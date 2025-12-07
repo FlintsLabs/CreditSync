@@ -1,0 +1,21 @@
+{
+    "name": "creditsync-backend",
+    "module": "src/index.ts",
+    "type": "module",
+    "scripts": {
+        "dev": "bun run --watch src/index.ts",
+        "generate": "drizzle-kit generate",
+        "migrate": "drizzle-kit migrate"
+    },
+    "dependencies": {
+        "elysia": "latest",
+        "@elysiajs/swagger": "latest",
+        "@elysiajs/cors": "latest",
+        "drizzle-orm": "latest",
+        "postgres": "latest"
+    },
+    "devDependencies": {
+        "bun-types": "latest",
+        "drizzle-kit": "latest"
+    }
+}
