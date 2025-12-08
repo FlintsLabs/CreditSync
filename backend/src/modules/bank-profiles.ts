@@ -1,18 +1,27 @@
 import { Elysia, t } from "elysia";
 import { db } from "../db";
 import { bankProfiles } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 
 export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
     .get("/", async () => {
-        return await db.select().from(bankProfiles);
+        // TODO: Get tenantId from context
+        return await db.select().from(bankProfiles).where(eq(bankProfiles.tenantId, "default_tenant"));
     })
     .get("/:id", async ({ params: { id } }) => {
-        const result = await db.select().from(bankProfiles).where(eq(bankProfiles.id, parseInt(id)));
+        // TODO: Get tenantId from context
+        const result = await db.select().from(bankProfiles).where(
+            and(
+                eq(bankProfiles.id, parseInt(id)),
+                eq(bankProfiles.tenantId, "default_tenant")
+            )
+        );
         return result[0];
     })
     .post("/", async ({ body }) => {
+        // TODO: Get tenantId from context
         const result = await db.insert(bankProfiles).values({
+            tenantId: "default_tenant", // Temporary default
             name: body.name,
             type: body.type,
             creditLimit: body.creditLimit?.toString()
@@ -26,6 +35,12 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
         })
     })
     .delete("/:id", async ({ params: { id } }) => {
-        const result = await db.delete(bankProfiles).where(eq(bankProfiles.id, parseInt(id))).returning();
+        // TODO: Get tenantId from context
+        const result = await db.delete(bankProfiles).where(
+            and(
+                eq(bankProfiles.id, parseInt(id)),
+                eq(bankProfiles.tenantId, "default_tenant")
+            )
+        ).returning();
         return result[0];
     });

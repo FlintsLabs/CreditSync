@@ -1,18 +1,27 @@
 import { Elysia, t } from "elysia";
 import { db } from "../db";
 import { borrowers } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 
 export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
     .get("/", async () => {
-        return await db.select().from(borrowers);
+        // TODO: Get tenantId from context
+        return await db.select().from(borrowers).where(eq(borrowers.tenantId, "default_tenant"));
     })
     .get("/:id", async ({ params: { id } }) => {
-        const result = await db.select().from(borrowers).where(eq(borrowers.id, parseInt(id)));
+        // TODO: Get tenantId from context
+        const result = await db.select().from(borrowers).where(
+            and(
+                eq(borrowers.id, parseInt(id)),
+                eq(borrowers.tenantId, "default_tenant")
+            )
+        );
         return result[0];
     })
     .post("/", async ({ body }) => {
+        // TODO: Get tenantId from context
         const result = await db.insert(borrowers).values({
+            tenantId: "default_tenant", // Temporary default
             name: body.name,
             idCardNumber: body.idCardNumber,
             phone: body.phone,
@@ -32,6 +41,7 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
         })
     })
     .put("/:id", async ({ params: { id }, body }) => {
+        // TODO: Get tenantId from context
         const result = await db.update(borrowers).set({
             name: body.name,
             idCardNumber: body.idCardNumber,
@@ -39,7 +49,12 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
             address: body.address,
             creditScore: body.creditScore,
             notes: body.notes
-        }).where(eq(borrowers.id, parseInt(id))).returning();
+        }).where(
+            and(
+                eq(borrowers.id, parseInt(id)),
+                eq(borrowers.tenantId, "default_tenant")
+            )
+        ).returning();
         return result[0];
     }, {
         body: t.Object({
