@@ -16,7 +16,7 @@ A Modern, High-Performance **Loan Management System** built for speed and precis
 
 ## 📂 Project Structure
 
-\`\`\`bash
+```text
 ├── backend/            # Bun + Elysia API Server
 │   ├── src/
 │   │   ├── modules/    # API Feature Modules (auth, loans, transactions)
@@ -32,7 +32,7 @@ A Modern, High-Performance **Loan Management System** built for speed and precis
 ├── docs/               # Project Documentation
 │   ├── adr/            # Architecture Decision Records
 │   └── implementation_plan.md
-\`\`\`
+```
 
 ## 🛠️ Getting Started
 
@@ -44,18 +44,18 @@ A Modern, High-Performance **Loan Management System** built for speed and precis
 ### Running Locally
 
 1.  **Backend**
-    \`\`\`bash
+    ```bash
     cd backend
     bun install
     bun run dev
-    \`\`\`
+    ```
 
 2.  **Frontend**
-    \`\`\`bash
+    ```bash
     cd frontend
     npm install
     npm run dev
-    \`\`\`
+    ```
 
 ## 📖 Documentation
 See [docs/](./docs) for detailed design documents and architecture decisions.
