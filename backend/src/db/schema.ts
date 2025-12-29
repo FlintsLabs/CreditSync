@@ -61,6 +61,8 @@ export const borrowers = pgTable("borrowers", {
     photoUrl: text("photo_url"), // Profile picture URL (MinIO)
     idCardImageUrl: text("id_card_image_url"), // OCR Image source
     creditScore: integer("credit_score").default(100),
+    tags: text("tags").array(), // Array of tags
+    googleMapsUrl: text("google_maps_url"), // URL for Google Maps location
     notes: text("notes"),
     createdAt: timestamp("created_at").defaultNow(),
 });

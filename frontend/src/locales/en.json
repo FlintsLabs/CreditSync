@@ -1,0 +1,52 @@
+{
+    "dashboard": {
+        "title": "Welcome back",
+        "description": "Here is an overview of your financial status.",
+        "funds": "Funds",
+        "loans": "Loans",
+        "borrowers": "Borrowers"
+    },
+    "funds": {
+        "title": "Sources of Funds",
+        "description": "Manage your bank accounts and credit lines.",
+        "add_source": "Add Source",
+        "bank_credit": "Bank Credit",
+        "capital": "Capital",
+        "limit": "Limit",
+        "view_details": "View Details",
+        "new_source": "New Source of Fund",
+        "source_name": "Bank/Source Name",
+        "type": "Type",
+        "max_amount": "Credit Limit / Max Amount"
+    },
+    "fund_detail": {
+        "revolving_credit": "Revolving Credit Line",
+        "available_credit": "Available Credit",
+        "active_withdrawals": "Active Withdrawals",
+        "utilization": "Used"
+    },
+    "common": {
+        "loading": "Loading...",
+        "save": "Save",
+        "cancel": "Cancel",
+        "delete": "Delete"
+    },
+    "login": {
+        "title": "Sign in to manage your lending portfolio",
+        "continue_google": "Continue with Google",
+        "terms": "By clicking continue, you agree to our Terms of Service and Privacy Policy.",
+        "failed": "Login failed!"
+    },
+    "chart": {
+        "financial_performance": "Financial Performance",
+        "subtitle": "Liability vs. Recovery vs. Repayment",
+        "liability": "Liability",
+        "collections": "actual Collection",
+        "expected": "Expected Collection",
+        "bank_payment": "Bank Payment",
+        "inflow_desc": "Money collected from borrowers (Revenue).",
+        "liability_desc": "Remaining principal owed to the bank.",
+        "outflow_desc": "Monthly installment paid to the bank.",
+        "expected_desc": "Scheduled payment from borrowers."
+    }
+}

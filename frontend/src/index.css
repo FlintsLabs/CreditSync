@@ -68,3 +68,48 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Custom Utilities for Login Page */
+@layer utilities {
+  .bg-grid-white {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' width='32' height='32' fill='none' stroke='rgb(255 255 255 / 0.05)'%3e%3cpath d='M0 .5H31.5V32'/%3e%3c/svg%3e");
+  }
+  
+  .mask-radial-faded {
+    mask-image: radial-gradient(circle at center, black, transparent 80%);
+  }
+
+  /* Aurora Animation */
+  @keyframes aurora {
+    0% { transform: translate(0, 0) scale(1); opacity: 0.8; }
+    33% { transform: translate(30px, -50px) scale(1.1); opacity: 1; }
+    66% { transform: translate(-20px, 20px) scale(0.9); opacity: 0.8; }
+    100% { transform: translate(0, 0) scale(1); opacity: 0.8; }
+  }
+  
+  .animate-aurora {
+    animation: aurora 10s ease-in-out infinite;
+  }
+  
+  .animate-aurora-delayed {
+    animation: aurora 15s ease-in-out infinite reverse;
+  }
+
+  /* Shimmer Border */
+  @keyframes border-rotate {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+
+  .shimmer-border {
+    background: linear-gradient(
+      60deg,
+      rgba(255,255,255,0.1),
+      rgba(255,255,255,0.4),
+      rgba(255,255,255,0.1)
+    );
+    background-size: 200% 200%;
+    animation: border-rotate 3s ease infinite;
+  }
+}

@@ -1,23 +1,61 @@
 import { Elysia, t } from "elysia";
 import { db } from "../db";
-import { loans, borrowers, bankLoans } from "../db/schema";
-import { eq, desc } from "drizzle-orm";
-import { calculateLoanSchedule, LoanCalculationParams, RepaymentType } from "../lib/calculator";
+import { loans, borrowers, transactions } from "../db/schema";
+import { eq, desc, and } from "drizzle-orm";
+import { calculateLoanSchedule, LoanCalculationParams, RepaymentType, calculateLoanClosingSummary } from "../lib/calculator";
+
+import { authPlugin } from "../middleware/auth";
 
 export const loansRoute = new Elysia({ prefix: "/loans" })
-    .get("/", async () => {
-        // TODO: Context Tenant
-        return await db.select({
+    .use(authPlugin)
+    .get("/", async ({ user }) => {
+        if (!user) return [];
+        // This is a simplified query for a list view.
+        // A real app might need more complex aggregation for total paid, etc.
+        const loanList = await db.select({
             id: loans.id,
             borrowerName: borrowers.name,
             principal: loans.principalAmount,
             status: loans.status,
-            createdAt: loans.createdAt
+            createdAt: loans.createdAt,
+            repaymentType: loans.repaymentType,
+            interestRate: loans.interestRate,
         })
             .from(loans)
             .leftJoin(borrowers, eq(loans.borrowerId, borrowers.id))
-            .where(eq(loans.tenantId, "default_tenant"))
+            .where(eq(loans.tenantId, user.tenantId))
             .orderBy(desc(loans.createdAt));
+        
+        return loanList;
+    })
+    .get("/:id/closing-summary", async ({ params, user, set }) => {
+        if (!user) {
+            set.status = 401;
+            return { error: "Unauthorized" };
+        }
+
+        const loanId = params.id;
+
+        const loan = await db.query.loans.findFirst({
+            where: and(eq(loans.id, loanId), eq(loans.tenantId, user.tenantId))
+        });
+
+        if (!loan) {
+            set.status = 404;
+            return { error: "Loan not found" };
+        }
+
+        const loanTransactions = await db.select()
+            .from(transactions)
+            .where(and(eq(transactions.loanId, loanId), eq(transactions.tenantId, user.tenantId)));
+
+        const summary = calculateLoanClosingSummary(loan, loanTransactions);
+
+        return summary;
+    }, {
+        params: t.Object({
+            id: t.Numeric()
+        })
     })
     .post("/calculate", ({ body }) => {
         const schedule = calculateLoanSchedule({
@@ -37,9 +75,10 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             startDate: t.String()
         })
     })
-    .post("/", async ({ body }) => {
+    .post("/", async ({ body, user }) => {
+        if (!user) throw new Error("Unauthorized");
         const result = await db.insert(loans).values({
-            tenantId: "default_tenant",
+            tenantId: user.tenantId,
             borrowerId: body.borrowerId,
             bankLoanId: body.bankLoanId,
             principalAmount: body.principal.toString(),

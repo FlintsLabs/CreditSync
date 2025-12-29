@@ -1,4 +1,3 @@
-version: '3.8'
 services:
   postgres:
     image: postgres:18
@@ -8,6 +7,7 @@ services:
       POSTGRES_DB: creditsync_db
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password
+      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "5433:5432"
     volumes:
@@ -26,6 +26,18 @@ services:
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: creditsync-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+    network_mode: "host"
+    depends_on:
+      - postgres
+      - minio
 
 volumes:
   postgres_data:

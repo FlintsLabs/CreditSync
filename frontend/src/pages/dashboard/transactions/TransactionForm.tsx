@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import axios from "axios";
+import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
 import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/Card";
@@ -21,7 +21,7 @@ export default function TransactionForm() {
     });
 
     useEffect(() => {
-        axios.get("http://localhost:3000/loans").then(res => setLoans(res.data));
+        api.get("/loans").then(res => setLoans(res.data));
     }, []);
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -42,7 +42,7 @@ export default function TransactionForm() {
         }
 
         try {
-            await axios.post("http://localhost:3000/transactions", data, {
+            await api.post("/transactions", data, {
                 headers: { "Content-Type": "multipart/form-data" }
             });
             navigate("/dashboard/transactions");

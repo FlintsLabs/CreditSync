@@ -90,3 +90,41 @@ export function calculateProRatedClosing(principal: number, interestRate: number
     const interest = principal * (interestRate / 100) * (days / 365);
     return principal + interest;
 }
+
+export interface LoanClosingSummary {
+    principal: number;
+    totalInterest: number;
+    totalPaid: number;
+    totalDue: number;
+    balance: number;
+    daysSinceStart: number;
+}
+
+export function calculateLoanClosingSummary(
+    loan: { principalAmount: string; interestRate: string; startDate: string | Date },
+    transactions: { amount: string }[],
+    closingDate: Date = new Date()
+): LoanClosingSummary {
+    const principal = parseFloat(loan.principalAmount);
+    const interestRate = parseFloat(loan.interestRate);
+
+    const start = dayjs(loan.startDate);
+    const end = dayjs(closingDate);
+    const daysSinceStart = Math.max(0, end.diff(start, 'day'));
+
+    const totalInterest = principal * (interestRate / 100) * (daysSinceStart / 365);
+    const totalDue = principal + totalInterest;
+
+    const totalPaid = transactions.reduce((sum, tx) => sum + parseFloat(tx.amount), 0);
+
+    const balance = totalDue - totalPaid;
+
+    return {
+        principal: Number(principal.toFixed(2)),
+        totalInterest: Number(totalInterest.toFixed(2)),
+        totalPaid: Number(totalPaid.toFixed(2)),
+        totalDue: Number(totalDue.toFixed(2)),
+        balance: Number(balance.toFixed(2)),
+        daysSinceStart,
+    };
+}

@@ -26,9 +26,9 @@ spec:
         - name: MINIO_ENDPOINT
           value: "minio:9000"
         - name: MINIO_ACCESS_KEY
-          value: "admin"
+          value: "minioadmin"
         - name: MINIO_SECRET_KEY
-          value: "password"
+          value: "minioadmin"
 ---
 apiVersion: v1
 kind: Service

@@ -25,6 +25,7 @@ export const authRoute = new Elysia({ prefix: "/auth" })
                 throw new Error("Invalid Token");
             }
             const payload = await userInfoResponse.json();
+            console.log("Google Payload:", JSON.stringify(payload, null, 2));
 
             if (!payload.email) {
                 throw new Error("Email not found in token");
@@ -43,6 +44,16 @@ export const authRoute = new Elysia({ prefix: "/auth" })
                     picture: payload.picture,
                     role: "owner" // First user or specific logic
                 }).returning();
+                user = result[0];
+            } else {
+                // Update existing user info to keep it fresh
+                const result = await db.update(users)
+                    .set({
+                        name: payload.name,
+                        picture: payload.picture
+                    })
+                    .where(eq(users.email, payload.email))
+                    .returning();
                 user = result[0];
             }
 

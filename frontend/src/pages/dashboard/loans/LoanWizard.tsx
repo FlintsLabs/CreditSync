@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import axios from "axios";
+import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
 import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/Card";
@@ -25,13 +25,13 @@ export default function LoanWizard() {
 
     useEffect(() => {
         // Fetch Dependencies
-        axios.get("http://localhost:3000/borrowers").then(res => setBorrowers(res.data));
-        axios.get("http://localhost:3000/bank-profiles").then(res => setFunds(res.data));
+        api.get("/borrowers").then(res => setBorrowers(res.data));
+        api.get("/bank-profiles").then(res => setFunds(res.data));
     }, []);
 
     const calculateSchedule = async () => {
         try {
-            const res = await axios.post("http://localhost:3000/loans/calculate", {
+            const res = await api.post("/loans/calculate", {
                 principal: Number(formData.principal),
                 interestRate: Number(formData.interestRate),
                 termMonths: Number(formData.termMonths),
@@ -61,7 +61,7 @@ export default function LoanWizard() {
             const total = schedule.length;
             const amount = schedule.length > 0 ? schedule[0].amount : 0;
 
-            await axios.post("http://localhost:3000/loans", {
+            await api.post("/loans", {
                 borrowerId: Number(formData.borrowerId),
                 bankLoanId: formData.bankLoanId ? Number(formData.bankLoanId) : undefined,
                 principal: Number(formData.principal),

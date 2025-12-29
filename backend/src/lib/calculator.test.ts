@@ -1,0 +1,123 @@
+import { describe, expect, it } from "bun:test";
+import { calculateLoanSchedule, calculateProRatedClosing, calculateLoanClosingSummary } from "./calculator";
+import dayjs from "dayjs";
+
+describe("Loan Calculator", () => {
+    it("should calculate monthly schedule correctly", () => {
+        const schedule = calculateLoanSchedule({
+            principal: 20000,
+            interestRate: 15,
+            termMonths: 12,
+            repaymentType: "monthly",
+            startDate: new Date("2024-01-01")
+        });
+
+        expect(schedule.length).toBe(12);
+        // Total interest = 20000 * 0.15 * 1 = 3000
+        // Total amount = 23000
+        // Installment = ceil(23000 / 12) = 1917
+        expect(schedule[0].amount).toBe(1917);
+        expect(schedule[0].dueDate).toBe("2024-02-01");
+    });
+
+    it("should calculate daily schedule correctly", () => {
+        const schedule = calculateLoanSchedule({
+            principal: 20000,
+            interestRate: 20,
+            termMonths: 12,
+            repaymentType: "daily",
+            startDate: new Date("2024-01-01")
+        });
+
+        // 12 months * 30 days = 360 installments
+        expect(schedule.length).toBe(360);
+        // Total interest = 4000
+        // Total = 24000
+        // Daily = ceil(24000/360) = 67
+        expect(schedule[0].amount).toBe(67);
+    });
+
+    it("should calculate pro-rated closing amount", () => {
+        const principal = 20000;
+        const rate = 18; // 18% per year
+        const start = new Date("2024-01-01");
+        const close = new Date("2024-01-11"); // 10 days passed
+
+        const closingAmount = calculateProRatedClosing(principal, rate, start, close);
+
+        // Interest = 20000 * 0.18 * (10/365) = 98.63
+        // Total = 20098.63
+        expect(closingAmount).toBeCloseTo(20098.63, 1);
+    });
+});
+
+
+describe("Loan Closing Summary Calculator", () => {
+    const loan = {
+        principalAmount: "10000",
+        interestRate: "10", // 10% per year
+        startDate: "2024-01-01",
+    };
+
+    it("should calculate correctly with partial payments", () => {
+        const transactions = [{ amount: "1000" }, { amount: "500" }];
+        const closingDate = new Date("2024-07-01");
+        
+        const summary = calculateLoanClosingSummary(loan, transactions, closingDate);
+        
+        const expectedInterest = 10000 * 0.10 * (summary.daysSinceStart / 365);
+        const expectedTotalDue = 10000 + expectedInterest;
+        const totalPaid = 1500;
+        const expectedBalance = expectedTotalDue - totalPaid;
+        
+        const expectedDays = dayjs(closingDate).diff(dayjs(loan.startDate), 'day');
+
+        expect(summary.daysSinceStart).toBe(expectedDays);
+        expect(summary.principal).toBe(10000);
+        expect(summary.totalInterest).toBeCloseTo(expectedInterest);
+        expect(summary.totalPaid).toBe(1500);
+        expect(summary.totalDue).toBeCloseTo(expectedTotalDue);
+        expect(summary.balance).toBeCloseTo(expectedBalance);
+    });
+
+    it("should calculate correctly with no payments", () => {
+        const transactions: { amount: string }[] = [];
+        const closingDate = new Date("2025-01-01"); // Exactly 366 days in a leap year
+        const summary = calculateLoanClosingSummary(loan, transactions, closingDate);
+        
+        const expectedDays = dayjs(closingDate).diff(dayjs(loan.startDate), 'day');
+        const expectedInterest = 10000 * 0.10 * (summary.daysSinceStart / 365);
+
+        expect(summary.daysSinceStart).toBe(expectedDays); // 366 days for a leap year
+        expect(summary.principal).toBe(10000);
+        expect(summary.totalInterest).toBeCloseTo(expectedInterest);
+        expect(summary.totalPaid).toBe(0);
+        expect(summary.totalDue).toBeCloseTo(10000 + expectedInterest);
+        expect(summary.balance).toBeCloseTo(10000 + expectedInterest);
+    });
+
+    it("should calculate correctly when overpaid", () => {
+        const transactions = [{ amount: "6000" }, { amount: "6000" }];
+        const closingDate = new Date("2025-01-01"); // Exactly 366 days
+        const summary = calculateLoanClosingSummary(loan, transactions, closingDate);
+
+        const expectedDays = dayjs(closingDate).diff(dayjs(loan.startDate), 'day');
+        const expectedInterest = 10000 * 0.10 * (summary.daysSinceStart / 365);
+
+        expect(summary.daysSinceStart).toBe(expectedDays);
+        expect(summary.totalPaid).toBe(12000);
+        expect(summary.totalDue).toBeCloseTo(10000 + expectedInterest);
+        expect(summary.balance).toBeCloseTo((10000 + expectedInterest) - 12000);
+    });
+
+    it("should return principal if closing date is on or before start date", () => {
+        const transactions: { amount: string }[] = [];
+        const closingDate = new Date("2024-01-01");
+        const summary = calculateLoanClosingSummary(loan, transactions, closingDate);
+
+        expect(summary.daysSinceStart).toBe(0);
+        expect(summary.totalInterest).toBe(0);
+        expect(summary.totalDue).toBe(10000);
+        expect(summary.balance).toBe(10000);
+    });
+});

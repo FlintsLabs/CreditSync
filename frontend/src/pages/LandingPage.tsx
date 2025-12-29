@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { Button } from "../components/ui/Button";
-import { ArrowRight, ShieldCheck, Zap, BarChart3, Lock } from "lucide-react";
+import { ArrowRight, ShieldCheck, Zap, BarChart3 } from "lucide-react";
 
 export default function LandingPage() {
     return (

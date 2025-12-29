@@ -1,11 +1,14 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { GoogleOAuthProvider } from "@react-oauth/google";
+import "./lib/i18n"; // Initialize i18n
 import Login from "./pages/auth/Login";
 import DashboardLayout from "./layouts/DashboardLayout";
 import Dashboard from "./pages/dashboard/Dashboard";
 import FundList from "./pages/dashboard/funds/FundList";
+import FundDetail from "./pages/dashboard/funds/FundDetail";
 import BorrowerList from "./pages/dashboard/borrowers/BorrowerList";
 import BorrowerForm from "./pages/dashboard/borrowers/BorrowerForm";
+import BorrowerDetail from "./pages/dashboard/borrowers/BorrowerDetail";
 import LoanWizard from "./pages/dashboard/loans/LoanWizard";
 import LoanList from "./pages/dashboard/loans/LoanList";
 import TransactionList from "./pages/dashboard/transactions/TransactionList";
@@ -40,8 +43,10 @@ function App() {
             <Route path="/dashboard" element={<DashboardLayout />}>
               <Route index element={<Dashboard />} />
               <Route path="funds" element={<FundList />} />
+              <Route path="funds/:id" element={<FundDetail />} />
               <Route path="borrowers" element={<BorrowerList />} />
               <Route path="borrowers/new" element={<BorrowerForm />} />
+              <Route path="borrowers/:id" element={<BorrowerDetail />} />
               <Route path="loans" element={<LoanList />} />
               <Route path="loans/new" element={<LoanWizard />} />
               <Route path="transactions" element={<TransactionList />} />

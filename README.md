@@ -53,8 +53,8 @@ A Modern, High-Performance **Loan Management System** built for speed and precis
 2.  **Frontend**
     ```bash
     cd frontend
-    npm install
-    npm run dev
+    bun install
+    bun run dev -- --host 0.0.0.0
     ```
 
 ## 📖 Documentation
