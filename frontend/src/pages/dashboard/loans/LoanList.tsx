@@ -10,7 +10,7 @@ import { LoanClosingModal } from "./LoanClosingModal";
 
 export default function LoanList() {
     const [loans, setLoans] = useState<any[]>([]);
-    const [closingLoanId, setClosingLoanId] = useState<number | null>(null);
+    const [closingLoanId, setClosingLoanId] = useState<string | null>(null);
 
     useEffect(() => {
         const fetchLoans = async () => {
@@ -54,7 +54,7 @@ export default function LoanList() {
                                     </Button>
                                 </DropdownMenuTrigger>
                                 <DropdownMenuContent align="end">
-                                    <DropdownMenuItem onClick={() => setClosingLoanId(loan.id)}>
+                                    <DropdownMenuItem onClick={() => setClosingLoanId(String(loan.id))}>
                                         <DollarSign className="mr-2 h-4 w-4" />
                                         <span>Calculate Closing Balance</span>
                                     </DropdownMenuItem>
