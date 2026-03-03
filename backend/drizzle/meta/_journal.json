@@ -15,6 +15,13 @@
       "when": 1765119637307,
       "tag": "0001_omniscient_veda",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1772545147440,
+      "tag": "0002_mean_hellion",
+      "breakpoints": true
     }
   ]
 }
