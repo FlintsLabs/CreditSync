@@ -197,7 +197,7 @@ const GraphMinimap = ({ graphRef, data, width = 120, height = 120, className }: 
 };
 
 export default function PortfolioGraph() {
-    const graphRef = useRef<ForceGraphMethods>();
+    const graphRef = useRef<ForceGraphMethods>(null!);
     const [allData, setAllData] = useState<{ nodes: any[], links: any[] }>({ nodes: [], links: [] });
     const [dimensions, setDimensions] = useState({ w: 800, h: 600 });
     const containerRef = useRef<HTMLDivElement>(null);
