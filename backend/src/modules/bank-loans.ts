@@ -10,7 +10,7 @@ export const bankLoansRoute = new Elysia({ prefix: "/bank-loans" })
         if (!user) return [];
         const whereClause = [eq(bankLoans.tenantId, user.tenantId)];
         if (query.bankProfileId) {
-            whereClause.push(eq(bankLoans.bankProfileId, parseInt(query.bankProfileId)));
+            whereClause.push(eq(bankLoans.bankProfileId, query.bankProfileId));
         }
         return await db.select().from(bankLoans)
             .where(and(...whereClause))
@@ -34,7 +34,7 @@ export const bankLoansRoute = new Elysia({ prefix: "/bank-loans" })
         return result[0];
     }, {
         body: t.Object({
-            bankProfileId: t.Optional(t.Number()),
+            bankProfileId: t.Optional(t.String()),
             amount: t.Number(),
             interestRate: t.Number(), // % per year
             startDate: t.Optional(t.String()),
