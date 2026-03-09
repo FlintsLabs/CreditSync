@@ -2,64 +2,9 @@ import { ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis, CartesianG
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "../../../components/ui/Card";
 import { Badge } from "../../../components/ui/badge";
 import { cn } from "../../../lib/utils";
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-
-// Realistic Data Simulation
-const generateRealisticData = () => {
-    let currentLiability = 100000; // Starting Debt (30k + 70k)
-    const monthlyInterestRate = 0.005; // ~6% p.a.
-    const baseBankPayment = 6700; // Fixed Installment (Sum of loans)
-
-    const months = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-    ];
-
-    const data = [];
-    const years = [2023, 2024, 2025];
-
-    for (const year of years) {
-        for (const month of months) {
-            // 1. Calculate Interest for the month
-            const interest = currentLiability * monthlyInterestRate;
-
-            // 2. Bank Payment (Outflow) - slightly variable
-            const paymentToBank = baseBankPayment;
-
-            // 3. Principal Repayment component
-            const principalRepayment = paymentToBank - interest;
-
-            // 4. Reduce Liability (Amortization)
-            // Ensure liability doesn't go below 0
-            currentLiability = Math.max(0, currentLiability - principalRepayment);
-
-            // 5. Collections (Inflow - Actual) - Variable (Seasonality + Randomness)
-            // Expecting ~1.35x of payment (Profit) but with +/- 20% variance
-            const variability = 0.8 + Math.random() * 0.4; // 0.8 to 1.2
-
-            // 6. Expected Collection (Target) - consistently higher than outflow
-            const expectedCollection = Math.round(paymentToBank * 1.5);
-
-            let collectedFromBorrowers = expectedCollection * variability; // Actual is relative to expected
-
-            // Simulate a "bad month" dip occasionally
-            if (Math.random() > 0.8) collectedFromBorrowers *= 0.6;
-
-            data.push({
-                name: `${month} ${year}`,
-                year,
-                liability: Math.round(currentLiability),
-                paymentToBank: Math.round(paymentToBank),
-                collectedFromBorrowers: Math.round(collectedFromBorrowers),
-                expectedCollection: Math.round(expectedCollection),
-            });
-        }
-    }
-    return data;
-};
-
-const allData = generateRealisticData();
+import { api } from "../../../lib/api";
 
 // ... CustomTooltip component remains same ...
 const CustomTooltip = ({ active, payload, label }: any) => {
@@ -91,6 +36,15 @@ export function FundPerformanceChart() {
     const { t } = useTranslation();
     const [selectedYears, setSelectedYears] = useState<number[]>([2024]);
     const availableYears = [2023, 2024, 2025];
+    const [allData, setAllData] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        api.get('/analytics/fund-performance')
+            .then(res => setAllData(res.data))
+            .catch(err => console.error("Error fetching fund performance data:", err))
+            .finally(() => setLoading(false));
+    }, []);
 
     const handleYearToggle = (year: number) => {
         setSelectedYears(prev =>
@@ -132,7 +86,10 @@ export function FundPerformanceChart() {
                 </div>
             </CardHeader>
             <CardContent className="pl-0 pb-2">
-                <div className="h-[400px] w-full mt-4">
+                <div className="h-[400px] w-full mt-4 flex items-center justify-center">
+                    {loading ? (
+                        <div className="text-muted-foreground animate-pulse">{t("loading")}...</div>
+                    ) : (
                     <ResponsiveContainer width="100%" height="100%">
                         <ComposedChart data={filteredData} margin={{ top: 10, right: 30, left: 20, bottom: 0 }}>
                             <defs>
@@ -244,6 +201,7 @@ export function FundPerformanceChart() {
 
                         </ComposedChart>
                     </ResponsiveContainer>
+                    )}
                 </div>
             </CardContent>
             <div className="border-t bg-muted/20 p-4">
