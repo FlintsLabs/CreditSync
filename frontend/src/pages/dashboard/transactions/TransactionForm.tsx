@@ -9,6 +9,7 @@ import { useNavigate } from "react-router-dom";
 export default function TransactionForm() {
     const navigate = useNavigate();
     const [loans, setLoans] = useState<any[]>([]);
+    const [pendingSlips, setPendingSlips] = useState<any[]>([]);
     const [uploading, setUploading] = useState(false);
 
     // Form State
@@ -17,11 +18,13 @@ export default function TransactionForm() {
         amount: "",
         date: new Date().toISOString().split('T')[0],
         notes: "",
-        slip: null as File | null
+        slip: null as File | null,
+        botUploadId: ""
     });
 
     useEffect(() => {
         api.get("/loans").then(res => setLoans(res.data));
+        api.get("/transactions/pending-slips").then(res => setPendingSlips(res.data));
     }, []);
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -39,6 +42,9 @@ export default function TransactionForm() {
         data.append("notes", formData.notes);
         if (formData.slip) {
             data.append("slip", formData.slip);
+        }
+        if (formData.botUploadId) {
+            data.append("botUploadId", formData.botUploadId);
         }
 
         try {
@@ -89,9 +95,26 @@ export default function TransactionForm() {
                     </div>
 
                     <div className="grid gap-2">
-                        <label>Slip Image (Optional)</label>
+                        <label>Link Existing Slip (From Line Bot)</label>
+                        <select
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                            value={formData.botUploadId}
+                            onChange={e => setFormData({ ...formData, botUploadId: e.target.value })}
+                            disabled={!!formData.slip}
+                        >
+                            <option value="">None (Upload manual slip below)</option>
+                            {pendingSlips.map((slip: any) => (
+                                <option key={slip.id} value={slip.id}>
+                                    Slip #{slip.id} - {new Date(slip.createdAt).toLocaleString()} (Sender: {slip.senderId})
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div className="grid gap-2">
+                        <label>Or Upload Slip Image (Optional)</label>
                         <div className="flex items-center gap-2">
-                            <Input type="file" onChange={handleFileChange} />
+                            <Input type="file" onChange={handleFileChange} disabled={!!formData.botUploadId} />
                         </div>
                     </div>
 

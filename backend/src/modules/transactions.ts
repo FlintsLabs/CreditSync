@@ -1,10 +1,23 @@
 import { Elysia, t } from "elysia";
 import { db } from "../db";
-import { transactions, loans, borrowers } from "../db/schema";
-import { eq, desc } from "drizzle-orm";
+import { transactions, loans, borrowers, botUploads, files } from "../db/schema";
+import { eq, desc, and } from "drizzle-orm";
 import { uploadFile } from "../lib/storage";
 
 export const transactionsRoute = new Elysia({ prefix: "/transactions" })
+    .get("/pending-slips", async () => {
+        // Fetch unmatched slips from bot uploads
+        return await db.select({
+            id: botUploads.id,
+            url: files.url,
+            createdAt: botUploads.createdAt,
+            senderId: botUploads.senderId
+        })
+        .from(botUploads)
+        .leftJoin(files, eq(botUploads.fileId, files.id))
+        .where(and(eq(botUploads.tenantId, "default_tenant"), eq(botUploads.status, "pending")))
+        .orderBy(desc(botUploads.createdAt));
+    })
     .get("/", async () => {
         // TODO: Context Tenant
         return await db.select({
@@ -37,6 +50,23 @@ export const transactionsRoute = new Elysia({ prefix: "/transactions" })
             }
         }
 
+        // Handle optional bot upload link
+        if (body.botUploadId) {
+            const botUpload = await db.query.botUploads.findFirst({
+                where: eq(botUploads.id, Number(body.botUploadId)),
+                with: { file: true }
+            });
+
+            if (botUpload?.file) {
+                slipUrl = botUpload.file.url;
+
+                // Mark bot upload as matched
+                await db.update(botUploads)
+                    .set({ status: "matched" })
+                    .where(eq(botUploads.id, botUpload.id));
+            }
+        }
+
         const result = await db.insert(transactions).values({
             tenantId: "default_tenant",
             loanId: Number(body.loanId),
@@ -55,6 +85,7 @@ export const transactionsRoute = new Elysia({ prefix: "/transactions" })
             type: t.Optional(t.String()),
             date: t.String(),
             notes: t.Optional(t.String()),
-            slip: t.Optional(t.File())
+            slip: t.Optional(t.File()),
+            botUploadId: t.Optional(t.String())
         })
     });

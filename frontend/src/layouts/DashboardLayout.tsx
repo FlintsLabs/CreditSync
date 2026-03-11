@@ -22,9 +22,9 @@ export default function DashboardLayout() {
     ];
 
     return (
-        <div className="flex min-h-screen bg-background text-foreground transition-colors duration-300">
+        <div className="flex min-h-screen bg-muted/30 text-foreground transition-colors duration-300 justify-center">
             {/* Desktop Sidebar (Hidden on Mobile) */}
-            <div className="hidden w-64 flex-col border-r bg-card md:flex sticky top-0 h-screen overflow-y-auto">
+            <div className="hidden w-64 flex-col border-r bg-card md:flex sticky top-0 h-screen overflow-y-auto shrink-0 shadow-sm z-10">
                 <AppBar />
                 <div className="flex flex-1 flex-col gap-1 p-4">
                     {navigation.map((item) => {
@@ -54,7 +54,7 @@ export default function DashboardLayout() {
             </div>
 
             {/* Main Content Area */}
-            <div className="flex flex-1 flex-col min-w-0">
+            <div className="flex flex-1 flex-col min-w-0 md:max-w-[1400px] w-full bg-background md:my-4 md:mr-4 md:rounded-2xl md:shadow-lg md:border overflow-hidden">
                 {/* Mobile Header (Visible only on Mobile) */}
                 <header className="sticky top-0 z-30 flex h-16 items-center border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 md:hidden">
                     <Button
@@ -117,8 +117,10 @@ export default function DashboardLayout() {
                 )}
 
                 {/* Page Content */}
-                <main className="flex-1 p-4 md:p-8 overflow-x-hidden">
-                    <Outlet />
+                <main className="flex-1 p-4 md:p-8 overflow-x-hidden bg-background">
+                    <div className="mx-auto w-full max-w-7xl">
+                        <Outlet />
+                    </div>
                 </main>
             </div>
         </div>
