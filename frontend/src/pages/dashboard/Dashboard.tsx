@@ -107,7 +107,7 @@ export default function Dashboard() {
                 {/* TAB: OVERVIEW */}
                 <TabsContent value="overview" className="space-y-4">
                     {/* Stats Cards */}
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                    <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
                         <Card>
                             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                                 <CardTitle className="text-sm font-medium">
@@ -213,7 +213,7 @@ export default function Dashboard() {
                     {/* Active Bank Loans Section */}
                     <div>
                         <h3 className="text-lg font-medium mb-4">Your Sources of Funds</h3>
-                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                        <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
                             {/* Loan Card 1: TTB - Fixed Term */}
                             <Card
                                 className="overflow-hidden border-l-4 border-l-blue-600 transition-all hover:shadow-md cursor-pointer hover:bg-muted/20"
@@ -347,9 +347,9 @@ export default function Dashboard() {
                         </div>
                     </div>
 
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+                    <div className="grid gap-4 grid-cols-1 lg:grid-cols-7">
                         {/* Chart */}
-                        <Card className="col-span-4 transition-all hover:shadow-md">
+                        <Card className="col-span-1 lg:col-span-4 transition-all hover:shadow-md">
                             <CardHeader>
                                 <CardTitle>Overview</CardTitle>
                             </CardHeader>
@@ -393,7 +393,7 @@ export default function Dashboard() {
                         </Card>
 
                         {/* Recent Sales/Activity */}
-                        <Card className="col-span-3 transition-all hover:shadow-md">
+                        <Card className="col-span-1 lg:col-span-3 transition-all hover:shadow-md">
                             <CardHeader>
                                 <CardTitle>Recent Activity</CardTitle>
                                 <p className="text-sm text-muted-foreground">
@@ -437,7 +437,7 @@ export default function Dashboard() {
                         {/* Add New Group Button could go here */}
                     </div>
 
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
                         {borrowerGroups.map((group) => (
                             <Card key={group.id} className="transition-all hover:shadow-lg border-t-4"
                                 style={{ borderTopColor: group.platform === 'line' ? '#06c755' : '#1877f2' }}

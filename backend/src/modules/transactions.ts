@@ -1,12 +1,18 @@
 import { Elysia, t } from "elysia";
 import { db } from "../db";
 import { transactions, loans, borrowers } from "../db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { uploadFile } from "../lib/storage";
 
 export const transactionsRoute = new Elysia({ prefix: "/transactions" })
-    .get("/", async () => {
+    .get("/", async ({ query }) => {
         // TODO: Context Tenant
+        const conditions = [eq(transactions.tenantId, "default_tenant")];
+
+        if (query.borrowerId) {
+            conditions.push(eq(loans.borrowerId, parseInt(query.borrowerId)));
+        }
+
         return await db.select({
             id: transactions.id,
             loanId: transactions.loanId,
@@ -19,8 +25,12 @@ export const transactionsRoute = new Elysia({ prefix: "/transactions" })
             .from(transactions)
             .leftJoin(loans, eq(transactions.loanId, loans.id))
             .leftJoin(borrowers, eq(loans.borrowerId, borrowers.id))
-            .where(eq(transactions.tenantId, "default_tenant"))
+            .where(and(...conditions))
             .orderBy(desc(transactions.transactionDate));
+    }, {
+        query: t.Object({
+            borrowerId: t.Optional(t.String())
+        })
     })
     .post("/", async ({ body }) => {
         let slipUrl = null;

@@ -42,7 +42,7 @@ export default function FundDetail() {
             </div>
 
             {/* Credit Limit Overview */}
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 grid-cols-1 md:grid-cols-3">
                 <Card className="md:col-span-1 border-l-4 border-l-blue-600 bg-blue-50/50">
                     <CardHeader className="pb-2">
                         <CardTitle className="text-sm font-medium text-muted-foreground">{t("fund_detail.available_credit")}</CardTitle>

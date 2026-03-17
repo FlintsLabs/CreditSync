@@ -80,12 +80,12 @@ export default function BorrowerDetail() {
             </div>
 
             {/* Info Grid */}
-            <div className="grid gap-6 md:grid-cols-3">
+            <div className="grid gap-6 grid-cols-1 md:grid-cols-3">
                 <Card className="md:col-span-2">
                     <CardHeader>
                         <CardTitle>Contact Information</CardTitle>
                     </CardHeader>
-                    <CardContent className="grid gap-4 sm:grid-cols-2">
+                    <CardContent className="grid gap-4 grid-cols-1 sm:grid-cols-2">
                         <div className="flex items-center gap-3">
                             <Phone className="h-5 w-5 text-muted-foreground" />
                             <div>
@@ -219,7 +219,7 @@ export default function BorrowerDetail() {
                 </TabsContent>
 
                 <TabsContent value="images">
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                         {borrower.idCardImageUrl && (
                             <div className="rounded-lg border overflow-hidden">
                                 <img src={borrower.idCardImageUrl} alt="ID Card" className="w-full h-40 object-cover" />

@@ -8,8 +8,14 @@ import { authPlugin } from "../middleware/auth";
 
 export const loansRoute = new Elysia({ prefix: "/loans" })
     .use(authPlugin)
-    .get("/", async ({ user }) => {
+    .get("/", async ({ user, query }) => {
         if (!user) return [];
+
+        const conditions = [eq(loans.tenantId, user.tenantId)];
+        if (query.borrowerId) {
+            conditions.push(eq(loans.borrowerId, parseInt(query.borrowerId)));
+        }
+
         // This is a simplified query for a list view.
         // A real app might need more complex aggregation for total paid, etc.
         const loanList = await db.select({
@@ -23,10 +29,14 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         })
             .from(loans)
             .leftJoin(borrowers, eq(loans.borrowerId, borrowers.id))
-            .where(eq(loans.tenantId, user.tenantId))
+            .where(and(...conditions))
             .orderBy(desc(loans.createdAt));
         
         return loanList;
+    }, {
+        query: t.Object({
+            borrowerId: t.Optional(t.String())
+        })
     })
     .get("/:id/closing-summary", async ({ params, user, set }) => {
         if (!user) {
