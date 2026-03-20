@@ -7,7 +7,7 @@ import { Input } from "../../../components/ui/Input";
 import { useTranslation } from "react-i18next";
 
 interface BankProfile {
-    id: number;
+    id: string;
     name: string;
     type: string;
     creditLimit: string | null;
@@ -56,7 +56,7 @@ export default function FundList() {
         }
     };
 
-    const handleDelete = async (id: number) => {
+    const handleDelete = async (id: string) => {
         if (!confirm(t("common.delete") + "?")) return;
         try {
             await api.delete(`/bank-profiles/${id}`);

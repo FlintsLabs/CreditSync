@@ -5,7 +5,7 @@ import { api } from "../../../lib/api";
 import { Loader2, Copy } from "lucide-react";
 
 interface LoanClosingModalProps {
-    loanId: number;
+    loanId: string;
     open: boolean;
     onOpenChange: (open: boolean) => void;
 }
@@ -99,7 +99,7 @@ export function LoanClosingModal({ loanId, open, onOpenChange }: LoanClosingModa
                 
                 <DialogFooter>
                     <Button
-                        variant="secondary"
+                        variant="outline"
                         onClick={() => onOpenChange(false)}
                     >
                         Close
