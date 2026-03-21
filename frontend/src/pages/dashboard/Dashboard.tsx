@@ -1,10 +1,10 @@
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/Card";
-import { Activity, CreditCard, DollarSign, Users, TrendingUp, ArrowUpRight, ArrowDownRight, ChevronRight, MessageCircle, Facebook, Users2, BarChart2 } from "lucide-react";
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, PieChart, Pie, Cell } from "recharts";
+import { Activity, CreditCard, DollarSign, Users, TrendingUp, ArrowUpRight, ChevronRight, MessageCircle, Facebook, Users2, BarChart2 } from "lucide-react";
+import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useNavigate } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
-import { Badge } from "../../components/ui/badge";
 import PortfolioGraph from "./PortfolioGraph";
+import FundPerformance from "./FundPerformance";
 
 const data = [
     { name: "Jan", total: 12000 },
@@ -89,25 +89,26 @@ export default function Dashboard() {
     const navigate = useNavigate();
     return (
         <div className="flex-1 space-y-8 p-4 pt-6">
-            <div className="flex items-center justify-between space-y-2">
-                <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
+            <div className="flex flex-col md:flex-row md:items-center justify-between space-y-2 md:space-y-0">
+                <h2 className="text-2xl md:text-3xl font-bold tracking-tight">Dashboard</h2>
                 <div className="flex items-center space-x-2">
                     {/* DateRangePicker Placeholder */}
                 </div>
             </div>
 
             <Tabs defaultValue="overview" className="space-y-4">
-                <TabsList>
+                <TabsList className="overflow-x-auto w-full justify-start md:w-auto h-auto p-1 border">
                     <TabsTrigger value="overview">Overview</TabsTrigger>
                     <TabsTrigger value="groups">Borrower Groups</TabsTrigger>
                     <TabsTrigger value="graph">Portfolio Graph</TabsTrigger>
+                    <TabsTrigger value="fund-performance">Fund Performance</TabsTrigger>
                     <TabsTrigger value="analytics" disabled>Analytics</TabsTrigger>
                 </TabsList>
 
                 {/* TAB: OVERVIEW */}
                 <TabsContent value="overview" className="space-y-4">
                     {/* Stats Cards */}
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                    <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
                         <Card>
                             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                                 <CardTitle className="text-sm font-medium">
@@ -213,7 +214,7 @@ export default function Dashboard() {
                     {/* Active Bank Loans Section */}
                     <div>
                         <h3 className="text-lg font-medium mb-4">Your Sources of Funds</h3>
-                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                        <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
                             {/* Loan Card 1: TTB - Fixed Term */}
                             <Card
                                 className="overflow-hidden border-l-4 border-l-blue-600 transition-all hover:shadow-md cursor-pointer hover:bg-muted/20"
@@ -347,9 +348,9 @@ export default function Dashboard() {
                         </div>
                     </div>
 
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+                    <div className="grid gap-4 grid-cols-1 lg:grid-cols-7">
                         {/* Chart */}
-                        <Card className="col-span-4 transition-all hover:shadow-md">
+                        <Card className="col-span-1 lg:col-span-4 transition-all hover:shadow-md">
                             <CardHeader>
                                 <CardTitle>Overview</CardTitle>
                             </CardHeader>
@@ -393,7 +394,7 @@ export default function Dashboard() {
                         </Card>
 
                         {/* Recent Sales/Activity */}
-                        <Card className="col-span-3 transition-all hover:shadow-md">
+                        <Card className="col-span-1 lg:col-span-3 transition-all hover:shadow-md">
                             <CardHeader>
                                 <CardTitle>Recent Activity</CardTitle>
                                 <p className="text-sm text-muted-foreground">
@@ -437,7 +438,7 @@ export default function Dashboard() {
                         {/* Add New Group Button could go here */}
                     </div>
 
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
                         {borrowerGroups.map((group) => (
                             <Card key={group.id} className="transition-all hover:shadow-lg border-t-4"
                                 style={{ borderTopColor: group.platform === 'line' ? '#06c755' : '#1877f2' }}
@@ -508,6 +509,11 @@ export default function Dashboard() {
                 {/* TAB: PORTFOLIO GRAPH */}
                 <TabsContent value="graph" className="space-y-4">
                     <PortfolioGraph />
+                </TabsContent>
+
+                {/* TAB: FUND PERFORMANCE */}
+                <TabsContent value="fund-performance" className="space-y-4">
+                    <FundPerformance />
                 </TabsContent>
             </Tabs>
         </div>
