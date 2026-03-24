@@ -10,7 +10,7 @@ import { LoanClosingModal } from "./LoanClosingModal";
 
 export default function LoanList() {
     const [loans, setLoans] = useState<any[]>([]);
-    const [closingLoanId, setClosingLoanId] = useState<number | null>(null);
+    const [closingLoanId, setClosingLoanId] = useState<string | null>(null);
 
     useEffect(() => {
         const fetchLoans = async () => {

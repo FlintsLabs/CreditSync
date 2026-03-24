@@ -3,7 +3,7 @@ import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
 import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/Card";
-import { ChevronRight, ChevronLeft, Calculator, CheckCircle } from "lucide-react";
+import { ChevronRight, ChevronLeft, CheckCircle } from "lucide-react";
 
 export default function LoanWizard() {
     const [step, setStep] = useState(1);
@@ -62,8 +62,8 @@ export default function LoanWizard() {
             const amount = schedule.length > 0 ? schedule[0].amount : 0;
 
             await api.post("/loans", {
-                borrowerId: Number(formData.borrowerId),
-                bankLoanId: formData.bankLoanId ? Number(formData.bankLoanId) : undefined,
+                borrowerId: formData.borrowerId,
+                bankLoanId: formData.bankLoanId ? formData.bankLoanId : undefined,
                 principal: Number(formData.principal),
                 interestRate: Number(formData.interestRate),
                 repaymentType: formData.repaymentType,

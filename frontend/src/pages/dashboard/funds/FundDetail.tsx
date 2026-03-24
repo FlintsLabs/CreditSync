@@ -2,7 +2,6 @@ import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, ArrowUpRight, ArrowDownRight, Download } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/Card";
-import { Badge } from "../../../components/ui/badge";
 import { FundPerformanceChart } from "./FundPerformanceChart";
 import { useTranslation } from "react-i18next";
 import { cn } from "../../../lib/utils";
@@ -17,7 +16,7 @@ const mockTransactions = [
 
 export default function FundDetail() {
     const { t } = useTranslation();
-    const { id } = useParams();
+    const { id: _id } = useParams();
     const navigate = useNavigate();
 
     // Mock finding the fund based on ID (In real app, fetch from API)
