@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/Button";
-import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/Card";
+import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../../components/ui/dropdown-menu";
 import { Plus, FileText, Calendar, MoreHorizontal, DollarSign } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -26,19 +26,19 @@ export default function LoanList() {
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                     <h2 className="text-3xl font-bold tracking-tight">Loan Agreements</h2>
                     <p className="text-muted-foreground">Manage active contracts and track repayments.</p>
                 </div>
                 <Link to="/dashboard/loans/new">
-                    <Button>
+                    <Button className="w-full sm:w-auto">
                         <Plus className="mr-2 h-4 w-4" /> New Loan
                     </Button>
                 </Link>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {loans.map((loan) => (
                     <Card key={loan.id} className="hover:shadow-md transition-shadow flex flex-col">
                         <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">

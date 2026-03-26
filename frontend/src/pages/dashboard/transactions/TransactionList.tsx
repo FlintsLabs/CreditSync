@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/Button";
-import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/Card";
+import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/card";
 import { Plus, ArrowUpRight, FileText } from "lucide-react";
 import { Link } from "react-router-dom";
 import { cn } from "../../../lib/utils";
@@ -23,13 +23,13 @@ export default function TransactionList() {
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                     <h2 className="text-3xl font-bold tracking-tight">Transactions</h2>
                     <p className="text-muted-foreground">Monitor repayment history and flow.</p>
                 </div>
                 <Link to="/dashboard/transactions/new">
-                    <Button>
+                    <Button className="w-full sm:w-auto">
                         <Plus className="mr-2 h-4 w-4" /> Record Repayment
                     </Button>
                 </Link>
@@ -51,45 +51,80 @@ export default function TransactionList() {
                     </Link>
                 </div>
             ) : (
-                <div className="rounded-md border bg-card">
-                    <table className="w-full text-sm">
-                        <thead>
-                            <tr className="border-b bg-muted/50 text-left">
-                                <th className="p-4 font-medium">Date</th>
-                                <th className="p-4 font-medium">Type</th>
-                                <th className="p-4 font-medium">Borrower</th>
-                                <th className="p-4 font-medium">Amount</th>
-                                <th className="p-4 font-medium">Slip</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {transactions.map((tx) => (
-                                <tr key={tx.id} className="border-b last:border-0 hover:bg-muted/50">
-                                    <td className="p-4">{new Date(tx.date).toLocaleDateString()}</td>
-                                    <td className="p-4 capitalize">
-                                        <span className="flex items-center">
-                                            <ArrowUpRight className="mr-2 h-4 w-4 text-green-500" />
-                                            {tx.type}
-                                        </span>
-                                    </td>
-                                    <td className="p-4">{tx.borrowerName || "Unknown"}</td>
-                                    <td className="p-4 font-semibold text-green-600">
-                                        +฿{Number(tx.amount).toLocaleString()}
-                                    </td>
-                                    <td className="p-4">
-                                        {tx.slipUrl ? (
-                                            <a href={tx.slipUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline flex items-center">
-                                                <FileText className="h-4 w-4 mr-1" /> View
-                                            </a>
-                                        ) : (
-                                            <span className="text-muted-foreground">-</span>
-                                        )}
-                                    </td>
+                <>
+                    {/* Desktop Table View */}
+                    <div className="hidden md:block rounded-md border bg-card">
+                        <table className="w-full text-sm">
+                            <thead>
+                                <tr className="border-b bg-muted/50 text-left">
+                                    <th className="p-4 font-medium">Date</th>
+                                    <th className="p-4 font-medium">Type</th>
+                                    <th className="p-4 font-medium">Borrower</th>
+                                    <th className="p-4 font-medium">Amount</th>
+                                    <th className="p-4 font-medium">Slip</th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
+                            </thead>
+                            <tbody>
+                                {transactions.map((tx) => (
+                                    <tr key={tx.id} className="border-b last:border-0 hover:bg-muted/50">
+                                        <td className="p-4">{new Date(tx.date).toLocaleDateString()}</td>
+                                        <td className="p-4 capitalize">
+                                            <span className="flex items-center">
+                                                <ArrowUpRight className="mr-2 h-4 w-4 text-green-500" />
+                                                {tx.type}
+                                            </span>
+                                        </td>
+                                        <td className="p-4">{tx.borrowerName || "Unknown"}</td>
+                                        <td className="p-4 font-semibold text-green-600">
+                                            +฿{Number(tx.amount).toLocaleString()}
+                                        </td>
+                                        <td className="p-4">
+                                            {tx.slipUrl ? (
+                                                <a href={tx.slipUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline flex items-center">
+                                                    <FileText className="h-4 w-4 mr-1" /> View
+                                                </a>
+                                            ) : (
+                                                <span className="text-muted-foreground">-</span>
+                                            )}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {/* Mobile Card View */}
+                    <div className="grid gap-4 grid-cols-1 md:hidden">
+                        {transactions.map((tx) => (
+                            <Card key={tx.id} className="hover:shadow-md transition-shadow">
+                                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                                    <CardTitle className="text-base">{tx.borrowerName || "Unknown"}</CardTitle>
+                                    <span className="text-sm text-muted-foreground">{new Date(tx.date).toLocaleDateString()}</span>
+                                </CardHeader>
+                                <CardContent>
+                                    <div className="flex justify-between items-center mt-2">
+                                        <div className="flex flex-col">
+                                            <span className="text-sm text-muted-foreground capitalize flex items-center">
+                                                <ArrowUpRight className="mr-1 h-3 w-3 text-green-500" />
+                                                {tx.type}
+                                            </span>
+                                        </div>
+                                        <div className="flex flex-col items-end">
+                                            <span className="font-semibold text-lg text-green-600">
+                                                +฿{Number(tx.amount).toLocaleString()}
+                                            </span>
+                                            {tx.slipUrl && (
+                                                <a href={tx.slipUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center mt-1">
+                                                    <FileText className="h-3 w-3 mr-1" /> View Slip
+                                                </a>
+                                            )}
+                                        </div>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        ))}
+                    </div>
+                </>
             )}
         </div>
     );
