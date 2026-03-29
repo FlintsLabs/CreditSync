@@ -1,10 +1,10 @@
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/Card";
-import { Activity, CreditCard, DollarSign, Users, TrendingUp, ArrowUpRight, ArrowDownRight, ChevronRight, MessageCircle, Facebook, Users2, BarChart2 } from "lucide-react";
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, PieChart, Pie, Cell } from "recharts";
+import { Activity, CreditCard, DollarSign, Users, TrendingUp, ArrowUpRight, ChevronRight, MessageCircle, Facebook, Users2, BarChart2 } from "lucide-react";
+import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useNavigate } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
-import { Badge } from "../../components/ui/badge";
 import PortfolioGraph from "./PortfolioGraph";
+import { FundPerformanceChart } from "./funds/FundPerformanceChart";
 
 const data = [
     { name: "Jan", total: 12000 },
@@ -101,7 +101,7 @@ export default function Dashboard() {
                     <TabsTrigger value="overview">Overview</TabsTrigger>
                     <TabsTrigger value="groups">Borrower Groups</TabsTrigger>
                     <TabsTrigger value="graph">Portfolio Graph</TabsTrigger>
-                    <TabsTrigger value="analytics" disabled>Analytics</TabsTrigger>
+                    <TabsTrigger value="analytics">Analytics</TabsTrigger>
                 </TabsList>
 
                 {/* TAB: OVERVIEW */}
@@ -508,6 +508,11 @@ export default function Dashboard() {
                 {/* TAB: PORTFOLIO GRAPH */}
                 <TabsContent value="graph" className="space-y-4">
                     <PortfolioGraph />
+                </TabsContent>
+
+                {/* TAB: ANALYTICS (Fund Performance) */}
+                <TabsContent value="analytics" className="space-y-4">
+                    <FundPerformanceChart />
                 </TabsContent>
             </Tabs>
         </div>
