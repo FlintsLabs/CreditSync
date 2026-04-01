@@ -23,8 +23,8 @@ export default function DashboardLayout() {
 
     return (
         <div className="flex min-h-screen bg-background text-foreground transition-colors duration-300">
-            {/* Desktop Sidebar (Hidden on Mobile) */}
-            <div className="hidden w-64 flex-col border-r bg-card md:flex sticky top-0 h-screen overflow-y-auto">
+            {/* Desktop Sidebar (Hidden on Mobile/Tablet Portrait) */}
+            <div className="hidden w-64 flex-col border-r bg-card lg:flex sticky top-0 h-screen overflow-y-auto shadow-sm">
                 <AppBar />
                 <div className="flex flex-1 flex-col gap-1 p-4">
                     {navigation.map((item) => {
@@ -55,8 +55,8 @@ export default function DashboardLayout() {
 
             {/* Main Content Area */}
             <div className="flex flex-1 flex-col min-w-0">
-                {/* Mobile Header (Visible only on Mobile) */}
-                <header className="sticky top-0 z-30 flex h-16 items-center border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 md:hidden">
+                {/* Mobile/Tablet Header (Visible below lg breakpoint) */}
+                <header className="sticky top-0 z-30 flex h-16 items-center border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 lg:hidden shadow-sm">
                     <Button
                         variant="ghost"
                         size="icon"
@@ -68,9 +68,9 @@ export default function DashboardLayout() {
                     <span className="font-bold text-lg">CreditSync</span>
                 </header>
 
-                {/* Mobile Sidebar Overlay (Slide-in) */}
+                {/* Mobile/Tablet Sidebar Overlay (Slide-in) */}
                 {isMobileMenuOpen && (
-                    <div className="fixed inset-0 z-40 flex md:hidden">
+                    <div className="fixed inset-0 z-40 flex lg:hidden">
                         {/* Backdrop */}
                         <div
                             className="fixed inset-0 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200"
@@ -117,7 +117,7 @@ export default function DashboardLayout() {
                 )}
 
                 {/* Page Content */}
-                <main className="flex-1 p-4 md:p-8 overflow-x-hidden">
+                <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-x-hidden max-w-[1600px] mx-auto w-full">
                     <Outlet />
                 </main>
             </div>

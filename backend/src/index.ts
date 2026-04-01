@@ -1,3 +1,4 @@
+import { aiToolsRoute } from "./modules/ai-tools";
 import { Elysia } from "elysia";
 import { swagger } from "@elysiajs/swagger";
 import { cors } from "@elysiajs/cors";
@@ -26,6 +27,7 @@ const app = new Elysia()
     .use(authPlugin)
     .use(authRoute)
     .use(webhookRoute) // Webhook has its own signature verification
+    .use(aiToolsRoute)
     .guard({ isLoggedIn: true }, (app) =>
         app
             .use(bankProfilesRoute)
