@@ -16,10 +16,6 @@ export default function BorrowerList() {
     const [editModalOpen, setEditModalOpen] = useState(false);
     const [selectedBorrower, setSelectedBorrower] = useState<any>(null);
 
-    useEffect(() => {
-        fetchBorrowers();
-    }, []);
-
     const fetchBorrowers = async () => {
         try {
             const res = await api.get("/borrowers");
@@ -28,6 +24,10 @@ export default function BorrowerList() {
             console.error("Failed", error);
         }
     };
+
+    useEffect(() => {
+        fetchBorrowers();
+    }, []);
 
     const handleEdit = (borrower: any) => {
         setSelectedBorrower(borrower);

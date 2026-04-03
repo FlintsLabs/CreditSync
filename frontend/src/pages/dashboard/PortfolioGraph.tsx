@@ -127,7 +127,7 @@ const GraphMinimap = ({ graphRef, data, width = 120, height = 120, className }: 
             try {
                 // Get current view transform
                 // const k = graphRef.current.zoom(); // Removed unused var
-                const center = graphRef.current.centerAt(); // {x, y} center of view in graph coords
+                const center = graphRef.current.centerAt() as any; // {x, y} center of view in graph coords
 
                 // Assuming the graph container size. We need to pass this or approximate.
                 // Let's assume passed via props or context, or use a fixed reference frame if consistent.
@@ -197,7 +197,7 @@ const GraphMinimap = ({ graphRef, data, width = 120, height = 120, className }: 
 };
 
 export default function PortfolioGraph() {
-    const graphRef = useRef<ForceGraphMethods>();
+    const graphRef = useRef<any>(null);
     const [allData, setAllData] = useState<{ nodes: any[], links: any[] }>({ nodes: [], links: [] });
     const [dimensions, setDimensions] = useState({ w: 800, h: 600 });
     const containerRef = useRef<HTMLDivElement>(null);
@@ -315,7 +315,7 @@ export default function PortfolioGraph() {
     const handleResetView = useCallback(() => {
         if (graphRef.current) {
             // Updated Zoom Fit for tighter view
-            graphRef.current.zoomToFit(800, 20);
+            graphRef.current.zoomToFit(800, 20, undefined as any);
         }
     }, []);
 
@@ -450,7 +450,7 @@ export default function PortfolioGraph() {
                         backgroundColor={theme === 'dark' ? '#09090b' : '#ffffff'}
                         onEngineStop={() => {
                             if (filteredData.nodes.length > 0) {
-                                graphRef.current?.zoomToFit(400, 50);
+                                graphRef.current?.zoomToFit(400, 50, undefined as any);
                             }
                         }}
                         onNodeClick={(node: any) => {
