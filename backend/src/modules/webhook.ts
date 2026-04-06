@@ -1,13 +1,18 @@
-import { Elysia, t } from "elysia";
+import { Elysia } from "elysia";
 import { messagingApi, validateSignature, WebhookEvent } from "@line/bot-sdk";
 import { db } from "../db";
 import { files, botUploads } from "../db/schema";
-import { uploadFile } from "../lib/storage";
+import { uploadFile, BUCKET_NAME } from "../lib/storage";
 
 const { MessagingApiBlobClient } = messagingApi;
 
-const channelSecret = process.env.LINE_CHANNEL_SECRET || "default_secret";
-const channelAccessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN || "default_token";
+const isProd = process.env.NODE_ENV === "production";
+const channelSecret = process.env.LINE_CHANNEL_SECRET || (isProd ? undefined : "dev_line_secret");
+const channelAccessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN || (isProd ? undefined : "dev_line_access_token");
+const lineTenantId = process.env.LINE_TENANT_ID;
+if (!channelSecret || !channelAccessToken) {
+    throw new Error("LINE_CHANNEL_SECRET and LINE_CHANNEL_ACCESS_TOKEN are required in production");
+}
 
 const blobClient = new MessagingApiBlobClient({
     channelAccessToken: channelAccessToken,
@@ -53,9 +58,12 @@ export const webhookRoute = new Elysia({ prefix: "/webhook" })
 
                     // 3. Save to DB
                     // Create File Record
+                    if (!lineTenantId) {
+                        throw new Error("LINE_TENANT_ID is not configured");
+                    }
                     const fileRecord = await db.insert(files).values({
-                        tenantId: "default_tenant", // TODO: Determine tenant from UserID mapping
-                        bucket: "creditsync-files",
+                        tenantId: lineTenantId,
+                        bucket: BUCKET_NAME,
                         key: key,
                         originalName: fileName,
                         mimeType: mimeType,
@@ -65,7 +73,7 @@ export const webhookRoute = new Elysia({ prefix: "/webhook" })
 
                     // Create Bot Upload Record
                     await db.insert(botUploads).values({
-                        tenantId: "default_tenant",
+                        tenantId: lineTenantId,
                         fileId: fileRecord[0].id,
                         source: "line",
                         senderId: userId,

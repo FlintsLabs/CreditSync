@@ -58,7 +58,7 @@ const generateGraphData = () => {
 };
 
 // --- Minimap Component ---
-const GraphMinimap = ({ graphRef, data, width = 120, height = 120, className }: { graphRef: React.RefObject<ForceGraphMethods>, data: { nodes: any[], links: any[] }, width?: number, height?: number, className?: string }) => {
+const GraphMinimap = ({ graphRef, data, width = 120, height = 120, className }: { graphRef: React.MutableRefObject<ForceGraphMethods | undefined>, data: { nodes: any[], links: any[] }, width?: number, height?: number, className?: string }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const { theme } = useTheme();
 
@@ -197,7 +197,7 @@ const GraphMinimap = ({ graphRef, data, width = 120, height = 120, className }: 
 };
 
 export default function PortfolioGraph() {
-    const graphRef = useRef<ForceGraphMethods>();
+    const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
     const [allData, setAllData] = useState<{ nodes: any[], links: any[] }>({ nodes: [], links: [] });
     const [dimensions, setDimensions] = useState({ w: 800, h: 600 });
     const containerRef = useRef<HTMLDivElement>(null);

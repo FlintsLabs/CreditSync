@@ -1,515 +1,509 @@
-import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/Card";
-import { Activity, CreditCard, DollarSign, Users, TrendingUp, ArrowUpRight, ArrowDownRight, ChevronRight, MessageCircle, Facebook, Users2, BarChart2 } from "lucide-react";
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, PieChart, Pie, Cell } from "recharts";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { AlertTriangle, ArrowRightLeft, CalendarClock, CreditCard, DollarSign, Users } from "lucide-react";
+import { api } from "../../lib/api";
+import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/Card";
+import { Button } from "../../components/ui/Button";
 import { Badge } from "../../components/ui/badge";
-import PortfolioGraph from "./PortfolioGraph";
 
-const data = [
-    { name: "Jan", total: 12000 },
-    { name: "Feb", total: 18000 },
-    { name: "Mar", total: 22000 },
-    { name: "Apr", total: 28000 },
-    { name: "May", total: 32000 },
-    { name: "Jun", total: 45000 },
-];
+interface DashboardSummary {
+    dueFromBorrowersToday: number;
+    dueToFundsToday: number;
+    netPositionToday: number;
+    overdueBorrowerCount: number;
+    overdueFundCount: number;
+    underfundedLoanCount: number;
+    unallocatedDrawdownCount: number;
+}
 
-const resentSales = [
-    {
-        name: "Somchai Jai-dee",
-        contact: "081-234-5678",
-        amount: "+฿1,999.00",
-        status: "Repayment"
-    },
-    {
-        name: "Jackson Lee",
-        contact: "Line: @jackson",
-        amount: "+฿39.00",
-        status: "Repayment"
-    },
-    {
-        name: "Isabella Nguyen",
-        contact: "099-999-9999",
-        amount: "+฿299.00",
-        status: "Interest"
-    },
-    {
-        name: "William Kim",
-        contact: "Line: will_kim",
-        amount: "+฿99.00",
-        status: "Repayment"
-    },
-    {
-        name: "Sofia Davis",
-        contact: "089-876-5432",
-        amount: "+฿39.00",
-        status: "Interest"
+interface BorrowerDueItem {
+    scheduleId: number;
+    dueDate: string;
+    remainingDue: string;
+    penaltyDue?: string;
+    totalDueNow?: string;
+    overdueDays?: number;
+    status: string;
+    installmentNo: number;
+    loanId: number;
+    borrowerName: string;
+    repaymentType: string;
+}
+
+interface FundDueItem {
+    scheduleId: number;
+    dueDate: string;
+    remainingDue: string;
+    penaltyDue?: string;
+    totalDueNow?: string;
+    overdueDays?: number;
+    status: string;
+    installmentNo: number;
+    bankLoanId: number;
+    bankProfileId: number | null;
+    note: string | null;
+}
+
+interface FundingAlerts {
+    underfundedLoans: Array<{
+        id: number;
+        borrowerName: string;
+        principalAmount: number;
+        fundedAmount: number;
+        gap: number;
+    }>;
+    unallocatedDrawdowns: Array<{
+        id: number;
+        bankProfileId: number | null;
+        totalAmount: number;
+        allocatedAmount: number;
+        availableAmount: number;
+        nextDueDate: string | null;
+    }>;
+}
+
+interface ReconciliationStatus {
+    unreconciledBorrowerPayments: number;
+    recordedFundRepayments: number;
+    fundRepaymentsMissingScheduleLink: number;
+    pendingBankImports: number;
+    pendingManualReviews: number;
+    borrowerPaymentsMissingSlip: number;
+}
+
+interface ProfitabilitySummary {
+    borrowerRevenueCollected: number;
+    fundCostPaid: number;
+    realizedSpread: number;
+    unrealizedSpread: number;
+    deployedPrincipal: number;
+    netCashPosition: number;
+    realizedRoiPercent: number;
+    carryForwardAvailable: number;
+}
+
+function formatCurrency(value: number) {
+    return `฿${value.toLocaleString(undefined, {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+    })}`;
+}
+
+function isPastDue(date: string) {
+    return date < new Date().toISOString().slice(0, 10);
+}
+
+function QueueBadge({ dueDate, status }: { dueDate: string; status: string }) {
+    return (
+        <Badge variant={isPastDue(dueDate) ? "destructive" : "secondary"}>
+            {status}
+        </Badge>
+    );
+}
+
+function openBorrowerRepayment(navigate: ReturnType<typeof useNavigate>, item: BorrowerDueItem) {
+    navigate(`/dashboard/transactions/new?loanId=${item.loanId}&scheduleId=${item.scheduleId}`);
+}
+
+function openFundRepayment(navigate: ReturnType<typeof useNavigate>, item: FundDueItem) {
+    if (!item.bankProfileId) {
+        navigate("/dashboard/funds");
+        return;
     }
-]
 
-// Mock Data for Borrower Groups
-const borrowerGroups = [
-    {
-        id: "line-1",
-        name: "Office Gang (Rama 9)",
-        platform: "line",
-        members: 12,
-        totalDebt: 150000,
-        profitRate: 15, // ROI %
-        profitAmount: 22500,
-        status: "Healthy",
-        collectionRate: 98
-    },
-    {
-        id: "line-2",
-        name: "Uni Friends (KU)",
-        platform: "line",
-        members: 8,
-        totalDebt: 45000,
-        profitRate: 10,
-        profitAmount: 4500,
-        status: "Watch",
-        collectionRate: 85
-    },
-    {
-        id: "fb-1",
-        name: "Marketplace Leads",
-        platform: "facebook",
-        members: 24,
-        totalDebt: 320000,
-        profitRate: 22,
-        profitAmount: 70400,
-        status: "Healthy",
-        collectionRate: 92
-    }
-]
+    navigate(`/dashboard/funds/${item.bankProfileId}?bankLoanId=${item.bankLoanId}&scheduleId=${item.scheduleId}`);
+}
 
 export default function Dashboard() {
     const navigate = useNavigate();
+    const [loading, setLoading] = useState(true);
+    const [errorMessage, setErrorMessage] = useState("");
+    const [summary, setSummary] = useState<DashboardSummary | null>(null);
+    const [borrowerQueue, setBorrowerQueue] = useState<BorrowerDueItem[]>([]);
+    const [fundQueue, setFundQueue] = useState<FundDueItem[]>([]);
+    const [alerts, setAlerts] = useState<FundingAlerts>({ underfundedLoans: [], unallocatedDrawdowns: [] });
+    const [reconciliation, setReconciliation] = useState<ReconciliationStatus | null>(null);
+    const [profitability, setProfitability] = useState<ProfitabilitySummary | null>(null);
+
+    useEffect(() => {
+        const loadDashboard = async () => {
+            try {
+                setLoading(true);
+                setErrorMessage("");
+
+                const [summaryRes, borrowerQueueRes, fundQueueRes, alertsRes, reconciliationRes, profitabilityRes] = await Promise.all([
+                    api.get("/dashboard/summary"),
+                    api.get("/dashboard/borrower-due-queue"),
+                    api.get("/dashboard/fund-due-queue"),
+                    api.get("/dashboard/funding-alerts"),
+                    api.get("/dashboard/reconciliation-status"),
+                    api.get("/dashboard/profitability-summary"),
+                ]);
+
+                setSummary(summaryRes.data ?? null);
+                setBorrowerQueue(borrowerQueueRes.data ?? []);
+                setFundQueue(fundQueueRes.data ?? []);
+                setAlerts(alertsRes.data ?? { underfundedLoans: [], unallocatedDrawdowns: [] });
+                setReconciliation(reconciliationRes.data ?? null);
+                setProfitability(profitabilityRes.data ?? null);
+            } catch (error) {
+                console.error("Failed to load dashboard", error);
+                setErrorMessage("Unable to load the live dashboard right now.");
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        loadDashboard();
+    }, []);
+
+    const borrowerDueNow = useMemo(() => borrowerQueue.slice(0, 8), [borrowerQueue]);
+    const fundDueNow = useMemo(() => fundQueue.slice(0, 8), [fundQueue]);
+    const overdueTotal = (summary?.overdueBorrowerCount ?? 0) + (summary?.overdueFundCount ?? 0);
+
     return (
         <div className="flex-1 space-y-8 p-4 pt-6">
-            <div className="flex items-center justify-between space-y-2">
-                <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
-                <div className="flex items-center space-x-2">
-                    {/* DateRangePicker Placeholder */}
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                    <h2 className="text-3xl font-bold tracking-tight">Operations Dashboard</h2>
+                    <p className="text-sm text-muted-foreground">
+                        เงินที่จะเข้า, เงินที่ต้องจ่ายคืน, และช่องว่างการ match funds ในมุมมองเดียว
+                    </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" onClick={() => navigate("/dashboard/transactions/new")}>
+                        Record Borrower Payment
+                    </Button>
+                    <Button variant="outline" onClick={() => navigate("/dashboard/funds")}>
+                        Open Funds
+                    </Button>
+                    <Button onClick={() => navigate("/dashboard/matching")}>
+                        Open Matching
+                    </Button>
                 </div>
             </div>
 
-            <Tabs defaultValue="overview" className="space-y-4">
-                <TabsList>
-                    <TabsTrigger value="overview">Overview</TabsTrigger>
-                    <TabsTrigger value="groups">Borrower Groups</TabsTrigger>
-                    <TabsTrigger value="graph">Portfolio Graph</TabsTrigger>
-                    <TabsTrigger value="analytics" disabled>Analytics</TabsTrigger>
-                </TabsList>
+            {errorMessage && (
+                <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                    {errorMessage}
+                </div>
+            )}
 
-                {/* TAB: OVERVIEW */}
-                <TabsContent value="overview" className="space-y-4">
-                    {/* Stats Cards */}
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                        <Card>
-                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                <CardTitle className="text-sm font-medium">
-                                    Total Revenue
-                                </CardTitle>
-                                <DollarSign className="h-4 w-4 text-muted-foreground" />
-                            </CardHeader>
-                            <CardContent>
-                                <div className="text-2xl font-bold">฿45,231.89</div>
-                                <p className="text-xs text-emerald-500 font-medium flex items-center">
-                                    +20.1% <TrendingUp className="h-3 w-3 ml-1" /> from last month
-                                </p>
-                                <div className="h-[40px] mt-3">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <AreaChart data={data}>
-                                            <defs>
-                                                <linearGradient id="colorTotalMini" x1="0" y1="0" x2="0" y2="1">
-                                                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
-                                                    <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
-                                                </linearGradient>
-                                            </defs>
-                                            <Area type="monotone" dataKey="total" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorTotalMini)" />
-                                        </AreaChart>
-                                    </ResponsiveContainer>
-                                </div>
-                            </CardContent>
-                        </Card>
-                        <Card>
-                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                <CardTitle className="text-sm font-medium">
-                                    Active Borrowers
-                                </CardTitle>
-                                <Users className="h-4 w-4 text-muted-foreground" />
-                            </CardHeader>
-                            <CardContent>
-                                <div className="text-2xl font-bold">+2350</div>
-                                <p className="text-xs text-emerald-500 font-medium flex items-center">
-                                    +180.1% <TrendingUp className="h-3 w-3 ml-1" /> from last month
-                                </p>
-                                <div className="h-[40px] mt-3">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <AreaChart data={[
-                                            { val: 100 }, { val: 120 }, { val: 150 }, { val: 200 }, { val: 300 }, { val: 350 }
-                                        ]}>
-                                            <Area type="monotone" dataKey="val" stroke="#10b981" strokeWidth={2} fill="none" />
-                                        </AreaChart>
-                                    </ResponsiveContainer>
-                                </div>
-                            </CardContent>
-                        </Card>
-                        <Card>
-                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                <CardTitle className="text-sm font-medium">Sales</CardTitle>
-                                <CreditCard className="h-4 w-4 text-muted-foreground" />
-                            </CardHeader>
-                            <CardContent>
-                                <div className="text-2xl font-bold">+12,234</div>
-                                <p className="text-xs text-rose-500 font-medium flex items-center">
-                                    -19% <TrendingUp className="h-3 w-3 ml-1 rotate-180" /> from last month
-                                </p>
-                                <div className="h-[40px] mt-3">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <AreaChart data={[
-                                            { val: 500 }, { val: 400 }, { val: 300 }, { val: 200 }, { val: 250 }, { val: 220 }
-                                        ]}>
-                                            <defs>
-                                                <linearGradient id="colorSalesMini" x1="0" y1="0" x2="0" y2="1">
-                                                    <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.3} />
-                                                    <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
-                                                </linearGradient>
-                                            </defs>
-                                            <Area type="monotone" dataKey="val" stroke="#f43f5e" strokeWidth={2} fillOpacity={1} fill="url(#colorSalesMini)" />
-                                        </AreaChart>
-                                    </ResponsiveContainer>
-                                </div>
-                            </CardContent>
-                        </Card>
-                        <Card>
-                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                <CardTitle className="text-sm font-medium">
-                                    Active Now
-                                </CardTitle>
-                                <Activity className="h-4 w-4 text-muted-foreground" />
-                            </CardHeader>
-                            <CardContent>
-                                <div className="text-2xl font-bold">+573</div>
-                                <p className="text-xs text-emerald-500 font-medium flex items-center">
-                                    +201 <ArrowUpRight className="h-3 w-3 ml-1" /> since last hour
-                                </p>
-                                <div className="h-[40px] mt-3">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <AreaChart data={[
-                                            { val: 10 }, { val: 25 }, { val: 15 }, { val: 40 }, { val: 30 }, { val: 60 }
-                                        ]}>
-                                            <Area type="monotone" dataKey="val" stroke="#10b981" strokeWidth={2} fill="none" />
-                                        </AreaChart>
-                                    </ResponsiveContainer>
-                                </div>
-                            </CardContent>
-                        </Card>
-                    </div>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Due from Borrowers</CardTitle>
+                        <DollarSign className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold">{loading ? "..." : formatCurrency(summary?.dueFromBorrowersToday ?? 0)}</div>
+                        <p className="text-xs text-muted-foreground">ยอดที่ควรรับเข้าตาม borrower schedules</p>
+                    </CardContent>
+                </Card>
 
-                    {/* Active Bank Loans Section */}
-                    <div>
-                        <h3 className="text-lg font-medium mb-4">Your Sources of Funds</h3>
-                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                            {/* Loan Card 1: TTB - Fixed Term */}
-                            <Card
-                                className="overflow-hidden border-l-4 border-l-blue-600 transition-all hover:shadow-md cursor-pointer hover:bg-muted/20"
-                                onClick={() => navigate("/dashboard/funds/1")}
-                            >
-                                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 bg-muted/40">
-                                    <div>
-                                        <CardTitle className="text-base font-bold text-blue-700">TTB Cash2Go</CardTitle>
-                                        <p className="text-xs text-muted-foreground">Fixed Term Loan</p>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <CreditCard className="h-5 w-5 text-blue-600" />
-                                        <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
-                                    </div>
-                                </CardHeader>
-                                <CardContent className="pt-4">
-                                    <div className="flex justify-between items-end mb-2">
-                                        <div>
-                                            <p className="text-xs text-muted-foreground">Remaining Balance</p>
-                                            <p className="text-2xl font-bold">฿145,000</p>
-                                        </div>
-                                        <div className="text-right">
-                                            <p className="text-xs text-muted-foreground">Limit</p>
-                                            <p className="text-sm font-medium">฿200,000</p>
-                                        </div>
-                                    </div>
-                                    {/* Progress Bar */}
-                                    <div className="h-2 w-full bg-secondary rounded-full mb-4">
-                                        <div className="h-2 bg-blue-600 rounded-full" style={{ width: "72.5%" }}></div>
-                                    </div>
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Due to Funds</CardTitle>
+                        <CreditCard className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold">{loading ? "..." : formatCurrency(summary?.dueToFundsToday ?? 0)}</div>
+                        <p className="text-xs text-muted-foreground">ยอดที่ควรจ่ายคืน upstream funds หรือ bank</p>
+                    </CardContent>
+                </Card>
 
-                                    <div className="grid grid-cols-2 gap-4 text-sm">
-                                        <div>
-                                            <p className="text-xs text-muted-foreground mb-1">Monthly Payment</p>
-                                            <p className="font-semibold">฿5,400</p>
-                                            <p className="text-[10px] text-muted-foreground">Fixed (24/36)</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-xs text-muted-foreground mb-1">Interest</p>
-                                            <p className="font-semibold text-rose-500">18.0%</p>
-                                            <p className="text-[10px] text-muted-foreground">Effective Rate</p>
-                                        </div>
-                                    </div>
-                                </CardContent>
-                            </Card>
-
-                            {/* Loan Card 2: KBank - Minimum Pay */}
-                            <Card className="overflow-hidden border-l-4 border-l-green-600 transition-all hover:shadow-md">
-                                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 bg-muted/40">
-                                    <div>
-                                        <CardTitle className="text-base font-bold text-green-700">K-Express Cash</CardTitle>
-                                        <p className="text-xs text-muted-foreground">Revolving Credit</p>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <CreditCard className="h-5 w-5 text-green-600" />
-                                        <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
-                                    </div>
-                                </CardHeader>
-                                <CardContent className="pt-4">
-                                    <div className="flex justify-between items-end mb-2">
-                                        <div>
-                                            <p className="text-xs text-muted-foreground">Current Usage</p>
-                                            <p className="text-2xl font-bold">฿28,500</p>
-                                        </div>
-                                        <div className="text-right">
-                                            <p className="text-xs text-muted-foreground">Limit</p>
-                                            <p className="text-sm font-medium">฿50,000</p>
-                                        </div>
-                                    </div>
-                                    {/* Progress Bar */}
-                                    <div className="h-2 w-full bg-secondary rounded-full mb-4">
-                                        <div className="h-2 bg-green-600 rounded-full" style={{ width: "57%" }}></div>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-4 text-sm">
-                                        <div>
-                                            <p className="text-xs text-muted-foreground mb-1">Min Payment</p>
-                                            <p className="font-semibold">฿1,425</p>
-                                            <p className="text-[10px] text-muted-foreground">5% of Balance</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-xs text-muted-foreground mb-1">Interest</p>
-                                            <p className="font-semibold text-rose-500">25.0%</p>
-                                            <p className="text-[10px] text-muted-foreground">Daily Calc</p>
-                                        </div>
-                                    </div>
-                                </CardContent>
-                            </Card>
-
-                            {/* Loan Card 3: SCB - Available */}
-                            <Card className="overflow-hidden border-l-4 border-l-purple-600 opacity-80 transition-all hover:shadow-md">
-                                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 bg-muted/40">
-                                    <div>
-                                        <CardTitle className="text-base font-bold text-purple-700">SCB Speedy Cash</CardTitle>
-                                        <p className="text-xs text-muted-foreground">Cash Card</p>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <CreditCard className="h-5 w-5 text-purple-600" />
-                                        <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
-                                    </div>
-                                </CardHeader>
-                                <CardContent className="pt-4">
-                                    <div className="flex justify-between items-end mb-2">
-                                        <div>
-                                            <p className="text-xs text-muted-foreground">Available</p>
-                                            <p className="text-2xl font-bold text-emerald-600">฿100,000</p>
-                                        </div>
-                                        <div className="text-right">
-                                            <p className="text-xs text-muted-foreground">Limit</p>
-                                            <p className="text-sm font-medium">฿100,000</p>
-                                        </div>
-                                    </div>
-                                    {/* Progress Bar */}
-                                    <div className="h-2 w-full bg-secondary rounded-full mb-4">
-                                        <div className="h-2 bg-purple-600 rounded-full" style={{ width: "0%" }}></div>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-4 text-sm">
-                                        <div>
-                                            <p className="text-xs text-muted-foreground mb-1">Status</p>
-                                            <p className="font-semibold text-emerald-600">Standby</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-xs text-muted-foreground mb-1">Interest</p>
-                                            <p className="font-semibold text-rose-500">22.0%</p>
-                                            <p className="text-[10px] text-muted-foreground">If withdrawn</p>
-                                        </div>
-                                    </div>
-                                </CardContent>
-                            </Card>
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Net Position Today</CardTitle>
+                        <CalendarClock className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className={`text-2xl font-bold ${(summary?.netPositionToday ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
+                            {loading ? "..." : formatCurrency(summary?.netPositionToday ?? 0)}
                         </div>
-                    </div>
+                        <p className="text-xs text-muted-foreground">ยอดรับเข้า ลบด้วยยอดจ่ายคืนที่ถึงกำหนด</p>
+                    </CardContent>
+                </Card>
 
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-                        {/* Chart */}
-                        <Card className="col-span-4 transition-all hover:shadow-md">
-                            <CardHeader>
-                                <CardTitle>Overview</CardTitle>
-                            </CardHeader>
-                            <CardContent className="pl-2">
-                                <ResponsiveContainer width="100%" height={350}>
-                                    <AreaChart data={data}>
-                                        <defs>
-                                            <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="5%" stopColor="#8884d8" stopOpacity={0.8} />
-                                                <stop offset="95%" stopColor="#8884d8" stopOpacity={0} />
-                                            </linearGradient>
-                                        </defs>
-                                        <XAxis
-                                            dataKey="name"
-                                            stroke="#888888"
-                                            fontSize={12}
-                                            tickLine={false}
-                                            axisLine={false}
-                                        />
-                                        <YAxis
-                                            stroke="#888888"
-                                            fontSize={12}
-                                            tickLine={false}
-                                            axisLine={false}
-                                            tickFormatter={(value) => `฿${value}`}
-                                        />
-                                        <Tooltip
-                                            formatter={(value) => [`฿${value}`, "Revenue"]}
-                                            contentStyle={{ borderRadius: "8px", border: "none", boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)" }}
-                                        />
-                                        <Area
-                                            type="monotone"
-                                            dataKey="total"
-                                            stroke="#8884d8"
-                                            fillOpacity={1}
-                                            fill="url(#colorTotal)"
-                                        />
-                                    </AreaChart>
-                                </ResponsiveContainer>
-                            </CardContent>
-                        </Card>
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Overdue Items</CardTitle>
+                        <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold">{loading ? "..." : overdueTotal}</div>
+                        <p className="text-xs text-muted-foreground">
+                            Borrowers {summary?.overdueBorrowerCount ?? 0} • Funds {summary?.overdueFundCount ?? 0}
+                        </p>
+                    </CardContent>
+                </Card>
+            </div>
 
-                        {/* Recent Sales/Activity */}
-                        <Card className="col-span-3 transition-all hover:shadow-md">
-                            <CardHeader>
-                                <CardTitle>Recent Activity</CardTitle>
-                                <p className="text-sm text-muted-foreground">
-                                    You made 265 sales this month.
-                                </p>
-                            </CardHeader>
-                            <CardContent>
-                                <div className="space-y-8">
-                                    {resentSales.map((sale, index) => (
-                                        <div className="flex items-center" key={index}>
-                                            <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center">
-                                                {/* Avatar Fallback */}
-                                                <span className="text-xs font-bold text-primary">
-                                                    {sale.name.charAt(0)}{sale.name.split(" ")[1]?.charAt(0)}
-                                                </span>
-                                            </div>
-                                            <div className="ml-4 space-y-1">
-                                                <p className="text-sm font-medium leading-none">{sale.name}</p>
-                                                <p className="text-sm text-muted-foreground">
-                                                    {sale.contact}
-                                                </p>
-                                            </div>
-                                            <div className="ml-auto font-medium">
-                                                {sale.amount}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </CardContent>
-                        </Card>
-                    </div>
-                </TabsContent>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Borrower Revenue Collected</CardTitle>
+                        <DollarSign className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold">{loading ? "..." : formatCurrency(profitability?.borrowerRevenueCollected ?? 0)}</div>
+                        <p className="text-xs text-muted-foreground">Interest, fee, และ penalty ที่เก็บได้แล้ว</p>
+                    </CardContent>
+                </Card>
 
-                {/* TAB: BORROWER GROUPS */}
-                <TabsContent value="groups" className="space-y-4">
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <h3 className="text-lg font-medium">Your Borrower Groups</h3>
-                            <p className="text-sm text-muted-foreground">Organize and track performance by platform.</p>
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Fund Cost Paid</CardTitle>
+                        <CreditCard className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className="text-2xl font-bold">{loading ? "..." : formatCurrency(profitability?.fundCostPaid ?? 0)}</div>
+                        <p className="text-xs text-muted-foreground">ดอกเบี้ย, fee, VAT, penalty ที่จ่าย upstream แล้ว</p>
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Realized Spread</CardTitle>
+                        <CalendarClock className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className={`text-2xl font-bold ${(profitability?.realizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
+                            {loading ? "..." : formatCurrency(profitability?.realizedSpread ?? 0)}
                         </div>
-                        {/* Add New Group Button could go here */}
-                    </div>
+                        <p className="text-xs text-muted-foreground">
+                            ROI {profitability?.realizedRoiPercent?.toFixed(2) ?? "0.00"}% on deployed principal
+                        </p>
+                    </CardContent>
+                </Card>
 
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                        {borrowerGroups.map((group) => (
-                            <Card key={group.id} className="transition-all hover:shadow-lg border-t-4"
-                                style={{ borderTopColor: group.platform === 'line' ? '#06c755' : '#1877f2' }}
-                            >
-                                <CardHeader className="pb-2">
-                                    <div className="flex justify-between items-start">
-                                        <div>
-                                            <CardTitle className="text-lg flex items-center gap-2">
-                                                {group.platform === 'line' ? <MessageCircle className="h-5 w-5 text-[#06c755]" fill="#06c755" color="white" /> : <Facebook className="h-5 w-5 text-[#1877f2]" fill="#1877f2" color="white" />}
-                                                {group.name}
-                                            </CardTitle>
-                                            <p className="text-xs text-muted-foreground mt-1 capitalize">{group.platform} Group</p>
-                                        </div>
-                                        <div className={`px-2 py-1 rounded-full text-xs font-bold ${group.status === 'Healthy' ? 'bg-emerald-100 text-emerald-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                                            {group.status}
-                                        </div>
-                                    </div>
-                                </CardHeader>
-                                <CardContent>
-                                    <div className="grid grid-cols-2 gap-4 mb-6">
-                                        <div className="space-y-1">
-                                            <p className="text-xs text-muted-foreground">Total Active Debt</p>
-                                            <p className="text-2xl font-bold">฿{group.totalDebt.toLocaleString()}</p>
-                                        </div>
-                                        <div className="space-y-1 text-right">
-                                            <p className="text-xs text-muted-foreground">Members</p>
-                                            <p className="text-xl font-medium flex justify-end items-center gap-1">
-                                                <Users2 className="h-4 w-4" /> {group.members}
-                                            </p>
-                                        </div>
-                                    </div>
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <CardTitle className="text-sm font-medium">Unrealized Spread</CardTitle>
+                        <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+                    </CardHeader>
+                    <CardContent>
+                        <div className={`text-2xl font-bold ${(profitability?.unrealizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
+                            {loading ? "..." : formatCurrency(profitability?.unrealizedSpread ?? 0)}
+                        </div>
+                        <p className="text-xs text-muted-foreground">ส่วนต่างที่ยังค้างอยู่ในสัญญา/งวดที่ยังไม่ปิด</p>
+                    </CardContent>
+                </Card>
+            </div>
 
-                                    <div className="bg-muted/50 p-4 rounded-lg space-y-4">
-                                        <div className="flex justify-between items-center">
-                                            <span className="text-sm font-medium flex items-center gap-2">
-                                                <BarChart2 className="h-4 w-4 text-primary" /> Profit / ROI
-                                            </span>
-                                            <span className="text-lg font-bold text-emerald-600">
-                                                +{group.profitRate}%
-                                            </span>
-                                        </div>
-                                        <div className="w-full bg-secondary h-2 rounded-full overflow-hidden">
-                                            <div className="h-full bg-emerald-500" style={{ width: `${group.profitRate * 2}%` }}></div>
-                                        </div>
-                                        <div className="flex justify-between text-xs text-muted-foreground">
-                                            <span>Est. Profit: ฿{group.profitAmount.toLocaleString()}</span>
-                                            <span>Collection: {group.collectionRate}%</span>
-                                        </div>
-                                    </div>
+            <div className="grid gap-4 xl:grid-cols-[1.3fr_0.9fr]">
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between">
+                        <CardTitle>Funding Alerts</CardTitle>
+                        <Button size="sm" variant="outline" onClick={() => navigate("/dashboard/matching")}>
+                            Open Matching Workspace
+                        </Button>
+                    </CardHeader>
+                    <CardContent className="grid gap-4 lg:grid-cols-2">
+                        <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-sm font-medium">
+                                    <Users className="h-4 w-4" />
+                                    Underfunded Loans
+                                </div>
+                                <Badge>{summary?.underfundedLoanCount ?? 0}</Badge>
+                            </div>
 
-                                    <div className="mt-4 flex -space-x-2 overflow-hidden">
-                                        {/* Mock Avatars */}
-                                        {[...Array(4)].map((_, i) => (
-                                            <div key={i} className="inline-block h-8 w-8 rounded-full ring-2 ring-background bg-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-500">
-                                                U{i + 1}
+                            {alerts.underfundedLoans.length === 0 ? (
+                                <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
+                                    No underfunded loans right now.
+                                </div>
+                            ) : (
+                                alerts.underfundedLoans.slice(0, 6).map((loan) => (
+                                    <button
+                                        key={loan.id}
+                                        type="button"
+                                        className="w-full rounded border p-3 text-left transition hover:border-primary/40 hover:bg-muted/50"
+                                        onClick={() => navigate("/dashboard/matching")}
+                                    >
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div>
+                                                <div className="font-medium">{loan.borrowerName}</div>
+                                                <div className="text-xs text-muted-foreground">
+                                                    Loan #{loan.id} • Funded {formatCurrency(loan.fundedAmount)} / {formatCurrency(loan.principalAmount)}
+                                                </div>
                                             </div>
-                                        ))}
-                                        <div className="inline-block h-8 w-8 rounded-full ring-2 ring-background bg-slate-100 flex items-center justify-center text-xs text-muted-foreground">
-                                            +{group.members - 4}
+                                            <div className="text-right">
+                                                <div className="font-medium text-destructive">{formatCurrency(loan.gap)}</div>
+                                                <div className="text-xs text-muted-foreground">Gap</div>
+                                            </div>
+                                        </div>
+                                    </button>
+                                ))
+                            )}
+                        </div>
+
+                        <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-sm font-medium">
+                                    <ArrowRightLeft className="h-4 w-4" />
+                                    Unallocated Drawdowns
+                                </div>
+                                <Badge>{summary?.unallocatedDrawdownCount ?? 0}</Badge>
+                            </div>
+
+                            {alerts.unallocatedDrawdowns.length === 0 ? (
+                                <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
+                                    No unallocated drawdowns right now.
+                                </div>
+                            ) : (
+                                alerts.unallocatedDrawdowns.slice(0, 6).map((drawdown) => (
+                                    <button
+                                        key={drawdown.id}
+                                        type="button"
+                                        className="w-full rounded border p-3 text-left transition hover:border-primary/40 hover:bg-muted/50"
+                                        onClick={() => navigate("/dashboard/funds")}
+                                    >
+                                        <div className="flex items-center justify-between gap-3">
+                                            <div>
+                                                <div className="font-medium">Drawdown #{drawdown.id}</div>
+                                                <div className="text-xs text-muted-foreground">
+                                                    Next due {drawdown.nextDueDate || "Not scheduled"}
+                                                </div>
+                                            </div>
+                                            <div className="text-right">
+                                                <div className="font-medium">{formatCurrency(drawdown.availableAmount)}</div>
+                                                <div className="text-xs text-muted-foreground">Available</div>
+                                            </div>
+                                        </div>
+                                    </button>
+                                ))
+                            )}
+                        </div>
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Reconciliation Status</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3 text-sm">
+                        <div className="rounded border p-3">
+                            <div className="flex items-center justify-between gap-3">
+                                <span className="text-muted-foreground">Borrower payments not matched to schedule</span>
+                                <span className="font-medium">{reconciliation?.unreconciledBorrowerPayments ?? 0}</span>
+                            </div>
+                        </div>
+                        <div className="rounded border p-3">
+                            <div className="flex items-center justify-between gap-3">
+                                <span className="text-muted-foreground">Recorded fund repayments</span>
+                                <span className="font-medium">{reconciliation?.recordedFundRepayments ?? 0}</span>
+                            </div>
+                        </div>
+                        <div className="rounded border p-3">
+                            <div className="flex items-center justify-between gap-3">
+                                <span className="text-muted-foreground">Fund repayments missing schedule link</span>
+                                <span className="font-medium text-destructive">{reconciliation?.fundRepaymentsMissingScheduleLink ?? 0}</span>
+                            </div>
+                        </div>
+                        <div className="rounded border p-3">
+                            <div className="flex items-center justify-between gap-3">
+                                <span className="text-muted-foreground">Raw bank statement imports pending review</span>
+                                <span className="font-medium">{reconciliation?.pendingBankImports ?? 0}</span>
+                            </div>
+                        </div>
+                        <div className="rounded border p-3">
+                            <div className="flex items-center justify-between gap-3">
+                                <span className="text-muted-foreground">Pending LINE/OCR uploads review</span>
+                                <span className="font-medium">{reconciliation?.pendingManualReviews ?? 0}</span>
+                            </div>
+                        </div>
+                        <div className="rounded border p-3">
+                            <div className="flex items-center justify-between gap-3">
+                                <span className="text-muted-foreground">Borrower payments missing slip</span>
+                                <span className="font-medium text-amber-600">{reconciliation?.borrowerPaymentsMissingSlip ?? 0}</span>
+                            </div>
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
+
+            <div className="grid gap-4 xl:grid-cols-2">
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between">
+                        <CardTitle>Borrower Due Queue</CardTitle>
+                        <Button size="sm" variant="outline" onClick={() => navigate("/dashboard/transactions/new")}>
+                            Record Payment
+                        </Button>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                        {borrowerDueNow.length === 0 ? (
+                            <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
+                                No borrower installments are due right now.
+                            </div>
+                        ) : (
+                            borrowerDueNow.map((item) => (
+                                <div key={item.scheduleId} className="rounded border p-3">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div>
+                                            <div className="font-medium">{item.borrowerName}</div>
+                                            <div className="text-xs text-muted-foreground">
+                                                Loan #{item.loanId} • Installment #{item.installmentNo} • {item.repaymentType}
+                                            </div>
+                                            <div className="text-xs text-muted-foreground">Due {item.dueDate}</div>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className="font-medium">{formatCurrency(Number(item.totalDueNow ?? item.remainingDue))}</div>
+                                            <QueueBadge dueDate={item.dueDate} status={item.status} />
                                         </div>
                                     </div>
-                                </CardContent>
-                            </Card>
-                        ))}
-                    </div>
-                </TabsContent>
+                                    <div className="mt-3 flex justify-end">
+                                        <Button size="sm" variant="outline" onClick={() => openBorrowerRepayment(navigate, item)}>
+                                            Record This Payment
+                                        </Button>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </CardContent>
+                </Card>
 
-                {/* TAB: PORTFOLIO GRAPH */}
-                <TabsContent value="graph" className="space-y-4">
-                    <PortfolioGraph />
-                </TabsContent>
-            </Tabs>
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between">
+                        <CardTitle>Fund Due Queue</CardTitle>
+                        <Button size="sm" variant="outline" onClick={() => navigate("/dashboard/funds")}>
+                            Open Funds
+                        </Button>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                        {fundDueNow.length === 0 ? (
+                            <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
+                                No fund repayments are due right now.
+                            </div>
+                        ) : (
+                            fundDueNow.map((item) => (
+                                <div key={item.scheduleId} className="rounded border p-3">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <div>
+                                            <div className="font-medium">Drawdown #{item.bankLoanId}</div>
+                                            <div className="text-xs text-muted-foreground">
+                                                Installment #{item.installmentNo} • Fund #{item.bankProfileId ?? "-"}
+                                            </div>
+                                            <div className="text-xs text-muted-foreground">
+                                                Due {item.dueDate}{item.note ? ` • ${item.note}` : ""}
+                                            </div>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className="font-medium">{formatCurrency(Number(item.totalDueNow ?? item.remainingDue))}</div>
+                                            <QueueBadge dueDate={item.dueDate} status={item.status} />
+                                        </div>
+                                    </div>
+                                    <div className="mt-3 flex justify-end">
+                                        <Button size="sm" variant="outline" onClick={() => openFundRepayment(navigate, item)}>
+                                            Record Fund Repayment
+                                        </Button>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </CardContent>
+                </Card>
+            </div>
         </div>
-    )
+    );
 }

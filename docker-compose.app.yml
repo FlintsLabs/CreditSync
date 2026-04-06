@@ -1,0 +1,30 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    container_name: creditsync-backend-prod
+    restart: unless-stopped
+    env_file:
+      - ./.env.production
+    command: ["/bin/sh", "-lc", "bun run migrate && bun run src/index.ts"]
+    networks:
+      - creditsync_runtime
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID}
+    container_name: creditsync-frontend-prod
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT}:80"
+    networks:
+      - creditsync_runtime
+
+networks:
+  creditsync_runtime:
+    external: true
+    name: creditsync_runtime

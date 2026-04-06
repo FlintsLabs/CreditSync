@@ -6,6 +6,8 @@ import { eq, and } from "drizzle-orm";
 import { authPlugin } from "../middleware/auth";
 
 import { extractTextFromImage } from "../lib/ocr";
+import { createAuditLog } from "../lib/audit-log";
+import { invalidateTenantCache, withTenantCache } from "../lib/cache";
 
 export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
     .use(authPlugin)
@@ -39,33 +41,58 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
     })
     .get("/", async ({ user }) => {
         if (!user) return [];
-        return await db.select().from(borrowers).where(eq(borrowers.tenantId, user.tenantId));
+        return await withTenantCache({
+            tenantId: user.tenantId,
+            namespace: "borrowers",
+            key: "list",
+            ttlSeconds: 60,
+            loader: async () => await db.select().from(borrowers).where(eq(borrowers.tenantId, user.tenantId)),
+        });
     })
     .get("/:id", async ({ params: { id }, user }) => {
         if (!user) return null;
-        const result = await db.select().from(borrowers).where(
-            and(
-                eq(borrowers.id, parseInt(id)),
-                eq(borrowers.tenantId, user.tenantId)
-            )
-        );
+        const result = await withTenantCache({
+            tenantId: user.tenantId,
+            namespace: "borrowers",
+            key: `detail:${id}`,
+            ttlSeconds: 60,
+            loader: async () => await db.select().from(borrowers).where(
+                and(
+                    eq(borrowers.id, parseInt(id)),
+                    eq(borrowers.tenantId, user.tenantId)
+                )
+            ),
+        });
         return result[0];
     })
     .post("/", async ({ body, user }) => {
         if (!user) throw new Error("Unauthorized");
-        const result = await db.insert(borrowers).values({
-            tenantId: user.tenantId,
-            name: body.name,
-            idCardNumber: body.idCardNumber,
-            phone: body.phone,
-            address: body.address,
-            creditScore: body.creditScore,
-            notes: body.notes,
-            idCardImageUrl: body.idCardImageUrl,
-            tags: body.tags,
-            googleMapsUrl: body.googleMapsUrl
-        }).returning();
-        return result[0];
+        return await db.transaction(async (tx) => {
+            const result = await tx.insert(borrowers).values({
+                tenantId: user.tenantId,
+                name: body.name,
+                idCardNumber: body.idCardNumber,
+                phone: body.phone,
+                address: body.address,
+                creditScore: body.creditScore,
+                notes: body.notes,
+                idCardImageUrl: body.idCardImageUrl,
+                tags: body.tags,
+                googleMapsUrl: body.googleMapsUrl
+            }).returning();
+
+            await createAuditLog(tx, {
+                tenantId: user.tenantId,
+                actorUserId: user.id,
+                entityType: "borrower",
+                entityId: result[0].id,
+                action: "created",
+                payload: result[0],
+            });
+
+            await invalidateTenantCache(user.tenantId);
+            return result[0];
+        });
     }, {
         body: t.Object({
             name: t.String(),
@@ -79,25 +106,54 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
             googleMapsUrl: t.Optional(t.String())
         })
     })
-    .put("/:id", async ({ params: { id }, body, user }) => {
+    .put("/:id", async ({ params: { id }, body, user, set }) => {
         if (!user) throw new Error("Unauthorized");
-        const result = await db.update(borrowers).set({
-            name: body.name,
-            idCardNumber: body.idCardNumber,
-            phone: body.phone,
-            address: body.address,
-            creditScore: body.creditScore,
-            notes: body.notes,
-            idCardImageUrl: body.idCardImageUrl,
-            tags: body.tags,
-            googleMapsUrl: body.googleMapsUrl
-        }).where(
-            and(
-                eq(borrowers.id, parseInt(id)),
-                eq(borrowers.tenantId, user.tenantId)
-            )
-        ).returning();
-        return result[0];
+        return await db.transaction(async (tx) => {
+            const existing = await tx.select().from(borrowers).where(
+                and(
+                    eq(borrowers.id, parseInt(id)),
+                    eq(borrowers.tenantId, user.tenantId)
+                )
+            ).then((rows) => rows[0]);
+
+            if (!existing) {
+                set.status = 404;
+                return { error: "Borrower not found" };
+            }
+
+            const result = await tx.update(borrowers).set({
+                name: body.name,
+                idCardNumber: body.idCardNumber,
+                phone: body.phone,
+                address: body.address,
+                creditScore: body.creditScore,
+                notes: body.notes,
+                idCardImageUrl: body.idCardImageUrl,
+                tags: body.tags,
+                googleMapsUrl: body.googleMapsUrl,
+                updatedAt: new Date(),
+            }).where(
+                and(
+                    eq(borrowers.id, parseInt(id)),
+                    eq(borrowers.tenantId, user.tenantId)
+                )
+            ).returning();
+
+            await createAuditLog(tx, {
+                tenantId: user.tenantId,
+                actorUserId: user.id,
+                entityType: "borrower",
+                entityId: result[0].id,
+                action: "updated",
+                payload: {
+                    before: existing,
+                    after: result[0],
+                },
+            });
+
+            await invalidateTenantCache(user.tenantId);
+            return result[0];
+        });
     }, {
         body: t.Object({
             name: t.Optional(t.String()),

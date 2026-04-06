@@ -1,0 +1,59 @@
+services:
+  postgres:
+    image: postgres:18
+    container_name: creditsync-postgres-prod
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    networks:
+      creditsync_runtime:
+        aliases:
+          - postgres
+
+  minio:
+    image: minio/minio
+    container_name: creditsync-minio-prod
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "${MINIO_API_PORT}:9000"
+      - "${MINIO_CONSOLE_PORT}:9001"
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_prod_data:/data
+    networks:
+      creditsync_runtime:
+        aliases:
+          - minio
+
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+    container_name: creditsync-dragonfly-prod
+    restart: unless-stopped
+    ulimits:
+      memlock: -1
+    ports:
+      - "${DRAGONFLY_PORT}:6379"
+    command: ["dragonfly", "--bind", "0.0.0.0", "--port", "6379", "--cache_mode=true"]
+    networks:
+      creditsync_runtime:
+        aliases:
+          - cache
+          - dragonfly
+
+volumes:
+  postgres_prod_data:
+  minio_prod_data:
+
+networks:
+  creditsync_runtime:
+    name: creditsync_runtime

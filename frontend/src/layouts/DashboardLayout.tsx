@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Outlet, Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, Users, Wallet, FileText, Settings, Activity, Menu, X } from "lucide-react";
+import { LayoutDashboard, Users, Wallet, FileText, Settings, Activity, Menu, X, ArrowRightLeft, ScanSearch } from "lucide-react";
 import { cn } from "../lib/utils";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import AppBar from "../components/AppBar";
@@ -16,7 +16,9 @@ export default function DashboardLayout() {
         { name: t("dashboard.title", "Dashboard"), href: "/dashboard", icon: LayoutDashboard },
         { name: t("dashboard.borrowers", "Borrowers"), href: "/dashboard/borrowers", icon: Users },
         { name: t("dashboard.loans", "Loans"), href: "/dashboard/loans", icon: FileText },
+        { name: "Matching", href: "/dashboard/matching", icon: ArrowRightLeft },
         { name: t("dashboard.transactions", "Transactions"), href: "/dashboard/transactions", icon: Activity },
+        { name: "Reconciliation", href: "/dashboard/reconciliation", icon: ScanSearch },
         { name: t("dashboard.funds", "Funds"), href: "/dashboard/funds", icon: Wallet },
         { name: t("dashboard.settings", "Settings"), href: "/dashboard/settings", icon: Settings },
     ];

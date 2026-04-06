@@ -11,8 +11,11 @@ import BorrowerForm from "./pages/dashboard/borrowers/BorrowerForm";
 import BorrowerDetail from "./pages/dashboard/borrowers/BorrowerDetail";
 import LoanWizard from "./pages/dashboard/loans/LoanWizard";
 import LoanList from "./pages/dashboard/loans/LoanList";
+import LoanDetail from "./pages/dashboard/loans/LoanDetail";
+import MatchingWorkspace from "./pages/dashboard/loans/MatchingWorkspace";
 import TransactionList from "./pages/dashboard/transactions/TransactionList";
 import TransactionForm from "./pages/dashboard/transactions/TransactionForm";
+import ReconciliationPage from "./pages/dashboard/reconciliation/ReconciliationPage";
 import LandingPage from "./pages/LandingPage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import './index.css'
@@ -48,9 +51,12 @@ function App() {
               <Route path="borrowers/new" element={<BorrowerForm />} />
               <Route path="borrowers/:id" element={<BorrowerDetail />} />
               <Route path="loans" element={<LoanList />} />
+              <Route path="loans/:id" element={<LoanDetail />} />
               <Route path="loans/new" element={<LoanWizard />} />
+              <Route path="matching" element={<MatchingWorkspace />} />
               <Route path="transactions" element={<TransactionList />} />
               <Route path="transactions/new" element={<TransactionForm />} />
+              <Route path="reconciliation" element={<ReconciliationPage />} />
             </Route>
           </Route>
 

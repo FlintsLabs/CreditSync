@@ -1,12 +1,18 @@
 import { Elysia } from "elysia";
 import { jwt } from "@elysiajs/jwt";
 
+const isProd = process.env.NODE_ENV === "production";
+const jwtSecret = process.env.JWT_SECRET || (isProd ? undefined : "dev_jwt_secret_change_me");
+if (!jwtSecret) {
+    throw new Error("JWT_SECRET is required in production");
+}
+
 export const authPlugin = (app: Elysia) =>
     app
         .use(
             jwt({
                 name: "jwt",
-                secret: process.env.JWT_SECRET || "default_secret_please_change",
+                secret: jwtSecret,
             })
         )
         .derive(async ({ jwt, cookie: { auth }, headers }) => {

@@ -6,29 +6,36 @@ import { users } from "../db/schema";
 import { eq } from "drizzle-orm";
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const defaultTenantId = process.env.DEFAULT_TENANT_ID;
+const isProd = process.env.NODE_ENV === "production";
+const jwtSecret = process.env.JWT_SECRET || (isProd ? undefined : "dev_jwt_secret_change_me");
+if (!jwtSecret) {
+    throw new Error("JWT_SECRET is required in production");
+}
 
 export const authRoute = new Elysia({ prefix: "/auth" })
     .use(
         jwt({
             name: "jwt",
-            secret: process.env.JWT_SECRET || "default_secret_please_change",
+            secret: jwtSecret,
         })
     )
-    .post("/google", async ({ body, jwt }) => {
+    .post("/google", async ({ body, jwt, set }) => {
         try {
-            // 1. Verify Google Token
-            // Warning: React-OAuth returns an 'access_token' (Opaque), not ID Token if using implicit flow.
-            // If we want ID Token, we verify against UserInfo endpoint.
-
-            const userInfoResponse = await fetch(`https://www.googleapis.com/oauth2/v3/userinfo?access_token=${body.token}`);
-            if (!userInfoResponse.ok) {
-                throw new Error("Invalid Token");
+            const ticket = await client.verifyIdToken({
+                idToken: body.idToken,
+                audience: process.env.GOOGLE_CLIENT_ID,
+            });
+            const payload = ticket.getPayload();
+            if (!payload) {
+                throw new Error("Invalid Google token payload");
             }
-            const payload = await userInfoResponse.json();
-            console.log("Google Payload:", JSON.stringify(payload, null, 2));
 
             if (!payload.email) {
                 throw new Error("Email not found in token");
+            }
+            if (!payload.email_verified) {
+                throw new Error("Google account email is not verified");
             }
 
             // 2. Check User in DB
@@ -36,9 +43,11 @@ export const authRoute = new Elysia({ prefix: "/auth" })
 
             // 3. Register if Not Exists
             if (!user) {
-                // Auto-register logic (Assign to default Tenant for now)
+                if (!defaultTenantId) {
+                    throw new Error("DEFAULT_TENANT_ID is not configured");
+                }
                 const result = await db.insert(users).values({
-                    tenantId: "default_tenant",
+                    tenantId: defaultTenantId,
                     email: payload.email,
                     name: payload.name,
                     picture: payload.picture,
@@ -79,10 +88,11 @@ export const authRoute = new Elysia({ prefix: "/auth" })
 
         } catch (error) {
             console.error("Auth Error", error);
+            set.status = 401;
             return { success: false, error: "Authentication Failed" };
         }
     }, {
         body: t.Object({
-            token: t.String()
+            idToken: t.String()
         })
     });

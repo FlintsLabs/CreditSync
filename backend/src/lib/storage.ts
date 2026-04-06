@@ -2,10 +2,10 @@ import { S3Client, PutObjectCommand, GetObjectCommand, HeadBucketCommand, Create
 
 export const s3 = new S3Client({
     region: "us-east-1", // MinIO default
-    endpoint: process.env.S3_ENDPOINT || "http://localhost:9000",
+    endpoint: process.env.S3_ENDPOINT || process.env.MINIO_ENDPOINT || "http://localhost:9000",
     credentials: {
-        accessKeyId: process.env.MINIO_ROOT_USER || "minioadmin",
-        secretAccessKey: process.env.MINIO_ROOT_PASSWORD || "minioadmin",
+        accessKeyId: process.env.MINIO_ROOT_USER || process.env.MINIO_ACCESS_KEY || "minioadmin",
+        secretAccessKey: process.env.MINIO_ROOT_PASSWORD || process.env.MINIO_SECRET_KEY || "minioadmin",
     },
     forcePathStyle: true, // Required for MinIO
 });
@@ -35,7 +35,7 @@ export async function uploadFile(key: string, body: Buffer | Uint8Array, content
             Body: body,
             ContentType: contentType
         }));
-        return `${process.env.S3_PUBLIC_URL || "http://localhost:9000"}/${BUCKET_NAME}/${key}`;
+        return `${process.env.S3_PUBLIC_URL || process.env.MINIO_PUBLIC_URL || "http://localhost:9000"}/${BUCKET_NAME}/${key}`;
     } catch (error) {
         console.error("S3 Upload Error", error);
         throw error;

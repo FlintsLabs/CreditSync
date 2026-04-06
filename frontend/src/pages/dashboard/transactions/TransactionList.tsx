@@ -1,10 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/Button";
-import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/Card";
 import { Plus, ArrowUpRight, FileText } from "lucide-react";
 import { Link } from "react-router-dom";
-import { cn } from "../../../lib/utils";
 
 export default function TransactionList() {
     const [transactions, setTransactions] = useState<any[]>([]);
@@ -13,7 +11,7 @@ export default function TransactionList() {
         const fetch = async () => {
             try {
                 const res = await api.get("/transactions");
-                setTransactions(res.data);
+                setTransactions(res.data ?? []);
             } catch (error) {
                 console.error("Failed to load transactions");
             }
@@ -26,7 +24,7 @@ export default function TransactionList() {
             <div className="flex items-center justify-between">
                 <div>
                     <h2 className="text-3xl font-bold tracking-tight">Transactions</h2>
-                    <p className="text-muted-foreground">Monitor repayment history and flow.</p>
+                    <p className="text-muted-foreground">Monitor repayment history and component breakdown.</p>
                 </div>
                 <Link to="/dashboard/transactions/new">
                     <Button>
@@ -51,14 +49,17 @@ export default function TransactionList() {
                     </Link>
                 </div>
             ) : (
-                <div className="rounded-md border bg-card">
+                <div className="rounded-md border bg-card overflow-x-auto">
                     <table className="w-full text-sm">
                         <thead>
                             <tr className="border-b bg-muted/50 text-left">
                                 <th className="p-4 font-medium">Date</th>
-                                <th className="p-4 font-medium">Type</th>
                                 <th className="p-4 font-medium">Borrower</th>
-                                <th className="p-4 font-medium">Amount</th>
+                                <th className="p-4 font-medium">Total</th>
+                                <th className="p-4 font-medium">Principal</th>
+                                <th className="p-4 font-medium">Interest</th>
+                                <th className="p-4 font-medium">Fee</th>
+                                <th className="p-4 font-medium">Penalty</th>
                                 <th className="p-4 font-medium">Slip</th>
                             </tr>
                         </thead>
@@ -66,16 +67,12 @@ export default function TransactionList() {
                             {transactions.map((tx) => (
                                 <tr key={tx.id} className="border-b last:border-0 hover:bg-muted/50">
                                     <td className="p-4">{new Date(tx.date).toLocaleDateString()}</td>
-                                    <td className="p-4 capitalize">
-                                        <span className="flex items-center">
-                                            <ArrowUpRight className="mr-2 h-4 w-4 text-green-500" />
-                                            {tx.type}
-                                        </span>
-                                    </td>
                                     <td className="p-4">{tx.borrowerName || "Unknown"}</td>
-                                    <td className="p-4 font-semibold text-green-600">
-                                        +฿{Number(tx.amount).toLocaleString()}
-                                    </td>
+                                    <td className="p-4 font-semibold text-green-600">฿{Number(tx.amount).toLocaleString()}</td>
+                                    <td className="p-4">฿{Number(tx.principalComponent ?? 0).toLocaleString()}</td>
+                                    <td className="p-4">฿{Number(tx.interestComponent ?? 0).toLocaleString()}</td>
+                                    <td className="p-4">฿{Number(tx.feeComponent ?? 0).toLocaleString()}</td>
+                                    <td className="p-4">฿{Number(tx.penaltyComponent ?? 0).toLocaleString()}</td>
                                     <td className="p-4">
                                         {tx.slipUrl ? (
                                             <a href={tx.slipUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline flex items-center">

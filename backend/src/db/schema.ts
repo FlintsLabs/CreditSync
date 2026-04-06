@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, numeric, boolean, integer, date, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, numeric, integer, date, pgEnum, jsonb } from "drizzle-orm/pg-core";
 
 // Enums
 export const roleEnum = pgEnum("role", ["owner", "manager", "collector", "viewer"]);
@@ -33,8 +33,15 @@ export const bankProfiles = pgTable("bank_profiles", {
     tenantId: tenantId,
     name: text("name").notNull(), // e.g., "SCB Personal Loan", "KBank Credit Card"
     type: text("type").notNull(), // "bank", "personal_savings"
+    providerName: text("provider_name"),
+    referenceNo: text("reference_no"),
+    status: text("status").default("active"),
+    note: text("note"),
     creditLimit: numeric("credit_limit"),
+    accountingMode: text("accounting_mode").default("external_liability").notNull(), // external_liability, capital_pool
+    reinvestProfitMode: text("reinvest_profit_mode").default("manual_distribution").notNull(), // manual_distribution, retain_in_pool
     createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 // Bank Loans (Money borrowed from Bank)
@@ -46,7 +53,64 @@ export const bankLoans = pgTable("bank_loans", {
     interestRate: numeric("interest_rate"), // e.g. 20 (% per year)
     startDate: date("start_date"),
     termMonths: integer("term_months"),
+    repaymentCycle: text("repayment_cycle").default("monthly"), // daily, weekly, monthly, custom
+    repaymentMode: text("repayment_mode").default("fixed_installment"), // fixed_installment, minimum_due, interest_only, custom
+    installmentAmount: numeric("installment_amount"),
+    totalInstallments: integer("total_installments"),
+    processingFeeAmount: numeric("processing_fee_amount").default("0"),
+    utilizationFeeAmount: numeric("utilization_fee_amount").default("0"),
+    vatRate: numeric("vat_rate").default("0"),
+    lateFeeMode: text("late_fee_mode").default("none"),
+    lateFeeAmount: numeric("late_fee_amount").default("0"),
+    gracePeriodDays: integer("grace_period_days").default(0),
+    nextDueDate: date("next_due_date"),
+    outstandingPrincipal: numeric("outstanding_principal").default("0"),
+    outstandingInterest: numeric("outstanding_interest").default("0"),
+    outstandingFees: numeric("outstanding_fees").default("0"),
+    outstandingPenalties: numeric("outstanding_penalties").default("0"),
     status: text("status").default("active"), // active, closed
+    closedAt: timestamp("closed_at"),
+    note: text("note"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const bankLoanSchedules = pgTable("bank_loan_schedules", {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId,
+    bankLoanId: integer("bank_loan_id").references(() => bankLoans.id).notNull(),
+    installmentNo: integer("installment_no").notNull(),
+    dueDate: date("due_date").notNull(),
+    scheduledPrincipal: numeric("scheduled_principal").default("0").notNull(),
+    scheduledInterest: numeric("scheduled_interest").default("0").notNull(),
+    scheduledFee: numeric("scheduled_fee").default("0").notNull(),
+    scheduledVat: numeric("scheduled_vat").default("0").notNull(),
+    scheduledTotal: numeric("scheduled_total").default("0").notNull(),
+    paidTotal: numeric("paid_total").default("0").notNull(),
+    paidPenalty: numeric("paid_penalty").default("0").notNull(),
+    overdueDays: integer("overdue_days").default(0).notNull(),
+    remainingDue: numeric("remaining_due").default("0").notNull(),
+    status: text("status").default("pending").notNull(),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const bankLoanRepayments = pgTable("bank_loan_repayments", {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId,
+    bankLoanId: integer("bank_loan_id").references(() => bankLoans.id).notNull(),
+    scheduleId: integer("schedule_id").references(() => bankLoanSchedules.id),
+    paymentDate: timestamp("payment_date").defaultNow().notNull(),
+    amount: numeric("amount").notNull(),
+    principalComponent: numeric("principal_component").default("0").notNull(),
+    interestComponent: numeric("interest_component").default("0").notNull(),
+    feeComponent: numeric("fee_component").default("0").notNull(),
+    vatComponent: numeric("vat_component").default("0").notNull(),
+    penaltyComponent: numeric("penalty_component").default("0").notNull(),
+    paymentMethod: text("payment_method"),
+    reference: text("reference"),
+    note: text("note"),
+    recordedByUserId: integer("recorded_by_user_id").references(() => users.id),
     createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -65,6 +129,7 @@ export const borrowers = pgTable("borrowers", {
     googleMapsUrl: text("google_maps_url"), // URL for Google Maps location
     notes: text("notes"),
     createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 // Lending Loans (Money lent to Borrowers)
@@ -78,9 +143,50 @@ export const loans = pgTable("loans", {
     repaymentType: text("repayment_type").notNull(), // "daily", "monthly", "floating"
     installmentAmount: numeric("installment_amount"), // e.g. 400 per day
     totalInstallments: integer("total_installments"),
+    gracePeriodDays: integer("grace_period_days").default(0),
+    lateFeeMode: text("late_fee_mode").default("none"),
+    lateFeeAmount: numeric("late_fee_amount").default("0"),
     startDate: date("start_date").defaultNow(),
+    nextDueDate: date("next_due_date"),
+    outstandingPrincipal: numeric("outstanding_principal").default("0"),
+    outstandingInterest: numeric("outstanding_interest").default("0"),
+    outstandingFees: numeric("outstanding_fees").default("0"),
     status: text("status").default("draft"), // draft, active, paid, defaulted
     clonedFromLoanId: integer("cloned_from_loan_id"), // traceability for Refinance/Top-up
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const loanSchedules = pgTable("loan_schedules", {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId,
+    loanId: integer("loan_id").references(() => loans.id).notNull(),
+    installmentNo: integer("installment_no").notNull(),
+    dueDate: date("due_date").notNull(),
+    scheduledPrincipal: numeric("scheduled_principal").default("0").notNull(),
+    scheduledInterest: numeric("scheduled_interest").default("0").notNull(),
+    scheduledFee: numeric("scheduled_fee").default("0").notNull(),
+    scheduledTotal: numeric("scheduled_total").default("0").notNull(),
+    paidTotal: numeric("paid_total").default("0").notNull(),
+    paidPenalty: numeric("paid_penalty").default("0").notNull(),
+    overdueDays: integer("overdue_days").default(0).notNull(),
+    remainingDue: numeric("remaining_due").default("0").notNull(),
+    status: text("status").default("pending").notNull(),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const loanFundingAllocations = pgTable("loan_funding_allocations", {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId,
+    bankProfileId: integer("bank_profile_id").references(() => bankProfiles.id),
+    bankLoanId: integer("bank_loan_id").references(() => bankLoans.id),
+    loanId: integer("loan_id").references(() => loans.id).notNull(),
+    allocatedAmount: numeric("allocated_amount").notNull(),
+    allocationDate: date("allocation_date").notNull(),
+    allocationType: text("allocation_type").default("initial").notNull(), // initial, manual_adjustment, reallocation_in, reallocation_out
+    note: text("note"),
+    createdByUserId: integer("created_by_user_id").references(() => users.id),
     createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -89,11 +195,61 @@ export const transactions = pgTable("transactions", {
     id: serial("id").primaryKey(),
     tenantId: tenantId,
     loanId: integer("loan_id").references(() => loans.id).notNull(),
+    scheduleId: integer("schedule_id").references(() => loanSchedules.id),
     amount: numeric("amount").notNull(),
+    principalComponent: numeric("principal_component").default("0").notNull(),
+    interestComponent: numeric("interest_component").default("0").notNull(),
+    feeComponent: numeric("fee_component").default("0").notNull(),
+    penaltyComponent: numeric("penalty_component").default("0").notNull(),
     type: text("type").default("repayment"), // repayment, close_account
     slipUrl: text("slip_url"), // Uploaded slip image
     transactionDate: timestamp("transaction_date").defaultNow(),
     notes: text("notes"),
+    recordedByUserId: integer("recorded_by_user_id").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const fundRolloverEntries = pgTable("fund_rollover_entries", {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId,
+    fromBankProfileId: integer("from_bank_profile_id").references(() => bankProfiles.id),
+    fromBankLoanId: integer("from_bank_loan_id").references(() => bankLoans.id),
+    toBankProfileId: integer("to_bank_profile_id").references(() => bankProfiles.id),
+    toBankLoanId: integer("to_bank_loan_id").references(() => bankLoans.id),
+    entryType: text("entry_type").notNull(), // surplus_transfer, deficit_support, refinance_in, refinance_out, capitalization, manual_adjustment
+    amount: numeric("amount").notNull(),
+    effectiveDate: date("effective_date").notNull(),
+    note: text("note"),
+    createdByUserId: integer("created_by_user_id").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const fundLedgerEntries = pgTable("fund_ledger_entries", {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId,
+    bankProfileId: integer("bank_profile_id").references(() => bankProfiles.id).notNull(),
+    bankLoanId: integer("bank_loan_id").references(() => bankLoans.id),
+    loanId: integer("loan_id").references(() => loans.id),
+    transactionId: integer("transaction_id").references(() => transactions.id),
+    bankRepaymentId: integer("bank_repayment_id").references(() => bankLoanRepayments.id),
+    rolloverEntryId: integer("rollover_entry_id").references(() => fundRolloverEntries.id),
+    entryDate: timestamp("entry_date").defaultNow().notNull(),
+    entryType: text("entry_type").notNull(), // loan_allocation_out, principal_return_in, interest_income_in, fee_income_in, bank_repayment_out, rollover_in, rollover_out
+    amount: numeric("amount").notNull(),
+    note: text("note"),
+    createdByUserId: integer("created_by_user_id").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const auditLogs = pgTable("audit_logs", {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId,
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    action: text("action").notNull(),
+    actorUserId: integer("actor_user_id").references(() => users.id),
+    payload: jsonb("payload"),
     createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -131,4 +287,17 @@ export const bankTransactions = pgTable("bank_transactions", {
     transactionDate: timestamp("transaction_date").defaultNow(),
     notes: text("notes"),
     createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const reconciliationEntries = pgTable("reconciliation_entries", {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId,
+    entityType: text("entity_type").notNull(), // borrower_transaction, bank_loan_repayment, bot_upload
+    entityId: integer("entity_id").notNull(),
+    uploadId: integer("upload_id").references(() => botUploads.id),
+    status: text("status").default("matched").notNull(), // matched, manual, ignored
+    note: text("note"),
+    matchedByUserId: integer("matched_by_user_id").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
 });

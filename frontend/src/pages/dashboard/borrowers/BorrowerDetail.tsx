@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { api } from "../../../lib/api";
 import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/Card";
 import { Badge } from "../../../components/ui/badge";
@@ -9,6 +9,7 @@ import { MapPin, Phone, CreditCard, ArrowLeft, FileText, ArrowUpRight } from "lu
 
 export default function BorrowerDetail() {
     const { id } = useParams();
+    const navigate = useNavigate();
     const [borrower, setBorrower] = useState<any>(null);
     const [loans, setLoans] = useState<any[]>([]);
     const [transactions, setTransactions] = useState<any[]>([]);
@@ -156,7 +157,7 @@ export default function BorrowerDetail() {
                         <div className="p-8 text-center text-muted-foreground border rounded-lg bg-muted/10">No loans found.</div>
                     ) : (
                         loans.map((loan) => (
-                            <Card key={loan.id} className="hover:bg-muted/10 transition-colors">
+                            <Card key={loan.id} className="hover:bg-muted/10 transition-colors cursor-pointer" onClick={() => navigate(`/dashboard/loans/${loan.id}`)}>
                                 <CardContent className="flex items-center justify-between p-6">
                                     <div className="flex items-center gap-4">
                                         <div className="p-2 bg-primary/10 rounded-full">

@@ -27,6 +27,16 @@ services:
     volumes:
       - minio_data:/data
 
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+    container_name: creditsync-dragonfly
+    restart: always
+    ulimits:
+      memlock: -1
+    ports:
+      - "6381:6379"
+    command: ["dragonfly", "--bind", "0.0.0.0", "--port", "6379", "--cache_mode=true"]
+
   tunnel:
     image: cloudflare/cloudflared:latest
     container_name: creditsync-tunnel
@@ -38,6 +48,7 @@ services:
     depends_on:
       - postgres
       - minio
+      - dragonfly
 
 volumes:
   postgres_data:

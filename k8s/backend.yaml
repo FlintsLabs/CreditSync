@@ -22,13 +22,15 @@ spec:
         - containerPort: 3000
         env:
         - name: DATABASE_URL
-          value: "postgres://user:password@postgres:5432/creditsync"
-        - name: MINIO_ENDPOINT
-          value: "minio:9000"
-        - name: MINIO_ACCESS_KEY
+          value: "postgres://user:password@postgres:5432/creditsync_db"
+        - name: S3_ENDPOINT
+          value: "http://minio:9000"
+        - name: MINIO_ROOT_USER
           value: "minioadmin"
-        - name: MINIO_SECRET_KEY
+        - name: MINIO_ROOT_PASSWORD
           value: "minioadmin"
+        - name: DEFAULT_TENANT_ID
+          value: "tenant_default"
 ---
 apiVersion: v1
 kind: Service

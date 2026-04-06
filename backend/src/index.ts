@@ -7,13 +7,23 @@ import { bankLoansRoute } from "./modules/bank-loans";
 import { borrowersRoute } from "./modules/borrowers";
 import { authRoute } from "./modules/auth";
 import { filesRoute } from "./modules/files";
+import { fundRolloversRoute } from "./modules/fund-rollovers";
 import { loansRoute } from "./modules/loans";
 import { transactionsRoute } from "./modules/transactions";
 import { webhookRoute } from "./modules/webhook";
+import { auditLogsRoute } from "./modules/audit-logs";
+import { dashboardRoute } from "./modules/dashboard";
+import { reconciliationRoute } from "./modules/reconciliation";
+
+const isProd = process.env.NODE_ENV === "production";
+const corsOrigins = (process.env.CORS_ORIGINS || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 
 const app = new Elysia()
     .use(cors({
-        origin: true, // Allow all origins for development mainly
+        origin: isProd ? corsOrigins : true,
         credentials: true,
         allowedHeaders: ['Content-Type', 'Authorization'],
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']
@@ -32,8 +42,12 @@ const app = new Elysia()
             .use(bankLoansRoute)
             .use(borrowersRoute)
             .use(filesRoute)
+            .use(fundRolloversRoute)
             .use(loansRoute)
             .use(transactionsRoute)
+            .use(auditLogsRoute)
+            .use(dashboardRoute)
+            .use(reconciliationRoute)
     )
     .listen({
         port: 3000,
