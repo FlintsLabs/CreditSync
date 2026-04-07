@@ -127,6 +127,7 @@ const GraphMinimap = ({ graphRef, data, width = 120, height = 120, className }: 
             try {
                 // Get current view transform
                 // const k = graphRef.current.zoom(); // Removed unused var
+                // @ts-ignore
                 const center = graphRef.current.centerAt(); // {x, y} center of view in graph coords
 
                 // Assuming the graph container size. We need to pass this or approximate.
@@ -197,7 +198,7 @@ const GraphMinimap = ({ graphRef, data, width = 120, height = 120, className }: 
 };
 
 export default function PortfolioGraph() {
-    const graphRef = useRef<ForceGraphMethods>();
+    const graphRef = useRef<ForceGraphMethods>(null as any);
     const [allData, setAllData] = useState<{ nodes: any[], links: any[] }>({ nodes: [], links: [] });
     const [dimensions, setDimensions] = useState({ w: 800, h: 600 });
     const containerRef = useRef<HTMLDivElement>(null);
