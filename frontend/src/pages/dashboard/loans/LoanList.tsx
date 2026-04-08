@@ -26,25 +26,26 @@ export default function LoanList() {
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center justify-between">
-                <div>
+            <div className="h-16 flex items-center justify-between sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 -mx-6 px-6 border-b sm:static sm:bg-transparent sm:backdrop-blur-none sm:mx-0 sm:px-0 sm:border-none sm:h-auto">
+                <div className="hidden sm:block">
                     <h2 className="text-3xl font-bold tracking-tight">Loan Agreements</h2>
                     <p className="text-muted-foreground">Manage active contracts and track repayments.</p>
                 </div>
+                <h2 className="text-xl font-bold tracking-tight sm:hidden">Loans</h2>
                 <Link to="/dashboard/loans/new">
-                    <Button>
-                        <Plus className="mr-2 h-4 w-4" /> New Loan
+                    <Button className="rounded-full shadow-lg" size="sm">
+                        <Plus className="mr-2 h-4 w-4" /> <span className="hidden sm:inline">New Loan</span><span className="sm:hidden">New</span>
                     </Button>
                 </Link>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {loans.map((loan) => (
-                    <Card key={loan.id} className="hover:shadow-md transition-shadow flex flex-col">
+                    <Card key={loan.id} className="rounded-xl hover:shadow-md transition-all border-l-4 border-l-primary/50 flex flex-col">
                         <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
-                            <div className="space-y-1">
-                                <CardTitle className="text-sm font-medium">{loan.borrowerName}</CardTitle>
-                                <div className="text-xs text-muted-foreground">Loan #{loan.id}</div>
+                            <div className="space-y-1 overflow-hidden">
+                                <CardTitle className="text-lg truncate">{loan.borrowerName}</CardTitle>
+                                <div className="text-xs text-muted-foreground truncate">Loan #{loan.id}</div>
                             </div>
                            <DropdownMenu>
                                 <DropdownMenuTrigger asChild>

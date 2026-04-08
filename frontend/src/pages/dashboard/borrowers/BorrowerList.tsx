@@ -46,11 +46,15 @@ export default function BorrowerList() {
 
     return (
         <div className="space-y-6">
-            <div className="h-16 flex items-center justify-between sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 -mx-6 px-6 border-b">
-                <h2 className="text-xl font-bold tracking-tight">Borrowers</h2>
+            <div className="h-16 flex items-center justify-between sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 -mx-6 px-6 border-b sm:static sm:bg-transparent sm:backdrop-blur-none sm:mx-0 sm:px-0 sm:border-none sm:h-auto">
+                <div className="hidden sm:block">
+                    <h2 className="text-3xl font-bold tracking-tight">Borrowers</h2>
+                    <p className="text-muted-foreground">Manage your clients and their credit profiles.</p>
+                </div>
+                <h2 className="text-xl font-bold tracking-tight sm:hidden">Borrowers</h2>
                 <Link to="/dashboard/borrowers/new">
                     <Button className="rounded-full shadow-lg" size="sm">
-                        <Plus className="mr-2 h-4 w-4" /> New Borrower
+                        <Plus className="mr-2 h-4 w-4" /> <span className="hidden sm:inline">New Borrower</span><span className="sm:hidden">New</span>
                     </Button>
                 </Link>
             </div>
