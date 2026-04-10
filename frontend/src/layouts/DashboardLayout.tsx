@@ -1,16 +1,13 @@
-import { useState } from "react";
 import { Outlet, Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, Users, Wallet, FileText, Settings, Activity, Menu, X } from "lucide-react";
+import { LayoutDashboard, Users, Wallet, FileText, Settings, Activity } from "lucide-react";
 import { cn } from "../lib/utils";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import AppBar from "../components/AppBar";
 import { useTranslation } from "react-i18next";
-import { Button } from "../components/ui/Button";
 
 export default function DashboardLayout() {
     const location = useLocation();
     const { t } = useTranslation();
-    const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
     const navigation = [
         { name: t("dashboard.title", "Dashboard"), href: "/dashboard", icon: LayoutDashboard },
@@ -54,72 +51,41 @@ export default function DashboardLayout() {
             </div>
 
             {/* Main Content Area */}
-            <div className="flex flex-1 flex-col min-w-0">
+            <div className="flex flex-1 flex-col min-w-0 pb-16 md:pb-0">
                 {/* Mobile Header (Visible only on Mobile) */}
-                <header className="sticky top-0 z-30 flex h-16 items-center border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 md:hidden">
-                    <Button
-                        variant="ghost"
-                        size="icon"
-                        className="-ml-2 mr-2"
-                        onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-                    >
-                        {isMobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-                    </Button>
+                <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 md:hidden">
                     <span className="font-bold text-lg">CreditSync</span>
-                </header>
-
-                {/* Mobile Sidebar Overlay (Slide-in) */}
-                {isMobileMenuOpen && (
-                    <div className="fixed inset-0 z-40 flex md:hidden">
-                        {/* Backdrop */}
-                        <div
-                            className="fixed inset-0 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200"
-                            onClick={() => setIsMobileMenuOpen(false)}
-                        />
-
-                        {/* Sidebar Panel */}
-                        <div className="relative flex w-[80%] max-w-xs flex-col bg-card shadow-2xl animate-in slide-in-from-left duration-300">
-                            <div className="p-4 border-b">
-                                <AppBar />
-                            </div>
-
-                            <div className="flex-1 overflow-y-auto p-4">
-                                <nav className="flex flex-col gap-1">
-                                    {navigation.map((item) => {
-                                        const Icon = item.icon;
-                                        const isActive = location.pathname === item.href;
-                                        return (
-                                            <Link
-                                                key={item.href}
-                                                to={item.href}
-                                                onClick={() => setIsMobileMenuOpen(false)}
-                                                className={cn(
-                                                    "flex items-center gap-3 rounded-md px-3 py-3 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
-                                                    isActive ? "bg-accent text-accent-foreground" : "text-muted-foreground"
-                                                )}
-                                            >
-                                                <Icon className="h-5 w-5" />
-                                                {item.name}
-                                            </Link>
-                                        );
-                                    })}
-                                </nav>
-                            </div>
-
-                            <div className="border-t p-4">
-                                <div className="flex items-center justify-between">
-                                    <span className="text-sm font-medium text-muted-foreground">Language</span>
-                                    <LanguageSwitcher />
-                                </div>
-                            </div>
-                        </div>
+                    <div className="flex items-center gap-2">
+                        {/* We use a specialized MobileAppBar here to avoid the extra CreditSync header from AppBar */}
+                        <AppBar />
                     </div>
-                )}
+                </header>
 
                 {/* Page Content */}
                 <main className="flex-1 p-4 md:p-8 overflow-x-hidden">
                     <Outlet />
                 </main>
+
+                {/* Mobile Bottom Navigation Bar (Visible only on Mobile) */}
+                <nav className="fixed bottom-0 left-0 right-0 z-40 flex h-16 items-center justify-around border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 md:hidden pb-safe">
+                    {navigation.slice(0, 5).map((item) => {
+                        const Icon = item.icon;
+                        const isActive = location.pathname === item.href;
+                        return (
+                            <Link
+                                key={item.href}
+                                to={item.href}
+                                className={cn(
+                                    "flex flex-col items-center justify-center w-full h-full gap-1 text-xs transition-colors hover:text-primary",
+                                    isActive ? "text-primary font-medium" : "text-muted-foreground"
+                                )}
+                            >
+                                <Icon className={cn("h-5 w-5", isActive && "fill-primary/20")} />
+                                <span>{item.name}</span>
+                            </Link>
+                        );
+                    })}
+                </nav>
             </div>
         </div>
     );

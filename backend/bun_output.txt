@@ -1,0 +1,3 @@
+bun install v1.2.14 (6a363a38)
+
+14 packages installed [210.00ms]

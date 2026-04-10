@@ -40,10 +40,10 @@ export default function AppBar() {
     };
 
     return (
-        <div className="flex h-16 items-center justify-between border-b px-4">
-            <h1 className="text-xl font-bold ml-2">CreditSync</h1>
+        <div className="flex h-16 items-center justify-between border-b px-4 w-full md:w-auto md:border-b-0 md:px-0">
+            <h1 className="text-xl font-bold ml-2 md:block hidden">CreditSync</h1>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 ml-auto">
                 <ModeToggle />
                 <DropdownMenu>
                     <DropdownMenuTrigger asChild>

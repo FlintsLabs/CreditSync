@@ -10,6 +10,7 @@ import { filesRoute } from "./modules/files";
 import { loansRoute } from "./modules/loans";
 import { transactionsRoute } from "./modules/transactions";
 import { webhookRoute } from "./modules/webhook";
+import { aiToolsRoute } from "./modules/ai-tools";
 
 const app = new Elysia()
     .use(cors({
@@ -34,6 +35,7 @@ const app = new Elysia()
             .use(filesRoute)
             .use(loansRoute)
             .use(transactionsRoute)
+            .use(aiToolsRoute)
     )
     .listen({
         port: 3000,
