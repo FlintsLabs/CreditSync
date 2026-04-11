@@ -290,7 +290,7 @@ export default function PortfolioGraph() {
     const filteredData = useMemo(() => {
         if (!allData.nodes.length) return { nodes: [], links: [] };
 
-        let activeNodes = allData.nodes.filter(node => {
+        const activeNodes = allData.nodes.filter(node => {
             if (node.type === 'bank') {
                 if (filterSource !== 'all' && node.id !== filterSource) return false;
                 return true;
