@@ -14,7 +14,7 @@ import {
 } from "./ui/dropdown-menu";
 
 interface User {
-    id: number;
+    id: string;
     name: string;
     email: string;
     picture?: string;

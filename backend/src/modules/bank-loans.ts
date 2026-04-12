@@ -34,7 +34,7 @@ export const bankLoansRoute = new Elysia({ prefix: "/bank-loans" })
         return result[0];
     }, {
         body: t.Object({
-            bankProfileId: t.Optional(t.Number()),
+            bankProfileId: t.Optional(t.String()),
             amount: t.Number(),
             interestRate: t.Number(), // % per year
             startDate: t.Optional(t.String()),
