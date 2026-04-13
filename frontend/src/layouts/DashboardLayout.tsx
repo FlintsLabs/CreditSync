@@ -21,6 +21,9 @@ export default function DashboardLayout() {
         { name: t("dashboard.settings", "Settings"), href: "/dashboard/settings", icon: Settings },
     ];
 
+    // Select a subset of items for the bottom navigation to fit on mobile
+    const bottomNavItems = navigation.slice(0, 4);
+
     return (
         <div className="flex min-h-screen bg-background text-foreground transition-colors duration-300">
             {/* Desktop Sidebar (Hidden on Mobile) */}
@@ -29,7 +32,7 @@ export default function DashboardLayout() {
                 <div className="flex flex-1 flex-col gap-1 p-4">
                     {navigation.map((item) => {
                         const Icon = item.icon;
-                        const isActive = location.pathname === item.href;
+                        const isActive = location.pathname === item.href || (item.href !== '/dashboard' && location.pathname.startsWith(item.href));
                         return (
                             <Link
                                 key={item.href}
@@ -54,21 +57,20 @@ export default function DashboardLayout() {
             </div>
 
             {/* Main Content Area */}
-            <div className="flex flex-1 flex-col min-w-0">
+            <div className="flex flex-1 flex-col min-w-0 md:pb-0 pb-16">
                 {/* Mobile Header (Visible only on Mobile) */}
-                <header className="sticky top-0 z-30 flex h-16 items-center border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 md:hidden">
+                <header className="sticky top-0 z-30 flex h-16 items-center border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 md:hidden justify-between">
+                    <span className="font-bold text-lg">CreditSync</span>
                     <Button
                         variant="ghost"
                         size="icon"
-                        className="-ml-2 mr-2"
                         onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
                     >
                         {isMobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
                     </Button>
-                    <span className="font-bold text-lg">CreditSync</span>
                 </header>
 
-                {/* Mobile Sidebar Overlay (Slide-in) */}
+                {/* Mobile Sidebar Overlay (Slide-in) for remaining items/settings */}
                 {isMobileMenuOpen && (
                     <div className="fixed inset-0 z-40 flex md:hidden">
                         {/* Backdrop */}
@@ -78,16 +80,19 @@ export default function DashboardLayout() {
                         />
 
                         {/* Sidebar Panel */}
-                        <div className="relative flex w-[80%] max-w-xs flex-col bg-card shadow-2xl animate-in slide-in-from-left duration-300">
-                            <div className="p-4 border-b">
+                        <div className="absolute right-0 top-0 h-full flex w-[80%] max-w-xs flex-col bg-card shadow-2xl animate-in slide-in-from-right duration-300">
+                            <div className="p-4 border-b flex justify-between items-center">
                                 <AppBar />
+                                <Button variant="ghost" size="icon" onClick={() => setIsMobileMenuOpen(false)}>
+                                    <X className="h-5 w-5" />
+                                </Button>
                             </div>
 
                             <div className="flex-1 overflow-y-auto p-4">
                                 <nav className="flex flex-col gap-1">
                                     {navigation.map((item) => {
                                         const Icon = item.icon;
-                                        const isActive = location.pathname === item.href;
+                                        const isActive = location.pathname === item.href || (item.href !== '/dashboard' && location.pathname.startsWith(item.href));
                                         return (
                                             <Link
                                                 key={item.href}
@@ -120,6 +125,27 @@ export default function DashboardLayout() {
                 <main className="flex-1 p-4 md:p-8 overflow-x-hidden">
                     <Outlet />
                 </main>
+            </div>
+
+            {/* Mobile Bottom Navigation */}
+            <div className="md:hidden fixed bottom-0 left-0 right-0 z-30 flex items-center justify-around h-16 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 shadow-lg">
+                {bottomNavItems.map((item) => {
+                    const Icon = item.icon;
+                    const isActive = location.pathname === item.href || (item.href !== '/dashboard' && location.pathname.startsWith(item.href));
+                    return (
+                        <Link
+                            key={item.href}
+                            to={item.href}
+                            className={cn(
+                                "flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors",
+                                isActive ? "text-primary font-semibold" : "text-muted-foreground hover:text-foreground"
+                            )}
+                        >
+                            <Icon className={cn("h-5 w-5", isActive && "fill-primary/20")} />
+                            <span className="text-[10px]">{item.name}</span>
+                        </Link>
+                    );
+                })}
             </div>
         </div>
     );
