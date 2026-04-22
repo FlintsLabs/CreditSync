@@ -1,5 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/Card";
-import { Activity, CreditCard, DollarSign, Users, TrendingUp, ArrowUpRight, ArrowDownRight, ChevronRight, MessageCircle, Facebook, Users2, BarChart2 } from "lucide-react";
+import { Activity, CreditCard, DollarSign, Users, TrendingUp, ArrowUpRight, ArrowDownRight, ChevronRight, MessageCircle, Facebook, Users2, BarChart2, Zap } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, PieChart, Pie, Cell } from "recharts";
 import { useNavigate } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
@@ -107,8 +107,8 @@ export default function Dashboard() {
                 {/* TAB: OVERVIEW */}
                 <TabsContent value="overview" className="space-y-4">
                     {/* Stats Cards */}
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                        <Card>
+                    <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+                        <Card className="transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
                             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                                 <CardTitle className="text-sm font-medium">
                                     Total Revenue
@@ -135,7 +135,7 @@ export default function Dashboard() {
                                 </div>
                             </CardContent>
                         </Card>
-                        <Card>
+                        <Card className="transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
                             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                                 <CardTitle className="text-sm font-medium">
                                     Active Borrowers
@@ -158,7 +158,7 @@ export default function Dashboard() {
                                 </div>
                             </CardContent>
                         </Card>
-                        <Card>
+                        <Card className="transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
                             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                                 <CardTitle className="text-sm font-medium">Sales</CardTitle>
                                 <CreditCard className="h-4 w-4 text-muted-foreground" />
@@ -185,7 +185,7 @@ export default function Dashboard() {
                                 </div>
                             </CardContent>
                         </Card>
-                        <Card>
+                        <Card className="transition-all duration-300 hover:shadow-lg hover:-translate-y-1">
                             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                                 <CardTitle className="text-sm font-medium">
                                     Active Now
@@ -347,9 +347,9 @@ export default function Dashboard() {
                         </div>
                     </div>
 
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+                    <div className="grid gap-4 grid-cols-1 lg:grid-cols-7">
                         {/* Chart */}
-                        <Card className="col-span-4 transition-all hover:shadow-md">
+                        <Card className="col-span-1 lg:col-span-4 transition-all duration-300 hover:shadow-lg">
                             <CardHeader>
                                 <CardTitle>Overview</CardTitle>
                             </CardHeader>
@@ -393,7 +393,7 @@ export default function Dashboard() {
                         </Card>
 
                         {/* Recent Sales/Activity */}
-                        <Card className="col-span-3 transition-all hover:shadow-md">
+                        <Card className="col-span-1 lg:col-span-3 transition-all duration-300 hover:shadow-lg">
                             <CardHeader>
                                 <CardTitle>Recent Activity</CardTitle>
                                 <p className="text-sm text-muted-foreground">
@@ -421,6 +421,35 @@ export default function Dashboard() {
                                             </div>
                                         </div>
                                     ))}
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        {/* AI Insights Placeholder */}
+                        <Card className="col-span-1 lg:col-span-7 bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-pink-500/10 border-indigo-500/20 transition-all duration-300 hover:shadow-lg mt-4">
+                            <CardHeader>
+                                <div className="flex items-center gap-2">
+                                    <Zap className="h-5 w-5 text-indigo-500" />
+                                    <CardTitle className="text-indigo-700 dark:text-indigo-400">AI Insights & Predictions</CardTitle>
+                                </div>
+                            </CardHeader>
+                            <CardContent>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    <div className="bg-background/60 backdrop-blur rounded-lg p-4 border border-indigo-500/10">
+                                        <h4 className="text-sm font-medium text-muted-foreground mb-1">Risk Assessment</h4>
+                                        <p className="text-2xl font-bold text-emerald-600">Low Risk</p>
+                                        <p className="text-xs text-muted-foreground mt-2">Portfolio health is optimal.</p>
+                                    </div>
+                                    <div className="bg-background/60 backdrop-blur rounded-lg p-4 border border-indigo-500/10">
+                                        <h4 className="text-sm font-medium text-muted-foreground mb-1">Cashflow Forecast (30d)</h4>
+                                        <p className="text-2xl font-bold">฿125,400</p>
+                                        <p className="text-xs text-emerald-600 mt-2 flex items-center gap-1"><ArrowUpRight className="h-3 w-3" /> +12.5% expected</p>
+                                    </div>
+                                    <div className="bg-background/60 backdrop-blur rounded-lg p-4 border border-indigo-500/10">
+                                        <h4 className="text-sm font-medium text-muted-foreground mb-1">Smart Match Queue</h4>
+                                        <p className="text-2xl font-bold text-amber-500">5 Slips</p>
+                                        <p className="text-xs text-muted-foreground mt-2">Ready for AI verification.</p>
+                                    </div>
                                 </div>
                             </CardContent>
                         </Card>
