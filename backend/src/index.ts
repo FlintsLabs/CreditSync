@@ -10,6 +10,7 @@ import { filesRoute } from "./modules/files";
 import { loansRoute } from "./modules/loans";
 import { transactionsRoute } from "./modules/transactions";
 import { webhookRoute } from "./modules/webhook";
+import { aiToolsRoute } from "./modules/ai-tools";
 
 const app = new Elysia()
     .use(cors({
@@ -28,6 +29,7 @@ const app = new Elysia()
     .use(webhookRoute) // Webhook has its own signature verification
     .guard({ isLoggedIn: true }, (app) =>
         app
+            .use(aiToolsRoute)
             .use(bankProfilesRoute)
             .use(bankLoansRoute)
             .use(borrowersRoute)
