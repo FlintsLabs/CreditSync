@@ -117,9 +117,35 @@ export default function DashboardLayout() {
                 )}
 
                 {/* Page Content */}
-                <main className="flex-1 p-4 md:p-8 overflow-x-hidden">
+                <main className="flex-1 p-4 md:p-8 overflow-x-hidden pb-20 md:pb-8">
                     <Outlet />
                 </main>
+
+                {/* Bottom Navigation Bar (Visible only on Mobile) */}
+                <div className="fixed bottom-0 left-0 right-0 z-30 flex h-16 items-center justify-around border-t bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 md:hidden">
+                    {[
+                        { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+                        { name: "Borrowers", href: "/dashboard/borrowers", icon: Users },
+                        { name: "Loans", href: "/dashboard/loans", icon: FileText },
+                        { name: "Transactions", href: "/dashboard/transactions", icon: Activity },
+                    ].map((item) => {
+                        const Icon = item.icon;
+                        const isActive = location.pathname === item.href;
+                        return (
+                            <Link
+                                key={item.href}
+                                to={item.href}
+                                className={cn(
+                                    "flex flex-col items-center justify-center gap-1 min-w-[4rem]",
+                                    isActive ? "text-primary" : "text-muted-foreground hover:text-primary"
+                                )}
+                            >
+                                <Icon className="h-5 w-5" />
+                                <span className="text-[10px] font-medium">{item.name}</span>
+                            </Link>
+                        );
+                    })}
+                </div>
             </div>
         </div>
     );
