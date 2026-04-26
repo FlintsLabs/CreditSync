@@ -1,10 +1,11 @@
-import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/Card";
+import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { Activity, CreditCard, DollarSign, Users, TrendingUp, ArrowUpRight, ArrowDownRight, ChevronRight, MessageCircle, Facebook, Users2, BarChart2 } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, PieChart, Pie, Cell } from "recharts";
 import { useNavigate } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { Badge } from "../../components/ui/badge";
 import PortfolioGraph from "./PortfolioGraph";
+import FundPerformanceChart from "./FundPerformanceChart";
 
 const data = [
     { name: "Jan", total: 12000 },
@@ -391,6 +392,8 @@ export default function Dashboard() {
                                 </ResponsiveContainer>
                             </CardContent>
                         </Card>
+
+                        <FundPerformanceChart />
 
                         {/* Recent Sales/Activity */}
                         <Card className="col-span-3 transition-all hover:shadow-md">

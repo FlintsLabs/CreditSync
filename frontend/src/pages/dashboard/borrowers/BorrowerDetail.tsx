@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api } from "../../../lib/api";
-import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/Card";
+import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
 import { Avatar, AvatarImage, AvatarFallback } from "../../../components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs";

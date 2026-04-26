@@ -1,7 +1,7 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, ArrowUpRight, ArrowDownRight, Download } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
-import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/Card";
+import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
 import { FundPerformanceChart } from "./FundPerformanceChart";
 import { useTranslation } from "react-i18next";

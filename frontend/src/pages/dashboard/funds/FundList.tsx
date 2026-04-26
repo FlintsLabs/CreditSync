@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/Button";
-import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/Card";
+import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/card";
 import { Plus, Wallet, Building2, Trash2 } from "lucide-react";
 import { Input } from "../../../components/ui/Input";
 import { useTranslation } from "react-i18next";

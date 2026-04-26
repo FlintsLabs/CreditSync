@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/Button";
-import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/Card";
+import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../../components/ui/dropdown-menu";
 import { Plus, FileText, Calendar, MoreHorizontal, DollarSign } from "lucide-react";
 import { Link } from "react-router-dom";
