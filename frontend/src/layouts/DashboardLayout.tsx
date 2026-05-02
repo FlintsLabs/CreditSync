@@ -117,9 +117,33 @@ export default function DashboardLayout() {
                 )}
 
                 {/* Page Content */}
-                <main className="flex-1 p-4 md:p-8 overflow-x-hidden">
+                <main className="flex-1 p-4 md:p-8 overflow-x-hidden pb-20 md:pb-8">
                     <Outlet />
                 </main>
+
+                {/* Mobile Bottom Navigation (Visible only on Mobile) */}
+                <nav className="md:hidden fixed bottom-0 w-full border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 z-30 pb-safe">
+                    <div className="flex items-center justify-around h-16 px-2">
+                        {navigation.slice(0, 5).map((item) => {
+                            const Icon = item.icon;
+                            // Check if current path starts with the nav item's href (to keep it active on child routes)
+                            const isActive = location.pathname === item.href || (item.href !== "/dashboard" && location.pathname.startsWith(item.href));
+                            return (
+                                <Link
+                                    key={item.href}
+                                    to={item.href}
+                                    className={cn(
+                                        "flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors hover:text-primary",
+                                        isActive ? "text-primary" : "text-muted-foreground"
+                                    )}
+                                >
+                                    <Icon className={cn("h-5 w-5", isActive && "fill-primary/20")} />
+                                    <span className="text-[10px] font-medium tracking-wide truncate max-w-[60px] text-center">{item.name}</span>
+                                </Link>
+                            );
+                        })}
+                    </div>
+                </nav>
             </div>
         </div>
     );
