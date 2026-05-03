@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Button } from "../../components/ui/Button";
+import { Button } from "../../components/ui/button";
 import { useGoogleLogin } from "@react-oauth/google";
 import { api } from "../../lib/api";
 

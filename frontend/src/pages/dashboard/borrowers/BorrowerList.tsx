@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
-import { Button } from "../../../components/ui/Button";
-import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "../../../components/ui/Card";
+import { Button } from "../../../components/ui/button";
+import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "../../../components/ui/card";
 import { Plus, Search, Edit2, Eye, MapPin, Users } from "lucide-react";
-import { Input } from "../../../components/ui/Input";
+import { Input } from "../../../components/ui/input";
 import { Link } from "react-router-dom";
 import { Avatar, AvatarImage, AvatarFallback } from "../../../components/ui/avatar";
 import { Badge } from "../../../components/ui/badge";

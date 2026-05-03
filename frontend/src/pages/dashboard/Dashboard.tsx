@@ -1,4 +1,4 @@
-import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/Card";
+import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { Activity, CreditCard, DollarSign, Users, TrendingUp, ArrowUpRight, ArrowDownRight, ChevronRight, MessageCircle, Facebook, Users2, BarChart2 } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis, PieChart, Pie, Cell } from "recharts";
 import { useNavigate } from "react-router-dom";
