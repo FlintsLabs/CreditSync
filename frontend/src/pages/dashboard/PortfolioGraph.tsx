@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/Card';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
 import { useTheme } from '../../components/theme-provider';
 import { Focus, ListFilter } from 'lucide-react';

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../../components/ui/dialog";
-import { Button } from "../../../components/ui/Button";
+import { Button } from "../../../components/ui/button";
 import { api } from "../../../lib/api";
 import { Loader2, Copy } from "lucide-react";
 

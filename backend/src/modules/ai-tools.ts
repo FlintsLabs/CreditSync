@@ -1,19 +1,19 @@
 import { Elysia, t } from "elysia";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import { borrowers, loans, transactions } from "../db/schema";
-import { eq, and, sql } from "drizzle-orm";
+import { authPlugin } from "../middleware/auth";
 
-// Schema for available AI Tools
-const aiToolsSchema = [
+const toolsSchemas = [
     {
         name: "get_borrower_summary",
-        description: "Get a summary of a specific borrower's profile and credit score.",
+        description: "Get a summary of a specific borrower including active loans and outstanding balance.",
         parameters: {
             type: "object",
             properties: {
                 borrowerId: {
                     type: "number",
-                    description: "The ID of the borrower to lookup."
+                    description: "The ID of the borrower to look up."
                 }
             },
             required: ["borrowerId"]
@@ -21,7 +21,16 @@ const aiToolsSchema = [
     },
     {
         name: "get_active_loans",
-        description: "Get all active loans for the current tenant.",
+        description: "Retrieve active loans for the current tenant.",
+        parameters: {
+            type: "object",
+            properties: {},
+            required: []
+        }
+    },
+    {
+        name: "get_financial_overview",
+        description: "Get a high-level financial overview including total lent, collected, and active principal.",
         parameters: {
             type: "object",
             properties: {},
@@ -30,75 +39,147 @@ const aiToolsSchema = [
     }
 ];
 
-import { authPlugin } from "../middleware/auth";
+const executeToolBodySchema = t.Union([
+    t.Object({
+        tool: t.Literal("get_borrower_summary"),
+        parameters: t.Object({
+            borrowerId: t.Number()
+        })
+    }),
+    t.Object({
+        tool: t.Literal("get_active_loans"),
+        parameters: t.Object({})
+    }),
+    t.Object({
+        tool: t.Literal("get_financial_overview"),
+        parameters: t.Object({})
+    })
+]);
 
 export const aiToolsRoute = new Elysia({ prefix: "/ai-tools" })
     .use(authPlugin)
-    .get("/tools", () => {
-        return aiToolsSchema;
-    })
-    .post("/execute", async ({ body, user }) => {
-        const { tool, parameters } = body as { tool: string; parameters: any };
+    .get("/tools", ({ user, set }) => {
+        if (!user?.tenantId) {
+            set.status = 401;
+            return { error: "Unauthorized" };
+        }
 
-        if (!user || !user.tenantId) {
-            throw new Error("Unauthorized: Tenant context missing");
+        return toolsSchemas;
+    })
+    .post("/execute", async ({ body, user, set }) => {
+        if (!user?.tenantId) {
+            set.status = 401;
+            return { error: "Unauthorized" };
         }
 
         try {
-            switch (tool) {
+            switch (body.tool) {
                 case "get_borrower_summary": {
-                    const borrowerId = Number(parameters.borrowerId);
-                    if (isNaN(borrowerId)) {
-                        return { error: "Invalid borrowerId" };
-                    }
+                    const borrowerId = body.parameters.borrowerId;
 
-                    const result = await db.query.borrowers.findFirst({
+                    const borrower = await db.query.borrowers.findFirst({
                         where: and(
                             eq(borrowers.id, borrowerId),
                             eq(borrowers.tenantId, user.tenantId)
                         )
                     });
 
-                    if (!result) return { error: "Borrower not found or unauthorized" };
+                    if (!borrower) {
+                        set.status = 404;
+                        return { error: "Borrower not found" };
+                    }
+
+                    const activeLoans = await db.select()
+                        .from(loans)
+                        .where(and(
+                            eq(loans.borrowerId, borrowerId),
+                            eq(loans.tenantId, user.tenantId),
+                            eq(loans.status, "active")
+                        ));
+
+                    const loanIds = activeLoans.map((loan) => loan.id);
+                    let totalPaid = 0;
+
+                    if (loanIds.length > 0) {
+                        const [txsResult] = await db.select({
+                            total: sql<number>`cast(coalesce(sum(${transactions.amount}), 0) as float)`
+                        })
+                            .from(transactions)
+                            .where(and(
+                                eq(transactions.tenantId, user.tenantId),
+                                inArray(transactions.loanId, loanIds)
+                            ));
+
+                        totalPaid = Number(txsResult?.total ?? 0);
+                    }
+
+                    const totalPrincipal = activeLoans.reduce(
+                        (sum, loan) => sum + Number(loan.principalAmount),
+                        0
+                    );
 
                     return {
-                        id: result.id,
-                        name: result.name,
-                        creditScore: result.creditScore,
-                        status: result.notes || "No notes available"
+                        borrower: {
+                            id: borrower.id,
+                            name: borrower.name,
+                            idCardNumber: borrower.idCardNumber,
+                            creditScore: borrower.creditScore
+                        },
+                        activeLoansCount: activeLoans.length,
+                        totalPrincipalLent: totalPrincipal,
+                        totalRepaid: totalPaid,
+                        estimatedOutstandingPrincipal: totalPrincipal - totalPaid
                     };
                 }
 
                 case "get_active_loans": {
-                    const activeLoans = await db.query.loans.findMany({
-                        where: and(
-                            eq(loans.status, "active"),
-                            eq(loans.tenantId, user.tenantId)
-                        ),
-                        with: {
-                            borrower: true
-                        }
-                    });
+                    const activeLoans = await db.select({
+                        id: loans.id,
+                        borrowerName: borrowers.name,
+                        principalAmount: loans.principalAmount,
+                        installmentAmount: loans.installmentAmount,
+                        repaymentType: loans.repaymentType,
+                        interestRate: loans.interestRate,
+                        startDate: loans.startDate
+                    })
+                        .from(loans)
+                        .leftJoin(borrowers, eq(loans.borrowerId, borrowers.id))
+                        .where(and(
+                            eq(loans.tenantId, user.tenantId),
+                            eq(loans.status, "active")
+                        ))
+                        .orderBy(desc(loans.createdAt))
+                        .limit(20);
 
-                    return activeLoans.map(loan => ({
-                        id: loan.id,
-                        borrowerName: loan.borrower.name,
-                        principalAmount: Number(loan.principalAmount),
-                        installmentAmount: Number(loan.installmentAmount),
-                        repaymentType: loan.repaymentType
-                    }));
+                    return { loans: activeLoans };
                 }
 
-                default:
-                    return { error: `Tool ${tool} not found` };
+                case "get_financial_overview": {
+                    const [loanAgg] = await db.select({
+                        totalLent: sql<number>`cast(coalesce(sum(${loans.principalAmount}), 0) as float)`,
+                        activePrincipal: sql<number>`cast(coalesce(sum(case when ${loans.status} = 'active' then ${loans.principalAmount} else 0 end), 0) as float)`
+                    })
+                        .from(loans)
+                        .where(eq(loans.tenantId, user.tenantId));
+
+                    const [txAgg] = await db.select({
+                        totalCollected: sql<number>`cast(coalesce(sum(${transactions.amount}), 0) as float)`
+                    })
+                        .from(transactions)
+                        .where(eq(transactions.tenantId, user.tenantId));
+
+                    return {
+                        totalLent: Number(loanAgg?.totalLent ?? 0),
+                        totalCollected: Number(txAgg?.totalCollected ?? 0),
+                        activePrincipal: Number(loanAgg?.activePrincipal ?? 0)
+                    };
+                }
             }
-        } catch (error: any) {
-            console.error("AI Tool Execution Error:", error);
-            return { error: "Failed to execute tool", details: error.message };
+        } catch (error) {
+            console.error("AI tool execution failed:", error);
+            set.status = 500;
+            return { error: "Failed to execute tool" };
         }
     }, {
-        body: t.Object({
-            tool: t.String(),
-            parameters: t.Any()
-        })
+        body: executeToolBodySchema
     });

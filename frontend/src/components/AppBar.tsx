@@ -2,7 +2,7 @@
 import { Settings, LogOut, User } from "lucide-react";
 import { ModeToggle } from "./theme-toggle";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
-import { Button } from "./ui/Button";
+import { Button } from "./ui/button";
 import {
     DropdownMenu,
     DropdownMenuContent,

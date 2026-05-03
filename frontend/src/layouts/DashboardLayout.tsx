@@ -5,7 +5,7 @@ import { cn } from "../lib/utils";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import AppBar from "../components/AppBar";
 import { useTranslation } from "react-i18next";
-import { Button } from "../components/ui/Button";
+import { Button } from "../components/ui/button";
 
 export default function DashboardLayout() {
     const location = useLocation();

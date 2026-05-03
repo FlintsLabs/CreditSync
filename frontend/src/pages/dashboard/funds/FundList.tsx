@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
-import { Button } from "../../../components/ui/Button";
-import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/Card";
+import { Button } from "../../../components/ui/button";
+import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/card";
 import { Plus, Wallet, Building2, Trash2 } from "lucide-react";
-import { Input } from "../../../components/ui/Input";
+import { Input } from "../../../components/ui/input";
 import { useTranslation } from "react-i18next";
 
 interface BankProfile {
