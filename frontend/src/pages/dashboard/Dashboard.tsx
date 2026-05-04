@@ -1,5 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { Activity, CreditCard, DollarSign, Users, TrendingUp, ArrowUpRight, ChevronRight, MessageCircle, Facebook, Users2, BarChart2 } from "lucide-react";
+import { Activity, CreditCard, DollarSign, Users, TrendingUp, ArrowUpRight, ChevronRight, MessageCircle, Users2, BarChart2 } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useNavigate } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
@@ -446,7 +446,7 @@ export default function Dashboard() {
                                     <div className="flex justify-between items-start">
                                         <div>
                                             <CardTitle className="text-lg flex items-center gap-2">
-                                                {group.platform === 'line' ? <MessageCircle className="h-5 w-5 text-[#06c755]" fill="#06c755" color="white" /> : <Facebook className="h-5 w-5 text-[#1877f2]" fill="#1877f2" color="white" />}
+                                                {group.platform === 'line' ? <MessageCircle className="h-5 w-5 text-[#06c755]" fill="#06c755" color="white" /> : <Users2 className="h-5 w-5 text-[#1877f2]" />}
                                                 {group.name}
                                             </CardTitle>
                                             <p className="text-xs text-muted-foreground mt-1 capitalize">{group.platform} Group</p>

@@ -1,64 +1,88 @@
-# CreditSync 💸
+# CreditSync
 
-A Modern, High-Performance **Loan Management System** built for speed and precision.
+CreditSync is a multi-tenant, mobile-first loan and credit portfolio management system for small lending operations. The app combines borrower, loan, fund, transaction, analytics, file/OCR, LINE webhook, and AI tool workflows in one Bun-based TypeScript stack.
 
-## 🚀 Technology Stack
+## Stack
 
-| Component | Technology | Description |
-| :--- | :--- | :--- |
-| **Runtime** | ![Bun](https://img.shields.io/badge/Bun-000000?style=flat&logo=bun&logoColor=white) | Ultra-fast JavaScript runtime |
-| **Backend** | ![Elysia](https://img.shields.io/badge/ElysiaJS-FE5F50?style=flat&logo=bun&logoColor=white) | High-performance API Framework |
-| **Frontend** | ![React](https://img.shields.io/badge/React-20232A?style=flat&logo=react&logoColor=61DAFB) | UI Library (Vite Build) |
-| **Styling** | ![Tailwind](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=flat&logo=tailwind-css&logoColor=white) | Utility-first CSS |
-| **Database** | ![Postgres](https://img.shields.io/badge/PostgreSQL-316192?style=flat&logo=postgresql&logoColor=white) | Relational Database |
-| **ORM** | ![Drizzle](https://img.shields.io/badge/Drizzle_ORM-C5F74F?style=flat&logo=drizzle&logoColor=black) | TypeScript ORM |
-| **Storage** | ![MinIO](https://img.shields.io/badge/MinIO-C72E49?style=flat&logo=minio&logoColor=white) | S3 Compatible Object Storage |
+| Area | Technology |
+| --- | --- |
+| Runtime | Bun |
+| Backend | Elysia 1.4, Drizzle ORM 0.45, PostgreSQL, MinIO/S3 |
+| Frontend | React 19, Vite 8, TypeScript 6, Tailwind CSS 4 |
+| UI | shadcn-style local components, Radix UI, lucide-react, Recharts |
+| Integrations | Google Auth, LINE Messaging API, Tesseract OCR |
 
-## 📂 Project Structure
+## Features
+
+- Tenant-scoped borrowers, loans, bank funds, bank profiles, and transactions.
+- JWT authentication and route-level authorization guard.
+- Fund performance analytics via `GET /analytics/fund-performance`.
+- AI tool registry and execution endpoint under `/ai-tools`.
+- Mobile-first dashboard layout with bottom navigation and analytics tab.
+- File upload, OCR extraction, and S3-compatible object storage support.
+- LINE webhook ingestion path for bot-uploaded files.
+
+## Project Structure
 
 ```text
-├── backend/            # Bun + Elysia API Server
-│   ├── src/
-│   │   ├── modules/    # API Feature Modules (auth, loans, transactions)
-│   │   ├── db/         # Drizzle Schema & Connection
-│   │   └── lib/        # Shared Utilities (calculator, storage)
-│
-├── frontend/           # React + Vite Application
-│   ├── src/
-│   │   ├── components/ # Reusable UI (shadcn/ui)
-│   │   ├── pages/      # Feature Pages (Dashboard, Wizard)
-│   │   └── layouts/    # App Shells
-│
-├── docs/               # Project Documentation
-│   ├── adr/            # Architecture Decision Records
-│   └── implementation_plan.md
+backend/
+  src/
+    db/          Drizzle schema and database connection
+    lib/         Shared calculator, OCR, and storage helpers
+    middleware/  Authentication middleware
+    modules/     Elysia route modules
+
+frontend/
+  src/
+    components/  Shared UI components
+    layouts/     Dashboard shell and navigation
+    pages/       Dashboard, auth, borrowers, loans, funds, transactions
+    lib/         API/auth utilities
+
+docs/
+  adr/           Architecture decisions
+  implementation_plan.md
 ```
 
-## 🛠️ Getting Started
+## Local Development
 
-### Prerequisites
-*   [Bun](https://bun.sh) (v1.x)
-*   [MinIO](https://min.io) (Running on port 9000/9001)
-*   PostgreSQL
+Install dependencies per app:
 
-### Running Locally
+```bash
+cd backend
+bun install
 
-1.  **Backend**
-    ```bash
-    cd backend
-    bun install
-    bun run dev
-    ```
+cd ../frontend
+bun install
+```
 
-2.  **Frontend**
-    ```bash
-    cd frontend
-    bun install
-    bun run dev -- --host 0.0.0.0
-    ```
+Run the API:
 
-## 📖 Documentation
-See [docs/](./docs) for detailed design documents and architecture decisions.
+```bash
+cd backend
+bun run dev
+```
 
----
-*Generated: 2025-12-08*
+Run the frontend:
+
+```bash
+cd frontend
+bun run dev
+```
+
+## Verification
+
+```bash
+cd backend
+bun build src/index.ts --target=bun --outdir=/tmp/creditsync-backend-build
+
+cd ../frontend
+bun run lint
+bun run build
+```
+
+## Dependency Updates
+
+Bun is the primary package manager for this repo. Use `bun update --latest` inside `backend/` and `frontend/`, and keep `bun.lock` committed with the matching `package.json`. If `backend/package-lock.json` remains in the repo, sync it after backend dependency changes.
+
+Last dependency refresh: 2026-05-05.
