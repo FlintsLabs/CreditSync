@@ -1,10 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/button";
-import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/card";
 import { Plus, ArrowUpRight, FileText } from "lucide-react";
 import { Link } from "react-router-dom";
-import { cn } from "../../../lib/utils";
 
 export default function TransactionList() {
     const [transactions, setTransactions] = useState<any[]>([]);

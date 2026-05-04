@@ -99,7 +99,7 @@ export function LoanClosingModal({ loanId, open, onOpenChange }: LoanClosingModa
                 
                 <DialogFooter>
                     <Button
-                        variant="secondary"
+                        variant="outline"
                         onClick={() => onOpenChange(false)}
                     >
                         Close

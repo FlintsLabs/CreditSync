@@ -3,7 +3,7 @@ import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/card";
-import { ChevronRight, ChevronLeft, Calculator, CheckCircle } from "lucide-react";
+import { ChevronRight, ChevronLeft, CheckCircle } from "lucide-react";
 
 export default function LoanWizard() {
     const [step, setStep] = useState(1);
