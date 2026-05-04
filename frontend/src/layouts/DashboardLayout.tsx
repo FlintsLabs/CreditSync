@@ -21,13 +21,6 @@ export default function DashboardLayout() {
         { name: t("dashboard.settings", "Settings"), href: "/dashboard/settings", icon: Settings },
     ];
 
-    const mobileNav = [
-        { name: t("dashboard.title", "Dashboard"), href: "/dashboard", icon: LayoutDashboard },
-        { name: t("dashboard.borrowers", "Borrowers"), href: "/dashboard/borrowers", icon: Users },
-        { name: t("dashboard.loans", "Loans"), href: "/dashboard/loans", icon: FileText },
-        { name: t("dashboard.transactions", "Txns"), href: "/dashboard/transactions", icon: Activity },
-    ];
-
     return (
         <div className="flex min-h-screen bg-background text-foreground transition-colors duration-300">
             {/* Desktop Sidebar (Hidden on Mobile) */}
@@ -124,30 +117,9 @@ export default function DashboardLayout() {
                 )}
 
                 {/* Page Content */}
-                <main className="flex-1 p-4 md:p-8 overflow-x-hidden pb-20 md:pb-8">
+                <main className="flex-1 p-4 md:p-8 overflow-x-hidden">
                     <Outlet />
                 </main>
-
-                {/* Mobile Bottom Navigation (Visible only on Mobile) */}
-                <div className="fixed bottom-0 left-0 right-0 z-30 flex h-16 items-center justify-around border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 md:hidden pb-safe">
-                    {mobileNav.map((item) => {
-                        const Icon = item.icon;
-                        const isActive = location.pathname === item.href;
-                        return (
-                            <Link
-                                key={item.href}
-                                to={item.href}
-                                className={cn(
-                                    "flex flex-col items-center justify-center gap-1 flex-1 py-2 text-xs font-medium transition-colors",
-                                    isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"
-                                )}
-                            >
-                                <Icon className="h-5 w-5" />
-                                <span>{item.name}</span>
-                            </Link>
-                        );
-                    })}
-                </div>
             </div>
         </div>
     );

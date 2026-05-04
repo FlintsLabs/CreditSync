@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
-import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/card";
+import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/Card";
 import { Upload, Loader2, CheckCircle, MapPin } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { TagInput } from "../../../components/ui/tag-input";

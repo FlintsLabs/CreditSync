@@ -1,5 +1,5 @@
 import { ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Area, ReferenceLine } from 'recharts';
-import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "../../../components/ui/card";
+import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "../../../components/ui/Card";
 import { Badge } from "../../../components/ui/badge";
 import { cn } from "../../../lib/utils";
 import { useState } from 'react';

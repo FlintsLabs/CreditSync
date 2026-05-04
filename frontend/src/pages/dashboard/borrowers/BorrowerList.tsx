@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/Button";
-import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "../../../components/ui/card";
+import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "../../../components/ui/Card";
 import { Plus, Search, Edit2, Eye, MapPin, Users } from "lucide-react";
 import { Input } from "../../../components/ui/Input";
 import { Link } from "react-router-dom";
