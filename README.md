@@ -6,16 +6,16 @@ CreditSync is a multi-tenant, mobile-first loan and credit portfolio management 
 
 | Area | Technology | Version |
 | --- | --- | --- |
-| Runtime | Bun | 1.3.3 |
-| Backend API | Elysia | 1.4.28 |
-| Backend middleware | `@elysiajs/cors`, `@elysiajs/jwt`, `@elysiajs/swagger` | 1.4.2, 1.4.2, 1.3.1 |
-| ORM / database driver | Drizzle ORM, Drizzle Kit, postgres | 0.45.2, 0.31.10, 3.4.9 |
-| Database | PostgreSQL | External service, not pinned in repo |
-| Object storage | MinIO / S3-compatible storage, AWS SDK S3 client | External service, `@aws-sdk/client-s3` 3.1041.0 |
-| Frontend | React, React DOM, Vite, TypeScript | 19.2.5, 19.2.5, 8.0.10, 6.0.3 |
-| Styling | Tailwind CSS, `@tailwindcss/postcss`, PostCSS, Autoprefixer | 4.2.4, 4.2.4, 8.5.14, 10.5.0 |
-| UI | shadcn-style local components, Radix UI, lucide-react, Recharts | local, Radix 1.1.x/2.1.x, 1.14.0, 3.8.1 |
-| Integrations | Google Auth, React Google OAuth, LINE Messaging API, Tesseract OCR | 10.6.2, 0.13.5, 11.0.0, 7.0.0 |
+| Runtime | ![Bun](https://img.shields.io/badge/Bun-000000?style=flat&logo=bun&logoColor=white) Bun | 1.3.3 |
+| Backend API | ![Elysia](https://img.shields.io/badge/ElysiaJS-FE5F50?style=flat&logo=bun&logoColor=white) Elysia | 1.4.28 |
+| Backend middleware | ![Elysia](https://img.shields.io/badge/ElysiaJS-FE5F50?style=flat&logo=bun&logoColor=white) `@elysiajs/cors`, `@elysiajs/jwt`, `@elysiajs/swagger` | 1.4.2, 1.4.2, 1.3.1 |
+| ORM / database driver | ![Drizzle](https://img.shields.io/badge/Drizzle_ORM-C5F74F?style=flat&logo=drizzle&logoColor=black) Drizzle ORM, Drizzle Kit, postgres | 0.45.2, 0.31.10, 3.4.9 |
+| Database | ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-316192?style=flat&logo=postgresql&logoColor=white) PostgreSQL | External service, not pinned in repo |
+| Object storage | ![MinIO](https://img.shields.io/badge/MinIO-C72E49?style=flat&logo=minio&logoColor=white) MinIO / S3-compatible storage, AWS SDK S3 client | External service, `@aws-sdk/client-s3` 3.1041.0 |
+| Frontend | ![React](https://img.shields.io/badge/React-20232A?style=flat&logo=react&logoColor=61DAFB) ![Vite](https://img.shields.io/badge/Vite-646CFF?style=flat&logo=vite&logoColor=white) ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=flat&logo=typescript&logoColor=white) React, React DOM, Vite, TypeScript | 19.2.5, 19.2.5, 8.0.10, 6.0.3 |
+| Styling | ![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=flat&logo=tailwind-css&logoColor=white) Tailwind CSS, `@tailwindcss/postcss`, PostCSS, Autoprefixer | 4.2.4, 4.2.4, 8.5.14, 10.5.0 |
+| UI | ![Radix UI](https://img.shields.io/badge/Radix_UI-161618?style=flat&logo=radix-ui&logoColor=white) ![Recharts](https://img.shields.io/badge/Recharts-FF6384?style=flat) shadcn-style local components, Radix UI, lucide-react, Recharts | local, Radix 1.1.x/2.1.x, 1.14.0, 3.8.1 |
+| Integrations | ![Google](https://img.shields.io/badge/Google_Auth-4285F4?style=flat&logo=google&logoColor=white) ![LINE](https://img.shields.io/badge/LINE-00C300?style=flat&logo=line&logoColor=white) Google Auth, React Google OAuth, LINE Messaging API, Tesseract OCR | 10.6.2, 0.13.5, 11.0.0, 7.0.0 |
 
 ## Features
 
