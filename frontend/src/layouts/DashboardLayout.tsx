@@ -117,9 +117,30 @@ export default function DashboardLayout() {
                 )}
 
                 {/* Page Content */}
-                <main className="flex-1 p-4 md:p-8 overflow-x-hidden">
+                <main className="flex-1 p-4 md:p-8 overflow-x-hidden pb-20 md:pb-8">
                     <Outlet />
                 </main>
+
+                {/* Mobile Bottom Navigation Bar */}
+                <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 flex h-16 bg-background border-t justify-around items-center px-2">
+                    {navigation.slice(0, 4).map((item) => {
+                        const Icon = item.icon;
+                        const isActive = location.pathname === item.href;
+                        return (
+                            <Link
+                                key={item.href}
+                                to={item.href}
+                                className={cn(
+                                    "flex flex-col items-center justify-center w-full h-full text-xs font-medium transition-colors",
+                                    isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"
+                                )}
+                            >
+                                <Icon className="h-5 w-5 mb-1" />
+                                <span>{item.name}</span>
+                            </Link>
+                        );
+                    })}
+                </nav>
             </div>
         </div>
     );
