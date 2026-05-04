@@ -4,6 +4,7 @@ import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "rec
 import { useNavigate } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import PortfolioGraph from "./PortfolioGraph";
+import { FundPerformanceChart } from "./funds/FundPerformanceChart";
 
 const data = [
     { name: "Jan", total: 12000 },
@@ -100,7 +101,7 @@ export default function Dashboard() {
                     <TabsTrigger value="overview">Overview</TabsTrigger>
                     <TabsTrigger value="groups">Borrower Groups</TabsTrigger>
                     <TabsTrigger value="graph">Portfolio Graph</TabsTrigger>
-                    <TabsTrigger value="analytics" disabled>Analytics</TabsTrigger>
+                    <TabsTrigger value="analytics">Analytics</TabsTrigger>
                 </TabsList>
 
                 {/* TAB: OVERVIEW */}
@@ -507,6 +508,11 @@ export default function Dashboard() {
                 {/* TAB: PORTFOLIO GRAPH */}
                 <TabsContent value="graph" className="space-y-4">
                     <PortfolioGraph />
+                </TabsContent>
+
+                {/* TAB: ANALYTICS */}
+                <TabsContent value="analytics" className="space-y-4">
+                    <FundPerformanceChart />
                 </TabsContent>
             </Tabs>
         </div>

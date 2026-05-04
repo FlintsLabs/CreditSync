@@ -121,25 +121,29 @@ export default function DashboardLayout() {
                     <Outlet />
                 </main>
 
-                {/* Mobile Bottom Navigation Bar */}
-                <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 flex h-16 bg-background border-t justify-around items-center px-2">
-                    {navigation.slice(0, 4).map((item) => {
-                        const Icon = item.icon;
-                        const isActive = location.pathname === item.href;
-                        return (
-                            <Link
-                                key={item.href}
-                                to={item.href}
-                                className={cn(
-                                    "flex flex-col items-center justify-center w-full h-full text-xs font-medium transition-colors",
-                                    isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"
-                                )}
-                            >
-                                <Icon className="h-5 w-5 mb-1" />
-                                <span>{item.name}</span>
-                            </Link>
-                        );
-                    })}
+                {/* Mobile Bottom Navigation */}
+                <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+                    <div className="flex h-16 items-center justify-around px-2">
+                        {navigation.slice(0, 5).map((item) => {
+                            const Icon = item.icon;
+                            const isActive = location.pathname === item.href || (
+                                item.href !== "/dashboard" && location.pathname.startsWith(item.href)
+                            );
+                            return (
+                                <Link
+                                    key={item.href}
+                                    to={item.href}
+                                    className={cn(
+                                        "flex h-full w-full flex-col items-center justify-center gap-1 text-[10px] font-medium tracking-wide transition-colors hover:text-primary",
+                                        isActive ? "text-primary" : "text-muted-foreground"
+                                    )}
+                                >
+                                    <Icon className={cn("h-5 w-5", isActive && "fill-primary/20")} />
+                                    <span className="max-w-[60px] truncate text-center">{item.name}</span>
+                                </Link>
+                            );
+                        })}
+                    </div>
                 </nav>
             </div>
         </div>
