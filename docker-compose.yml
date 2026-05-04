@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:18
+    image: postgres:18.3
     container_name: creditsync-postgres
     restart: always
     environment:
@@ -14,7 +14,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
   minio:
-    image: minio/minio
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: creditsync-minio
     restart: always
     environment:
@@ -28,7 +28,7 @@ services:
       - minio_data:/data
 
   tunnel:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2026.3.0
     container_name: creditsync-tunnel
     restart: unless-stopped
     command: tunnel --no-autoupdate run
