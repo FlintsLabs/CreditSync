@@ -4,13 +4,18 @@ CreditSync is a multi-tenant, mobile-first loan and credit portfolio management 
 
 ## Stack
 
-| Area | Technology |
-| --- | --- |
-| Runtime | Bun |
-| Backend | Elysia 1.4, Drizzle ORM 0.45, PostgreSQL, MinIO/S3 |
-| Frontend | React 19, Vite 8, TypeScript 6, Tailwind CSS 4 |
-| UI | shadcn-style local components, Radix UI, lucide-react, Recharts |
-| Integrations | Google Auth, LINE Messaging API, Tesseract OCR |
+| Area | Technology | Version |
+| --- | --- | --- |
+| Runtime | Bun | 1.3.3 |
+| Backend API | Elysia | 1.4.28 |
+| Backend middleware | `@elysiajs/cors`, `@elysiajs/jwt`, `@elysiajs/swagger` | 1.4.2, 1.4.2, 1.3.1 |
+| ORM / database driver | Drizzle ORM, Drizzle Kit, postgres | 0.45.2, 0.31.10, 3.4.9 |
+| Database | PostgreSQL | External service, not pinned in repo |
+| Object storage | MinIO / S3-compatible storage, AWS SDK S3 client | External service, `@aws-sdk/client-s3` 3.1041.0 |
+| Frontend | React, React DOM, Vite, TypeScript | 19.2.5, 19.2.5, 8.0.10, 6.0.3 |
+| Styling | Tailwind CSS, `@tailwindcss/postcss`, PostCSS, Autoprefixer | 4.2.4, 4.2.4, 8.5.14, 10.5.0 |
+| UI | shadcn-style local components, Radix UI, lucide-react, Recharts | local, Radix 1.1.x/2.1.x, 1.14.0, 3.8.1 |
+| Integrations | Google Auth, React Google OAuth, LINE Messaging API, Tesseract OCR | 10.6.2, 0.13.5, 11.0.0, 7.0.0 |
 
 ## Features
 
