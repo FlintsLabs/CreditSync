@@ -5,7 +5,6 @@ import { useNavigate } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { Badge } from "../../components/ui/badge";
 import PortfolioGraph from "./PortfolioGraph";
-import FundPerformance from "./FundPerformance";
 
 const data = [
     { name: "Jan", total: 12000 },
@@ -90,7 +89,7 @@ export default function Dashboard() {
     const navigate = useNavigate();
     return (
         <div className="flex-1 space-y-8 p-4 pt-6">
-            <div className="flex flex-col md:flex-row items-start md:items-center justify-between space-y-2 md:space-y-0">
+            <div className="flex items-center justify-between space-y-2">
                 <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
                 <div className="flex items-center space-x-2">
                     {/* DateRangePicker Placeholder */}
@@ -98,12 +97,11 @@ export default function Dashboard() {
             </div>
 
             <Tabs defaultValue="overview" className="space-y-4">
-                {/* Responsive TabsList - switch to flex-wrap on small screens to avoid overflow */}
-                <TabsList className="flex flex-wrap h-auto w-full md:grid md:grid-cols-4 lg:w-[600px] mb-4">
-                    <TabsTrigger className="flex-1 md:flex-none" value="overview">Overview</TabsTrigger>
-                    <TabsTrigger className="flex-1 md:flex-none" value="groups">Groups</TabsTrigger>
-                    <TabsTrigger className="flex-1 md:flex-none" value="graph">Graph</TabsTrigger>
-                    <TabsTrigger className="flex-1 md:flex-none" value="analytics">Analytics</TabsTrigger>
+                <TabsList>
+                    <TabsTrigger value="overview">Overview</TabsTrigger>
+                    <TabsTrigger value="groups">Borrower Groups</TabsTrigger>
+                    <TabsTrigger value="graph">Portfolio Graph</TabsTrigger>
+                    <TabsTrigger value="analytics" disabled>Analytics</TabsTrigger>
                 </TabsList>
 
                 {/* TAB: OVERVIEW */}
@@ -349,9 +347,9 @@ export default function Dashboard() {
                         </div>
                     </div>
 
-                    <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-7">
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
                         {/* Chart */}
-                        <Card className="col-span-1 md:col-span-2 lg:col-span-4 transition-all hover:shadow-md">
+                        <Card className="col-span-4 transition-all hover:shadow-md">
                             <CardHeader>
                                 <CardTitle>Overview</CardTitle>
                             </CardHeader>
@@ -395,7 +393,7 @@ export default function Dashboard() {
                         </Card>
 
                         {/* Recent Sales/Activity */}
-                        <Card className="col-span-1 md:col-span-2 lg:col-span-3 transition-all hover:shadow-md">
+                        <Card className="col-span-3 transition-all hover:shadow-md">
                             <CardHeader>
                                 <CardTitle>Recent Activity</CardTitle>
                                 <p className="text-sm text-muted-foreground">
@@ -510,11 +508,6 @@ export default function Dashboard() {
                 {/* TAB: PORTFOLIO GRAPH */}
                 <TabsContent value="graph" className="space-y-4">
                     <PortfolioGraph />
-                </TabsContent>
-
-                {/* TAB: ANALYTICS (Fund Performance) */}
-                <TabsContent value="analytics" className="space-y-4">
-                    <FundPerformance />
                 </TabsContent>
             </Tabs>
         </div>
