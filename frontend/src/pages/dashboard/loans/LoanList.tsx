@@ -26,14 +26,16 @@ export default function LoanList() {
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="sticky top-0 z-10 -mx-4 flex h-20 items-center justify-between border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 sm:-mx-6 sm:h-24 sm:px-6">
                 <div>
-                    <h2 className="text-3xl font-bold tracking-tight">Loan Agreements</h2>
-                    <p className="text-muted-foreground">Manage active contracts and track repayments.</p>
+                    <h2 className="text-xl font-bold tracking-tight sm:text-3xl">Loan Agreements</h2>
+                    <p className="hidden text-sm text-muted-foreground sm:block">Manage active contracts and track repayments.</p>
                 </div>
                 <Link to="/dashboard/loans/new">
-                    <Button>
-                        <Plus className="mr-2 h-4 w-4" /> New Loan
+                    <Button className="rounded-full shadow-lg sm:rounded-md sm:shadow-none" size="sm">
+                        <Plus className="mr-2 h-4 w-4" />
+                        <span className="hidden sm:inline">New Loan</span>
+                        <span className="sm:hidden">New</span>
                     </Button>
                 </Link>
             </div>
