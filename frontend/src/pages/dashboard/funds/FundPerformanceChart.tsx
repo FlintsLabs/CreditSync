@@ -2,8 +2,9 @@ import { ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis, CartesianG
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
 import { cn } from "../../../lib/utils";
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { api } from "../../../lib/api";
 
 // Realistic Data Simulation
 const generateRealisticData = () => {
@@ -59,7 +60,7 @@ const generateRealisticData = () => {
     return data;
 };
 
-const allData = generateRealisticData();
+const fallbackData = generateRealisticData();
 
 // ... CustomTooltip component remains same ...
 const CustomTooltip = ({ active, payload, label }: any) => {
@@ -90,7 +91,20 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 export function FundPerformanceChart() {
     const { t } = useTranslation();
     const [selectedYears, setSelectedYears] = useState<number[]>([2024]);
+    const [allData, setAllData] = useState(fallbackData);
     const availableYears = [2023, 2024, 2025];
+
+    useEffect(() => {
+        api.get("/analytics/fund-performance")
+            .then((res) => {
+                if (Array.isArray(res.data) && res.data.length > 0) {
+                    setAllData(res.data);
+                }
+            })
+            .catch((error) => {
+                console.error("Failed to load fund performance data", error);
+            });
+    }, []);
 
     const handleYearToggle = (year: number) => {
         setSelectedYears(prev =>
