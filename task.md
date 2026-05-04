@@ -17,7 +17,7 @@
 - [ ] **Phase 3: Fund Management & Dashboard**
     - [x] Backend: Bank Profile & Bank Loan CRUD (Tenant-scoped) <!-- id: 5 -->
     - [x] Frontend: Dashboard for Bank Loans (Interest/ROI/Balance) <!-- id: 7 -->
-    - [ ] **[NEW] Fund Performance Dashboard (Combo Chart: Inflow/Outflow/Liability)** <!-- id: 34 -->
+    - [x] **[NEW] Fund Performance Dashboard (Combo Chart: Inflow/Outflow/Liability)** <!-- id: 34 -->
 
 - [/] **Phase 4: Borrower Profile & OCR**
     - [x] Backend: Borrower CRUD with S3 Image Upload <!-- id: 8 -->
