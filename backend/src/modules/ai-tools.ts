@@ -1,13 +1,14 @@
 import { Elysia, t } from "elysia";
 import { db } from "../db";
 import { borrowers, loans, transactions } from "../db/schema";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, desc, sql, inArray } from "drizzle-orm";
+import { authPlugin } from "../middleware/auth";
 
-// Schema for available AI Tools
-const aiToolsSchema = [
+// Define tool schemas for AI context
+const toolsSchemas = [
     {
         name: "get_borrower_summary",
-        description: "Get a summary of a specific borrower's profile and credit score.",
+        description: "Get a summary of a specific borrower including their active loans, total outstanding balance, profile and credit score.",
         parameters: {
             type: "object",
             properties: {
@@ -21,7 +22,16 @@ const aiToolsSchema = [
     },
     {
         name: "get_active_loans",
-        description: "Get all active loans for the current tenant.",
+        description: "Retrieve a list of all active loans for the current user/tenant.",
+        parameters: {
+            type: "object",
+            properties: {},
+            required: []
+        }
+    },
+    {
+        name: "get_financial_overview",
+        description: "Get a high-level financial overview of the fund, including total lent, total collected, and total outstanding.",
         parameters: {
             type: "object",
             properties: {},
@@ -30,19 +40,18 @@ const aiToolsSchema = [
     }
 ];
 
-import { authPlugin } from "../middleware/auth";
-
 export const aiToolsRoute = new Elysia({ prefix: "/ai-tools" })
     .use(authPlugin)
-    .get("/tools", () => {
-        return aiToolsSchema;
+    .get("/tools", ({ user }) => {
+        if (!user) throw new Error("Unauthorized");
+        return toolsSchemas;
     })
     .post("/execute", async ({ body, user }) => {
-        const { tool, parameters } = body as { tool: string; parameters: any };
-
         if (!user || !user.tenantId) {
             throw new Error("Unauthorized: Tenant context missing");
         }
+
+        const { tool, parameters } = body as { tool: string; parameters: any };
 
         try {
             switch (tool) {
@@ -52,20 +61,52 @@ export const aiToolsRoute = new Elysia({ prefix: "/ai-tools" })
                         return { error: "Invalid borrowerId" };
                     }
 
-                    const result = await db.query.borrowers.findFirst({
+                    const borrower = await db.query.borrowers.findFirst({
                         where: and(
                             eq(borrowers.id, borrowerId),
                             eq(borrowers.tenantId, user.tenantId)
                         )
                     });
 
-                    if (!result) return { error: "Borrower not found or unauthorized" };
+                    if (!borrower) {
+                        return { error: "Borrower not found or unauthorized." };
+                    }
+
+                    const activeLoans = await db.select()
+                        .from(loans)
+                        .where(and(eq(loans.borrowerId, borrowerId), eq(loans.tenantId, user.tenantId), eq(loans.status, "active")));
+
+                    const loanIds = activeLoans.map(l => l.id);
+                    let totalPaid = 0;
+
+                    if (loanIds.length > 0) {
+                        // Get transactions for active loans using aggregation
+                        const [txsResult] = await db.select({
+                            total: sql<number>`cast(coalesce(sum(${transactions.amount}), 0) as float)`
+                        })
+                        .from(transactions)
+                        .where(and(
+                            eq(transactions.tenantId, user.tenantId),
+                            inArray(transactions.loanId, loanIds)
+                        ));
+
+                        totalPaid = txsResult.total;
+                    }
+
+                    const totalPrincipal = activeLoans.reduce((sum, l) => sum + Number(l.principalAmount), 0);
 
                     return {
-                        id: result.id,
-                        name: result.name,
-                        creditScore: result.creditScore,
-                        status: result.notes || "No notes available"
+                        borrower: {
+                            id: borrower.id,
+                            name: borrower.name,
+                            idCardNumber: borrower.idCardNumber,
+                            creditScore: borrower.creditScore,
+                            status: borrower.notes || "No notes available"
+                        },
+                        activeLoansCount: activeLoans.length,
+                        totalPrincipalLent: totalPrincipal,
+                        totalRepaid: totalPaid,
+                        estimatedOutstandingPrincipal: totalPrincipal - totalPaid // Simplified for overview
                     };
                 }
 
@@ -77,16 +118,40 @@ export const aiToolsRoute = new Elysia({ prefix: "/ai-tools" })
                         ),
                         with: {
                             borrower: true
-                        }
+                        },
+                        orderBy: [desc(loans.createdAt)],
+                        limit: 20
                     });
 
-                    return activeLoans.map(loan => ({
-                        id: loan.id,
-                        borrowerName: loan.borrower.name,
-                        principalAmount: Number(loan.principalAmount),
-                        installmentAmount: Number(loan.installmentAmount),
-                        repaymentType: loan.repaymentType
-                    }));
+                    return {
+                        loans: activeLoans.map(loan => ({
+                            id: loan.id,
+                            borrowerName: loan.borrower.name,
+                            principalAmount: Number(loan.principalAmount),
+                            installmentAmount: Number(loan.installmentAmount),
+                            repaymentType: loan.repaymentType,
+                            interestRate: Number(loan.interestRate),
+                            startDate: loan.startDate
+                        }))
+                    };
+                }
+
+                case "get_financial_overview": {
+                    // Aggregated financial overview
+                    const [loanAgg] = await db.select({
+                        totalLent: sql<number>`cast(coalesce(sum(${loans.principalAmount}), 0) as float)`,
+                        activePrincipal: sql<number>`cast(coalesce(sum(case when ${loans.status} = 'active' then ${loans.principalAmount} else 0 end), 0) as float)`
+                    }).from(loans).where(eq(loans.tenantId, user.tenantId));
+
+                    const [txAgg] = await db.select({
+                        totalCollected: sql<number>`cast(coalesce(sum(${transactions.amount}), 0) as float)`
+                    }).from(transactions).where(eq(transactions.tenantId, user.tenantId));
+
+                    return {
+                        totalLent: loanAgg.totalLent,
+                        totalCollected: txAgg.totalCollected,
+                        activePrincipal: loanAgg.activePrincipal
+                    };
                 }
 
                 default:
