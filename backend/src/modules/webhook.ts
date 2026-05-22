@@ -14,7 +14,7 @@ const blobClient = new MessagingApiBlobClient({
 });
 
 export const webhookRoute = new Elysia({ prefix: "/webhook" })
-    .post("/line", async ({ request, set }) => {
+    .post("/line/:tenantId", async ({ params: { tenantId }, request, set }) => {
         const signature = request.headers.get("x-line-signature");
         const bodyText = await request.text();
 
@@ -54,7 +54,7 @@ export const webhookRoute = new Elysia({ prefix: "/webhook" })
                     // 3. Save to DB
                     // Create File Record
                     const fileRecord = await db.insert(files).values({
-                        tenantId: "default_tenant", // TODO: Determine tenant from UserID mapping
+                        tenantId: tenantId,
                         bucket: "creditsync-files",
                         key: key,
                         originalName: fileName,
@@ -65,7 +65,7 @@ export const webhookRoute = new Elysia({ prefix: "/webhook" })
 
                     // Create Bot Upload Record
                     await db.insert(botUploads).values({
-                        tenantId: "default_tenant",
+                        tenantId: tenantId,
                         fileId: fileRecord[0].id,
                         source: "line",
                         senderId: userId,

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/button";
-import { Plus, ArrowUpRight, FileText } from "lucide-react";
+import { Plus, ArrowUpRight, FileText, CheckSquare } from "lucide-react";
 import { Link } from "react-router-dom";
 
 export default function TransactionList() {
@@ -26,11 +26,18 @@ export default function TransactionList() {
                     <h2 className="text-3xl font-bold tracking-tight">Transactions</h2>
                     <p className="text-muted-foreground">Monitor repayment history and flow.</p>
                 </div>
-                <Link to="/dashboard/transactions/new">
-                    <Button>
-                        <Plus className="mr-2 h-4 w-4" /> Record Repayment
-                    </Button>
-                </Link>
+                <div className="flex space-x-2">
+                    <Link to="/dashboard/transactions/verification-queue">
+                        <Button variant="outline">
+                            <CheckSquare className="mr-2 h-4 w-4" /> Verification Queue
+                        </Button>
+                    </Link>
+                    <Link to="/dashboard/transactions/new">
+                        <Button>
+                            <Plus className="mr-2 h-4 w-4" /> Record Repayment
+                        </Button>
+                    </Link>
+                </div>
             </div>
 
             {transactions.length === 0 ? (
