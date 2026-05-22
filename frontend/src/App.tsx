@@ -13,6 +13,7 @@ import LoanWizard from "./pages/dashboard/loans/LoanWizard";
 import LoanList from "./pages/dashboard/loans/LoanList";
 import TransactionList from "./pages/dashboard/transactions/TransactionList";
 import TransactionForm from "./pages/dashboard/transactions/TransactionForm";
+import SlipVerificationQueue from "./pages/dashboard/transactions/SlipVerificationQueue";
 import LandingPage from "./pages/LandingPage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import './index.css'
@@ -51,6 +52,7 @@ function App() {
               <Route path="loans/new" element={<LoanWizard />} />
               <Route path="transactions" element={<TransactionList />} />
               <Route path="transactions/new" element={<TransactionForm />} />
+              <Route path="transactions/verification-queue" element={<SlipVerificationQueue />} />
             </Route>
           </Route>
 
