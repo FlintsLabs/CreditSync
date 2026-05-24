@@ -15,7 +15,7 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
         if (!user) return null;
         const result = await db.select().from(bankProfiles).where(
             and(
-                eq(bankProfiles.id, parseInt(id)),
+                eq(bankProfiles.id, id),
                 eq(bankProfiles.tenantId, user.tenantId)
             )
         );
@@ -41,7 +41,7 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
         if (!user) throw new Error("Unauthorized");
         const result = await db.delete(bankProfiles).where(
             and(
-                eq(bankProfiles.id, parseInt(id)),
+                eq(bankProfiles.id, id),
                 eq(bankProfiles.tenantId, user.tenantId)
             )
         ).returning();
