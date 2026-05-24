@@ -39,7 +39,7 @@ export const transactionsRoute = new Elysia({ prefix: "/transactions" })
 
         const result = await db.insert(transactions).values({
             tenantId: "default_tenant",
-            loanId: Number(body.loanId),
+            loanId: body.loanId,
             amount: body.amount.toString(),
             type: body.type || "repayment",
             slipUrl: slipUrl,

@@ -45,7 +45,7 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
         if (!user) return null;
         const result = await db.select().from(borrowers).where(
             and(
-                eq(borrowers.id, parseInt(id)),
+                eq(borrowers.id, id),
                 eq(borrowers.tenantId, user.tenantId)
             )
         );
@@ -93,7 +93,7 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
             googleMapsUrl: body.googleMapsUrl
         }).where(
             and(
-                eq(borrowers.id, parseInt(id)),
+                eq(borrowers.id, id),
                 eq(borrowers.tenantId, user.tenantId)
             )
         ).returning();
