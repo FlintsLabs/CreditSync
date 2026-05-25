@@ -3,6 +3,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import { borrowers, loans, transactions } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
+import { calculateLoanClosingSummary } from "../lib/calculator";
 
 const toolsSchemas = [
     {
@@ -36,6 +37,24 @@ const toolsSchemas = [
             properties: {},
             required: []
         }
+    },
+    {
+        name: "calculate_loan_payoff",
+        description: "Calculate the exact payoff amount (closing summary) for a specific loan as of a certain date.",
+        parameters: {
+            type: "object",
+            properties: {
+                loanId: {
+                    type: "number",
+                    description: "The ID of the loan to calculate payoff for."
+                },
+                closingDate: {
+                    type: "string",
+                    description: "Optional ISO date string for the closing date. Defaults to today."
+                }
+            },
+            required: ["loanId"]
+        }
     }
 ];
 
@@ -53,6 +72,13 @@ const executeToolBodySchema = t.Union([
     t.Object({
         tool: t.Literal("get_financial_overview"),
         parameters: t.Object({})
+    }),
+    t.Object({
+        tool: t.Literal("calculate_loan_payoff"),
+        parameters: t.Object({
+            loanId: t.Number(),
+            closingDate: t.Optional(t.String())
+        })
     })
 ]);
 
@@ -173,6 +199,34 @@ export const aiToolsRoute = new Elysia({ prefix: "/ai-tools" })
                         totalCollected: Number(txAgg?.totalCollected ?? 0),
                         activePrincipal: Number(loanAgg?.activePrincipal ?? 0)
                     };
+                }
+
+                case "calculate_loan_payoff": {
+                    const { loanId, closingDate } = body.parameters;
+
+                    const loan = await db.query.loans.findFirst({
+                        where: and(
+                            eq(loans.id, loanId),
+                            eq(loans.tenantId, user.tenantId)
+                        )
+                    });
+
+                    if (!loan) {
+                        set.status = 404;
+                        return { error: "Loan not found" };
+                    }
+
+                    const loanTransactions = await db.select()
+                        .from(transactions)
+                        .where(and(
+                            eq(transactions.loanId, loanId),
+                            eq(transactions.tenantId, user.tenantId)
+                        ));
+
+                    const dateToUse = closingDate ? new Date(closingDate) : new Date();
+                    const summary = calculateLoanClosingSummary(loan, loanTransactions, dateToUse);
+
+                    return summary;
                 }
             }
         } catch (error) {
