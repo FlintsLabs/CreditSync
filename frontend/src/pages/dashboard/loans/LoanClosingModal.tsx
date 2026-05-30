@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../../components/ui/dialog";
 import { Button } from "../../../components/ui/button";
 import { api } from "../../../lib/api";
@@ -25,13 +25,7 @@ export function LoanClosingModal({ loanId, open, onOpenChange }: LoanClosingModa
     const [error, setError] = useState<string | null>(null);
     const [copied, setCopied] = useState(false);
 
-    useEffect(() => {
-        if (open && loanId) {
-            fetchSummary();
-        }
-    }, [open, loanId]);
-
-    const fetchSummary = async () => {
+    const fetchSummary = React.useCallback(async () => {
         setLoading(true);
         setError(null);
         setSummary(null);
@@ -44,7 +38,13 @@ export function LoanClosingModal({ loanId, open, onOpenChange }: LoanClosingModa
         } finally {
             setLoading(false);
         }
-    };
+    }, [loanId]);
+
+    useEffect(() => {
+        if (open && loanId) {
+            fetchSummary();
+        }
+    }, [open, loanId, fetchSummary]);
 
     const handleCopyToClipboard = () => {
         if (summary?.balance) {
