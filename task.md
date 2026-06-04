@@ -24,9 +24,9 @@
     - [x] Service: OCR Service (Tesseract or Vision API placeholder) <!-- id: 9 -->
     - [x] Frontend: Borrower Registration Form (Upload ID -> OCR) <!-- id: 10 -->
 
-- [/] **Phase 5: Loan Engine & Calculation**
+- [x] **Phase 5: Loan Engine & Calculation**
     - [x] Logic: Interest Calculator (Daily, Weekly, Monthly, Floating) <!-- id: 12 -->
-    - [ ] Feature: Loan Closing Calculator (Pro-rated + Copy to Clipboard) <!-- id: 30 -->
+    - [x] Feature: Loan Closing Calculator (Pro-rated + Copy to Clipboard) <!-- id: 30 -->
     - [x] Frontend: Loan Creation Wizard (Calculator & Simulator) <!-- id: 16 -->
 
 - [/] **Phase 6: Transactions & Automation**
@@ -35,9 +35,9 @@
     - [ ] **[NEW] Webhook Service: Handle incoming slip images from Bots (Line)** <!-- id: 33 -->
     - [ ] Report: Traceability (Bank Loan -> Customer Loan -> ROI) <!-- id: 22 -->
 
-- [ ] **Phase 7: Mobile-First UX Polish**
+- [x] **Phase 7: Mobile-First UX Polish**
     - [x] Theme: Shadcn UI + Tailwind Optimization <!-- id: 23 -->
-    - [ ] Review: Mobile Responsiveness Check <!-- id: 24 -->
+    - [x] Review: Mobile Responsiveness Check <!-- id: 24 -->
 
 - [ ] **Phase 8: Operational Efficiency & Security [NEW]**
     - [ ] Feature: Audit Logs & Activity History (Loan/Borrower updates) <!-- id: 35 -->
