@@ -1,5 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { Activity, CreditCard, DollarSign, Users, TrendingUp, ArrowUpRight, ChevronRight, MessageCircle, Users2, BarChart2 } from "lucide-react";
+import { Activity, CreditCard, DollarSign, Users, TrendingUp, ArrowUpRight, ChevronRight, MessageCircle, Users2, BarChart2, PlusCircle, Send, FileText } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useNavigate } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
@@ -106,6 +106,38 @@ export default function Dashboard() {
 
                 {/* TAB: OVERVIEW */}
                 <TabsContent value="overview" className="space-y-4">
+                    {/* Quick Actions */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6">
+                        <button
+                            onClick={() => navigate("/dashboard/loans")}
+                            className="flex flex-col items-center justify-center p-4 bg-primary/10 hover:bg-primary/20 text-primary rounded-xl transition-all hover:scale-105"
+                        >
+                            <PlusCircle className="h-6 w-6 mb-2" />
+                            <span className="text-sm font-medium">New Loan</span>
+                        </button>
+                        <button
+                            onClick={() => navigate("/dashboard/transactions")}
+                            className="flex flex-col items-center justify-center p-4 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 rounded-xl transition-all hover:scale-105"
+                        >
+                            <Send className="h-6 w-6 mb-2" />
+                            <span className="text-sm font-medium">Record Payment</span>
+                        </button>
+                        <button
+                            onClick={() => navigate("/dashboard/borrowers")}
+                            className="flex flex-col items-center justify-center p-4 bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 rounded-xl transition-all hover:scale-105"
+                        >
+                            <Users className="h-6 w-6 mb-2" />
+                            <span className="text-sm font-medium">Add Borrower</span>
+                        </button>
+                        <button
+                            onClick={() => navigate("/dashboard/funds")}
+                            className="flex flex-col items-center justify-center p-4 bg-purple-500/10 hover:bg-purple-500/20 text-purple-600 rounded-xl transition-all hover:scale-105"
+                        >
+                            <FileText className="h-6 w-6 mb-2" />
+                            <span className="text-sm font-medium">Manage Funds</span>
+                        </button>
+                    </div>
+
                     {/* Stats Cards */}
                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                         <Card>

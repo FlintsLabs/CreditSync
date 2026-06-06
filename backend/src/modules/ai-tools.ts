@@ -3,6 +3,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import { borrowers, loans, transactions } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
+import { calculateLoanClosingSummary } from "../lib/calculator";
 
 const toolsSchemas = [
     {
@@ -36,6 +37,20 @@ const toolsSchemas = [
             properties: {},
             required: []
         }
+    },
+    {
+        name: "calculate_loan_payoff",
+        description: "Calculate the exact amount required to close a specific loan today, considering pro-rated interest and all past payments.",
+        parameters: {
+            type: "object",
+            properties: {
+                loanId: {
+                    type: "number",
+                    description: "The ID of the loan to calculate payoff for."
+                }
+            },
+            required: ["loanId"]
+        }
     }
 ];
 
@@ -53,6 +68,12 @@ const executeToolBodySchema = t.Union([
     t.Object({
         tool: t.Literal("get_financial_overview"),
         parameters: t.Object({})
+    }),
+    t.Object({
+        tool: t.Literal("calculate_loan_payoff"),
+        parameters: t.Object({
+            loanId: t.Number()
+        })
     })
 ]);
 
@@ -172,6 +193,45 @@ export const aiToolsRoute = new Elysia({ prefix: "/ai-tools" })
                         totalLent: Number(loanAgg?.totalLent ?? 0),
                         totalCollected: Number(txAgg?.totalCollected ?? 0),
                         activePrincipal: Number(loanAgg?.activePrincipal ?? 0)
+                    };
+                }
+
+                case "calculate_loan_payoff": {
+                    const loanId = body.parameters.loanId;
+                    const loan = await db.query.loans.findFirst({
+                        where: and(
+                            eq(loans.id, loanId),
+                            eq(loans.tenantId, user.tenantId)
+                        )
+                    });
+
+                    if (!loan) {
+                        set.status = 404;
+                        return { error: "Loan not found" };
+                    }
+
+                    const txs = await db.select({
+                        amount: transactions.amount
+                    })
+                        .from(transactions)
+                        .where(and(
+                            eq(transactions.loanId, loanId),
+                            eq(transactions.tenantId, user.tenantId)
+                        ));
+
+                    const summary = calculateLoanClosingSummary(
+                        {
+                            principalAmount: loan.principalAmount,
+                            interestRate: loan.interestRate,
+                            startDate: loan.startDate
+                        },
+                        txs.map(tx => ({ amount: String(tx.amount) }))
+                    );
+
+                    return {
+                        loanId: loan.id,
+                        status: loan.status,
+                        calculation: summary
                     };
                 }
             }
