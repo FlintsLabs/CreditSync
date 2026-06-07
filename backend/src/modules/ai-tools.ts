@@ -58,6 +58,117 @@ const executeToolBodySchema = t.Union([
 
 export const aiToolsRoute = new Elysia({ prefix: "/ai-tools" })
     .use(authPlugin)
+    .post("/chat", async ({ body, user, set }) => {
+        // Architectural hook for MCP / AI Flow
+        // This endpoint takes a raw message, routes it to the appropriate tool (simulated by regex for now),
+        // and returns a unified conversational response along with the tool data.
+        if (!user?.tenantId) {
+            set.status = 401;
+            return { error: "Unauthorized" };
+        }
+
+        const typedBody = body as { message: string };
+        const textLower = (typedBody.message || "").toLowerCase();
+
+        try {
+            if (textLower.includes("overview") || textLower.includes("financial")) {
+                const [loanAgg] = await db.select({
+                    totalLent: sql<number>`cast(coalesce(sum(${loans.principalAmount}), 0) as float)`,
+                    activePrincipal: sql<number>`cast(coalesce(sum(case when ${loans.status} = 'active' then ${loans.principalAmount} else 0 end), 0) as float)`
+                }).from(loans).where(eq(loans.tenantId, user.tenantId));
+
+                const [txAgg] = await db.select({
+                    totalCollected: sql<number>`cast(coalesce(sum(${transactions.amount}), 0) as float)`
+                }).from(transactions).where(eq(transactions.tenantId, user.tenantId));
+
+                const data = {
+                    totalLent: Number(loanAgg?.totalLent ?? 0),
+                    totalCollected: Number(txAgg?.totalCollected ?? 0),
+                    activePrincipal: Number(loanAgg?.activePrincipal ?? 0)
+                };
+
+                return {
+                    response: `Financial Overview:\n- Total Lent: $${data.totalLent}\n- Total Collected: $${data.totalCollected}\n- Active Principal: $${data.activePrincipal}`,
+                    tools_called: ["get_financial_overview"],
+                    data
+                };
+            } else if (textLower.includes("active loan") || textLower.includes("loans")) {
+                const activeLoans = await db.select({
+                    id: loans.id,
+                    borrowerName: borrowers.name,
+                    principalAmount: loans.principalAmount,
+                })
+                .from(loans)
+                .leftJoin(borrowers, eq(loans.borrowerId, borrowers.id))
+                .where(and(eq(loans.tenantId, user.tenantId), eq(loans.status, "active")))
+                .orderBy(desc(loans.createdAt))
+                .limit(20);
+
+                let replyContent = `Active Loans (${activeLoans.length}):\n` +
+                    activeLoans.slice(0, 5).map((l: any) => `- Loan #${l.id}: ${l.borrowerName || 'Unknown'} - $${l.principalAmount}`).join("\n");
+
+                if (activeLoans.length > 5) replyContent += `\n...and ${activeLoans.length - 5} more.`;
+
+                return {
+                    response: replyContent,
+                    tools_called: ["get_active_loans"],
+                    data: { loans: activeLoans }
+                };
+            } else if (textLower.includes("borrower") || textLower.includes("summary")) {
+                const match = textLower.match(/\d+/);
+                if (match) {
+                    const borrowerId = parseInt(match[0], 10);
+                    const borrower = await db.query.borrowers.findFirst({
+                        where: and(eq(borrowers.id, borrowerId), eq(borrowers.tenantId, user.tenantId))
+                    });
+
+                    if (!borrower) {
+                        return { response: "Borrower not found." };
+                    }
+
+                    const activeLoans = await db.select().from(loans).where(and(eq(loans.borrowerId, borrowerId), eq(loans.tenantId, user.tenantId), eq(loans.status, "active")));
+                    const loanIds = activeLoans.map((loan) => loan.id);
+                    let totalPaid = 0;
+
+                    if (loanIds.length > 0) {
+                        const [txsResult] = await db.select({
+                            total: sql<number>`cast(coalesce(sum(${transactions.amount}), 0) as float)`
+                        }).from(transactions).where(and(eq(transactions.tenantId, user.tenantId), inArray(transactions.loanId, loanIds)));
+                        totalPaid = Number(txsResult?.total ?? 0);
+                    }
+
+                    const totalPrincipal = activeLoans.reduce((sum, loan) => sum + Number(loan.principalAmount), 0);
+                    const data = {
+                        borrower: { id: borrower.id, name: borrower.name, creditScore: borrower.creditScore },
+                        activeLoansCount: activeLoans.length,
+                        totalPrincipalLent: totalPrincipal,
+                        totalRepaid: totalPaid,
+                        estimatedOutstandingPrincipal: totalPrincipal - totalPaid
+                    };
+
+                    const replyContent = `Borrower Summary (${data.borrower?.name || 'Unknown'}):\n- Credit Score: ${data.borrower?.creditScore || 'N/A'}\n- Active Loans: ${data.activeLoansCount || 0}\n- Total Lent: $${data.totalPrincipalLent || 0}\n- Total Repaid: $${data.totalRepaid || 0}\n- Estimated Outstanding: $${data.estimatedOutstandingPrincipal || 0}`;
+
+                    return {
+                        response: replyContent,
+                        tools_called: ["get_borrower_summary"],
+                        data
+                    };
+                } else {
+                    return { response: "Please provide a borrower ID. For example: 'borrower 1 summary'" };
+                }
+            } else {
+                return { response: "I'm sorry, I don't understand. I can help you with a financial overview, active loans, or a borrower summary (please provide an ID)." };
+            }
+        } catch (error) {
+            console.error("AI chat tool error:", error);
+            set.status = 500;
+            return { error: "Failed to process chat message" };
+        }
+    }, {
+        body: t.Object({
+            message: t.String()
+        })
+    })
     .get("/tools", ({ user, set }) => {
         if (!user?.tenantId) {
             set.status = 401;

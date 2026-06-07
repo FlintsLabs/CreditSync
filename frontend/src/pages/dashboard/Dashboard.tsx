@@ -97,12 +97,14 @@ export default function Dashboard() {
             </div>
 
             <Tabs defaultValue="overview" className="space-y-4">
-                <TabsList>
-                    <TabsTrigger value="overview">Overview</TabsTrigger>
-                    <TabsTrigger value="groups">Borrower Groups</TabsTrigger>
-                    <TabsTrigger value="graph">Portfolio Graph</TabsTrigger>
-                    <TabsTrigger value="analytics">Analytics</TabsTrigger>
-                </TabsList>
+                <div className="overflow-x-auto pb-2 -mx-4 px-4 md:mx-0 md:px-0">
+                    <TabsList className="w-full justify-start inline-flex min-w-max">
+                        <TabsTrigger value="overview">Overview</TabsTrigger>
+                        <TabsTrigger value="groups">Borrower Groups</TabsTrigger>
+                        <TabsTrigger value="graph">Portfolio Graph</TabsTrigger>
+                        <TabsTrigger value="analytics">Analytics</TabsTrigger>
+                    </TabsList>
+                </div>
 
                 {/* TAB: OVERVIEW */}
                 <TabsContent value="overview" className="space-y-4">
@@ -354,7 +356,7 @@ export default function Dashboard() {
                                 <CardTitle>Overview</CardTitle>
                             </CardHeader>
                             <CardContent className="pl-2">
-                                <ResponsiveContainer width="100%" height={350}>
+                                <ResponsiveContainer width="100%" minHeight={250} height={350}>
                                     <AreaChart data={data}>
                                         <defs>
                                             <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
