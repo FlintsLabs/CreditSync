@@ -43,7 +43,7 @@ const executeToolBodySchema = t.Union([
     t.Object({
         tool: t.Literal("get_borrower_summary"),
         parameters: t.Object({
-            borrowerId: t.Number()
+            borrowerId: t.String()
         })
     }),
     t.Object({

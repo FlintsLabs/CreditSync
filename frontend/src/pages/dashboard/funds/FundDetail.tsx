@@ -8,10 +8,10 @@ import { cn } from "../../../lib/utils";
 
 // Mock Data for specific Bank Loan
 const mockTransactions = [
-    { id: 1, date: "2024-06-05", title: "Repayment (Jun)", type: "repayment", amount: -5400, balance: 145000, method: "K-Mobile Banking" },
-    { id: 2, date: "2024-05-05", title: "Repayment (May)", type: "repayment", amount: -5400, balance: 150400, method: "K-Mobile Banking" },
-    { id: 3, date: "2024-04-05", title: "Repayment (Apr)", type: "repayment", amount: -5400, balance: 155800, method: "K-Mobile Banking" },
-    { id: 4, date: "2024-03-15", title: "Loan Disbursement", type: "income", amount: 200000, balance: 200000, method: "Bank Transfer" },
+    { id: "1", date: "2024-06-05", title: "Repayment (Jun)", type: "repayment", amount: -5400, balance: 145000, method: "K-Mobile Banking" },
+    { id: "2", date: "2024-05-05", title: "Repayment (May)", type: "repayment", amount: -5400, balance: 150400, method: "K-Mobile Banking" },
+    { id: "3", date: "2024-04-05", title: "Repayment (Apr)", type: "repayment", amount: -5400, balance: 155800, method: "K-Mobile Banking" },
+    { id: "4", date: "2024-03-15", title: "Loan Disbursement", type: "income", amount: 200000, balance: 200000, method: "Bank Transfer" },
 ];
 
 export default function FundDetail() {

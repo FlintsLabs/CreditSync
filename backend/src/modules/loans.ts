@@ -54,7 +54,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         return summary;
     }, {
         params: t.Object({
-            id: t.Numeric()
+            id: t.String()
         })
     })
     .post("/calculate", ({ body }) => {
@@ -93,8 +93,8 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         return result[0];
     }, {
         body: t.Object({
-            borrowerId: t.Number(),
-            bankLoanId: t.Optional(t.Number()),
+            borrowerId: t.String(),
+            bankLoanId: t.Optional(t.String()),
             principal: t.Number(),
             interestRate: t.Number(),
             repaymentType: t.String(),
