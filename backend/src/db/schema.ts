@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, numeric, boolean, integer, date, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, numeric, boolean, integer, date, pgEnum, uuid } from "drizzle-orm/pg-core";
 
 // Enums
 export const roleEnum = pgEnum("role", ["owner", "manager", "collector", "viewer"]);
@@ -8,7 +8,7 @@ const tenantId = text("tenant_id").notNull(); // All tables must have this
 
 // Users (Admins/Lenders)
 export const users = pgTable("users", {
-    id: serial("id").primaryKey(),
+    id: uuid("id").defaultRandom().primaryKey(),
     tenantId: tenantId,
     email: text("email").notNull().unique(),
     name: text("name"),
@@ -19,7 +19,7 @@ export const users = pgTable("users", {
 
 // Tenant Configuration (Secrets, Tokens)
 export const tenantConfigs = pgTable("tenant_configs", {
-    id: serial("id").primaryKey(),
+    id: uuid("id").defaultRandom().primaryKey(),
     tenantId: text("tenant_id").notNull().unique(),
     lineChannelToken: text("line_channel_token"),
     webhookSecret: text("webhook_secret"), // For verifying incoming webhook signatures
@@ -29,7 +29,7 @@ export const tenantConfigs = pgTable("tenant_configs", {
 
 // Bank Profiles (Source of Funds)
 export const bankProfiles = pgTable("bank_profiles", {
-    id: serial("id").primaryKey(),
+    id: uuid("id").defaultRandom().primaryKey(),
     tenantId: tenantId,
     name: text("name").notNull(), // e.g., "SCB Personal Loan", "KBank Credit Card"
     type: text("type").notNull(), // "bank", "personal_savings"
@@ -39,9 +39,9 @@ export const bankProfiles = pgTable("bank_profiles", {
 
 // Bank Loans (Money borrowed from Bank)
 export const bankLoans = pgTable("bank_loans", {
-    id: serial("id").primaryKey(),
+    id: uuid("id").defaultRandom().primaryKey(),
     tenantId: tenantId,
-    bankProfileId: integer("bank_profile_id").references(() => bankProfiles.id),
+    bankProfileId: uuid("bank_profile_id").references(() => bankProfiles.id),
     amount: numeric("amount").notNull(), // e.g. 200000
     interestRate: numeric("interest_rate"), // e.g. 20 (% per year)
     startDate: date("start_date"),
@@ -52,7 +52,7 @@ export const bankLoans = pgTable("bank_loans", {
 
 // Borrowers (End Customers)
 export const borrowers = pgTable("borrowers", {
-    id: serial("id").primaryKey(),
+    id: uuid("id").defaultRandom().primaryKey(),
     tenantId: tenantId,
     name: text("name").notNull(),
     idCardNumber: text("id_card_number"),
@@ -69,10 +69,10 @@ export const borrowers = pgTable("borrowers", {
 
 // Lending Loans (Money lent to Borrowers)
 export const loans = pgTable("loans", {
-    id: serial("id").primaryKey(),
+    id: uuid("id").defaultRandom().primaryKey(),
     tenantId: tenantId,
-    borrowerId: integer("borrower_id").references(() => borrowers.id).notNull(),
-    bankLoanId: integer("bank_loan_id").references(() => bankLoans.id), // Traceability to source
+    borrowerId: uuid("borrower_id").references(() => borrowers.id).notNull(),
+    bankLoanId: uuid("bank_loan_id").references(() => bankLoans.id), // Traceability to source
     principalAmount: numeric("principal_amount").notNull(),
     interestRate: numeric("interest_rate").notNull(), // Calculated rate for borrower
     repaymentType: text("repayment_type").notNull(), // "daily", "monthly", "floating"
@@ -80,15 +80,15 @@ export const loans = pgTable("loans", {
     totalInstallments: integer("total_installments"),
     startDate: date("start_date").defaultNow(),
     status: text("status").default("draft"), // draft, active, paid, defaulted
-    clonedFromLoanId: integer("cloned_from_loan_id"), // traceability for Refinance/Top-up
+    clonedFromLoanId: uuid("cloned_from_loan_id"), // traceability for Refinance/Top-up
     createdAt: timestamp("created_at").defaultNow(),
 });
 
 // Transactions (Repayments from Borrowers)
 export const transactions = pgTable("transactions", {
-    id: serial("id").primaryKey(),
+    id: uuid("id").defaultRandom().primaryKey(),
     tenantId: tenantId,
-    loanId: integer("loan_id").references(() => loans.id).notNull(),
+    loanId: uuid("loan_id").references(() => loans.id).notNull(),
     amount: numeric("amount").notNull(),
     type: text("type").default("repayment"), // repayment, close_account
     slipUrl: text("slip_url"), // Uploaded slip image
@@ -99,7 +99,7 @@ export const transactions = pgTable("transactions", {
 
 // Files (MinIO Objects)
 export const files = pgTable("files", {
-    id: serial("id").primaryKey(),
+    id: uuid("id").defaultRandom().primaryKey(),
     tenantId: tenantId,
     bucket: text("bucket").notNull(),
     key: text("key").notNull(), // S3 Key
@@ -112,9 +112,9 @@ export const files = pgTable("files", {
 
 // Bot Uploads (Unprocessed images from Webhooks)
 export const botUploads = pgTable("bot_uploads", {
-    id: serial("id").primaryKey(),
+    id: uuid("id").defaultRandom().primaryKey(),
     tenantId: tenantId,
-    fileId: integer("file_id").references(() => files.id),
+    fileId: uuid("file_id").references(() => files.id),
     source: text("source").default("line"), // line, telegram
     senderId: text("sender_id"), // User ID from the bot platform
     status: text("status").default("pending"), // pending, matched, discarded
@@ -123,9 +123,9 @@ export const botUploads = pgTable("bot_uploads", {
 
 // Bank Transactions (Repayments to Bank)
 export const bankTransactions = pgTable("bank_transactions", {
-    id: serial("id").primaryKey(),
+    id: uuid("id").defaultRandom().primaryKey(),
     tenantId: tenantId,
-    bankLoanId: integer("bank_loan_id").references(() => bankLoans.id).notNull(),
+    bankLoanId: uuid("bank_loan_id").references(() => bankLoans.id).notNull(),
     amount: numeric("amount").notNull(),
     type: text("type").default("repayment"),
     transactionDate: timestamp("transaction_date").defaultNow(),
