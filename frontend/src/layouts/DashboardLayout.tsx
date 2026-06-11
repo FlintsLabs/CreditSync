@@ -6,6 +6,7 @@ import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import AppBar from "../components/AppBar";
 import { useTranslation } from "react-i18next";
 import { Button } from "../components/ui/button";
+import { AIAssistant } from "../components/AIAssistant";
 
 export default function DashboardLayout() {
     const location = useLocation();
@@ -120,6 +121,9 @@ export default function DashboardLayout() {
                 <main className="flex-1 p-4 md:p-8 overflow-x-hidden pb-20 md:pb-8">
                     <Outlet />
                 </main>
+
+                {/* AI Assistant Widget */}
+                <AIAssistant />
 
                 {/* Mobile Bottom Navigation */}
                 <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">

@@ -56,8 +56,39 @@ const executeToolBodySchema = t.Union([
     })
 ]);
 
+const chatBodySchema = t.Object({
+    message: t.String()
+});
+
 export const aiToolsRoute = new Elysia({ prefix: "/ai-tools" })
     .use(authPlugin)
+    .post("/chat", async ({ body, user, set }) => {
+        if (!user?.tenantId) {
+            set.status = 401;
+            return { error: "Unauthorized" };
+        }
+
+        try {
+            const userMessage = body.message.toLowerCase();
+
+            if (userMessage.includes("summary") || userMessage.includes("borrower")) {
+                return { reply: "I can help with that. Please execute the `get_borrower_summary` tool with the borrower ID." };
+            } else if (userMessage.includes("active loans") || userMessage.includes("loans")) {
+                return { reply: "I can fetch your active loans. Please execute the `get_active_loans` tool." };
+            } else if (userMessage.includes("overview") || userMessage.includes("financial")) {
+                return { reply: "I can show you a financial overview. Please execute the `get_financial_overview` tool." };
+            }
+
+            return { reply: "I am ready to assist you. I can help you get a borrower summary, view active loans, or check the financial overview." };
+
+        } catch (error) {
+            console.error("AI chat error:", error);
+            set.status = 500;
+            return { error: "Failed to process chat message" };
+        }
+    }, {
+        body: chatBodySchema
+    })
     .get("/tools", ({ user, set }) => {
         if (!user?.tenantId) {
             set.status = 401;
