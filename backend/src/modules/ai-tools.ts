@@ -66,6 +66,49 @@ export const aiToolsRoute = new Elysia({ prefix: "/ai-tools" })
 
         return toolsSchemas;
     })
+    .post("/chat", async ({ body, user, set }) => {
+        if (!user?.tenantId) {
+            set.status = 401;
+            return { error: "Unauthorized" };
+        }
+
+        try {
+            // Placeholder logic for AI Chat / MCP Intent Routing
+            const userMessage = body.message?.toLowerCase() || "";
+
+            // Mock responses based on keywords
+            if (userMessage.includes("overview") || userMessage.includes("สรุป")) {
+                return {
+                    reply: "ระบบกำลังเรียกดูภาพรวมทางการเงินให้คุณ...",
+                    toolToCall: "get_financial_overview",
+                    toolParameters: {}
+                };
+            } else if (userMessage.includes("loan") || userMessage.includes("กู้")) {
+                return {
+                    reply: "นี่คือข้อมูลสัญญาเงินกู้ที่กำลังทำงานอยู่...",
+                    toolToCall: "get_active_loans",
+                    toolParameters: {}
+                };
+            } else {
+                return {
+                    reply: `ฉันเข้าใจว่าคุณพูดว่า: "${body.message}" (นี่คือข้อความจำลองจาก AI Assistant เพื่อรอการเชื่อมต่อกับ LLM/MCP ในอนาคต)`
+                };
+            }
+
+        } catch (error) {
+            console.error("AI chat failed:", error);
+            set.status = 500;
+            return { error: "Failed to process chat" };
+        }
+    }, {
+        body: t.Object({
+            message: t.String(),
+            history: t.Optional(t.Array(t.Object({
+                role: t.String(),
+                content: t.String()
+            })))
+        })
+    })
     .post("/execute", async ({ body, user, set }) => {
         if (!user?.tenantId) {
             set.status = 401;
