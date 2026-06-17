@@ -29,6 +29,7 @@ export function LoanClosingModal({ loanId, open, onOpenChange }: LoanClosingModa
         if (open && loanId) {
             fetchSummary();
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open, loanId]);
 
     const fetchSummary = async () => {

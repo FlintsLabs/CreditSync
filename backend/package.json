@@ -15,7 +15,7 @@
         "@line/bot-sdk": "^11.0.0",
         "dayjs": "^1.11.20",
         "drizzle-orm": "^0.45.2",
-        "elysia": "^1.4.28",
+        "elysia": "^1.4.29",
         "google-auth-library": "^10.6.2",
         "postgres": "^3.4.9",
         "tesseract.js": "^7.0.0"
