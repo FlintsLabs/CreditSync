@@ -26,7 +26,7 @@
 
 - [/] **Phase 5: Loan Engine & Calculation**
     - [x] Logic: Interest Calculator (Daily, Weekly, Monthly, Floating) <!-- id: 12 -->
-    - [ ] Feature: Loan Closing Calculator (Pro-rated + Copy to Clipboard) <!-- id: 30 -->
+    - [x] Feature: Loan Closing Calculator (Pro-rated + Copy to Clipboard) <!-- id: 30 -->
     - [x] Frontend: Loan Creation Wizard (Calculator & Simulator) <!-- id: 16 -->
 
 - [/] **Phase 6: Transactions & Automation**

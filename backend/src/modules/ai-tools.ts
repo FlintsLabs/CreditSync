@@ -3,6 +3,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import { borrowers, loans, transactions } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
+import { calculateLoanClosingSummary } from "../lib/calculator";
 
 const toolsSchemas = [
     {
@@ -36,6 +37,20 @@ const toolsSchemas = [
             properties: {},
             required: []
         }
+    },
+    {
+        name: "calculate_loan_payoff",
+        description: "Calculate the pro-rated closing amount for a specific loan.",
+        parameters: {
+            type: "object",
+            properties: {
+                loanId: {
+                    type: "number",
+                    description: "The ID of the loan to calculate the payoff for."
+                }
+            },
+            required: ["loanId"]
+        }
     }
 ];
 
@@ -53,6 +68,12 @@ const executeToolBodySchema = t.Union([
     t.Object({
         tool: t.Literal("get_financial_overview"),
         parameters: t.Object({})
+    }),
+    t.Object({
+        tool: t.Literal("calculate_loan_payoff"),
+        parameters: t.Object({
+            loanId: t.Number()
+        })
     })
 ]);
 
@@ -174,6 +195,33 @@ export const aiToolsRoute = new Elysia({ prefix: "/ai-tools" })
                         activePrincipal: Number(loanAgg?.activePrincipal ?? 0)
                     };
                 }
+
+                case "calculate_loan_payoff": {
+                    const loanId = body.parameters.loanId;
+
+                    const loan = await db.query.loans.findFirst({
+                        where: and(
+                            eq(loans.id, loanId),
+                            eq(loans.tenantId, user.tenantId)
+                        )
+                    });
+
+                    if (!loan) {
+                        set.status = 404;
+                        return { error: "Loan not found" };
+                    }
+
+                    const loanTransactions = await db.select()
+                        .from(transactions)
+                        .where(and(
+                            eq(transactions.loanId, loanId),
+                            eq(transactions.tenantId, user.tenantId)
+                        ));
+
+                    const summary = calculateLoanClosingSummary(loan, loanTransactions);
+
+                    return summary;
+                }
             }
         } catch (error) {
             console.error("AI tool execution failed:", error);
@@ -182,4 +230,60 @@ export const aiToolsRoute = new Elysia({ prefix: "/ai-tools" })
         }
     }, {
         body: executeToolBodySchema
+    })
+    .post("/chat", async ({ body, user, set }) => {
+        if (!user?.tenantId) {
+            set.status = 401;
+            return { error: "Unauthorized" };
+        }
+
+        const { message } = body;
+        const lowerMessage = message.toLowerCase();
+
+        // Simple intent parsing for demonstration
+        if (lowerMessage.includes("active loans") || lowerMessage.includes("สินเชื่อที่ยังใช้งานอยู่")) {
+            return {
+                reply: "Executing get_active_loans tool...",
+                toolCall: { tool: "get_active_loans", parameters: {} }
+            };
+        } else if (lowerMessage.includes("financial overview") || lowerMessage.includes("ภาพรวมการเงิน")) {
+             return {
+                reply: "Executing get_financial_overview tool...",
+                toolCall: { tool: "get_financial_overview", parameters: {} }
+            };
+        } else if (lowerMessage.includes("borrower summary") || lowerMessage.includes("ข้อมูลลูกหนี้")) {
+            // Extract a simple ID if present, e.g. "borrower summary 1"
+            const match = message.match(/\d+/);
+            if (match) {
+                 return {
+                    reply: `Executing get_borrower_summary tool for ID ${match[0]}...`,
+                    toolCall: { tool: "get_borrower_summary", parameters: { borrowerId: parseInt(match[0]) } }
+                };
+            } else {
+                 return {
+                    reply: "Please specify a borrower ID. Example: 'borrower summary 1'"
+                };
+            }
+        } else if (lowerMessage.includes("calculate payoff") || lowerMessage.includes("คำนวณยอดปิด") || lowerMessage.includes("payoff")) {
+             const match = message.match(/\d+/);
+             if (match) {
+                 return {
+                    reply: `Executing calculate_loan_payoff tool for loan ID ${match[0]}...`,
+                    toolCall: { tool: "calculate_loan_payoff", parameters: { loanId: parseInt(match[0]) } }
+                };
+             } else {
+                 return {
+                    reply: "Please specify a loan ID to calculate payoff. Example: 'calculate payoff 1'"
+                 }
+             }
+        }
+
+        return {
+            reply: `I received your message: "${message}". I can help with active loans, financial overview, borrower summaries, and calculating loan payoffs. How can I help you?`
+        };
+
+    }, {
+        body: t.Object({
+            message: t.String()
+        })
     });
