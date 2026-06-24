@@ -1,6 +1,6 @@
 // Basic Auth Mock
 export interface User {
-    id: number;
+    id: string;
     name: string;
     email: string;
     role: "owner" | "manager" | "collector" | "viewer";
@@ -14,7 +14,7 @@ export const loginWithGoogle = async () => {
 }
 
 export const mockUser: User = {
-    id: 1,
+    id: "uuid-1",
     name: "Demo Owner",
     email: "demo@creditsync.app",
     role: "owner",
