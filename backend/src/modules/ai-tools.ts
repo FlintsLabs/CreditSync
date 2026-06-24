@@ -12,7 +12,7 @@ const toolsSchemas = [
             type: "object",
             properties: {
                 borrowerId: {
-                    type: "number",
+                    type: "string",
                     description: "The ID of the borrower to look up."
                 }
             },
@@ -43,7 +43,7 @@ const executeToolBodySchema = t.Union([
     t.Object({
         tool: t.Literal("get_borrower_summary"),
         parameters: t.Object({
-            borrowerId: t.Number()
+            borrowerId: t.String()
         })
     }),
     t.Object({

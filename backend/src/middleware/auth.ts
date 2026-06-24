@@ -18,7 +18,7 @@ export const authPlugin = (app: Elysia) =>
 
             return {
                 user: {
-                    id: profile.id as number,
+                    id: profile.id as string,
                     email: profile.email as string,
                     role: profile.role as string,
                     tenantId: profile.tenantId as string,
