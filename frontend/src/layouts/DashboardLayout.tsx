@@ -6,6 +6,7 @@ import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import AppBar from "../components/AppBar";
 import { useTranslation } from "react-i18next";
 import { Button } from "../components/ui/button";
+import AIAssistant from "../components/AIAssistant";
 
 export default function DashboardLayout() {
     const location = useLocation();
@@ -121,6 +122,11 @@ export default function DashboardLayout() {
                     <Outlet />
                 </main>
 
+                {/* AIAssistant Widget */}
+                <div className="fixed bottom-20 right-4 md:bottom-8 md:right-8 z-[100] flex flex-col items-end">
+                    <AIAssistant />
+                </div>
+
                 {/* Mobile Bottom Navigation */}
                 <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
                     <div className="flex h-16 items-center justify-around px-2">
@@ -145,6 +151,7 @@ export default function DashboardLayout() {
                         })}
                     </div>
                 </nav>
+
             </div>
         </div>
     );
