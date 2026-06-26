@@ -56,6 +56,10 @@ const executeToolBodySchema = t.Union([
     })
 ]);
 
+const chatBodySchema = t.Object({
+    message: t.String()
+});
+
 export const aiToolsRoute = new Elysia({ prefix: "/ai-tools" })
     .use(authPlugin)
     .get("/tools", ({ user, set }) => {
@@ -182,4 +186,49 @@ export const aiToolsRoute = new Elysia({ prefix: "/ai-tools" })
         }
     }, {
         body: executeToolBodySchema
+    })
+    .post("/chat", async ({ body, user, set }) => {
+        if (!user?.tenantId) {
+            set.status = 401;
+            return { error: "Unauthorized" };
+        }
+
+        try {
+            const { message } = body;
+            const lowerMsg = message.toLowerCase();
+
+            // Simple intent routing via keywords
+            if (lowerMsg.includes("overview") || lowerMsg.includes("ภาพรวม") || lowerMsg.includes("สรุป")) {
+                const [loanAgg] = await db.select({
+                    totalLent: sql<number>`cast(coalesce(sum(${loans.principalAmount}), 0) as float)`,
+                    activePrincipal: sql<number>`cast(coalesce(sum(case when ${loans.status} = 'active' then ${loans.principalAmount} else 0 end), 0) as float)`
+                })
+                    .from(loans)
+                    .where(eq(loans.tenantId, user.tenantId));
+
+                const [txAgg] = await db.select({
+                    totalCollected: sql<number>`cast(coalesce(sum(${transactions.amount}), 0) as float)`
+                })
+                    .from(transactions)
+                    .where(eq(transactions.tenantId, user.tenantId));
+
+                const totalLent = Number(loanAgg?.totalLent ?? 0);
+                const totalCollected = Number(txAgg?.totalCollected ?? 0);
+                const activePrincipal = Number(loanAgg?.activePrincipal ?? 0);
+
+                return {
+                    reply: `ภาพรวมพอร์ตการลงทุนปัจจุบัน:\n- ปล่อยกู้ทั้งหมด: ${totalLent.toLocaleString()} บาท\n- ยอดเงินต้นที่กำลังทำงาน: ${activePrincipal.toLocaleString()} บาท\n- เก็บเงินได้แล้วรวม: ${totalCollected.toLocaleString()} บาท`
+                };
+            }
+
+            return {
+                reply: `เข้าใจแล้วครับว่า "${message}" หากต้องการดูภาพรวมพอร์ตสามารถพิมพ์คำว่า "ภาพรวม" ได้เลยครับ`
+            };
+        } catch (error) {
+            console.error("AI chat execution failed:", error);
+            set.status = 500;
+            return { error: "Failed to execute chat" };
+        }
+    }, {
+        body: chatBodySchema
     });
