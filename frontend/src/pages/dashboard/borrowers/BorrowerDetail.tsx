@@ -28,7 +28,7 @@ export default function BorrowerDetail() {
 
                 // Client-side filtering as per current backend capabilities
                 // Ideally backend should support /loans?borrowerId=...
-                const bLoans = lRes.data.filter((l: any) => l.borrowerId === Number(id));
+                const bLoans = lRes.data.filter((l: any) => l.borrowerId === id);
                 setLoans(bLoans);
 
                 // Filter transactions for these loans
