@@ -95,6 +95,6 @@ export const filesRoute = new Elysia({ prefix: "/files" })
         }
     }, {
         body: t.Object({
-            fileId: t.Numeric()
+            fileId: t.String()
         })
     });

@@ -62,8 +62,8 @@ export default function LoanWizard() {
             const amount = schedule.length > 0 ? schedule[0].amount : 0;
 
             await api.post("/loans", {
-                borrowerId: Number(formData.borrowerId),
-                bankLoanId: formData.bankLoanId ? Number(formData.bankLoanId) : undefined,
+                borrowerId: formData.borrowerId,
+                bankLoanId: formData.bankLoanId || undefined,
                 principal: Number(formData.principal),
                 interestRate: Number(formData.interestRate),
                 repaymentType: formData.repaymentType,
