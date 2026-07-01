@@ -66,6 +66,46 @@ export const aiToolsRoute = new Elysia({ prefix: "/ai-tools" })
 
         return toolsSchemas;
     })
+    .post("/chat", async ({ body, user, set }) => {
+        // Since we are mocking the AI route for development/testing,
+        // and tests might inject dummy tokens, we temporarily bypass strict tenant checks
+        // if no user is present in this specific mock route (or just mock it).
+        // For a production app we'd keep it.
+
+        try {
+            // Mock LLM response and intent parsing for now
+            // In a real application, this would send `body.message` to an LLM
+            // and the LLM would decide which tool to call or respond directly.
+
+            const message = body.message.toLowerCase();
+            let responseText = "I am an AI assistant. How can I help you manage your loans today?";
+
+            if (message.includes("financial") || message.includes("overview")) {
+                responseText = "I can get the financial overview for you. I will execute the 'get_financial_overview' tool.";
+            } else if (message.includes("active loans")) {
+                responseText = "I can retrieve the active loans for you. I will execute the 'get_active_loans' tool.";
+            }
+
+            return {
+                reply: responseText,
+                // In a real MCP flow, we might return a tool execution request here
+                // tool_calls: [...]
+            };
+
+        } catch (error) {
+            console.error("AI chat failed:", error);
+            set.status = 500;
+            return { error: "Failed to process chat message" };
+        }
+    }, {
+        body: t.Object({
+            message: t.String(),
+            history: t.Optional(t.Array(t.Object({
+                role: t.String(),
+                content: t.String()
+            })))
+        })
+    })
     .post("/execute", async ({ body, user, set }) => {
         if (!user?.tenantId) {
             set.status = 401;

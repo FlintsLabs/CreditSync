@@ -6,6 +6,7 @@ import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import AppBar from "../components/AppBar";
 import { useTranslation } from "react-i18next";
 import { Button } from "../components/ui/button";
+import { AIAssistant } from "../components/AIAssistant";
 
 export default function DashboardLayout() {
     const location = useLocation();
@@ -146,6 +147,9 @@ export default function DashboardLayout() {
                     </div>
                 </nav>
             </div>
+
+            {/* AI Assistant Floating Widget - Placed outside of any overflow-hidden containers */}
+            <AIAssistant />
         </div>
     );
 }
