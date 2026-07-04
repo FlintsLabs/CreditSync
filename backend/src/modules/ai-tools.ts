@@ -66,6 +66,107 @@ export const aiToolsRoute = new Elysia({ prefix: "/ai-tools" })
 
         return toolsSchemas;
     })
+    .post("/chat", async ({ body, user, set }) => {
+        if (!user?.tenantId) {
+            set.status = 401;
+            return { error: "Unauthorized" };
+        }
+
+        const userMessage = body.message.toLowerCase();
+        let toolToExecute: any = null;
+        let responseMessage = "I'm not sure how to help with that. Try asking for a 'financial overview', 'active loans', or summary of a specific borrower (e.g. 'summary for borrower 1').";
+
+        // Simple intent parsing
+        if (userMessage.includes("financial") || userMessage.includes("overview")) {
+            toolToExecute = { tool: "get_financial_overview", parameters: {} };
+        } else if (userMessage.includes("active loan") || userMessage.includes("loans")) {
+            toolToExecute = { tool: "get_active_loans", parameters: {} };
+        } else if (userMessage.includes("borrower") || userMessage.includes("summary")) {
+             // Extract ID if possible
+             const match = userMessage.match(/\d+/);
+             if (match) {
+                 toolToExecute = { tool: "get_borrower_summary", parameters: { borrowerId: parseInt(match[0], 10) } };
+             } else {
+                 responseMessage = "Please specify a borrower ID. For example: 'summary for borrower 1'.";
+             }
+        }
+
+        if (toolToExecute) {
+            try {
+                // Execute logic directly based on tool (reusing logic below)
+                switch (toolToExecute.tool) {
+                    case "get_financial_overview": {
+                         const [loanAgg] = await db.select({
+                            totalLent: sql<number>`cast(coalesce(sum(${loans.principalAmount}), 0) as float)`,
+                            activePrincipal: sql<number>`cast(coalesce(sum(case when ${loans.status} = 'active' then ${loans.principalAmount} else 0 end), 0) as float)`
+                        })
+                            .from(loans)
+                            .where(eq(loans.tenantId, user.tenantId));
+
+                        const [txAgg] = await db.select({
+                            totalCollected: sql<number>`cast(coalesce(sum(${transactions.amount}), 0) as float)`
+                        })
+                            .from(transactions)
+                            .where(eq(transactions.tenantId, user.tenantId));
+
+                        const totalLent = Number(loanAgg?.totalLent ?? 0);
+                        const activePrincipal = Number(loanAgg?.activePrincipal ?? 0);
+                        const totalCollected = Number(txAgg?.totalCollected ?? 0);
+
+                        responseMessage = `Here is your financial overview: Total Lent is ฿${totalLent.toLocaleString()}, Active Principal is ฿${activePrincipal.toLocaleString()}, and Total Collected is ฿${totalCollected.toLocaleString()}.`;
+                        break;
+                    }
+                    case "get_active_loans": {
+                        const activeLoans = await db.select({
+                            id: loans.id,
+                            principalAmount: loans.principalAmount
+                        })
+                            .from(loans)
+                            .where(and(
+                                eq(loans.tenantId, user.tenantId),
+                                eq(loans.status, "active")
+                            ))
+                            .limit(20);
+
+                        responseMessage = `You have ${activeLoans.length} active loans.`;
+                        break;
+                    }
+                    case "get_borrower_summary": {
+                        const borrowerId = toolToExecute.parameters.borrowerId;
+                        const borrower = await db.query.borrowers.findFirst({
+                            where: and(
+                                eq(borrowers.id, borrowerId),
+                                eq(borrowers.tenantId, user.tenantId)
+                            )
+                        });
+
+                        if (!borrower) {
+                            responseMessage = `I couldn't find a borrower with ID ${borrowerId}.`;
+                        } else {
+                             const activeLoans = await db.select()
+                                .from(loans)
+                                .where(and(
+                                    eq(loans.borrowerId, borrowerId),
+                                    eq(loans.tenantId, user.tenantId),
+                                    eq(loans.status, "active")
+                                ));
+                            responseMessage = `Borrower ${borrower.name} (ID: ${borrower.id}) has ${activeLoans.length} active loans.`;
+                        }
+                        break;
+                    }
+                }
+            } catch (err) {
+                console.error("AI chat error:", err);
+                responseMessage = "An error occurred while fetching the data.";
+            }
+        }
+
+        return { response: responseMessage };
+    }, {
+        body: t.Object({
+            message: t.String()
+        })
+    })
     .post("/execute", async ({ body, user, set }) => {
         if (!user?.tenantId) {
             set.status = 401;
