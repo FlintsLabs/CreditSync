@@ -17,6 +17,7 @@
 - Accepted real registered private-app technical IDs without weakening the documented non-live placeholder state, and corrected duplicate-evidence and renewal-reversal orchestration to match the frozen MCP surface.
 - Corrected operator guidance so bearer hashes exclude trailing newlines, MinIO recovery preserves and verifies evidence metadata/checksums, and disabling MCP does not take the shared REST backend offline.
 - Corrected Plugin `1.0.0` renewal reversal to retain borrower identity before execution, derive renewal/old/new loan IDs from the same-task execute result, inspect only portfolio-exposed loan states, and rely on the atomic backend reversal command to return downstream blockers safely.
+- Aligned Plugin `1.0.0` blocked-renewal behavior with the real sanitized backend error: `RENEWAL_REVERSE_BLOCKED`, its backend message, and aggregate `downstreamEntryCount` only, without invented transaction or adjustment identities.
 
 ## v0.3.3 - 2026-08-10
 

@@ -65,9 +65,12 @@ describe("CreditSync plugin 1.0.0 contract", () => {
         expect(skill).toContain("`renewal.execute` does not return a borrower UUID");
         expect(skill).toContain("only the current loan states exposed by `borrower.portfolio`");
         expect(skill).toContain("authoritative atomic downstream-activity check");
-        expect(skill).toContain("report those blockers and stop");
+        expect(skill).toContain("aggregate `downstreamEntryCount`");
+        expect(skill).toContain("backend message");
         expect(skill).not.toContain("supplies the renewal, old-loan, new-loan, and borrower public UUIDs");
         expect(skill).not.toContain("inspect the current state of both loans and downstream activity");
+        expect(skill).not.toContain("transaction/adjustment blockers");
+        expect(skill).not.toContain("report those blockers");
     });
 
     test("frozen full MCP metadata matches an actual authenticated tools/list response", async () => {

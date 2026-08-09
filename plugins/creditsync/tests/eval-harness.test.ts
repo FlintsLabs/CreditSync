@@ -134,13 +134,18 @@ describe("CreditSync executable orchestration evals", () => {
         expect(result).toMatchObject({ outcome: "stopped", stopReason: "use-web-renewal-detail", calls: [] });
     });
 
-    test("renewal.reverse is the authoritative atomic downstream check and reports blockers", async () => {
+    test("renewal.reverse reports the backend's exact aggregate blocker contract and remains stopped", async () => {
         const result = await runEvalScenario("renewal-reversal-blocked");
         expect(result).toMatchObject({
             outcome: "stopped",
-            stopReason: "downstream-activity-blocked",
-            blockers: [{ type: "transaction", publicId: "0198c481-3e2b-7000-8000-000000000051" }],
+            stopReason: "renewal-reverse-blocked",
+            error: {
+                code: "RENEWAL_REVERSE_BLOCKED",
+                message: "Reverse downstream replacement-loan entries first",
+                details: { downstreamEntryCount: 3 },
+            },
         });
+        expect(result).not.toHaveProperty("blockers");
         expect(result.calls.map((call) => call.name)).toEqual(["borrower.portfolio", "renewal.reverse"]);
     });
 

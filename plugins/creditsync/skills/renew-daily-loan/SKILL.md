@@ -34,12 +34,12 @@ If the backend reports stale, expired, underfunded, or changed charges, return t
 
 The frozen MCP 1.0 surface has no renewal-detail/get tool. Reverse only when both the exact successful `renewal.execute` result and the borrower public UUID retained from the same-task pre-execution resolution are available. `renewal.execute` returns the renewal, old-loan, and new-loan public UUIDs; **`renewal.execute` does not return a borrower UUID**. If either the execute result or retained borrower UUID is unavailable, stop and direct the operator to the Web UI renewal detail; never invent either value.
 
-Use the retained borrower UUID to inspect only the current loan states exposed by `borrower.portfolio`. That portfolio does not expose transactions, adjustments, or funding activity, so it cannot prove that reversal is safe. `renewal.reverse` is the authoritative atomic downstream-activity check. It may safely reject the command and return transaction/adjustment blockers without reversing anything; report those blockers and stop.
+Use the retained borrower UUID to inspect only the current loan states exposed by `borrower.portfolio`. That portfolio does not expose transactions, adjustments, or funding activity, so it cannot prove that reversal is safe. `renewal.reverse` is the authoritative atomic downstream-activity check. It may safely reject the command with `RENEWAL_REVERSE_BLOCKED`, the backend message, and only the aggregate `downstreamEntryCount`; report that count and message, then stop without claiming individual blocker types or IDs.
 
 1. Verify the same-task execute result, retained pre-execution borrower UUID, and the exposed current state of the old and new loans.
 2. Explain the compensating effects and obtain a non-blank reversal reason.
 3. Call `renewal.reverse` with the known renewal public UUID, that non-blank reason, and a stable reversal idempotency key.
-4. Treat the tool result as authoritative. If it returns downstream blockers, report those blockers and stop; never delete or bypass them.
+4. Treat the tool result as authoritative. If it returns `RENEWAL_REVERSE_BLOCKED`, report its backend message and aggregate downstream entry count, then stop; never infer or invent individual entries.
 
 A retry of the same intent reuses its idempotency key. A materially changed preview, execution reason, or reversal reason is a new intent and needs a new key.
 
@@ -51,7 +51,7 @@ A retry of the same intent reuses its idempotency key. A materially changed prev
 | Waiver positive | Exact waiver plus reason required |
 | Fresh preview, no confirmation | Explain and stop |
 | Stale/expired preview | Re-preview and reconfirm |
-| `renewal.reverse` returns downstream blockers | Report blockers and stop; no reversal occurred |
+| `RENEWAL_REVERSE_BLOCKED` | Report backend message plus aggregate count and stop; no reversal occurred |
 | Execute result or retained borrower UUID unavailable | Stop and use Web UI renewal detail |
 
 ## Common mistakes

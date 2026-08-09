@@ -17,7 +17,7 @@ const PREVIEW_HASH = `v1:${"a".repeat(64)}`;
 const FILE_HASH = "b".repeat(64);
 
 export type ToolCall = { name: McpToolName; arguments: Record<string, unknown> };
-type ScriptedError = { code: string; details?: Record<string, unknown> };
+type ScriptedError = { code: string; message: string; details?: Record<string, unknown> };
 type ScriptStep = ToolCall & { result?: Record<string, unknown>; error?: ScriptedError };
 
 export type SameTaskRenewalExecutionContext = {
@@ -37,14 +37,14 @@ export type HarnessResult = {
     effects: string[];
     outcome: "completed" | "stopped";
     stopReason?: string;
-    blockers?: Array<Record<string, unknown>>;
+    error?: { code: string; message: string; details: { downstreamEntryCount: number } };
     renewalContext?: SameTaskRenewalExecutionContext;
     inspectedLoanStates?: Array<{ publicId: string; status: string }>;
 };
 
 class ScriptedMcpError extends Error {
-    constructor(readonly code: string, readonly details: Record<string, unknown>) {
-        super(code);
+    constructor(readonly code: string, message: string, readonly details: Record<string, unknown>) {
+        super(message);
     }
 }
 
@@ -70,7 +70,7 @@ class ScriptedMcp {
             throw new Error(`MCP call mismatch at ${this.cursor}: expected ${step.name} ${JSON.stringify(step.arguments)}, received ${name} ${JSON.stringify(args)}`);
         }
         this.calls.push({ name, arguments: args });
-        if (step.error) throw new ScriptedMcpError(step.error.code, step.error.details ?? {});
+        if (step.error) throw new ScriptedMcpError(step.error.code, step.error.message, step.error.details ?? {});
         return step.result ?? {};
     }
 
@@ -261,14 +261,17 @@ async function reverseRenewal(
         });
         return { outcome: "completed", renewalContext, inspectedLoanStates } as const;
     } catch (error) {
-        if (error instanceof ScriptedMcpError && error.code === "RENEWAL_HAS_DOWNSTREAM_ACTIVITY") {
-            const blockers = Array.isArray(error.details.blockers)
-                ? error.details.blockers as Array<Record<string, unknown>>
-                : [];
+        if (error instanceof ScriptedMcpError && error.code === "RENEWAL_REVERSE_BLOCKED") {
+            const downstreamEntryCount = error.details.downstreamEntryCount;
+            if (typeof downstreamEntryCount !== "number") throw error;
             return {
                 outcome: "stopped",
-                stopReason: "downstream-activity-blocked",
-                blockers,
+                stopReason: "renewal-reverse-blocked",
+                error: {
+                    code: error.code,
+                    message: error.message,
+                    details: { downstreamEntryCount },
+                },
                 renewalContext,
                 inspectedLoanStates,
             } as const;
@@ -452,8 +455,9 @@ const SCENARIOS: Record<string, Scenario> = {
                 name: "renewal.reverse",
                 arguments: { renewalPublicId: SAME_TASK_RENEWAL_CONTEXT.executeResult.publicId, reason: "Owner confirmed renewal reversal; backend must atomically check downstream activity", idempotencyKey: "renewal-reverse-20260810-1" },
                 error: {
-                    code: "RENEWAL_HAS_DOWNSTREAM_ACTIVITY",
-                    details: { blockers: [{ type: "transaction", publicId: "0198c481-3e2b-7000-8000-000000000051" }] },
+                    code: "RENEWAL_REVERSE_BLOCKED",
+                    message: "Reverse downstream replacement-loan entries first",
+                    details: { downstreamEntryCount: 3 },
                 },
             },
         ],
