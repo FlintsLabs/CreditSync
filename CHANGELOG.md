@@ -57,6 +57,7 @@
 ### Added
 - Added the approved Connected Capital design specification for the CreditSync favicon and PWA app icon asset set.
 - Added the implementation plan and ignored local workflow directories for isolated favicon development.
+- Added the Connected Capital SVG favicon, browser PNG variants, Apple touch icon, and PWA manifest assets to the frontend.
 
 ## v0.3.0 - 2026-08-09
 
