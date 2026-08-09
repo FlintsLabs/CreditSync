@@ -5,6 +5,7 @@
 ### Added
 - Added a Decimal-based money kernel, exact daily fixed-installment schedule generation, and oldest-first repayment allocation primitives.
 - Added a Bun-backed backend TypeScript typecheck gate and focused money-kernel tests.
+- Added the v0.3.0 agent-workflow data foundation for borrower aliases, payment intake/evidence matching, transaction reversals, loan renewals and adjustments, tenant-scoped idempotency, and append-only audit history.
 
 ### Fixed
 - Corrected backend source typing issues surfaced by the new typecheck gate without changing existing workflow behavior.

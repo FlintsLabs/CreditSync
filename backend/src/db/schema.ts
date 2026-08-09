@@ -1,5 +1,19 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, serial, timestamp, numeric, integer, date, pgEnum, jsonb, uuid } from "drizzle-orm/pg-core";
+import {
+    type AnyPgColumn,
+    check,
+    date,
+    integer,
+    jsonb,
+    numeric,
+    pgEnum,
+    pgTable,
+    serial,
+    text,
+    timestamp,
+    uniqueIndex,
+    uuid,
+} from "drizzle-orm/pg-core";
 
 // Enums
 export const roleEnum = pgEnum("role", ["owner", "manager", "collector", "viewer"]);
@@ -221,9 +235,27 @@ export const transactions = pgTable("transactions", {
     transactionDate: timestamp("transaction_date").defaultNow(),
     notes: text("notes"),
     recordedByUserId: integer("recorded_by_user_id").references(() => users.id),
+    paymentIntakeId: integer("payment_intake_id").references(() => paymentIntakes.id),
+    entryType: text("entry_type").default("repayment").notNull(), // repayment, reversal
+    reversedTransactionId: integer("reversed_transaction_id").references(
+        (): AnyPgColumn => transactions.id,
+    ),
+    idempotencyKey: text("idempotency_key"),
+    postedAt: timestamp("posted_at").defaultNow().notNull(),
     createdAt: timestamp("created_at").defaultNow(),
     updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => [
+    uniqueIndex("transactions_tenant_idempotency_unique")
+        .on(table.tenantId, table.idempotencyKey)
+        .where(sql`${table.idempotencyKey} IS NOT NULL`),
+    uniqueIndex("transactions_tenant_reversed_transaction_unique")
+        .on(table.tenantId, table.reversedTransactionId)
+        .where(sql`${table.reversedTransactionId} IS NOT NULL`),
+    check(
+        "transactions_entry_type_reference_check",
+        sql`(${table.entryType} = 'repayment' AND ${table.reversedTransactionId} IS NULL) OR (${table.entryType} = 'reversal' AND ${table.reversedTransactionId} IS NOT NULL)`,
+    ),
+]);
 
 export const fundRolloverEntries = pgTable("fund_rollover_entries", {
     id: serial("id").primaryKey(),
@@ -267,9 +299,14 @@ export const auditLogs = pgTable("audit_logs", {
     entityId: text("entity_id").notNull(),
     action: text("action").notNull(),
     actorUserId: integer("actor_user_id").references(() => users.id),
+    actorSource: text("actor_source").default("system").notNull(), // web, mcp, system
+    requestId: text("request_id"),
+    correlationId: text("correlation_id"),
     payload: jsonb("payload"),
     createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => [
+    check("audit_logs_actor_source_check", sql`${table.actorSource} IN ('web', 'mcp', 'system')`),
+]);
 
 // Files (MinIO Objects)
 export const files = pgTable("files", {
@@ -324,3 +361,197 @@ export const reconciliationEntries = pgTable("reconciliation_entries", {
     createdAt: timestamp("created_at").defaultNow(),
     updatedAt: timestamp("updated_at").defaultNow(),
 });
+
+// Borrower names learned or confirmed by operators and payment-review workflows.
+// The same normalized alias may identify more than one borrower; resolution must
+// surface that ambiguity rather than selecting a borrower automatically.
+export const borrowerAliases = pgTable("borrower_aliases", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    borrowerId: integer("borrower_id").references(() => borrowers.id).notNull(),
+    alias: text("alias").notNull(),
+    normalizedAlias: text("normalized_alias").notNull(),
+    source: text("source").default("manual").notNull(), // manual, payment, import
+    status: text("status").default("pending").notNull(), // pending, confirmed, inactive
+    confirmedAt: timestamp("confirmed_at"),
+    createdByUserId: integer("created_by_user_id").references(() => users.id),
+    updatedByUserId: integer("updated_by_user_id").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("borrower_aliases_tenant_borrower_normalized_unique")
+        .on(table.tenantId, table.borrowerId, table.normalizedAlias),
+    check("borrower_aliases_status_check", sql`${table.status} IN ('pending', 'confirmed', 'inactive')`),
+]);
+
+export const paymentIntakes = pgTable("payment_intakes", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    ownerUserId: integer("owner_user_id").references(() => users.id),
+    source: text("source").default("web").notNull(), // web, mcp, legacy
+    status: text("status").default("draft").notNull(), // draft, needs_review, ready, posted, reversed, duplicate
+    amount: numeric("amount").notNull(),
+    receivedAt: timestamp("received_at").defaultNow().notNull(),
+    payerName: text("payer_name"),
+    bankReference: text("bank_reference"),
+    bankReferenceHash: text("bank_reference_hash"),
+    qrPayloadHash: text("qr_payload_hash"),
+    idempotencyKey: text("idempotency_key"),
+    duplicateOfIntakeId: integer("duplicate_of_intake_id").references(
+        (): AnyPgColumn => paymentIntakes.id,
+    ),
+    notes: text("notes"),
+    postedAt: timestamp("posted_at"),
+    createdByUserId: integer("created_by_user_id").references(() => users.id),
+    updatedByUserId: integer("updated_by_user_id").references(() => users.id),
+    postedByUserId: integer("posted_by_user_id").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_intakes_tenant_idempotency_unique")
+        .on(table.tenantId, table.idempotencyKey)
+        .where(sql`${table.idempotencyKey} IS NOT NULL`),
+    uniqueIndex("payment_intakes_tenant_bank_reference_hash_unique")
+        .on(table.tenantId, table.bankReferenceHash)
+        .where(sql`${table.bankReferenceHash} IS NOT NULL`),
+    uniqueIndex("payment_intakes_tenant_qr_payload_hash_unique")
+        .on(table.tenantId, table.qrPayloadHash)
+        .where(sql`${table.qrPayloadHash} IS NOT NULL`),
+    check(
+        "payment_intakes_status_check",
+        sql`${table.status} IN ('draft', 'needs_review', 'ready', 'posted', 'reversed', 'duplicate')`,
+    ),
+]);
+
+export const paymentEvidence = pgTable("payment_evidence", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    paymentIntakeId: integer("payment_intake_id").references(() => paymentIntakes.id).notNull(),
+    fileId: integer("file_id").references(() => files.id),
+    evidenceType: text("evidence_type").default("slip").notNull(), // slip, qr, legacy_slip
+    status: text("status").default("pending").notNull(), // pending, ready, rejected
+    evidenceHash: text("evidence_hash"),
+    mimeType: text("mime_type"),
+    declaredSize: integer("declared_size"),
+    legacyReference: text("legacy_reference"),
+    finalizedAt: timestamp("finalized_at"),
+    createdByUserId: integer("created_by_user_id").references(() => users.id),
+    updatedByUserId: integer("updated_by_user_id").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_evidence_tenant_evidence_hash_unique")
+        .on(table.tenantId, table.evidenceHash)
+        .where(sql`${table.evidenceHash} IS NOT NULL`),
+    check("payment_evidence_status_check", sql`${table.status} IN ('pending', 'ready', 'rejected')`),
+]);
+
+export const paymentMatchProposals = pgTable("payment_match_proposals", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    paymentIntakeId: integer("payment_intake_id").references(() => paymentIntakes.id).notNull(),
+    version: integer("version").notNull(),
+    proposalHash: text("proposal_hash").notNull(),
+    status: text("status").default("draft").notNull(), // draft, needs_review, ready, posted, stale
+    warnings: jsonb("warnings"),
+    expiresAt: timestamp("expires_at"),
+    createdByUserId: integer("created_by_user_id").references(() => users.id),
+    updatedByUserId: integer("updated_by_user_id").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_match_proposals_tenant_intake_version_unique")
+        .on(table.tenantId, table.paymentIntakeId, table.version),
+    check(
+        "payment_match_proposals_status_check",
+        sql`${table.status} IN ('draft', 'needs_review', 'ready', 'posted', 'stale')`,
+    ),
+]);
+
+export const paymentMatchAllocations = pgTable("payment_match_allocations", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    proposalId: integer("proposal_id").references(() => paymentMatchProposals.id).notNull(),
+    allocationOrder: integer("allocation_order").notNull(),
+    borrowerId: integer("borrower_id").references(() => borrowers.id).notNull(),
+    loanId: integer("loan_id").references(() => loans.id).notNull(),
+    scheduleId: integer("schedule_id").references(() => loanSchedules.id),
+    amount: numeric("amount").notNull(),
+    status: text("status").default("proposed").notNull(), // proposed, posted, reversed
+    matchReason: text("match_reason"),
+    createdByUserId: integer("created_by_user_id").references(() => users.id),
+    updatedByUserId: integer("updated_by_user_id").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_match_allocations_tenant_proposal_order_unique")
+        .on(table.tenantId, table.proposalId, table.allocationOrder),
+    check("payment_match_allocations_status_check", sql`${table.status} IN ('proposed', 'posted', 'reversed')`),
+]);
+
+export const loanRenewals = pgTable("loan_renewals", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    oldLoanId: integer("old_loan_id").references(() => loans.id).notNull(),
+    newLoanId: integer("new_loan_id").references(() => loans.id),
+    status: text("status").default("preview").notNull(), // preview, executed, reversed, expired
+    previewHash: text("preview_hash").notNull(),
+    requestedPrincipal: numeric("requested_principal").notNull(),
+    outstandingPrincipal: numeric("outstanding_principal").notNull(),
+    dueCharges: numeric("due_charges").default("0").notNull(),
+    waivedCharges: numeric("waived_charges").default("0").notNull(),
+    cashDirection: text("cash_direction"), // payout, collection, none
+    cashAmount: numeric("cash_amount").default("0").notNull(),
+    reason: text("reason"),
+    idempotencyKey: text("idempotency_key"),
+    expiresAt: timestamp("expires_at").notNull(),
+    executedAt: timestamp("executed_at"),
+    reversedAt: timestamp("reversed_at"),
+    createdByUserId: integer("created_by_user_id").references(() => users.id),
+    updatedByUserId: integer("updated_by_user_id").references(() => users.id),
+    executedByUserId: integer("executed_by_user_id").references(() => users.id),
+    reversedByUserId: integer("reversed_by_user_id").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("loan_renewals_tenant_idempotency_unique")
+        .on(table.tenantId, table.idempotencyKey)
+        .where(sql`${table.idempotencyKey} IS NOT NULL`),
+    check("loan_renewals_status_check", sql`${table.status} IN ('preview', 'executed', 'reversed', 'expired')`),
+    check("loan_renewals_cash_direction_check", sql`${table.cashDirection} IS NULL OR ${table.cashDirection} IN ('payout', 'collection', 'none')`),
+]);
+
+export const loanAdjustments = pgTable("loan_adjustments", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    loanId: integer("loan_id").references(() => loans.id).notNull(),
+    renewalId: integer("renewal_id").references(() => loanRenewals.id),
+    adjustmentType: text("adjustment_type").notNull(), // principal_transfer, cash_payout, charge_settlement, charge_waiver, reversal
+    amount: numeric("amount").notNull(),
+    status: text("status").default("posted").notNull(), // posted, reversed
+    idempotencyKey: text("idempotency_key"),
+    reversedAdjustmentId: integer("reversed_adjustment_id").references(
+        (): AnyPgColumn => loanAdjustments.id,
+    ),
+    reason: text("reason"),
+    effectiveAt: timestamp("effective_at").defaultNow().notNull(),
+    createdByUserId: integer("created_by_user_id").references(() => users.id),
+    updatedByUserId: integer("updated_by_user_id").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("loan_adjustments_tenant_idempotency_unique")
+        .on(table.tenantId, table.idempotencyKey)
+        .where(sql`${table.idempotencyKey} IS NOT NULL`),
+    uniqueIndex("loan_adjustments_tenant_reversed_adjustment_unique")
+        .on(table.tenantId, table.reversedAdjustmentId)
+        .where(sql`${table.reversedAdjustmentId} IS NOT NULL`),
+    check("loan_adjustments_status_check", sql`${table.status} IN ('posted', 'reversed')`),
+]);

@@ -57,6 +57,13 @@
       "when": 1775600000000,
       "tag": "0007_user_record_visibility",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786240000000,
+      "tag": "0008_agent_workflow_foundation",
+      "breakpoints": true
     }
   ]
 }
