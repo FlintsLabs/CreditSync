@@ -19,7 +19,7 @@ import {
     users,
 } from "../db/schema";
 import type { CommandContext } from "./command-context";
-import type { SignedPutRequest } from "../lib/storage";
+import type { SignedPutRequest, StoredObjectHead } from "../lib/storage";
 import {
     createPaymentIntake,
     finalizePaymentEvidence,
@@ -236,6 +236,9 @@ describe("payment application service", () => {
             ],
         });
         expect(ready).toMatchObject({ version: 3, status: "ready", totalAllocated: "120.00" });
+        expect((await db.select().from(paymentMatchProposals).where(eq(paymentMatchProposals.paymentIntakeId,
+            (await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, intake.publicId) }))!.id
+        )).orderBy(paymentMatchProposals.version)).map((proposal) => proposal.status)).toEqual(["stale", "stale", "ready"]);
         expect(ready.allocations.map((row) => row.amount)).toEqual(["40.00", "30.00", "50.00"]);
         expect(new Set(ready.allocations.map((row) => row.borrowerPublicId)).size).toBe(2);
         expect((await getPaymentIntake(context(actor), intake.publicId)).latestProposal).toMatchObject({
@@ -385,6 +388,97 @@ describe("payment application service", () => {
             entry.entryType.endsWith("_out") ? balance.minus(entry.amount) : balance.plus(entry.amount), new Decimal(0)).toFixed(2)).toBe("0.00");
     });
 
+    // Break caught: normalizing by funded subtotal credits 100% of a partially funded payment and ignores reallocation-out rows.
+    integrationTest("credits only the economic funded share across net reallocated sources and reverses each fund to zero", async () => {
+        const actor = await seedUser();
+        const seeded = await seedLoan({ actor, borrowerName: "Partially funded", schedules: [{ total: "100.00" }] });
+        const [firstProfile, secondProfile] = await db.insert(bankProfiles).values([
+            { tenantId: actor.tenantId, name: "Fund A", type: "personal_savings" },
+            { tenantId: actor.tenantId, name: "Fund B", type: "personal_savings" },
+        ]).returning();
+        await db.insert(loanFundingAllocations).values([
+            { tenantId: actor.tenantId, loanId: seeded.loan.id, bankProfileId: firstProfile!.id, allocatedAmount: "40.00", allocationDate: "2026-08-01", allocationType: "initial" },
+            { tenantId: actor.tenantId, loanId: seeded.loan.id, bankProfileId: firstProfile!.id, allocatedAmount: "-10.00", allocationDate: "2026-08-02", allocationType: "reallocation_out" },
+            { tenantId: actor.tenantId, loanId: seeded.loan.id, bankProfileId: secondProfile!.id, allocatedAmount: "20.00", allocationDate: "2026-08-02", allocationType: "reallocation_in" },
+        ]);
+        const intake = await createPaymentIntake(context(actor), { amount: "1.01", receivedAt: "2026-08-10T10:00:00.000Z" });
+        const preview = await previewPaymentMatch(context(actor), intake.publicId, { allocations: [{
+            borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "1.01",
+        }] });
+        await postPayment(context(actor), intake.publicId, { proposalPublicId: preview.publicId });
+
+        const credits = await db.select().from(fundLedgerEntries);
+        expect(credits.map((entry) => ({ profile: entry.bankProfileId, amount: entry.amount }))).toEqual([
+            { profile: firstProfile!.id, amount: "0.30" },
+            { profile: secondProfile!.id, amount: "0.21" },
+        ]);
+        expect(credits.reduce((sum, entry) => sum.plus(entry.amount), new Decimal(0)).toFixed(2)).toBe("0.51");
+
+        await reversePayment(context(actor), intake.publicId);
+        const allEntries = await db.select().from(fundLedgerEntries);
+        for (const profile of [firstProfile!, secondProfile!]) {
+            expect(allEntries.filter((entry) => entry.bankProfileId === profile.id).reduce((sum, entry) =>
+                entry.entryType.endsWith("_out") ? sum.minus(entry.amount) : sum.plus(entry.amount), new Decimal(0)).toFixed(2)).toBe("0.00");
+        }
+    });
+
+    // Break caught: a downstream fund-ledger insert can commit schedule/transaction effects before surfacing its failure.
+    integrationTest("rolls back every posting effect when fund-ledger persistence fails", async () => {
+        const actor = await seedUser();
+        const seeded = await seedLoan({ actor, borrowerName: "Atomic payer", schedules: [{ total: "100.00" }], funded: true });
+        const intake = await createPaymentIntake(context(actor), { amount: "40.00", receivedAt: "2026-08-10T10:00:00.000Z" });
+        const preview = await previewPaymentMatch(context(actor), intake.publicId, { allocations: [{
+            borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "40.00",
+        }] });
+        await db.execute(sql`CREATE OR REPLACE FUNCTION fail_payment_ledger_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN RAISE EXCEPTION 'injected ledger failure'; END $$`);
+        await db.execute(sql`CREATE TRIGGER fail_payment_ledger_insert BEFORE INSERT ON fund_ledger_entries
+            FOR EACH ROW EXECUTE FUNCTION fail_payment_ledger_insert()`);
+        try {
+            await expect(postPayment(context(actor), intake.publicId, { proposalPublicId: preview.publicId }))
+                .rejects.toMatchObject({ cause: expect.objectContaining({ message: "injected ledger failure" }) });
+            expect(await db.select().from(transactions)).toHaveLength(0);
+            expect(await db.select().from(fundLedgerEntries)).toHaveLength(0);
+            expect(await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.id, seeded.schedules[0]!.id) }))
+                .toMatchObject({ paidTotal: "0.00", remainingDue: "100.00" });
+            expect(await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, intake.publicId) }))
+                .toMatchObject({ status: "ready", postedAt: null });
+        } finally {
+            await db.execute(sql`DROP TRIGGER IF EXISTS fail_payment_ledger_insert ON fund_ledger_entries`);
+            await db.execute(sql`DROP FUNCTION IF EXISTS fail_payment_ledger_insert()`);
+        }
+    });
+
+    // Break caught: grouped reversal marks allocations from superseded proposals reversed even though they were never posted.
+    integrationTest("reverses only the posted grouped proposal and remains idempotent", async () => {
+        const actor = await seedUser();
+        const first = await seedLoan({ actor, borrowerName: "Grouped A", schedules: [{ total: "40.00" }] });
+        const second = await seedLoan({ actor, borrowerName: "Grouped B", schedules: [{ total: "60.00" }] });
+        const intake = await createPaymentIntake(context(actor), { amount: "60.00", receivedAt: "2026-08-10T10:00:00.000Z" });
+        const superseded = await previewPaymentMatch(context(actor), intake.publicId, { allocations: [
+            { borrowerPublicId: first.borrower.publicId, loanPublicId: first.loan.publicId, amount: "20.00" },
+            { borrowerPublicId: second.borrower.publicId, loanPublicId: second.loan.publicId, amount: "40.00" },
+        ] });
+        const postedProposal = await previewPaymentMatch(context(actor), intake.publicId, { allocations: [
+            { borrowerPublicId: first.borrower.publicId, loanPublicId: first.loan.publicId, amount: "30.00" },
+            { borrowerPublicId: second.borrower.publicId, loanPublicId: second.loan.publicId, amount: "30.00" },
+        ] });
+        await postPayment(context(actor), intake.publicId, { proposalPublicId: postedProposal.publicId });
+        const reversed = await reversePayment(context(actor), intake.publicId);
+        expect(await reversePayment(context(actor), intake.publicId)).toEqual(reversed);
+        expect(reversed.transactions).toHaveLength(4);
+        const proposals = await db.select().from(paymentMatchProposals).where(eq(paymentMatchProposals.paymentIntakeId,
+            (await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, intake.publicId) }))!.id
+        ));
+        const allocationStatuses = async (proposalPublicId: string) => {
+            const proposal = proposals.find((row) => row.publicId === proposalPublicId)!;
+            return (await db.select().from(paymentMatchAllocations).where(eq(paymentMatchAllocations.proposalId, proposal.id)))
+                .map((row) => row.status);
+        };
+        expect(await allocationStatuses(superseded.publicId)).toEqual(["proposed", "proposed"]);
+        expect(await allocationStatuses(postedProposal.publicId)).toEqual(["reversed", "reversed"]);
+    });
+
     // Break caught: reversing an older payment after a newer one rewrites component attribution for the wrong balance state.
     integrationTest("rejects out-of-order reversal when a later repayment remains posted", async () => {
         const actor = await seedUser();
@@ -427,9 +521,58 @@ describe("payment application service", () => {
             expect.objectContaining({ penaltyComponent: "15.00", feeComponent: "10.00", interestComponent: "20.00", principalComponent: "0.00" }),
         ]);
         expect(await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.id, seeded.schedules[0]!.id) }))
-            .toMatchObject({ paidPenalty: "15.00", paidTotal: "30.00", remainingDue: "70.00" });
+            .toMatchObject({ paidPenalty: "15.00", paidTotal: "30.00", remainingDue: "70.00", status: "overdue", overdueDays: 9 });
         expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) }))
             .toMatchObject({ outstandingFees: "0.00", outstandingInterest: "0.00", outstandingPrincipal: "70.00" });
+    });
+
+    // Break caught: payment/reversal hard-code pending and leave a stale loan nextDueDate after payoff.
+    integrationTest("preserves multi-schedule receipt-date lifecycle and clears/restores next due dates", async () => {
+        const actor = await seedUser();
+        const seeded = await seedLoan({
+            actor,
+            borrowerName: "Lifecycle payer",
+            schedules: [
+                { total: "30.00", principal: "10.00", interest: "10.00", fee: "10.00", dueDate: "2026-08-01" },
+                { total: "70.00", principal: "70.00", dueDate: "2026-09-10" },
+            ],
+        });
+        await db.update(loans).set({ lateFeeMode: "fixed", lateFeeAmount: "5.00", nextDueDate: "2026-08-01" })
+            .where(eq(loans.id, seeded.loan.id));
+        const intake = await createPaymentIntake(context(actor), { amount: "45.00", receivedAt: "2026-08-10T10:00:00.000Z" });
+        const preview = await previewPaymentMatch(context(actor), intake.publicId, { allocations: [{
+            borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "45.00",
+        }] });
+        const posted = await postPayment(context(actor), intake.publicId, { proposalPublicId: preview.publicId });
+        expect(posted.transactions).toEqual([
+            expect.objectContaining({ penaltyComponent: "5.00", feeComponent: "10.00", interestComponent: "10.00", principalComponent: "10.00" }),
+            expect.objectContaining({ penaltyComponent: "0.00", feeComponent: "0.00", interestComponent: "0.00", principalComponent: "10.00" }),
+        ]);
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, seeded.loan.id)).orderBy(loanSchedules.installmentNo)).toEqual([
+            expect.objectContaining({ remainingDue: "0.00", status: "paid", overdueDays: 0 }),
+            expect.objectContaining({ remainingDue: "60.00", status: "partial", overdueDays: 0 }),
+        ]);
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) }))
+            .toMatchObject({ nextDueDate: "2026-09-10", status: "active" });
+
+        await reversePayment(context(actor), intake.publicId);
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, seeded.loan.id)).orderBy(loanSchedules.installmentNo)).toEqual([
+            expect.objectContaining({ remainingDue: "30.00", status: "overdue", overdueDays: 9 }),
+            expect.objectContaining({ remainingDue: "70.00", status: "pending", overdueDays: 0 }),
+        ]);
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) }))
+            .toMatchObject({ nextDueDate: "2026-08-01", status: "active" });
+
+        const payoff = await createPaymentIntake(context(actor), { amount: "105.00", receivedAt: "2026-08-10T11:00:00.000Z" });
+        const payoffPreview = await previewPaymentMatch(context(actor), payoff.publicId, { allocations: [{
+            borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "105.00",
+        }] });
+        await postPayment(context(actor), payoff.publicId, { proposalPublicId: payoffPreview.publicId });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) }))
+            .toMatchObject({ nextDueDate: null, status: "paid" });
+        await reversePayment(context(actor), payoff.publicId);
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) }))
+            .toMatchObject({ nextDueDate: "2026-08-01", status: "active" });
     });
 
     // Break caught: finalize trusts client URLs/metadata or accepts another tenant's object/hash.
@@ -506,7 +649,7 @@ describe("payment application service", () => {
         const expiringIntent = await preparePaymentEvidence(context(actor), expiringIntake.publicId, {
             mimeType: "image/png", size: 12, sha256: "f".repeat(64),
         }, gateway);
-        await db.update(paymentEvidence).set({ updatedAt: new Date(Date.now() - 1_000_000) })
+        await db.update(paymentEvidence).set({ uploadExpiresAt: new Date(Date.now() - 1) })
             .where(eq(paymentEvidence.publicId, expiringIntent.publicId));
         const replacementIntake = await createPaymentIntake(context(actor), {
             amount: "62.00", receivedAt: "2026-08-10T10:50:00.000Z",
@@ -583,6 +726,79 @@ describe("payment application service", () => {
         expect(await settled).toMatchObject({ code: "PAYMENT_INTAKE_IMMUTABLE", status: 409 });
         expect(await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, target.publicId) }))
             .toMatchObject({ status: "posted", duplicateOfIntakeId: null });
+    });
+
+    // Break caught: finalization reconstructs expiry from environment TTL instead of the signer's returned timestamp.
+    integrationTest("rejects every evidence HEAD mismatch and the exact signer-returned expiry", async () => {
+        const actor = await seedUser();
+        const mismatchCases: Array<{ name: string; head: StoredObjectHead }> = [
+            { name: "missing", head: { exists: false, contentType: null, contentLength: null, checksumSha256: null, metadata: {} } },
+            { name: "tenant", head: { exists: true, contentType: "image/png", contentLength: 12, checksumSha256: "1".repeat(64), metadata: { tenant: "wrong", intake: "set-later" } } },
+            { name: "intake", head: { exists: true, contentType: "image/png", contentLength: 12, checksumSha256: "2".repeat(64), metadata: { tenant: "tenant-a", intake: "wrong" } } },
+            { name: "mime", head: { exists: true, contentType: "image/jpeg", contentLength: 12, checksumSha256: "3".repeat(64), metadata: { tenant: "tenant-a", intake: "set-later" } } },
+            { name: "size", head: { exists: true, contentType: "image/png", contentLength: 13, checksumSha256: "4".repeat(64), metadata: { tenant: "tenant-a", intake: "set-later" } } },
+            { name: "checksum", head: { exists: true, contentType: "image/png", contentLength: 12, checksumSha256: "0".repeat(64), metadata: { tenant: "tenant-a", intake: "set-later" } } },
+        ];
+        for (const [index, mismatch] of mismatchCases.entries()) {
+            const intake = await createPaymentIntake(context(actor), { amount: `${70 + index}.00`, receivedAt: `2026-08-10T1${index}:00:00.000Z` });
+            const checksum = String(index + 1).repeat(64);
+            const head = { ...mismatch.head, metadata: {
+                ...mismatch.head.metadata,
+                ...(mismatch.head.metadata.intake === "set-later" ? { intake: intake.publicId } : {}),
+            } };
+            const gateway: EvidenceStorageGateway = {
+                preparePut: async () => ({ uploadUrl: "https://storage.example.test/signed", expiresAt: new Date(Date.now() + 1_000) }),
+                head: async () => head,
+            };
+            const intent = await preparePaymentEvidence(context(actor), intake.publicId, { mimeType: "image/png", size: 12, sha256: checksum }, gateway);
+            await expect(finalizePaymentEvidence(context(actor), intake.publicId, intent.publicId, gateway))
+                .rejects.toMatchObject({ code: "EVIDENCE_METADATA_MISMATCH", status: 409 });
+        }
+
+        const expiredIntake = await createPaymentIntake(context(actor), { amount: "80.00", receivedAt: "2026-08-10T18:00:00.000Z" });
+        const expiredGateway: EvidenceStorageGateway = {
+            preparePut: async () => ({ uploadUrl: "https://storage.example.test/signed", expiresAt: new Date(Date.now() + 20) }),
+            head: async () => ({
+                exists: true, contentType: "image/png", contentLength: 12, checksumSha256: "9".repeat(64),
+                metadata: { tenant: "tenant-a", intake: expiredIntake.publicId },
+            }),
+        };
+        const expiredIntent = await preparePaymentEvidence(context(actor), expiredIntake.publicId, {
+            mimeType: "image/png", size: 12, sha256: "9".repeat(64),
+        }, expiredGateway);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        await expect(finalizePaymentEvidence(context(actor), expiredIntake.publicId, expiredIntent.publicId, expiredGateway))
+            .rejects.toMatchObject({ code: "EVIDENCE_UPLOAD_EXPIRED", status: 409 });
+    });
+
+    // Break caught: a delayed signer can return a live upload capability after the intake becomes posted.
+    integrationTest("does not return a newly signed evidence capability after posting wins the race", async () => {
+        const actor = await seedUser();
+        const seeded = await seedLoan({ actor, borrowerName: "Signing race", schedules: [{ total: "10.00" }] });
+        const intake = await createPaymentIntake(context(actor), { amount: "10.00", receivedAt: "2026-08-10T10:00:00.000Z" });
+        const preview = await previewPaymentMatch(context(actor), intake.publicId, { allocations: [{
+            borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "10.00",
+        }] });
+        let signerEntered!: () => void;
+        let releaseSigner!: () => void;
+        const entered = new Promise<void>((resolve) => { signerEntered = resolve; });
+        const release = new Promise<void>((resolve) => { releaseSigner = resolve; });
+        const gateway: EvidenceStorageGateway = {
+            preparePut: async () => {
+                signerEntered();
+                await release;
+                return { uploadUrl: "https://storage.example.test/signed", expiresAt: new Date(Date.now() + 60_000) };
+            },
+            head: async () => ({ exists: false, contentType: null, contentLength: null, checksumSha256: null, metadata: {} }),
+        };
+        const preparing = preparePaymentEvidence(context(actor), intake.publicId, {
+            mimeType: "image/png", size: 12, sha256: "8".repeat(64),
+        }, gateway);
+        const settled = preparing.then((value) => value, (error) => error);
+        await entered;
+        await postPayment(context(actor), intake.publicId, { proposalPublicId: preview.publicId });
+        releaseSigner();
+        expect(await settled).toMatchObject({ code: "PAYMENT_INTAKE_IMMUTABLE", status: 409 });
     });
 
     // Break caught: list/get leak numeric keys or records owned by another tenant.

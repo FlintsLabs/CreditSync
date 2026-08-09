@@ -497,6 +497,7 @@ export const paymentEvidence = pgTable("payment_evidence", {
     mimeType: text("mime_type"),
     declaredSize: integer("declared_size"),
     legacyReference: text("legacy_reference"),
+    uploadExpiresAt: timestamp("upload_expires_at"),
     finalizedAt: timestamp("finalized_at"),
     createdByUserId: integer("created_by_user_id"),
     updatedByUserId: integer("updated_by_user_id"),

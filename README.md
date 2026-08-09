@@ -28,7 +28,7 @@ The repo already contains a working MVP foundation:
 - OCR endpoint for uploaded ID-card-like images
 - Loan calculation plus draft-review-activation flow
 - Payment intake, evidence, review, grouped allocation, posting, and compensating reversal workflow
-- Legacy transaction recording and repayment-history reads remain available
+- Legacy repayment-history reads remain available; repayment writes use the payment-intake workflow exclusively
 - Closing summary calculation for loans
 - LINE webhook ingestion for image uploads
 
@@ -69,7 +69,7 @@ Some screens are still mock/demo oriented and not fully wired to live backend da
 
 ### 4. Transaction Management
 
-- record repayments manually
+- record repayments manually through payment intakes
 - upload repayment slips
 - link payment to a loan
 - show repayment history
@@ -78,7 +78,7 @@ Some screens are still mock/demo oriented and not fully wired to live backend da
 - preview deterministic matches, review ambiguous matches, and split one intake across borrowers, loans, and schedules
 - post schedule, loan, and fund effects atomically, then correct posted payments with append-only compensating reversals
 
-The authenticated payment API is rooted at `/payment-intakes`. It exposes create/list/get and review-queue operations, `/:id/evidence/upload-intents`, `/:id/evidence/:evidenceId/finalize`, `/:id/match-preview`, `/:id/post`, `/:id/review`, and `/:id/reverse`. All command IDs are UUIDs and all public money values are two-decimal strings. Keep using `/transactions` for legacy repayment reads and the legacy manual-recording flow.
+The authenticated payment API is rooted at `/payment-intakes`. It exposes create/list/get and review-queue operations, `/:id/evidence/upload-intents`, `/:id/evidence/:evidenceId/finalize`, `/:id/match-preview`, `/:id/post`, `/:id/review`, and `/:id/reverse`. All command IDs are UUIDs and all public money values are two-decimal strings. `GET /transactions` remains available for legacy repayment history, but `POST /transactions` returns `405 LEGACY_REPAYMENT_WRITE_DISABLED`; all repayment writes must use `/payment-intakes` so one Decimal allocator and one PostgreSQL lock order govern balances.
 
 ### 5. Funding and Traceability
 
@@ -206,7 +206,7 @@ Important variables include:
 - `LINE_TENANT_ID`
 - `VITE_GOOGLE_CLIENT_ID`
 
-For file access, CreditSync stores an internal file reference and resolves it to a time-limited signed URL when the API returns borrower images, uploaded files, and repayment slips. With the default S3-compatible setup, keep `S3_ENDPOINT` for server-side uploads and `S3_PUBLIC_URL` for the browser-reachable hostname used in presigned download links. In the bundled production setup, `S3_PUBLIC_URL` should point to the frontend domain with a `/files` prefix because Nginx proxies `/files/*` to MinIO. Payment evidence uses signed S3-compatible PUTs with signed MIME, size, SHA-256 checksum, tenant, and intake metadata; finalization verifies the stored object with `HEAD` and never accepts a caller-provided fetch URL. `EVIDENCE_UPLOAD_TTL_SECONDS` defaults to `300`, `EVIDENCE_MAX_BYTES` to `20971520` (20 MiB), and `PAYMENT_PREVIEW_TTL_SECONDS` to `900`. The evidence-intent workflow requires `STORAGE_PROVIDER=s3`; existing Azure Blob file reads/uploads remain available outside this workflow.
+For file access, CreditSync stores an internal file reference and resolves it to a time-limited signed URL when the API returns borrower images, uploaded files, and repayment slips. With the default S3-compatible setup, keep `S3_ENDPOINT` for server-side uploads and `S3_PUBLIC_URL` for the browser-reachable hostname used in presigned download links. In the bundled production setup, `S3_PUBLIC_URL` should point to the frontend domain with a `/files` prefix because Nginx proxies `/files/*` to MinIO. Payment evidence uses signed S3-compatible PUTs with signed MIME, size, SHA-256 checksum, tenant, and intake metadata; the signer-returned expiry is persisted exactly, and finalization checks that timestamp plus stored-object metadata under row locks. It never accepts a caller-provided fetch URL. `EVIDENCE_UPLOAD_TTL_SECONDS` defaults to `300`, `EVIDENCE_MAX_BYTES` to `20971520` (20 MiB), and `PAYMENT_PREVIEW_TTL_SECONDS` to `900`. The evidence-intent workflow requires `STORAGE_PROVIDER=s3`; existing Azure Blob file reads/uploads remain available outside this workflow.
 
 ### 3. Install dependencies
 

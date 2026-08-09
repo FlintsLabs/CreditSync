@@ -4,6 +4,7 @@ import { readMigrationFiles } from "drizzle-orm/migrator";
 const migrationTag = "0008_agent_workflow_foundation";
 const backendRoot = new URL("../../", import.meta.url).pathname;
 const migrationPath = `${backendRoot}drizzle/${migrationTag}.sql`;
+const evidenceExpiryMigrationPath = `${backendRoot}drizzle/0010_payment_evidence_expiry.sql`;
 const journalPath = `${backendRoot}drizzle/meta/_journal.json`;
 
 async function migrationSql(): Promise<string> {
@@ -13,6 +14,14 @@ async function migrationSql(): Promise<string> {
 }
 
 describe("agent workflow migration contract", () => {
+    test("adds exact evidence upload expiry with an additive registered migration", async () => {
+        const journal = await Bun.file(journalPath).json() as { entries: Array<{ idx: number; tag: string }> };
+        expect(journal.entries.find((entry) => entry.tag === "0010_payment_evidence_expiry"))
+            .toMatchObject({ idx: 10, tag: "0010_payment_evidence_expiry" });
+        const migration = await Bun.file(evidenceExpiryMigrationPath).text();
+        expect(migration).toContain('ALTER TABLE "payment_evidence" ADD COLUMN "upload_expires_at" timestamp');
+        expect(migration).not.toMatch(/\bDROP\b/i);
+    });
     test("registers one Drizzle migration after 0007", async () => {
         const journal = await Bun.file(journalPath).json() as {
             entries: Array<{ idx: number; tag: string }>;

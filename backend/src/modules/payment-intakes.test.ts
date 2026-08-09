@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { borrowers, loanSchedules, loans, users } from "../db/schema";
+import { borrowers, loanSchedules, loans, paymentIntakes, transactions, users } from "../db/schema";
 import { paymentIntakesRoute } from "./payment-intakes";
+import { transactionsRoute } from "./transactions";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
@@ -123,5 +124,99 @@ describe("payment intake REST adapter", () => {
         });
         expect(invalidMoney.response.status).toBe(400);
         expect(invalidMoney.body).toMatchObject({ code: "INVALID_PAYMENT_AMOUNT" });
+
+        const blankIdempotency = await jsonRequest(app, "/payment-intakes", token, {
+            method: "POST",
+            headers: { "idempotency-key": "   " },
+            body: JSON.stringify({ amount: "10.00", receivedAt: "2026-08-10T10:00:00.000Z" }),
+        });
+        expect(blankIdempotency.response.status).toBe(400);
+        expect(blankIdempotency.body).toMatchObject({ code: "INVALID_IDEMPOTENCY_KEY" });
+    });
+
+    // Break caught: owner-scoped HTTP list/get/mutations reveal or mutate a peer collector's intake.
+    integrationTest("enforces owner scope across payment intake HTTP reads and mutations", async () => {
+        const [actor, peer] = await db.insert(users).values([
+            { tenantId: "tenant-a", email: "scope-a@example.test", role: "collector" },
+            { tenantId: "tenant-a", email: "scope-b@example.test", role: "collector" },
+        ]).returning();
+        const [own, hidden] = await db.insert(paymentIntakes).values([
+            { tenantId: "tenant-a", ownerUserId: actor!.id, source: "web", status: "draft", amount: "10.00", receivedAt: new Date() },
+            { tenantId: "tenant-a", ownerUserId: peer!.id, source: "web", status: "draft", amount: "20.00", receivedAt: new Date() },
+        ]).returning();
+        const token = await authToken(actor!);
+        const app = new Elysia().use(paymentIntakesRoute);
+        const list = await jsonRequest(app, "/payment-intakes", token);
+        expect(list.body).toEqual([expect.objectContaining({ publicId: own!.publicId })]);
+        const detail = await jsonRequest(app, `/payment-intakes/${hidden!.publicId}`, token);
+        expect(detail.response.status).toBe(404);
+        expect(detail.body).toMatchObject({ code: "PAYMENT_INTAKE_NOT_FOUND" });
+        const mutation = await jsonRequest(app, `/payment-intakes/${hidden!.publicId}/review`, token, {
+            method: "POST", body: JSON.stringify({ status: "needs_review" }),
+        });
+        expect(mutation.response.status).toBe(404);
+        expect(await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.id, hidden!.id) }))
+            .toMatchObject({ status: "draft" });
+    });
+
+    // Break caught: the legacy writer uses principal-first Number allocation and can overwrite an intake post from a stale snapshot.
+    integrationTest("keeps legacy transactions read-only while an intake post holds the financial writer boundary", async () => {
+        const actor = await db.insert(users).values({ tenantId: "tenant-a", email: "single-writer@example.test", role: "owner" })
+            .returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId: "tenant-a", ownerUserId: actor.id, name: "Mixed Components" })
+            .returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({
+            tenantId: "tenant-a", ownerUserId: actor.id, borrowerId: borrower.id,
+            principalAmount: "70.00", interestRate: "0.00", repaymentType: "monthly",
+            outstandingPrincipal: "70.00", outstandingInterest: "20.00", outstandingFees: "10.00", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        const schedule = await db.insert(loanSchedules).values({
+            tenantId: "tenant-a", loanId: loan.id, installmentNo: 1, dueDate: "2026-08-10",
+            scheduledPrincipal: "70.00", scheduledInterest: "20.00", scheduledFee: "10.00",
+            scheduledTotal: "100.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "100.00", status: "pending",
+        }).returning().then((rows) => rows[0]!);
+        const token = await authToken(actor);
+        const app = new Elysia().use(paymentIntakesRoute).use(transactionsRoute);
+
+        const created = await jsonRequest(app, "/payment-intakes", token, {
+            method: "POST", body: JSON.stringify({ amount: "40.00", receivedAt: "2026-08-10T10:00:00.000Z" }),
+        });
+        const preview = await jsonRequest(app, `/payment-intakes/${created.body.publicId}/match-preview`, token, {
+            method: "POST", body: JSON.stringify({ allocations: [{
+                borrowerPublicId: borrower.publicId, loanPublicId: loan.publicId, amount: "40.00",
+            }] }),
+        });
+
+        let release!: () => void;
+        let locked!: () => void;
+        const lockReady = new Promise<void>((resolve) => { locked = resolve; });
+        const releaseLock = new Promise<void>((resolve) => { release = resolve; });
+        const blocker = db.transaction(async (tx) => {
+            await tx.execute(sql`SELECT id FROM loans WHERE id = ${loan.id} FOR UPDATE`);
+            await tx.execute(sql`SELECT id FROM loan_schedules WHERE id = ${schedule.id} FOR UPDATE`);
+            locked();
+            await releaseLock;
+        });
+        await lockReady;
+        const posting = jsonRequest(app, `/payment-intakes/${created.body.publicId}/post`, token, {
+            method: "POST", body: JSON.stringify({ proposalPublicId: preview.body.publicId }),
+        });
+        const legacyRequest = jsonRequest(app, "/transactions", token, {
+            method: "POST", body: JSON.stringify({ loanId: loan.publicId, amount: "30.00", date: "2026-08-10T10:01:00.000Z" }),
+        });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        release();
+        await blocker;
+        const legacy = await legacyRequest;
+        expect(legacy.response.status).toBe(405);
+        expect(legacy.body).toMatchObject({ code: "LEGACY_REPAYMENT_WRITE_DISABLED" });
+        const legacyWithoutBody = await jsonRequest(app, "/transactions", token, { method: "POST" });
+        expect(legacyWithoutBody.response.status).toBe(405);
+        expect((await posting).response.status).toBe(200);
+        expect(await db.select().from(transactions)).toEqual([
+            expect.objectContaining({ feeComponent: "10.00", interestComponent: "20.00", principalComponent: "10.00" }),
+        ]);
+        expect(await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.id, schedule.id) }))
+            .toMatchObject({ paidTotal: "40.00", remainingDue: "60.00" });
     });
 });

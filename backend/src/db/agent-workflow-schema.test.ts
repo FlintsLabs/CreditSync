@@ -36,6 +36,9 @@ function uniqueIndexContract(table: PgTable, name: string) {
 }
 
 describe("agent workflow Drizzle schema", () => {
+    test("persists the exact signer-returned payment evidence expiry", () => {
+        expect(Object.keys(schema.paymentEvidence)).toContain("uploadExpiresAt");
+    });
     test("exports every additive workflow table with tenant, UUIDv7, timestamps, actor, and status metadata", () => {
         for (const exportName of expectedWorkflowTables) {
             const table = workflowTable(exportName);

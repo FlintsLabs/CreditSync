@@ -13,7 +13,7 @@
 ### Changed
 - Loan creation is now draft-first: `POST /loans` stores editable terms without a schedule, while `POST /loans/:id/activate` locks the terms and creates the schedule once. The current web wizard performs both steps to preserve its existing confirm-and-create flow.
 - Borrower and loan-application REST adapters now delegate to the shared services and use public UUID identifiers at their external command boundaries.
-- Payment REST adapters now delegate to the shared payment application service, use UUID command boundaries and exact money strings, while preserving legacy `/transactions` reads and manual repayment compatibility.
+- Payment REST adapters now delegate to the shared payment application service and use UUID command boundaries and exact money strings; legacy `GET /transactions` remains readable while legacy repayment writes return 405 so all balance mutations share one Decimal allocator and lock order.
 - Loan schedule, closing, allocation-state, profitability, funding-allocation, and funding-reallocation REST payloads now expose public UUIDs and two-decimal money strings; funding mutations accept public funding UUIDs and money strings.
 - Updated the loan detail, matching, and closing frontend flows for the exact public loan DTOs.
 
@@ -26,6 +26,7 @@
 - Mapped routine borrower and loan authorization, visibility, state, and duplicate-alias failures to stable domain error codes and statuses.
 - Restored tenant cache invalidation after borrower updates so cached loan lists immediately reflect borrower-name changes.
 - Serialized payment preview/post/reversal state transitions with PostgreSQL row locks, rejected and marked stale proposals after concurrent balance changes, and kept schedule, loan, transaction, fund-ledger, and audit effects atomic and append-only.
+- Persisted exact signed-evidence expiry, hardened delayed signing/finalization races, attributed fund effects only to net economic funded shares, and restored exact schedule/loan lifecycle state on posting and reversal.
 
 ## v0.2.4 - 2026-08-09
 

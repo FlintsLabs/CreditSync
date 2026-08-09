@@ -1,0 +1,1 @@
+ALTER TABLE "payment_evidence" ADD COLUMN "upload_expires_at" timestamp;

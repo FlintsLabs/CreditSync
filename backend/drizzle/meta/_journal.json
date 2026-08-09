@@ -71,6 +71,13 @@
       "when": 1786294151294,
       "tag": "0009_loan_draft_terms",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786299738393,
+      "tag": "0010_payment_evidence_expiry",
+      "breakpoints": true
     }
   ]
 }
