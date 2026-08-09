@@ -138,6 +138,7 @@ The web app exposes `/payments` as the human review inbox. It persists and shows
 │   ├── src/lib/          # api client, auth helpers, i18n
 │   └── src/pages/        # landing, login, dashboard screens
 ├── docs/                 # ADRs and planning docs
+├── plugins/creditsync/   # Private Codex plugin 1.0.0, skills, evals, and validation
 ├── k8s/                  # Kubernetes manifests
 ├── docker-compose.yml    # local development infra
 ├── docker-compose.infra.yml  # production-style infra including dragonfly cache
@@ -315,6 +316,24 @@ For rotation, put the old and new hashes in `MCP_API_TOKEN_HASHES` separated by 
 
 `MCP_RATE_LIMIT_MAX` defaults to 60 requests per `MCP_RATE_LIMIT_WINDOW_SECONDS` (also 60). Dragonfly is used when `CACHE_URL` is available; an in-process limiter remains active if the cache is unavailable. `/mcp` logs only sanitized event, tool, status, request/correlation ID, and timing fields—never authorization headers or tool arguments.
 
+## Private CreditSync Plugin
+
+The repository includes CreditSync Plugin `1.0.0` under [`plugins/creditsync`](./plugins/creditsync). It combines five orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
+
+Before installation, register the deployed MCP endpoint as a private Codex app and replace the conspicuous `plugin_asdk_app_REPLACE_AFTER_PRIVATE_REGISTRATION` value in `plugins/creditsync/.app.json` with the returned `plugin_asdk_app...` technical ID. Then validate and install from the repository marketplace:
+
+```bash
+bun test plugins/creditsync/tests/plugin-contract.test.ts
+bun run plugins/creditsync/scripts/validate.ts
+python3 /home/flintstone/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py plugins/creditsync
+codex plugin marketplace add /absolute/path/to/CreditSync
+codex plugin add creditsync@personal
+```
+
+Start a new Codex task after installation. The committed app ID is intentionally a non-runnable registration placeholder, so static validation is not evidence of a live private-app connection.
+
+See [`docs/operations/agent-mcp-plugin.md`](./docs/operations/agent-mcp-plugin.md) for Cloudflare, token rotation, MinIO evidence, private registration, and rollback, and [`docs/operations/backup-recovery.md`](./docs/operations/backup-recovery.md) for database/object backup and isolated restore verification.
+
 ### Dev vs Docker Quick Reference
 
 | Scenario | Infra | Backend | Frontend |
@@ -431,6 +450,8 @@ Additional planning and architecture notes:
 - [docs/adr/001-tech-stack.md](./docs/adr/001-tech-stack.md)
 - [docs/adr/002-storage-strategy.md](./docs/adr/002-storage-strategy.md)
 - [requirement.md](./requirement.md)
+- [Agent/MCP/plugin operations](./docs/operations/agent-mcp-plugin.md)
+- [Backup and recovery](./docs/operations/backup-recovery.md)
 
 ## Suggested Next Work
 

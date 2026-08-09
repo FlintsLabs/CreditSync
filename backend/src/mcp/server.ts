@@ -124,6 +124,7 @@ const intakeOutput = z.object({
     payerName: z.string().nullable().optional(),
     bankReference: z.string().nullable().optional(),
     notes: z.string().nullable().optional(),
+    warnings: z.array(warningSchema).optional(),
     postedAt: nullableIsoDateTime.optional(),
     createdAt: nullableIsoDateTime.optional(),
     updatedAt: nullableIsoDateTime.optional(),

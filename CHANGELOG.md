@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.3.4 - 2026-08-10
+
+### Added
+- Added CreditSync Plugin `1.0.0` with a private app manifest, repository marketplace, five sequentially tested workflow skills, matching/financial/error references, and positive/negative eval contracts.
+- Added executable plugin validation for manifest discovery, frozen MCP tool names, marketplace paths, forbidden deferred capabilities, eval coverage, and common secret patterns.
+- Added deployment, Cloudflare HTTPS MCP, bearer rotation, MinIO evidence, private registration, backup/restore, reconciliation, and operational rollback documentation.
+
+### Changed
+- Documented application release `v0.3.4` as the truthful integration release while retaining the plugin's independent `1.0.0` contract and the existing frozen MCP schema version `1.0`.
+- Documented that the committed private-app technical ID is a non-runnable registration placeholder and that live installation/authentication remains an operator step.
+
+### Fixed
+- Kept persisted payment-intake review warnings inside the frozen MCP 1.0 output schema so real default-adapter posting, retrieval, and reversal calls remain valid after the web review changes.
+
 ## v0.3.3 - 2026-08-10
 
 ### Added
