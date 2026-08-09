@@ -16,7 +16,10 @@ export const authPlugin = (app: Elysia) =>
             })
         )
         .derive(async ({ jwt, cookie: { auth }, headers }) => {
-            const token = auth?.value || headers.authorization?.replace("Bearer ", "");
+            const cookieToken = auth?.value;
+            const token = typeof cookieToken === "string"
+                ? cookieToken
+                : headers.authorization?.replace("Bearer ", "");
             if (!token) return { user: null };
 
             const profile = await jwt.verify(token);

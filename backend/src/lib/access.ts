@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, type SQLWrapper } from "drizzle-orm";
 import { borrowers, files, loans, transactions } from "../db/schema";
 
 export interface AuthenticatedUser {
@@ -72,6 +72,6 @@ export function assertBorrowerAccess(user: AuthenticatedUser, borrowerOwnerUserI
     return canAccessTenantWideData(user) || borrowerOwnerUserId === user.id;
 }
 
-export function mergeFilters<T>(filters: T[], extra?: T) {
+export function mergeFilters<T extends SQLWrapper>(filters: T[], extra?: T) {
     return extra ? and(...filters, extra) : and(...filters);
 }

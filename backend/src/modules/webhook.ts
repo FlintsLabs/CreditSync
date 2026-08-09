@@ -1,5 +1,5 @@
 import { Elysia } from "elysia";
-import { messagingApi, validateSignature, WebhookEvent } from "@line/bot-sdk";
+import { messagingApi, validateSignature, webhook } from "@line/bot-sdk";
 import { db } from "../db";
 import { files, botUploads } from "../db/schema";
 import { toStorageReference, uploadFile } from "../lib/storage";
@@ -29,13 +29,14 @@ export const webhookRoute = new Elysia({ prefix: "/webhook" })
         }
 
         const body = JSON.parse(bodyText);
-        const events: WebhookEvent[] = body.events;
+        const events: webhook.Event[] = body.events;
 
         for (const event of events) {
             if (event.type === "message" && event.message.type === "image") {
                 try {
                     const messageId = event.message.id;
-                    const userId = event.source.userId;
+                    const userId = event.source?.userId;
+                    if (!userId) continue;
 
                     // 1. Get Image Content
                     const stream = await blobClient.getMessageContent(messageId);

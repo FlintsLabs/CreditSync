@@ -66,9 +66,9 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
                 const drawdowns = await db.select().from(bankLoans).where(and(eq(bankLoans.bankProfileId, bankProfileId), eq(bankLoans.tenantId, user.tenantId)));
                 const summary = await getBankProfileSettlementSummary(user.tenantId, bankProfileId);
                 return {
+                    ...summary,
                     bankProfileId,
                     drawdownCount: drawdowns.length,
-                    ...summary,
                 };
             },
         });
@@ -106,9 +106,9 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
         ).then((rows) => Number(rows[0]?.totalAllocated ?? 0));
 
                 return {
-            bankProfileId,
-            ...summary,
-            ...deriveProfitabilityMetrics(summary, Math.max(0, deployedPrincipal)),
+                    ...summary,
+                    bankProfileId,
+                    ...deriveProfitabilityMetrics(summary, Math.max(0, deployedPrincipal)),
                 };
             },
         });

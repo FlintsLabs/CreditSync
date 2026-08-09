@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.0 - 2026-08-09
+
+### Added
+- Added a Decimal-based money kernel, exact daily fixed-installment schedule generation, and oldest-first repayment allocation primitives.
+- Added a Bun-backed backend TypeScript typecheck gate and focused money-kernel tests.
+
+### Fixed
+- Corrected backend source typing issues surfaced by the new typecheck gate without changing existing workflow behavior.
+
 ## v0.2.4 - 2026-08-09
 
 ### Changed

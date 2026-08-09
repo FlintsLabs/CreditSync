@@ -303,7 +303,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             .from(transactions)
             .where(and(eq(transactions.loanId, loan.id), eq(transactions.tenantId, user.tenantId)));
 
-        return calculateLoanClosingSummary(loan, loanTransactions);
+        return calculateLoanClosingSummary({ ...loan, startDate: loan.startDate ?? new Date() }, loanTransactions);
     }, {
         params: t.Object({
             id: t.String()
@@ -334,7 +334,6 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             const updated = await tx.update(loans)
                 .set({
                     status: "closed",
-                    closedAt: new Date(),
                     updatedAt: new Date(),
                 })
                 .where(eq(loans.id, loan.id))
@@ -371,7 +370,9 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             interestRate: body.interestRate,
             termMonths: body.termMonths,
             repaymentType: body.repaymentType as RepaymentType,
-            startDate: new Date(body.startDate)
+            startDate: new Date(body.startDate),
+            totalInstallments: body.totalInstallments,
+            installmentAmount: body.installmentAmount,
         });
     }, {
         body: t.Object({
@@ -379,7 +380,9 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             interestRate: t.Number(),
             termMonths: t.Number(),
             repaymentType: t.String(),
-            startDate: t.String()
+            startDate: t.String(),
+            totalInstallments: t.Optional(t.Number()),
+            installmentAmount: t.Optional(t.Number())
         })
     })
     .post("/", async ({ body, user, set }) => {
@@ -393,6 +396,8 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                 termMonths: body.termMonths,
                 repaymentType: body.repaymentType as RepaymentType,
                 startDate: body.startDate,
+                totalInstallments: body.totalInstallments,
+                installmentAmount: body.installmentAmount,
             });
 
         const created = await db.transaction(async (tx) => {
@@ -404,6 +409,10 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                     return { error: "Borrower not found" };
                 }
                 borrowerId = borrower.id;
+            }
+            if (borrowerId === undefined) {
+                set.status = 400;
+                return { error: "Borrower is required" };
             }
 
             let bankLoanId = body.bankLoanId ?? null;
@@ -437,7 +446,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                     status: "active",
                 };
 
-            const created = await tx.insert(loans).values({
+            const loanValues = {
                 tenantId: user.tenantId,
                 ownerUserId: user.id,
                 borrowerId,
@@ -453,7 +462,9 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                 outstandingInterest: initialRollup.outstandingInterest.toFixed(2),
                 outstandingFees: initialRollup.outstandingFees.toFixed(2),
                 status: "active"
-            }).returning().then((rows) => rows[0]);
+            } satisfies typeof loans.$inferInsert;
+
+            const created = await tx.insert(loans).values(loanValues).returning().then((rows) => rows[0]);
 
             if (generatedSchedule.length > 0) {
                 await tx.insert(loanSchedules).values(
@@ -634,7 +645,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         return created;
     }, {
         params: t.Object({
-            id: t.Numeric(),
+            id: t.String(),
         }),
         body: t.Object({
             bankProfileId: t.Optional(t.Number()),

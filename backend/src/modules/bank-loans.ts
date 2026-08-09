@@ -13,7 +13,7 @@ import {
 } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
 import { isTenantAdminUser } from "../lib/access";
-import { generateBankLoanSchedule } from "../lib/bank-loan-schedule";
+import { generateBankLoanSchedule, type RepaymentCycle } from "../lib/bank-loan-schedule";
 import { computeBankLoanRollup } from "../lib/bank-loan-rollup";
 import { createAuditLog } from "../lib/audit-log";
 import { deriveProfitabilityMetrics, getBankLoanSettlementSummary } from "../lib/fund-settlement";
@@ -355,7 +355,7 @@ export const bankLoansRoute = new Elysia({ prefix: "/bank-loans" })
             const nextInterestRate = body.interestRate ?? Number(existingLoan.interestRate ?? 0);
             const nextStartDate = body.startDate ?? existingLoan.startDate ?? undefined;
             const nextTermMonths = body.termMonths ?? existingLoan.termMonths ?? undefined;
-            const nextRepaymentCycle = body.repaymentCycle ?? existingLoan.repaymentCycle ?? "monthly";
+            const nextRepaymentCycle = (body.repaymentCycle ?? existingLoan.repaymentCycle ?? "monthly") as RepaymentCycle;
             const nextRepaymentMode = body.repaymentMode ?? existingLoan.repaymentMode ?? "fixed_installment";
             const existingInstallmentAmount = Number(existingLoan.installmentAmount ?? 0);
             const nextInstallmentAmount = body.installmentAmount ?? (existingInstallmentAmount > 0 ? existingInstallmentAmount : undefined);
@@ -820,9 +820,9 @@ export const bankLoansRoute = new Elysia({ prefix: "/bank-loans" })
                     dueDate: row.dueDate,
                     remainingDue: row.remainingDue,
                     paidPenalty: row.paidPenalty,
-                    gracePeriodDays: bankLoan.gracePeriodDays,
-                    lateFeeMode: bankLoan.lateFeeMode,
-                    lateFeeAmount: bankLoan.lateFeeAmount,
+                    gracePeriodDays: currentBankLoan.gracePeriodDays,
+                    lateFeeMode: currentBankLoan.lateFeeMode,
+                    lateFeeAmount: currentBankLoan.lateFeeAmount,
                     baseStatus: row.status,
                     asOf: body.paymentDate || new Date(),
                 });
@@ -837,14 +837,13 @@ export const bankLoansRoute = new Elysia({ prefix: "/bank-loans" })
                     outstandingPenalties: outstandingPenalties.toFixed(2),
                     nextDueDate: rollup.nextDueDate ?? undefined,
                     status: rollup.status,
-                    closedAt: rollup.status === "closed" ? new Date() : null,
                 })
                 .where(eq(bankLoans.id, bankLoanId));
 
-            if (bankLoan.bankProfileId) {
+            if (currentBankLoan.bankProfileId) {
                 await tx.insert(fundLedgerEntries).values({
                     tenantId: user.tenantId,
-                    bankProfileId: bankLoan.bankProfileId,
+                    bankProfileId: currentBankLoan.bankProfileId,
                     bankLoanId,
                     bankRepaymentId: repayment.id,
                     entryDate: body.paymentDate ? new Date(body.paymentDate) : new Date(),

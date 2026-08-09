@@ -1,6 +1,6 @@
 import dayjs from "dayjs";
 
-type RepaymentCycle = "daily" | "weekly" | "monthly" | "custom";
+export type RepaymentCycle = "daily" | "weekly" | "monthly" | "custom";
 
 interface GenerateBankLoanScheduleInput {
     amount: number;

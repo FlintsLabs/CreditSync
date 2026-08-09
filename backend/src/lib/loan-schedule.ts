@@ -1,11 +1,13 @@
 import { calculateLoanSchedule, type RepaymentType } from "./calculator";
 
 interface GenerateLoanScheduleInput {
-    principal: number;
-    interestRate: number;
+    principal: number | string;
+    interestRate: number | string;
     termMonths: number;
     repaymentType: RepaymentType;
     startDate?: string;
+    totalInstallments?: number;
+    installmentAmount?: number | string;
 }
 
 export interface GeneratedLoanScheduleRow {
@@ -26,6 +28,8 @@ export function generateLoanSchedule(input: GenerateLoanScheduleInput): Generate
         termMonths: input.termMonths,
         repaymentType: input.repaymentType,
         startDate,
+        totalInstallments: input.totalInstallments,
+        installmentAmount: input.installmentAmount,
     });
 
     return schedule.map((row) => ({

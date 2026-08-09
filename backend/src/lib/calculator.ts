@@ -1,13 +1,16 @@
 import dayjs from "dayjs";
+import Decimal from "decimal.js";
 
 export type RepaymentType = "daily" | "weekly" | "monthly" | "floating";
 
 export interface LoanCalculationParams {
-    principal: number;
-    interestRate: number; // Percent per year
+    principal: number | string;
+    interestRate: number | string; // Percent per year
     termMonths: number;
     repaymentType: RepaymentType;
     startDate: Date;
+    totalInstallments?: number;
+    installmentAmount?: number | string;
 }
 
 export interface InstallmentSchedule {
@@ -27,39 +30,62 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
     // Total Interest = Principal * Rate * (Years)
     // Total Amount = Principal + Total Interest
 
-    const years = termMonths / 12;
-    const totalInterest = principal * (interestRate / 100) * years;
-    const totalAmount = principal + totalInterest;
+    const principalMoney = new Decimal(principal);
+    const interestRatePercent = new Decimal(interestRate);
+    if (!principalMoney.isFinite() || !interestRatePercent.isFinite() || principalMoney.isNegative() || interestRatePercent.isNegative()) {
+        throw new Error("Loan principal and interest rate must be non-negative finite values");
+    }
+    const totalInterest = principalMoney.times(interestRatePercent).div(100).times(termMonths).div(12);
+    const totalAmount = principalMoney.plus(totalInterest);
 
     let installments = 0;
     let installmentAmount = 0;
 
     // Determine number of installments based on type
     if (repaymentType === "daily") {
-        installments = termMonths * 30; // Approx
-        installmentAmount = Math.ceil(totalAmount / installments);
+        installments = params.totalInstallments && params.totalInstallments > 0 ? params.totalInstallments : termMonths * 30; // Approx
+        installmentAmount = params.installmentAmount === undefined
+            ? totalAmount.div(installments).ceil().toNumber()
+            : new Decimal(params.installmentAmount).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
     } else if (repaymentType === "weekly") {
         installments = termMonths * 4;
-        installmentAmount = Math.ceil(totalAmount / installments);
+        installmentAmount = totalAmount.div(installments).ceil().toNumber();
     } else if (repaymentType === "monthly") {
         installments = termMonths;
-        installmentAmount = Math.ceil(totalAmount / installments);
+        installmentAmount = totalAmount.div(installments).ceil().toNumber();
     } else {
         // Floating: No fixed schedule, interest accrues daily
         return [];
     }
 
-    let remainingPrincipal = principal;
+    const fixedDailyInstallment = repaymentType === "daily"
+        && params.totalInstallments !== undefined
+        && params.installmentAmount !== undefined;
+    const fixedTotal = fixedDailyInstallment
+        ? new Decimal(params.installmentAmount!).times(installments)
+        : totalAmount;
+    if (fixedTotal.lessThan(principalMoney)) {
+        throw new Error("Installment total cannot be less than principal");
+    }
+    const scheduledInterest = fixedDailyInstallment ? fixedTotal.minus(principalMoney) : totalInterest;
+    const principalPerInstallment = principalMoney.div(installments).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const interestPerInstallment = scheduledInterest.div(installments).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    let allocatedPrincipal = new Decimal(0);
+    let allocatedInterest = new Decimal(0);
+    let remainingPrincipal = principalMoney;
     let currentDate = dayjs(startDate);
 
     for (let i = 1; i <= installments; i++) {
-        // Simple amortization breakdown (Pro-rated evenly for simplicity in this MVP)
-        // In real accounting, this might be effective rate.
-        const interestPerInstallment = totalInterest / installments;
-        const principalPerInstallment = totalAmount / installments - interestPerInstallment;
-
-        remainingPrincipal -= principalPerInstallment;
-        if (remainingPrincipal < 0) remainingPrincipal = 0;
+        const isFinalInstallment = i === installments;
+        const principalComponent = isFinalInstallment
+            ? principalMoney.minus(allocatedPrincipal)
+            : principalPerInstallment;
+        const interestComponent = isFinalInstallment
+            ? scheduledInterest.minus(allocatedInterest)
+            : interestPerInstallment;
+        allocatedPrincipal = allocatedPrincipal.plus(principalComponent);
+        allocatedInterest = allocatedInterest.plus(interestComponent);
+        remainingPrincipal = Decimal.max(0, remainingPrincipal.minus(principalComponent));
 
         // Validating dates
         if (repaymentType === "daily") currentDate = currentDate.add(1, 'day');
@@ -70,9 +96,9 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
             installmentNo: i,
             dueDate: currentDate.format("YYYY-MM-DD"),
             amount: installmentAmount,
-            principalComponent: Number(principalPerInstallment.toFixed(2)),
-            interestComponent: Number(interestPerInstallment.toFixed(2)),
-            remainingPrincipal: Number(remainingPrincipal.toFixed(2))
+            principalComponent: principalComponent.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
+            interestComponent: interestComponent.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
+            remainingPrincipal: remainingPrincipal.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber()
         });
     }
 
