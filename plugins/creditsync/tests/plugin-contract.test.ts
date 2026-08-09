@@ -59,6 +59,17 @@ describe("CreditSync plugin 1.0.0 contract", () => {
         }
     });
 
+    test("renewal reversal skill states only capabilities exposed by MCP 1.0", async () => {
+        const skill = await readFile(resolve(pluginRoot, "skills/renew-daily-loan/SKILL.md"), "utf8");
+        expect(skill).toContain("borrower public UUID retained from the same-task pre-execution resolution");
+        expect(skill).toContain("`renewal.execute` does not return a borrower UUID");
+        expect(skill).toContain("only the current loan states exposed by `borrower.portfolio`");
+        expect(skill).toContain("authoritative atomic downstream-activity check");
+        expect(skill).toContain("report those blockers and stop");
+        expect(skill).not.toContain("supplies the renewal, old-loan, new-loan, and borrower public UUIDs");
+        expect(skill).not.toContain("inspect the current state of both loans and downstream activity");
+    });
+
     test("frozen full MCP metadata matches an actual authenticated tools/list response", async () => {
         const contract = await json("references/mcp-tool-contract.json") as unknown as FrozenMcpContract;
         expect(contract.schemaVersion).toBe("1.0");
@@ -92,9 +103,11 @@ describe("CreditSync plugin 1.0.0 contract", () => {
             "renewal-unsettled-charges",
             "renewal-missing-confirmation",
             "renewal-reversal-without-result",
+            "renewal-reversal-without-borrower",
+            "renewal-reversal-blocked",
             "unauthorized-access",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
-        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(9);
+        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(11);
     });
 
     test("repo marketplace resolves the plugin from its declared local path", async () => {

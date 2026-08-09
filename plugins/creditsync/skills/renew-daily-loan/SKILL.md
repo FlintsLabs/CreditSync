@@ -32,12 +32,14 @@ If the backend reports stale, expired, underfunded, or changed charges, return t
 
 ## Reverse
 
-The frozen MCP 1.0 surface has no renewal-detail/get tool. Reverse only when the exact successful `renewal.execute` result is still available in the current task and supplies the renewal, old-loan, new-loan, and borrower public UUIDs. Use `borrower.portfolio` to inspect the current state of both loans and downstream activity. If that same-task result is unavailable, stop and direct the operator to the Web UI renewal detail; never invent a renewal UUID or claim an unsupported inspection.
+The frozen MCP 1.0 surface has no renewal-detail/get tool. Reverse only when both the exact successful `renewal.execute` result and the borrower public UUID retained from the same-task pre-execution resolution are available. `renewal.execute` returns the renewal, old-loan, and new-loan public UUIDs; **`renewal.execute` does not return a borrower UUID**. If either the execute result or retained borrower UUID is unavailable, stop and direct the operator to the Web UI renewal detail; never invent either value.
 
-1. Verify the same-task execute result and inspect the current borrower portfolio containing both loans.
+Use the retained borrower UUID to inspect only the current loan states exposed by `borrower.portfolio`. That portfolio does not expose transactions, adjustments, or funding activity, so it cannot prove that reversal is safe. `renewal.reverse` is the authoritative atomic downstream-activity check. It may safely reject the command and return transaction/adjustment blockers without reversing anything; report those blockers and stop.
+
+1. Verify the same-task execute result, retained pre-execution borrower UUID, and the exposed current state of the old and new loans.
 2. Explain the compensating effects and obtain a non-blank reversal reason.
 3. Call `renewal.reverse` with the known renewal public UUID, that non-blank reason, and a stable reversal idempotency key.
-4. If downstream transactions or adjustments block reversal, report them and stop; never delete or bypass them.
+4. Treat the tool result as authoritative. If it returns downstream blockers, report those blockers and stop; never delete or bypass them.
 
 A retry of the same intent reuses its idempotency key. A materially changed preview, execution reason, or reversal reason is a new intent and needs a new key.
 
@@ -49,8 +51,8 @@ A retry of the same intent reuses its idempotency key. A materially changed prev
 | Waiver positive | Exact waiver plus reason required |
 | Fresh preview, no confirmation | Explain and stop |
 | Stale/expired preview | Re-preview and reconfirm |
-| Downstream activity exists | Reverse downstream activity first |
-| Execute result unavailable in this task | Stop and use Web UI renewal detail |
+| `renewal.reverse` returns downstream blockers | Report blockers and stop; no reversal occurred |
+| Execute result or retained borrower UUID unavailable | Stop and use Web UI renewal detail |
 
 ## Common mistakes
 

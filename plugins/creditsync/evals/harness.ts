@@ -17,14 +17,36 @@ const PREVIEW_HASH = `v1:${"a".repeat(64)}`;
 const FILE_HASH = "b".repeat(64);
 
 export type ToolCall = { name: McpToolName; arguments: Record<string, unknown> };
-type ScriptStep = ToolCall & { result?: Record<string, unknown>; error?: string };
+type ScriptedError = { code: string; details?: Record<string, unknown> };
+type ScriptStep = ToolCall & { result?: Record<string, unknown>; error?: ScriptedError };
+
+export type SameTaskRenewalExecutionContext = {
+    provenance: "same_task_renewal_execute_result";
+    retainedBorrowerPublicId: string;
+    executeResult: {
+        publicId: string;
+        status: string;
+        oldLoanPublicId: string;
+        newLoanPublicId: string | null;
+        [key: string]: unknown;
+    };
+};
 
 export type HarnessResult = {
     calls: ToolCall[];
     effects: string[];
     outcome: "completed" | "stopped";
     stopReason?: string;
+    blockers?: Array<Record<string, unknown>>;
+    renewalContext?: SameTaskRenewalExecutionContext;
+    inspectedLoanStates?: Array<{ publicId: string; status: string }>;
 };
+
+class ScriptedMcpError extends Error {
+    constructor(readonly code: string, readonly details: Record<string, unknown>) {
+        super(code);
+    }
+}
 
 class ScriptedMcp {
     readonly calls: ToolCall[] = [];
@@ -48,7 +70,7 @@ class ScriptedMcp {
             throw new Error(`MCP call mismatch at ${this.cursor}: expected ${step.name} ${JSON.stringify(step.arguments)}, received ${name} ${JSON.stringify(args)}`);
         }
         this.calls.push({ name, arguments: args });
-        if (step.error) throw new Error(step.error);
+        if (step.error) throw new ScriptedMcpError(step.error.code, step.error.details ?? {});
         return step.result ?? {};
     }
 
@@ -150,6 +172,37 @@ const loanTerms = {
     installmentAmount: "190.00",
 } as const;
 
+const EXECUTED_RENEWAL_RESULT = {
+    publicId: RENEWAL,
+    status: "executed",
+    oldLoanPublicId: LOAN_A,
+    newLoanPublicId: LOAN_B,
+    previewHash: PREVIEW_HASH,
+    principalPaid: "1666.70",
+    outstandingPrincipal: "833.30",
+    dueCharges: "0.00",
+    settlementAmount: "833.30",
+    waivedCharges: "0.00",
+    requestedPrincipal: "2500.00",
+    cashDirection: "payout",
+    cashAmount: "1666.70",
+} satisfies SameTaskRenewalExecutionContext["executeResult"];
+
+const SAME_TASK_RENEWAL_CONTEXT: SameTaskRenewalExecutionContext = {
+    provenance: "same_task_renewal_execute_result",
+    retainedBorrowerPublicId: BORROWER_A,
+    executeResult: EXECUTED_RENEWAL_RESULT,
+};
+
+const RENEWAL_PORTFOLIO = {
+    borrower: { publicId: BORROWER_A },
+    aliases: [],
+    loans: [
+        { publicId: LOAN_A, principal: "2500.00", interestRate: "14.00", repaymentType: "daily", status: "renewed", startDate: "2026-07-01" },
+        { publicId: LOAN_B, principal: "2500.00", interestRate: "14.00", repaymentType: "daily", status: "active", startDate: "2026-08-11" },
+    ],
+};
+
 async function loanActivation(mcp: ScriptedMcp) {
     const search = await mcp.call("borrower.search", { query: "กนกพิชญ์" });
     const borrowerPublicId = (search.candidates as Array<{ publicId: string }>)[0]!.publicId;
@@ -165,31 +218,69 @@ async function renewalExecute(mcp: ScriptedMcp, operatorConfirmed = true) {
     const preview = await mcp.call("renewal.preview", { oldLoanPublicId: LOAN_A, requestedPrincipal: "2500.00" });
     if (preview.dueCharges !== "0.00") return { outcome: "stopped", stopReason: "unsettled-charges" } as const;
     if (!operatorConfirmed) return { outcome: "stopped", stopReason: "confirmation-required" } as const;
-    await mcp.call("renewal.execute", {
+    const executeResult = await mcp.call("renewal.execute", {
         renewalPublicId: preview.publicId,
         previewHash: preview.previewHash,
         confirmed: true,
         reason: "Owner confirmed the displayed renewal",
         idempotencyKey: "renewal-execute-20260810-1",
     });
-    return { outcome: "completed" } as const;
+    return {
+        outcome: "completed",
+        renewalContext: {
+            provenance: "same_task_renewal_execute_result",
+            retainedBorrowerPublicId: BORROWER_A,
+            executeResult: executeResult as SameTaskRenewalExecutionContext["executeResult"],
+        },
+    } as const;
 }
 
-async function reverseRenewal(mcp: ScriptedMcp, knownExecution: boolean) {
-    if (!knownExecution) return { outcome: "stopped", stopReason: "use-web-renewal-detail" } as const;
-    await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A });
-    await mcp.call("renewal.reverse", {
-        renewalPublicId: RENEWAL,
-        reason: "Owner confirmed renewal reversal after downstream review",
-        idempotencyKey: "renewal-reverse-20260810-1",
+async function reverseRenewal(
+    mcp: ScriptedMcp,
+    context?: Partial<SameTaskRenewalExecutionContext> & {
+        executeResult?: Partial<SameTaskRenewalExecutionContext["executeResult"]>;
+    },
+) {
+    const executeResult = context?.executeResult;
+    if (context?.provenance !== "same_task_renewal_execute_result" || !context.retainedBorrowerPublicId || !executeResult?.publicId || !executeResult.oldLoanPublicId || !executeResult.newLoanPublicId) {
+        return { outcome: "stopped", stopReason: "use-web-renewal-detail" } as const;
+    }
+    const renewalContext = context as SameTaskRenewalExecutionContext;
+    const portfolio = await mcp.call("borrower.portfolio", {
+        borrowerPublicId: renewalContext.retainedBorrowerPublicId,
     });
-    return { outcome: "completed" } as const;
+    const relevantLoanIds = new Set([executeResult.oldLoanPublicId, executeResult.newLoanPublicId]);
+    const inspectedLoanStates = (portfolio.loans as Array<{ publicId: string; status: string }>)
+        .filter((loan) => relevantLoanIds.has(loan.publicId))
+        .map((loan) => ({ publicId: loan.publicId, status: loan.status }));
+    try {
+        await mcp.call("renewal.reverse", {
+            renewalPublicId: executeResult.publicId,
+            reason: "Owner confirmed renewal reversal; backend must atomically check downstream activity",
+            idempotencyKey: "renewal-reverse-20260810-1",
+        });
+        return { outcome: "completed", renewalContext, inspectedLoanStates } as const;
+    } catch (error) {
+        if (error instanceof ScriptedMcpError && error.code === "RENEWAL_HAS_DOWNSTREAM_ACTIVITY") {
+            const blockers = Array.isArray(error.details.blockers)
+                ? error.details.blockers as Array<Record<string, unknown>>
+                : [];
+            return {
+                outcome: "stopped",
+                stopReason: "downstream-activity-blocked",
+                blockers,
+                renewalContext,
+                inspectedLoanStates,
+            } as const;
+        }
+        throw error;
+    }
 }
 
 type Scenario = {
     script: ScriptStep[];
     authorized?: boolean;
-    run: (mcp: ScriptedMcp) => Promise<{ outcome: "completed" | "stopped"; stopReason?: string }>;
+    run: (mcp: ScriptedMcp) => Promise<Omit<HarnessResult, "calls" | "effects">>;
 };
 
 const SCENARIOS: Record<string, Scenario> = {
@@ -280,7 +371,7 @@ const SCENARIOS: Record<string, Scenario> = {
         script: [
             { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
             { name: "renewal.preview", arguments: { oldLoanPublicId: LOAN_A, requestedPrincipal: "2500.00" }, result: { publicId: RENEWAL, previewHash: PREVIEW_HASH, dueCharges: "0.00" } },
-            { name: "renewal.execute", arguments: { renewalPublicId: RENEWAL, previewHash: PREVIEW_HASH, confirmed: true, reason: "Owner confirmed the displayed renewal", idempotencyKey: "renewal-execute-20260810-1" } },
+            { name: "renewal.execute", arguments: { renewalPublicId: RENEWAL, previewHash: PREVIEW_HASH, confirmed: true, reason: "Owner confirmed the displayed renewal", idempotencyKey: "renewal-execute-20260810-1" }, result: EXECUTED_RENEWAL_RESULT },
         ],
         run: (mcp) => renewalExecute(mcp),
     },
@@ -293,10 +384,10 @@ const SCENARIOS: Record<string, Scenario> = {
     },
     "renewal-reversal": {
         script: [
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
-            { name: "renewal.reverse", arguments: { renewalPublicId: RENEWAL, reason: "Owner confirmed renewal reversal after downstream review", idempotencyKey: "renewal-reverse-20260810-1" } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: SAME_TASK_RENEWAL_CONTEXT.retainedBorrowerPublicId }, result: RENEWAL_PORTFOLIO },
+            { name: "renewal.reverse", arguments: { renewalPublicId: SAME_TASK_RENEWAL_CONTEXT.executeResult.publicId, reason: "Owner confirmed renewal reversal; backend must atomically check downstream activity", idempotencyKey: "renewal-reverse-20260810-1" } },
         ],
-        run: (mcp) => reverseRenewal(mcp, true),
+        run: (mcp) => reverseRenewal(mcp, SAME_TASK_RENEWAL_CONTEXT),
     },
     "ambiguous-nickname": {
         script: [
@@ -345,7 +436,28 @@ const SCENARIOS: Record<string, Scenario> = {
     },
     "renewal-reversal-without-result": {
         script: [],
-        run: (mcp) => reverseRenewal(mcp, false),
+        run: (mcp) => reverseRenewal(mcp),
+    },
+    "renewal-reversal-without-borrower": {
+        script: [],
+        run: (mcp) => reverseRenewal(mcp, {
+            provenance: "same_task_renewal_execute_result",
+            executeResult: EXECUTED_RENEWAL_RESULT,
+        }),
+    },
+    "renewal-reversal-blocked": {
+        script: [
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: SAME_TASK_RENEWAL_CONTEXT.retainedBorrowerPublicId }, result: RENEWAL_PORTFOLIO },
+            {
+                name: "renewal.reverse",
+                arguments: { renewalPublicId: SAME_TASK_RENEWAL_CONTEXT.executeResult.publicId, reason: "Owner confirmed renewal reversal; backend must atomically check downstream activity", idempotencyKey: "renewal-reverse-20260810-1" },
+                error: {
+                    code: "RENEWAL_HAS_DOWNSTREAM_ACTIVITY",
+                    details: { blockers: [{ type: "transaction", publicId: "0198c481-3e2b-7000-8000-000000000051" }] },
+                },
+            },
+        ],
+        run: (mcp) => reverseRenewal(mcp, SAME_TASK_RENEWAL_CONTEXT),
     },
     "unauthorized-access": {
         script: [],

@@ -86,7 +86,33 @@ describe("CreditSync executable orchestration evals", () => {
         ]);
     });
 
-    test("reversal boundaries require explicit reasons and a known renewal execution", async () => {
+    test("renewal reversal derives IDs from a same-task execute result and retained pre-execution borrower", async () => {
+        const execution = await runEvalScenario("renewal-execute");
+        const renewal = await runEvalScenario("renewal-reversal");
+        const context = (renewal as typeof renewal & {
+            renewalContext?: {
+                provenance: string;
+                retainedBorrowerPublicId: string;
+                executeResult: Record<string, unknown>;
+            };
+        }).renewalContext;
+
+        expect(context?.provenance).toBe("same_task_renewal_execute_result");
+        expect(execution.renewalContext).toEqual(context);
+        expect(context?.executeResult).not.toHaveProperty("borrowerPublicId");
+        expect(renewal.calls[0]?.arguments).toEqual({ borrowerPublicId: context?.retainedBorrowerPublicId });
+        expect(renewal.calls.at(-1)?.arguments).toMatchObject({ renewalPublicId: context?.executeResult.publicId });
+        expect(context?.executeResult).toMatchObject({
+            oldLoanPublicId: "0198c481-3e2b-7000-8000-000000000031",
+            newLoanPublicId: "0198c481-3e2b-7000-8000-000000000032",
+        });
+        expect(renewal.inspectedLoanStates).toEqual([
+            { publicId: "0198c481-3e2b-7000-8000-000000000031", status: "renewed" },
+            { publicId: "0198c481-3e2b-7000-8000-000000000032", status: "active" },
+        ]);
+    });
+
+    test("reversal boundaries require explicit reasons and stop without retained same-task context", async () => {
         const payment = await runEvalScenario("payment-reversal");
         expect(payment.calls.at(-1)?.arguments).toEqual({
             paymentIntakePublicId: "0198c481-3e2b-7000-8000-000000000021",
@@ -98,9 +124,24 @@ describe("CreditSync executable orchestration evals", () => {
 
         const renewal = await runEvalScenario("renewal-reversal");
         expect(renewal.calls.at(-1)?.arguments).toMatchObject({
-            reason: "Owner confirmed renewal reversal after downstream review",
+            reason: "Owner confirmed renewal reversal; backend must atomically check downstream activity",
             idempotencyKey: "renewal-reverse-20260810-1",
         });
+    });
+
+    test("renewal reversal stops when retained borrower context is missing", async () => {
+        const result = await runEvalScenario("renewal-reversal-without-borrower");
+        expect(result).toMatchObject({ outcome: "stopped", stopReason: "use-web-renewal-detail", calls: [] });
+    });
+
+    test("renewal.reverse is the authoritative atomic downstream check and reports blockers", async () => {
+        const result = await runEvalScenario("renewal-reversal-blocked");
+        expect(result).toMatchObject({
+            outcome: "stopped",
+            stopReason: "downstream-activity-blocked",
+            blockers: [{ type: "transaction", publicId: "0198c481-3e2b-7000-8000-000000000051" }],
+        });
+        expect(result.calls.map((call) => call.name)).toEqual(["borrower.portfolio", "renewal.reverse"]);
     });
 
     test("ambiguous, needs-review, unsettled, and unauthorized fixtures make no forbidden write", async () => {

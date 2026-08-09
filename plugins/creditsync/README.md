@@ -45,7 +45,7 @@ Start a new Codex task after installation so plugin skills and the private app a
 - `needs_review`, fuzzy identity, allocation mismatch, stale preview, and unresolved renewal charges stop for human input.
 - Hard duplicates return the original intake and never create a second payment.
 - Loan activation and every renewal show the backend result before explicit confirmation.
-- Reversals require a reason and create compensating history rather than deletion.
+- Reversals require a reason and create compensating history rather than deletion. Renewal reversal uses same-task execute IDs plus the borrower ID retained before execution; `renewal.reverse`, not the limited portfolio view, performs the authoritative atomic downstream-activity check.
 
 See `references/` for matching, accounting invariants, error recovery, and the frozen full 20-tool metadata snapshot. The snapshot is generated through an authenticated local MCP SDK Client `tools/list` call. `evals/evals.json` and `evals/harness.ts` execute exact ordered/repeated tool calls, supported arguments, injected workflow states, external upload effects, and forbidden-write boundaries while remaining honest that no live private app was used.
 

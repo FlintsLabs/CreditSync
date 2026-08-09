@@ -23,3 +23,4 @@
 - Allowed both the documented non-live app placeholder and syntactically valid registered technical IDs during package validation.
 - Stopped image-first reconciliation on duplicate evidence before PUT/finalize/preview/post, and documented honest payment/renewal reversal prerequisites for the frozen tool surface.
 - Corrected token-byte hashing, metadata-preserving MinIO recovery, and MCP-only rollback guidance.
+- Corrected renewal-reversal provenance: the borrower UUID is retained before execution rather than read from `renewal.execute`, portfolio inspection is limited to exposed loan states, and `renewal.reverse` is the authoritative atomic blocker check.

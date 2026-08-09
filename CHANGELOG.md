@@ -16,6 +16,7 @@
 - Hardened Plugin `1.0.0` with a deterministic full `tools/list` metadata snapshot and executable scripted-MCP evals covering exact call order/arguments, repeated alias operations, duplicate/stale/review/unauthorized stops, confirmation, reversal, idempotency, and forbidden upload/write effects.
 - Accepted real registered private-app technical IDs without weakening the documented non-live placeholder state, and corrected duplicate-evidence and renewal-reversal orchestration to match the frozen MCP surface.
 - Corrected operator guidance so bearer hashes exclude trailing newlines, MinIO recovery preserves and verifies evidence metadata/checksums, and disabling MCP does not take the shared REST backend offline.
+- Corrected Plugin `1.0.0` renewal reversal to retain borrower identity before execution, derive renewal/old/new loan IDs from the same-task execute result, inspect only portfolio-exposed loan states, and rely on the atomic backend reversal command to return downstream blockers safely.
 
 ## v0.3.3 - 2026-08-10
 
