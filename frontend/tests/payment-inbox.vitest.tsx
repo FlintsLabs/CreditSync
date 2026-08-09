@@ -77,6 +77,77 @@ describe("PaymentInbox", () => {
 
         await user.click(within(rows[1]!).getByRole("button", { name: /remove allocation/i }));
         expect(screen.getAllByTestId("allocation-row")).toHaveLength(1);
+        expect(screen.queryByRole("button", { name: /confirm and post/i })).not.toBeInTheDocument();
+    });
+
+    test("requires a new preview after every edit, add, or remove mutation", async () => {
+        const user = userEvent.setup();
+        render(<MemoryRouter><PaymentInbox /></MemoryRouter>);
+        await user.click(await screen.findByRole("button", { name: /^B/ }));
+        let rows = screen.getAllByTestId("allocation-row");
+        await user.selectOptions(within(rows[0]!).getByLabelText(/borrower loan/i), LOAN_A);
+        await user.click(screen.getByRole("button", { name: /preview allocation/i }));
+        expect(await screen.findByRole("button", { name: /confirm and post/i })).toBeInTheDocument();
+
+        await user.clear(within(rows[0]!).getByLabelText(/allocation amount/i));
+        await user.type(within(rows[0]!).getByLabelText(/allocation amount/i), "20.00");
+        expect(screen.queryByRole("button", { name: /confirm and post/i })).not.toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: /preview allocation/i }));
+        expect(await screen.findByRole("button", { name: /confirm and post/i })).toBeInTheDocument();
+
+        await user.click(screen.getByRole("button", { name: /add allocation/i }));
+        expect(screen.queryByRole("button", { name: /confirm and post/i })).not.toBeInTheDocument();
+        rows = screen.getAllByTestId("allocation-row");
+        await user.selectOptions(within(rows[1]!).getByLabelText(/borrower loan/i), LOAN_B);
+        await user.type(within(rows[1]!).getByLabelText(/allocation amount/i), "20.00");
+        await user.click(screen.getByRole("button", { name: /preview allocation/i }));
+        expect(await screen.findByRole("button", { name: /confirm and post/i })).toBeInTheDocument();
+
+        await user.click(within(rows[1]!).getByRole("button", { name: /remove allocation/i }));
+        expect(screen.queryByRole("button", { name: /confirm and post/i })).not.toBeInTheDocument();
+    });
+
+    test("disables editor mutations and discards a preview response after the intake changes", async () => {
+        const user = userEvent.setup();
+        let resolvePreview!: (value: { data: Record<string, unknown> }) => void;
+        const pendingPreview = new Promise<{ data: Record<string, unknown> }>((resolve) => { resolvePreview = resolve; });
+        vi.mocked(api.post).mockImplementation(async (url) => {
+            if (url.endsWith("/match-preview")) return pendingPreview;
+            throw new Error(`Unexpected POST ${url}`);
+        });
+        render(<MemoryRouter><PaymentInbox /></MemoryRouter>);
+        await user.click(await screen.findByRole("button", { name: /^B/ }));
+        const row = screen.getByTestId("allocation-row");
+        await user.selectOptions(within(row).getByLabelText(/borrower loan/i), LOAN_A);
+        await user.click(screen.getByRole("button", { name: /preview allocation/i }));
+
+        expect(within(row).getByLabelText(/borrower loan/i)).toBeDisabled();
+        expect(within(row).getByLabelText(/allocation amount/i)).toBeDisabled();
+        expect(screen.queryByRole("button", { name: /add allocation/i })).not.toBeInTheDocument();
+
+        await user.click(screen.getByRole("button", { name: /^A/ }));
+        expect(await screen.findByText(INTAKE_A)).toBeInTheDocument();
+        await act(async () => resolvePreview({ data: {
+            publicId: "019c3a5a-94ce-7f2c-8b08-f56852dca7af",
+            status: "ready", version: 1, totalAllocated: "40.00", allocations: [], warnings: [],
+            expiresAt: "2026-08-10T12:00:00.000Z",
+        } }));
+        await user.click(screen.getByRole("checkbox", { name: /reviewed the possible duplicate/i }));
+        expect(screen.queryByRole("button", { name: /confirm and post/i })).not.toBeInTheDocument();
+    });
+
+    test("announces a localized error when manual refresh fails", async () => {
+        const user = userEvent.setup();
+        render(<MemoryRouter><PaymentInbox /></MemoryRouter>);
+        const refresh = await screen.findByRole("button", { name: /refresh/i });
+        vi.mocked(api.get).mockImplementation(async (url) => {
+            if (url === "/payment-intakes") throw new Error("network down");
+            if (url === "/loans") return { data: loans };
+            throw new Error(`Unexpected GET ${url}`);
+        });
+        await user.click(refresh);
+        expect(await screen.findByRole("alert")).toHaveTextContent("Unable to load payment inbox.");
+        await waitFor(() => expect(refresh).toBeEnabled());
     });
 
     test("ignores a stale detail response after selecting another intake", async () => {

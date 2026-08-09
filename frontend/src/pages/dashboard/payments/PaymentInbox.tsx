@@ -59,8 +59,11 @@ export default function PaymentInbox() {
     const [semanticReviewed, setSemanticReviewed] = useState(false);
     const [reversalOpen, setReversalOpen] = useState(false);
     const [reversalReason, setReversalReason] = useState("");
+    const [editorRevision, setEditorRevision] = useState(0);
+    const [proposalRevision, setProposalRevision] = useState<number | null>(null);
     const selectionToken = useRef(0);
     const loansRef = useRef<LoanOption[]>([]);
+    const editorRevisionRef = useRef(0);
 
     const money = useCallback((value: string) => formatMoneyExact(value, i18n.language), [i18n.language]);
     const dateTime = useCallback((value: string) => new Intl.DateTimeFormat(i18n.language, {
@@ -90,6 +93,9 @@ export default function PaymentInbox() {
         setDetail(null);
         setBaselineProposal(null);
         setProposal(null);
+        editorRevisionRef.current += 1;
+        setEditorRevision(editorRevisionRef.current);
+        setProposalRevision(null);
         setAllocations([newAllocation()]);
         setSemanticReviewed(false);
         setReversalOpen(false);
@@ -148,23 +154,42 @@ export default function PaymentInbox() {
         finally { setBusy(false); }
     };
 
-    const editAllocation = (id: string, patch: Partial<AllocationDraft>) => {
-        setAllocations((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row));
+    const updateAllocations = (update: (current: AllocationDraft[]) => AllocationDraft[]) => {
+        editorRevisionRef.current += 1;
+        setEditorRevision(editorRevisionRef.current);
+        setProposalRevision(null);
         setProposal(null);
+        setAllocations(update);
+    };
+    const editAllocation = (id: string, patch: Partial<AllocationDraft>) => {
+        updateAllocations((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row));
     };
     const enteredTotal = (() => { try { return sumMoney(allocations.map((row) => row.amount || "0.00")); } catch { return "0.00"; } })();
     const previousTotal = baselineProposal?.totalAllocated ?? "0.00";
     const previewTotal = proposal?.totalAllocated ?? enteredTotal;
     const difference = moneyDifference(previewTotal, previousTotal);
     const semanticWarnings = detail?.warnings?.filter((warning) => warning.code === "POSSIBLE_SEMANTIC_DUPLICATE") ?? [];
-    const canEdit = Boolean(detail && !detailLoading && !["posted", "reversed", "duplicate"].includes(detail.status));
+    const canEdit = Boolean(detail && !detailLoading && !busy && !["posted", "reversed", "duplicate"].includes(detail.status));
+    const proposalMatchesEditor = Boolean(proposal && proposalRevision === editorRevision);
 
-    const preview = () => mutate(async () => {
+    const preview = () => {
+        const revision = editorRevisionRef.current;
+        const snapshot = toExplicitAllocations(allocations);
+        return mutate(async () => {
         const response = await api.post(`/payment-intakes/${detail!.publicId}/match-preview`, {
-            allocations: toExplicitAllocations(allocations),
+            allocations: snapshot,
         });
+        if (editorRevisionRef.current !== revision) return;
+        setProposalRevision(revision);
         setProposal(response.data);
-    }, false);
+        }, false);
+    };
+
+    const refreshList = async () => {
+        setMessage("");
+        try { await loadList(); }
+        catch (error) { setMessage(localizedError(error, "payments.errors.load")); }
+    };
 
     const uploadEvidence = (file: File) => mutate(async () => {
         const digest = hex(await crypto.subtle.digest("SHA-256", await file.arrayBuffer()));
@@ -182,7 +207,7 @@ export default function PaymentInbox() {
     return <div className="space-y-6" aria-busy={listLoading || detailLoading || busy}>
         <div className="flex flex-wrap items-center justify-between gap-3">
             <div><h1 className="text-3xl font-bold">{t("payments.title")}</h1><p className="text-muted-foreground">{t("payments.description")}</p></div>
-            <div className="flex gap-2"><Button variant="outline" disabled={listLoading} onClick={() => void loadList()}><RefreshCw className="mr-2 h-4 w-4" />{listLoading ? t("common.loading") : t("common.refresh")}</Button><Link to="/transactions/new" className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground"><ArrowDownToLine className="mr-2 h-4 w-4" />{t("payments.new")}</Link></div>
+            <div className="flex gap-2"><Button variant="outline" disabled={listLoading} onClick={() => void refreshList()}><RefreshCw className="mr-2 h-4 w-4" />{listLoading ? t("common.loading") : t("common.refresh")}</Button><Link to="/transactions/new" className="inline-flex h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground"><ArrowDownToLine className="mr-2 h-4 w-4" />{t("payments.new")}</Link></div>
         </div>
         {message && <div role="alert" className="rounded border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{message}</div>}
         <div className="grid gap-5 xl:grid-cols-[0.85fr_1.4fr]">
@@ -203,11 +228,11 @@ export default function PaymentInbox() {
                         <label htmlFor={`loan-${row.id}`} className="grid gap-1 text-sm">{t("payments.loan")}<select id={`loan-${row.id}`} className="h-10 rounded border bg-background px-3" value={row.loanPublicId} disabled={!canEdit} onChange={(event) => { const loan = loans.find((candidate) => candidate.publicId === event.target.value); editAllocation(row.id, { loanPublicId: event.target.value, borrowerPublicId: loan?.borrowerPublicId ?? "" }); }}><option value="">{t("payments.selectLoan")}</option>{loans.map((loan) => <option key={loan.publicId} value={loan.publicId}>{loan.borrowerName} · {loan.publicId.slice(0, 8)}</option>)}</select></label>
                         <label htmlFor={`amount-${row.id}`} className="grid gap-1 text-sm">{t("payments.allocationAmount")}<Input id={`amount-${row.id}`} value={row.amount} disabled={!canEdit} onChange={(event) => editAllocation(row.id, { amount: event.target.value })} /></label>
                         <label htmlFor={`schedule-${row.id}`} className="grid gap-1 text-sm md:col-span-2">{t("payments.scheduleId")}<Input id={`schedule-${row.id}`} value={row.schedulePublicId ?? ""} disabled={!canEdit} placeholder={t("payments.optionalUuid")} onChange={(event) => editAllocation(row.id, { schedulePublicId: event.target.value })} /></label>
-                        {allocations.length > 1 && <Button aria-label={t("payments.removeAllocation", { index: index + 1 })} size="sm" variant="outline" disabled={!canEdit} onClick={() => setAllocations((current) => current.filter((candidate) => candidate.id !== row.id))}><Trash2 className="mr-2 h-4 w-4" />{t("payments.removeAllocation")}</Button>}
+                        {allocations.length > 1 && <Button aria-label={t("payments.removeAllocation", { index: index + 1 })} size="sm" variant="outline" disabled={!canEdit} onClick={() => updateAllocations((current) => current.filter((candidate) => candidate.id !== row.id))}><Trash2 className="mr-2 h-4 w-4" />{t("payments.removeAllocation")}</Button>}
                     </div>)}
-                    {canEdit && <Button size="sm" variant="outline" onClick={() => setAllocations((current) => [...current, newAllocation()])}><Plus className="mr-2 h-4 w-4" />{t("payments.addAllocation")}</Button>}
+                    {canEdit && <Button size="sm" variant="outline" onClick={() => updateAllocations((current) => [...current, newAllocation()])}><Plus className="mr-2 h-4 w-4" />{t("payments.addAllocation")}</Button>}
                     <div className="rounded border p-3 text-sm"><div className="grid gap-2 sm:grid-cols-3"><div><span className="text-muted-foreground">{t("payments.previous")}</span><div>{money(previousTotal)}</div></div><div><span className="text-muted-foreground">{proposal ? t("payments.previewTotal") : t("payments.enteredTotal")}</span><div>{money(previewTotal)}</div></div><div><span className="text-muted-foreground">{t("payments.difference")}</span><div>{money(difference)}</div></div></div>{proposal && <div className="mt-2"><Badge variant={proposal.status === "ready" ? "default" : "destructive"}>{t(`payments.status.${proposal.status}`)}</Badge>{proposal.warnings.map((warning) => <div key={warning.code} className="mt-2 text-amber-600">{t(`payments.warnings.${warning.code}`, { defaultValue: t("payments.warnings.UNKNOWN") })}</div>)}</div>}</div>
-                    <div className="flex flex-wrap gap-2">{canEdit && <Button disabled={busy || allocations.some((row) => !row.loanPublicId || !row.borrowerPublicId || !row.amount)} onClick={() => void preview()}>{busy ? t("common.loading") : t("payments.preview")}</Button>}{proposal?.status === "ready" && canEdit && (semanticWarnings.length === 0 || semanticReviewed) && <Button className="bg-emerald-600 hover:bg-emerald-700" disabled={busy} onClick={() => void mutate(async () => { await api.post(`/payment-intakes/${detail.publicId}/post`, { proposalPublicId: proposal.publicId }); })}><CheckCircle2 className="mr-2 h-4 w-4" />{t("payments.post")}</Button>}{detail.status === "posted" && !reversalOpen && <Button variant="destructive" onClick={() => setReversalOpen(true)}><RotateCcw className="mr-2 h-4 w-4" />{t("payments.reverse")}</Button>}</div>
+                    <div className="flex flex-wrap gap-2">{canEdit && <Button disabled={allocations.some((row) => !row.loanPublicId || !row.borrowerPublicId || !row.amount)} onClick={() => void preview()}>{t("payments.preview")}</Button>}{proposalMatchesEditor && proposal?.status === "ready" && canEdit && (semanticWarnings.length === 0 || semanticReviewed) && <Button className="bg-emerald-600 hover:bg-emerald-700" onClick={() => void mutate(async () => { await api.post(`/payment-intakes/${detail.publicId}/post`, { proposalPublicId: proposal.publicId }); })}><CheckCircle2 className="mr-2 h-4 w-4" />{t("payments.post")}</Button>}{detail.status === "posted" && !reversalOpen && <Button variant="destructive" onClick={() => setReversalOpen(true)}><RotateCcw className="mr-2 h-4 w-4" />{t("payments.reverse")}</Button>}</div>
                     {reversalOpen && <div className="rounded border border-destructive/30 p-3"><label htmlFor="payment-reversal-reason" className="grid gap-1 text-sm">{t("payments.reversalReason")}<Input id="payment-reversal-reason" value={reversalReason} onChange={(event) => setReversalReason(event.target.value)} /></label><div className="mt-3 flex gap-2"><Button variant="outline" onClick={() => setReversalOpen(false)}>{t("common.cancel")}</Button><Button variant="destructive" disabled={busy || !reversalReason.trim()} onClick={() => void mutate(async () => { await api.post(`/payment-intakes/${detail.publicId}/reverse`, { reason: reversalReason.trim() }); })}>{t("payments.confirmReverse")}</Button></div></div>}
                 </CardContent></Card>
                 <Card><CardHeader><CardTitle>{t("payments.audit")}</CardTitle></CardHeader><CardContent aria-live="polite">{audit.status === "loading" && <div role="status">{t("common.loading")}</div>}{audit.status === "empty" && <div>{t("payments.auditEmpty")}</div>}{audit.status === "forbidden" && <div>{t("payments.auditForbidden")}</div>}{audit.status === "error" && <div role="alert">{t("payments.auditFailed")}</div>}{audit.status === "ready" && <div className="space-y-2">{audit.entries.map((entry) => <div key={entry.id} className="rounded border p-3 text-sm"><div className="flex justify-between"><span>{t(`auditActions.${entry.action}`, { defaultValue: t("auditActions.unknown") })}</span><span>{dateTime(entry.createdAt)}</span></div><div className="mt-1 break-all font-mono text-xs text-muted-foreground">{t("payments.auditId")}: {entry.id} · {t("payments.correlationId")}: {entry.correlationId || "—"} · {t("payments.requestId")}: {entry.requestId || "—"}</div></div>)}</div>}</CardContent></Card>

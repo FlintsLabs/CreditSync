@@ -60,3 +60,20 @@ The follow-up resolves all findings recorded in `task-7-review.md`:
 - Locale parity — English 597 / Thai 597 leaf keys, no missing keys.
 
 Verified implementation commit: `c719bfb` (`fix: harden web review workflows`).
+
+## v0.3.3 Fix Round 2
+
+The Round-1 re-review findings N-C1, N-I1, and the remaining M2 refresh branch are addressed:
+
+- Payment preview responses are bound to a monotonic allocation-editor revision. Editing, adding, removing, or changing intake/suggested rows advances that revision, clears the ready proposal, and requires a new preview before Post is rendered.
+- Allocation controls are disabled while a preview is in flight. The captured revision is checked again when the response returns, so switching intake while waiting cannot install an old proposal on the new editor.
+- Manual Refresh now clears any prior message, catches list/loan failures, announces the existing localized `payments.errors.load` message through the alert surface, and always releases its loading state.
+- The MCP `payment.reverse` 1.0 schema accepts both the frozen `{ paymentIntakePublicId }` shape and the additive optional `reason`. The default adapter supplies `MCP 1.0 compatibility reversal` when the field is absent; REST/web still require and audit an explicit operator reason.
+- Actual MCP-client coverage exercises both legacy and reason-provided inputs without changing `schemaVersion: "1.0"`. The database-backed default-adapter regression verifies the compatibility reason in the reversal audit payload when `TEST_DATABASE_URL` is available.
+
+### TDD Evidence
+
+- Payment Inbox RED: 4 expected failures reproduced retained Post after add/remove, editable controls during preview, stale response installation, and the unhandled refresh rejection. GREEN: 7/7 Payment Inbox component tests passed.
+- MCP RED: the actual client legacy input was rejected before reaching the shared handler. GREEN: 8 runnable MCP contract tests passed and both input shapes returned the same versioned handler error; 2 database integrations were skipped locally.
+
+Final gate results and the fix-round commit hash are reported with the task handoff.

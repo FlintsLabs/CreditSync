@@ -15,6 +15,9 @@
 - Preserved identical user-entered daily-loan terms from preview through draft creation instead of deriving fixed terms from rounded preview rows.
 - Preserved exact public money strings in confirmation displays, retained payment preview baselines, ignored stale intake responses, and reused renewal execution/reversal keys for retries of the same intent.
 - Distinguished loading, empty, forbidden, and failed audit states; localized workflow domain errors and audit actions; and displayed renewal interest, fee, and penalty components separately.
+- Bound ready payment proposals to the exact allocation-editor revision, invalidating them on every edit/add/remove/selection change and discarding stale in-flight preview responses before Post can reappear.
+- Preserved the frozen MCP schema-version 1.0 `payment.reverse` input by keeping `reason` optional and supplying a stable audit reason for legacy clients, while REST/web reversals continue to require an operator reason.
+- Caught manual Payment Inbox refresh failures and announced the localized error without leaving the refresh control busy.
 
 ## v0.3.2 - 2026-08-10
 

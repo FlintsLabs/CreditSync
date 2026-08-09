@@ -290,12 +290,15 @@ describe("CreditSync stateless MCP contract", () => {
         });
         expect((posted.structuredContent as Record<string, unknown>).correlationId).toMatch(/^[0-9a-f-]{36}$/);
 
-        const reversed = await client.callTool({
+        const legacyReversed = await client.callTool({
+            name: "payment.reverse",
+            arguments: { paymentIntakePublicId: INTAKE_ID },
+        });
+        const reasonedReversed = await client.callTool({
             name: "payment.reverse",
             arguments: { paymentIntakePublicId: INTAKE_ID, reason: "Bank correction" },
         });
-        expect(reversed.isError).toBe(true);
-        expect(reversed.structuredContent).toEqual({
+        const expectedReversalError = {
             schemaVersion: "1.0",
             error: {
                 code: "REVERSAL_NOT_LATEST",
@@ -304,7 +307,11 @@ describe("CreditSync stateless MCP contract", () => {
                 reviewRequired: true,
                 details: { paymentIntakePublicId: INTAKE_ID },
             },
-        });
+        };
+        expect(legacyReversed.isError).toBe(true);
+        expect(legacyReversed.structuredContent).toEqual(expectedReversalError);
+        expect(reasonedReversed.isError).toBe(true);
+        expect(reasonedReversed.structuredContent).toEqual(expectedReversalError);
         expect(JSON.stringify(logs)).not.toContain(TOKEN);
         expect(JSON.stringify(logs)).not.toContain("paymentIntakePublicId");
 

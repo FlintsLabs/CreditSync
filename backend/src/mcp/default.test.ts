@@ -8,6 +8,7 @@ import { db } from "../db";
 import {
     bankLoans,
     bankProfiles,
+    auditLogs,
     borrowers,
     loanSchedules,
     loans,
@@ -160,7 +161,7 @@ describe("default MCP adapter integration", () => {
 
         const first = resultData(await client.callTool({
             name: "payment.reverse",
-            arguments: { paymentIntakePublicId: intakePublicId, reason: "Correct duplicate transfer" },
+            arguments: { paymentIntakePublicId: intakePublicId },
         }));
         const retry = resultData(await client.callTool({
             name: "payment.reverse",
@@ -182,6 +183,9 @@ describe("default MCP adapter integration", () => {
         expect(await db.select().from(transactions).where(eq(transactions.paymentIntakeId,
             (await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, intakePublicId) }))!.id)))
             .toHaveLength(2);
+        expect((await db.select().from(auditLogs)).find((entry) =>
+            entry.entityId === intakePublicId && entry.action === "reversed")?.payload)
+            .toMatchObject({ reason: "MCP 1.0 compatibility reversal" });
 
         await client.close();
     });

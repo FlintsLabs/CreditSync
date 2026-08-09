@@ -53,6 +53,12 @@ function asString(input: ToolInput, field: string) {
     return input[field] as string;
 }
 
+function paymentReversalReason(input: ToolInput) {
+    return typeof input.reason === "string" && input.reason.trim()
+        ? input.reason.trim()
+        : "MCP 1.0 compatibility reversal";
+}
+
 export function createDefaultMcpToolHandlers(
     dependencies: DefaultMcpDependencies = {},
 ): Record<McpToolName, McpToolHandler> {
@@ -104,7 +110,7 @@ export function createDefaultMcpToolHandlers(
         { proposalPublicId: asString(input, "proposalPublicId") },
     ),
     "payment.reverse": (ctx, input) => reversePayment(ctx, asString(input, "paymentIntakePublicId"), {
-        reason: asString(input, "reason"),
+        reason: paymentReversalReason(input),
     }),
     "loan.preview": async (_ctx, input) => {
         try {
