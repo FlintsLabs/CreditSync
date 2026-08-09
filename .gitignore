@@ -55,3 +55,7 @@ drizzle/migrations/ # Keep source schemas, ignore generated migrations IF one pr
 # Temporary
 tmp/
 temp/
+
+# Local agent workflow state
+.superpowers/
+.worktrees/
