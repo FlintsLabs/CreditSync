@@ -255,6 +255,138 @@ describe("loan application service", () => {
         ))).toHaveLength(1);
     });
 
+    // Break caught: activating another draft ignores signed source allocations and overdraws one bank drawdown.
+    integrationTest("rejects serial activation beyond net drawdown capacity and rolls back every activation effect", async () => {
+        const actor = await seedUser("tenant-a", "serial-capacity@example.test", "owner");
+        const ctx = context("tenant-a", actor.id);
+        const borrower = await createBorrower(ctx, { name: "Serial Capacity Borrower" });
+        const [sourceProfile, targetProfile] = await db.insert(bankProfiles).values([
+            { tenantId: "tenant-a", name: "Serial Source", type: "bank" },
+            { tenantId: "tenant-a", name: "Serial Target", type: "bank" },
+        ]).returning();
+        const [source, target] = await db.insert(bankLoans).values([
+            { tenantId: "tenant-a", bankProfileId: sourceProfile!.id, amount: "100.00" },
+            { tenantId: "tenant-a", bankProfileId: targetProfile!.id, amount: "100.00" },
+        ]).returning();
+        const firstDraft = await createLoanDraft(ctx, {
+            borrowerPublicId: borrower.publicId,
+            bankLoanPublicId: source!.publicId,
+            ...terms,
+            principal: "80.00",
+        });
+        const secondDraft = await createLoanDraft(context("tenant-a", actor.id, "serial-second-draft"), {
+            borrowerPublicId: borrower.publicId,
+            bankLoanPublicId: source!.publicId,
+            ...terms,
+            principal: "50.00",
+        });
+        await activateLoan(ctx, firstDraft.publicId);
+        const firstLoan = await db.query.loans.findFirst({ where: eq(loans.publicId, firstDraft.publicId) });
+        const secondLoan = await db.query.loans.findFirst({ where: eq(loans.publicId, secondDraft.publicId) });
+        const allocationGroupId = crypto.randomUUID();
+        await db.insert(loanFundingAllocations).values([
+            {
+                tenantId: "tenant-a", bankProfileId: sourceProfile!.id, bankLoanId: source!.id,
+                loanId: firstLoan!.id, allocatedAmount: "-20.00", allocationDate: terms.startDate,
+                allocationType: "reallocation_out", allocationGroupId, createdByUserId: actor.id,
+            },
+            {
+                tenantId: "tenant-a", bankProfileId: targetProfile!.id, bankLoanId: target!.id,
+                loanId: firstLoan!.id, allocatedAmount: "20.00", allocationDate: terms.startDate,
+                allocationType: "reallocation_in", allocationGroupId, createdByUserId: actor.id,
+            },
+        ]);
+
+        await expect(activateLoan(context("tenant-a", actor.id, "serial-capacity-reject"), secondDraft.publicId))
+            .rejects.toMatchObject({
+                code: "ALLOCATION_EXCEEDS_DRAWDOWN",
+                status: 400,
+                details: { sourceRemaining: "40.00" },
+            });
+
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, secondLoan!.id) }))
+            .toMatchObject({ status: "draft", outstandingPrincipal: "0.00" });
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, secondLoan!.id))).toHaveLength(0);
+        expect(await db.select().from(loanFundingAllocations).where(eq(loanFundingAllocations.loanId, secondLoan!.id))).toHaveLength(0);
+        expect(await db.select().from(auditLogs).where(and(
+            eq(auditLogs.entityId, secondDraft.publicId),
+            eq(auditLogs.action, "activated"),
+        ))).toHaveLength(0);
+        const sourceNet = await db.select({
+            total: sql<string>`coalesce(sum(${loanFundingAllocations.allocatedAmount}), 0)`,
+        }).from(loanFundingAllocations).where(and(
+            eq(loanFundingAllocations.tenantId, "tenant-a"),
+            eq(loanFundingAllocations.bankLoanId, source!.id),
+        )).then((rows) => new Decimal(rows[0]?.total ?? 0).toFixed(2));
+        expect(sourceNet).toBe("60.00");
+    });
+
+    // Break caught: two different draft rows bypass one another's locks and both consume the same insufficient drawdown.
+    integrationTest("serializes concurrent activation of distinct drafts against one drawdown capacity", async () => {
+        const actor = await seedUser("tenant-a", "concurrent-capacity@example.test", "owner");
+        const borrower = await createBorrower(context("tenant-a", actor.id), { name: "Concurrent Capacity Borrower" });
+        const profile = await db.insert(bankProfiles).values({
+            tenantId: "tenant-a", name: "Concurrent Capacity Source", type: "bank",
+        }).returning().then((rows) => rows[0]!);
+        const drawdown = await db.insert(bankLoans).values({
+            tenantId: "tenant-a", bankProfileId: profile.id, amount: "100.00",
+        }).returning().then((rows) => rows[0]!);
+        const draftA = await createLoanDraft(context("tenant-a", actor.id, "concurrent-draft-a"), {
+            borrowerPublicId: borrower.publicId, bankLoanPublicId: drawdown.publicId,
+            ...terms, principal: "60.00",
+        });
+        const draftB = await createLoanDraft(context("tenant-a", actor.id, "concurrent-draft-b"), {
+            borrowerPublicId: borrower.publicId, bankLoanPublicId: drawdown.publicId,
+            ...terms, principal: "60.00",
+        });
+        const storedA = await db.query.loans.findFirst({ where: eq(loans.publicId, draftA.publicId) });
+        const storedB = await db.query.loans.findFirst({ where: eq(loans.publicId, draftB.publicId) });
+
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        let markLocked!: () => void;
+        const locked = new Promise<void>((resolve) => { markLocked = resolve; });
+        const blocker = db.transaction(async (tx) => {
+            await tx.execute(sql`SELECT id FROM bank_loans WHERE id = ${drawdown.id} AND tenant_id = 'tenant-a' FOR UPDATE`);
+            markLocked();
+            await held;
+        });
+        await locked;
+        const activationA = activateLoan(context("tenant-a", actor.id, "concurrent-activate-a"), draftA.publicId);
+        const activationB = activateLoan(context("tenant-a", actor.id, "concurrent-activate-b"), draftB.publicId);
+        await Bun.sleep(20);
+        release();
+        await blocker;
+        const outcomes = await Promise.allSettled([activationA, activationB]);
+
+        expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+        const rejected = outcomes.find((outcome) => outcome.status === "rejected") as PromiseRejectedResult | undefined;
+        expect(rejected?.reason).toMatchObject({
+            code: "ALLOCATION_EXCEEDS_DRAWDOWN",
+            status: 400,
+            details: { sourceRemaining: "40.00" },
+        });
+        const rows = await db.select().from(loans).where(sql`${loans.id} IN (${storedA!.id}, ${storedB!.id})`);
+        expect(rows.map((row) => row.status).sort()).toEqual(["active", "draft"]);
+        const winner = rows.find((row) => row.status === "active")!;
+        const loser = rows.find((row) => row.status === "draft")!;
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, winner.id))).toHaveLength(3);
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, loser.id))).toHaveLength(0);
+        expect(await db.select().from(loanFundingAllocations).where(eq(loanFundingAllocations.loanId, loser.id))).toHaveLength(0);
+        expect(await db.select().from(auditLogs).where(and(
+            eq(auditLogs.entityId, loser.publicId),
+            eq(auditLogs.action, "activated"),
+        ))).toHaveLength(0);
+        const drawdownNet = await db.select({
+            total: sql<string>`coalesce(sum(${loanFundingAllocations.allocatedAmount}), 0)`,
+        }).from(loanFundingAllocations).where(and(
+            eq(loanFundingAllocations.tenantId, "tenant-a"),
+            eq(loanFundingAllocations.bankLoanId, drawdown.id),
+        )).then((result) => new Decimal(result[0]?.total ?? 0));
+        expect(drawdownNet.toFixed(2)).toBe("60.00");
+        expect(drawdownNet.lte(drawdown.amount)).toBe(true);
+    });
+
     // Break caught: an active loan's financial terms can be edited through the draft command.
     integrationTest("rejects term edits after activation", async () => {
         const actor = await seedUser("tenant-a", "immutable@example.test", "collector");

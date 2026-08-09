@@ -243,6 +243,33 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
             throw new DomainError("INVALID_LOAN_TERMS", "Draft term months are required", 400);
         }
 
+        let fundingSource: typeof bankLoans.$inferSelect | null = null;
+        if (current.bankLoanId) {
+            const lockedSource = await tx.execute(sql`SELECT id FROM bank_loans
+                WHERE id = ${current.bankLoanId} AND tenant_id = ${ctx.tenantId} FOR UPDATE`);
+            if (!lockedSource.length) {
+                throw new DomainError("BANK_LOAN_NOT_FOUND", "Funding source drawdown not found", 404);
+            }
+            fundingSource = await tx.query.bankLoans.findFirst({
+                where: and(eq(bankLoans.id, current.bankLoanId), eq(bankLoans.tenantId, ctx.tenantId)),
+            }) ?? null;
+            if (!fundingSource) {
+                throw new DomainError("BANK_LOAN_NOT_FOUND", "Funding source drawdown not found", 404);
+            }
+            const sourceAllocation = await tx.select({
+                totalAllocated: sql<string>`coalesce(sum(${loanFundingAllocations.allocatedAmount}), 0)`,
+            }).from(loanFundingAllocations).where(and(
+                eq(loanFundingAllocations.bankLoanId, fundingSource.id),
+                eq(loanFundingAllocations.tenantId, ctx.tenantId),
+            )).then((rows) => new Decimal(rows[0]?.totalAllocated ?? 0));
+            const sourceRemaining = new Decimal(fundingSource.amount).minus(sourceAllocation);
+            if (new Decimal(current.principalAmount).gt(sourceRemaining)) {
+                throw new DomainError("ALLOCATION_EXCEEDS_DRAWDOWN", "Allocation exceeds remaining drawdown balance", 400, {
+                    sourceRemaining: serializeMoney(sourceRemaining),
+                });
+            }
+        }
+
         let generated;
         try {
             generated = current.repaymentType === "floating" ? [] : generateLoanSchedule({
@@ -278,15 +305,11 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
                 status: "pending",
             })));
         }
-        if (current.bankLoanId) {
-            const source = await tx.query.bankLoans.findFirst({
-                where: and(eq(bankLoans.id, current.bankLoanId), eq(bankLoans.tenantId, ctx.tenantId)),
-            });
-            if (!source) throw new DomainError("BANK_LOAN_NOT_FOUND", "Funding source drawdown not found", 404);
+        if (fundingSource) {
             await tx.insert(loanFundingAllocations).values({
                 tenantId: ctx.tenantId,
-                bankProfileId: source.bankProfileId,
-                bankLoanId: source.id,
+                bankProfileId: fundingSource.bankProfileId,
+                bankLoanId: fundingSource.id,
                 loanId: current.id,
                 allocatedAmount: serializeMoney(current.principalAmount),
                 allocationDate: current.startDate ?? new Date().toISOString().slice(0, 10),
