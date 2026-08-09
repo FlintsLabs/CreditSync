@@ -1,0 +1,113 @@
+import { describe, expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { EVAL_SCENARIO_IDS, runEvalScenario } from "../evals/harness";
+
+const pluginRoot = resolve(import.meta.dir, "..");
+
+type CatalogCase = {
+    id: string;
+    kind: "positive" | "negative";
+    expectedCalls: string[];
+    forbiddenCalls: string[];
+    expectedEffects?: string[];
+    forbiddenEffects?: string[];
+};
+
+async function fixtures() {
+    const catalog = JSON.parse(await readFile(resolve(pluginRoot, "evals/evals.json"), "utf8")) as { cases: CatalogCase[] };
+    const contract = JSON.parse(await readFile(resolve(pluginRoot, "references/mcp-tool-contract.json"), "utf8")) as {
+        tools: Array<{ name: string; inputSchema: { required?: string[]; properties?: Record<string, unknown> } }>;
+    };
+    return { catalog, contract };
+}
+
+describe("CreditSync executable orchestration evals", () => {
+    test("every catalog case executes with exact ordered/repeated MCP calls", async () => {
+        const { catalog } = await fixtures();
+        expect(new Set(EVAL_SCENARIO_IDS)).toEqual(new Set(catalog.cases.map((entry) => entry.id)));
+        for (const entry of catalog.cases) {
+            const result = await runEvalScenario(entry.id);
+            expect(result.calls.map((call) => call.name), entry.id).toEqual(entry.expectedCalls);
+            for (const forbidden of entry.forbiddenCalls) {
+                expect(result.calls.some((call) => call.name === forbidden), `${entry.id} called forbidden ${forbidden}`).toBe(false);
+            }
+            expect(result.effects, `${entry.id} external side effects`).toEqual(entry.expectedEffects ?? []);
+            for (const forbidden of entry.forbiddenEffects ?? []) {
+                expect(result.effects.includes(forbidden), `${entry.id} executed forbidden ${forbidden}`).toBe(false);
+            }
+        }
+    });
+
+    test("every scripted call uses only advertised fields and supplies advertised required fields", async () => {
+        const { catalog, contract } = await fixtures();
+        const tools = new Map(contract.tools.map((tool) => [tool.name, tool]));
+        for (const entry of catalog.cases) {
+            const result = await runEvalScenario(entry.id);
+            for (const call of result.calls) {
+                const schema = tools.get(call.name)?.inputSchema;
+                expect(schema, `${entry.id}/${call.name} missing frozen input schema`).toBeDefined();
+                const supplied = Object.keys(call.arguments).sort();
+                const supported = Object.keys(schema?.properties ?? {});
+                expect(supplied.filter((key) => !supported.includes(key)), `${entry.id}/${call.name} unsupported args`).toEqual([]);
+                expect((schema?.required ?? []).filter((key) => !(key in call.arguments)), `${entry.id}/${call.name} missing required args`).toEqual([]);
+            }
+        }
+    });
+
+    test("alias add and confirmation are separate calls with the returned alias UUID", async () => {
+        const result = await runEvalScenario("borrower-create-alias");
+        const aliasCalls = result.calls.filter((call) => call.name === "borrower.alias");
+        expect(aliasCalls).toHaveLength(2);
+        expect(aliasCalls[0]?.arguments).toMatchObject({ action: "add", alias: "นก" });
+        expect(aliasCalls[1]?.arguments).toEqual({
+            action: "confirm",
+            aliasPublicId: "0198c481-3e2b-7000-8000-000000000013",
+        });
+    });
+
+    test("duplicate evidence stops before finalize, preview, and financial posting", async () => {
+        const result = await runEvalScenario("duplicate-evidence-hash");
+        expect(result.outcome).toBe("stopped");
+        expect(result.stopReason).toBe("duplicate-evidence");
+        expect(result.calls.map((call) => call.name)).toEqual(["intake.create", "evidence.prepare", "intake.get"]);
+        expect(result.effects).toEqual([]);
+    });
+
+    test("stale payment state is inspected and re-previewed before posting the new proposal", async () => {
+        const result = await runEvalScenario("payment-stale-repreview");
+        expect(result.outcome).toBe("completed");
+        expect(result.calls.map((call) => call.name)).toEqual([
+            "intake.create",
+            "payment.preview",
+            "intake.get",
+            "payment.preview",
+            "payment.post",
+        ]);
+    });
+
+    test("reversal boundaries require explicit reasons and a known renewal execution", async () => {
+        const payment = await runEvalScenario("payment-reversal");
+        expect(payment.calls.at(-1)?.arguments).toEqual({
+            paymentIntakePublicId: "0198c481-3e2b-7000-8000-000000000021",
+            reason: "Owner confirmed duplicate bank posting",
+        });
+
+        const missingRenewal = await runEvalScenario("renewal-reversal-without-result");
+        expect(missingRenewal).toMatchObject({ outcome: "stopped", stopReason: "use-web-renewal-detail", calls: [] });
+
+        const renewal = await runEvalScenario("renewal-reversal");
+        expect(renewal.calls.at(-1)?.arguments).toMatchObject({
+            reason: "Owner confirmed renewal reversal after downstream review",
+            idempotencyKey: "renewal-reverse-20260810-1",
+        });
+    });
+
+    test("ambiguous, needs-review, unsettled, and unauthorized fixtures make no forbidden write", async () => {
+        for (const id of ["ambiguous-nickname", "allocation-mismatch", "renewal-unsettled-charges", "renewal-missing-confirmation", "unauthorized-access"]) {
+            const result = await runEvalScenario(id);
+            expect(result.outcome, id).toBe("stopped");
+            expect(result.calls.some((call) => ["payment.post", "renewal.execute", "borrower.create"].includes(call.name)), id).toBe(false);
+        }
+    });
+});

@@ -15,3 +15,11 @@
 ### Compatibility
 
 - Frozen CreditSync MCP tool names, schemas, annotations, and workflows at schema version `1.0`. Breaking contract changes require plugin `2.0.0`.
+
+### Fixed
+
+- Replaced the name-only contract with a deterministic full metadata snapshot captured by an authenticated local MCP SDK Client `tools/list` call.
+- Added executable scripted-MCP evals for exact ordered/repeated calls, supported arguments, stale/duplicate/review/unauthorized branches, explicit confirmation, reversal reasons/idempotency, and forbidden writes/upload effects.
+- Allowed both the documented non-live app placeholder and syntactically valid registered technical IDs during package validation.
+- Stopped image-first reconciliation on duplicate evidence before PUT/finalize/preview/post, and documented honest payment/renewal reversal prerequisites for the frozen tool surface.
+- Corrected token-byte hashing, metadata-preserving MinIO recovery, and MCP-only rollback guidance.

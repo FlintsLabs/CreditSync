@@ -2,12 +2,24 @@ import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { MCP_TOOL_NAMES } from "../../../backend/src/mcp/server";
+import type { FrozenMcpContract } from "../../../backend/src/mcp/contract-snapshot";
+import { EVAL_SCENARIO_IDS, runEvalScenario } from "../evals/harness";
+import { canonicalContractJson, captureAdvertisedMcpContract } from "./mcp-contract";
 
 const pluginRoot = resolve(import.meta.dir, "..");
 const repositoryRoot = resolve(pluginRoot, "../..");
 const expectedSkills = ["creditsync", "manage-borrowers", "reconcile-payments", "manage-loans", "renew-daily-loan"];
 const expectedReferences = ["matching-policy.md", "financial-rules.md", "error-recovery.md", "mcp-tool-contract.json"];
 const forbiddenEntries = [".mcp.json", "hooks.json", "hooks", "ui", "oauth.json"];
+export const PRIVATE_APP_ID_PLACEHOLDER = "plugin_asdk_app_REPLACE_AFTER_PRIVATE_REGISTRATION";
+
+export function classifyPrivateAppId(value: unknown): "placeholder" | "registered" | "invalid" {
+    if (value === PRIVATE_APP_ID_PLACEHOLDER) return "placeholder";
+    if (typeof value === "string" && /^plugin_asdk_app_[A-Za-z0-9_-]{8,}$/u.test(value) && !/REPLACE/iu.test(value)) {
+        return "registered";
+    }
+    return "invalid";
+}
 
 async function parseJson(path: string) {
     return JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
@@ -41,9 +53,8 @@ export async function validatePlugin() {
 
     const app = await parseJson(resolve(pluginRoot, ".app.json")) as { apps?: Record<string, { id?: string }> };
     const appId = app.apps?.creditsync?.id;
-    if (appId !== "plugin_asdk_app_REPLACE_AFTER_PRIVATE_REGISTRATION") {
-        errors.push(".app.json must use the documented private-registration placeholder until registration");
-    }
+    const appRegistration = classifyPrivateAppId(appId);
+    if (appRegistration === "invalid") errors.push(".app.json requires the documented placeholder or a technical ID beginning plugin_asdk_app_");
     const appRaw = await readFile(resolve(pluginRoot, ".app.json"), "utf8");
     if (/https?:\/\//iu.test(appRaw) || /bearer|token|secret/iu.test(appRaw)) errors.push(".app.json must not contain connection data");
 
@@ -63,28 +74,54 @@ export async function validatePlugin() {
         if (!existsSync(resolve(pluginRoot, "references", reference))) errors.push(`missing reference ${reference}`);
     }
 
-    const contract = await parseJson(resolve(pluginRoot, "references/mcp-tool-contract.json")) as {
-        schemaVersion?: string;
-        tools?: string[];
-        operations?: Record<string, unknown>;
-    };
+    const contract = await parseJson(resolve(pluginRoot, "references/mcp-tool-contract.json")) as unknown as FrozenMcpContract;
     if (contract.schemaVersion !== "1.0") errors.push("tool contract schemaVersion must be 1.0");
-    if (!equalStrings(contract.tools, MCP_TOOL_NAMES)) errors.push("plugin tool list differs from backend MCP tool list/order");
-    if (!equalStrings(Object.keys(contract.operations ?? {}), MCP_TOOL_NAMES)) errors.push("operation contracts differ from backend MCP tool list/order");
+    if (!equalStrings(contract.tools?.map((tool) => tool.name), MCP_TOOL_NAMES)) errors.push("plugin tool list differs from backend MCP tool list/order");
+    const advertised = await captureAdvertisedMcpContract();
+    if (canonicalContractJson(contract) !== canonicalContractJson(advertised)) {
+        errors.push("committed MCP contract differs from an authenticated local tools/list response; regenerate with scripts/mcp-contract.ts --write");
+    }
 
     const evals = await parseJson(resolve(pluginRoot, "evals/evals.json")) as {
         execution?: { liveMcpCallsPerformed?: boolean };
-        cases?: Array<{ id?: string; kind?: string; prompt?: string; expectedCalls?: string[]; forbiddenCalls?: string[] }>;
+        cases?: Array<{
+            id?: string;
+            kind?: string;
+            prompt?: string;
+            expectedCalls?: string[];
+            forbiddenCalls?: string[];
+            expectedEffects?: string[];
+            forbiddenEffects?: string[];
+        }>;
     };
     if (evals.execution?.liveMcpCallsPerformed !== false) errors.push("eval manifest must truthfully declare that live MCP calls were not run");
     const cases = evals.cases ?? [];
     if (cases.filter((entry) => entry.kind === "positive").length < 8) errors.push("evals require at least eight positive workflows");
-    if (cases.filter((entry) => entry.kind === "negative").length !== 6) errors.push("evals require exactly six negative safety workflows");
+    if (cases.filter((entry) => entry.kind === "negative").length < 9) errors.push("evals require at least nine negative safety workflows");
+    if (!equalStrings(cases.map((entry) => entry.id), EVAL_SCENARIO_IDS)) errors.push("eval catalog and executable harness scenario order differ");
     const validTools = new Set<string>(MCP_TOOL_NAMES);
     for (const entry of cases) {
         if (!entry.id || !entry.prompt) errors.push("each eval requires id and prompt");
         for (const name of [...entry.expectedCalls ?? [], ...entry.forbiddenCalls ?? []]) {
             if (!validTools.has(name)) errors.push(`eval ${entry.id ?? "unknown"} references unknown tool ${name}`);
+        }
+        if (!entry.id) continue;
+        try {
+            const result = await runEvalScenario(entry.id);
+            if (!equalStrings(result.calls.map((call) => call.name), entry.expectedCalls ?? [])) {
+                errors.push(`eval ${entry.id} executable call order differs from its catalog contract`);
+            }
+            for (const name of entry.forbiddenCalls ?? []) {
+                if (result.calls.some((call) => call.name === name)) errors.push(`eval ${entry.id} executed forbidden tool ${name}`);
+            }
+            if (!equalStrings(result.effects, entry.expectedEffects ?? [])) {
+                errors.push(`eval ${entry.id} executable side effects differ from its catalog contract`);
+            }
+            for (const effect of entry.forbiddenEffects ?? []) {
+                if (result.effects.includes(effect)) errors.push(`eval ${entry.id} executed forbidden side effect ${effect}`);
+            }
+        } catch (error) {
+            errors.push(`eval ${entry.id} harness failed: ${error instanceof Error ? error.message : String(error)}`);
         }
     }
 
@@ -119,5 +156,7 @@ if (import.meta.main) {
         for (const error of errors) console.error(`- ${error}`);
         process.exit(1);
     }
-    console.log("CreditSync plugin validation passed (1.0.0, 5 skills, 20 tools, no bundled MCP/secrets). ");
+    const app = await parseJson(resolve(pluginRoot, ".app.json")) as { apps?: Record<string, { id?: string }> };
+    const registration = classifyPrivateAppId(app.apps?.creditsync?.id);
+    console.log(`CreditSync plugin validation passed (1.0.0, 5 skills, 20 tools, no bundled MCP/secrets; private app: ${registration}${registration === "placeholder" ? ", non-live" : ""}).`);
 }

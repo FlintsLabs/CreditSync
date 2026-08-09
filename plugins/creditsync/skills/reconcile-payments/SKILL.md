@@ -19,8 +19,9 @@ Treat intake, evidence, matching, posting, and reversal as separate stages. A sl
 For image-first capture, calculate the file SHA-256 locally. After intake creation:
 
 1. Call `evidence.prepare` with intake public UUID, MIME type, byte size, SHA-256, and evidence type.
-2. PUT the unchanged bytes to the returned signed URL using exactly its required headers before expiry.
-3. Call `evidence.finalize` with the evidence public UUID.
+2. Inspect the prepare result **before any PUT**. If it reports `duplicate`, call `intake.get` with the returned original `intakePublicId`, report the original, and stop. Do not upload, finalize, preview, or post.
+3. Only for a non-duplicate prepare result, PUT the unchanged bytes to its returned signed URL using exactly its required headers before expiry.
+4. Call `evidence.finalize` with the evidence public UUID.
 
 Do not send evidence when data-only capture is sufficient. Do not log or repeat raw QR payloads or signed upload URLs.
 
@@ -37,13 +38,14 @@ One transfer may allocate across many loans and borrowers. Never force an alloca
 
 ## Reverse
 
-Inspect the posted intake and show the entries that will be compensated. Obtain a non-blank reason, then call `payment.reverse` with the intake public UUID. The frozen 1.0 tool has no client idempotency-key field; the backend makes repeat reversal of that intake idempotent. Report the resulting audit/correlation identifiers. A reversal does not delete the original transaction.
+Inspect the posted intake and show the entries that will be compensated. Obtain a non-blank reason, then call `payment.reverse` with both `{ paymentIntakePublicId, reason }`. The frozen 1.0 tool has no client idempotency-key field; the backend makes repeat reversal of that intake idempotent. Report the resulting audit/correlation identifiers. A reversal does not delete the original transaction.
 
 ## Quick reference
 
 | State | Continue? |
 | --- | --- |
 | hard duplicate | No; inspect original intake |
+| duplicate from `evidence.prepare` | No PUT/finalize/preview/post; inspect original intake |
 | semantic warning | Preview, disclose warning, then follow returned state |
 | `ready` latest proposal | May post exact proposal |
 | `needs_review` or fuzzy | Human chooses allocations |

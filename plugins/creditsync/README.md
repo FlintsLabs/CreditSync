@@ -25,7 +25,7 @@ bun run plugins/creditsync/scripts/validate.ts
 python3 /home/flintstone/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py plugins/creditsync
 ```
 
-The committed placeholder is deliberately non-runnable. Static package validation does not claim that registration or live authentication has succeeded.
+The committed placeholder is deliberately non-runnable. Validation accepts either that documented placeholder or a syntactically valid registered `plugin_asdk_app_...` technical ID, while clearly reporting placeholder state as non-live. Local contract/eval validation does not claim that private registration or live authentication has succeeded.
 
 ## Repository marketplace
 
@@ -47,7 +47,7 @@ Start a new Codex task after installation so plugin skills and the private app a
 - Loan activation and every renewal show the backend result before explicit confirmation.
 - Reversals require a reason and create compensating history rather than deletion.
 
-See `references/` for matching, accounting invariants, error recovery, and the frozen 20-tool list. `evals/evals.json` is a machine-checkable prompt/call contract; `evals/skill-tests.md` records honest no-live-call skill application results.
+See `references/` for matching, accounting invariants, error recovery, and the frozen full 20-tool metadata snapshot. The snapshot is generated through an authenticated local MCP SDK Client `tools/list` call. `evals/evals.json` and `evals/harness.ts` execute exact ordered/repeated tool calls, supported arguments, injected workflow states, external upload effects, and forbidden-write boundaries while remaining honest that no live private app was used.
 
 Deployment, credential rotation, MinIO evidence, and recovery procedures are maintained in the root repository documentation:
 

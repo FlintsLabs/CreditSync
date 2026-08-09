@@ -1,6 +1,6 @@
 # Skill application evidence
 
-These are documentation TDD results, not live accounting executions. No production CreditSync tools were called and no financial writes were made.
+These are local scripted-MCP orchestration results, not live accounting executions. No production CreditSync tools were called and no financial writes were made.
 
 ## RED baseline
 
@@ -22,4 +22,10 @@ The final renewal test identified that `payment.reverse` 1.0 has no client idemp
 
 A final all-skill/schema audit found one omitted `renewal.reverse` reason in the written call sequence. After adding that required field, the scoped re-audit passed with no unsupported tool names or inputs and all six negative stop gates intact.
 
-The executable `scripts/validate.ts` checks that every eval call name belongs to the frozen 20-tool contract. Live private-app evals remain an operator release step after replacing the `.app.json` registration placeholder and configuring credentials.
+## Executable harness
+
+`evals/harness.ts` now executes every catalog workflow against injected MCP responses. The scripted adapter fails on any wrong call order or argument object, including repeated alias add/confirm and stale preview/re-preview calls. The suite checks every supplied top-level argument against the actual advertised input schema, and asserts forbidden financial writes for duplicate, ambiguous, `needs_review`, stale, unsettled, unconfirmed, and unauthorized states.
+
+The evidence-duplicate case also records non-MCP upload effects and proves `evidence.prepare` duplicate state stops before PUT, finalize, preview, or post. Reversal cases prove the payment reason and renewal reason/idempotency key are sent, and that renewal reversal stops when the current task does not hold the exact execute result because MCP 1.0 has no renewal-detail tool.
+
+The executable `scripts/validate.ts` runs the harness and compares the committed full metadata snapshot to an authenticated local MCP SDK Client `tools/list` response. Live private-app evals remain an operator release step after replacing the `.app.json` registration placeholder and configuring credentials.

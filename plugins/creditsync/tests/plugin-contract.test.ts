@@ -3,6 +3,9 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { MCP_TOOL_NAMES } from "../../../backend/src/mcp/server";
+import type { FrozenMcpContract } from "../../../backend/src/mcp/contract-snapshot";
+import { canonicalContractJson, captureAdvertisedMcpContract } from "../scripts/mcp-contract";
+import { classifyPrivateAppId, PRIVATE_APP_ID_PLACEHOLDER } from "../scripts/validate";
 
 const pluginRoot = resolve(import.meta.dir, "..");
 const repositoryRoot = resolve(pluginRoot, "../..");
@@ -23,15 +26,14 @@ describe("CreditSync plugin 1.0.0 contract", () => {
         expect(manifest).not.toHaveProperty("ui");
     });
 
-    test("private app ID is an explicit registration placeholder without connection secrets", async () => {
-        const app = await json(".app.json");
-        expect(app).toEqual({
-            apps: {
-                creditsync: {
-                    id: "plugin_asdk_app_REPLACE_AFTER_PRIVATE_REGISTRATION",
-                },
-            },
-        });
+    test("private app ID supports the non-live placeholder and registered technical IDs without connection secrets", async () => {
+        const app = await json(".app.json") as { apps?: { creditsync?: { id?: string } } };
+        expect(Object.keys(app.apps ?? {})).toEqual(["creditsync"]);
+        expect(["placeholder", "registered"]).toContain(classifyPrivateAppId(app.apps?.creditsync?.id));
+        expect(classifyPrivateAppId(PRIVATE_APP_ID_PLACEHOLDER)).toBe("placeholder");
+        expect(classifyPrivateAppId("plugin_asdk_app_A1b2C3d4E5f6G7h8")).toBe("registered");
+        expect(classifyPrivateAppId("asdk_app_missing_prefix")).toBe("invalid");
+        expect(classifyPrivateAppId("plugin_asdk_app_REPLACE_WITH_REAL_ID")).toBe("invalid");
         const raw = await readFile(resolve(pluginRoot, ".app.json"), "utf8");
         expect(raw).not.toMatch(/https?:\/\//iu);
         expect(raw).not.toMatch(/bearer|token|secret/iu);
@@ -57,14 +59,14 @@ describe("CreditSync plugin 1.0.0 contract", () => {
         }
     });
 
-    test("frozen plugin tool list matches the backend MCP 1.0 surface", async () => {
-        const contract = await json("references/mcp-tool-contract.json") as {
-            schemaVersion?: string;
-            tools?: string[];
-        };
+    test("frozen full MCP metadata matches an actual authenticated tools/list response", async () => {
+        const contract = await json("references/mcp-tool-contract.json") as unknown as FrozenMcpContract;
         expect(contract.schemaVersion).toBe("1.0");
-        expect(contract.tools).toEqual([...MCP_TOOL_NAMES]);
+        expect(contract.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
         expect(contract.tools).toHaveLength(20);
+        expect(contract.tools.every((tool) => tool.inputSchema && tool.outputSchema && tool.annotations)).toBe(true);
+        const advertised = await captureAdvertisedMcpContract();
+        expect(canonicalContractJson(contract)).toBe(canonicalContractJson(advertised));
     });
 
     test("eval catalog covers every required positive and negative workflow", async () => {
@@ -76,6 +78,7 @@ describe("CreditSync plugin 1.0.0 contract", () => {
             "borrower-create-alias",
             "payment-data-only",
             "payment-slip",
+            "payment-stale-repreview",
             "payment-split-loans",
             "payment-split-borrowers-intermediary",
             "payment-partial",
@@ -84,11 +87,14 @@ describe("CreditSync plugin 1.0.0 contract", () => {
             "ambiguous-nickname",
             "allocation-mismatch",
             "duplicate-reference",
+            "duplicate-evidence-hash",
             "active-loan-edit",
             "renewal-unsettled-charges",
+            "renewal-missing-confirmation",
+            "renewal-reversal-without-result",
             "unauthorized-access",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
-        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(6);
+        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(9);
     });
 
     test("repo marketplace resolves the plugin from its declared local path", async () => {

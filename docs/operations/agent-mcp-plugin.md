@@ -28,10 +28,14 @@ Generate the raw value on the client/operator machine. Store it only in the Code
 
 ```bash
 umask 077
-openssl rand -hex 32 > /secure/operator/location/creditsync-mcp-token
-chmod 600 /secure/operator/location/creditsync-mcp-token
-sha256sum /secure/operator/location/creditsync-mcp-token
+CREDITSYNC_MCP_TOKEN_FILE=/secure/operator/location/creditsync-mcp-token
+openssl rand -hex 32 | tr -d '\n' > "$CREDITSYNC_MCP_TOKEN_FILE"
+chmod 600 "$CREDITSYNC_MCP_TOKEN_FILE"
+test "$(wc -c < "$CREDITSYNC_MCP_TOKEN_FILE")" -eq 64
+sha256sum "$CREDITSYNC_MCP_TOKEN_FILE"
 ```
+
+The `tr` plus 64-byte assertion ensures the server hashes exactly the raw token bytes and not a trailing line feed. Put the displayed digest on the server; load the raw file into the private app secret without adding a newline.
 
 For rotation, configure old and new digests as the two comma-separated `MCP_API_TOKEN_HASHES`, redeploy the backend, update the private app secret, verify the new token, remove the old digest, and redeploy. The server accepts at most two unique hashes. Never print the raw token in CI output or commit a digest/environment file.
 
@@ -48,7 +52,7 @@ Keep `STORAGE_PROVIDER=s3`, `S3_ENDPOINT` reachable by the backend, and `S3_PUBL
 3. Validate:
 
 ```bash
-bun test plugins/creditsync/tests/plugin-contract.test.ts
+bun test plugins/creditsync/tests
 bun run plugins/creditsync/scripts/validate.ts
 python3 /home/flintstone/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py plugins/creditsync
 ```
@@ -68,7 +72,7 @@ The committed placeholder cannot connect and must remain until private registrat
 
 Before rollout, preserve database/object backups and the previously deployed app image/plugin directory. Apply migrations before accepting writes, then run reconciliation totals and the MCP contract suite. If application health or accounting verification fails:
 
-1. Disable Cloudflare `/mcp` ingress or remove both MCP token hashes to stop agent writes.
+1. Disable Cloudflare `/mcp` ingress while leaving web/REST routes available. As a second kill switch, replace `MCP_API_TOKEN_HASHES` with the SHA-256 of one newly generated, valid token whose raw value is not distributed to any client. **Never leave `MCP_API_TOKEN_HASHES` empty**: empty/invalid configuration intentionally prevents the shared backend from starting and would also take REST offline.
 2. Keep the database and object store intact; do not delete or edit posted records.
 3. Roll the application image back only when it remains compatible with applied additive migrations.
 4. If data restoration is required, stop all writers and follow the isolated restore procedure in `backup-recovery.md`.

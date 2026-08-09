@@ -13,6 +13,9 @@
 
 ### Fixed
 - Kept persisted payment-intake review warnings inside the frozen MCP 1.0 output schema so real default-adapter posting, retrieval, and reversal calls remain valid after the web review changes.
+- Hardened Plugin `1.0.0` with a deterministic full `tools/list` metadata snapshot and executable scripted-MCP evals covering exact call order/arguments, repeated alias operations, duplicate/stale/review/unauthorized stops, confirmation, reversal, idempotency, and forbidden upload/write effects.
+- Accepted real registered private-app technical IDs without weakening the documented non-live placeholder state, and corrected duplicate-evidence and renewal-reversal orchestration to match the frozen MCP surface.
+- Corrected operator guidance so bearer hashes exclude trailing newlines, MinIO recovery preserves and verifies evidence metadata/checksums, and disabling MCP does not take the shared REST backend offline.
 
 ## v0.3.3 - 2026-08-10
 

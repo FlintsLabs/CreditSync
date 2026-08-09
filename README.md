@@ -306,11 +306,14 @@ Tool inputs use public UUIDs and two-decimal money strings. Results include conc
 Generate a high-entropy client token and calculate its SHA-256 hash locally. Keep the raw token only in the MCP client secret store; CreditSync receives only its hash:
 
 ```bash
-MCP_RAW_TOKEN="$(openssl rand -hex 32)"
-printf '%s' "$MCP_RAW_TOKEN" | sha256sum
+umask 077
+CREDITSYNC_MCP_TOKEN_FILE=/secure/operator/location/creditsync-mcp-token
+openssl rand -hex 32 | tr -d '\n' > "$CREDITSYNC_MCP_TOKEN_FILE"
+test "$(wc -c < "$CREDITSYNC_MCP_TOKEN_FILE")" -eq 64
+sha256sum "$CREDITSYNC_MCP_TOKEN_FILE"
 ```
 
-Set the resulting 64-character digest in `MCP_API_TOKEN_HASHES`, set `MCP_ALLOWED_HOSTS` to the external request host (comma-separated, without a URL scheme), and configure the fixed tenant/actor. Connect the client to `https://your-credit-sync-host.example/mcp` with `Authorization: Bearer <raw-token>`.
+The no-newline write and 64-byte assertion ensure the digest covers the exact raw bearer bytes. Set the resulting 64-character digest in `MCP_API_TOKEN_HASHES`, set `MCP_ALLOWED_HOSTS` to the external request host (comma-separated, without a URL scheme), and configure the fixed tenant/actor. Load the raw file into the client secret without appending a newline, then connect to `https://your-credit-sync-host.example/mcp`.
 
 For rotation, put the old and new hashes in `MCP_API_TOKEN_HASHES` separated by a comma, restart the backend, move clients to the new raw token, then remove the old hash and restart again. At most two unique hashes are accepted. Never commit the raw token, token hash, `.env`, or `.env.production`.
 

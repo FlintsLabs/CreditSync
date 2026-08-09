@@ -32,9 +32,11 @@ If the backend reports stale, expired, underfunded, or changed charges, return t
 
 ## Reverse
 
-1. Inspect the executed renewal and both loans.
+The frozen MCP 1.0 surface has no renewal-detail/get tool. Reverse only when the exact successful `renewal.execute` result is still available in the current task and supplies the renewal, old-loan, new-loan, and borrower public UUIDs. Use `borrower.portfolio` to inspect the current state of both loans and downstream activity. If that same-task result is unavailable, stop and direct the operator to the Web UI renewal detail; never invent a renewal UUID or claim an unsupported inspection.
+
+1. Verify the same-task execute result and inspect the current borrower portfolio containing both loans.
 2. Explain the compensating effects and obtain a non-blank reversal reason.
-3. Call `renewal.reverse` with the renewal public UUID, that non-blank reason, and a stable reversal idempotency key.
+3. Call `renewal.reverse` with the known renewal public UUID, that non-blank reason, and a stable reversal idempotency key.
 4. If downstream transactions or adjustments block reversal, report them and stop; never delete or bypass them.
 
 A retry of the same intent reuses its idempotency key. A materially changed preview, execution reason, or reversal reason is a new intent and needs a new key.
@@ -48,6 +50,7 @@ A retry of the same intent reuses its idempotency key. A materially changed prev
 | Fresh preview, no confirmation | Explain and stop |
 | Stale/expired preview | Re-preview and reconfirm |
 | Downstream activity exists | Reverse downstream activity first |
+| Execute result unavailable in this task | Stop and use Web UI renewal detail |
 
 ## Common mistakes
 
