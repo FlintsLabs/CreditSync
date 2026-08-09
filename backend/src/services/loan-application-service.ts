@@ -265,7 +265,7 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
             const sourceRemaining = new Decimal(fundingSource.amount).minus(sourceAllocation);
             if (new Decimal(current.principalAmount).gt(sourceRemaining)) {
                 throw new DomainError("ALLOCATION_EXCEEDS_DRAWDOWN", "Allocation exceeds remaining drawdown balance", 400, {
-                    sourceRemaining: serializeMoney(sourceRemaining),
+                    sourceRemaining: serializeMoney(Decimal.max(0, sourceRemaining)),
                 });
             }
         }

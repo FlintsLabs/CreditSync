@@ -12,6 +12,7 @@
 - Documented that the committed private-app technical ID is a non-runnable registration placeholder and that live installation/authentication remains an operator step.
 
 ### Fixed
+- Preserved stable REST and MCP drawdown-capacity errors for already-overallocated legacy states by reporting zero allocatable remaining capacity without weakening atomic rejection or rollback.
 - Serialized draft-loan activation on its tenant funding drawdown and rejected exact Decimal principal allocations beyond the signed net remaining capacity, with atomic rollback for serial and concurrent conflicts.
 - Kept persisted payment-intake review warnings inside the frozen MCP 1.0 output schema so real default-adapter posting, retrieval, and reversal calls remain valid after the web review changes.
 - Hardened Plugin `1.0.0` with a deterministic full `tools/list` metadata snapshot and executable scripted-MCP evals covering exact call order/arguments, repeated alias operations, duplicate/stale/review/unauthorized stops, confirmation, reversal, idempotency, and forbidden upload/write effects.

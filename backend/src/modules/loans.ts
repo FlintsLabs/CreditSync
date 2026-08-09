@@ -633,7 +633,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                 const sourceRemaining = new Decimal(sourceDrawdown.amount).minus(sourceAllocation);
                 if (amount.gt(sourceRemaining)) {
                     throw new DomainError("ALLOCATION_EXCEEDS_DRAWDOWN", "Allocation exceeds remaining drawdown balance", 400, {
-                        sourceRemaining: serializeMoney(sourceRemaining),
+                        sourceRemaining: serializeMoney(Decimal.max(0, sourceRemaining)),
                     });
                 }
 

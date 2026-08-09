@@ -545,6 +545,53 @@ describe("loan application service", () => {
         expect(duplicateClose.body).toMatchObject({ code: "LOAN_ALREADY_CLOSED" });
     });
 
+    // Break caught: the ordinary funding writer serializes a negative remaining capacity and leaks a 500 response.
+    integrationTest("returns stable zero remaining capacity from REST funding allocation on an overallocated drawdown", async () => {
+        const owner = await seedUser("tenant-a", "overallocated-rest@example.test", "owner");
+        const ctx = context("tenant-a", owner.id);
+        const borrower = await createBorrower(ctx, { name: "Overallocated REST Borrower" });
+        const draft = await createLoanDraft(ctx, { borrowerPublicId: borrower.publicId, ...terms });
+        const storedLoan = await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) });
+        const profile = await db.insert(bankProfiles).values({
+            tenantId: "tenant-a", name: "Overallocated REST Source", type: "bank",
+        }).returning().then((rows) => rows[0]!);
+        const drawdown = await db.insert(bankLoans).values({
+            tenantId: "tenant-a", bankProfileId: profile.id, amount: "100.00",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanFundingAllocations).values({
+            tenantId: "tenant-a", bankProfileId: profile.id, bankLoanId: drawdown.id,
+            loanId: storedLoan!.id, allocatedAmount: "120.00", allocationDate: "2026-08-10",
+            allocationType: "initial", createdByUserId: owner.id,
+        });
+        const auditCountBefore = await db.select().from(auditLogs).then((rows) => rows.length);
+        const app = new Elysia().use(loansRoute);
+        const response = await app.handle(new Request(`http://localhost/loans/${draft.publicId}/funding-allocations`, {
+            method: "POST",
+            headers: {
+                authorization: `Bearer ${await authToken(owner)}`,
+                "content-type": "application/json",
+            },
+            body: JSON.stringify({
+                bankLoanPublicId: drawdown.publicId,
+                allocatedAmount: "1.00",
+                allocationDate: "2026-08-10",
+            }),
+        }));
+        const responseText = await response.text();
+
+        expect(response.status, responseText).toBe(400);
+        expect(JSON.parse(responseText)).toEqual({
+            error: "Allocation exceeds remaining drawdown balance",
+            code: "ALLOCATION_EXCEEDS_DRAWDOWN",
+            details: { sourceRemaining: "0.00" },
+        });
+        expect(await db.select().from(loanFundingAllocations).where(and(
+            eq(loanFundingAllocations.tenantId, "tenant-a"),
+            eq(loanFundingAllocations.bankLoanId, drawdown.id),
+        ))).toHaveLength(1);
+        expect(await db.select().from(auditLogs).then((rows) => rows.length)).toBe(auditCountBefore);
+    });
+
     // Break caught: funding allocation/reallocation REST paths accept internal numeric source IDs and return raw rows.
     integrationTest("accepts and returns public funding UUIDs and two-decimal strings", async () => {
         const owner = await seedUser("tenant-a", "reallocation@example.test", "owner");

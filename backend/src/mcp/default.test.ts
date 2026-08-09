@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
 import {
@@ -10,6 +10,7 @@ import {
     bankProfiles,
     auditLogs,
     borrowers,
+    loanFundingAllocations,
     loanSchedules,
     loans,
     paymentIntakes,
@@ -91,6 +92,85 @@ function resultData(result: Awaited<ReturnType<Client["callTool"]>>) {
 }
 
 describe("default MCP adapter integration", () => {
+    // Break caught: an already-overallocated source turns loan activation into INTERNAL_ERROR instead of a stable capacity rejection.
+    integrationTest("returns stable zero remaining capacity and rolls back MCP activation on an overallocated drawdown", async () => {
+        const actor = await db.insert(users).values({
+            tenantId: TENANT_ID,
+            email: ACTOR_EMAIL,
+            role: "owner",
+        }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({
+            tenantId: TENANT_ID,
+            ownerUserId: actor.id,
+            name: "MCP overallocated borrower",
+        }).returning().then((rows) => rows[0]!);
+        const profile = await db.insert(bankProfiles).values({
+            tenantId: TENANT_ID,
+            name: "MCP overallocated source",
+            type: "bank",
+        }).returning().then((rows) => rows[0]!);
+        const drawdown = await db.insert(bankLoans).values({
+            tenantId: TENANT_ID,
+            bankProfileId: profile.id,
+            amount: "100.00",
+        }).returning().then((rows) => rows[0]!);
+        const [existingLoan, draft] = await db.insert(loans).values([
+            {
+                tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id,
+                principalAmount: "120.00", interestRate: "0.00", repaymentType: "floating",
+                outstandingPrincipal: "120.00", status: "active",
+            },
+            {
+                tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id, bankLoanId: drawdown.id,
+                principalAmount: "10.00", interestRate: "0.00", repaymentType: "daily", termMonths: 1,
+                totalInstallments: 1, installmentAmount: "10.00", startDate: "2026-08-10",
+                outstandingPrincipal: "0.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "draft",
+            },
+        ]).returning();
+        await db.insert(loanFundingAllocations).values({
+            tenantId: TENANT_ID,
+            bankProfileId: profile.id,
+            bankLoanId: drawdown.id,
+            loanId: existingLoan!.id,
+            allocatedAmount: "120.00",
+            allocationDate: "2026-08-10",
+            allocationType: "initial",
+            createdByUserId: actor.id,
+        });
+        const { client } = await startDefaultServer();
+
+        const result = await client.callTool({
+            name: "loan.activate",
+            arguments: { loanPublicId: draft!.publicId },
+        });
+
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toEqual({
+            schemaVersion: "1.0",
+            error: {
+                code: "ALLOCATION_EXCEEDS_DRAWDOWN",
+                message: "Allocation exceeds remaining drawdown balance",
+                retryable: false,
+                reviewRequired: false,
+                details: { sourceRemaining: "0.00" },
+            },
+        });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, draft!.id) })).toMatchObject({
+            status: "draft",
+            outstandingPrincipal: "0.00",
+            outstandingInterest: "0.00",
+            nextDueDate: null,
+        });
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, draft!.id))).toHaveLength(0);
+        expect(await db.select().from(loanFundingAllocations).where(eq(loanFundingAllocations.loanId, draft!.id))).toHaveLength(0);
+        expect(await db.select().from(auditLogs).where(and(
+            eq(auditLogs.entityId, draft!.publicId),
+            eq(auditLogs.action, "activated"),
+        ))).toHaveLength(0);
+
+        await client.close();
+    });
+
     // Break caught: signed compensating ledger values are rejected after the reversal has already committed.
     integrationTest("returns a successful audited payment reversal and the same public result on retry", async () => {
         const actor = await db.insert(users).values({
