@@ -14,7 +14,7 @@ import {
 import { authPlugin } from "../middleware/auth";
 import { isTenantAdminUser } from "../lib/access";
 import { generateBankLoanSchedule, type RepaymentCycle } from "../lib/bank-loan-schedule";
-import { computeBankLoanRollup } from "../lib/bank-loan-rollup";
+import { buildBankLoanRepaymentRollupUpdate, computeBankLoanRollup } from "../lib/bank-loan-rollup";
 import { createAuditLog } from "../lib/audit-log";
 import { deriveProfitabilityMetrics, getBankLoanSettlementSummary } from "../lib/fund-settlement";
 import { computeOverdueSnapshot } from "../lib/overdue";
@@ -830,14 +830,7 @@ export const bankLoansRoute = new Elysia({ prefix: "/bank-loans" })
             }, 0);
 
             await tx.update(bankLoans)
-                .set({
-                    outstandingPrincipal: rollup.outstandingPrincipal.toFixed(2),
-                    outstandingInterest: rollup.outstandingInterest.toFixed(2),
-                    outstandingFees: rollup.outstandingFees.toFixed(2),
-                    outstandingPenalties: outstandingPenalties.toFixed(2),
-                    nextDueDate: rollup.nextDueDate ?? undefined,
-                    status: rollup.status,
-                })
+                .set(buildBankLoanRepaymentRollupUpdate(rollup, outstandingPenalties))
                 .where(eq(bankLoans.id, bankLoanId));
 
             if (currentBankLoan.bankProfileId) {

@@ -1,13 +1,14 @@
+import Decimal from "decimal.js";
 import { calculateLoanSchedule, type RepaymentType } from "./calculator";
 
 interface GenerateLoanScheduleInput {
-    principal: number | string;
-    interestRate: number | string;
+    principal: Decimal.Value;
+    interestRate: Decimal.Value;
     termMonths: number;
     repaymentType: RepaymentType;
     startDate?: string;
     totalInstallments?: number;
-    installmentAmount?: number | string;
+    installmentAmount?: Decimal.Value;
 }
 
 export interface GeneratedLoanScheduleRow {

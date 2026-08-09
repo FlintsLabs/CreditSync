@@ -1,16 +1,17 @@
 import dayjs from "dayjs";
 import Decimal from "decimal.js";
+import { parseMoney, serializeMoney } from "./money";
 
 export type RepaymentType = "daily" | "weekly" | "monthly" | "floating";
 
 export interface LoanCalculationParams {
-    principal: number | string;
-    interestRate: number | string; // Percent per year
+    principal: Decimal.Value;
+    interestRate: Decimal.Value; // Percent per year
     termMonths: number;
     repaymentType: RepaymentType;
     startDate: Date;
     totalInstallments?: number;
-    installmentAmount?: number | string;
+    installmentAmount?: Decimal.Value;
 }
 
 export interface InstallmentSchedule {
@@ -20,6 +21,25 @@ export interface InstallmentSchedule {
     principalComponent: number;
     interestComponent: number;
     remainingPrincipal: number;
+}
+
+export interface PublicLoanCalculationParams {
+    principal: string;
+    interestRate: string;
+    termMonths: number;
+    repaymentType: RepaymentType;
+    startDate: string;
+    totalInstallments?: number;
+    installmentAmount?: string;
+}
+
+export interface PublicInstallmentSchedule {
+    installmentNo: number;
+    dueDate: string;
+    amount: string;
+    principalComponent: string;
+    interestComponent: string;
+    remainingPrincipal: string;
 }
 
 export function calculateLoanSchedule(params: LoanCalculationParams): InstallmentSchedule[] {
@@ -40,13 +60,23 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
 
     let installments = 0;
     let installmentAmount = 0;
+    let dailyInstallmentMoney: Decimal | undefined;
 
     // Determine number of installments based on type
     if (repaymentType === "daily") {
-        installments = params.totalInstallments && params.totalInstallments > 0 ? params.totalInstallments : termMonths * 30; // Approx
+        if (params.totalInstallments !== undefined
+            && (!Number.isFinite(params.totalInstallments)
+                || !Number.isInteger(params.totalInstallments)
+                || params.totalInstallments <= 0)) {
+            throw new Error("Daily total installments must be a positive integer");
+        }
+        installments = params.totalInstallments ?? termMonths * 30; // Approx
+        dailyInstallmentMoney = params.installmentAmount === undefined
+            ? undefined
+            : new Decimal(params.installmentAmount).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
         installmentAmount = params.installmentAmount === undefined
             ? totalAmount.div(installments).ceil().toNumber()
-            : new Decimal(params.installmentAmount).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
+            : dailyInstallmentMoney!.toNumber();
     } else if (repaymentType === "weekly") {
         installments = termMonths * 4;
         installmentAmount = totalAmount.div(installments).ceil().toNumber();
@@ -62,7 +92,7 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
         && params.totalInstallments !== undefined
         && params.installmentAmount !== undefined;
     const fixedTotal = fixedDailyInstallment
-        ? new Decimal(params.installmentAmount!).times(installments)
+        ? dailyInstallmentMoney!.times(installments)
         : totalAmount;
     if (fixedTotal.lessThan(principalMoney)) {
         throw new Error("Installment total cannot be less than principal");
@@ -103,6 +133,27 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
     }
 
     return schedule;
+}
+
+export function calculatePublicLoanSchedule(params: PublicLoanCalculationParams): PublicInstallmentSchedule[] {
+    const schedule = calculateLoanSchedule({
+        principal: parseMoney(params.principal),
+        interestRate: parseMoney(params.interestRate),
+        termMonths: params.termMonths,
+        repaymentType: params.repaymentType,
+        startDate: new Date(params.startDate),
+        totalInstallments: params.totalInstallments,
+        installmentAmount: params.installmentAmount === undefined ? undefined : parseMoney(params.installmentAmount),
+    });
+
+    return schedule.map((row) => ({
+        installmentNo: row.installmentNo,
+        dueDate: row.dueDate,
+        amount: serializeMoney(row.amount),
+        principalComponent: serializeMoney(row.principalComponent),
+        interestComponent: serializeMoney(row.interestComponent),
+        remainingPrincipal: serializeMoney(row.remainingPrincipal),
+    }));
 }
 
 export function calculateProRatedClosing(principal: number, interestRate: number, startDate: Date, closingDate: Date): number {

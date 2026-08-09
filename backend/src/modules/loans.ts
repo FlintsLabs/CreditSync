@@ -11,7 +11,7 @@ import {
     transactions,
 } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
-import { calculateLoanClosingSummary, calculateLoanSchedule, type RepaymentType } from "../lib/calculator";
+import { calculateLoanClosingSummary, calculatePublicLoanSchedule, type RepaymentType } from "../lib/calculator";
 import { generateLoanSchedule } from "../lib/loan-schedule";
 import { computeLoanRollup } from "../lib/loan-rollup";
 import { createAuditLog } from "../lib/audit-log";
@@ -364,25 +364,30 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             note: t.Optional(t.String()),
         })
     })
-    .post("/calculate", ({ body }) => {
-        return calculateLoanSchedule({
-            principal: body.principal,
-            interestRate: body.interestRate,
-            termMonths: body.termMonths,
-            repaymentType: body.repaymentType as RepaymentType,
-            startDate: new Date(body.startDate),
-            totalInstallments: body.totalInstallments,
-            installmentAmount: body.installmentAmount,
-        });
+    .post("/calculate", ({ body, set }) => {
+        try {
+            return calculatePublicLoanSchedule({
+                principal: body.principal,
+                interestRate: body.interestRate,
+                termMonths: body.termMonths,
+                repaymentType: body.repaymentType as RepaymentType,
+                startDate: body.startDate,
+                totalInstallments: body.totalInstallments,
+                installmentAmount: body.installmentAmount,
+            });
+        } catch (error) {
+            set.status = 400;
+            return { error: error instanceof Error ? error.message : "Invalid loan calculation input" };
+        }
     }, {
         body: t.Object({
-            principal: t.Number(),
-            interestRate: t.Number(),
+            principal: t.String(),
+            interestRate: t.String(),
             termMonths: t.Number(),
             repaymentType: t.String(),
             startDate: t.String(),
             totalInstallments: t.Optional(t.Number()),
-            installmentAmount: t.Optional(t.Number())
+            installmentAmount: t.Optional(t.String())
         })
     })
     .post("/", async ({ body, user, set }) => {

@@ -38,3 +38,19 @@ export function computeBankLoanRollup(schedules: ScheduleLike[]) {
         status: schedules.every((item) => item.status === "paid") ? "closed" : "active",
     };
 }
+
+export function buildBankLoanRepaymentRollupUpdate(
+    rollup: ReturnType<typeof computeBankLoanRollup>,
+    outstandingPenalties: number,
+    closedAt: Date = new Date(),
+) {
+    return {
+        outstandingPrincipal: rollup.outstandingPrincipal.toFixed(2),
+        outstandingInterest: rollup.outstandingInterest.toFixed(2),
+        outstandingFees: rollup.outstandingFees.toFixed(2),
+        outstandingPenalties: outstandingPenalties.toFixed(2),
+        nextDueDate: rollup.nextDueDate ?? undefined,
+        status: rollup.status,
+        closedAt: rollup.status === "closed" ? closedAt : null,
+    };
+}

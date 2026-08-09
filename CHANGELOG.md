@@ -8,6 +8,7 @@
 
 ### Fixed
 - Corrected backend source typing issues surfaced by the new typecheck gate without changing existing workflow behavior.
+- Restored bank-loan close timestamp persistence after repayment and hardened daily installment, public schedule-money, and allocation due-date validation.
 
 ## v0.2.4 - 2026-08-09
 

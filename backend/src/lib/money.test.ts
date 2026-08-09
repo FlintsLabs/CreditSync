@@ -52,6 +52,19 @@ describe("daily fixed-installment schedule", () => {
         expect(sumMoney(schedule.map((row) => row.scheduledInterest))).toEqual(parseMoney("350.00"));
         expect(sumMoney(schedule.map((row) => row.scheduledTotal))).toEqual(parseMoney("2850.00"));
     });
+
+    // Break caught: a zero, negative, or fractional installment count silently changes the loan terms.
+    it.each([0, -1, 15.5])("rejects invalid supplied installment count %p", (totalInstallments) => {
+        expect(() => generateLoanSchedule({
+            principal: "2500.00",
+            interestRate: "0.00",
+            installmentAmount: "190.00",
+            totalInstallments,
+            termMonths: 1,
+            repaymentType: "daily",
+            startDate: "2026-01-01",
+        })).toThrow("Daily total installments must be a positive integer");
+    });
 });
 
 describe("oldest-first payment allocation", () => {
@@ -125,5 +138,31 @@ describe("oldest-first payment allocation", () => {
             result.unallocatedAmount,
         ]))).toBe("300.00");
         expect(result.unallocatedAmount).toBe("55.00");
+    });
+
+    // Break caught: an undated schedule receives payment before an explicitly dated older obligation.
+    it("places schedules without a due date after dated schedules", () => {
+        const result = allocatePaymentOldestFirst("10.00", [
+            {
+                scheduleId: "undated",
+                installmentNo: 1,
+                penaltyDue: "0.00",
+                feeDue: "0.00",
+                interestDue: "0.00",
+                principalDue: "10.00",
+            },
+            {
+                scheduleId: "dated",
+                installmentNo: 2,
+                dueDate: "2026-01-01",
+                penaltyDue: "0.00",
+                feeDue: "0.00",
+                interestDue: "0.00",
+                principalDue: "10.00",
+            },
+        ]);
+
+        expect(result.allocations).toHaveLength(1);
+        expect(result.allocations[0]?.scheduleId).toBe("dated");
     });
 });

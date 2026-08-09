@@ -68,6 +68,8 @@ export function allocatePaymentOldestFirst(
     }
 
     const orderedSchedules = [...schedules].sort((left, right) => {
+        if (left.dueDate && !right.dueDate) return -1;
+        if (!left.dueDate && right.dueDate) return 1;
         const dueDateComparison = (left.dueDate ?? "").localeCompare(right.dueDate ?? "");
         return dueDateComparison || left.installmentNo - right.installmentNo;
     });
