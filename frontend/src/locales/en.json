@@ -44,6 +44,7 @@
         "history": "History",
         "openMenu": "Open menu",
         "refresh": "Refresh",
+        "add": "Add",
         "close": "Close"
     },
     "appbar": {
@@ -55,6 +56,7 @@
         "dashboard": "Dashboard",
         "matching": "Matching",
         "transactions": "Transactions",
+        "payments": "Payment Inbox",
         "reconciliation": "Reconciliation",
         "settings": "Settings",
         "language": "Language"
@@ -102,7 +104,8 @@
         "steps": {
             "select": "Step 1: Select Borrower & Drawdown",
             "terms": "Step 2: Loan Terms",
-            "review": "Step 3: Review & Confirm"
+            "review": "Step 3: Preview & Save Draft",
+            "activate": "Step 4: Activate Draft"
         },
         "repaymentOptions": {
             "monthly": "Monthly Installment",
@@ -124,7 +127,17 @@
         "errors": {
             "loadDependencies": "Unable to load borrowers and funds right now.",
             "calculate": "Unable to calculate the borrower schedule.",
-            "create": "Failed to create the loan agreement."
+            "create": "Failed to create the loan agreement.",
+            "activate": "Failed to activate the loan agreement."
+        },
+        "draft": {
+            "save": "Save draft",
+            "saved": "Loan draft saved",
+            "description": "Review the persisted draft identifier before activating the agreement.",
+            "id": "Draft ID",
+            "activationNotice": "Activation locks these terms and creates the repayment schedule. This action is explicit and idempotent.",
+            "activate": "Activate loan",
+            "activating": "Activating..."
         }
     },
     "transactions": {
@@ -162,10 +175,14 @@
         "slip": "Slip Image (Optional)",
         "notes": "Notes",
         "submit": "Confirm Repayment",
+        "intakeNotice": "This repayment is recorded through payment intake, explicit allocation preview, and posting. Evidence can be added from Payment Inbox before posting a reviewed intake.",
         "errors": {
             "loadLoans": "Unable to load loans.",
             "loadSchedule": "Unable to load borrower schedule.",
-            "recordFailed": "Record failed"
+            "recordFailed": "Record failed",
+            "selectLoan": "Select a valid loan before recording the payment.",
+            "duplicate": "This payment matches an existing intake and was not posted again.",
+            "needsReview": "The allocation needs review before it can be posted."
         }
     },
     "borrowers": {
@@ -196,7 +213,27 @@
         "loanSummary": "Principal: ฿{{principal}} • {{repaymentType}}",
         "startDate": "Start Date",
         "loanId": "Loan ID",
-        "noTransactions": "No transactions found."
+        "noTransactions": "No transactions found.",
+        "aliases": {
+            "title": "Aliases",
+            "placeholder": "Add an account name or nickname",
+            "confirm": "Confirm",
+            "deactivate": "Deactivate",
+            "empty": "No aliases have been recorded.",
+            "status": { "pending": "Pending", "confirmed": "Confirmed", "inactive": "Inactive" },
+            "source": { "manual": "Manual", "payment": "Payment", "import": "Import" }
+        },
+        "history": {
+            "title": "Revision History",
+            "auditId": "Audit ID",
+            "correlationId": "Correlation ID",
+            "requestId": "Request ID",
+            "unavailable": "Revision history is unavailable for this role."
+        },
+        "errors": {
+            "load": "Unable to load the borrower portfolio.",
+            "alias": "Unable to update the borrower alias."
+        }
     },
     "funds": {
         "title": "Sources of Funds",
@@ -507,6 +544,80 @@
         "optional": "Optional",
         "saveChanges": "Save Changes",
         "createProfile": "Create Borrower Profile"
+    },
+    "payments": {
+        "title": "Payment Inbox",
+        "description": "Review incoming payments, evidence, allocation previews, posting, and corrections.",
+        "new": "Record payment",
+        "inbox": "Inbox",
+        "empty": "No payment intakes yet.",
+        "select": "Select an intake to review.",
+        "review": "Payment review",
+        "unknownPayer": "Unknown payer",
+        "duplicateWarning": "This intake is marked as a duplicate. Do not post it again.",
+        "amount": "Received amount",
+        "reference": "Bank reference",
+        "intakeId": "Payment intake ID",
+        "markReview": "Mark for review",
+        "addEvidence": "Add evidence",
+        "allocation": "Allocation preview",
+        "loan": "Borrower loan",
+        "selectLoan": "Select an active loan",
+        "allocationAmount": "Allocation amount",
+        "scheduleId": "Starting schedule UUID",
+        "optionalUuid": "Optional UUID; allocation continues oldest-first",
+        "previewVersion": "Preview version {{version}}",
+        "previous": "Previous allocation",
+        "previewTotal": "Preview total",
+        "difference": "Difference",
+        "preview": "Preview allocation",
+        "post": "Confirm and post",
+        "reverse": "Reverse posted payment",
+        "audit": "Audit trail",
+        "auditId": "Audit ID",
+        "correlationId": "Correlation ID",
+        "requestId": "Request ID",
+        "auditUnavailable": "Audit metadata is unavailable for this role.",
+        "status": {
+            "draft": "Draft", "needs_review": "Needs review", "ready": "Ready", "posted": "Posted",
+            "reversed": "Reversed", "duplicate": "Duplicate", "pending": "Pending", "rejected": "Rejected", "stale": "Stale"
+        },
+        "warnings": {
+            "ALLOCATION_SUM_MISMATCH": "Allocation total does not match the intake amount.",
+            "ALLOCATION_EXCEEDS_OBLIGATION": "Allocation exceeds the selected loan obligation.",
+            "BORROWER_NOT_CONFIRMED": "Payer could not be resolved to a confirmed borrower."
+        },
+        "errors": { "load": "Unable to load payment inbox.", "loadDetail": "Unable to load payment detail.", "action": "Payment action failed." }
+    },
+    "renewal": {
+        "title": "Daily Loan Renewal",
+        "description": "Preview settlement, cash movement, and the replacement schedule before explicit confirmation.",
+        "requestedPrincipal": "New requested principal",
+        "waivedCharges": "Charges to waive",
+        "waiverReason": "Waiver reason",
+        "preview": "Preview renewal",
+        "previewTitle": "Renewal preview",
+        "recoveredPrincipal": "Recovered principal",
+        "oldOutstanding": "Old outstanding principal",
+        "dueCharges": "Charges due",
+        "waiver": "Waiver",
+        "settlement": "Charge settlement",
+        "cashPayout": "Net cash",
+        "renewalId": "Renewal ID",
+        "expires": "Preview expires",
+        "newSchedule": "New repayment schedule",
+        "dueDate": "Due date", "principal": "Principal", "interest": "Interest", "total": "Total",
+        "executionReason": "Execution reason",
+        "confirmation": "I reviewed recovered principal, old outstanding, charges, waivers, cash movement, and the complete new schedule.",
+        "confirm": "Confirm renewal",
+        "executed": "Renewal executed. New loan: {{id}}",
+        "reverseReason": "Reversal reason",
+        "reverse": "Reverse renewal",
+        "audit": "Audit trail",
+        "auditId": "Audit ID", "correlationId": "Correlation ID", "requestId": "Request ID",
+        "cashDirection": { "payout": "Payout", "collection": "Collection", "none": "No cash movement" },
+        "status": { "preview": "Preview", "executed": "Executed", "reversed": "Reversed", "expired": "Expired" },
+        "errors": { "preview": "Unable to preview renewal.", "execute": "Unable to execute renewal.", "reverse": "Unable to reverse renewal." }
     },
     "loanDetail": {
         "description": "Profitability, funding composition, and installment status in one view.",

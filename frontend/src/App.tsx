@@ -16,6 +16,7 @@ import MatchingWorkspace from "./pages/dashboard/loans/MatchingWorkspace";
 import TransactionList from "./pages/dashboard/transactions/TransactionList";
 import TransactionForm from "./pages/dashboard/transactions/TransactionForm";
 import ReconciliationPage from "./pages/dashboard/reconciliation/ReconciliationPage";
+import PaymentInbox from "./pages/dashboard/payments/PaymentInbox";
 import LandingPage from "./pages/LandingPage";
 import ProtectedRoute from "./components/ProtectedRoute";
 import './index.css'
@@ -56,6 +57,7 @@ function App() {
               <Route path="matching" element={<MatchingWorkspace />} />
               <Route path="transactions" element={<TransactionList />} />
               <Route path="transactions/new" element={<TransactionForm />} />
+              <Route path="payments" element={<PaymentInbox />} />
               <Route path="reconciliation" element={<ReconciliationPage />} />
             </Route>
           </Route>

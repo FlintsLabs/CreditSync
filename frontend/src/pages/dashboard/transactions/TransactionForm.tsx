@@ -6,10 +6,12 @@ import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui
 import { Loader2 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import { createPaymentWorkflow, type HttpClient } from "../../../lib/workflow-api";
 
 interface LoanOption {
-    id: number;
-    publicId?: string;
+    id: string;
+    publicId: string;
+    borrowerPublicId: string;
     borrowerName: string;
     principal: string | number;
     nextDueDate?: string | null;
@@ -18,8 +20,8 @@ interface LoanOption {
 }
 
 interface LoanScheduleItem {
-    id: number;
-    publicId?: string;
+    id: string;
+    publicId: string;
     installmentNo: number;
     dueDate: string;
     remainingDue: string;
@@ -44,15 +46,14 @@ export default function TransactionForm() {
         scheduleId: searchParams.get("scheduleId") ?? "",
         amount: "",
         date: new Date().toISOString().split("T")[0],
-        notes: "",
-        slip: null as File | null
+        notes: ""
     });
 
     useEffect(() => {
         api.get("/loans")
             .then((res) => setLoans(res.data ?? []))
             .catch(() => setErrorMessage(t("transactionsForm.errors.loadLoans", "Unable to load loans.")));
-    }, []);
+    }, [t]);
 
     useEffect(() => {
         const loadSchedule = async () => {
@@ -95,43 +96,46 @@ export default function TransactionForm() {
         };
 
         loadSchedule();
-    }, [formData.loanId, searchParams]);
+    }, [formData.loanId, searchParams, t]);
 
     const selectedSchedule = useMemo(
         () => scheduleItems.find((item) => String(item.publicId ?? item.id) === formData.scheduleId),
         [scheduleItems, formData.scheduleId]
     );
 
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files?.[0]) {
-            setFormData((prev) => ({ ...prev, slip: e.target.files![0] }));
-        }
-    };
-
     const handleSubmit = async () => {
         setUploading(true);
         setErrorMessage("");
 
-        const data = new FormData();
-        data.append("loanId", formData.loanId);
-        data.append("amount", formData.amount);
-        data.append("date", formData.date);
-        data.append("notes", formData.notes);
-        if (formData.scheduleId) {
-            data.append("scheduleId", formData.scheduleId);
-        }
-        if (formData.slip) {
-            data.append("slip", formData.slip);
-        }
-
         try {
-            await api.post("/transactions", data, {
-                headers: { "Content-Type": "multipart/form-data" }
+            const selectedLoan = loans.find((loan) => loan.publicId === formData.loanId);
+            if (!selectedLoan) throw new Error(t("transactionsForm.errors.selectLoan"));
+            const result = await createPaymentWorkflow(api as unknown as HttpClient, {
+                amount: formData.amount,
+                receivedAt: new Date(`${formData.date}T12:00:00`).toISOString(),
+                payerName: selectedLoan.borrowerName,
+                notes: formData.notes,
+                allocation: {
+                    borrowerPublicId: selectedLoan.borrowerPublicId,
+                    loanPublicId: selectedLoan.publicId,
+                    ...(formData.scheduleId ? { schedulePublicId: formData.scheduleId } : {}),
+                    amount: formData.amount,
+                },
             });
-            navigate("/transactions");
-        } catch (error: any) {
+            if (result.duplicate) {
+                setErrorMessage(t("transactionsForm.errors.duplicate"));
+                return;
+            }
+            if (result.status !== "posted") {
+                setErrorMessage(t("transactionsForm.errors.needsReview"));
+                navigate("/payments");
+                return;
+            }
+            navigate("/payments");
+        } catch (error: unknown) {
             console.error("Record failed", error);
-            setErrorMessage(error?.response?.data?.error || t("transactionsForm.errors.recordFailed", "Record failed"));
+            const apiError = error as { response?: { data?: { error?: string } } };
+            setErrorMessage(apiError.response?.data?.error || (error instanceof Error ? error.message : t("transactionsForm.errors.recordFailed", "Record failed")));
         } finally {
             setUploading(false);
         }
@@ -214,14 +218,11 @@ export default function TransactionForm() {
                     </div>
 
                     <div className="grid gap-2">
-                        <label>{t("transactionsForm.slip", "Slip Image (Optional)")}</label>
-                        <Input type="file" onChange={handleFileChange} />
-                    </div>
-
-                    <div className="grid gap-2">
                         <label>{t("transactionsForm.notes", "Notes")}</label>
                         <Input value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} />
                     </div>
+
+                    <p className="text-xs text-muted-foreground">{t("transactionsForm.intakeNotice")}</p>
 
                     <Button className="w-full" onClick={handleSubmit} disabled={!formData.loanId || !formData.amount || uploading}>
                         {uploading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

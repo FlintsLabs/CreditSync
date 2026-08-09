@@ -56,6 +56,7 @@ Some screens are still mock/demo oriented and not fully wired to live backend da
 - create and edit borrower profiles
 - search canonical names and confirmed aliases without auto-selecting ambiguous matches
 - manage borrower aliases and view borrower portfolio summaries
+- confirm or deactivate aliases and review borrower/alias audit revisions with request and correlation identifiers
 - store phone, address, tags, notes, and map links
 - attach ID card image
 - OCR text extraction to help fill borrower data
@@ -65,6 +66,7 @@ Some screens are still mock/demo oriented and not fully wired to live backend da
 - calculate repayment schedules before saving
 - support `daily`, `weekly`, `monthly`, and `floating` repayment types
 - create editable loan drafts, then activate them to lock terms and generate schedules exactly once
+- use separate preview, draft-save, and activation confirmations in the web wizard
 - preview installment breakdown
 - calculate closing balance based on elapsed time and payments already received
 
@@ -88,6 +90,8 @@ Renewal previews derive principal from posted, non-reversed transaction componen
 - post schedule, loan, and fund effects atomically, then correct posted payments with append-only compensating reversals
 
 The authenticated payment API is rooted at `/payment-intakes`. It exposes create/list/get and review-queue operations, `/:id/evidence/upload-intents`, `/:id/evidence/:evidenceId/finalize`, `/:id/match-preview`, `/:id/post`, `/:id/review`, and `/:id/reverse`. All command IDs are UUIDs and all public money values are two-decimal strings. `GET /transactions` remains available for legacy repayment history, but `POST /transactions` returns `405 LEGACY_REPAYMENT_WRITE_DISABLED`; all repayment writes must use `/payment-intakes` so one Decimal allocator and one PostgreSQL lock order govern balances.
+
+The web app exposes `/payments` as the human review inbox. It shows intake status and duplicate warnings, accepts optional signed evidence, previews explicit allocations and differences, requires a ready preview before posting, supports compensating reversal, and displays available audit/request/correlation identifiers. The manual repayment shortcut also uses this intake workflow and never calls the disabled legacy write endpoint.
 
 ### 5. Funding and Traceability
 
@@ -270,7 +274,9 @@ The frontend uses `/api` as the API base path and expects Vite proxy configurati
 
 Protected app navigation now keeps the dashboard overview at `/dashboard`, while resource sections live at first-level routes such as `/funds/:id`, `/borrowers/:id`, and `/loans/:id`. URL-facing resource identifiers are moving to `uuidv7`-style public IDs, while internal numeric IDs remain in the database for joins and accounting logic.
 
-Loan agreement creation is draft-first. `POST /api/loans` accepts borrower and optional funding-source public IDs and returns a draft without schedules. Draft terms can be changed with `PUT /api/loans/:id`; `POST /api/loans/:id/activate` locks the terms and creates schedules and the initial funding allocation once. Repeating activation is safe and returns the already-active agreement. The current loan wizard immediately activates after creating the draft so the existing user flow remains coherent until the dedicated draft UI is introduced.
+Loan agreement creation is draft-first. `POST /api/loans` accepts borrower and optional funding-source public IDs and returns a draft without schedules. Draft terms can be changed with `PUT /api/loans/:id`; `POST /api/loans/:id/activate` locks the terms and creates schedules and the initial funding allocation once. Repeating activation is safe and returns the already-active agreement. The web wizard now previews terms, saves and exposes the draft UUID, then requires a separate activation action.
+
+Active or paid daily-loan detail pages include the renewal control. The operator sees recovered principal, old outstanding principal, due charges, waivers, settlement, net payout or collection, and the full replacement schedule before checking an explicit confirmation. Execution and reversal use separate idempotency keys and show available audit/request/correlation identifiers.
 
 Loan-facing REST payloads use public UUIDs for loans, schedules, funding profiles, drawdowns, and allocations. Public money inputs and outputs use two-decimal strings (for example, `"500.00"`). This includes schedule and closing reads, allocation/profitability summaries, and funding allocation/reallocation mutations. Generated schedules conserve the exact principal-plus-interest obligation: each row's principal, interest, and fee components equal its scheduled total and remaining due, with any cent residual carried by the final installment. Schedule money remains Decimal-safe internally and does not pass through JavaScript `number`, including for values above the safe-integer range.
 

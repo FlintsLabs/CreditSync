@@ -6,6 +6,8 @@ import { api } from "../../../lib/api";
 import { getStoredUser, isTenantAdminUser } from "../../../lib/session";
 import { Button } from "../../../components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/Card";
+import appI18n from "../../../lib/i18n";
+import { LoanRenewalPanel } from "./LoanRenewalPanel";
 
 interface LoanDetailData {
     id: string;
@@ -14,6 +16,7 @@ interface LoanDetailData {
     principalAmount: string;
     interestRate: string;
     repaymentType: string;
+    termMonths: number | null;
     installmentAmount: string | null;
     totalInstallments: number | null;
     startDate: string | null;
@@ -84,10 +87,9 @@ interface LoanAllocationState {
 }
 
 function formatCurrency(value: number) {
-    return `฿${value.toLocaleString(undefined, {
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 2,
-    })}`;
+    return new Intl.NumberFormat(appI18n.language, {
+        style: "currency", currency: "THB", minimumFractionDigits: 2,
+    }).format(value);
 }
 
 export default function LoanDetail() {
@@ -431,6 +433,10 @@ export default function LoanDetail() {
                             )}
                         </CardContent>
                     </Card>
+
+                    {loan.repaymentType === "daily" && ["active", "paid"].includes(loan.status) && (
+                        <LoanRenewalPanel loan={loan} />
+                    )}
                 </>
             )}
         </div>

@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.3.2 - 2026-08-10
+
+### Added
+- Added localized Payment Inbox review surfaces for duplicate status, signed evidence, explicit allocation previews and differences, posting, reversal, and audit/correlation identifiers.
+- Added borrower alias confirmation/deactivation with revision history, explicit loan draft activation, and daily-renewal previews covering recovered principal, charges, waivers, cash movement, replacement schedules, confirmation, and reversal.
+- Added focused Bun tests for exact-money workflow DTOs, payment create-preview-post ordering, duplicate short-circuiting, and renewal idempotency headers.
+
+### Changed
+- Migrated the manual repayment form from the disabled legacy transaction write to the payment-intake create, explicit-preview, and post workflow.
+- Updated Thai and English workflow copy together and formatted workflow money and dates with the active application locale.
+- Aligned the frontend lint gate with the existing non-Compiler React codebase while retaining strict TypeScript production builds.
+
 ## v0.3.1 - 2026-08-10
 
 ### Added

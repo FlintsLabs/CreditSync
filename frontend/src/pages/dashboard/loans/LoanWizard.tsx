@@ -67,6 +67,7 @@ export default function LoanWizard() {
     const [loadingDependencies, setLoadingDependencies] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [errorMessage, setErrorMessage] = useState("");
+    const [draftId, setDraftId] = useState("");
 
     const [formData, setFormData] = useState({
         borrowerId: "",
@@ -108,14 +109,14 @@ export default function LoanWizard() {
 
     const calculateSchedule = async () => {
         try {
-            const res = await api.post("/loans/calculate", {
+            const res = await api.post("/loans/preview", {
                 principal: toPublicMoney(formData.principal),
                 interestRate: toPublicMoney(formData.interestRate),
                 termMonths: toPositiveInteger(formData.termMonths, "Term months"),
                 repaymentType: formData.repaymentType,
                 startDate: formData.startDate
             });
-            setSchedule(res.data ?? []);
+            setSchedule(res.data?.schedule ?? []);
             return true;
         } catch (error) {
             console.error("Calculation failed", error);
@@ -153,13 +154,26 @@ export default function LoanWizard() {
                 installmentAmount: amount,
                 startDate: formData.startDate
             });
-            await api.post(`/loans/${draft.data.publicId}/activate`);
-
-            window.location.href = "/loans";
+            setDraftId(draft.data.publicId);
+            setStep(4);
         } catch (error: unknown) {
             console.error("Failed to create loan", error);
             const apiError = error as { response?: { data?: { error?: string } } };
             setErrorMessage(apiError.response?.data?.error || t("loanWizard.errors.create", "Failed to create the loan agreement."));
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handleActivate = async () => {
+        try {
+            setSubmitting(true);
+            setErrorMessage("");
+            await api.post(`/loans/${draftId}/activate`);
+            window.location.href = `/loans/${draftId}`;
+        } catch (error: unknown) {
+            const apiError = error as { response?: { data?: { error?: string } } };
+            setErrorMessage(apiError.response?.data?.error || t("loanWizard.errors.activate"));
         } finally {
             setSubmitting(false);
         }
@@ -170,7 +184,7 @@ export default function LoanWizard() {
             <h2 className="text-3xl font-bold">{t("loanWizard.title", "New Loan Agreement")}</h2>
 
             <div className="flex gap-2">
-                {[1, 2, 3].map((i) => (
+                {[1, 2, 3, 4].map((i) => (
                     <div key={i} className={`h-2 flex-1 rounded-full ${step >= i ? "bg-primary" : "bg-muted"}`} />
                 ))}
             </div>
@@ -188,6 +202,7 @@ export default function LoanWizard() {
                         {step === 1 && t("loanWizard.steps.select", "Step 1: Select Borrower & Drawdown")}
                         {step === 2 && t("loanWizard.steps.terms", "Step 2: Loan Terms")}
                         {step === 3 && t("loanWizard.steps.review", "Step 3: Review & Confirm")}
+                        {step === 4 && t("loanWizard.steps.activate")}
                     </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -325,8 +340,19 @@ export default function LoanWizard() {
                         </div>
                     )}
 
+                    {step === 4 && (
+                        <div className="space-y-4">
+                            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-5">
+                                <div className="flex items-center gap-2 font-semibold text-emerald-700"><CheckCircle className="h-5 w-5" />{t("loanWizard.draft.saved")}</div>
+                                <p className="mt-2 text-sm text-muted-foreground">{t("loanWizard.draft.description")}</p>
+                                <div className="mt-3 break-all font-mono text-xs">{t("loanWizard.draft.id")}: {draftId}</div>
+                            </div>
+                            <div className="rounded border p-4 text-sm text-muted-foreground">{t("loanWizard.draft.activationNotice")}</div>
+                        </div>
+                    )}
+
                     <div className="flex justify-between pt-4">
-                        <Button variant="outline" onClick={() => setStep(step - 1)} disabled={step === 1 || submitting}>
+                        <Button variant="outline" onClick={() => setStep(step - 1)} disabled={step === 1 || step === 4 || submitting}>
                             <ChevronLeft className="mr-2 h-4 w-4" /> {t("common.back", "Back")}
                         </Button>
 
@@ -337,9 +363,13 @@ export default function LoanWizard() {
                             >
                                 {t("common.next", "Next")} <ChevronRight className="ml-2 h-4 w-4" />
                             </Button>
-                        ) : (
+                        ) : step === 3 ? (
                             <Button onClick={handleSubmit} className="bg-green-600 hover:bg-green-700" disabled={submitting}>
-                                <CheckCircle className="mr-2 h-4 w-4" /> {submitting ? t("loanWizard.creating", "Creating...") : t("loanWizard.submit", "Create Loan Agreement")}
+                                <CheckCircle className="mr-2 h-4 w-4" /> {submitting ? t("loanWizard.creating", "Creating...") : t("loanWizard.draft.save")}
+                            </Button>
+                        ) : (
+                            <Button onClick={handleActivate} className="bg-green-600 hover:bg-green-700" disabled={submitting || !draftId}>
+                                <CheckCircle className="mr-2 h-4 w-4" /> {submitting ? t("loanWizard.draft.activating") : t("loanWizard.draft.activate")}
                             </Button>
                         )}
                     </div>
