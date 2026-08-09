@@ -31,10 +31,27 @@ interface BankProfile {
 interface LoanSchedulePreview {
     installmentNo: number;
     dueDate: string;
-    amount: number;
-    principalComponent: number;
-    interestComponent: number;
-    remainingPrincipal: number;
+    amount: string;
+    principalComponent: string;
+    interestComponent: string;
+    remainingPrincipal: string;
+}
+
+function toPublicMoney(value: string) {
+    const normalized = value.trim();
+    if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) {
+        throw new Error("Money must be a non-negative amount with at most two decimal places");
+    }
+    const [whole, fractional = ""] = normalized.split(".");
+    return `${whole}.${fractional.padEnd(2, "0")}`;
+}
+
+function toPositiveInteger(value: string, label: string) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
+        throw new Error(`${label} must be a positive whole number`);
+    }
+    return parsed;
 }
 
 export default function LoanWizard() {
@@ -90,9 +107,9 @@ export default function LoanWizard() {
     const calculateSchedule = async () => {
         try {
             const res = await api.post("/loans/calculate", {
-                principal: Number(formData.principal),
-                interestRate: Number(formData.interestRate),
-                termMonths: Number(formData.termMonths),
+                principal: toPublicMoney(formData.principal),
+                interestRate: toPublicMoney(formData.interestRate),
+                termMonths: toPositiveInteger(formData.termMonths, "Term months"),
                 repaymentType: formData.repaymentType,
                 startDate: formData.startDate
             });
@@ -120,25 +137,26 @@ export default function LoanWizard() {
             setSubmitting(true);
             setErrorMessage("");
 
-            const total = schedule.length || Number(formData.termMonths);
-            const amount = schedule.length > 0 ? schedule[0].amount : 0;
+            const total = schedule.length || toPositiveInteger(formData.termMonths, "Term months");
+            const amount = schedule.length > 0 ? schedule[0].amount : undefined;
 
             await api.post("/loans", {
                 borrowerId: Number(formData.borrowerId),
                 bankLoanId: isTenantAdmin && formData.bankLoanId ? Number(formData.bankLoanId) : undefined,
-                principal: Number(formData.principal),
-                interestRate: Number(formData.interestRate),
+                principal: toPublicMoney(formData.principal),
+                interestRate: toPublicMoney(formData.interestRate),
                 repaymentType: formData.repaymentType,
-                termMonths: Number(formData.termMonths),
+                termMonths: toPositiveInteger(formData.termMonths, "Term months"),
                 totalInstallments: total,
                 installmentAmount: amount,
                 startDate: formData.startDate
             });
 
             window.location.href = "/loans";
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error("Failed to create loan", error);
-            setErrorMessage(error?.response?.data?.error || t("loanWizard.errors.create", "Failed to create the loan agreement."));
+            const apiError = error as { response?: { data?: { error?: string } } };
+            setErrorMessage(apiError.response?.data?.error || t("loanWizard.errors.create", "Failed to create the loan agreement."));
         } finally {
             setSubmitting(false);
         }

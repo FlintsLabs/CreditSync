@@ -11,7 +11,7 @@ import {
     transactions,
 } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
-import { calculateLoanClosingSummary, calculatePublicLoanSchedule, type RepaymentType } from "../lib/calculator";
+import { calculateLoanClosingSummary, calculatePublicLoanSchedule, normalizePublicLoanTerms, type RepaymentType } from "../lib/calculator";
 import { generateLoanSchedule } from "../lib/loan-schedule";
 import { computeLoanRollup } from "../lib/loan-rollup";
 import { createAuditLog } from "../lib/audit-log";
@@ -393,16 +393,31 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
     .post("/", async ({ body, user, set }) => {
         if (!user) throw new Error("Unauthorized");
 
-        const generatedSchedule = body.repaymentType === "floating"
-            ? []
-            : generateLoanSchedule({
+        let terms;
+        try {
+            terms = normalizePublicLoanTerms({
                 principal: body.principal,
                 interestRate: body.interestRate,
                 termMonths: body.termMonths,
                 repaymentType: body.repaymentType as RepaymentType,
-                startDate: body.startDate,
                 totalInstallments: body.totalInstallments,
                 installmentAmount: body.installmentAmount,
+            });
+        } catch (error) {
+            set.status = 400;
+            return { error: error instanceof Error ? error.message : "Invalid loan terms" };
+        }
+
+        const generatedSchedule = body.repaymentType === "floating"
+            ? []
+            : generateLoanSchedule({
+                principal: terms.principal,
+                interestRate: terms.interestRate,
+                termMonths: terms.termMonths,
+                repaymentType: terms.repaymentType,
+                startDate: body.startDate,
+                totalInstallments: terms.totalInstallments,
+                installmentAmount: terms.installmentAmount,
             });
 
         const created = await db.transaction(async (tx) => {
@@ -444,7 +459,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                     status: "pending",
                 })))
                 : {
-                    outstandingPrincipal: body.principal,
+                    outstandingPrincipal: Number(terms.principal),
                     outstandingInterest: 0,
                     outstandingFees: 0,
                     nextDueDate: null,
@@ -456,11 +471,11 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                 ownerUserId: user.id,
                 borrowerId,
                 bankLoanId,
-                principalAmount: body.principal.toFixed(2),
-                interestRate: body.interestRate.toFixed(2),
-                repaymentType: body.repaymentType,
-                totalInstallments: body.totalInstallments,
-                installmentAmount: body.installmentAmount?.toFixed(2),
+                principalAmount: terms.principal,
+                interestRate: terms.interestRate,
+                repaymentType: terms.repaymentType,
+                totalInstallments: terms.totalInstallments,
+                installmentAmount: terms.installmentAmount,
                 startDate: body.startDate,
                 nextDueDate: initialRollup.nextDueDate ?? undefined,
                 outstandingPrincipal: initialRollup.outstandingPrincipal.toFixed(2),
@@ -507,7 +522,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                     bankProfileId: sourceDrawdown.bankProfileId,
                     bankLoanId: sourceDrawdown.id,
                     loanId: created.id,
-                    allocatedAmount: body.principal.toFixed(2),
+                    allocatedAmount: terms.principal,
                     allocationDate: body.startDate,
                     allocationType: "initial",
                     note: "Auto-created from legacy bankLoanId field",
@@ -537,12 +552,12 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             borrowerPublicId: t.Optional(t.String()),
             bankLoanId: t.Optional(t.Number()),
             bankLoanPublicId: t.Optional(t.String()),
-            principal: t.Number(),
-            interestRate: t.Number(),
+            principal: t.String(),
+            interestRate: t.String(),
             repaymentType: t.String(),
             termMonths: t.Number(),
             totalInstallments: t.Number(),
-            installmentAmount: t.Optional(t.Number()),
+            installmentAmount: t.Optional(t.String()),
             startDate: t.String()
         })
     })

@@ -42,6 +42,41 @@ export interface PublicInstallmentSchedule {
     remainingPrincipal: string;
 }
 
+export interface PublicLoanTerms {
+    principal: string;
+    interestRate: string;
+    termMonths: number;
+    repaymentType: RepaymentType;
+    totalInstallments?: number;
+    installmentAmount?: string;
+}
+
+export function normalizePublicLoanTerms(input: PublicLoanTerms): PublicLoanTerms {
+    if (!Number.isFinite(input.termMonths) || !Number.isInteger(input.termMonths) || input.termMonths <= 0) {
+        throw new Error("Term months must be a positive whole number");
+    }
+    if (!(["daily", "weekly", "monthly", "floating"] as const).includes(input.repaymentType)) {
+        throw new Error("Repayment type is not supported");
+    }
+    if (input.totalInstallments !== undefined
+        && (!Number.isFinite(input.totalInstallments)
+            || !Number.isInteger(input.totalInstallments)
+            || input.totalInstallments <= 0)) {
+        throw new Error(input.repaymentType === "daily"
+            ? "Daily total installments must be a positive integer"
+            : "Total installments must be a positive integer");
+    }
+
+    return {
+        ...input,
+        principal: serializeMoney(parseMoney(input.principal)),
+        interestRate: serializeMoney(parseMoney(input.interestRate)),
+        installmentAmount: input.installmentAmount === undefined
+            ? undefined
+            : serializeMoney(parseMoney(input.installmentAmount)),
+    };
+}
+
 export function calculateLoanSchedule(params: LoanCalculationParams): InstallmentSchedule[] {
     const { principal, interestRate, termMonths, repaymentType, startDate } = params;
     const schedule: InstallmentSchedule[] = [];
@@ -136,14 +171,15 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
 }
 
 export function calculatePublicLoanSchedule(params: PublicLoanCalculationParams): PublicInstallmentSchedule[] {
+    const terms = normalizePublicLoanTerms(params);
     const schedule = calculateLoanSchedule({
-        principal: parseMoney(params.principal),
-        interestRate: parseMoney(params.interestRate),
-        termMonths: params.termMonths,
-        repaymentType: params.repaymentType,
+        principal: parseMoney(terms.principal),
+        interestRate: parseMoney(terms.interestRate),
+        termMonths: terms.termMonths,
+        repaymentType: terms.repaymentType,
         startDate: new Date(params.startDate),
-        totalInstallments: params.totalInstallments,
-        installmentAmount: params.installmentAmount === undefined ? undefined : parseMoney(params.installmentAmount),
+        totalInstallments: terms.totalInstallments,
+        installmentAmount: terms.installmentAmount === undefined ? undefined : parseMoney(terms.installmentAmount),
     });
 
     return schedule.map((row) => ({
