@@ -1,11 +1,12 @@
 import { Elysia, t } from "elysia";
-import { uploadFile, downloadFile } from "../lib/storage";
+import { BUCKET_NAME, downloadFile, resolveStoredFileUrl, toStorageReference, uploadFile } from "../lib/storage";
 import { db } from "../db";
 import { files } from "../db/schema";
 import { eq, and } from "drizzle-orm";
 import { extractTextFromImage } from "../lib/ocr";
 
 import { authPlugin } from "../middleware/auth";
+import { fileAccessFilters } from "../lib/access";
 
 export const filesRoute = new Elysia({ prefix: "/files" })
     .use(authPlugin)
@@ -30,20 +31,26 @@ export const filesRoute = new Elysia({ prefix: "/files" })
         const key = `uploads/${Date.now()}_${file.name}`;
 
         try {
-            const url = await uploadFile(key, Buffer.from(buffer), file.type);
+            const uploaded = await uploadFile(key, Buffer.from(buffer), file.type);
+            const fileRef = toStorageReference(uploaded);
 
             // Record in DB
             const result = await db.insert(files).values({
                 tenantId: user.tenantId,
-                url: url,
-                key: key,
+                ownerUserId: user.id,
+                url: fileRef,
+                key: uploaded.key,
                 originalName: file.name,
                 mimeType: file.type,
                 size: file.size,
-                bucket: "creditsync-files"
+                bucket: uploaded.bucket
             }).returning();
 
-            return result[0];
+            return {
+                ...result[0],
+                fileRef,
+                url: await resolveStoredFileUrl(fileRef),
+            };
         } catch (error) {
             console.error(error);
             set.status = 500;
@@ -66,10 +73,7 @@ export const filesRoute = new Elysia({ prefix: "/files" })
             // Find file in DB
             const fileRecord = await db.select()
                 .from(files)
-                .where(and(
-                    eq(files.id, fileId),
-                    eq(files.tenantId, user.tenantId)
-                ))
+                .where(and(eq(files.id, fileId), ...fileAccessFilters(user)))
                 .then(res => res[0]);
 
             if (!fileRecord) {
@@ -78,7 +82,7 @@ export const filesRoute = new Elysia({ prefix: "/files" })
             }
 
             // Download file
-            const buffer = await downloadFile(fileRecord.key);
+            const buffer = await downloadFile(fileRecord.key, fileRecord.bucket);
 
             // Convert PDF to image if needed? core OCR handles images.
             // For now assume image.
@@ -97,4 +101,32 @@ export const filesRoute = new Elysia({ prefix: "/files" })
         body: t.Object({
             fileId: t.Numeric()
         })
+    })
+    .get("/:id/access-url", async ({ params: { id }, set, user }) => {
+        if (!user) {
+            set.status = 401;
+            return { error: "Unauthorized" };
+        }
+
+        const fileRecord = await db.select()
+            .from(files)
+            .where(and(eq(files.id, Number(id)), ...fileAccessFilters(user)))
+            .then((rows) => rows[0]);
+
+        if (!fileRecord) {
+            set.status = 404;
+            return { error: "File not found" };
+        }
+
+        const fileRef = fileRecord.url || toStorageReference({
+            provider: process.env.STORAGE_PROVIDER === "azure-blob" ? "azure-blob" : "s3",
+            bucket: fileRecord.bucket || BUCKET_NAME,
+            key: fileRecord.key,
+        });
+
+        return {
+            id: fileRecord.id,
+            fileRef,
+            url: await resolveStoredFileUrl(fileRef),
+        };
     });

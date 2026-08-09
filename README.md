@@ -46,6 +46,8 @@ Some screens are still mock/demo oriented and not fully wired to live backend da
 - JWT auth between frontend and backend
 - role model prepared for `owner`, `manager`, `collector`, and `viewer`
 - multi-tenant data separation
+- tenant admins (`owner`, `manager`) can see all tenant data, while `collector` and `viewer` accounts are scoped to records they own
+- first Google login in a tenant becomes `owner`; later auto-created users default to `viewer`
 
 ### 2. Borrower Management
 
@@ -182,12 +184,16 @@ Important variables include:
 - `S3_ENDPOINT`
 - `S3_PUBLIC_URL`
 - `S3_BUCKET`
+- `FILE_URL_TTL_SECONDS`
+- `STORAGE_PROVIDER`
 - `CACHE_URL`
 - `CACHE_TTL_SECONDS`
 - `LINE_CHANNEL_SECRET`
 - `LINE_CHANNEL_ACCESS_TOKEN`
 - `LINE_TENANT_ID`
 - `VITE_GOOGLE_CLIENT_ID`
+
+For file access, CreditSync stores an internal file reference and resolves it to a time-limited signed URL when the API returns borrower images, uploaded files, and repayment slips. With the default S3-compatible setup, keep `S3_ENDPOINT` for server-side uploads and `S3_PUBLIC_URL` for the browser-reachable hostname used in presigned download links. In the bundled production setup, `S3_PUBLIC_URL` should point to the frontend domain with a `/files` prefix because Nginx proxies `/files/*` to MinIO. If you switch to Azure Blob Storage, set `STORAGE_PROVIDER=azure-blob` and provide `AZURE_STORAGE_ACCOUNT_NAME`, `AZURE_STORAGE_ACCOUNT_KEY`, `AZURE_STORAGE_ENDPOINT`, and `AZURE_STORAGE_CONTAINER`.
 
 ### 3. Install dependencies
 
@@ -233,6 +239,8 @@ http://localhost:5173
 
 The frontend uses `/api` as the API base path and expects Vite proxy configuration during development.
 
+Protected app navigation now keeps the dashboard overview at `/dashboard`, while resource sections live at first-level routes such as `/funds/:id`, `/borrowers/:id`, and `/loans/:id`. URL-facing resource identifiers are moving to `uuidv7`-style public IDs, while internal numeric IDs remain in the database for joins and accounting logic.
+
 ### Dev vs Docker Quick Reference
 
 | Scenario | Infra | Backend | Frontend |
@@ -271,6 +279,7 @@ At minimum, update:
 - `JWT_SECRET`
 - `CORS_ORIGINS`
 - `S3_PUBLIC_URL`
+- `FILE_URL_TTL_SECONDS`
 - `CACHE_URL`
 - `CACHE_TTL_SECONDS`
 
@@ -295,6 +304,7 @@ This exposes:
 - Dragonfly on `localhost:6381`
 
 The frontend container serves the React app through Nginx and proxies `/api` to the backend container.
+When Cloudflare Tunnel is enabled in Docker, it should run on the shared `creditsync_runtime` network so hostnames like `frontend`, `backend`, and `minio` resolve directly inside the tunnel container.
 
 ### 4. Rebuild only what changed
 

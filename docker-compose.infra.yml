@@ -50,6 +50,20 @@ services:
           - cache
           - dragonfly
 
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: creditsync-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+    depends_on:
+      - postgres
+      - minio
+      - dragonfly
+    networks:
+      - creditsync_runtime
+
 volumes:
   postgres_prod_data:
   minio_prod_data:

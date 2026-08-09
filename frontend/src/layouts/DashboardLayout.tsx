@@ -6,21 +6,26 @@ import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import AppBar from "../components/AppBar";
 import { useTranslation } from "react-i18next";
 import { Button } from "../components/ui/Button";
+import { getStoredUser, isTenantAdminUser } from "../lib/session";
 
 export default function DashboardLayout() {
     const location = useLocation();
     const { t } = useTranslation();
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+    const currentUser = getStoredUser();
+    const isTenantAdmin = isTenantAdminUser(currentUser);
 
     const navigation = [
-        { name: t("dashboard.title", "Dashboard"), href: "/dashboard", icon: LayoutDashboard },
-        { name: t("dashboard.borrowers", "Borrowers"), href: "/dashboard/borrowers", icon: Users },
-        { name: t("dashboard.loans", "Loans"), href: "/dashboard/loans", icon: FileText },
-        { name: "Matching", href: "/dashboard/matching", icon: ArrowRightLeft },
-        { name: t("dashboard.transactions", "Transactions"), href: "/dashboard/transactions", icon: Activity },
-        { name: "Reconciliation", href: "/dashboard/reconciliation", icon: ScanSearch },
-        { name: t("dashboard.funds", "Funds"), href: "/dashboard/funds", icon: Wallet },
-        { name: t("dashboard.settings", "Settings"), href: "/dashboard/settings", icon: Settings },
+        ...(isTenantAdmin ? [{ name: t("nav.dashboard", "Dashboard"), href: "/dashboard", icon: LayoutDashboard }] : []),
+        { name: t("dashboard.borrowers", "Borrowers"), href: "/borrowers", icon: Users },
+        { name: t("dashboard.loans", "Loans"), href: "/loans", icon: FileText },
+        { name: t("nav.transactions", "Transactions"), href: "/transactions", icon: Activity },
+        ...(isTenantAdmin ? [
+            { name: t("nav.matching", "Matching"), href: "/matching", icon: ArrowRightLeft },
+            { name: t("nav.reconciliation", "Reconciliation"), href: "/reconciliation", icon: ScanSearch },
+            { name: t("dashboard.funds", "Funds"), href: "/funds", icon: Wallet },
+        ] : []),
+        { name: t("nav.settings", "Settings"), href: "/dashboard/settings", icon: Settings },
     ];
 
     return (
@@ -49,7 +54,7 @@ export default function DashboardLayout() {
                 </div>
                 <div className="p-4 mt-auto border-t">
                     <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-muted-foreground">Language</span>
+                        <span className="text-xs font-medium text-muted-foreground">{t("nav.language", "Language")}</span>
                         <LanguageSwitcher />
                     </div>
                 </div>
@@ -110,7 +115,7 @@ export default function DashboardLayout() {
 
                             <div className="border-t p-4">
                                 <div className="flex items-center justify-between">
-                                    <span className="text-sm font-medium text-muted-foreground">Language</span>
+                                    <span className="text-sm font-medium text-muted-foreground">{t("nav.language", "Language")}</span>
                                     <LanguageSwitcher />
                                 </div>
                             </div>

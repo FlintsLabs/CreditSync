@@ -2,12 +2,14 @@ import { Elysia, t } from "elysia";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db";
 import { borrowers, fundLedgerEntries, loanFundingAllocations, loanSchedules, loans, transactions } from "../db/schema";
-import { uploadFile } from "../lib/storage";
+import { resolveStoredFileUrl, toStorageReference, uploadFile } from "../lib/storage";
 import { authPlugin } from "../middleware/auth";
+import { getAccessScopeCacheKey, loanAccessFilters, transactionAccessFilters } from "../lib/access";
 import { computeLoanRollup } from "../lib/loan-rollup";
 import { createAuditLog } from "../lib/audit-log";
 import { computeOverdueSnapshot } from "../lib/overdue";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
+import { findAccessibleLoanByPublicId } from "../lib/public-id";
 
 export const transactionsRoute = new Elysia({ prefix: "/transactions" })
     .use(authPlugin)
@@ -16,30 +18,41 @@ export const transactionsRoute = new Elysia({ prefix: "/transactions" })
             set.status = 401;
             return { error: "Unauthorized" };
         }
+        const scopeKey = getAccessScopeCacheKey(user);
         return await withTenantCache({
             tenantId: user.tenantId,
             namespace: "transactions",
-            key: "list",
+            key: `list:${scopeKey}`,
             ttlSeconds: 20,
-            loader: async () => await db.select({
-                id: transactions.id,
-                loanId: transactions.loanId,
-                scheduleId: transactions.scheduleId,
-                borrowerName: borrowers.name,
-                amount: transactions.amount,
-                principalComponent: transactions.principalComponent,
-                interestComponent: transactions.interestComponent,
-                feeComponent: transactions.feeComponent,
-                penaltyComponent: transactions.penaltyComponent,
-                type: transactions.type,
-                date: transactions.transactionDate,
-                slipUrl: transactions.slipUrl
-            })
-                .from(transactions)
-                .leftJoin(loans, eq(transactions.loanId, loans.id))
-                .leftJoin(borrowers, eq(loans.borrowerId, borrowers.id))
-                .where(eq(transactions.tenantId, user.tenantId))
-                .orderBy(desc(transactions.transactionDate)),
+            loader: async () => {
+                const rows = await db.select({
+                    id: transactions.id,
+                    publicId: transactions.publicId,
+                    loanId: transactions.loanId,
+                    loanPublicId: loans.publicId,
+                    scheduleId: transactions.scheduleId,
+                    borrowerName: borrowers.name,
+                    amount: transactions.amount,
+                    principalComponent: transactions.principalComponent,
+                    interestComponent: transactions.interestComponent,
+                    feeComponent: transactions.feeComponent,
+                    penaltyComponent: transactions.penaltyComponent,
+                    type: transactions.type,
+                    date: transactions.transactionDate,
+                    slipUrl: transactions.slipUrl
+                })
+                    .from(transactions)
+                    .leftJoin(loans, eq(transactions.loanId, loans.id))
+                    .leftJoin(borrowers, eq(loans.borrowerId, borrowers.id))
+                    .where(and(...transactionAccessFilters(user)))
+                    .orderBy(desc(transactions.transactionDate));
+
+                return await Promise.all(rows.map(async (row) => ({
+                    ...row,
+                    slipRef: row.slipUrl,
+                    slipUrl: await resolveStoredFileUrl(row.slipUrl),
+                })));
+            },
         });
     })
     .post("/", async ({ body, user, set }) => {
@@ -54,17 +67,19 @@ export const transactionsRoute = new Elysia({ prefix: "/transactions" })
             const key = `slips/${Date.now()}_${file.name}`;
             try {
                 const buffer = await file.arrayBuffer();
-                slipUrl = await uploadFile(key, Buffer.from(buffer), file.type);
+                const uploaded = await uploadFile(key, Buffer.from(buffer), file.type);
+                slipUrl = toStorageReference(uploaded);
             } catch (error) {
                 console.error("Slip upload failed", error);
             }
         }
 
-        const loanId = Number(body.loanId);
+        const resolvedLoan = await findAccessibleLoanByPublicId(user, body.loanId);
+        const loanId = resolvedLoan?.id ?? Number(body.loanId);
 
         const created = await db.transaction(async (tx) => {
             const loan = await tx.query.loans.findFirst({
-                where: and(eq(loans.id, loanId), eq(loans.tenantId, user.tenantId)),
+                where: and(eq(loans.id, loanId), ...loanAccessFilters(user)),
             });
 
             if (!loan) {
@@ -73,13 +88,26 @@ export const transactionsRoute = new Elysia({ prefix: "/transactions" })
             }
 
             const targetSchedule = body.scheduleId
-                ? await tx.query.loanSchedules.findFirst({
-                    where: and(
-                        eq(loanSchedules.id, Number(body.scheduleId)),
-                        eq(loanSchedules.loanId, loanId),
-                        eq(loanSchedules.tenantId, user.tenantId)
-                    ),
-                })
+                ? await (() => {
+                    const numericScheduleId = Number(body.scheduleId);
+                    if (!Number.isNaN(numericScheduleId)) {
+                        return tx.query.loanSchedules.findFirst({
+                            where: and(
+                                eq(loanSchedules.id, numericScheduleId),
+                                eq(loanSchedules.loanId, loanId),
+                                eq(loanSchedules.tenantId, user.tenantId)
+                            ),
+                        });
+                    }
+
+                    return tx.query.loanSchedules.findFirst({
+                        where: and(
+                            eq(loanSchedules.publicId, body.scheduleId),
+                            eq(loanSchedules.loanId, loanId),
+                            eq(loanSchedules.tenantId, user.tenantId)
+                        ),
+                    });
+                })()
                 : await tx.select().from(loanSchedules).where(
                     and(
                         eq(loanSchedules.loanId, loanId),
@@ -124,6 +152,7 @@ export const transactionsRoute = new Elysia({ prefix: "/transactions" })
 
             const result = await tx.insert(transactions).values({
                 tenantId: user.tenantId,
+                ownerUserId: loan.ownerUserId ?? user.id,
                 loanId,
                 scheduleId: targetSchedule?.id ?? null,
                 amount: paymentAmount.toFixed(2),
@@ -309,7 +338,14 @@ export const transactionsRoute = new Elysia({ prefix: "/transactions" })
         });
 
         await invalidateTenantCache(user.tenantId);
-        return created;
+        if ("error" in created) {
+            return created;
+        }
+        return {
+            ...created,
+            slipRef: created.slipUrl,
+            slipUrl: await resolveStoredFileUrl(created.slipUrl),
+        };
     }, {
         body: t.Object({
             loanId: t.String(),

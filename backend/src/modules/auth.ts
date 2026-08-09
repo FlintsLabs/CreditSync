@@ -46,12 +46,16 @@ export const authRoute = new Elysia({ prefix: "/auth" })
                 if (!defaultTenantId) {
                     throw new Error("DEFAULT_TENANT_ID is not configured");
                 }
+                const existingTenantUsers = await db.select({ id: users.id })
+                    .from(users)
+                    .where(eq(users.tenantId, defaultTenantId))
+                    .limit(1);
                 const result = await db.insert(users).values({
                     tenantId: defaultTenantId,
                     email: payload.email,
                     name: payload.name,
                     picture: payload.picture,
-                    role: "owner" // First user or specific logic
+                    role: existingTenantUsers.length === 0 ? "owner" : "viewer"
                 }).returning();
                 user = result[0];
             } else {
@@ -81,6 +85,7 @@ export const authRoute = new Elysia({ prefix: "/auth" })
                     id: user.id,
                     name: user.name,
                     email: user.email,
+                    tenantId: user.tenantId,
                     role: user.role,
                     picture: user.picture
                 }

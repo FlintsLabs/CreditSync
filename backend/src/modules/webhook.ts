@@ -2,7 +2,7 @@ import { Elysia } from "elysia";
 import { messagingApi, validateSignature, WebhookEvent } from "@line/bot-sdk";
 import { db } from "../db";
 import { files, botUploads } from "../db/schema";
-import { uploadFile, BUCKET_NAME } from "../lib/storage";
+import { toStorageReference, uploadFile } from "../lib/storage";
 
 const { MessagingApiBlobClient } = messagingApi;
 
@@ -54,7 +54,8 @@ export const webhookRoute = new Elysia({ prefix: "/webhook" })
                     const key = `uploads/bot/${fileName}`;
                     const mimeType = "image/jpeg";
 
-                    const url = await uploadFile(key, buffer, mimeType);
+                    const uploaded = await uploadFile(key, buffer, mimeType);
+                    const fileRef = toStorageReference(uploaded);
 
                     // 3. Save to DB
                     // Create File Record
@@ -63,12 +64,12 @@ export const webhookRoute = new Elysia({ prefix: "/webhook" })
                     }
                     const fileRecord = await db.insert(files).values({
                         tenantId: lineTenantId,
-                        bucket: BUCKET_NAME,
-                        key: key,
+                        bucket: uploaded.bucket,
+                        key: uploaded.key,
                         originalName: fileName,
                         mimeType: mimeType,
                         size: buffer.length,
-                        url: url
+                        url: fileRef
                     }).returning();
 
                     // Create Bot Upload Record

@@ -6,6 +6,7 @@ import { Button } from "../../../components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/Card";
 import { Input } from "../../../components/ui/Input";
 import { Badge } from "../../../components/ui/badge";
+import { useTranslation } from "react-i18next";
 
 interface LoanRow {
     id: number;
@@ -76,11 +77,12 @@ interface BankProfile {
     name: string;
 }
 
-function formatCurrency(value: number) {
-    return `฿${value.toLocaleString()}`;
+function formatCurrency(value: number, locale?: string) {
+    return `฿${value.toLocaleString(locale)}`;
 }
 
 export default function MatchingWorkspace() {
+    const { t, i18n } = useTranslation();
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [errorMessage, setErrorMessage] = useState("");
@@ -158,7 +160,7 @@ export default function MatchingWorkspace() {
             }
         } catch (error) {
             console.error("Failed to load matching workspace", error);
-            setErrorMessage("Unable to load matching workspace right now.");
+            setErrorMessage(t("matching.errors.loadWorkspace", "Unable to load matching workspace right now."));
         } finally {
             setLoading(false);
         }
@@ -217,7 +219,7 @@ export default function MatchingWorkspace() {
                 setSelectedLoanProfitability(profitabilityRes.data ?? null);
             } catch (error) {
                 console.error("Failed to load allocation history", error);
-                setErrorMessage("Unable to load allocation history right now.");
+                setErrorMessage(t("matching.errors.loadHistory", "Unable to load allocation history right now."));
             }
         };
 
@@ -226,7 +228,7 @@ export default function MatchingWorkspace() {
 
     const handleSaveAllocations = async () => {
         if (!selectedLoan) {
-            setErrorMessage("Please select a borrower loan first.");
+            setErrorMessage(t("matching.errors.selectLoanFirst", "Please select a borrower loan first."));
             return;
         }
 
@@ -235,7 +237,7 @@ export default function MatchingWorkspace() {
             .filter((item) => item.amount > 0);
 
         if (entries.length === 0) {
-            setErrorMessage("Enter at least one allocation amount.");
+            setErrorMessage(t("matching.errors.enterAllocation", "Enter at least one allocation amount."));
             return;
         }
 
@@ -256,7 +258,7 @@ export default function MatchingWorkspace() {
             await loadWorkspace();
         } catch (error: any) {
             console.error("Failed to save allocations", error);
-            setErrorMessage(error?.response?.data?.error || "Unable to save allocations right now.");
+            setErrorMessage(error?.response?.data?.error || t("matching.errors.saveAllocations", "Unable to save allocations right now."));
         } finally {
             setSaving(false);
         }
@@ -268,7 +270,7 @@ export default function MatchingWorkspace() {
             if (!row.bankLoanId) continue;
             const current = grouped.get(row.bankLoanId) ?? {
                 bankLoanId: row.bankLoanId,
-                bankProfileName: row.bankProfileName ?? (row.bankProfileId ? bankProfileNameById.get(row.bankProfileId) ?? "Unknown source" : "Unknown source"),
+                bankProfileName: row.bankProfileName ?? (row.bankProfileId ? bankProfileNameById.get(row.bankProfileId) ?? t("matching.unknownSource", "Unknown source") : t("matching.unknownSource", "Unknown source")),
                 amount: 0,
             };
             current.amount += Number(row.allocatedAmount ?? 0);
@@ -279,12 +281,12 @@ export default function MatchingWorkspace() {
 
     const handleReallocate = async () => {
         if (!selectedLoanId) {
-            setErrorMessage("Please select a borrower loan first.");
+            setErrorMessage(t("matching.errors.selectLoanFirst", "Please select a borrower loan first."));
             return;
         }
 
         if (!reallocationForm.fromBankLoanId || !reallocationForm.toBankLoanId || !reallocationForm.amount) {
-            setErrorMessage("Please complete source, target, and amount for reallocation.");
+            setErrorMessage(t("matching.errors.completeReallocation", "Please complete source, target, and amount for reallocation."));
             return;
         }
 
@@ -311,7 +313,7 @@ export default function MatchingWorkspace() {
             setAllocationHistory(historyRes.data ?? []);
         } catch (error: any) {
             console.error("Failed to reallocate", error);
-            setErrorMessage(error?.response?.data?.error || "Unable to reallocate funding right now.");
+            setErrorMessage(error?.response?.data?.error || t("matching.errors.reallocate", "Unable to reallocate funding right now."));
         } finally {
             setSaving(false);
         }
@@ -322,16 +324,16 @@ export default function MatchingWorkspace() {
             <div className="flex items-center justify-between gap-4">
                 <div>
                     <div className="flex items-center gap-3">
-                        <Link to="/dashboard/loans" className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-input bg-background hover:bg-accent">
+                        <Link to="/loans" className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-input bg-background hover:bg-accent">
                             <ChevronLeft className="h-4 w-4" />
                         </Link>
                         <div>
-                            <h2 className="text-3xl font-bold tracking-tight">Matching Workspace</h2>
-                            <p className="text-muted-foreground">Match borrower loans to one or more funding drawdowns with live funding gap checks.</p>
+                            <h2 className="text-3xl font-bold tracking-tight">{t("matching.title", "Matching Workspace")}</h2>
+                            <p className="text-muted-foreground">{t("matching.description", "Match borrower loans to one or more funding drawdowns with live funding gap checks.")}</p>
                         </div>
                     </div>
                 </div>
-                <Button onClick={() => loadWorkspace()} variant="outline" disabled={loading || saving}>Refresh</Button>
+                <Button onClick={() => loadWorkspace()} variant="outline" disabled={loading || saving}>{t("common.refresh", "Refresh")}</Button>
             </div>
 
             {errorMessage && (
@@ -343,14 +345,14 @@ export default function MatchingWorkspace() {
             <div className="grid gap-4 xl:grid-cols-[0.95fr_1.35fr]">
                 <Card>
                     <CardHeader>
-                        <CardTitle>Needs Funding</CardTitle>
+                        <CardTitle>{t("matching.needsFunding", "Needs Funding")}</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-3">
                         {loading ? (
-                            <div className="text-sm text-muted-foreground">Loading loans...</div>
+                            <div className="text-sm text-muted-foreground">{t("matching.loadingLoans", "Loading loans...")}</div>
                         ) : needsFundingLoans.length === 0 ? (
                             <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
-                                All current borrower loans are fully funded.
+                                {t("matching.allFunded", "All current borrower loans are fully funded.")}
                             </div>
                         ) : (
                             needsFundingLoans.map((loan) => {
@@ -368,22 +370,22 @@ export default function MatchingWorkspace() {
                                         <div className="flex items-center justify-between gap-3">
                                             <div>
                                                 <div className="font-medium">{loan.borrowerName}</div>
-                                                <div className="text-xs text-muted-foreground">Loan #{loan.id}</div>
+                                                <div className="text-xs text-muted-foreground">{t("loans.loanLabel", { defaultValue: "Loan #{{id}}", id: loan.id })}</div>
                                             </div>
                                             <Badge variant={loan.allocationState === "unfunded" ? "destructive" : "secondary"}>{state}</Badge>
                                         </div>
                                         <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
                                             <div>
-                                                <div className="text-muted-foreground">Principal</div>
-                                                <div className="font-medium">{formatCurrency(principal)}</div>
+                                                <div className="text-muted-foreground">{t("loanWizard.columns.principal", "Principal")}</div>
+                                                <div className="font-medium">{formatCurrency(principal, i18n.language)}</div>
                                             </div>
                                             <div>
-                                                <div className="text-muted-foreground">Funded</div>
-                                                <div className="font-medium">{formatCurrency(fundedAmount)}</div>
+                                                <div className="text-muted-foreground">{t("matching.funded", "Funded")}</div>
+                                                <div className="font-medium">{formatCurrency(fundedAmount, i18n.language)}</div>
                                             </div>
                                             <div>
-                                                <div className="text-muted-foreground">Gap</div>
-                                                <div className="font-medium text-destructive">{formatCurrency(gap)}</div>
+                                                <div className="text-muted-foreground">{t("loans.remainingGap", "Gap")}</div>
+                                                <div className="font-medium text-destructive">{formatCurrency(gap, i18n.language)}</div>
                                             </div>
                                         </div>
                                     </button>
@@ -396,30 +398,30 @@ export default function MatchingWorkspace() {
                 <div className="space-y-4">
                     <Card>
                         <CardHeader>
-                            <CardTitle>Selected Loan</CardTitle>
+                            <CardTitle>{t("matching.selectedLoan", "Selected Loan")}</CardTitle>
                         </CardHeader>
                         <CardContent>
                             {!selectedLoan ? (
                                 <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
-                                    Select a borrower loan from the left to start matching.
+                                    {t("matching.selectLoanPrompt", "Select a borrower loan from the left to start matching.")}
                                 </div>
                             ) : (
                                 <div className="grid gap-4 md:grid-cols-4">
                                     <div>
-                                        <div className="text-xs text-muted-foreground">Borrower</div>
+                                        <div className="text-xs text-muted-foreground">{t("loanWizard.borrower", "Borrower")}</div>
                                         <div className="font-medium">{selectedLoan.borrowerName}</div>
                                     </div>
                                     <div>
-                                        <div className="text-xs text-muted-foreground">Principal</div>
-                                        <div className="font-medium">{formatCurrency(selectedLoanPrincipal)}</div>
+                                        <div className="text-xs text-muted-foreground">{t("loanWizard.columns.principal", "Principal")}</div>
+                                        <div className="font-medium">{formatCurrency(selectedLoanPrincipal, i18n.language)}</div>
                                     </div>
                                     <div>
-                                        <div className="text-xs text-muted-foreground">Already funded</div>
-                                        <div className="font-medium">{formatCurrency(selectedLoanFundedAmount)}</div>
+                                        <div className="text-xs text-muted-foreground">{t("matching.alreadyFunded", "Already funded")}</div>
+                                        <div className="font-medium">{formatCurrency(selectedLoanFundedAmount, i18n.language)}</div>
                                     </div>
                                     <div>
-                                        <div className="text-xs text-muted-foreground">Remaining gap</div>
-                                        <div className={`font-medium ${remainingFundingGap > 0 ? "text-destructive" : "text-emerald-600"}`}>{formatCurrency(remainingFundingGap)}</div>
+                                        <div className="text-xs text-muted-foreground">{t("loans.remainingGap", "Remaining gap")}</div>
+                                        <div className={`font-medium ${remainingFundingGap > 0 ? "text-destructive" : "text-emerald-600"}`}>{formatCurrency(remainingFundingGap, i18n.language)}</div>
                                     </div>
                                 </div>
                             )}
@@ -429,36 +431,36 @@ export default function MatchingWorkspace() {
                     {selectedLoan && (
                         <Card>
                             <CardHeader>
-                                <CardTitle>Loan Profitability Snapshot</CardTitle>
+                                <CardTitle>{t("matching.loanProfitabilitySnapshot", "Loan Profitability Snapshot")}</CardTitle>
                             </CardHeader>
                             <CardContent className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
                                 <div>
-                                    <div className="text-xs text-muted-foreground">Revenue collected</div>
-                                    <div className="font-medium">{formatCurrency(Number(selectedLoanProfitability?.borrowerRevenueCollected ?? 0))}</div>
+                                    <div className="text-xs text-muted-foreground">{t("dashboardPage.cards.borrowerRevenue", "Revenue collected")}</div>
+                                    <div className="font-medium">{formatCurrency(Number(selectedLoanProfitability?.borrowerRevenueCollected ?? 0), i18n.language)}</div>
                                 </div>
                                 <div>
-                                    <div className="text-xs text-muted-foreground">Fund cost paid</div>
-                                    <div className="font-medium">{formatCurrency(Number(selectedLoanProfitability?.fundCostPaid ?? 0))}</div>
+                                    <div className="text-xs text-muted-foreground">{t("dashboardPage.cards.fundCostPaid", "Fund cost paid")}</div>
+                                    <div className="font-medium">{formatCurrency(Number(selectedLoanProfitability?.fundCostPaid ?? 0), i18n.language)}</div>
                                 </div>
                                 <div>
-                                    <div className="text-xs text-muted-foreground">Realized spread</div>
+                                    <div className="text-xs text-muted-foreground">{t("funds.metrics.realizedSpread", "Realized spread")}</div>
                                     <div className={`font-medium ${Number(selectedLoanProfitability?.realizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                                        {formatCurrency(Number(selectedLoanProfitability?.realizedSpread ?? 0))}
+                                        {formatCurrency(Number(selectedLoanProfitability?.realizedSpread ?? 0), i18n.language)}
                                     </div>
                                 </div>
                                 <div>
-                                    <div className="text-xs text-muted-foreground">Unrealized spread</div>
+                                    <div className="text-xs text-muted-foreground">{t("loans.unrealizedSpread", "Unrealized spread")}</div>
                                     <div className={`font-medium ${Number(selectedLoanProfitability?.unrealizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                                        {formatCurrency(Number(selectedLoanProfitability?.unrealizedSpread ?? 0))}
+                                        {formatCurrency(Number(selectedLoanProfitability?.unrealizedSpread ?? 0), i18n.language)}
                                     </div>
                                 </div>
                                 <div>
-                                    <div className="text-xs text-muted-foreground">Funded principal</div>
-                                    <div className="font-medium">{formatCurrency(Number(selectedLoanProfitability?.fundedPrincipal ?? 0))}</div>
+                                    <div className="text-xs text-muted-foreground">{t("loanDetail.fundedPrincipal", "Funded principal")}</div>
+                                    <div className="font-medium">{formatCurrency(Number(selectedLoanProfitability?.fundedPrincipal ?? 0), i18n.language)}</div>
                                 </div>
                                 <div>
-                                    <div className="text-xs text-muted-foreground">Gap after matching</div>
-                                    <div className="font-medium">{formatCurrency(Number(selectedLoanProfitability?.unallocatedPrincipalGap ?? selectedLoan.remainingGap ?? 0))}</div>
+                                    <div className="text-xs text-muted-foreground">{t("matching.gapAfterMatching", "Gap after matching")}</div>
+                                    <div className="font-medium">{formatCurrency(Number(selectedLoanProfitability?.unallocatedPrincipalGap ?? selectedLoan.remainingGap ?? 0), i18n.language)}</div>
                                 </div>
                             </CardContent>
                         </Card>
@@ -468,22 +470,22 @@ export default function MatchingWorkspace() {
                         <div className="grid gap-4 xl:grid-cols-2">
                             <Card>
                                 <CardHeader>
-                                    <CardTitle>Current Net Allocations</CardTitle>
+                                    <CardTitle>{t("matching.currentNetAllocations", "Current Net Allocations")}</CardTitle>
                                 </CardHeader>
                                 <CardContent className="space-y-3">
                                     {currentAllocationByDrawdown.length === 0 ? (
                                         <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
-                                            This loan has no active allocations yet.
+                                            {t("matching.noActiveAllocations", "This loan has no active allocations yet.")}
                                         </div>
                                     ) : (
                                         currentAllocationByDrawdown.map((item) => (
                                             <div key={item.bankLoanId} className="rounded border p-3 text-sm">
                                                 <div className="flex items-center justify-between gap-3">
                                                     <div>
-                                                        <div className="font-medium">Drawdown #{item.bankLoanId}</div>
+                                                        <div className="font-medium">{t("dashboardPage.drawdownLabel", { defaultValue: "Drawdown #{{id}}", id: item.bankLoanId })}</div>
                                                         <div className="text-xs text-muted-foreground">{item.bankProfileName}</div>
                                                     </div>
-                                                    <div className="font-medium">{formatCurrency(item.amount)}</div>
+                                                    <div className="font-medium">{formatCurrency(item.amount, i18n.language)}</div>
                                                 </div>
                                             </div>
                                         ))
@@ -493,41 +495,41 @@ export default function MatchingWorkspace() {
 
                             <Card>
                                 <CardHeader>
-                                    <CardTitle>Reallocate Funding</CardTitle>
+                                    <CardTitle>{t("matching.reallocateFunding", "Reallocate Funding")}</CardTitle>
                                 </CardHeader>
                                 <CardContent className="space-y-3">
                                     <div className="grid gap-1.5">
-                                        <label className="text-sm font-medium">From drawdown</label>
+                                        <label className="text-sm font-medium">{t("matching.fromDrawdown", "From drawdown")}</label>
                                         <select
                                             className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                                             value={reallocationForm.fromBankLoanId}
                                             onChange={(e) => setReallocationForm((prev) => ({ ...prev, fromBankLoanId: e.target.value }))}
                                         >
-                                            <option value="">Select source...</option>
+                                            <option value="">{t("matching.selectSource", "Select source...")}</option>
                                             {currentAllocationByDrawdown.map((item) => (
                                                 <option key={item.bankLoanId} value={item.bankLoanId}>
-                                                    #{item.bankLoanId} • {item.bankProfileName} • {formatCurrency(item.amount)}
+                                                    #{item.bankLoanId} • {item.bankProfileName} • {formatCurrency(item.amount, i18n.language)}
                                                 </option>
                                             ))}
                                         </select>
                                     </div>
                                     <div className="grid gap-1.5">
-                                        <label className="text-sm font-medium">To drawdown</label>
+                                        <label className="text-sm font-medium">{t("matching.toDrawdown", "To drawdown")}</label>
                                         <select
                                             className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                                             value={reallocationForm.toBankLoanId}
                                             onChange={(e) => setReallocationForm((prev) => ({ ...prev, toBankLoanId: e.target.value }))}
                                         >
-                                            <option value="">Select target...</option>
+                                            <option value="">{t("matching.selectTarget", "Select target...")}</option>
                                             {drawdowns.map((item) => (
                                                 <option key={item.id} value={item.id}>
-                                                    #{item.id} • {item.bankProfileId ? bankProfileNameById.get(item.bankProfileId) ?? "Unknown source" : "Unknown source"}
+                                                    #{item.id} • {item.bankProfileId ? bankProfileNameById.get(item.bankProfileId) ?? t("matching.unknownSource", "Unknown source") : t("matching.unknownSource", "Unknown source")}
                                                 </option>
                                             ))}
                                         </select>
                                     </div>
                                     <div className="grid gap-1.5">
-                                        <label className="text-sm font-medium">Amount</label>
+                                        <label className="text-sm font-medium">{t("transactionsForm.amount", "Amount")}</label>
                                         <Input
                                             type="number"
                                             min="0"
@@ -537,7 +539,7 @@ export default function MatchingWorkspace() {
                                         />
                                     </div>
                                     <div className="grid gap-1.5">
-                                        <label className="text-sm font-medium">Note</label>
+                                        <label className="text-sm font-medium">{t("transactionsForm.note", "Note")}</label>
                                         <Input
                                             value={reallocationForm.note}
                                             onChange={(e) => setReallocationForm((prev) => ({ ...prev, note: e.target.value }))}
@@ -545,7 +547,7 @@ export default function MatchingWorkspace() {
                                     </div>
                                     <Button onClick={handleReallocate} disabled={saving}>
                                         {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                        Reallocate
+                                        {t("matching.reallocate", "Reallocate")}
                                     </Button>
                                 </CardContent>
                             </Card>
@@ -557,20 +559,20 @@ export default function MatchingWorkspace() {
                             <div className="flex items-center justify-between gap-3">
                                 <CardTitle className="flex items-center gap-2">
                                     <ArrowRightLeft className="h-4 w-4" />
-                                    Available Drawdowns
+                                    {t("matching.availableDrawdowns", "Available Drawdowns")}
                                 </CardTitle>
                                 <Button onClick={handleSaveAllocations} disabled={!selectedLoan || saving}>
                                     {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                                    Save Allocations
+                                    {t("matching.saveAllocations", "Save Allocations")}
                                 </Button>
                             </div>
                         </CardHeader>
                         <CardContent className="space-y-3">
                             {loading ? (
-                                <div className="text-sm text-muted-foreground">Loading drawdowns...</div>
+                                <div className="text-sm text-muted-foreground">{t("matching.loadingDrawdowns", "Loading drawdowns...")}</div>
                             ) : drawdowns.length === 0 ? (
                                 <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
-                                    No active drawdowns available for matching.
+                                    {t("matching.noActiveDrawdowns", "No active drawdowns available for matching.")}
                                 </div>
                             ) : (
                                 drawdowns.map((drawdown) => {
@@ -584,40 +586,40 @@ export default function MatchingWorkspace() {
                                             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                                                 <div className="space-y-1">
                                                     <div className="font-medium">
-                                                        Drawdown #{drawdown.id} {drawdown.bankProfileId ? `• ${bankProfileNameById.get(drawdown.bankProfileId) ?? "Unknown source"}` : ""}
+                                                        {t("dashboardPage.drawdownLabel", { defaultValue: "Drawdown #{{id}}", id: drawdown.id })} {drawdown.bankProfileId ? `• ${bankProfileNameById.get(drawdown.bankProfileId) ?? t("matching.unknownSource", "Unknown source")}` : ""}
                                                     </div>
                                                     <div className="text-xs text-muted-foreground">
-                                                        Outstanding principal: {formatCurrency(Number(drawdown.outstandingPrincipal ?? 0))} • Next due: {drawdown.nextDueDate || "Not scheduled"}
+                                                        {t("loanWizard.outstandingPrincipal", "Outstanding principal")}: {formatCurrency(Number(drawdown.outstandingPrincipal ?? 0), i18n.language)} • {t("loanWizard.nextDue", "Next due")}: {drawdown.nextDueDate || t("matching.notScheduled", "Not scheduled")}
                                                     </div>
                                                     <div className="text-xs text-muted-foreground capitalize">
-                                                        Allocation state: {(drawdown.allocationState ?? "unallocated").replaceAll("_", " ")}
+                                                        {t("matching.allocationState", "Allocation state")}: {(drawdown.allocationState ?? "unallocated").replaceAll("_", " ")}
                                                     </div>
                                                 </div>
                                                 <div className="grid grid-cols-2 gap-3 text-xs md:min-w-[280px]">
                                                     <div>
-                                                        <div className="text-muted-foreground">Drawdown total</div>
-                                                        <div className="font-medium">{formatCurrency(amount)}</div>
+                                                        <div className="text-muted-foreground">{t("matching.drawdownTotal", "Drawdown total")}</div>
+                                                        <div className="font-medium">{formatCurrency(amount, i18n.language)}</div>
                                                     </div>
                                                     <div>
-                                                        <div className="text-muted-foreground">Already allocated</div>
-                                                        <div className="font-medium">{formatCurrency(allocatedAmount)}</div>
+                                                        <div className="text-muted-foreground">{t("matching.alreadyAllocated", "Already allocated")}</div>
+                                                        <div className="font-medium">{formatCurrency(allocatedAmount, i18n.language)}</div>
                                                     </div>
                                                     <div>
-                                                        <div className="text-muted-foreground">Available now</div>
-                                                        <div className="font-medium">{formatCurrency(available)}</div>
+                                                        <div className="text-muted-foreground">{t("matching.availableNow", "Available now")}</div>
+                                                        <div className="font-medium">{formatCurrency(available, i18n.language)}</div>
                                                     </div>
                                                     <div>
-                                                        <div className="text-muted-foreground">After draft</div>
-                                                        <div className={`font-medium ${availableAfterDraft === 0 && draftAmount > 0 ? "text-destructive" : ""}`}>{formatCurrency(availableAfterDraft)}</div>
+                                                        <div className="text-muted-foreground">{t("matching.afterDraft", "After draft")}</div>
+                                                        <div className={`font-medium ${availableAfterDraft === 0 && draftAmount > 0 ? "text-destructive" : ""}`}>{formatCurrency(availableAfterDraft, i18n.language)}</div>
                                                     </div>
                                                 </div>
                                             </div>
                                             <div className="mt-4 grid gap-2 md:grid-cols-[1fr_180px] md:items-end">
                                                 <div className="text-xs text-muted-foreground">
-                                                    Enter how much of this drawdown should fund the selected borrower loan. One loan can take multiple drawdowns.
+                                                    {t("matching.allocateHelp", "Enter how much of this drawdown should fund the selected borrower loan. One loan can take multiple drawdowns.")}
                                                 </div>
                                                 <div className="grid gap-1.5">
-                                                    <label className="text-sm font-medium">Allocate Amount</label>
+                                                    <label className="text-sm font-medium">{t("matching.allocateAmount", "Allocate Amount")}</label>
                                                     <Input
                                                         type="number"
                                                         min="0"
@@ -638,12 +640,12 @@ export default function MatchingWorkspace() {
                     {selectedLoan && (
                         <Card>
                             <CardHeader>
-                                <CardTitle>Allocation History</CardTitle>
+                                <CardTitle>{t("loanDetail.allocationHistory", "Allocation History")}</CardTitle>
                             </CardHeader>
                             <CardContent>
                                 {allocationHistory.length === 0 ? (
                                     <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
-                                        No allocation history yet for this loan.
+                                        {t("matching.noAllocationHistory", "No allocation history yet for this loan.")}
                                     </div>
                                 ) : (
                                     <div className="space-y-2">
@@ -652,14 +654,14 @@ export default function MatchingWorkspace() {
                                                 <div className="flex items-center justify-between gap-3">
                                                     <div>
                                                         <div className="font-medium">
-                                                            {row.allocationType} {row.bankLoanId ? `• Drawdown #${row.bankLoanId}` : ""}
+                                                            {row.allocationType} {row.bankLoanId ? `• ${t("dashboardPage.drawdownLabel", { defaultValue: "Drawdown #{{id}}", id: row.bankLoanId })}` : ""}
                                                         </div>
                                                         <div className="text-xs text-muted-foreground">
-                                                            {row.bankProfileName ?? (row.bankProfileId ? bankProfileNameById.get(row.bankProfileId) ?? "Unknown source" : "No source")} • {row.allocationDate || "-"}
+                                                            {row.bankProfileName ?? (row.bankProfileId ? bankProfileNameById.get(row.bankProfileId) ?? t("matching.unknownSource", "Unknown source") : t("matching.noSource", "No source"))} • {row.allocationDate || "-"}
                                                         </div>
                                                     </div>
                                                     <div className={`font-medium ${Number(row.allocatedAmount) < 0 ? "text-destructive" : "text-emerald-600"}`}>
-                                                        {Number(row.allocatedAmount) < 0 ? "-" : "+"}{formatCurrency(Math.abs(Number(row.allocatedAmount)))}
+                                                        {Number(row.allocatedAmount) < 0 ? "-" : "+"}{formatCurrency(Math.abs(Number(row.allocatedAmount)), i18n.language)}
                                                     </div>
                                                 </div>
                                                 {row.note && <div className="mt-1 text-xs text-muted-foreground">{row.note}</div>}

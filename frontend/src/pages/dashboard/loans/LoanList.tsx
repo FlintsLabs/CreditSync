@@ -7,9 +7,11 @@ import { Plus, FileText, Calendar, MoreHorizontal, DollarSign, ArrowRightLeft } 
 import { Link } from "react-router-dom";
 import { cn } from "../../../lib/utils";
 import { LoanClosingModal } from "./LoanClosingModal";
+import { useTranslation } from "react-i18next";
 
 interface LoanRow {
     id: number;
+    publicId?: string;
     borrowerName: string;
     principal: string | number;
     status: string;
@@ -22,14 +24,15 @@ interface LoanRow {
     unrealizedSpread?: number;
 }
 
-function formatCurrency(value: number) {
-    return `฿${value.toLocaleString(undefined, {
+function formatCurrency(value: number, locale?: string) {
+    return `฿${value.toLocaleString(locale, {
         minimumFractionDigits: 0,
         maximumFractionDigits: 2,
     })}`;
 }
 
 export default function LoanList() {
+    const { t, i18n } = useTranslation();
     const [loans, setLoans] = useState<LoanRow[]>([]);
     const [closingLoanId, setClosingLoanId] = useState<number | null>(null);
     const [search, setSearch] = useState("");
@@ -92,18 +95,18 @@ export default function LoanList() {
         <div className="space-y-6">
             <div className="flex items-center justify-between">
                 <div>
-                    <h2 className="text-3xl font-bold tracking-tight">Loan Agreements</h2>
-                    <p className="text-muted-foreground">Manage active contracts and track repayments.</p>
+                    <h2 className="text-3xl font-bold tracking-tight">{t("loans.title", "Loan Agreements")}</h2>
+                    <p className="text-muted-foreground">{t("loans.description", "Manage active contracts and track repayments.")}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                    <Link to="/dashboard/loans/new">
+                    <Link to="/loans/new">
                         <Button>
-                            <Plus className="mr-2 h-4 w-4" /> New Loan
+                            <Plus className="mr-2 h-4 w-4" /> {t("loans.new", "New Loan")}
                         </Button>
                     </Link>
-                    <Link to="/dashboard/matching">
+                    <Link to="/matching">
                         <Button variant="outline">
-                            <ArrowRightLeft className="mr-2 h-4 w-4" /> Matching Workspace
+                            <ArrowRightLeft className="mr-2 h-4 w-4" /> {t("matching.title", "Matching Workspace")}
                         </Button>
                     </Link>
                 </div>
@@ -112,42 +115,42 @@ export default function LoanList() {
             <Card>
                 <CardContent className="grid gap-3 pt-6 md:grid-cols-2 xl:grid-cols-4">
                     <div className="grid gap-1.5">
-                        <label className="text-sm font-medium">Search</label>
+                        <label className="text-sm font-medium">{t("common.search", "Search")}</label>
                         <input
                             className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                            placeholder="Borrower or loan #"
+                            placeholder={t("loans.search", "Borrower or loan #")}
                             value={search}
                             onChange={(event) => setSearch(event.target.value)}
                         />
                     </div>
                     <div className="grid gap-1.5">
-                        <label className="text-sm font-medium">Status</label>
+                        <label className="text-sm font-medium">{t("common.status", "Status")}</label>
                         <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-                            <option value="all">All statuses</option>
-                            <option value="active">Active</option>
-                            <option value="draft">Draft</option>
-                            <option value="paid">Paid</option>
-                            <option value="defaulted">Defaulted</option>
+                            <option value="all">{t("loans.filters.allStatuses", "All statuses")}</option>
+                            <option value="active">{t("loans.status.active", "Active")}</option>
+                            <option value="draft">{t("loans.status.draft", "Draft")}</option>
+                            <option value="paid">{t("loans.status.paid", "Paid")}</option>
+                            <option value="defaulted">{t("loans.status.defaulted", "Defaulted")}</option>
                         </select>
                     </div>
                     <div className="grid gap-1.5">
-                        <label className="text-sm font-medium">Funding State</label>
+                        <label className="text-sm font-medium">{t("loans.fundingState", "Funding State")}</label>
                         <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={fundingFilter} onChange={(event) => setFundingFilter(event.target.value)}>
-                            <option value="all">All funding states</option>
-                            <option value="unfunded">Unfunded</option>
-                            <option value="partially_funded">Partially funded</option>
-                            <option value="fully_funded">Fully funded</option>
-                            <option value="overfunded">Overfunded</option>
+                            <option value="all">{t("loans.filters.allFundingStates", "All funding states")}</option>
+                            <option value="unfunded">{t("loans.funding.unfunded", "Unfunded")}</option>
+                            <option value="partially_funded">{t("loans.funding.partiallyFunded", "Partially funded")}</option>
+                            <option value="fully_funded">{t("loans.funding.fullyFunded", "Fully funded")}</option>
+                            <option value="overfunded">{t("loans.funding.overfunded", "Overfunded")}</option>
                         </select>
                     </div>
                     <div className="grid gap-1.5">
-                        <label className="text-sm font-medium">Sort</label>
+                        <label className="text-sm font-medium">{t("common.sort", "Sort")}</label>
                         <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
-                            <option value="newest">Newest first</option>
-                            <option value="oldest">Oldest first</option>
-                            <option value="largest_gap">Largest gap</option>
-                            <option value="best_spread">Best realized spread</option>
-                            <option value="worst_spread">Worst realized spread</option>
+                            <option value="newest">{t("loans.sort.newest", "Newest first")}</option>
+                            <option value="oldest">{t("loans.sort.oldest", "Oldest first")}</option>
+                            <option value="largest_gap">{t("loans.sort.largestGap", "Largest gap")}</option>
+                            <option value="best_spread">{t("loans.sort.bestSpread", "Best realized spread")}</option>
+                            <option value="worst_spread">{t("loans.sort.worstSpread", "Worst realized spread")}</option>
                         </select>
                     </div>
                 </CardContent>
@@ -155,17 +158,17 @@ export default function LoanList() {
 
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {visibleLoans.map((loan) => (
-                    <Link key={loan.id} to={`/dashboard/loans/${loan.id}`} className="block">
+                    <Link key={loan.id} to={`/loans/${loan.publicId ?? loan.id}`} className="block">
                     <Card className="hover:shadow-md transition-shadow flex flex-col h-full">
                         <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
                             <div className="space-y-1">
                                 <CardTitle className="text-sm font-medium">{loan.borrowerName}</CardTitle>
-                                <div className="text-xs text-muted-foreground">Loan #{loan.id}</div>
+                                <div className="text-xs text-muted-foreground">{t("loans.loanLabel", { defaultValue: "Loan #{{id}}", id: loan.id })}</div>
                             </div>
                            <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
                                     <Button variant="ghost" className="h-8 w-8 p-0" onClick={(event) => event.preventDefault()}>
-                                        <span className="sr-only">Open menu</span>
+                                        <span className="sr-only">{t("common.openMenu", "Open menu")}</span>
                                         <MoreHorizontal className="h-4 w-4" />
                                     </Button>
                                 </DropdownMenuTrigger>
@@ -175,7 +178,7 @@ export default function LoanList() {
                                         setClosingLoanId(loan.id);
                                     }}>
                                         <DollarSign className="mr-2 h-4 w-4" />
-                                        <span>Calculate Closing Balance</span>
+                                        <span>{t("loans.calculateClosingBalance", "Calculate Closing Balance")}</span>
                                     </DropdownMenuItem>
                                 </DropdownMenuContent>
                             </DropdownMenu>
@@ -183,7 +186,7 @@ export default function LoanList() {
                         <CardContent className="flex-grow flex flex-col justify-between">
                             <div className="space-y-3">
                                 <div>
-                                    <div className="text-2xl font-bold mb-2">{formatCurrency(Number(loan.principal))}</div>
+                                    <div className="text-2xl font-bold mb-2">{formatCurrency(Number(loan.principal), i18n.language)}</div>
                                     <p className={cn(
                                         "text-xs font-semibold uppercase",
                                         loan.status === "active" ? "text-green-600" : "text-gray-500"
@@ -192,36 +195,36 @@ export default function LoanList() {
 
                                 <div className="grid grid-cols-2 gap-3 text-xs">
                                     <div>
-                                        <div className="text-muted-foreground">Funding state</div>
+                                        <div className="text-muted-foreground">{t("loans.fundingState", "Funding state")}</div>
                                         <div className="font-medium capitalize">
                                             {(loan.allocationState ?? "unfunded").replaceAll("_", " ")}
                                         </div>
                                     </div>
                                     <div>
-                                        <div className="text-muted-foreground">Remaining gap</div>
+                                        <div className="text-muted-foreground">{t("loans.remainingGap", "Remaining gap")}</div>
                                         <div className={cn(
                                             "font-medium",
                                             Number(loan.remainingGap ?? 0) > 0 ? "text-destructive" : "text-emerald-600"
                                         )}>
-                                            {formatCurrency(Number(loan.remainingGap ?? 0))}
+                                            {formatCurrency(Number(loan.remainingGap ?? 0), i18n.language)}
                                         </div>
                                     </div>
                                     <div>
-                                        <div className="text-muted-foreground">Realized spread</div>
+                                        <div className="text-muted-foreground">{t("funds.metrics.realizedSpread", "Realized spread")}</div>
                                         <div className={cn(
                                             "font-medium",
                                             Number(loan.realizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"
                                         )}>
-                                            {formatCurrency(Number(loan.realizedSpread ?? 0))}
+                                            {formatCurrency(Number(loan.realizedSpread ?? 0), i18n.language)}
                                         </div>
                                     </div>
                                     <div>
-                                        <div className="text-muted-foreground">Unrealized spread</div>
+                                        <div className="text-muted-foreground">{t("loans.unrealizedSpread", "Unrealized spread")}</div>
                                         <div className={cn(
                                             "font-medium",
                                             Number(loan.unrealizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"
                                         )}>
-                                            {formatCurrency(Number(loan.unrealizedSpread ?? 0))}
+                                            {formatCurrency(Number(loan.unrealizedSpread ?? 0), i18n.language)}
                                         </div>
                                     </div>
                                 </div>
@@ -229,7 +232,7 @@ export default function LoanList() {
 
                             <div className="flex items-center text-sm text-muted-foreground mt-4">
                                 <Calendar className="mr-2 h-4 w-4 flex-shrink-0" />
-                                <span>{new Date(loan.createdAt).toLocaleDateString()}</span>
+                                <span>{new Date(loan.createdAt).toLocaleDateString(i18n.language)}</span>
                             </div>
                         </CardContent>
                     </Card>
@@ -242,13 +245,13 @@ export default function LoanList() {
                     <div className="bg-background p-4 rounded-full shadow-sm mb-4">
                         <FileText className="h-12 w-12 text-muted-foreground/50" />
                     </div>
-                    <h3 className="text-xl font-semibold">No Active Loans</h3>
+                    <h3 className="text-xl font-semibold">{t("loans.emptyTitle", "No Active Loans")}</h3>
                     <p className="text-muted-foreground mt-2 max-w-sm mx-auto">
-                        Create your first loan agreement to start tracking principal, interest, and repayments.
+                        {t("loans.emptyDescription", "Create your first loan agreement to start tracking principal, interest, and repayments.")}
                     </p>
-                    <Link to="/dashboard/loans/new">
+                    <Link to="/loans/new">
                         <Button className="mt-6 rounded-full shadow-lg">
-                            <Plus className="mr-2 h-4 w-4" /> Create Loan
+                            <Plus className="mr-2 h-4 w-4" /> {t("loans.create", "Create Loan")}
                         </Button>
                     </Link>
                 </div>

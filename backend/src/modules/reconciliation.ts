@@ -3,15 +3,17 @@ import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db";
 import { bankLoanRepayments, bankLoans, botUploads, borrowers, files, loans, reconciliationEntries, transactions } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
+import { isTenantAdminUser } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
+import { resolveStoredFileUrl } from "../lib/storage";
 
 export const reconciliationRoute = new Elysia({ prefix: "/reconciliation" })
     .use(authPlugin)
     .get("/overview", async ({ user, set }) => {
-        if (!user) {
-            set.status = 401;
-            return { error: "Unauthorized" };
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
         }
 
         return await withTenantCache({
@@ -70,8 +72,24 @@ export const reconciliationRoute = new Elysia({ prefix: "/reconciliation" })
                 );
 
                 return {
-                    pendingUploads: uploads.filter((row) => row.status === "pending"),
-                    unreconciledBorrowerTransactions: borrowerTransactions.filter((row) => !matchedKeys.has(`borrower_transaction:${row.id}`)),
+                    pendingUploads: await Promise.all(
+                        uploads
+                            .filter((row) => row.status === "pending")
+                            .map(async (row) => ({
+                                ...row,
+                                fileRef: row.fileUrl,
+                                fileUrl: await resolveStoredFileUrl(row.fileUrl),
+                            }))
+                    ),
+                    unreconciledBorrowerTransactions: await Promise.all(
+                        borrowerTransactions
+                            .filter((row) => !matchedKeys.has(`borrower_transaction:${row.id}`))
+                            .map(async (row) => ({
+                                ...row,
+                                slipRef: row.slipUrl,
+                                slipUrl: await resolveStoredFileUrl(row.slipUrl),
+                            }))
+                    ),
                     unreconciledBankRepayments: bankRepayments.filter((row) => !matchedKeys.has(`bank_loan_repayment:${row.id}`)),
                     history: reconciliations.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime()),
                 };
@@ -79,7 +97,10 @@ export const reconciliationRoute = new Elysia({ prefix: "/reconciliation" })
         });
     })
     .post("/borrower-transactions/:id/match", async ({ params: { id }, body, user, set }) => {
-        if (!user) throw new Error("Unauthorized");
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
+        }
 
         const transactionId = parseInt(id);
 
@@ -142,7 +163,10 @@ export const reconciliationRoute = new Elysia({ prefix: "/reconciliation" })
         })
     })
     .post("/bank-repayments/:id/match", async ({ params: { id }, body, user, set }) => {
-        if (!user) throw new Error("Unauthorized");
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
+        }
 
         const repaymentId = parseInt(id);
 
@@ -205,7 +229,10 @@ export const reconciliationRoute = new Elysia({ prefix: "/reconciliation" })
         })
     })
     .post("/uploads/:id/ignore", async ({ params: { id }, body, user, set }) => {
-        if (!user) throw new Error("Unauthorized");
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
+        }
 
         const uploadId = parseInt(id);
 

@@ -1,4 +1,5 @@
-import { pgTable, text, serial, timestamp, numeric, integer, date, pgEnum, jsonb } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, text, serial, timestamp, numeric, integer, date, pgEnum, jsonb, uuid } from "drizzle-orm/pg-core";
 
 // Enums
 export const roleEnum = pgEnum("role", ["owner", "manager", "collector", "viewer"]);
@@ -9,6 +10,7 @@ const tenantId = text("tenant_id").notNull(); // All tables must have this
 // Users (Admins/Lenders)
 export const users = pgTable("users", {
     id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: tenantId,
     email: text("email").notNull().unique(),
     name: text("name"),
@@ -20,6 +22,7 @@ export const users = pgTable("users", {
 // Tenant Configuration (Secrets, Tokens)
 export const tenantConfigs = pgTable("tenant_configs", {
     id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: text("tenant_id").notNull().unique(),
     lineChannelToken: text("line_channel_token"),
     webhookSecret: text("webhook_secret"), // For verifying incoming webhook signatures
@@ -30,6 +33,7 @@ export const tenantConfigs = pgTable("tenant_configs", {
 // Bank Profiles (Source of Funds)
 export const bankProfiles = pgTable("bank_profiles", {
     id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: tenantId,
     name: text("name").notNull(), // e.g., "SCB Personal Loan", "KBank Credit Card"
     type: text("type").notNull(), // "bank", "personal_savings"
@@ -47,6 +51,7 @@ export const bankProfiles = pgTable("bank_profiles", {
 // Bank Loans (Money borrowed from Bank)
 export const bankLoans = pgTable("bank_loans", {
     id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: tenantId,
     bankProfileId: integer("bank_profile_id").references(() => bankProfiles.id),
     amount: numeric("amount").notNull(), // e.g. 200000
@@ -77,6 +82,7 @@ export const bankLoans = pgTable("bank_loans", {
 
 export const bankLoanSchedules = pgTable("bank_loan_schedules", {
     id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: tenantId,
     bankLoanId: integer("bank_loan_id").references(() => bankLoans.id).notNull(),
     installmentNo: integer("installment_no").notNull(),
@@ -97,6 +103,7 @@ export const bankLoanSchedules = pgTable("bank_loan_schedules", {
 
 export const bankLoanRepayments = pgTable("bank_loan_repayments", {
     id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: tenantId,
     bankLoanId: integer("bank_loan_id").references(() => bankLoans.id).notNull(),
     scheduleId: integer("schedule_id").references(() => bankLoanSchedules.id),
@@ -117,7 +124,9 @@ export const bankLoanRepayments = pgTable("bank_loan_repayments", {
 // Borrowers (End Customers)
 export const borrowers = pgTable("borrowers", {
     id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: tenantId,
+    ownerUserId: integer("owner_user_id").references(() => users.id),
     name: text("name").notNull(),
     idCardNumber: text("id_card_number"),
     address: text("address"),
@@ -135,7 +144,9 @@ export const borrowers = pgTable("borrowers", {
 // Lending Loans (Money lent to Borrowers)
 export const loans = pgTable("loans", {
     id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: tenantId,
+    ownerUserId: integer("owner_user_id").references(() => users.id),
     borrowerId: integer("borrower_id").references(() => borrowers.id).notNull(),
     bankLoanId: integer("bank_loan_id").references(() => bankLoans.id), // Traceability to source
     principalAmount: numeric("principal_amount").notNull(),
@@ -159,6 +170,7 @@ export const loans = pgTable("loans", {
 
 export const loanSchedules = pgTable("loan_schedules", {
     id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: tenantId,
     loanId: integer("loan_id").references(() => loans.id).notNull(),
     installmentNo: integer("installment_no").notNull(),
@@ -178,6 +190,7 @@ export const loanSchedules = pgTable("loan_schedules", {
 
 export const loanFundingAllocations = pgTable("loan_funding_allocations", {
     id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: tenantId,
     bankProfileId: integer("bank_profile_id").references(() => bankProfiles.id),
     bankLoanId: integer("bank_loan_id").references(() => bankLoans.id),
@@ -193,7 +206,9 @@ export const loanFundingAllocations = pgTable("loan_funding_allocations", {
 // Transactions (Repayments from Borrowers)
 export const transactions = pgTable("transactions", {
     id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: tenantId,
+    ownerUserId: integer("owner_user_id").references(() => users.id),
     loanId: integer("loan_id").references(() => loans.id).notNull(),
     scheduleId: integer("schedule_id").references(() => loanSchedules.id),
     amount: numeric("amount").notNull(),
@@ -212,6 +227,7 @@ export const transactions = pgTable("transactions", {
 
 export const fundRolloverEntries = pgTable("fund_rollover_entries", {
     id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: tenantId,
     fromBankProfileId: integer("from_bank_profile_id").references(() => bankProfiles.id),
     fromBankLoanId: integer("from_bank_loan_id").references(() => bankLoans.id),
@@ -227,6 +243,7 @@ export const fundRolloverEntries = pgTable("fund_rollover_entries", {
 
 export const fundLedgerEntries = pgTable("fund_ledger_entries", {
     id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: tenantId,
     bankProfileId: integer("bank_profile_id").references(() => bankProfiles.id).notNull(),
     bankLoanId: integer("bank_loan_id").references(() => bankLoans.id),
@@ -244,6 +261,7 @@ export const fundLedgerEntries = pgTable("fund_ledger_entries", {
 
 export const auditLogs = pgTable("audit_logs", {
     id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: tenantId,
     entityType: text("entity_type").notNull(),
     entityId: text("entity_id").notNull(),
@@ -256,19 +274,22 @@ export const auditLogs = pgTable("audit_logs", {
 // Files (MinIO Objects)
 export const files = pgTable("files", {
     id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: tenantId,
+    ownerUserId: integer("owner_user_id").references(() => users.id),
     bucket: text("bucket").notNull(),
     key: text("key").notNull(), // S3 Key
     originalName: text("original_name"),
     mimeType: text("mime_type"),
     size: integer("size"),
-    url: text("url"), // Public/Presigned URL cache
+    url: text("url"), // Stored file reference, resolved to a signed URL at read time
     createdAt: timestamp("created_at").defaultNow(),
 });
 
 // Bot Uploads (Unprocessed images from Webhooks)
 export const botUploads = pgTable("bot_uploads", {
     id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: tenantId,
     fileId: integer("file_id").references(() => files.id),
     source: text("source").default("line"), // line, telegram
@@ -280,6 +301,7 @@ export const botUploads = pgTable("bot_uploads", {
 // Bank Transactions (Repayments to Bank)
 export const bankTransactions = pgTable("bank_transactions", {
     id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: tenantId,
     bankLoanId: integer("bank_loan_id").references(() => bankLoans.id).notNull(),
     amount: numeric("amount").notNull(),
@@ -291,6 +313,7 @@ export const bankTransactions = pgTable("bank_transactions", {
 
 export const reconciliationEntries = pgTable("reconciliation_entries", {
     id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: tenantId,
     entityType: text("entity_type").notNull(), // borrower_transaction, bank_loan_repayment, bot_upload
     entityId: integer("entity_id").notNull(),

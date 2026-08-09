@@ -8,8 +8,10 @@ import { Link } from "react-router-dom";
 import { Avatar, AvatarImage, AvatarFallback } from "../../../components/ui/avatar";
 import { Badge } from "../../../components/ui/badge";
 import BorrowerEditModal from "./BorrowerEditModal";
+import { useTranslation } from "react-i18next";
 
 export default function BorrowerList() {
+    const { t } = useTranslation();
     const [borrowers, setBorrowers] = useState<any[]>([]);
 
     // Edit Modal State
@@ -47,17 +49,17 @@ export default function BorrowerList() {
     return (
         <div className="space-y-6">
             <div className="h-16 flex items-center justify-between sticky top-0 z-10 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 -mx-6 px-6 border-b">
-                <h2 className="text-xl font-bold tracking-tight">Borrowers</h2>
-                <Link to="/dashboard/borrowers/new">
+                <h2 className="text-xl font-bold tracking-tight">{t("borrowers.title", "Borrowers")}</h2>
+                <Link to="/borrowers/new">
                     <Button className="rounded-full shadow-lg" size="sm">
-                        <Plus className="mr-2 h-4 w-4" /> New Borrower
+                        <Plus className="mr-2 h-4 w-4" /> {t("borrowers.new", "New Borrower")}
                     </Button>
                 </Link>
             </div>
 
             {/* Search - Placeholder */}
             <div className="flex w-full max-w-sm items-center space-x-2">
-                <Input placeholder="Search name or ID card..." className="rounded-full" />
+                <Input placeholder={t("borrowers.search", "Search name or ID card...")} className="rounded-full" />
                 <Button type="submit" size="icon" variant="ghost" className="rounded-full">
                     <Search className="h-4 w-4" />
                 </Button>
@@ -68,13 +70,13 @@ export default function BorrowerList() {
                     <div className="bg-background p-4 rounded-full shadow-sm mb-4">
                         <Users className="h-12 w-12 text-muted-foreground/50" />
                     </div>
-                    <h3 className="text-xl font-semibold">No Borrowers Found</h3>
+                    <h3 className="text-xl font-semibold">{t("borrowers.emptyTitle", "No Borrowers Found")}</h3>
                     <p className="text-muted-foreground mt-2 max-w-sm mx-auto">
-                        Get started by creating your first borrower profile to track loans and credit scores.
+                        {t("borrowers.emptyDescription", "Get started by creating your first borrower profile to track loans and credit scores.")}
                     </p>
-                    <Link to="/dashboard/borrowers/new">
+                    <Link to="/borrowers/new">
                         <Button className="mt-6 rounded-full shadow-lg">
-                            <Plus className="mr-2 h-4 w-4" /> Create Borrower
+                            <Plus className="mr-2 h-4 w-4" /> {t("borrowers.create", "Create Borrower")}
                         </Button>
                     </Link>
                 </div>
@@ -92,7 +94,7 @@ export default function BorrowerList() {
                                 <div className="overflow-hidden">
                                     <CardTitle className="text-lg truncate">{b.name}</CardTitle>
                                     <div className="text-xs text-muted-foreground truncate flex items-center gap-1">
-                                        {b.idCardNumber || "No ID Card"}
+                                        {b.idCardNumber || t("borrowers.noIdCard", "No ID Card")}
                                     </div>
                                     {b.tags && b.tags.length > 0 && (
                                         <div className="flex flex-wrap gap-1 mt-1">
@@ -111,27 +113,27 @@ export default function BorrowerList() {
                             <CardContent className="pb-2">
                                 <div className="text-sm space-y-1">
                                     <p className="flex justify-between">
-                                        <span className="text-muted-foreground">Phone:</span>
+                                        <span className="text-muted-foreground">{t("borrowers.phone", "Phone")}:</span>
                                         <span>{b.phone || "-"}</span>
                                     </p>
                                     <p className="flex justify-between">
-                                        <span className="text-muted-foreground">Credit Score:</span>
+                                        <span className="text-muted-foreground">{t("borrowers.creditScore", "Credit Score")}:</span>
                                         <span className={b.creditScore > 700 ? "text-green-600 font-bold" : "text-amber-600"}>{b.creditScore}</span>
                                     </p>
                                     {b.googleMapsUrl && (
                                         <a href={b.googleMapsUrl} target="_blank" rel="noreferrer" className="flex items-center text-xs text-blue-500 hover:underline mt-1">
-                                            <MapPin className="h-3 w-3 mr-1" /> View Map Location
+                                            <MapPin className="h-3 w-3 mr-1" /> {t("borrowers.viewMap", "View Map Location")}
                                         </a>
                                     )}
                                 </div>
                             </CardContent>
                             <CardFooter className="flex justify-end gap-2 pt-2 border-t bg-muted/20 rounded-b-xl">
                                 <Button variant="ghost" size="sm" onClick={() => handleEdit(b)} className="h-8 rounded-full">
-                                    <Edit2 className="h-3 w-3 mr-1" /> Edit
+                                    <Edit2 className="h-3 w-3 mr-1" /> {t("common.edit", "Edit")}
                                 </Button>
-                                <Link to={`/dashboard/borrowers/${b.id}`}>
+                                <Link to={`/borrowers/${b.publicId ?? b.id}`}>
                                     <Button size="sm" variant="outline" className="h-8 rounded-full">
-                                        <Eye className="h-3 w-3 mr-1" /> Details
+                                        <Eye className="h-3 w-3 mr-1" /> {t("common.details", "Details")}
                                     </Button>
                                 </Link>
                             </CardFooter>

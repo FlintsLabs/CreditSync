@@ -3,8 +3,10 @@ import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/Button";
 import { Plus, ArrowUpRight, FileText } from "lucide-react";
 import { Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 
 export default function TransactionList() {
+    const { t, i18n } = useTranslation();
     const [transactions, setTransactions] = useState<any[]>([]);
 
     useEffect(() => {
@@ -23,12 +25,12 @@ export default function TransactionList() {
         <div className="space-y-6">
             <div className="flex items-center justify-between">
                 <div>
-                    <h2 className="text-3xl font-bold tracking-tight">Transactions</h2>
-                    <p className="text-muted-foreground">Monitor repayment history and component breakdown.</p>
+                    <h2 className="text-3xl font-bold tracking-tight">{t("transactions.title", "Transactions")}</h2>
+                    <p className="text-muted-foreground">{t("transactions.description", "Monitor repayment history and component breakdown.")}</p>
                 </div>
-                <Link to="/dashboard/transactions/new">
+                <Link to="/transactions/new">
                     <Button>
-                        <Plus className="mr-2 h-4 w-4" /> Record Repayment
+                        <Plus className="mr-2 h-4 w-4" /> {t("transactions.recordRepayment", "Record Repayment")}
                     </Button>
                 </Link>
             </div>
@@ -38,13 +40,13 @@ export default function TransactionList() {
                     <div className="bg-background p-4 rounded-full shadow-sm mb-4">
                         <ArrowUpRight className="h-12 w-12 text-muted-foreground/50" />
                     </div>
-                    <h3 className="text-xl font-semibold">No Transactions</h3>
+                    <h3 className="text-xl font-semibold">{t("transactions.emptyTitle", "No Transactions")}</h3>
                     <p className="text-muted-foreground mt-2 max-w-sm mx-auto">
-                        Repayments and disbursements will appear here once you start processing loans.
+                        {t("transactions.emptyDescription", "Repayments and disbursements will appear here once you start processing loans.")}
                     </p>
-                    <Link to="/dashboard/transactions/new">
+                    <Link to="/transactions/new">
                         <Button className="mt-6 rounded-full shadow-lg">
-                            <Plus className="mr-2 h-4 w-4" /> Record Repayment
+                            <Plus className="mr-2 h-4 w-4" /> {t("transactions.recordRepayment", "Record Repayment")}
                         </Button>
                     </Link>
                 </div>
@@ -53,30 +55,30 @@ export default function TransactionList() {
                     <table className="w-full text-sm">
                         <thead>
                             <tr className="border-b bg-muted/50 text-left">
-                                <th className="p-4 font-medium">Date</th>
-                                <th className="p-4 font-medium">Borrower</th>
-                                <th className="p-4 font-medium">Total</th>
-                                <th className="p-4 font-medium">Principal</th>
-                                <th className="p-4 font-medium">Interest</th>
-                                <th className="p-4 font-medium">Fee</th>
-                                <th className="p-4 font-medium">Penalty</th>
-                                <th className="p-4 font-medium">Slip</th>
+                                <th className="p-4 font-medium">{t("transactions.columns.date", "Date")}</th>
+                                <th className="p-4 font-medium">{t("transactions.columns.borrower", "Borrower")}</th>
+                                <th className="p-4 font-medium">{t("transactions.columns.total", "Total")}</th>
+                                <th className="p-4 font-medium">{t("transactions.columns.principal", "Principal")}</th>
+                                <th className="p-4 font-medium">{t("transactions.columns.interest", "Interest")}</th>
+                                <th className="p-4 font-medium">{t("transactions.columns.fee", "Fee")}</th>
+                                <th className="p-4 font-medium">{t("transactions.columns.penalty", "Penalty")}</th>
+                                <th className="p-4 font-medium">{t("transactions.columns.slip", "Slip")}</th>
                             </tr>
                         </thead>
                         <tbody>
                             {transactions.map((tx) => (
                                 <tr key={tx.id} className="border-b last:border-0 hover:bg-muted/50">
-                                    <td className="p-4">{new Date(tx.date).toLocaleDateString()}</td>
-                                    <td className="p-4">{tx.borrowerName || "Unknown"}</td>
-                                    <td className="p-4 font-semibold text-green-600">฿{Number(tx.amount).toLocaleString()}</td>
-                                    <td className="p-4">฿{Number(tx.principalComponent ?? 0).toLocaleString()}</td>
-                                    <td className="p-4">฿{Number(tx.interestComponent ?? 0).toLocaleString()}</td>
-                                    <td className="p-4">฿{Number(tx.feeComponent ?? 0).toLocaleString()}</td>
-                                    <td className="p-4">฿{Number(tx.penaltyComponent ?? 0).toLocaleString()}</td>
+                                    <td className="p-4">{new Date(tx.date).toLocaleDateString(i18n.language)}</td>
+                                    <td className="p-4">{tx.borrowerName || t("common.unknown", "Unknown")}</td>
+                                    <td className="p-4 font-semibold text-green-600">฿{Number(tx.amount).toLocaleString(i18n.language)}</td>
+                                    <td className="p-4">฿{Number(tx.principalComponent ?? 0).toLocaleString(i18n.language)}</td>
+                                    <td className="p-4">฿{Number(tx.interestComponent ?? 0).toLocaleString(i18n.language)}</td>
+                                    <td className="p-4">฿{Number(tx.feeComponent ?? 0).toLocaleString(i18n.language)}</td>
+                                    <td className="p-4">฿{Number(tx.penaltyComponent ?? 0).toLocaleString(i18n.language)}</td>
                                     <td className="p-4">
                                         {tx.slipUrl ? (
                                             <a href={tx.slipUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline flex items-center">
-                                                <FileText className="h-4 w-4 mr-1" /> View
+                                                <FileText className="h-4 w-4 mr-1" /> {t("common.view", "View")}
                                             </a>
                                         ) : (
                                             <span className="text-muted-foreground">-</span>

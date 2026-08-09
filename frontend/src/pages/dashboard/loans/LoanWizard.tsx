@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
+import { getStoredUser, isTenantAdminUser } from "../../../lib/session";
 import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
 import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/Card";
 import { ChevronRight, ChevronLeft, CheckCircle, AlertCircle } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 interface Borrower {
     id: number;
@@ -36,6 +38,9 @@ interface LoanSchedulePreview {
 }
 
 export default function LoanWizard() {
+    const { t, i18n } = useTranslation();
+    const currentUser = getStoredUser();
+    const isTenantAdmin = isTenantAdminUser(currentUser);
     const [step, setStep] = useState(1);
     const [borrowers, setBorrowers] = useState<Borrower[]>([]);
     const [drawdowns, setDrawdowns] = useState<DrawdownOption[]>([]);
@@ -61,22 +66,22 @@ export default function LoanWizard() {
             try {
                 const [borrowersRes, drawdownsRes, profilesRes] = await Promise.all([
                     api.get("/borrowers"),
-                    api.get("/bank-loans"),
-                    api.get("/bank-profiles"),
+                    isTenantAdmin ? api.get("/bank-loans") : Promise.resolve({ data: [] }),
+                    isTenantAdmin ? api.get("/bank-profiles") : Promise.resolve({ data: [] }),
                 ]);
                 setBorrowers(borrowersRes.data ?? []);
                 setDrawdowns((drawdownsRes.data ?? []).filter((item: DrawdownOption) => item.status !== "closed"));
                 setBankProfiles(profilesRes.data ?? []);
             } catch (error) {
                 console.error("Failed to load loan wizard dependencies", error);
-                setErrorMessage("Unable to load borrowers and funds right now.");
+                setErrorMessage(t("loanWizard.errors.loadDependencies", "Unable to load borrowers and funds right now."));
             } finally {
                 setLoadingDependencies(false);
             }
         };
 
         loadDependencies();
-    }, []);
+    }, [isTenantAdmin, t]);
 
     const selectedDrawdown = drawdowns.find((item) => String(item.id) === formData.bankLoanId);
     const selectedDrawdownProfile = bankProfiles.find((item) => item.id === selectedDrawdown?.bankProfileId);
@@ -95,7 +100,7 @@ export default function LoanWizard() {
             return true;
         } catch (error) {
             console.error("Calculation failed", error);
-            setErrorMessage("Unable to calculate the borrower schedule.");
+            setErrorMessage(t("loanWizard.errors.calculate", "Unable to calculate the borrower schedule."));
             return false;
         }
     };
@@ -120,7 +125,7 @@ export default function LoanWizard() {
 
             await api.post("/loans", {
                 borrowerId: Number(formData.borrowerId),
-                bankLoanId: formData.bankLoanId ? Number(formData.bankLoanId) : undefined,
+                bankLoanId: isTenantAdmin && formData.bankLoanId ? Number(formData.bankLoanId) : undefined,
                 principal: Number(formData.principal),
                 interestRate: Number(formData.interestRate),
                 repaymentType: formData.repaymentType,
@@ -130,10 +135,10 @@ export default function LoanWizard() {
                 startDate: formData.startDate
             });
 
-            window.location.href = "/dashboard/loans";
+            window.location.href = "/loans";
         } catch (error: any) {
             console.error("Failed to create loan", error);
-            setErrorMessage(error?.response?.data?.error || "Failed to create the loan agreement.");
+            setErrorMessage(error?.response?.data?.error || t("loanWizard.errors.create", "Failed to create the loan agreement."));
         } finally {
             setSubmitting(false);
         }
@@ -141,7 +146,7 @@ export default function LoanWizard() {
 
     return (
         <div className="max-w-4xl mx-auto space-y-6">
-            <h2 className="text-3xl font-bold">New Loan Agreement</h2>
+            <h2 className="text-3xl font-bold">{t("loanWizard.title", "New Loan Agreement")}</h2>
 
             <div className="flex gap-2">
                 {[1, 2, 3].map((i) => (
@@ -159,23 +164,23 @@ export default function LoanWizard() {
             <Card>
                 <CardHeader>
                     <CardTitle>
-                        {step === 1 && "Step 1: Select Borrower & Drawdown"}
-                        {step === 2 && "Step 2: Loan Terms"}
-                        {step === 3 && "Step 3: Review & Confirm"}
+                        {step === 1 && t("loanWizard.steps.select", "Step 1: Select Borrower & Drawdown")}
+                        {step === 2 && t("loanWizard.steps.terms", "Step 2: Loan Terms")}
+                        {step === 3 && t("loanWizard.steps.review", "Step 3: Review & Confirm")}
                     </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     {step === 1 && (
                         <>
                             <div className="grid gap-2">
-                                <label>Borrower</label>
+                                <label>{t("loanWizard.borrower", "Borrower")}</label>
                                 <select
                                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                                     value={formData.borrowerId}
                                     onChange={(e) => setFormData({ ...formData, borrowerId: e.target.value })}
                                     disabled={loadingDependencies}
                                 >
-                                    <option value="">Select Borrower...</option>
+                                    <option value="">{t("loanWizard.selectBorrower", "Select Borrower...")}</option>
                                     {borrowers.map((b) => (
                                         <option key={b.id} value={b.id}>
                                             {b.name} {b.idCardNumber ? `(${b.idCardNumber})` : ""}
@@ -184,17 +189,17 @@ export default function LoanWizard() {
                                 </select>
                             </div>
                             <div className="grid gap-2">
-                                <label>Funding Drawdown (Optional)</label>
+                                <label>{t("loanWizard.drawdown", "Funding Drawdown (Optional)")}</label>
                                 <select
                                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                                     value={formData.bankLoanId}
                                     onChange={(e) => setFormData({ ...formData, bankLoanId: e.target.value })}
                                     disabled={loadingDependencies}
                                 >
-                                    <option value="">None (Unmatched / Own Capital)</option>
+                                    <option value="">{t("loanWizard.noneDrawdown", "None (Unmatched / Own Capital)")}</option>
                                     {drawdowns.map((item) => (
                                         <option key={item.id} value={item.id}>
-                                            #{item.id} {item.bankProfileId ? bankProfileNameById.get(item.bankProfileId) ?? "" : ""} ฿{Number(item.outstandingPrincipal ?? item.amount).toLocaleString()}
+                                            #{item.id} {item.bankProfileId ? bankProfileNameById.get(item.bankProfileId) ?? "" : ""} ฿{Number(item.outstandingPrincipal ?? item.amount).toLocaleString(i18n.language)}
                                         </option>
                                     ))}
                                 </select>
@@ -202,15 +207,15 @@ export default function LoanWizard() {
 
                             {selectedDrawdown && (
                                 <div className="rounded-lg border bg-muted/30 p-4 text-sm">
-                                    <div className="font-medium">Selected drawdown</div>
+                                    <div className="font-medium">{t("loanWizard.selectedDrawdown", "Selected drawdown")}</div>
                                     <div className="mt-1 text-muted-foreground">
-                                        Source: {selectedDrawdownProfile?.name ?? "Unknown source"}
+                                        {t("loanWizard.source", "Source")}: {selectedDrawdownProfile?.name ?? t("loanWizard.unknownSource", "Unknown source")}
                                     </div>
                                     <div className="text-muted-foreground">
-                                        Outstanding principal: ฿{Number(selectedDrawdown.outstandingPrincipal ?? 0).toLocaleString()}
+                                        {t("loanWizard.outstandingPrincipal", "Outstanding principal")}: ฿{Number(selectedDrawdown.outstandingPrincipal ?? 0).toLocaleString(i18n.language)}
                                     </div>
                                     <div className="text-muted-foreground">
-                                        Next due: {selectedDrawdown.nextDueDate || "Not scheduled"}
+                                        {t("loanWizard.nextDue", "Next due")}: {selectedDrawdown.nextDueDate || t("loanWizard.notScheduled", "Not scheduled")}
                                     </div>
                                 </div>
                             )}
@@ -220,32 +225,32 @@ export default function LoanWizard() {
                     {step === 2 && (
                         <div className="grid gap-4 md:grid-cols-2">
                             <div className="grid gap-2">
-                                <label>Principal Amount (฿)</label>
+                                <label>{t("loanWizard.principalAmount", "Principal Amount (฿)")}</label>
                                 <Input type="number" value={formData.principal} onChange={(e) => setFormData({ ...formData, principal: e.target.value })} />
                             </div>
                             <div className="grid gap-2">
-                                <label>Interest Rate (% per year)</label>
+                                <label>{t("loanWizard.interestRate", "Interest Rate (% per year)")}</label>
                                 <Input type="number" value={formData.interestRate} onChange={(e) => setFormData({ ...formData, interestRate: e.target.value })} />
                             </div>
                             <div className="grid gap-2">
-                                <label>Term (Months)</label>
+                                <label>{t("loanWizard.termMonths", "Term (Months)")}</label>
                                 <Input type="number" value={formData.termMonths} onChange={(e) => setFormData({ ...formData, termMonths: e.target.value })} />
                             </div>
                             <div className="grid gap-2">
-                                <label>Repayment Type</label>
+                                <label>{t("loanWizard.repaymentType", "Repayment Type")}</label>
                                 <select
                                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                                     value={formData.repaymentType}
                                     onChange={(e) => setFormData({ ...formData, repaymentType: e.target.value })}
                                 >
-                                    <option value="monthly">Monthly Installment</option>
-                                    <option value="daily">Daily Installment</option>
-                                    <option value="weekly">Weekly Installment</option>
-                                    <option value="floating">Floating (No fixed schedule)</option>
+                                    <option value="monthly">{t("loanWizard.repaymentOptions.monthly", "Monthly Installment")}</option>
+                                    <option value="daily">{t("loanWizard.repaymentOptions.daily", "Daily Installment")}</option>
+                                    <option value="weekly">{t("loanWizard.repaymentOptions.weekly", "Weekly Installment")}</option>
+                                    <option value="floating">{t("loanWizard.repaymentOptions.floating", "Floating (No fixed schedule)")}</option>
                                 </select>
                             </div>
                             <div className="grid gap-2">
-                                <label>Start Date</label>
+                                <label>{t("loanWizard.startDate", "Start Date")}</label>
                                 <Input type="date" value={formData.startDate} onChange={(e) => setFormData({ ...formData, startDate: e.target.value })} />
                             </div>
                         </div>
@@ -254,18 +259,18 @@ export default function LoanWizard() {
                     {step === 3 && (
                         <div className="space-y-4">
                             <div className="rounded-md border p-4 text-sm">
-                                <div className="font-medium">Funding setup</div>
+                                <div className="font-medium">{t("loanWizard.fundingSetup", "Funding setup")}</div>
                                 <div className="mt-1 text-muted-foreground">
                                     {formData.bankLoanId
-                                        ? `This loan will be created against drawdown #${formData.bankLoanId}.`
-                                        : "This loan will be created without a matched drawdown and can be allocated later."}
+                                        ? t("loanWizard.review.withDrawdown", { defaultValue: "This loan will be created against drawdown #{{id}}.", id: formData.bankLoanId })
+                                        : t("loanWizard.review.withoutDrawdown", "This loan will be created without a matched drawdown and can be allocated later.")}
                                 </div>
                             </div>
                             <div className="bg-muted p-4 rounded-md">
-                                <h3 className="font-semibold mb-2">Installment Schedule Preview</h3>
+                                <h3 className="font-semibold mb-2">{t("loanWizard.schedulePreview", "Installment Schedule Preview")}</h3>
                                 {schedule.length === 0 ? (
                                     <div className="text-sm text-muted-foreground">
-                                        Floating repayment type has no fixed borrower schedule.
+                                        {t("loanWizard.noFixedSchedule", "Floating repayment type has no fixed borrower schedule.")}
                                     </div>
                                 ) : (
                                     <div className="max-h-60 overflow-y-auto">
@@ -273,11 +278,11 @@ export default function LoanWizard() {
                                             <thead>
                                                 <tr className="text-left">
                                                     <th className="p-2">#</th>
-                                                    <th className="p-2">Due Date</th>
-                                                    <th className="p-2">Amount</th>
-                                                    <th className="p-2">Principal</th>
-                                                    <th className="p-2">Interest</th>
-                                                    <th className="p-2">Balance</th>
+                                                    <th className="p-2">{t("loanWizard.columns.dueDate", "Due Date")}</th>
+                                                    <th className="p-2">{t("loanWizard.columns.amount", "Amount")}</th>
+                                                    <th className="p-2">{t("loanWizard.columns.principal", "Principal")}</th>
+                                                    <th className="p-2">{t("loanWizard.columns.interest", "Interest")}</th>
+                                                    <th className="p-2">{t("loanWizard.columns.balance", "Balance")}</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -285,10 +290,10 @@ export default function LoanWizard() {
                                                     <tr key={row.installmentNo} className="border-t">
                                                         <td className="p-2">{row.installmentNo}</td>
                                                         <td className="p-2">{row.dueDate}</td>
-                                                        <td className="p-2">฿{Number(row.amount).toLocaleString()}</td>
-                                                        <td className="p-2 text-muted-foreground">{Number(row.principalComponent).toLocaleString()}</td>
-                                                        <td className="p-2 text-destructive">{Number(row.interestComponent).toLocaleString()}</td>
-                                                        <td className="p-2">{Number(row.remainingPrincipal).toLocaleString()}</td>
+                                                        <td className="p-2">฿{Number(row.amount).toLocaleString(i18n.language)}</td>
+                                                        <td className="p-2 text-muted-foreground">{Number(row.principalComponent).toLocaleString(i18n.language)}</td>
+                                                        <td className="p-2 text-destructive">{Number(row.interestComponent).toLocaleString(i18n.language)}</td>
+                                                        <td className="p-2">{Number(row.remainingPrincipal).toLocaleString(i18n.language)}</td>
                                                     </tr>
                                                 ))}
                                             </tbody>
@@ -301,7 +306,7 @@ export default function LoanWizard() {
 
                     <div className="flex justify-between pt-4">
                         <Button variant="outline" onClick={() => setStep(step - 1)} disabled={step === 1 || submitting}>
-                            <ChevronLeft className="mr-2 h-4 w-4" /> Back
+                            <ChevronLeft className="mr-2 h-4 w-4" /> {t("common.back", "Back")}
                         </Button>
 
                         {step < 3 ? (
@@ -309,11 +314,11 @@ export default function LoanWizard() {
                                 onClick={handleNext}
                                 disabled={loadingDependencies || !formData.borrowerId || (step === 2 && !formData.principal)}
                             >
-                                Next <ChevronRight className="ml-2 h-4 w-4" />
+                                {t("common.next", "Next")} <ChevronRight className="ml-2 h-4 w-4" />
                             </Button>
                         ) : (
                             <Button onClick={handleSubmit} className="bg-green-600 hover:bg-green-700" disabled={submitting}>
-                                <CheckCircle className="mr-2 h-4 w-4" /> {submitting ? "Creating..." : "Create Loan Agreement"}
+                                <CheckCircle className="mr-2 h-4 w-4" /> {submitting ? t("loanWizard.creating", "Creating...") : t("loanWizard.submit", "Create Loan Agreement")}
                             </Button>
                         )}
                     </div>

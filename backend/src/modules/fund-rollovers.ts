@@ -3,6 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db";
 import { fundLedgerEntries, fundRolloverEntries } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
+import { isTenantAdminUser } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
 import { getBankProfileSettlementSummary } from "../lib/fund-settlement";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
@@ -11,8 +12,11 @@ const outgoingEntryTypes = new Set(["surplus_transfer", "refinance_out", "capita
 
 export const fundRolloversRoute = new Elysia({ prefix: "/fund-rollovers" })
     .use(authPlugin)
-    .get("/", async ({ user, query }) => {
-        if (!user) return [];
+    .get("/", async ({ user, query, set }) => {
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
+        }
 
         return await withTenantCache({
             tenantId: user.tenantId,
@@ -40,7 +44,10 @@ export const fundRolloversRoute = new Elysia({ prefix: "/fund-rollovers" })
         })
     })
     .post("/", async ({ body, user, set }) => {
-        if (!user) throw new Error("Unauthorized");
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
+        }
 
         if (!body.fromBankProfileId && !body.toBankProfileId) {
             set.status = 400;

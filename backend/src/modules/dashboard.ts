@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "../db";
 import { bankLoanRepayments, bankLoanSchedules, bankLoans, bankTransactions, borrowers, botUploads, loanFundingAllocations, loanSchedules, loans, reconciliationEntries, transactions } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
+import { isTenantAdminUser } from "../lib/access";
 import { getTenantProfitabilitySummary } from "../lib/fund-settlement";
 import { computeOverdueSnapshot } from "../lib/overdue";
 import { withTenantCache } from "../lib/cache";
@@ -14,9 +15,9 @@ function todayString() {
 export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
     .use(authPlugin)
     .get("/summary", async ({ user, set }) => {
-        if (!user) {
-            set.status = 401;
-            return { error: "Unauthorized" };
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
         }
 
         return await withTenantCache({
@@ -109,9 +110,9 @@ export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
         });
     })
     .get("/borrower-due-queue", async ({ user, set }) => {
-        if (!user) {
-            set.status = 401;
-            return { error: "Unauthorized" };
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
         }
 
         return await withTenantCache({
@@ -164,9 +165,9 @@ export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
         });
     })
     .get("/fund-due-queue", async ({ user, set }) => {
-        if (!user) {
-            set.status = 401;
-            return { error: "Unauthorized" };
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
         }
 
         return await withTenantCache({
@@ -218,9 +219,9 @@ export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
         });
     })
     .get("/funding-alerts", async ({ user, set }) => {
-        if (!user) {
-            set.status = 401;
-            return { error: "Unauthorized" };
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
         }
 
         return await withTenantCache({
@@ -287,9 +288,9 @@ export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
         });
     })
     .get("/reconciliation-status", async ({ user, set }) => {
-        if (!user) {
-            set.status = 401;
-            return { error: "Unauthorized" };
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
         }
 
         return await withTenantCache({
@@ -349,9 +350,9 @@ export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
         });
     })
     .get("/profitability-summary", async ({ user, set }) => {
-        if (!user) {
-            set.status = 401;
-            return { error: "Unauthorized" };
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
         }
 
         return await withTenantCache({

@@ -44,7 +44,6 @@ services:
     command: tunnel --no-autoupdate run
     environment:
       - TUNNEL_TOKEN=${TUNNEL_TOKEN}
-    network_mode: "host"
     depends_on:
       - postgres
       - minio

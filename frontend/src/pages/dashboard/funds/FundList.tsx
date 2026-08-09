@@ -9,6 +9,7 @@ import { useNavigate } from "react-router-dom";
 
 interface BankProfile {
     id: number;
+    publicId?: string;
     name: string;
     type: string;
     creditLimit: string | null;
@@ -20,7 +21,7 @@ interface BankProfile {
 }
 
 export default function FundList() {
-    const { t } = useTranslation();
+    const { t, i18n } = useTranslation();
     const navigate = useNavigate();
     const [funds, setFunds] = useState<BankProfile[]>([]);
     const [loading, setLoading] = useState(true);
@@ -63,7 +64,8 @@ export default function FundList() {
             const rawFunds: BankProfile[] = res.data ?? [];
             const enrichedFunds = await Promise.all(
                 rawFunds.map(async (fund) => {
-                    const profitabilityRes = await api.get(`/bank-profiles/${fund.id}/profitability`);
+                    const profitabilityKey = fund.publicId ?? fund.id;
+                    const profitabilityRes = await api.get(`/bank-profiles/${profitabilityKey}/profitability`);
                     return {
                         ...fund,
                         deployedPrincipal: Number(profitabilityRes.data?.deployedPrincipal ?? 0),
@@ -78,7 +80,7 @@ export default function FundList() {
             setErrorMessage("");
         } catch (error) {
             console.error("Failed to fetch funds", error);
-            setErrorMessage("Unable to load funding sources right now.");
+            setErrorMessage(t("funds.errors.load", "Unable to load funding sources right now."));
         } finally {
             setLoading(false);
         }
@@ -95,7 +97,7 @@ export default function FundList() {
         event?.preventDefault();
 
         if (!newName.trim()) {
-            setErrorMessage("Please enter a fund name before saving.");
+            setErrorMessage(t("funds.errors.missingName", "Please enter a fund name before saving."));
             return;
         }
 
@@ -111,13 +113,13 @@ export default function FundList() {
             await fetchFunds();
         } catch (error) {
             console.error("Failed to create fund", error);
-            setErrorMessage("Failed to create the funding source. Please try again.");
+            setErrorMessage(t("funds.errors.create", "Failed to create the funding source. Please try again."));
         } finally {
             setSubmitting(false);
         }
     };
 
-    const handleDelete = async (id: number) => {
+    const handleDelete = async (id: string | number) => {
         if (!confirm(t("common.delete") + "?")) return;
         try {
             await api.delete(`/bank-profiles/${id}`);
@@ -154,25 +156,25 @@ export default function FundList() {
             <Card>
                 <CardContent className="grid gap-3 pt-6 md:grid-cols-2 xl:grid-cols-3">
                     <div className="grid gap-1.5">
-                        <label className="text-sm font-medium">Search</label>
-                        <Input placeholder="Fund name" value={search} onChange={(event) => setSearch(event.target.value)} />
+                        <label className="text-sm font-medium">{t("common.search", "Search")}</label>
+                        <Input placeholder={t("funds.searchPlaceholder", "Fund name")} value={search} onChange={(event) => setSearch(event.target.value)} />
                     </div>
                     <div className="grid gap-1.5">
                         <label className="text-sm font-medium">{t("funds.type")}</label>
                         <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}>
-                            <option value="all">All types</option>
-                            <option value="bank">Bank</option>
-                            <option value="personal">Personal</option>
-                            <option value="investor">Investor</option>
+                            <option value="all">{t("funds.filters.allTypes", "All types")}</option>
+                            <option value="bank">{t("funds.filters.bank", "Bank")}</option>
+                            <option value="personal">{t("funds.filters.personal", "Personal")}</option>
+                            <option value="investor">{t("funds.filters.investor", "Investor")}</option>
                         </select>
                     </div>
                     <div className="grid gap-1.5">
-                        <label className="text-sm font-medium">Sort</label>
+                        <label className="text-sm font-medium">{t("common.sort", "Sort")}</label>
                         <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={sortBy} onChange={(event) => setSortBy(event.target.value)}>
-                            <option value="name">Name</option>
-                            <option value="net_cash_desc">Highest net cash</option>
-                            <option value="spread_desc">Highest realized spread</option>
-                            <option value="deployed_desc">Highest deployed</option>
+                            <option value="name">{t("common.name", "Name")}</option>
+                            <option value="net_cash_desc">{t("funds.sort.netCash", "Highest net cash")}</option>
+                            <option value="spread_desc">{t("funds.sort.realizedSpread", "Highest realized spread")}</option>
+                            <option value="deployed_desc">{t("funds.sort.deployed", "Highest deployed")}</option>
                         </select>
                     </div>
                 </CardContent>
@@ -188,7 +190,7 @@ export default function FundList() {
                             <div className="grid w-full items-center gap-1.5">
                                 <label className="text-sm font-medium">{t("funds.source_name")}</label>
                                 <Input
-                                    placeholder="e.g. SCB Speedy Cash"
+                                    placeholder={t("funds.exampleName", "e.g. SCB Speedy Cash")}
                                     value={newName}
                                     onChange={e => setNewName(e.target.value)}
                                 />
@@ -202,7 +204,7 @@ export default function FundList() {
                                 >
                                     <option value="bank">{t("funds.bank_credit")}</option>
                                     <option value="personal">{t("funds.capital")}</option>
-                                    <option value="investor">External Investor</option>
+                                    <option value="investor">{t("funds.filters.externalInvestor", "External Investor")}</option>
                                 </select>
                             </div>
                             <div className="grid w-full items-center gap-1.5">
@@ -210,10 +212,10 @@ export default function FundList() {
                                 <Input type="number" placeholder="0.00" value={newLimit} onChange={e => setNewLimit(e.target.value)} />
                             </div>
                             <Button type="submit" disabled={submitting}>
-                                {submitting ? "Saving..." : t("common.save")}
+                                {submitting ? t("common.saving", "Saving...") : t("common.save")}
                             </Button>
                             <Button type="button" variant="outline" onClick={resetCreateForm} disabled={submitting}>
-                                Cancel
+                                {t("common.cancel", "Cancel")}
                             </Button>
                         </form>
                     </CardContent>
@@ -249,7 +251,7 @@ export default function FundList() {
                         <Card
                             key={fund.id}
                             className="cursor-pointer transition-all hover:shadow-md hover:border-primary/50 group"
-                            onClick={() => navigate(`/dashboard/funds/${fund.id}`)}
+                            onClick={() => navigate(`/funds/${fund.publicId ?? fund.id}`)}
                         >
                             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                                 <CardTitle className="text-sm font-medium">
@@ -266,27 +268,27 @@ export default function FundList() {
                             <CardContent>
                                 <div className="text-2xl font-bold">{fund.name}</div>
                                 <p className="text-xs text-muted-foreground">
-                                    {t("funds.limit")}: ฿{Number(fund.creditLimit).toLocaleString()}
+                                    {t("funds.limit")}: ฿{Number(fund.creditLimit).toLocaleString(i18n.language)}
                                 </p>
                                 <div className="mt-4 grid grid-cols-2 gap-3 text-xs">
                                     <div>
-                                        <div className="text-muted-foreground">Deployed</div>
-                                        <div className="font-medium">฿{Number(fund.deployedPrincipal ?? 0).toLocaleString()}</div>
+                                        <div className="text-muted-foreground">{t("funds.metrics.deployed", "Deployed")}</div>
+                                        <div className="font-medium">฿{Number(fund.deployedPrincipal ?? 0).toLocaleString(i18n.language)}</div>
                                     </div>
                                     <div>
-                                        <div className="text-muted-foreground">Carry-forward</div>
-                                        <div className="font-medium">฿{Number(fund.carryForwardAvailable ?? 0).toLocaleString()}</div>
+                                        <div className="text-muted-foreground">{t("funds.metrics.carryForward", "Carry-forward")}</div>
+                                        <div className="font-medium">฿{Number(fund.carryForwardAvailable ?? 0).toLocaleString(i18n.language)}</div>
                                     </div>
                                     <div>
-                                        <div className="text-muted-foreground">Realized spread</div>
+                                        <div className="text-muted-foreground">{t("funds.metrics.realizedSpread", "Realized spread")}</div>
                                         <div className={`font-medium ${Number(fund.realizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                                            ฿{Number(fund.realizedSpread ?? 0).toLocaleString()}
+                                            ฿{Number(fund.realizedSpread ?? 0).toLocaleString(i18n.language)}
                                         </div>
                                     </div>
                                     <div>
-                                        <div className="text-muted-foreground">Net cash</div>
+                                        <div className="text-muted-foreground">{t("funds.metrics.netCash", "Net cash")}</div>
                                         <div className={`font-medium ${Number(fund.netCashPosition ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                                            ฿{Number(fund.netCashPosition ?? 0).toLocaleString()}
+                                            ฿{Number(fund.netCashPosition ?? 0).toLocaleString(i18n.language)}
                                         </div>
                                     </div>
                                 </div>
@@ -297,7 +299,7 @@ export default function FundList() {
                                         size="sm"
                                         onClick={(e) => {
                                             e.stopPropagation();
-                                            handleDelete(fund.id);
+                                            handleDelete(fund.publicId ?? fund.id);
                                         }}
                                         className="text-destructive hover:text-destructive h-8 w-8 p-0"
                                     >

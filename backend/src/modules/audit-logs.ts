@@ -3,13 +3,14 @@ import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db";
 import { auditLogs } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
+import { isTenantAdminUser } from "../lib/access";
 
 export const auditLogsRoute = new Elysia({ prefix: "/audit-logs" })
     .use(authPlugin)
     .get("/", async ({ user, query, set }) => {
-        if (!user) {
-            set.status = 401;
-            return { error: "Unauthorized" };
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
         }
 
         const rows = await db.select().from(auditLogs).where(eq(auditLogs.tenantId, user.tenantId)).orderBy(desc(auditLogs.createdAt));
@@ -28,9 +29,9 @@ export const auditLogsRoute = new Elysia({ prefix: "/audit-logs" })
         })
     })
     .get("/:entityType/:entityId", async ({ params, user, set }) => {
-        if (!user) {
-            set.status = 401;
-            return { error: "Unauthorized" };
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
         }
 
         return await db.select().from(auditLogs).where(

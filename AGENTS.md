@@ -39,6 +39,13 @@ This project is optimized for **Bun**. Agents should prefer using Bun for all de
 - `docker-compose.app.yml` joins the existing external network, so infra should be started first.
 - `dragonfly` is exposed on the shared network as both `cache` and `dragonfly`.
 
+## Language Consistency
+
+- Frontend text must follow the active system/app language setting.
+- Do not mix hardcoded Thai and English strings within the same user flow or screen when a translation key should be used.
+- Prefer updating `frontend/src/locales/en.json` and `frontend/src/locales/th.json` together when adding or changing user-facing copy.
+- When formatting dates, numbers, or currency in the frontend, prefer using the active i18n language instead of the browser default when practical.
+
 ## Commit Discipline
 
 - Every commit must update [`CHANGELOG.md`](./CHANGELOG.md).

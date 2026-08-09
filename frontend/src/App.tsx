@@ -43,8 +43,8 @@ function App() {
           <Route path="/login" element={<Login />} />
 
           <Route element={<ProtectedRoute />}>
-            <Route path="/dashboard" element={<DashboardLayout />}>
-              <Route index element={<Dashboard />} />
+            <Route path="/" element={<DashboardLayout />}>
+              <Route path="dashboard" element={<Dashboard />} />
               <Route path="funds" element={<FundList />} />
               <Route path="funds/:id" element={<FundDetail />} />
               <Route path="borrowers" element={<BorrowerList />} />

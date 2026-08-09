@@ -3,14 +3,19 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { bankLoans, bankProfiles, loanFundingAllocations } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
+import { isTenantAdminUser } from "../lib/access";
 import { deriveProfitabilityMetrics, getBankProfileSettlementSummary } from "../lib/fund-settlement";
 import { createAuditLog } from "../lib/audit-log";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
+import { findBankProfileByPublicId } from "../lib/public-id";
 
 export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
     .use(authPlugin)
-    .get("/", async ({ user }) => {
-        if (!user) return [];
+    .get("/", async ({ user, set }) => {
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
+        }
         return await withTenantCache({
             tenantId: user.tenantId,
             namespace: "bank-profiles",
@@ -20,37 +25,37 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
         });
     })
     .get("/:id", async ({ params: { id }, user, set }) => {
-        if (!user) return null;
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
+        }
+        const profile = await findBankProfileByPublicId(user.tenantId, id);
+        if (!profile) {
+            set.status = 404;
+            return { error: "Bank profile not found" };
+        }
         const result = await withTenantCache({
             tenantId: user.tenantId,
             namespace: "bank-profiles",
             key: `detail:${id}`,
             ttlSeconds: 60,
-            loader: async () => await db.select().from(bankProfiles).where(
-            and(
-                eq(bankProfiles.id, parseInt(id)),
-                eq(bankProfiles.tenantId, user.tenantId)
-            )
-        ),
+            loader: async () => [profile],
         });
-        if (!result[0]) {
-            set.status = 404;
-            return { error: "Bank profile not found" };
-        }
         return result[0];
     })
     .get("/:id/settlement-summary", async ({ params: { id }, user, set }) => {
-        if (!user) return null;
-
-        const bankProfileId = parseInt(id);
-        const profile = await db.query.bankProfiles.findFirst({
-            where: and(eq(bankProfiles.id, bankProfileId), eq(bankProfiles.tenantId, user.tenantId)),
-        });
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
+        }
+        const profile = await findBankProfileByPublicId(user.tenantId, id);
 
         if (!profile) {
             set.status = 404;
             return { error: "Bank profile not found" };
         }
+
+        const bankProfileId = profile.id;
 
         const cached = await withTenantCache({
             tenantId: user.tenantId,
@@ -71,17 +76,18 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
         return cached;
     })
     .get("/:id/profitability", async ({ params: { id }, user, set }) => {
-        if (!user) return null;
-
-        const bankProfileId = parseInt(id);
-        const profile = await db.query.bankProfiles.findFirst({
-            where: and(eq(bankProfiles.id, bankProfileId), eq(bankProfiles.tenantId, user.tenantId)),
-        });
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
+        }
+        const profile = await findBankProfileByPublicId(user.tenantId, id);
 
         if (!profile) {
             set.status = 404;
             return { error: "Bank profile not found" };
         }
+
+        const bankProfileId = profile.id;
 
         return await withTenantCache({
             tenantId: user.tenantId,
@@ -107,8 +113,11 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
             },
         });
     })
-    .post("/", async ({ body, user }) => {
-        if (!user) throw new Error("Unauthorized");
+    .post("/", async ({ body, user, set }) => {
+        if (!user || !["owner", "manager"].includes(user.role)) {
+            set.status = 403;
+            return { error: "Forbidden" };
+        }
         return await db.transaction(async (tx) => {
             const result = await tx.insert(bankProfiles).values({
                 tenantId: user.tenantId,
@@ -148,19 +157,22 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
         })
     })
     .put("/:id", async ({ params: { id }, body, user, set }) => {
-        if (!user) throw new Error("Unauthorized");
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
+        }
         return await db.transaction(async (tx) => {
-            const existing = await tx.select().from(bankProfiles).where(
-                and(
-                    eq(bankProfiles.id, parseInt(id)),
-                    eq(bankProfiles.tenantId, user.tenantId)
-                )
-            ).then((rows) => rows[0]);
-
-            if (!existing) {
+            const target = await findBankProfileByPublicId(user.tenantId, id);
+            if (!target) {
                 set.status = 404;
                 return { error: "Bank profile not found" };
             }
+            const existing = await tx.select().from(bankProfiles).where(
+                and(
+                    eq(bankProfiles.id, target.id),
+                    eq(bankProfiles.tenantId, user.tenantId)
+                )
+            ).then((rows) => rows[0]);
 
             const result = await tx.update(bankProfiles).set({
                 name: body.name,
@@ -175,7 +187,7 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
                 updatedAt: new Date(),
             }).where(
                 and(
-                    eq(bankProfiles.id, parseInt(id)),
+                    eq(bankProfiles.id, target.id),
                     eq(bankProfiles.tenantId, user.tenantId)
                 )
             ).returning();
@@ -209,11 +221,18 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
             status: t.Optional(t.String()),
         })
     })
-    .delete("/:id", async ({ params: { id }, user }) => {
-        if (!user) throw new Error("Unauthorized");
+    .delete("/:id", async ({ params: { id }, user, set }) => {
+        if (!user || !["owner", "manager"].includes(user.role)) {
+            set.status = 403;
+            return { error: "Forbidden" };
+        }
+        const target = await findBankProfileByPublicId(user.tenantId, id);
+        if (!target) {
+            return null;
+        }
         const result = await db.delete(bankProfiles).where(
             and(
-                eq(bankProfiles.id, parseInt(id)),
+                eq(bankProfiles.id, target.id),
                 eq(bankProfiles.tenantId, user.tenantId)
             )
         ).returning();

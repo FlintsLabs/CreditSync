@@ -131,7 +131,7 @@ interface FundRolloverEntry {
 }
 
 export default function FundDetail() {
-    const { t } = useTranslation();
+    const { t, i18n } = useTranslation();
     const navigate = useNavigate();
     const { id } = useParams();
     const [searchParams, setSearchParams] = useSearchParams();
@@ -197,7 +197,7 @@ export default function FundDetail() {
     useEffect(() => {
         const run = async () => {
             if (!id) {
-                setErrorMessage("Funding source not found.");
+                setErrorMessage(t("fundDetail.errors.notFound", "Funding source not found."));
                 setLoading(false);
                 return;
             }
@@ -207,7 +207,7 @@ export default function FundDetail() {
                 setErrorMessage("");
             } catch (error) {
                 console.error("Failed to load fund details", error);
-                setErrorMessage("Unable to load the funding source right now.");
+                setErrorMessage(t("fundDetail.errors.loadFund", "Unable to load the funding source right now."));
             } finally {
                 setLoading(false);
             }
@@ -279,7 +279,7 @@ export default function FundDetail() {
             }
         } catch (error) {
             console.error("Failed to load bank loan schedule", error);
-            setErrorMessage("Unable to load the drawdown schedule right now.");
+            setErrorMessage(t("fundDetail.errors.loadDrawdownSchedule", "Unable to load the drawdown schedule right now."));
         } finally {
             setScheduleLoading(false);
         }
@@ -323,7 +323,7 @@ export default function FundDetail() {
         event.preventDefault();
         if (!fund) return;
         if (!drawdownAmount || !drawdownInterestRate || !drawdownStartDate) {
-            setErrorMessage("Please complete amount, interest rate, and start date before saving the drawdown.");
+            setErrorMessage(t("fundDetail.errors.completeDrawdown", "Please complete amount, interest rate, and start date before saving the drawdown."));
             return;
         }
 
@@ -346,7 +346,7 @@ export default function FundDetail() {
             resetDrawdownForm();
         } catch (error) {
             console.error("Failed to create drawdown", error);
-            setErrorMessage("Unable to create the drawdown right now.");
+            setErrorMessage(t("fundDetail.errors.createDrawdown", "Unable to create the drawdown right now."));
         } finally {
             setCreateSubmitting(false);
         }
@@ -373,12 +373,12 @@ export default function FundDetail() {
         event.preventDefault();
 
         if (!fund || !selectedBankLoanId || !selectedScheduleId) {
-            setErrorMessage("Please select a schedule row before recording a repayment.");
+            setErrorMessage(t("fundDetail.errors.selectScheduleFirst", "Please select a schedule row before recording a repayment."));
             return;
         }
 
         if (!repaymentAmount || Number(repaymentAmount) <= 0) {
-            setErrorMessage("Please enter a repayment amount greater than zero.");
+            setErrorMessage(t("fundDetail.errors.enterRepaymentAmount", "Please enter a repayment amount greater than zero."));
             return;
         }
 
@@ -409,7 +409,7 @@ export default function FundDetail() {
             }, { replace: true });
         } catch (error) {
             console.error("Failed to record repayment", error);
-            setErrorMessage("Unable to record the repayment right now.");
+            setErrorMessage(t("fundDetail.errors.recordRepayment", "Unable to record the repayment right now."));
         } finally {
             setRepaymentSubmitting(false);
         }
@@ -419,7 +419,7 @@ export default function FundDetail() {
         event.preventDefault();
         if (!fund) return;
         if (!rolloverAmount || Number(rolloverAmount) <= 0) {
-            setErrorMessage("Please enter a rollover amount greater than zero.");
+            setErrorMessage(t("fundDetail.errors.enterRolloverAmount", "Please enter a rollover amount greater than zero."));
             return;
         }
 
@@ -443,7 +443,7 @@ export default function FundDetail() {
             setRolloverNote("");
         } catch (error: any) {
             console.error("Failed to create rollover", error);
-            setErrorMessage(error?.response?.data?.error || "Unable to save the rollover entry right now.");
+            setErrorMessage(error?.response?.data?.error || t("fundDetail.errors.saveRollover", "Unable to save the rollover entry right now."));
         } finally {
             setRolloverSubmitting(false);
         }
@@ -461,12 +461,12 @@ export default function FundDetail() {
     return (
         <div className="space-y-6">
             <div className="flex items-center gap-4">
-                <Button variant="ghost" size="icon" onClick={() => navigate("/dashboard/funds")}>
+                <Button variant="ghost" size="icon" onClick={() => navigate("/funds")}>
                     <ArrowLeft className="h-4 w-4" />
                 </Button>
                 <div>
                     <h2 className="text-2xl font-bold tracking-tight">
-                        {loading ? "Loading..." : fund?.name ?? "Funding Source"}
+                        {loading ? t("common.loading", "Loading...") : fund?.name ?? t("fundDetail.fundingSource", "Funding Source")}
                     </h2>
                     <p className="text-muted-foreground">
                         {fund?.type === "bank" ? t("fund_detail.revolving_credit") : t("funds.capital")}
@@ -485,7 +485,7 @@ export default function FundDetail() {
             ) : !fund ? (
                 <Card>
                     <CardContent className="py-10 text-center text-muted-foreground">
-                        This funding source does not exist anymore.
+                        {t("fundDetail.missing", "This funding source does not exist anymore.")}
                     </CardContent>
                 </Card>
             ) : (
@@ -493,17 +493,17 @@ export default function FundDetail() {
                     <div className="grid gap-4 md:grid-cols-3">
                         <Card>
                             <CardHeader className="pb-2">
-                                <CardTitle className="text-sm font-medium text-muted-foreground">Available Credit</CardTitle>
+                                <CardTitle className="text-sm font-medium text-muted-foreground">{t("fund_detail.available_credit", "Available Credit")}</CardTitle>
                             </CardHeader>
                             <CardContent>
                                 <div className="flex items-center gap-3">
                                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
                                         {fund.type === "bank" ? <Building2 className="h-5 w-5" /> : <Wallet className="h-5 w-5" />}
                                     </div>
-                                    <div className="text-3xl font-bold">฿{availableAmount.toLocaleString()}</div>
+                                    <div className="text-3xl font-bold">฿{availableAmount.toLocaleString(i18n.language)}</div>
                                 </div>
                                 <div className="mt-3 text-xs text-muted-foreground">
-                                    {t("funds.limit")}: ฿{fundLimit.toLocaleString()}
+                                    {t("funds.limit")}: ฿{fundLimit.toLocaleString(i18n.language)}
                                 </div>
                                 <div className="mt-3 h-2 w-full rounded-full bg-muted">
                                     <div className="h-2 rounded-full bg-primary" style={{ width: `${Math.min(utilizationRate, 100)}%` }} />
@@ -516,53 +516,53 @@ export default function FundDetail() {
 
                         <Card>
                             <CardHeader className="pb-2">
-                                <CardTitle className="text-sm font-medium text-muted-foreground">Settlement Position</CardTitle>
+                                <CardTitle className="text-sm font-medium text-muted-foreground">{t("fundDetail.settlementPosition", "Settlement Position")}</CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-2 text-sm">
                                 <div className="flex justify-between">
-                                    <span>Realized spread</span>
-                                    <span className="font-medium">฿{Number(settlementSummary?.realizedSpread ?? 0).toLocaleString()}</span>
+                                    <span>{t("funds.metrics.realizedSpread", "Realized spread")}</span>
+                                    <span className="font-medium">฿{Number(settlementSummary?.realizedSpread ?? 0).toLocaleString(i18n.language)}</span>
                                 </div>
                                 <div className="flex justify-between">
-                                    <span>Unrealized spread</span>
-                                    <span className="font-medium">฿{Number(settlementSummary?.unrealizedSpread ?? 0).toLocaleString()}</span>
+                                    <span>{t("loans.unrealizedSpread", "Unrealized spread")}</span>
+                                    <span className="font-medium">฿{Number(settlementSummary?.unrealizedSpread ?? 0).toLocaleString(i18n.language)}</span>
                                 </div>
                                 <div className="flex justify-between">
-                                    <span>Surplus balance</span>
-                                    <span className="font-medium text-emerald-600">฿{Number(settlementSummary?.surplusBalance ?? 0).toLocaleString()}</span>
+                                    <span>{t("fundDetail.surplusBalance", "Surplus balance")}</span>
+                                    <span className="font-medium text-emerald-600">฿{Number(settlementSummary?.surplusBalance ?? 0).toLocaleString(i18n.language)}</span>
                                 </div>
                                 <div className="flex justify-between">
-                                    <span>Deficit balance</span>
-                                    <span className="font-medium text-destructive">฿{Number(settlementSummary?.deficitBalance ?? 0).toLocaleString()}</span>
+                                    <span>{t("fundDetail.deficitBalance", "Deficit balance")}</span>
+                                    <span className="font-medium text-destructive">฿{Number(settlementSummary?.deficitBalance ?? 0).toLocaleString(i18n.language)}</span>
                                 </div>
                             </CardContent>
                         </Card>
 
                         <Card>
                             <CardHeader className="pb-2">
-                                <CardTitle className="text-sm font-medium text-muted-foreground">Source Profitability</CardTitle>
+                                <CardTitle className="text-sm font-medium text-muted-foreground">{t("fundDetail.sourceProfitability", "Source Profitability")}</CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-2 text-sm">
                                 <div className="flex justify-between">
-                                    <span>Revenue collected</span>
-                                    <span className="font-medium">฿{Number(sourceProfitability?.borrowerRevenueCollected ?? 0).toLocaleString()}</span>
+                                    <span>{t("dashboardPage.cards.borrowerRevenue", "Revenue collected")}</span>
+                                    <span className="font-medium">฿{Number(sourceProfitability?.borrowerRevenueCollected ?? 0).toLocaleString(i18n.language)}</span>
                                 </div>
                                 <div className="flex justify-between">
-                                    <span>Fund cost paid</span>
-                                    <span className="font-medium">฿{Number(sourceProfitability?.fundCostPaid ?? 0).toLocaleString()}</span>
+                                    <span>{t("dashboardPage.cards.fundCostPaid", "Fund cost paid")}</span>
+                                    <span className="font-medium">฿{Number(sourceProfitability?.fundCostPaid ?? 0).toLocaleString(i18n.language)}</span>
                                 </div>
                                 <div className="flex justify-between">
-                                    <span>Deployed principal</span>
-                                    <span className="font-medium">฿{Number(sourceProfitability?.deployedPrincipal ?? 0).toLocaleString()}</span>
+                                    <span>{t("funds.metrics.deployed", "Deployed principal")}</span>
+                                    <span className="font-medium">฿{Number(sourceProfitability?.deployedPrincipal ?? 0).toLocaleString(i18n.language)}</span>
                                 </div>
                                 <div className="flex justify-between">
-                                    <span>Net cash position</span>
+                                    <span>{t("funds.metrics.netCash", "Net cash position")}</span>
                                     <span className={`font-medium ${Number(sourceProfitability?.netCashPosition ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                                        ฿{Number(sourceProfitability?.netCashPosition ?? 0).toLocaleString()}
+                                        ฿{Number(sourceProfitability?.netCashPosition ?? 0).toLocaleString(i18n.language)}
                                     </span>
                                 </div>
                                 <div className="flex justify-between">
-                                    <span>Realized ROI</span>
+                                    <span>{t("fundDetail.realizedRoi", "Realized ROI")}</span>
                                     <span className="font-medium">{Number(sourceProfitability?.realizedRoiPercent ?? 0).toLocaleString()}%</span>
                                 </div>
                             </CardContent>
@@ -575,8 +575,8 @@ export default function FundDetail() {
                                 <div className="flex items-center justify-between gap-4">
                                     <CardTitle className="text-sm font-medium">{t("fund_detail.active_withdrawals")}</CardTitle>
                                     <div className="flex items-center gap-2">
-                                        <Link to="/dashboard/matching">
-                                            <Button type="button" size="sm" variant="outline">Open Matching</Button>
+                                        <Link to="/matching">
+                                            <Button type="button" size="sm" variant="outline">{t("dashboardPage.actions.openMatching", "Open Matching")}</Button>
                                         </Link>
                                         <Button
                                             type="button"
@@ -586,7 +586,7 @@ export default function FundDetail() {
                                                 setErrorMessage("");
                                             }}
                                         >
-                                            Add Drawdown
+                                            {t("fundDetail.addDrawdown", "Add Drawdown")}
                                         </Button>
                                     </div>
                                 </div>
@@ -595,65 +595,65 @@ export default function FundDetail() {
                                 {isAddingDrawdown && (
                                     <form className="mb-6 grid gap-4 rounded-lg border border-dashed p-4 md:grid-cols-2" onSubmit={handleCreateDrawdown}>
                                         <div className="grid gap-1.5">
-                                            <label className="text-sm font-medium">Amount</label>
+                                            <label className="text-sm font-medium">{t("transactionsForm.amount", "Amount")}</label>
                                             <Input type="number" value={drawdownAmount} onChange={(e) => setDrawdownAmount(e.target.value)} />
                                         </div>
                                         <div className="grid gap-1.5">
-                                            <label className="text-sm font-medium">Interest Rate (%)</label>
+                                            <label className="text-sm font-medium">{t("loanWizard.interestRate", "Interest Rate (%)")}</label>
                                             <Input type="number" value={drawdownInterestRate} onChange={(e) => setDrawdownInterestRate(e.target.value)} />
                                         </div>
                                         <div className="grid gap-1.5">
-                                            <label className="text-sm font-medium">Start Date</label>
+                                            <label className="text-sm font-medium">{t("loanWizard.startDate", "Start Date")}</label>
                                             <Input type="date" value={drawdownStartDate} onChange={(e) => setDrawdownStartDate(e.target.value)} />
                                         </div>
                                         <div className="grid gap-1.5">
-                                            <label className="text-sm font-medium">Term (Months)</label>
+                                            <label className="text-sm font-medium">{t("loanWizard.termMonths", "Term (Months)")}</label>
                                             <Input type="number" value={drawdownTermMonths} onChange={(e) => setDrawdownTermMonths(e.target.value)} />
                                         </div>
                                         <div className="grid gap-1.5">
-                                            <label className="text-sm font-medium">Repayment Cycle</label>
+                                            <label className="text-sm font-medium">{t("fundDetail.repaymentCycle", "Repayment Cycle")}</label>
                                             <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={drawdownRepaymentCycle} onChange={(e) => setDrawdownRepaymentCycle(e.target.value)}>
-                                                <option value="monthly">Monthly</option>
-                                                <option value="weekly">Weekly</option>
-                                                <option value="daily">Daily</option>
+                                                <option value="monthly">{t("loanWizard.repaymentOptions.monthly", "Monthly")}</option>
+                                                <option value="weekly">{t("loanWizard.repaymentOptions.weekly", "Weekly")}</option>
+                                                <option value="daily">{t("loanWizard.repaymentOptions.daily", "Daily")}</option>
                                             </select>
                                         </div>
                                         <div className="grid gap-1.5">
-                                            <label className="text-sm font-medium">Fixed Installment Override</label>
-                                            <Input type="number" placeholder="Optional" value={drawdownInstallmentAmount} onChange={(e) => setDrawdownInstallmentAmount(e.target.value)} />
+                                            <label className="text-sm font-medium">{t("fundDetail.fixedInstallmentOverride", "Fixed Installment Override")}</label>
+                                            <Input type="number" placeholder={t("borrowerForm.optional", "Optional")} value={drawdownInstallmentAmount} onChange={(e) => setDrawdownInstallmentAmount(e.target.value)} />
                                         </div>
                                         <div className="flex items-end gap-2 md:col-span-2">
-                                            <Button type="submit" disabled={createSubmitting}>{createSubmitting ? "Saving..." : "Save Drawdown"}</Button>
-                                            <Button type="button" variant="outline" onClick={resetDrawdownForm} disabled={createSubmitting}>Cancel</Button>
+                                            <Button type="submit" disabled={createSubmitting}>{createSubmitting ? t("common.saving", "Saving...") : t("fundDetail.saveDrawdown", "Save Drawdown")}</Button>
+                                            <Button type="button" variant="outline" onClick={resetDrawdownForm} disabled={createSubmitting}>{t("common.cancel", "Cancel")}</Button>
                                         </div>
                                     </form>
                                 )}
 
                                 {bankLoans.length === 0 ? (
                                     <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
-                                        No bank loan withdrawals have been recorded for this funding source yet.
+                                        {t("fundDetail.noDrawdowns", "No bank loan withdrawals have been recorded for this funding source yet.")}
                                     </div>
                                 ) : (
                                     <div className="space-y-4">
                                         {bankLoans.map((loan) => (
                                             <button key={loan.id} type="button" className="flex w-full items-center justify-between border-b pb-2 text-left last:border-0 last:pb-0" onClick={() => loadSchedule(loan.id)}>
                                                 <div className="space-y-1">
-                                                    <div className="font-semibold">Withdrawal #{loan.id}</div>
+                                                    <div className="font-semibold">{t("fundDetail.withdrawalLabel", { defaultValue: "Withdrawal #{{id}}", id: loan.id })}</div>
                                                     <div className="text-xs text-muted-foreground">
-                                                        {loan.startDate || "No start date"} • {loan.repaymentCycle || "monthly"} • Term: {loan.termMonths ?? 0} Months
+                                                        {loan.startDate || t("fundDetail.noStartDate", "No start date")} • {loan.repaymentCycle || t("loanWizard.repaymentOptions.monthly", "monthly")} • {t("fundDetail.termLabel", "Term")}: {loan.termMonths ?? 0} {t("fundDetail.months", "Months")}
                                                     </div>
                                                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                                         <CalendarDays className="h-3.5 w-3.5" />
-                                                        Next due: {loan.nextDueDate || "Not scheduled"}
+                                                        {t("loanWizard.nextDue", "Next due")}: {loan.nextDueDate || t("fundDetail.notScheduled", "Not scheduled")}
                                                     </div>
                                                 </div>
                                                 <div className="text-right">
-                                                    <div className="font-bold">฿{Number(loan.amount).toLocaleString()}</div>
+                                                    <div className="font-bold">฿{Number(loan.amount).toLocaleString(i18n.language)}</div>
                                                     <div className="text-xs text-muted-foreground">
-                                                        Installment: ฿{Number(loan.installmentAmount ?? 0).toLocaleString()}
+                                                        {t("fundDetail.installment", "Installment")}: ฿{Number(loan.installmentAmount ?? 0).toLocaleString(i18n.language)}
                                                     </div>
                                                     <div className="text-xs text-muted-foreground">
-                                                        Outstanding principal: ฿{Number(loan.outstandingPrincipal ?? 0).toLocaleString()}
+                                                        {t("loanWizard.outstandingPrincipal", "Outstanding principal")}: ฿{Number(loan.outstandingPrincipal ?? 0).toLocaleString(i18n.language)}
                                                     </div>
                                                 </div>
                                             </button>
@@ -667,59 +667,59 @@ export default function FundDetail() {
                             <CardHeader className="pb-2">
                                 <CardTitle className="text-sm font-medium flex items-center gap-2">
                                     <ArrowRightLeft className="h-4 w-4" />
-                                    Rollover / Carry-forward
+                                    {t("fundDetail.rolloverCarryForward", "Rollover / Carry-forward")}
                                 </CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-4">
                                 <form className="space-y-3" onSubmit={handleCreateRollover}>
                                     <div className="grid gap-1.5">
-                                        <label className="text-sm font-medium">Entry Type</label>
+                                        <label className="text-sm font-medium">{t("fundDetail.entryType", "Entry Type")}</label>
                                         <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={rolloverType} onChange={(e) => setRolloverType(e.target.value)}>
-                                            <option value="surplus_transfer">Surplus transfer</option>
-                                            <option value="deficit_support">Deficit support</option>
-                                            <option value="capitalization">Capitalization</option>
-                                            <option value="manual_adjustment">Manual adjustment</option>
+                                            <option value="surplus_transfer">{t("fundDetail.rolloverTypes.surplusTransfer", "Surplus transfer")}</option>
+                                            <option value="deficit_support">{t("fundDetail.rolloverTypes.deficitSupport", "Deficit support")}</option>
+                                            <option value="capitalization">{t("fundDetail.rolloverTypes.capitalization", "Capitalization")}</option>
+                                            <option value="manual_adjustment">{t("fundDetail.rolloverTypes.manualAdjustment", "Manual adjustment")}</option>
                                         </select>
                                     </div>
                                     <div className="grid gap-1.5">
-                                        <label className="text-sm font-medium">Target Fund</label>
+                                        <label className="text-sm font-medium">{t("fundDetail.targetFund", "Target Fund")}</label>
                                         <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={rolloverTargetProfileId} onChange={(e) => setRolloverTargetProfileId(e.target.value)}>
-                                            <option value="">No destination / same source</option>
+                                            <option value="">{t("fundDetail.noDestination", "No destination / same source")}</option>
                                             {rolloverTargets.map((item) => (
                                                 <option key={item.id} value={item.id}>{item.name}</option>
                                             ))}
                                         </select>
                                     </div>
                                     <div className="grid gap-1.5">
-                                        <label className="text-sm font-medium">Amount</label>
+                                        <label className="text-sm font-medium">{t("transactionsForm.amount", "Amount")}</label>
                                         <Input type="number" value={rolloverAmount} onChange={(e) => setRolloverAmount(e.target.value)} />
                                     </div>
                                     <div className="grid gap-1.5">
-                                        <label className="text-sm font-medium">Effective Date</label>
+                                        <label className="text-sm font-medium">{t("fundDetail.effectiveDate", "Effective Date")}</label>
                                         <Input type="date" value={rolloverDate} onChange={(e) => setRolloverDate(e.target.value)} />
                                     </div>
                                     <div className="grid gap-1.5">
-                                        <label className="text-sm font-medium">Note</label>
+                                        <label className="text-sm font-medium">{t("transactionsForm.note", "Note")}</label>
                                         <Input value={rolloverNote} onChange={(e) => setRolloverNote(e.target.value)} />
                                     </div>
                                     <Button type="submit" className="w-full" disabled={rolloverSubmitting}>
-                                        {rolloverSubmitting ? "Saving..." : "Save Rollover"}
+                                        {rolloverSubmitting ? t("common.saving", "Saving...") : t("fundDetail.saveRollover", "Save Rollover")}
                                     </Button>
                                 </form>
 
                                 <div className="space-y-2">
-                                    <div className="text-sm font-medium">History</div>
+                                    <div className="text-sm font-medium">{t("common.history", "History")}</div>
                                     {rollovers.length === 0 ? (
                                         <div className="rounded border border-dashed p-3 text-sm text-muted-foreground">
-                                            No carry-forward entries yet.
+                                            {t("fundDetail.noCarryForwardEntries", "No carry-forward entries yet.")}
                                         </div>
                                     ) : (
                                         <div className="space-y-2">
                                             {rollovers.slice(0, 5).map((item) => (
                                                 <div key={item.id} className="rounded border p-3 text-sm">
                                                     <div className="flex items-center justify-between gap-3">
-                                                        <span className="font-medium">{item.entryType}</span>
-                                                        <span>฿{Number(item.amount).toLocaleString()}</span>
+                                                        <span className="font-medium">{t(`fundDetail.rolloverTypes.${item.entryType === "surplus_transfer" ? "surplusTransfer" : item.entryType === "deficit_support" ? "deficitSupport" : item.entryType === "capitalization" ? "capitalization" : "manualAdjustment"}`)}</span>
+                                                        <span>฿{Number(item.amount).toLocaleString(i18n.language)}</span>
                                                     </div>
                                                     <div className="text-xs text-muted-foreground">{item.effectiveDate}</div>
                                                     {item.note && <div className="mt-1 text-xs text-muted-foreground">{item.note}</div>}
@@ -736,57 +736,57 @@ export default function FundDetail() {
                         <div className="grid gap-4 xl:grid-cols-[1.3fr_0.9fr_0.8fr]">
                             <Card className="xl:col-span-3">
                                 <CardHeader>
-                                    <CardTitle>Selected Drawdown Position</CardTitle>
+                                    <CardTitle>{t("fundDetail.selectedDrawdownPosition", "Selected Drawdown Position")}</CardTitle>
                                 </CardHeader>
                                 <CardContent className="grid gap-4 md:grid-cols-4 xl:grid-cols-6">
                                     <div>
-                                        <div className="text-xs text-muted-foreground">Allocation state</div>
+                                        <div className="text-xs text-muted-foreground">{t("matching.allocationState", "Allocation state")}</div>
                                         <div className="font-medium capitalize">{selectedDrawdownAllocationState?.state?.replaceAll("_", " ") || "-"}</div>
                                     </div>
                                     <div>
-                                        <div className="text-xs text-muted-foreground">Allocated principal</div>
-                                        <div className="font-medium">฿{Number(selectedDrawdownAllocationState?.netAllocatedPrincipal ?? 0).toLocaleString()}</div>
+                                        <div className="text-xs text-muted-foreground">{t("loanDetail.allocatedPrincipal", "Allocated principal")}</div>
+                                        <div className="font-medium">฿{Number(selectedDrawdownAllocationState?.netAllocatedPrincipal ?? 0).toLocaleString(i18n.language)}</div>
                                     </div>
                                     <div>
-                                        <div className="text-xs text-muted-foreground">Remaining capacity</div>
-                                        <div className="font-medium">฿{Number(selectedDrawdownAllocationState?.remainingCapacity ?? 0).toLocaleString()}</div>
+                                        <div className="text-xs text-muted-foreground">{t("fundDetail.remainingCapacity", "Remaining capacity")}</div>
+                                        <div className="font-medium">฿{Number(selectedDrawdownAllocationState?.remainingCapacity ?? 0).toLocaleString(i18n.language)}</div>
                                     </div>
                                     <div>
-                                        <div className="text-xs text-muted-foreground">Revenue collected</div>
-                                        <div className="font-medium">฿{Number(selectedDrawdownProfitability?.borrowerRevenueCollected ?? 0).toLocaleString()}</div>
+                                        <div className="text-xs text-muted-foreground">{t("dashboardPage.cards.borrowerRevenue", "Revenue collected")}</div>
+                                        <div className="font-medium">฿{Number(selectedDrawdownProfitability?.borrowerRevenueCollected ?? 0).toLocaleString(i18n.language)}</div>
                                     </div>
                                     <div>
-                                        <div className="text-xs text-muted-foreground">Fund cost paid</div>
-                                        <div className="font-medium">฿{Number(selectedDrawdownProfitability?.fundCostPaid ?? 0).toLocaleString()}</div>
+                                        <div className="text-xs text-muted-foreground">{t("dashboardPage.cards.fundCostPaid", "Fund cost paid")}</div>
+                                        <div className="font-medium">฿{Number(selectedDrawdownProfitability?.fundCostPaid ?? 0).toLocaleString(i18n.language)}</div>
                                     </div>
                                     <div>
-                                        <div className="text-xs text-muted-foreground">Realized spread</div>
+                                        <div className="text-xs text-muted-foreground">{t("funds.metrics.realizedSpread", "Realized spread")}</div>
                                         <div className={`font-medium ${Number(selectedDrawdownProfitability?.realizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                                            ฿{Number(selectedDrawdownProfitability?.realizedSpread ?? 0).toLocaleString()}
+                                            ฿{Number(selectedDrawdownProfitability?.realizedSpread ?? 0).toLocaleString(i18n.language)}
                                         </div>
                                     </div>
                                     <div>
-                                        <div className="text-xs text-muted-foreground">Unrealized spread</div>
+                                        <div className="text-xs text-muted-foreground">{t("loans.unrealizedSpread", "Unrealized spread")}</div>
                                         <div className={`font-medium ${Number(selectedDrawdownProfitability?.unrealizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                                            ฿{Number(selectedDrawdownProfitability?.unrealizedSpread ?? 0).toLocaleString()}
+                                            ฿{Number(selectedDrawdownProfitability?.unrealizedSpread ?? 0).toLocaleString(i18n.language)}
                                         </div>
                                     </div>
                                     <div>
-                                        <div className="text-xs text-muted-foreground">Outstanding cost</div>
-                                        <div className="font-medium">฿{Number(selectedDrawdownProfitability?.outstandingCost ?? 0).toLocaleString()}</div>
+                                        <div className="text-xs text-muted-foreground">{t("loanDetail.outstandingFundingCost", "Outstanding funding cost")}</div>
+                                        <div className="font-medium">฿{Number(selectedDrawdownProfitability?.outstandingCost ?? 0).toLocaleString(i18n.language)}</div>
                                     </div>
                                     <div>
-                                        <div className="text-xs text-muted-foreground">Net cash position</div>
+                                        <div className="text-xs text-muted-foreground">{t("funds.metrics.netCash", "Net cash position")}</div>
                                         <div className={`font-medium ${Number(selectedDrawdownProfitability?.netCashPosition ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                                            ฿{Number(selectedDrawdownProfitability?.netCashPosition ?? 0).toLocaleString()}
+                                            ฿{Number(selectedDrawdownProfitability?.netCashPosition ?? 0).toLocaleString(i18n.language)}
                                         </div>
                                     </div>
                                     <div>
-                                        <div className="text-xs text-muted-foreground">Carry-forward</div>
-                                        <div className="font-medium">฿{Number(selectedDrawdownProfitability?.carryForwardAvailable ?? 0).toLocaleString()}</div>
+                                        <div className="text-xs text-muted-foreground">{t("fundDetail.carryForward", "Carry-forward")}</div>
+                                        <div className="font-medium">฿{Number(selectedDrawdownProfitability?.carryForwardAvailable ?? 0).toLocaleString(i18n.language)}</div>
                                     </div>
                                     <div>
-                                        <div className="text-xs text-muted-foreground">Realized ROI</div>
+                                        <div className="text-xs text-muted-foreground">{t("fundDetail.realizedRoi", "Realized ROI")}</div>
                                         <div className="font-medium">{Number(selectedDrawdownProfitability?.realizedRoiPercent ?? 0).toLocaleString()}%</div>
                                     </div>
                                 </CardContent>
@@ -794,14 +794,14 @@ export default function FundDetail() {
 
                             <Card className="xl:col-span-2">
                                 <CardHeader>
-                                    <CardTitle>Repayment Schedule</CardTitle>
+                                    <CardTitle>{t("loanDetail.repaymentSchedule", "Repayment Schedule")}</CardTitle>
                                 </CardHeader>
                                 <CardContent>
                                     {scheduleLoading ? (
-                                        <div className="text-sm text-muted-foreground">Loading schedule...</div>
+                                        <div className="text-sm text-muted-foreground">{t("fundDetail.loadingSchedule", "Loading schedule...")}</div>
                                     ) : selectedSchedule.length === 0 ? (
                                         <div className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
-                                            This drawdown does not have a generated repayment schedule yet.
+                                            {t("fundDetail.noRepaymentSchedule", "This drawdown does not have a generated repayment schedule yet.")}
                                         </div>
                                     ) : (
                                         <div className="overflow-x-auto">
@@ -809,11 +809,11 @@ export default function FundDetail() {
                                                 <thead>
                                                     <tr className="border-b text-left">
                                                         <th className="py-2 pr-3">#</th>
-                                                        <th className="py-2 pr-3">Due Date</th>
-                                                        <th className="py-2 pr-3">Total</th>
-                                                        <th className="py-2 pr-3">Remaining</th>
-                                                        <th className="py-2 pr-3">Status</th>
-                                                        <th className="py-2">Action</th>
+                                                        <th className="py-2 pr-3">{t("loanWizard.nextDue", "Due Date")}</th>
+                                                        <th className="py-2 pr-3">{t("fundDetail.total", "Total")}</th>
+                                                        <th className="py-2 pr-3">{t("fundDetail.remaining", "Remaining")}</th>
+                                                        <th className="py-2 pr-3">{t("common.status", "Status")}</th>
+                                                        <th className="py-2">{t("fundDetail.action", "Action")}</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody>
@@ -826,7 +826,7 @@ export default function FundDetail() {
                                                             <td className="py-2 pr-3 capitalize">{item.status}</td>
                                                             <td className="py-2">
                                                                 <Button type="button" size="sm" variant={selectedScheduleId === item.id ? "default" : "outline"} onClick={() => handleSelectScheduleForRepayment(item)}>
-                                                                    Select
+                                                                    {t("fundDetail.select", "Select")}
                                                                 </Button>
                                                             </td>
                                                         </tr>
@@ -840,32 +840,32 @@ export default function FundDetail() {
 
                             <Card>
                                 <CardHeader>
-                                    <CardTitle>Record Fund Repayment</CardTitle>
+                                    <CardTitle>{t("dashboardPage.actions.recordFundRepayment", "Record Fund Repayment")}</CardTitle>
                                 </CardHeader>
                                 <CardContent>
                                     <form className="space-y-3" onSubmit={handleRecordRepayment}>
                                         <div className="grid gap-1.5">
-                                            <label className="text-sm font-medium">Amount</label>
+                                            <label className="text-sm font-medium">{t("transactionsForm.amount", "Amount")}</label>
                                             <Input type="number" value={repaymentAmount} onChange={(e) => setRepaymentAmount(e.target.value)} />
                                         </div>
                                         <div className="grid gap-1.5">
-                                            <label className="text-sm font-medium">Date</label>
+                                            <label className="text-sm font-medium">{t("transactionsForm.date", "Date")}</label>
                                             <Input type="date" value={repaymentDate} onChange={(e) => setRepaymentDate(e.target.value)} />
                                         </div>
                                         <div className="grid gap-1.5">
-                                            <label className="text-sm font-medium">Payment Method</label>
+                                            <label className="text-sm font-medium">{t("transactionsForm.paymentMethod", "Payment Method")}</label>
                                             <Input value={repaymentMethod} onChange={(e) => setRepaymentMethod(e.target.value)} />
                                         </div>
                                         <div className="grid gap-1.5">
-                                            <label className="text-sm font-medium">Reference</label>
+                                            <label className="text-sm font-medium">{t("transactionsForm.reference", "Reference")}</label>
                                             <Input value={repaymentReference} onChange={(e) => setRepaymentReference(e.target.value)} />
                                         </div>
                                         <div className="grid gap-1.5">
-                                            <label className="text-sm font-medium">Note</label>
+                                            <label className="text-sm font-medium">{t("transactionsForm.note", "Note")}</label>
                                             <Input value={repaymentNote} onChange={(e) => setRepaymentNote(e.target.value)} />
                                         </div>
                                         <Button type="submit" className="w-full" disabled={repaymentSubmitting || !selectedScheduleId}>
-                                            {repaymentSubmitting ? "Saving..." : "Save Repayment"}
+                                            {repaymentSubmitting ? t("common.saving", "Saving...") : t("fundDetail.saveRepayment", "Save Repayment")}
                                         </Button>
                                     </form>
                                 </CardContent>
@@ -877,12 +877,12 @@ export default function FundDetail() {
                         <div className="grid gap-4 xl:grid-cols-2">
                             <Card>
                                 <CardHeader>
-                                    <CardTitle>Linked Borrower Loans</CardTitle>
+                                    <CardTitle>{t("fundDetail.linkedBorrowerLoans", "Linked Borrower Loans")}</CardTitle>
                                 </CardHeader>
                                 <CardContent>
                                     {selectedAllocations.length === 0 ? (
                                         <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
-                                            No borrower loans have been allocated to this drawdown yet.
+                                            {t("fundDetail.noLinkedBorrowerLoans", "No borrower loans have been allocated to this drawdown yet.")}
                                         </div>
                                     ) : (
                                         <div className="space-y-2">
@@ -890,7 +890,7 @@ export default function FundDetail() {
                                                 <div key={item.id} className="rounded border p-3 text-sm">
                                                     <div className="flex items-center justify-between gap-3">
                                                         <span className="font-medium">{item.borrowerName || `Loan #${item.loanId}`}</span>
-                                                        <span>฿{Number(item.allocatedAmount).toLocaleString()}</span>
+                                                        <span>฿{Number(item.allocatedAmount).toLocaleString(i18n.language)}</span>
                                                     </div>
                                                     <div className="text-xs text-muted-foreground">
                                                         {item.allocationType} • {item.allocationDate}
@@ -904,23 +904,23 @@ export default function FundDetail() {
 
                             <Card>
                                 <CardHeader>
-                                    <CardTitle>Repayment History</CardTitle>
+                                    <CardTitle>{t("fundDetail.repaymentHistory", "Repayment History")}</CardTitle>
                                 </CardHeader>
                                 <CardContent>
                                     {selectedRepayments.length === 0 ? (
                                         <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
-                                            No repayments recorded yet for this drawdown.
+                                            {t("fundDetail.noRepayments", "No repayments recorded yet for this drawdown.")}
                                         </div>
                                     ) : (
                                         <div className="space-y-2">
                                             {selectedRepayments.map((item) => (
                                                 <div key={item.id} className="rounded border p-3 text-sm">
                                                     <div className="flex items-center justify-between gap-3">
-                                                        <span className="font-medium">{new Date(item.paymentDate).toLocaleDateString()}</span>
-                                                        <span>฿{Number(item.amount).toLocaleString()}</span>
+                                                        <span className="font-medium">{new Date(item.paymentDate).toLocaleDateString(i18n.language)}</span>
+                                                        <span>฿{Number(item.amount).toLocaleString(i18n.language)}</span>
                                                     </div>
                                                     <div className="mt-1 text-xs text-muted-foreground">
-                                                        Principal ฿{Number(item.principalComponent).toLocaleString()} • Interest ฿{Number(item.interestComponent).toLocaleString()} • Fee/VAT/Penalty ฿{(Number(item.feeComponent) + Number(item.vatComponent) + Number(item.penaltyComponent)).toLocaleString()}
+                                                        {t("loanWizard.columns.principal", "Principal")} ฿{Number(item.principalComponent).toLocaleString(i18n.language)} • {t("loanDetail.outstandingInterest", "Interest")} ฿{Number(item.interestComponent).toLocaleString(i18n.language)} • {t("fundDetail.feeVatPenalty", "Fee/VAT/Penalty")} ฿{(Number(item.feeComponent) + Number(item.vatComponent) + Number(item.penaltyComponent)).toLocaleString(i18n.language)}
                                                     </div>
                                                 </div>
                                             ))}

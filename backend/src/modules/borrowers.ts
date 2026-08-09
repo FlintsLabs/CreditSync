@@ -4,10 +4,23 @@ import { borrowers } from "../db/schema";
 import { eq, and } from "drizzle-orm";
 
 import { authPlugin } from "../middleware/auth";
+import { borrowerAccessFilters, getAccessScopeCacheKey } from "../lib/access";
 
 import { extractTextFromImage } from "../lib/ocr";
 import { createAuditLog } from "../lib/audit-log";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
+import { findAccessibleBorrowerByPublicId } from "../lib/public-id";
+import { resolveStoredFileUrl } from "../lib/storage";
+
+async function hydrateBorrowerMedia<T extends { photoUrl?: string | null; idCardImageUrl?: string | null }>(borrower: T) {
+    return {
+        ...borrower,
+        photoRef: borrower.photoUrl ?? null,
+        photoUrl: await resolveStoredFileUrl(borrower.photoUrl),
+        idCardImageRef: borrower.idCardImageUrl ?? null,
+        idCardImageUrl: await resolveStoredFileUrl(borrower.idCardImageUrl),
+    };
+}
 
 export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
     .use(authPlugin)
@@ -41,27 +54,32 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
     })
     .get("/", async ({ user }) => {
         if (!user) return [];
+        const scopeKey = getAccessScopeCacheKey(user);
         return await withTenantCache({
             tenantId: user.tenantId,
             namespace: "borrowers",
-            key: "list",
+            key: `list:${scopeKey}`,
             ttlSeconds: 60,
-            loader: async () => await db.select().from(borrowers).where(eq(borrowers.tenantId, user.tenantId)),
+            loader: async () => {
+                const rows = await db.select().from(borrowers).where(and(...borrowerAccessFilters(user)));
+                return await Promise.all(rows.map((row) => hydrateBorrowerMedia(row)));
+            },
         });
     })
     .get("/:id", async ({ params: { id }, user }) => {
         if (!user) return null;
+        const borrower = await findAccessibleBorrowerByPublicId(user, id);
+        if (!borrower) return null;
+        const scopeKey = getAccessScopeCacheKey(user);
         const result = await withTenantCache({
             tenantId: user.tenantId,
             namespace: "borrowers",
-            key: `detail:${id}`,
+            key: `detail:${id}:${scopeKey}`,
             ttlSeconds: 60,
-            loader: async () => await db.select().from(borrowers).where(
-                and(
-                    eq(borrowers.id, parseInt(id)),
-                    eq(borrowers.tenantId, user.tenantId)
-                )
-            ),
+            loader: async () => {
+                const rows = await db.select().from(borrowers).where(and(eq(borrowers.id, borrower.id), ...borrowerAccessFilters(user)));
+                return await Promise.all(rows.map((row) => hydrateBorrowerMedia(row)));
+            },
         });
         return result[0];
     })
@@ -70,6 +88,7 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
         return await db.transaction(async (tx) => {
             const result = await tx.insert(borrowers).values({
                 tenantId: user.tenantId,
+                ownerUserId: user.id,
                 name: body.name,
                 idCardNumber: body.idCardNumber,
                 phone: body.phone,
@@ -91,7 +110,7 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
             });
 
             await invalidateTenantCache(user.tenantId);
-            return result[0];
+            return await hydrateBorrowerMedia(result[0]);
         });
     }, {
         body: t.Object({
@@ -109,17 +128,14 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
     .put("/:id", async ({ params: { id }, body, user, set }) => {
         if (!user) throw new Error("Unauthorized");
         return await db.transaction(async (tx) => {
-            const existing = await tx.select().from(borrowers).where(
-                and(
-                    eq(borrowers.id, parseInt(id)),
-                    eq(borrowers.tenantId, user.tenantId)
-                )
-            ).then((rows) => rows[0]);
-
-            if (!existing) {
+            const borrower = await findAccessibleBorrowerByPublicId(user, id);
+            if (!borrower) {
                 set.status = 404;
                 return { error: "Borrower not found" };
             }
+            const existing = await tx.select().from(borrowers).where(
+                and(eq(borrowers.id, borrower.id), ...borrowerAccessFilters(user))
+            ).then((rows) => rows[0]);
 
             const result = await tx.update(borrowers).set({
                 name: body.name,
@@ -133,10 +149,7 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
                 googleMapsUrl: body.googleMapsUrl,
                 updatedAt: new Date(),
             }).where(
-                and(
-                    eq(borrowers.id, parseInt(id)),
-                    eq(borrowers.tenantId, user.tenantId)
-                )
+                and(eq(borrowers.id, borrower.id), ...borrowerAccessFilters(user))
             ).returning();
 
             await createAuditLog(tx, {
@@ -152,7 +165,7 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
             });
 
             await invalidateTenantCache(user.tenantId);
-            return result[0];
+            return await hydrateBorrowerMedia(result[0]);
         });
     }, {
         body: t.Object({

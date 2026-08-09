@@ -13,28 +13,37 @@ import {
 import { authPlugin } from "../middleware/auth";
 import { calculateLoanClosingSummary, calculateLoanSchedule, type RepaymentType } from "../lib/calculator";
 import { generateLoanSchedule } from "../lib/loan-schedule";
+import { computeLoanRollup } from "../lib/loan-rollup";
 import { createAuditLog } from "../lib/audit-log";
+import { canAccessTenantWideData, getAccessScopeCacheKey, loanAccessFilters } from "../lib/access";
 import { getLoanProfitabilitySummary } from "../lib/fund-settlement";
 import { computeOverdueSnapshot } from "../lib/overdue";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
+import { findAccessibleBorrowerByPublicId, findAccessibleLoanByPublicId, findBankLoanByPublicId } from "../lib/public-id";
 
 export const loansRoute = new Elysia({ prefix: "/loans" })
     .use(authPlugin)
     .get("/", async ({ user, query }) => {
         if (!user) return [];
 
-        const conditions = [eq(loans.tenantId, user.tenantId)];
+        const conditions = loanAccessFilters(user);
         if (query.borrowerId) {
-            conditions.push(eq(loans.borrowerId, Number(query.borrowerId)));
+            const borrower = await findAccessibleBorrowerByPublicId(user, query.borrowerId);
+            if (!borrower) {
+                return [];
+            }
+            conditions.push(eq(loans.borrowerId, borrower.id));
         }
+        const scopeKey = getAccessScopeCacheKey(user);
 
         return await withTenantCache({
             tenantId: user.tenantId,
             namespace: "loans",
-            key: `list:borrower=${query.borrowerId ?? "all"}`,
+            key: `list:${scopeKey}:borrower=${query.borrowerId ?? "all"}`,
             ttlSeconds: 30,
             loader: async () => await db.select({
                 id: loans.id,
+                publicId: loans.publicId,
                 borrowerId: loans.borrowerId,
                 bankLoanId: loans.bankLoanId,
                 borrowerName: borrowers.name,
@@ -61,14 +70,20 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             set.status = 401;
             return { error: "Unauthorized" };
         }
+        const targetLoan = await findAccessibleLoanByPublicId(user, params.id);
+        if (!targetLoan) {
+            set.status = 404;
+            return { error: "Loan not found" };
+        }
+        const scopeKey = getAccessScopeCacheKey(user);
 
         const loan = await withTenantCache({
             tenantId: user.tenantId,
             namespace: "loans",
-            key: `detail:${params.id}`,
+            key: `detail:${params.id}:${scopeKey}`,
             ttlSeconds: 30,
             loader: async () => await db.query.loans.findFirst({
-                where: and(eq(loans.id, params.id), eq(loans.tenantId, user.tenantId)),
+                where: and(eq(loans.id, targetLoan.id), ...loanAccessFilters(user)),
             }),
         });
 
@@ -80,7 +95,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         return loan;
     }, {
         params: t.Object({
-            id: t.Numeric(),
+            id: t.String(),
         })
     })
     .get("/:id/schedule", async ({ params, user, set }) => {
@@ -89,19 +104,18 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             return { error: "Unauthorized" };
         }
 
-        const loan = await db.query.loans.findFirst({
-            where: and(eq(loans.id, params.id), eq(loans.tenantId, user.tenantId)),
-        });
+        const loan = await findAccessibleLoanByPublicId(user, params.id);
 
         if (!loan) {
             set.status = 404;
             return { error: "Loan not found" };
         }
 
+        const scopeKey = getAccessScopeCacheKey(user);
         return await withTenantCache({
             tenantId: user.tenantId,
             namespace: "loans",
-            key: `schedule:${loan.id}`,
+            key: `schedule:${loan.id}:${scopeKey}`,
             ttlSeconds: 20,
             loader: async () => {
                 const scheduleRows = await db.select().from(loanSchedules).where(
@@ -124,6 +138,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
 
                     return {
                         ...row,
+                        publicId: row.publicId,
                         overdueDays: overdue.overdueDays,
                         penaltyDue: overdue.penaltyDue.toFixed(2),
                         totalDueNow: overdue.totalDueNow.toFixed(2),
@@ -134,7 +149,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         });
     }, {
         params: t.Object({
-            id: t.Numeric(),
+            id: t.String(),
         })
     })
     .get("/:id/funding-allocations", async ({ params, user, set }) => {
@@ -143,24 +158,26 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             return { error: "Unauthorized" };
         }
 
-        const loan = await db.query.loans.findFirst({
-            where: and(eq(loans.id, params.id), eq(loans.tenantId, user.tenantId)),
-        });
+        const loan = await findAccessibleLoanByPublicId(user, params.id);
 
         if (!loan) {
             set.status = 404;
             return { error: "Loan not found" };
         }
 
+        const scopeKey = getAccessScopeCacheKey(user);
         return await withTenantCache({
             tenantId: user.tenantId,
             namespace: "loans",
-            key: `funding-allocations:${loan.id}`,
+            key: `funding-allocations:${loan.id}:${scopeKey}`,
             ttlSeconds: 20,
             loader: async () => await db.select({
                 id: loanFundingAllocations.id,
                 bankLoanId: loanFundingAllocations.bankLoanId,
                 bankProfileId: loanFundingAllocations.bankProfileId,
+                loanPublicId: loans.publicId,
+                bankProfilePublicId: bankProfiles.publicId,
+                bankLoanPublicId: bankLoans.publicId,
                 allocatedAmount: loanFundingAllocations.allocatedAmount,
                 allocationDate: loanFundingAllocations.allocationDate,
                 allocationType: loanFundingAllocations.allocationType,
@@ -169,6 +186,8 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             })
                 .from(loanFundingAllocations)
                 .leftJoin(bankProfiles, eq(loanFundingAllocations.bankProfileId, bankProfiles.id))
+                .leftJoin(bankLoans, eq(loanFundingAllocations.bankLoanId, bankLoans.id))
+                .leftJoin(loans, eq(loanFundingAllocations.loanId, loans.id))
                 .where(
                     and(
                         eq(loanFundingAllocations.loanId, loan.id),
@@ -179,7 +198,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         });
     }, {
         params: t.Object({
-            id: t.Numeric(),
+            id: t.String(),
         })
     })
     .get("/:id/profitability", async ({ params, user, set }) => {
@@ -188,12 +207,19 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             return { error: "Unauthorized" };
         }
 
+        if (!canAccessTenantWideData(user)) {
+            set.status = 403;
+            return { error: "Forbidden" };
+        }
         const summary = await withTenantCache({
             tenantId: user.tenantId,
             namespace: "loans",
             key: `profitability:${params.id}`,
             ttlSeconds: 20,
-            loader: async () => await getLoanProfitabilitySummary(user.tenantId, params.id),
+            loader: async () => {
+                const loan = await findAccessibleLoanByPublicId(user, params.id);
+                return loan ? await getLoanProfitabilitySummary(user.tenantId, loan.id) : null;
+            },
         });
         if (!summary) {
             set.status = 404;
@@ -203,7 +229,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         return summary;
     }, {
         params: t.Object({
-            id: t.Numeric(),
+            id: t.String(),
         })
     })
     .get("/:id/allocation-state", async ({ params, user, set }) => {
@@ -212,19 +238,18 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             return { error: "Unauthorized" };
         }
 
-        const loan = await db.query.loans.findFirst({
-            where: and(eq(loans.id, params.id), eq(loans.tenantId, user.tenantId)),
-        });
+        const loan = await findAccessibleLoanByPublicId(user, params.id);
 
         if (!loan) {
             set.status = 404;
             return { error: "Loan not found" };
         }
 
+        const scopeKey = getAccessScopeCacheKey(user);
         return await withTenantCache({
             tenantId: user.tenantId,
             namespace: "loans",
-            key: `allocation-state:${loan.id}`,
+            key: `allocation-state:${loan.id}:${scopeKey}`,
             ttlSeconds: 20,
             loader: async () => {
                 const netAllocated = await db.select({
@@ -247,6 +272,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
 
                 return {
                     loanId: loan.id,
+                    loanPublicId: loan.publicId,
                     principalAmount: Number(principalAmount.toFixed(2)),
                     netAllocatedPrincipal: Number(netAllocated.toFixed(2)),
                     remainingGap: Number(remainingGap.toFixed(2)),
@@ -257,7 +283,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         });
     }, {
         params: t.Object({
-            id: t.Numeric(),
+            id: t.String(),
         })
     })
     .get("/:id/closing-summary", async ({ params, user, set }) => {
@@ -266,9 +292,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             return { error: "Unauthorized" };
         }
 
-        const loan = await db.query.loans.findFirst({
-            where: and(eq(loans.id, params.id), eq(loans.tenantId, user.tenantId))
-        });
+        const loan = await findAccessibleLoanByPublicId(user, params.id);
 
         if (!loan) {
             set.status = 404;
@@ -277,12 +301,12 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
 
         const loanTransactions = await db.select()
             .from(transactions)
-            .where(and(eq(transactions.loanId, params.id), eq(transactions.tenantId, user.tenantId)));
+            .where(and(eq(transactions.loanId, loan.id), eq(transactions.tenantId, user.tenantId)));
 
         return calculateLoanClosingSummary(loan, loanTransactions);
     }, {
         params: t.Object({
-            id: t.Numeric()
+            id: t.String()
         })
     })
     .post("/:id/close", async ({ params, body, user, set }) => {
@@ -291,10 +315,11 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             return { error: "Unauthorized" };
         }
 
-        return await db.transaction(async (tx) => {
-            const loan = await tx.query.loans.findFirst({
-                where: and(eq(loans.id, params.id), eq(loans.tenantId, user.tenantId)),
-            });
+            return await db.transaction(async (tx) => {
+            const resolved = await findAccessibleLoanByPublicId(user, params.id);
+            const loan = resolved ? await tx.query.loans.findFirst({
+                where: and(eq(loans.id, resolved.id), ...loanAccessFilters(user)),
+            }) : null;
 
             if (!loan) {
                 set.status = 404;
@@ -312,7 +337,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                     closedAt: new Date(),
                     updatedAt: new Date(),
                 })
-                .where(eq(loans.id, params.id))
+                .where(eq(loans.id, loan.id))
                 .returning()
                 .then((rows) => rows[0]);
 
@@ -320,7 +345,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                 tenantId: user.tenantId,
                 actorUserId: user.id,
                 entityType: "loan",
-                entityId: params.id,
+                entityId: loan.id,
                 action: "closed",
                 payload: {
                     before: loan,
@@ -334,7 +359,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         });
     }, {
         params: t.Object({
-            id: t.Numeric(),
+            id: t.String(),
         }),
         body: t.Object({
             note: t.Optional(t.String()),
@@ -371,16 +396,62 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             });
 
         const created = await db.transaction(async (tx) => {
+            let borrowerId = body.borrowerId;
+            if (body.borrowerPublicId) {
+                const borrower = await findAccessibleBorrowerByPublicId(user, body.borrowerPublicId);
+                if (!borrower) {
+                    set.status = 404;
+                    return { error: "Borrower not found" };
+                }
+                borrowerId = borrower.id;
+            }
+
+            let bankLoanId = body.bankLoanId ?? null;
+            if (!canAccessTenantWideData(user) && (body.bankLoanId || body.bankLoanPublicId)) {
+                set.status = 403;
+                return { error: "Forbidden" };
+            }
+            if (body.bankLoanPublicId) {
+                const bankLoan = await findBankLoanByPublicId(user.tenantId, body.bankLoanPublicId);
+                if (!bankLoan) {
+                    set.status = 404;
+                    return { error: "Funding source drawdown not found" };
+                }
+                bankLoanId = bankLoan.id;
+            }
+
+            const initialRollup = generatedSchedule.length > 0
+                ? computeLoanRollup(generatedSchedule.map((row) => ({
+                    dueDate: row.dueDate,
+                    scheduledPrincipal: row.scheduledPrincipal,
+                    scheduledInterest: row.scheduledInterest,
+                    scheduledFee: row.scheduledFee,
+                    remainingDue: row.remainingDue,
+                    status: "pending",
+                })))
+                : {
+                    outstandingPrincipal: body.principal,
+                    outstandingInterest: 0,
+                    outstandingFees: 0,
+                    nextDueDate: null,
+                    status: "active",
+                };
+
             const created = await tx.insert(loans).values({
                 tenantId: user.tenantId,
-                borrowerId: body.borrowerId,
-                bankLoanId: body.bankLoanId,
+                ownerUserId: user.id,
+                borrowerId,
+                bankLoanId,
                 principalAmount: body.principal.toFixed(2),
                 interestRate: body.interestRate.toFixed(2),
                 repaymentType: body.repaymentType,
                 totalInstallments: body.totalInstallments,
                 installmentAmount: body.installmentAmount?.toFixed(2),
                 startDate: body.startDate,
+                nextDueDate: initialRollup.nextDueDate ?? undefined,
+                outstandingPrincipal: initialRollup.outstandingPrincipal.toFixed(2),
+                outstandingInterest: initialRollup.outstandingInterest.toFixed(2),
+                outstandingFees: initialRollup.outstandingFees.toFixed(2),
                 status: "active"
             }).returning().then((rows) => rows[0]);
 
@@ -395,17 +466,17 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                         scheduledInterest: row.scheduledInterest,
                         scheduledFee: row.scheduledFee,
                         scheduledTotal: row.scheduledTotal,
-                        paidTotal: row.paidTotal,
+                        paidTotal: "0.00",
                         remainingDue: row.remainingDue,
                         status: "pending",
                     }))
                 );
             }
 
-            if (body.bankLoanId) {
+            if (bankLoanId) {
                 const sourceDrawdown = await tx.select().from(bankLoans).where(
                     and(
-                        eq(bankLoans.id, body.bankLoanId),
+                        eq(bankLoans.id, bankLoanId),
                         eq(bankLoans.tenantId, user.tenantId)
                     )
                 ).then((rows) => rows[0]);
@@ -446,8 +517,10 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         return created;
     }, {
         body: t.Object({
-            borrowerId: t.Number(),
+            borrowerId: t.Optional(t.Number()),
+            borrowerPublicId: t.Optional(t.String()),
             bankLoanId: t.Optional(t.Number()),
+            bankLoanPublicId: t.Optional(t.String()),
             principal: t.Number(),
             interestRate: t.Number(),
             repaymentType: t.String(),
@@ -459,12 +532,17 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
     })
     .post("/:id/funding-allocations", async ({ params, body, user, set }) => {
         if (!user) throw new Error("Unauthorized");
+        if (!canAccessTenantWideData(user)) {
+            set.status = 403;
+            return { error: "Forbidden" };
+        }
 
         const created = await db.transaction(async (tx) => {
+            const resolvedLoan = await findAccessibleLoanByPublicId(user, params.id);
             const loan = await tx.select().from(loans).where(
                 and(
-                    eq(loans.id, params.id),
-                    eq(loans.tenantId, user.tenantId)
+                    eq(loans.id, resolvedLoan?.id ?? -1),
+                    ...loanAccessFilters(user)
                 )
             ).then((rows) => rows[0]);
 
@@ -574,12 +652,16 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
     })
     .post("/:id/funding-reallocations", async ({ params, body, user, set }) => {
         if (!user) throw new Error("Unauthorized");
+        if (!canAccessTenantWideData(user)) {
+            set.status = 403;
+            return { error: "Forbidden" };
+        }
 
         const createdRows = await db.transaction(async (tx) => {
             const loan = await tx.select().from(loans).where(
                 and(
                     eq(loans.id, params.id),
-                    eq(loans.tenantId, user.tenantId)
+                    ...loanAccessFilters(user)
                 )
             ).then((rows) => rows[0]);
 

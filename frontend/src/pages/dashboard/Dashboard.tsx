@@ -5,6 +5,8 @@ import { api } from "../../lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/Card";
 import { Button } from "../../components/ui/Button";
 import { Badge } from "../../components/ui/badge";
+import { useTranslation } from "react-i18next";
+import { getStoredUser, isTenantAdminUser } from "../../lib/session";
 
 interface DashboardSummary {
     dueFromBorrowersToday: number;
@@ -18,6 +20,7 @@ interface DashboardSummary {
 
 interface BorrowerDueItem {
     scheduleId: number;
+    schedulePublicId?: string;
     dueDate: string;
     remainingDue: string;
     penaltyDue?: string;
@@ -26,12 +29,14 @@ interface BorrowerDueItem {
     status: string;
     installmentNo: number;
     loanId: number;
+    loanPublicId?: string;
     borrowerName: string;
     repaymentType: string;
 }
 
 interface FundDueItem {
     scheduleId: number;
+    schedulePublicId?: string;
     dueDate: string;
     remainingDue: string;
     penaltyDue?: string;
@@ -40,13 +45,16 @@ interface FundDueItem {
     status: string;
     installmentNo: number;
     bankLoanId: number;
+    bankLoanPublicId?: string;
     bankProfileId: number | null;
+    bankProfilePublicId?: string | null;
     note: string | null;
 }
 
 interface FundingAlerts {
     underfundedLoans: Array<{
         id: number;
+        publicId?: string;
         borrowerName: string;
         principalAmount: number;
         fundedAmount: number;
@@ -54,7 +62,9 @@ interface FundingAlerts {
     }>;
     unallocatedDrawdowns: Array<{
         id: number;
+        publicId?: string;
         bankProfileId: number | null;
+        bankProfilePublicId?: string | null;
         totalAmount: number;
         allocatedAmount: number;
         availableAmount: number;
@@ -82,8 +92,8 @@ interface ProfitabilitySummary {
     carryForwardAvailable: number;
 }
 
-function formatCurrency(value: number) {
-    return `฿${value.toLocaleString(undefined, {
+function formatCurrency(value: number, locale?: string) {
+    return `฿${value.toLocaleString(locale, {
         minimumFractionDigits: 0,
         maximumFractionDigits: 2,
     })}`;
@@ -102,20 +112,23 @@ function QueueBadge({ dueDate, status }: { dueDate: string; status: string }) {
 }
 
 function openBorrowerRepayment(navigate: ReturnType<typeof useNavigate>, item: BorrowerDueItem) {
-    navigate(`/dashboard/transactions/new?loanId=${item.loanId}&scheduleId=${item.scheduleId}`);
+    navigate(`/transactions/new?loanId=${item.loanPublicId ?? item.loanId}&scheduleId=${item.schedulePublicId ?? item.scheduleId}`);
 }
 
 function openFundRepayment(navigate: ReturnType<typeof useNavigate>, item: FundDueItem) {
-    if (!item.bankProfileId) {
-        navigate("/dashboard/funds");
+    if (!item.bankProfilePublicId && !item.bankProfileId) {
+        navigate("/funds");
         return;
     }
 
-    navigate(`/dashboard/funds/${item.bankProfileId}?bankLoanId=${item.bankLoanId}&scheduleId=${item.scheduleId}`);
+    navigate(`/funds/${item.bankProfilePublicId ?? item.bankProfileId}?bankLoanId=${item.bankLoanPublicId ?? item.bankLoanId}&scheduleId=${item.schedulePublicId ?? item.scheduleId}`);
 }
 
 export default function Dashboard() {
+    const { t, i18n } = useTranslation();
     const navigate = useNavigate();
+    const currentUser = getStoredUser();
+    const isTenantAdmin = isTenantAdminUser(currentUser);
     const [loading, setLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState("");
     const [summary, setSummary] = useState<DashboardSummary | null>(null);
@@ -126,6 +139,11 @@ export default function Dashboard() {
     const [profitability, setProfitability] = useState<ProfitabilitySummary | null>(null);
 
     useEffect(() => {
+        if (!isTenantAdmin) {
+            navigate("/loans", { replace: true });
+            return;
+        }
+
         const loadDashboard = async () => {
             try {
                 setLoading(true);
@@ -148,14 +166,14 @@ export default function Dashboard() {
                 setProfitability(profitabilityRes.data ?? null);
             } catch (error) {
                 console.error("Failed to load dashboard", error);
-                setErrorMessage("Unable to load the live dashboard right now.");
+                setErrorMessage(t("dashboardPage.errors.load", "Unable to load the live dashboard right now."));
             } finally {
                 setLoading(false);
             }
         };
 
         loadDashboard();
-    }, []);
+    }, [isTenantAdmin, navigate, t]);
 
     const borrowerDueNow = useMemo(() => borrowerQueue.slice(0, 8), [borrowerQueue]);
     const fundDueNow = useMemo(() => fundQueue.slice(0, 8), [fundQueue]);
@@ -165,20 +183,20 @@ export default function Dashboard() {
         <div className="flex-1 space-y-8 p-4 pt-6">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                    <h2 className="text-3xl font-bold tracking-tight">Operations Dashboard</h2>
+                    <h2 className="text-3xl font-bold tracking-tight">{t("dashboardPage.title", "Operations Dashboard")}</h2>
                     <p className="text-sm text-muted-foreground">
-                        เงินที่จะเข้า, เงินที่ต้องจ่ายคืน, และช่องว่างการ match funds ในมุมมองเดียว
+                        {t("dashboardPage.description", "Incoming cash, outgoing obligations, and funding gaps in one view")}
                     </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                    <Button variant="outline" onClick={() => navigate("/dashboard/transactions/new")}>
-                        Record Borrower Payment
+                    <Button variant="outline" onClick={() => navigate("/transactions/new")}>
+                        {t("dashboardPage.actions.recordBorrowerPayment", "Record Borrower Payment")}
                     </Button>
-                    <Button variant="outline" onClick={() => navigate("/dashboard/funds")}>
-                        Open Funds
+                    <Button variant="outline" onClick={() => navigate("/funds")}>
+                        {t("dashboardPage.actions.openFunds", "Open Funds")}
                     </Button>
-                    <Button onClick={() => navigate("/dashboard/matching")}>
-                        Open Matching
+                    <Button onClick={() => navigate("/matching")}>
+                        {t("dashboardPage.actions.openMatching", "Open Matching")}
                     </Button>
                 </div>
             </div>
@@ -192,48 +210,48 @@ export default function Dashboard() {
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Due from Borrowers</CardTitle>
+                        <CardTitle className="text-sm font-medium">{t("dashboardPage.cards.dueFromBorrowers", "Due from Borrowers")}</CardTitle>
                         <DollarSign className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">{loading ? "..." : formatCurrency(summary?.dueFromBorrowersToday ?? 0)}</div>
-                        <p className="text-xs text-muted-foreground">ยอดที่ควรรับเข้าตาม borrower schedules</p>
+                        <div className="text-2xl font-bold">{loading ? "..." : formatCurrency(summary?.dueFromBorrowersToday ?? 0, i18n.language)}</div>
+                        <p className="text-xs text-muted-foreground">{t("dashboardPage.cards.dueFromBorrowersDesc", "Scheduled cash expected from borrower schedules")}</p>
                     </CardContent>
                 </Card>
 
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Due to Funds</CardTitle>
+                        <CardTitle className="text-sm font-medium">{t("dashboardPage.cards.dueToFunds", "Due to Funds")}</CardTitle>
                         <CreditCard className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">{loading ? "..." : formatCurrency(summary?.dueToFundsToday ?? 0)}</div>
-                        <p className="text-xs text-muted-foreground">ยอดที่ควรจ่ายคืน upstream funds หรือ bank</p>
+                        <div className="text-2xl font-bold">{loading ? "..." : formatCurrency(summary?.dueToFundsToday ?? 0, i18n.language)}</div>
+                        <p className="text-xs text-muted-foreground">{t("dashboardPage.cards.dueToFundsDesc", "Scheduled repayments due back to funds or banks")}</p>
                     </CardContent>
                 </Card>
 
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Net Position Today</CardTitle>
+                        <CardTitle className="text-sm font-medium">{t("dashboardPage.cards.netPosition", "Net Position Today")}</CardTitle>
                         <CalendarClock className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
                         <div className={`text-2xl font-bold ${(summary?.netPositionToday ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                            {loading ? "..." : formatCurrency(summary?.netPositionToday ?? 0)}
+                            {loading ? "..." : formatCurrency(summary?.netPositionToday ?? 0, i18n.language)}
                         </div>
-                        <p className="text-xs text-muted-foreground">ยอดรับเข้า ลบด้วยยอดจ่ายคืนที่ถึงกำหนด</p>
+                        <p className="text-xs text-muted-foreground">{t("dashboardPage.cards.netPositionDesc", "Incoming due today minus outgoing obligations due today")}</p>
                     </CardContent>
                 </Card>
 
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Overdue Items</CardTitle>
+                        <CardTitle className="text-sm font-medium">{t("dashboardPage.cards.overdueItems", "Overdue Items")}</CardTitle>
                         <AlertTriangle className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
                         <div className="text-2xl font-bold">{loading ? "..." : overdueTotal}</div>
                         <p className="text-xs text-muted-foreground">
-                            Borrowers {summary?.overdueBorrowerCount ?? 0} • Funds {summary?.overdueFundCount ?? 0}
+                            {t("dashboardPage.cards.overdueBreakdown", { defaultValue: "Borrowers {{borrowers}} • Funds {{funds}}", borrowers: summary?.overdueBorrowerCount ?? 0, funds: summary?.overdueFundCount ?? 0 })}
                         </p>
                     </CardContent>
                 </Card>
@@ -242,34 +260,34 @@ export default function Dashboard() {
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Borrower Revenue Collected</CardTitle>
+                        <CardTitle className="text-sm font-medium">{t("dashboardPage.cards.borrowerRevenue", "Borrower Revenue Collected")}</CardTitle>
                         <DollarSign className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">{loading ? "..." : formatCurrency(profitability?.borrowerRevenueCollected ?? 0)}</div>
-                        <p className="text-xs text-muted-foreground">Interest, fee, และ penalty ที่เก็บได้แล้ว</p>
+                        <div className="text-2xl font-bold">{loading ? "..." : formatCurrency(profitability?.borrowerRevenueCollected ?? 0, i18n.language)}</div>
+                        <p className="text-xs text-muted-foreground">{t("dashboardPage.cards.borrowerRevenueDesc", "Collected interest, fees, and penalties")}</p>
                     </CardContent>
                 </Card>
 
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Fund Cost Paid</CardTitle>
+                        <CardTitle className="text-sm font-medium">{t("dashboardPage.cards.fundCostPaid", "Fund Cost Paid")}</CardTitle>
                         <CreditCard className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold">{loading ? "..." : formatCurrency(profitability?.fundCostPaid ?? 0)}</div>
-                        <p className="text-xs text-muted-foreground">ดอกเบี้ย, fee, VAT, penalty ที่จ่าย upstream แล้ว</p>
+                        <div className="text-2xl font-bold">{loading ? "..." : formatCurrency(profitability?.fundCostPaid ?? 0, i18n.language)}</div>
+                        <p className="text-xs text-muted-foreground">{t("dashboardPage.cards.fundCostPaidDesc", "Upstream interest, fees, VAT, and penalties already paid")}</p>
                     </CardContent>
                 </Card>
 
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Realized Spread</CardTitle>
+                        <CardTitle className="text-sm font-medium">{t("dashboardPage.cards.realizedSpread", "Realized Spread")}</CardTitle>
                         <CalendarClock className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
                         <div className={`text-2xl font-bold ${(profitability?.realizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                            {loading ? "..." : formatCurrency(profitability?.realizedSpread ?? 0)}
+                            {loading ? "..." : formatCurrency(profitability?.realizedSpread ?? 0, i18n.language)}
                         </div>
                         <p className="text-xs text-muted-foreground">
                             ROI {profitability?.realizedRoiPercent?.toFixed(2) ?? "0.00"}% on deployed principal
@@ -279,14 +297,14 @@ export default function Dashboard() {
 
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Unrealized Spread</CardTitle>
+                        <CardTitle className="text-sm font-medium">{t("dashboardPage.cards.unrealizedSpread", "Unrealized Spread")}</CardTitle>
                         <AlertTriangle className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
                         <div className={`text-2xl font-bold ${(profitability?.unrealizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                            {loading ? "..." : formatCurrency(profitability?.unrealizedSpread ?? 0)}
+                            {loading ? "..." : formatCurrency(profitability?.unrealizedSpread ?? 0, i18n.language)}
                         </div>
-                        <p className="text-xs text-muted-foreground">ส่วนต่างที่ยังค้างอยู่ในสัญญา/งวดที่ยังไม่ปิด</p>
+                        <p className="text-xs text-muted-foreground">{t("dashboardPage.cards.unrealizedSpreadDesc", "Spread still locked in open contracts and installments")}</p>
                     </CardContent>
                 </Card>
             </div>
@@ -294,9 +312,9 @@ export default function Dashboard() {
             <div className="grid gap-4 xl:grid-cols-[1.3fr_0.9fr]">
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between">
-                        <CardTitle>Funding Alerts</CardTitle>
-                        <Button size="sm" variant="outline" onClick={() => navigate("/dashboard/matching")}>
-                            Open Matching Workspace
+                        <CardTitle>{t("dashboardPage.sections.fundingAlerts", "Funding Alerts")}</CardTitle>
+                        <Button size="sm" variant="outline" onClick={() => navigate("/matching")}>
+                            {t("dashboardPage.actions.openMatchingWorkspace", "Open Matching Workspace")}
                         </Button>
                     </CardHeader>
                     <CardContent className="grid gap-4 lg:grid-cols-2">
@@ -304,14 +322,14 @@ export default function Dashboard() {
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2 text-sm font-medium">
                                     <Users className="h-4 w-4" />
-                                    Underfunded Loans
+                                    {t("dashboardPage.sections.underfundedLoans", "Underfunded Loans")}
                                 </div>
                                 <Badge>{summary?.underfundedLoanCount ?? 0}</Badge>
                             </div>
 
                             {alerts.underfundedLoans.length === 0 ? (
                                 <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
-                                    No underfunded loans right now.
+                                    {t("dashboardPage.empty.noUnderfundedLoans", "No underfunded loans right now.")}
                                 </div>
                             ) : (
                                 alerts.underfundedLoans.slice(0, 6).map((loan) => (
@@ -319,18 +337,18 @@ export default function Dashboard() {
                                         key={loan.id}
                                         type="button"
                                         className="w-full rounded border p-3 text-left transition hover:border-primary/40 hover:bg-muted/50"
-                                        onClick={() => navigate("/dashboard/matching")}
+                                        onClick={() => navigate("/matching")}
                                     >
                                         <div className="flex items-center justify-between gap-3">
                                             <div>
                                                 <div className="font-medium">{loan.borrowerName}</div>
                                                 <div className="text-xs text-muted-foreground">
-                                                    Loan #{loan.id} • Funded {formatCurrency(loan.fundedAmount)} / {formatCurrency(loan.principalAmount)}
+                                                    {t("dashboardPage.loanFundingSummary", { defaultValue: "Loan #{{id}} • Funded {{funded}} / {{principal}}", id: loan.id, funded: formatCurrency(loan.fundedAmount, i18n.language), principal: formatCurrency(loan.principalAmount, i18n.language) })}
                                                 </div>
                                             </div>
                                             <div className="text-right">
-                                                <div className="font-medium text-destructive">{formatCurrency(loan.gap)}</div>
-                                                <div className="text-xs text-muted-foreground">Gap</div>
+                                                <div className="font-medium text-destructive">{formatCurrency(loan.gap, i18n.language)}</div>
+                                                <div className="text-xs text-muted-foreground">{t("loans.remainingGap", "Gap")}</div>
                                             </div>
                                         </div>
                                     </button>
@@ -342,14 +360,14 @@ export default function Dashboard() {
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2 text-sm font-medium">
                                     <ArrowRightLeft className="h-4 w-4" />
-                                    Unallocated Drawdowns
+                                    {t("dashboardPage.sections.unallocatedDrawdowns", "Unallocated Drawdowns")}
                                 </div>
                                 <Badge>{summary?.unallocatedDrawdownCount ?? 0}</Badge>
                             </div>
 
                             {alerts.unallocatedDrawdowns.length === 0 ? (
                                 <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
-                                    No unallocated drawdowns right now.
+                                    {t("dashboardPage.empty.noUnallocatedDrawdowns", "No unallocated drawdowns right now.")}
                                 </div>
                             ) : (
                                 alerts.unallocatedDrawdowns.slice(0, 6).map((drawdown) => (
@@ -357,18 +375,18 @@ export default function Dashboard() {
                                         key={drawdown.id}
                                         type="button"
                                         className="w-full rounded border p-3 text-left transition hover:border-primary/40 hover:bg-muted/50"
-                                        onClick={() => navigate("/dashboard/funds")}
+                                        onClick={() => navigate("/funds")}
                                     >
                                         <div className="flex items-center justify-between gap-3">
                                             <div>
-                                                <div className="font-medium">Drawdown #{drawdown.id}</div>
+                                                <div className="font-medium">{t("dashboardPage.drawdownLabel", { defaultValue: "Drawdown #{{id}}", id: drawdown.id })}</div>
                                                 <div className="text-xs text-muted-foreground">
-                                                    Next due {drawdown.nextDueDate || "Not scheduled"}
+                                                    {t("dashboardPage.nextDue", { defaultValue: "Next due {{date}}", date: drawdown.nextDueDate || t("loanWizard.notScheduled", "Not scheduled") })}
                                                 </div>
                                             </div>
                                             <div className="text-right">
-                                                <div className="font-medium">{formatCurrency(drawdown.availableAmount)}</div>
-                                                <div className="text-xs text-muted-foreground">Available</div>
+                                                <div className="font-medium">{formatCurrency(drawdown.availableAmount, i18n.language)}</div>
+                                                <div className="text-xs text-muted-foreground">{t("dashboardPage.available", "Available")}</div>
                                             </div>
                                         </div>
                                     </button>
@@ -380,42 +398,42 @@ export default function Dashboard() {
 
                 <Card>
                     <CardHeader>
-                        <CardTitle>Reconciliation Status</CardTitle>
+                        <CardTitle>{t("dashboardPage.sections.reconciliationStatus", "Reconciliation Status")}</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-3 text-sm">
                         <div className="rounded border p-3">
                             <div className="flex items-center justify-between gap-3">
-                                <span className="text-muted-foreground">Borrower payments not matched to schedule</span>
+                                <span className="text-muted-foreground">{t("dashboardPage.reconciliation.unmatchedBorrowerPayments", "Borrower payments not matched to schedule")}</span>
                                 <span className="font-medium">{reconciliation?.unreconciledBorrowerPayments ?? 0}</span>
                             </div>
                         </div>
                         <div className="rounded border p-3">
                             <div className="flex items-center justify-between gap-3">
-                                <span className="text-muted-foreground">Recorded fund repayments</span>
+                                <span className="text-muted-foreground">{t("dashboardPage.reconciliation.recordedFundRepayments", "Recorded fund repayments")}</span>
                                 <span className="font-medium">{reconciliation?.recordedFundRepayments ?? 0}</span>
                             </div>
                         </div>
                         <div className="rounded border p-3">
                             <div className="flex items-center justify-between gap-3">
-                                <span className="text-muted-foreground">Fund repayments missing schedule link</span>
+                                <span className="text-muted-foreground">{t("dashboardPage.reconciliation.missingFundScheduleLink", "Fund repayments missing schedule link")}</span>
                                 <span className="font-medium text-destructive">{reconciliation?.fundRepaymentsMissingScheduleLink ?? 0}</span>
                             </div>
                         </div>
                         <div className="rounded border p-3">
                             <div className="flex items-center justify-between gap-3">
-                                <span className="text-muted-foreground">Raw bank statement imports pending review</span>
+                                <span className="text-muted-foreground">{t("dashboardPage.reconciliation.pendingBankImports", "Raw bank statement imports pending review")}</span>
                                 <span className="font-medium">{reconciliation?.pendingBankImports ?? 0}</span>
                             </div>
                         </div>
                         <div className="rounded border p-3">
                             <div className="flex items-center justify-between gap-3">
-                                <span className="text-muted-foreground">Pending LINE/OCR uploads review</span>
+                                <span className="text-muted-foreground">{t("dashboardPage.reconciliation.pendingManualReviews", "Pending LINE/OCR uploads review")}</span>
                                 <span className="font-medium">{reconciliation?.pendingManualReviews ?? 0}</span>
                             </div>
                         </div>
                         <div className="rounded border p-3">
                             <div className="flex items-center justify-between gap-3">
-                                <span className="text-muted-foreground">Borrower payments missing slip</span>
+                                <span className="text-muted-foreground">{t("dashboardPage.reconciliation.missingBorrowerSlip", "Borrower payments missing slip")}</span>
                                 <span className="font-medium text-amber-600">{reconciliation?.borrowerPaymentsMissingSlip ?? 0}</span>
                             </div>
                         </div>
@@ -426,15 +444,15 @@ export default function Dashboard() {
             <div className="grid gap-4 xl:grid-cols-2">
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between">
-                        <CardTitle>Borrower Due Queue</CardTitle>
-                        <Button size="sm" variant="outline" onClick={() => navigate("/dashboard/transactions/new")}>
-                            Record Payment
+                        <CardTitle>{t("dashboardPage.sections.borrowerDueQueue", "Borrower Due Queue")}</CardTitle>
+                        <Button size="sm" variant="outline" onClick={() => navigate("/transactions/new")}>
+                            {t("dashboardPage.actions.recordPayment", "Record Payment")}
                         </Button>
                     </CardHeader>
                     <CardContent className="space-y-3">
                         {borrowerDueNow.length === 0 ? (
                             <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
-                                No borrower installments are due right now.
+                                {t("dashboardPage.empty.noBorrowerDue", "No borrower installments are due right now.")}
                             </div>
                         ) : (
                             borrowerDueNow.map((item) => (
@@ -443,18 +461,18 @@ export default function Dashboard() {
                                         <div>
                                             <div className="font-medium">{item.borrowerName}</div>
                                             <div className="text-xs text-muted-foreground">
-                                                Loan #{item.loanId} • Installment #{item.installmentNo} • {item.repaymentType}
+                                                {t("dashboardPage.borrowerQueueItem", { defaultValue: "Loan #{{loanId}} • Installment #{{installmentNo}} • {{repaymentType}}", loanId: item.loanId, installmentNo: item.installmentNo, repaymentType: item.repaymentType })}
                                             </div>
-                                            <div className="text-xs text-muted-foreground">Due {item.dueDate}</div>
+                                            <div className="text-xs text-muted-foreground">{t("dashboardPage.dueLabel", { defaultValue: "Due {{date}}", date: item.dueDate })}</div>
                                         </div>
                                         <div className="text-right">
-                                            <div className="font-medium">{formatCurrency(Number(item.totalDueNow ?? item.remainingDue))}</div>
+                                            <div className="font-medium">{formatCurrency(Number(item.totalDueNow ?? item.remainingDue), i18n.language)}</div>
                                             <QueueBadge dueDate={item.dueDate} status={item.status} />
                                         </div>
                                     </div>
                                     <div className="mt-3 flex justify-end">
                                         <Button size="sm" variant="outline" onClick={() => openBorrowerRepayment(navigate, item)}>
-                                            Record This Payment
+                                            {t("dashboardPage.actions.recordThisPayment", "Record This Payment")}
                                         </Button>
                                     </div>
                                 </div>
@@ -465,37 +483,37 @@ export default function Dashboard() {
 
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between">
-                        <CardTitle>Fund Due Queue</CardTitle>
-                        <Button size="sm" variant="outline" onClick={() => navigate("/dashboard/funds")}>
-                            Open Funds
+                        <CardTitle>{t("dashboardPage.sections.fundDueQueue", "Fund Due Queue")}</CardTitle>
+                        <Button size="sm" variant="outline" onClick={() => navigate("/funds")}>
+                            {t("dashboardPage.actions.openFunds", "Open Funds")}
                         </Button>
                     </CardHeader>
                     <CardContent className="space-y-3">
                         {fundDueNow.length === 0 ? (
                             <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
-                                No fund repayments are due right now.
+                                {t("dashboardPage.empty.noFundDue", "No fund repayments are due right now.")}
                             </div>
                         ) : (
                             fundDueNow.map((item) => (
                                 <div key={item.scheduleId} className="rounded border p-3">
                                     <div className="flex items-center justify-between gap-3">
                                         <div>
-                                            <div className="font-medium">Drawdown #{item.bankLoanId}</div>
+                                            <div className="font-medium">{t("dashboardPage.drawdownLabel", { defaultValue: "Drawdown #{{id}}", id: item.bankLoanId })}</div>
                                             <div className="text-xs text-muted-foreground">
-                                                Installment #{item.installmentNo} • Fund #{item.bankProfileId ?? "-"}
+                                                {t("dashboardPage.fundQueueItem", { defaultValue: "Installment #{{installmentNo}} • Fund #{{fundId}}", installmentNo: item.installmentNo, fundId: item.bankProfileId ?? "-" })}
                                             </div>
                                             <div className="text-xs text-muted-foreground">
-                                                Due {item.dueDate}{item.note ? ` • ${item.note}` : ""}
+                                                {t("dashboardPage.dueLabel", { defaultValue: "Due {{date}}", date: item.dueDate })}{item.note ? ` • ${item.note}` : ""}
                                             </div>
                                         </div>
                                         <div className="text-right">
-                                            <div className="font-medium">{formatCurrency(Number(item.totalDueNow ?? item.remainingDue))}</div>
+                                            <div className="font-medium">{formatCurrency(Number(item.totalDueNow ?? item.remainingDue), i18n.language)}</div>
                                             <QueueBadge dueDate={item.dueDate} status={item.status} />
                                         </div>
                                     </div>
                                     <div className="mt-3 flex justify-end">
                                         <Button size="sm" variant="outline" onClick={() => openFundRepayment(navigate, item)}>
-                                            Record Fund Repayment
+                                            {t("dashboardPage.actions.recordFundRepayment", "Record Fund Repayment")}
                                         </Button>
                                     </div>
                                 </div>

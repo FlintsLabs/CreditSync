@@ -1,13 +1,17 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, CalendarDays, User2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { api } from "../../../lib/api";
+import { getStoredUser, isTenantAdminUser } from "../../../lib/session";
 import { Button } from "../../../components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/Card";
 
 interface LoanDetailData {
     id: number;
+    publicId?: string;
     borrowerId: number;
+    borrowerPublicId?: string;
     principalAmount: string;
     interestRate: string;
     repaymentType: string;
@@ -23,12 +27,14 @@ interface LoanDetailData {
 
 interface BorrowerData {
     id: number;
+    publicId?: string;
     name: string;
     phone?: string | null;
 }
 
 interface LoanScheduleRow {
     id: number;
+    publicId?: string;
     installmentNo: number;
     dueDate: string;
     scheduledTotal: string;
@@ -39,7 +45,9 @@ interface LoanScheduleRow {
 interface AllocationRow {
     id: number;
     bankLoanId?: number | null;
+    bankLoanPublicId?: string | null;
     bankProfileId?: number | null;
+    bankProfilePublicId?: string | null;
     bankProfileName?: string | null;
     allocatedAmount: string;
     allocationDate?: string;
@@ -58,7 +66,9 @@ interface LoanProfitability {
     fundingShare: number;
     fundingComposition: Array<{
         bankLoanId: number;
+        bankLoanPublicId?: string | null;
         bankProfileId: number | null;
+        bankProfilePublicId?: string | null;
         netAllocatedPrincipal: number;
         shareOfLoanPrincipal: number;
         shareOfDrawdown: number;
@@ -86,8 +96,11 @@ function formatCurrency(value: number) {
 }
 
 export default function LoanDetail() {
+    const { t } = useTranslation();
     const navigate = useNavigate();
     const { id } = useParams();
+    const currentUser = getStoredUser();
+    const isTenantAdmin = isTenantAdminUser(currentUser);
     const [loading, setLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState("");
     const [loan, setLoan] = useState<LoanDetailData | null>(null);
@@ -100,20 +113,22 @@ export default function LoanDetail() {
     useEffect(() => {
         const run = async () => {
             if (!id) {
-                setErrorMessage("Loan not found.");
+                setErrorMessage(t("loanDetail.errors.notFound", "Loan not found."));
                 setLoading(false);
                 return;
             }
 
             try {
                 setLoading(true);
-                const [loanRes, scheduleRes, allocationsRes, profitabilityRes, allocationStateRes] = await Promise.all([
+                const [loanRes, scheduleRes, allocationsRes, allocationStateRes] = await Promise.all([
                     api.get(`/loans/${id}`),
                     api.get(`/loans/${id}/schedule`),
                     api.get(`/loans/${id}/funding-allocations`),
-                    api.get(`/loans/${id}/profitability`),
                     api.get(`/loans/${id}/allocation-state`),
                 ]);
+                const profitabilityRes = isTenantAdmin
+                    ? await api.get(`/loans/${id}/profitability`)
+                    : { data: null };
 
                 const loanData = loanRes.data ?? null;
                 setLoan(loanData);
@@ -122,8 +137,8 @@ export default function LoanDetail() {
                 setProfitability(profitabilityRes.data ?? null);
                 setAllocationState(allocationStateRes.data ?? null);
 
-                if (loanData?.borrowerId) {
-                    const borrowerRes = await api.get(`/borrowers/${loanData.borrowerId}`);
+                if (loanData?.borrowerPublicId) {
+                    const borrowerRes = await api.get(`/borrowers/${loanData.borrowerPublicId}`);
                     setBorrower(borrowerRes.data ?? null);
                 } else {
                     setBorrower(null);
@@ -132,28 +147,28 @@ export default function LoanDetail() {
                 setErrorMessage("");
             } catch (error) {
                 console.error("Failed to load loan detail", error);
-                setErrorMessage("Unable to load loan detail right now.");
+                setErrorMessage(t("loanDetail.errors.load", "Unable to load loan detail right now."));
             } finally {
                 setLoading(false);
             }
         };
 
         run();
-    }, [id]);
+    }, [id, isTenantAdmin, t]);
 
     const nextDueRow = schedule.find((row) => Number(row.remainingDue) > 0) ?? null;
 
     return (
         <div className="space-y-6">
             <div className="flex items-center gap-4">
-                <Button variant="ghost" size="icon" onClick={() => navigate("/dashboard/loans")}>
+                <Button variant="ghost" size="icon" onClick={() => navigate("/loans")}>
                     <ArrowLeft className="h-4 w-4" />
                 </Button>
                 <div>
                     <h2 className="text-2xl font-bold tracking-tight">
-                        {loading ? "Loading..." : `Loan #${loan?.id ?? ""}`}
+                        {loading ? t("common.loading", "Loading...") : t("loans.loanLabel", { defaultValue: "Loan #{{id}}", id: loan?.id ?? "" })}
                     </h2>
-                    <p className="text-muted-foreground">Profitability, funding composition, and installment status in one view.</p>
+                    <p className="text-muted-foreground">{t("loanDetail.description", "Profitability, funding composition, and installment status in one view.")}</p>
                 </div>
             </div>
 
@@ -164,11 +179,11 @@ export default function LoanDetail() {
             )}
 
             {loading ? (
-                <div>Loading...</div>
+                <div>{t("common.loading", "Loading...")}</div>
             ) : !loan ? (
                 <Card>
                     <CardContent className="py-10 text-center text-muted-foreground">
-                        This loan does not exist anymore.
+                        {t("loanDetail.missing", "This loan does not exist anymore.")}
                     </CardContent>
                 </Card>
             ) : (
@@ -176,17 +191,17 @@ export default function LoanDetail() {
                     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                         <Card>
                             <CardHeader className="pb-2">
-                                <CardTitle className="text-sm font-medium text-muted-foreground">Borrower</CardTitle>
+                                <CardTitle className="text-sm font-medium text-muted-foreground">{t("loanWizard.borrower", "Borrower")}</CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-2 text-sm">
                                 <div className="flex items-center gap-2 font-medium">
                                     <User2 className="h-4 w-4 text-muted-foreground" />
-                                    {borrower?.name ?? "Unknown borrower"}
+                                    {borrower?.name ?? t("loanDetail.unknownBorrower", "Unknown borrower")}
                                 </div>
                                 {borrower?.phone && <div className="text-muted-foreground">{borrower.phone}</div>}
                                 {borrower && (
-                                    <Link to={`/dashboard/borrowers/${borrower.id}`} className="text-primary text-xs hover:underline">
-                                        Open borrower profile
+                                    <Link to={`/borrowers/${borrower.publicId ?? borrower.id}`} className="text-primary text-xs hover:underline">
+                                        {t("loanDetail.openBorrowerProfile", "Open borrower profile")}
                                     </Link>
                                 )}
                             </CardContent>
@@ -194,23 +209,23 @@ export default function LoanDetail() {
 
                         <Card>
                             <CardHeader className="pb-2">
-                                <CardTitle className="text-sm font-medium text-muted-foreground">Loan Position</CardTitle>
+                                <CardTitle className="text-sm font-medium text-muted-foreground">{t("loanDetail.loanPosition", "Loan Position")}</CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-2 text-sm">
                                 <div className="flex justify-between">
-                                    <span>Principal</span>
+                                    <span>{t("loanWizard.columns.principal", "Principal")}</span>
                                     <span className="font-medium">{formatCurrency(Number(loan.principalAmount ?? 0))}</span>
                                 </div>
                                 <div className="flex justify-between">
-                                    <span>Outstanding principal</span>
+                                    <span>{t("loanWizard.outstandingPrincipal", "Outstanding principal")}</span>
                                     <span className="font-medium">{formatCurrency(Number(loan.outstandingPrincipal ?? 0))}</span>
                                 </div>
                                 <div className="flex justify-between">
-                                    <span>Outstanding interest</span>
+                                    <span>{t("loanDetail.outstandingInterest", "Outstanding interest")}</span>
                                     <span className="font-medium">{formatCurrency(Number(loan.outstandingInterest ?? 0))}</span>
                                 </div>
                                 <div className="flex justify-between">
-                                    <span>Status</span>
+                                    <span>{t("common.status", "Status")}</span>
                                     <span className="font-medium uppercase">{loan.status}</span>
                                 </div>
                             </CardContent>
@@ -218,25 +233,25 @@ export default function LoanDetail() {
 
                         <Card>
                             <CardHeader className="pb-2">
-                                <CardTitle className="text-sm font-medium text-muted-foreground">Funding State</CardTitle>
+                                <CardTitle className="text-sm font-medium text-muted-foreground">{t("loans.fundingState", "Funding State")}</CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-2 text-sm">
                                 <div className="flex justify-between">
-                                    <span>State</span>
+                                    <span>{t("loanDetail.state", "State")}</span>
                                     <span className="font-medium capitalize">{allocationState?.state?.replaceAll("_", " ") ?? "-"}</span>
                                 </div>
                                 <div className="flex justify-between">
-                                    <span>Funded principal</span>
+                                    <span>{t("loanDetail.fundedPrincipal", "Funded principal")}</span>
                                     <span className="font-medium">{formatCurrency(Number(allocationState?.netAllocatedPrincipal ?? 0))}</span>
                                 </div>
                                 <div className="flex justify-between">
-                                    <span>Remaining gap</span>
+                                    <span>{t("loans.remainingGap", "Remaining gap")}</span>
                                     <span className={`font-medium ${Number(allocationState?.remainingGap ?? 0) > 0 ? "text-destructive" : "text-emerald-600"}`}>
                                         {formatCurrency(Number(allocationState?.remainingGap ?? 0))}
                                     </span>
                                 </div>
                                 <div className="flex justify-between">
-                                    <span>Overfunded</span>
+                                    <span>{t("loanDetail.overfunded", "Overfunded")}</span>
                                     <span className="font-medium">{formatCurrency(Number(allocationState?.overfundedAmount ?? 0))}</span>
                                 </div>
                             </CardContent>
@@ -244,7 +259,7 @@ export default function LoanDetail() {
 
                         <Card>
                             <CardHeader className="pb-2">
-                                <CardTitle className="text-sm font-medium text-muted-foreground">Next Due</CardTitle>
+                                <CardTitle className="text-sm font-medium text-muted-foreground">{t("loanWizard.nextDue", "Next Due")}</CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-2 text-sm">
                                 {nextDueRow ? (
@@ -254,15 +269,15 @@ export default function LoanDetail() {
                                             <span className="font-medium">{nextDueRow.dueDate}</span>
                                         </div>
                                         <div className="flex justify-between">
-                                            <span>Remaining due</span>
+                                            <span>{t("loanDetail.remainingDue", "Remaining due")}</span>
                                             <span className="font-medium">{formatCurrency(Number(nextDueRow.remainingDue ?? 0))}</span>
                                         </div>
-                                        <Link to={`/dashboard/transactions/new?loanId=${loan.id}&scheduleId=${nextDueRow.id}`} className="text-primary text-xs hover:underline">
-                                            Record this payment
+                                        <Link to={`/transactions/new?loanId=${loan.publicId ?? loan.id}&scheduleId=${nextDueRow.publicId ?? nextDueRow.id}`} className="text-primary text-xs hover:underline">
+                                            {t("dashboardPage.actions.recordThisPayment", "Record this payment")}
                                         </Link>
                                     </>
                                 ) : (
-                                    <div className="text-muted-foreground">No pending installment right now.</div>
+                                    <div className="text-muted-foreground">{t("loanDetail.noPendingInstallment", "No pending installment right now.")}</div>
                                 )}
                             </CardContent>
                         </Card>
@@ -270,35 +285,35 @@ export default function LoanDetail() {
 
                     <Card>
                         <CardHeader>
-                            <CardTitle>Profitability Snapshot</CardTitle>
+                            <CardTitle>{t("loanDetail.profitabilitySnapshot", "Profitability Snapshot")}</CardTitle>
                         </CardHeader>
-                        <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+                            <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
                             <div>
-                                <div className="text-xs text-muted-foreground">Revenue collected</div>
+                                <div className="text-xs text-muted-foreground">{t("dashboardPage.cards.borrowerRevenue", "Revenue collected")}</div>
                                 <div className="font-medium">{formatCurrency(Number(profitability?.borrowerRevenueCollected ?? 0))}</div>
                             </div>
                             <div>
-                                <div className="text-xs text-muted-foreground">Fund cost paid</div>
+                                <div className="text-xs text-muted-foreground">{t("dashboardPage.cards.fundCostPaid", "Fund cost paid")}</div>
                                 <div className="font-medium">{formatCurrency(Number(profitability?.fundCostPaid ?? 0))}</div>
                             </div>
                             <div>
-                                <div className="text-xs text-muted-foreground">Realized spread</div>
+                                <div className="text-xs text-muted-foreground">{t("funds.metrics.realizedSpread", "Realized spread")}</div>
                                 <div className={`font-medium ${Number(profitability?.realizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
                                     {formatCurrency(Number(profitability?.realizedSpread ?? 0))}
                                 </div>
                             </div>
                             <div>
-                                <div className="text-xs text-muted-foreground">Unrealized spread</div>
+                                <div className="text-xs text-muted-foreground">{t("loans.unrealizedSpread", "Unrealized spread")}</div>
                                 <div className={`font-medium ${Number(profitability?.unrealizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
                                     {formatCurrency(Number(profitability?.unrealizedSpread ?? 0))}
                                 </div>
                             </div>
                             <div>
-                                <div className="text-xs text-muted-foreground">Funding share</div>
+                                <div className="text-xs text-muted-foreground">{t("loanDetail.fundingShare", "Funding share")}</div>
                                 <div className="font-medium">{((Number(profitability?.fundingShare ?? 0)) * 100).toFixed(1)}%</div>
                             </div>
                             <div>
-                                <div className="text-xs text-muted-foreground">Outstanding funding cost</div>
+                                <div className="text-xs text-muted-foreground">{t("loanDetail.outstandingFundingCost", "Outstanding funding cost")}</div>
                                 <div className="font-medium">{formatCurrency(Number(profitability?.estimatedOutstandingFundingCost ?? 0))}</div>
                             </div>
                         </CardContent>
@@ -307,7 +322,7 @@ export default function LoanDetail() {
                     <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
                         <Card>
                             <CardHeader>
-                                <CardTitle>Funding Composition</CardTitle>
+                                <CardTitle>{t("loanDetail.fundingComposition", "Funding Composition")}</CardTitle>
                             </CardHeader>
                             <CardContent>
                                 {profitability?.fundingComposition?.length ? (
@@ -316,22 +331,22 @@ export default function LoanDetail() {
                                             <div key={item.bankLoanId} className="rounded border p-3 text-sm">
                                                 <div className="flex items-center justify-between gap-3">
                                                     <div>
-                                                        <div className="font-medium">Drawdown #{item.bankLoanId}</div>
+                                                        <div className="font-medium">{t("dashboardPage.drawdownLabel", { defaultValue: "Drawdown #{{id}}", id: item.bankLoanId })}</div>
                                                         <div className="text-xs text-muted-foreground">
-                                                            Share of loan: {(item.shareOfLoanPrincipal * 100).toFixed(1)}% • Share of drawdown cost: {(item.shareOfDrawdown * 100).toFixed(1)}%
+                                                            {t("loanDetail.shareOfLoan", "Share of loan")}: {(item.shareOfLoanPrincipal * 100).toFixed(1)}% • {t("loanDetail.shareOfDrawdownCost", "Share of drawdown cost")}: {(item.shareOfDrawdown * 100).toFixed(1)}%
                                                         </div>
                                                     </div>
-                                                    <Link to={`/dashboard/funds/${item.bankProfileId}?bankLoanId=${item.bankLoanId}`} className="text-primary text-xs hover:underline">
-                                                        Open drawdown
+                                                    <Link to={`/funds/${item.bankProfilePublicId ?? item.bankProfileId}?bankLoanId=${item.bankLoanPublicId ?? item.bankLoanId}`} className="text-primary text-xs hover:underline">
+                                                        {t("loanDetail.openDrawdown", "Open drawdown")}
                                                     </Link>
                                                 </div>
                                                 <div className="mt-3 grid gap-3 md:grid-cols-3">
                                                     <div>
-                                                        <div className="text-xs text-muted-foreground">Allocated principal</div>
+                                                        <div className="text-xs text-muted-foreground">{t("loanDetail.allocatedPrincipal", "Allocated principal")}</div>
                                                         <div className="font-medium">{formatCurrency(item.netAllocatedPrincipal)}</div>
                                                     </div>
                                                     <div>
-                                                        <div className="text-xs text-muted-foreground">Estimated cost paid</div>
+                                                        <div className="text-xs text-muted-foreground">{t("loanDetail.estimatedCostPaid", "Estimated cost paid")}</div>
                                                         <div className="font-medium">
                                                             {formatCurrency(
                                                                 item.estimatedBankInterestPaid +
@@ -342,7 +357,7 @@ export default function LoanDetail() {
                                                         </div>
                                                     </div>
                                                     <div>
-                                                        <div className="text-xs text-muted-foreground">Outstanding cost allocated</div>
+                                                        <div className="text-xs text-muted-foreground">{t("loanDetail.outstandingCostAllocated", "Outstanding cost allocated")}</div>
                                                         <div className="font-medium">{formatCurrency(item.outstandingCostAllocated)}</div>
                                                     </div>
                                                 </div>
@@ -351,7 +366,7 @@ export default function LoanDetail() {
                                     </div>
                                 ) : (
                                     <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
-                                        This loan has not been matched to any funding drawdown yet.
+                                        {t("loanDetail.noFundingComposition", "This loan has not been matched to any funding drawdown yet.")}
                                     </div>
                                 )}
                             </CardContent>
@@ -359,12 +374,12 @@ export default function LoanDetail() {
 
                         <Card>
                             <CardHeader>
-                                <CardTitle>Repayment Schedule</CardTitle>
+                                <CardTitle>{t("loanDetail.repaymentSchedule", "Repayment Schedule")}</CardTitle>
                             </CardHeader>
                             <CardContent>
                                 {schedule.length === 0 ? (
                                     <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
-                                        No repayment schedule available for this loan.
+                                        {t("loanDetail.noRepaymentSchedule", "No repayment schedule available for this loan.")}
                                     </div>
                                 ) : (
                                     <div className="space-y-2">
@@ -372,7 +387,7 @@ export default function LoanDetail() {
                                             <div key={row.id} className="rounded border p-3 text-sm">
                                                 <div className="flex items-center justify-between gap-3">
                                                     <div>
-                                                        <div className="font-medium">Installment #{row.installmentNo}</div>
+                                                        <div className="font-medium">{t("loanDetail.installmentLabel", { defaultValue: "Installment #{{id}}", id: row.installmentNo })}</div>
                                                         <div className="text-xs text-muted-foreground">{row.dueDate}</div>
                                                     </div>
                                                     <div className="text-right">
@@ -390,12 +405,12 @@ export default function LoanDetail() {
 
                     <Card>
                         <CardHeader>
-                            <CardTitle>Allocation History</CardTitle>
+                            <CardTitle>{t("loanDetail.allocationHistory", "Allocation History")}</CardTitle>
                         </CardHeader>
                         <CardContent>
                             {allocations.length === 0 ? (
                                 <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
-                                    No funding allocations have been recorded for this loan yet.
+                                    {t("loanDetail.noAllocationHistory", "No funding allocations have been recorded for this loan yet.")}
                                 </div>
                             ) : (
                                 <div className="space-y-2">
@@ -407,7 +422,7 @@ export default function LoanDetail() {
                                                         {row.allocationType} {row.bankLoanId ? `• Drawdown #${row.bankLoanId}` : ""}
                                                     </div>
                                                     <div className="text-xs text-muted-foreground">
-                                                        {row.bankProfileName ?? "Unknown source"} • {row.allocationDate ?? "-"}
+                                                        {row.bankProfileName ?? t("matching.unknownSource", "Unknown source")} • {row.allocationDate ?? "-"}
                                                     </div>
                                                 </div>
                                                 <div className={`font-medium ${Number(row.allocatedAmount) < 0 ? "text-destructive" : "text-emerald-600"}`}>

@@ -1,5 +1,6 @@
 
 import { Settings, LogOut, User } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { ModeToggle } from "./theme-toggle";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { Button } from "./ui/Button";
@@ -22,6 +23,7 @@ interface User {
 }
 
 export default function AppBar() {
+    const { t } = useTranslation();
     // Get user from local storage safely
     let user: User | null = null;
     try {
@@ -67,17 +69,17 @@ export default function AppBar() {
                         <DropdownMenuGroup>
                             <DropdownMenuItem>
                                 <User className="mr-2 h-4 w-4" />
-                                <span>Profile</span>
+                                <span>{t("appbar.profile", "Profile")}</span>
                             </DropdownMenuItem>
                             <DropdownMenuItem>
                                 <Settings className="mr-2 h-4 w-4" />
-                                <span>Settings</span>
+                                <span>{t("appbar.settings", "Settings")}</span>
                             </DropdownMenuItem>
                         </DropdownMenuGroup>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
                             <LogOut className="mr-2 h-4 w-4" />
-                            <span>Log out</span>
+                            <span>{t("appbar.logout", "Log out")}</span>
                         </DropdownMenuItem>
                     </DropdownMenuContent>
                 </DropdownMenu>
