@@ -1,27 +1,5 @@
 # Changelog
 
-## v0.3.2 - 2026-08-10
-
-### Fixed
-- Preserved scheduled-loan principal, interest, totals, and remaining balances above JavaScript's safe-integer range by carrying canonical money strings from the Decimal calculator through schedule generation and activation rollups.
-
-### Tests
-- Added exact large-value monthly, weekly, and daily schedule regressions plus PostgreSQL activation coverage for stored schedules and loan rollups.
-
-## v0.3.1 - 2026-08-10
-
-### Changed
-- Loan schedule, closing, allocation-state, profitability, funding-allocation, and funding-reallocation REST payloads now expose public UUIDs and two-decimal money strings; funding mutations accept public funding UUIDs and money strings.
-- Updated the loan detail, matching, and closing frontend flows for the exact public loan DTOs.
-
-### Fixed
-- Conserved principal, interest, fees, row totals, and remaining due across daily, weekly, and monthly schedules, including non-even final installments, without `Number` drift in activation rollups.
-- Mapped routine borrower and loan authorization, visibility, state, and duplicate-alias failures to stable domain error codes and statuses.
-- Restored tenant cache invalidation after borrower updates so cached loan lists immediately reflect borrower-name changes.
-
-### Tests
-- Added PostgreSQL coverage for exact activation balances, simultaneous activation idempotency, the authenticated draft-to-activation REST lifecycle, public funding DTOs, mutation audits, duplicate aliases, and Dragonfly-backed cache invalidation.
-
 ## v0.3.0 - 2026-08-09
 
 ### Added
@@ -29,16 +7,22 @@
 - Added a Bun-backed backend TypeScript typecheck gate and focused money-kernel tests.
 - Added the v0.3.0 agent-workflow data foundation for borrower aliases, payment intake/evidence matching, transaction reversals, loan renewals and adjustments, tenant-scoped idempotency, and append-only audit history.
 - Added shared borrower and loan-application services with normalized alias search, public-ID presenters, command-context audit metadata, borrower portfolios, editable loan drafts, previews, and idempotent activation.
+- Added PostgreSQL and Dragonfly regression coverage for exact schedules and activation rollups, concurrent activation, the authenticated draft lifecycle, public funding DTOs, mutation audits, duplicate aliases, and cache invalidation, including large-value monthly, weekly, and daily money cases.
 
 ### Changed
 - Loan creation is now draft-first: `POST /loans` stores editable terms without a schedule, while `POST /loans/:id/activate` locks the terms and creates the schedule once. The current web wizard performs both steps to preserve its existing confirm-and-create flow.
 - Borrower and loan-application REST adapters now delegate to the shared services and use public UUID identifiers at their external command boundaries.
+- Loan schedule, closing, allocation-state, profitability, funding-allocation, and funding-reallocation REST payloads now expose public UUIDs and two-decimal money strings; funding mutations accept public funding UUIDs and money strings.
+- Updated the loan detail, matching, and closing frontend flows for the exact public loan DTOs.
 
 ### Fixed
 - Corrected backend source typing issues surfaced by the new typecheck gate without changing existing workflow behavior.
 - Restored bank-loan close timestamp persistence after repayment and hardened daily installment, public schedule-money, and allocation due-date validation.
 - Aligned the loan wizard and create API with the two-decimal public-money contract from schedule calculation through loan creation.
 - Enforced tenant-safe workflow relationships and reversal references in PostgreSQL, while hardening migration idempotency, uniqueness, and full financial-state preservation tests.
+- Conserved principal, interest, fees, row totals, and remaining due across daily, weekly, and monthly schedules, including non-even final installments and values above JavaScript's safe-integer range, by carrying canonical money strings through schedule generation and activation rollups.
+- Mapped routine borrower and loan authorization, visibility, state, and duplicate-alias failures to stable domain error codes and statuses.
+- Restored tenant cache invalidation after borrower updates so cached loan lists immediately reflect borrower-name changes.
 
 ## v0.2.4 - 2026-08-09
 
