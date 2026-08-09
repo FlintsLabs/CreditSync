@@ -6,6 +6,11 @@
 - Added a Decimal-based money kernel, exact daily fixed-installment schedule generation, and oldest-first repayment allocation primitives.
 - Added a Bun-backed backend TypeScript typecheck gate and focused money-kernel tests.
 - Added the v0.3.0 agent-workflow data foundation for borrower aliases, payment intake/evidence matching, transaction reversals, loan renewals and adjustments, tenant-scoped idempotency, and append-only audit history.
+- Added shared borrower and loan-application services with normalized alias search, public-ID presenters, command-context audit metadata, borrower portfolios, editable loan drafts, previews, and idempotent activation.
+
+### Changed
+- Loan creation is now draft-first: `POST /loans` stores editable terms without a schedule, while `POST /loans/:id/activate` locks the terms and creates the schedule once. The current web wizard performs both steps to preserve its existing confirm-and-create flow.
+- Borrower and loan-application REST adapters now delegate to the shared services and use public UUID identifiers at their external command boundaries.
 
 ### Fixed
 - Corrected backend source typing issues surfaced by the new typecheck gate without changing existing workflow behavior.

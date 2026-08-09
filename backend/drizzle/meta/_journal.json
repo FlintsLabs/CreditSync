@@ -64,6 +64,13 @@
       "when": 1786240000000,
       "tag": "0008_agent_workflow_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786294151294,
+      "tag": "0009_loan_draft_terms",
+      "breakpoints": true
     }
   ]
 }

@@ -9,8 +9,8 @@ import { Badge } from "../../../components/ui/badge";
 import { useTranslation } from "react-i18next";
 
 interface LoanRow {
-    id: number;
-    borrowerId: number;
+    id: string;
+    borrowerId: string;
     borrowerName: string;
     principal: string | number;
     status: string;
@@ -89,7 +89,7 @@ export default function MatchingWorkspace() {
     const [loans, setLoans] = useState<LoanRow[]>([]);
     const [drawdowns, setDrawdowns] = useState<DrawdownRow[]>([]);
     const [bankProfiles, setBankProfiles] = useState<BankProfile[]>([]);
-    const [selectedLoanId, setSelectedLoanId] = useState<number | null>(null);
+    const [selectedLoanId, setSelectedLoanId] = useState<string | null>(null);
     const [selectedLoanProfitability, setSelectedLoanProfitability] = useState<LoanProfitability | null>(null);
     const [draftAllocations, setDraftAllocations] = useState<Record<number, string>>({});
     const [allocationHistory, setAllocationHistory] = useState<AllocationRow[]>([]);
@@ -122,7 +122,7 @@ export default function MatchingWorkspace() {
                 Promise.all(rawDrawdowns.map((drawdown: DrawdownRow) => api.get(`/bank-loans/${drawdown.id}/allocation-state`).then((res) => ({ bankLoanId: drawdown.id, state: res.data as DrawdownAllocationState })))),
             ]);
 
-            const fundedByLoan = new Map<number, number>(
+            const fundedByLoan = new Map<string, number>(
                 loanStates.map(({ loanId, state }) => [
                     loanId,
                     Number(state?.netAllocatedPrincipal ?? 0),
@@ -134,7 +134,7 @@ export default function MatchingWorkspace() {
                     Number(state?.netAllocatedPrincipal ?? 0),
                 ])
             );
-            const loanStateById = new Map<number, LoanAllocationState>(loanStates.map(({ loanId, state }) => [loanId, state]));
+            const loanStateById = new Map<string, LoanAllocationState>(loanStates.map(({ loanId, state }) => [loanId, state]));
             const drawdownStateById = new Map<number, DrawdownAllocationState>(drawdownStates.map(({ bankLoanId, state }) => [bankLoanId, state]));
 
             const normalizedLoans: LoanRow[] = rawLoans.map((loan: LoanRow) => ({
@@ -188,7 +188,7 @@ export default function MatchingWorkspace() {
         }));
     };
 
-    const handleSelectLoan = (loanId: number) => {
+    const handleSelectLoan = (loanId: string) => {
         setSelectedLoanId(loanId);
         setDraftAllocations({});
         setAllocationHistory([]);

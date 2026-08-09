@@ -26,7 +26,7 @@ The repo already contains a working MVP foundation:
 - Borrower CRUD
 - File upload to MinIO / S3-compatible storage
 - OCR endpoint for uploaded ID-card-like images
-- Loan calculation service and loan creation flow
+- Loan calculation plus draft-review-activation flow
 - Transaction recording with optional repayment slip upload
 - Closing summary calculation for loans
 - LINE webhook ingestion for image uploads
@@ -52,6 +52,8 @@ Some screens are still mock/demo oriented and not fully wired to live backend da
 ### 2. Borrower Management
 
 - create and edit borrower profiles
+- search canonical names and confirmed aliases without auto-selecting ambiguous matches
+- manage borrower aliases and view borrower portfolio summaries
 - store phone, address, tags, notes, and map links
 - attach ID card image
 - OCR text extraction to help fill borrower data
@@ -60,7 +62,7 @@ Some screens are still mock/demo oriented and not fully wired to live backend da
 
 - calculate repayment schedules before saving
 - support `daily`, `weekly`, `monthly`, and `floating` repayment types
-- create active loan agreements
+- create editable loan drafts, then activate them to lock terms and generate schedules exactly once
 - preview installment breakdown
 - calculate closing balance based on elapsed time and payments already received
 
@@ -108,7 +110,8 @@ Some screens are still mock/demo oriented and not fully wired to live backend da
 │   ├── src/db/           # schema and database connection
 │   ├── src/lib/          # calculator, OCR, storage helpers
 │   ├── src/middleware/   # auth middleware
-│   └── src/modules/      # auth, borrowers, loans, files, transactions, webhook
+│   ├── src/modules/      # auth, borrowers, loans, files, transactions, webhook
+│   └── src/services/     # shared borrower and loan-application commands
 ├── frontend/             # React + Vite app
 │   ├── src/components/   # reusable UI components
 │   ├── src/layouts/      # dashboard shell
@@ -240,6 +243,8 @@ http://localhost:5173
 The frontend uses `/api` as the API base path and expects Vite proxy configuration during development.
 
 Protected app navigation now keeps the dashboard overview at `/dashboard`, while resource sections live at first-level routes such as `/funds/:id`, `/borrowers/:id`, and `/loans/:id`. URL-facing resource identifiers are moving to `uuidv7`-style public IDs, while internal numeric IDs remain in the database for joins and accounting logic.
+
+Loan agreement creation is draft-first. `POST /api/loans` accepts borrower and optional funding-source public IDs and returns a draft without schedules. Draft terms can be changed with `PUT /api/loans/:id`; `POST /api/loans/:id/activate` locks the terms and creates schedules and the initial funding allocation once. Repeating activation is safe and returns the already-active agreement. The current loan wizard immediately activates after creating the draft so the existing user flow remains coherent until the dedicated draft UI is introduced.
 
 ### Dev vs Docker Quick Reference
 

@@ -10,8 +10,8 @@ import { LoanClosingModal } from "./LoanClosingModal";
 import { useTranslation } from "react-i18next";
 
 interface LoanRow {
-    id: number;
-    publicId?: string;
+    id: string;
+    publicId: string;
     borrowerName: string;
     principal: string | number;
     status: string;
@@ -34,7 +34,7 @@ function formatCurrency(value: number, locale?: string) {
 export default function LoanList() {
     const { t, i18n } = useTranslation();
     const [loans, setLoans] = useState<LoanRow[]>([]);
-    const [closingLoanId, setClosingLoanId] = useState<number | null>(null);
+    const [closingLoanId, setClosingLoanId] = useState<string | null>(null);
     const [search, setSearch] = useState("");
     const [statusFilter, setStatusFilter] = useState("all");
     const [fundingFilter, setFundingFilter] = useState("all");

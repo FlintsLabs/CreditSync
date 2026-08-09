@@ -170,6 +170,7 @@ export const loans = pgTable("loans", {
     principalAmount: numeric("principal_amount").notNull(),
     interestRate: numeric("interest_rate").notNull(), // Calculated rate for borrower
     repaymentType: text("repayment_type").notNull(), // "daily", "monthly", "floating"
+    termMonths: integer("term_months"), // Nullable so pre-draft-workflow active loans remain compatible
     installmentAmount: numeric("installment_amount"), // e.g. 400 per day
     totalInstallments: integer("total_installments"),
     gracePeriodDays: integer("grace_period_days").default(0),
@@ -186,6 +187,7 @@ export const loans = pgTable("loans", {
     updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
     uniqueIndex("loans_tenant_id_id_unique").on(table.tenantId, table.id),
+    check("loans_term_months_check", sql`${table.termMonths} IS NULL OR ${table.termMonths} > 0`),
 ]);
 
 export const loanSchedules = pgTable("loan_schedules", {

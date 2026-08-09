@@ -8,13 +8,15 @@ import { ChevronRight, ChevronLeft, CheckCircle, AlertCircle } from "lucide-reac
 import { useTranslation } from "react-i18next";
 
 interface Borrower {
-    id: number;
+    id: string;
+    publicId: string;
     name: string;
     idCardNumber?: string | null;
 }
 
 interface DrawdownOption {
     id: number;
+    publicId: string;
     bankProfileId: number | null;
     amount: string;
     outstandingPrincipal: string | null;
@@ -100,7 +102,7 @@ export default function LoanWizard() {
         loadDependencies();
     }, [isTenantAdmin, t]);
 
-    const selectedDrawdown = drawdowns.find((item) => String(item.id) === formData.bankLoanId);
+    const selectedDrawdown = drawdowns.find((item) => item.publicId === formData.bankLoanId);
     const selectedDrawdownProfile = bankProfiles.find((item) => item.id === selectedDrawdown?.bankProfileId);
     const bankProfileNameById = new Map(bankProfiles.map((item) => [item.id, item.name]));
 
@@ -140,9 +142,9 @@ export default function LoanWizard() {
             const total = schedule.length || toPositiveInteger(formData.termMonths, "Term months");
             const amount = schedule.length > 0 ? schedule[0].amount : undefined;
 
-            await api.post("/loans", {
-                borrowerId: Number(formData.borrowerId),
-                bankLoanId: isTenantAdmin && formData.bankLoanId ? Number(formData.bankLoanId) : undefined,
+            const draft = await api.post("/loans", {
+                borrowerPublicId: formData.borrowerId,
+                bankLoanPublicId: isTenantAdmin && formData.bankLoanId ? formData.bankLoanId : undefined,
                 principal: toPublicMoney(formData.principal),
                 interestRate: toPublicMoney(formData.interestRate),
                 repaymentType: formData.repaymentType,
@@ -151,6 +153,7 @@ export default function LoanWizard() {
                 installmentAmount: amount,
                 startDate: formData.startDate
             });
+            await api.post(`/loans/${draft.data.publicId}/activate`);
 
             window.location.href = "/loans";
         } catch (error: unknown) {
@@ -216,7 +219,7 @@ export default function LoanWizard() {
                                 >
                                     <option value="">{t("loanWizard.noneDrawdown", "None (Unmatched / Own Capital)")}</option>
                                     {drawdowns.map((item) => (
-                                        <option key={item.id} value={item.id}>
+                                        <option key={item.publicId} value={item.publicId}>
                                             #{item.id} {item.bankProfileId ? bankProfileNameById.get(item.bankProfileId) ?? "" : ""} ฿{Number(item.outstandingPrincipal ?? item.amount).toLocaleString(i18n.language)}
                                         </option>
                                     ))}

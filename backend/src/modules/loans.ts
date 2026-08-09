@@ -11,15 +11,40 @@ import {
     transactions,
 } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
-import { calculateLoanClosingSummary, calculatePublicLoanSchedule, normalizePublicLoanTerms, type RepaymentType } from "../lib/calculator";
-import { generateLoanSchedule } from "../lib/loan-schedule";
-import { computeLoanRollup } from "../lib/loan-rollup";
+import { calculateLoanClosingSummary } from "../lib/calculator";
 import { createAuditLog } from "../lib/audit-log";
 import { canAccessTenantWideData, getAccessScopeCacheKey, loanAccessFilters } from "../lib/access";
 import { getLoanProfitabilitySummary } from "../lib/fund-settlement";
 import { computeOverdueSnapshot } from "../lib/overdue";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
-import { findAccessibleBorrowerByPublicId, findAccessibleLoanByPublicId, findBankLoanByPublicId } from "../lib/public-id";
+import { findAccessibleBorrowerByPublicId, findAccessibleLoanByPublicId } from "../lib/public-id";
+import { activateLoan, createLoanDraft, getLoanApplication, previewLoan, updateLoanDraft } from "../services/loan-application-service";
+import type { CommandContext } from "../services/command-context";
+import { presentDomainError } from "../services/domain-error";
+
+type RouteUser = { id: number; tenantId: string };
+
+function commandContext(user: RouteUser, request: Request): CommandContext {
+    const requestId = request.headers.get("x-request-id") ?? crypto.randomUUID();
+    return {
+        tenantId: user.tenantId,
+        actorUserId: user.id,
+        actorSource: "web",
+        requestId,
+        correlationId: request.headers.get("x-correlation-id") ?? requestId,
+        idempotencyKey: request.headers.get("idempotency-key") ?? undefined,
+    };
+}
+
+function domainFailure(error: unknown, set: { status?: number | string }) {
+    const presented = presentDomainError(error);
+    set.status = presented.status;
+    return presented.body;
+}
+
+const repaymentType = t.Union([
+    t.Literal("daily"), t.Literal("weekly"), t.Literal("monthly"), t.Literal("floating"),
+]);
 
 export const loansRoute = new Elysia({ prefix: "/loans" })
     .use(authPlugin)
@@ -42,10 +67,10 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             key: `list:${scopeKey}:borrower=${query.borrowerId ?? "all"}`,
             ttlSeconds: 30,
             loader: async () => await db.select({
-                id: loans.id,
+                id: loans.publicId,
                 publicId: loans.publicId,
-                borrowerId: loans.borrowerId,
-                bankLoanId: loans.bankLoanId,
+                borrowerId: borrowers.publicId,
+                borrowerPublicId: borrowers.publicId,
                 borrowerName: borrowers.name,
                 principal: loans.principalAmount,
                 status: loans.status,
@@ -65,34 +90,23 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             borrowerId: t.Optional(t.String()),
         })
     })
-    .get("/:id", async ({ params, user, set }) => {
+    .get("/:id", async ({ params, user, request, set }) => {
         if (!user) {
             set.status = 401;
             return { error: "Unauthorized" };
         }
-        const targetLoan = await findAccessibleLoanByPublicId(user, params.id);
-        if (!targetLoan) {
-            set.status = 404;
-            return { error: "Loan not found" };
-        }
         const scopeKey = getAccessScopeCacheKey(user);
-
-        const loan = await withTenantCache({
-            tenantId: user.tenantId,
-            namespace: "loans",
-            key: `detail:${params.id}:${scopeKey}`,
-            ttlSeconds: 30,
-            loader: async () => await db.query.loans.findFirst({
-                where: and(eq(loans.id, targetLoan.id), ...loanAccessFilters(user)),
-            }),
-        });
-
-        if (!loan) {
-            set.status = 404;
-            return { error: "Loan not found" };
+        try {
+            return await withTenantCache({
+                tenantId: user.tenantId,
+                namespace: "loans",
+                key: `detail:${params.id}:${scopeKey}`,
+                ttlSeconds: 30,
+                loader: async () => getLoanApplication(commandContext(user, request), params.id),
+            });
+        } catch (error) {
+            return domainFailure(error, set);
         }
-
-        return loan;
     }, {
         params: t.Object({
             id: t.String(),
@@ -366,201 +380,86 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
     })
     .post("/calculate", ({ body, set }) => {
         try {
-            return calculatePublicLoanSchedule({
-                principal: body.principal,
-                interestRate: body.interestRate,
-                termMonths: body.termMonths,
-                repaymentType: body.repaymentType as RepaymentType,
-                startDate: body.startDate,
-                totalInstallments: body.totalInstallments,
-                installmentAmount: body.installmentAmount,
-            });
+            return previewLoan(body).schedule;
         } catch (error) {
-            set.status = 400;
-            return { error: error instanceof Error ? error.message : "Invalid loan calculation input" };
+            return domainFailure(error, set);
         }
     }, {
         body: t.Object({
             principal: t.String(),
             interestRate: t.String(),
             termMonths: t.Number(),
-            repaymentType: t.String(),
+            repaymentType,
             startDate: t.String(),
             totalInstallments: t.Optional(t.Number()),
             installmentAmount: t.Optional(t.String())
         })
     })
-    .post("/", async ({ body, user, set }) => {
-        if (!user) throw new Error("Unauthorized");
-
-        let terms;
+    .post("/preview", ({ body, set }) => {
         try {
-            terms = normalizePublicLoanTerms({
-                principal: body.principal,
-                interestRate: body.interestRate,
-                termMonths: body.termMonths,
-                repaymentType: body.repaymentType as RepaymentType,
-                totalInstallments: body.totalInstallments,
-                installmentAmount: body.installmentAmount,
-            });
+            return previewLoan(body);
         } catch (error) {
-            set.status = 400;
-            return { error: error instanceof Error ? error.message : "Invalid loan terms" };
+            return domainFailure(error, set);
         }
-
-        const generatedSchedule = body.repaymentType === "floating"
-            ? []
-            : generateLoanSchedule({
-                principal: terms.principal,
-                interestRate: terms.interestRate,
-                termMonths: terms.termMonths,
-                repaymentType: terms.repaymentType,
-                startDate: body.startDate,
-                totalInstallments: terms.totalInstallments,
-                installmentAmount: terms.installmentAmount,
-            });
-
-        const created = await db.transaction(async (tx) => {
-            let borrowerId = body.borrowerId;
-            if (body.borrowerPublicId) {
-                const borrower = await findAccessibleBorrowerByPublicId(user, body.borrowerPublicId);
-                if (!borrower) {
-                    set.status = 404;
-                    return { error: "Borrower not found" };
-                }
-                borrowerId = borrower.id;
-            }
-            if (borrowerId === undefined) {
-                set.status = 400;
-                return { error: "Borrower is required" };
-            }
-
-            let bankLoanId = body.bankLoanId ?? null;
-            if (!canAccessTenantWideData(user) && (body.bankLoanId || body.bankLoanPublicId)) {
-                set.status = 403;
-                return { error: "Forbidden" };
-            }
-            if (body.bankLoanPublicId) {
-                const bankLoan = await findBankLoanByPublicId(user.tenantId, body.bankLoanPublicId);
-                if (!bankLoan) {
-                    set.status = 404;
-                    return { error: "Funding source drawdown not found" };
-                }
-                bankLoanId = bankLoan.id;
-            }
-
-            const initialRollup = generatedSchedule.length > 0
-                ? computeLoanRollup(generatedSchedule.map((row) => ({
-                    dueDate: row.dueDate,
-                    scheduledPrincipal: row.scheduledPrincipal,
-                    scheduledInterest: row.scheduledInterest,
-                    scheduledFee: row.scheduledFee,
-                    remainingDue: row.remainingDue,
-                    status: "pending",
-                })))
-                : {
-                    outstandingPrincipal: Number(terms.principal),
-                    outstandingInterest: 0,
-                    outstandingFees: 0,
-                    nextDueDate: null,
-                    status: "active",
-                };
-
-            const loanValues = {
-                tenantId: user.tenantId,
-                ownerUserId: user.id,
-                borrowerId,
-                bankLoanId,
-                principalAmount: terms.principal,
-                interestRate: terms.interestRate,
-                repaymentType: terms.repaymentType,
-                totalInstallments: terms.totalInstallments,
-                installmentAmount: terms.installmentAmount,
-                startDate: body.startDate,
-                nextDueDate: initialRollup.nextDueDate ?? undefined,
-                outstandingPrincipal: initialRollup.outstandingPrincipal.toFixed(2),
-                outstandingInterest: initialRollup.outstandingInterest.toFixed(2),
-                outstandingFees: initialRollup.outstandingFees.toFixed(2),
-                status: "active"
-            } satisfies typeof loans.$inferInsert;
-
-            const created = await tx.insert(loans).values(loanValues).returning().then((rows) => rows[0]);
-
-            if (generatedSchedule.length > 0) {
-                await tx.insert(loanSchedules).values(
-                    generatedSchedule.map((row) => ({
-                        tenantId: user.tenantId,
-                        loanId: created.id,
-                        installmentNo: row.installmentNo,
-                        dueDate: row.dueDate,
-                        scheduledPrincipal: row.scheduledPrincipal,
-                        scheduledInterest: row.scheduledInterest,
-                        scheduledFee: row.scheduledFee,
-                        scheduledTotal: row.scheduledTotal,
-                        paidTotal: "0.00",
-                        remainingDue: row.remainingDue,
-                        status: "pending",
-                    }))
-                );
-            }
-
-            if (bankLoanId) {
-                const sourceDrawdown = await tx.select().from(bankLoans).where(
-                    and(
-                        eq(bankLoans.id, bankLoanId),
-                        eq(bankLoans.tenantId, user.tenantId)
-                    )
-                ).then((rows) => rows[0]);
-
-                if (!sourceDrawdown) {
-                    set.status = 404;
-                    return { error: "Funding source drawdown not found" };
-                }
-
-                await tx.insert(loanFundingAllocations).values({
-                    tenantId: user.tenantId,
-                    bankProfileId: sourceDrawdown.bankProfileId,
-                    bankLoanId: sourceDrawdown.id,
-                    loanId: created.id,
-                    allocatedAmount: terms.principal,
-                    allocationDate: body.startDate,
-                    allocationType: "initial",
-                    note: "Auto-created from legacy bankLoanId field",
-                    createdByUserId: user.id,
-                });
-            }
-
-            await createAuditLog(tx, {
-                tenantId: user.tenantId,
-                actorUserId: user.id,
-                entityType: "loan",
-                entityId: created.id,
-                action: "created",
-                payload: {
-                    loan: created,
-                    scheduleCount: generatedSchedule.length,
-                },
-            });
-
-            return created;
-        });
-        await invalidateTenantCache(user.tenantId);
-        return created;
     }, {
         body: t.Object({
-            borrowerId: t.Optional(t.Number()),
-            borrowerPublicId: t.Optional(t.String()),
-            bankLoanId: t.Optional(t.Number()),
-            bankLoanPublicId: t.Optional(t.String()),
+            principal: t.String(), interestRate: t.String(), termMonths: t.Number(),
+            repaymentType, startDate: t.String(), totalInstallments: t.Optional(t.Number()),
+            installmentAmount: t.Optional(t.String()),
+        }),
+    })
+    .post("/", async ({ body, user, request, set }) => {
+        if (!user) throw new Error("Unauthorized");
+        try {
+            const created = await createLoanDraft(commandContext(user, request), body);
+            await invalidateTenantCache(user.tenantId);
+            return created;
+        } catch (error) {
+            return domainFailure(error, set);
+        }
+    }, {
+        body: t.Object({
+            borrowerPublicId: t.String(),
+            bankLoanPublicId: t.Optional(t.Nullable(t.String())),
             principal: t.String(),
             interestRate: t.String(),
-            repaymentType: t.String(),
+            repaymentType,
             termMonths: t.Number(),
-            totalInstallments: t.Number(),
+            totalInstallments: t.Optional(t.Number()),
             installmentAmount: t.Optional(t.String()),
             startDate: t.String()
         })
     })
+    .put("/:id", async ({ params, body, user, request, set }) => {
+        if (!user) throw new Error("Unauthorized");
+        try {
+            const updated = await updateLoanDraft(commandContext(user, request), params.id, body);
+            await invalidateTenantCache(user.tenantId);
+            return updated;
+        } catch (error) {
+            return domainFailure(error, set);
+        }
+    }, {
+        params: t.Object({ id: t.String() }),
+        body: t.Object({
+            borrowerPublicId: t.Optional(t.String()),
+            bankLoanPublicId: t.Optional(t.Nullable(t.String())),
+            principal: t.Optional(t.String()), interestRate: t.Optional(t.String()),
+            repaymentType: t.Optional(repaymentType), termMonths: t.Optional(t.Number()),
+            totalInstallments: t.Optional(t.Number()), installmentAmount: t.Optional(t.String()),
+            startDate: t.Optional(t.String()),
+        }),
+    })
+    .post("/:id/activate", async ({ params, user, request, set }) => {
+        if (!user) throw new Error("Unauthorized");
+        try {
+            const activated = await activateLoan(commandContext(user, request), params.id);
+            await invalidateTenantCache(user.tenantId);
+            return activated;
+        } catch (error) {
+            return domainFailure(error, set);
+        }
+    }, { params: t.Object({ id: t.String() }) })
     .post("/:id/funding-allocations", async ({ params, body, user, set }) => {
         if (!user) throw new Error("Unauthorized");
         if (!canAccessTenantWideData(user)) {
@@ -687,11 +586,16 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             set.status = 403;
             return { error: "Forbidden" };
         }
+        const resolvedLoan = await findAccessibleLoanByPublicId(user, params.id);
+        if (!resolvedLoan) {
+            set.status = 404;
+            return { error: "Loan not found" };
+        }
 
         const createdRows = await db.transaction(async (tx) => {
             const loan = await tx.select().from(loans).where(
                 and(
-                    eq(loans.id, params.id),
+                    eq(loans.id, resolvedLoan.id),
                     ...loanAccessFilters(user)
                 )
             ).then((rows) => rows[0]);
@@ -807,7 +711,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         return createdRows;
     }, {
         params: t.Object({
-            id: t.Numeric(),
+            id: t.String(),
         }),
         body: t.Object({
             fromBankLoanId: t.Number(),

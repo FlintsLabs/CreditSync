@@ -6,7 +6,7 @@ import { Loader2, Copy } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 interface LoanClosingModalProps {
-    loanId: number;
+    loanId: string;
     open: boolean;
     onOpenChange: (open: boolean) => void;
 }

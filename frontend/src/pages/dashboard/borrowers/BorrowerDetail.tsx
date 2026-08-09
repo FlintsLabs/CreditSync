@@ -23,7 +23,7 @@ export default function BorrowerDetail() {
                 // Parallel fetch
                 const [bRes, lRes, tRes] = await Promise.all([
                     api.get(`/borrowers/${id}`),
-                    api.get("/loans"), // Optimized: should filter by borrowerId on backend in real app, filtering client side for now
+                    api.get("/loans", { params: { borrowerId: id } }),
                     api.get("/transactions")
                 ]);
 
@@ -31,12 +31,12 @@ export default function BorrowerDetail() {
 
                 // Client-side filtering as per current backend capabilities
                 // Ideally backend should support /loans?borrowerId=...
-                const bLoans = lRes.data.filter((l: any) => l.borrowerId === Number(id));
+                const bLoans = lRes.data;
                 setLoans(bLoans);
 
                 // Filter transactions for these loans
                 const loanIds = bLoans.map((l: any) => l.id);
-                const bTrans = tRes.data.filter((t: any) => loanIds.includes(t.loanId));
+                const bTrans = tRes.data.filter((transaction: any) => loanIds.includes(transaction.loanPublicId));
                 setTransactions(bTrans);
 
             } catch (error) {

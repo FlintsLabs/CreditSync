@@ -8,10 +8,9 @@ import { Button } from "../../../components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/Card";
 
 interface LoanDetailData {
-    id: number;
-    publicId?: string;
-    borrowerId: number;
-    borrowerPublicId?: string;
+    id: string;
+    publicId: string;
+    borrowerPublicId: string | null;
     principalAmount: string;
     interestRate: string;
     repaymentType: string;
