@@ -170,73 +170,93 @@ ALTER TABLE "audit_logs" ADD COLUMN "correlation_id" text;
 --> statement-breakpoint
 ALTER TABLE "audit_logs" ADD CONSTRAINT "audit_logs_actor_source_check" CHECK ("actor_source" IN ('web', 'mcp', 'system'));
 --> statement-breakpoint
-ALTER TABLE "borrower_aliases" ADD CONSTRAINT "borrower_aliases_borrower_id_borrowers_id_fk" FOREIGN KEY ("borrower_id") REFERENCES "public"."borrowers"("id") ON DELETE no action ON UPDATE no action;
+CREATE UNIQUE INDEX "users_tenant_id_id_unique" ON "users" USING btree ("tenant_id", "id");
 --> statement-breakpoint
-ALTER TABLE "borrower_aliases" ADD CONSTRAINT "borrower_aliases_created_by_user_id_users_id_fk" FOREIGN KEY ("created_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+CREATE UNIQUE INDEX "borrowers_tenant_id_id_unique" ON "borrowers" USING btree ("tenant_id", "id");
 --> statement-breakpoint
-ALTER TABLE "borrower_aliases" ADD CONSTRAINT "borrower_aliases_updated_by_user_id_users_id_fk" FOREIGN KEY ("updated_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+CREATE UNIQUE INDEX "files_tenant_id_id_unique" ON "files" USING btree ("tenant_id", "id");
 --> statement-breakpoint
-ALTER TABLE "payment_intakes" ADD CONSTRAINT "payment_intakes_owner_user_id_users_id_fk" FOREIGN KEY ("owner_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+CREATE UNIQUE INDEX "loans_tenant_id_id_unique" ON "loans" USING btree ("tenant_id", "id");
 --> statement-breakpoint
-ALTER TABLE "payment_intakes" ADD CONSTRAINT "payment_intakes_duplicate_of_intake_id_payment_intakes_id_fk" FOREIGN KEY ("duplicate_of_intake_id") REFERENCES "public"."payment_intakes"("id") ON DELETE no action ON UPDATE no action;
+CREATE UNIQUE INDEX "loan_schedules_tenant_id_id_unique" ON "loan_schedules" USING btree ("tenant_id", "id");
 --> statement-breakpoint
-ALTER TABLE "payment_intakes" ADD CONSTRAINT "payment_intakes_created_by_user_id_users_id_fk" FOREIGN KEY ("created_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+CREATE UNIQUE INDEX "payment_intakes_tenant_id_id_unique" ON "payment_intakes" USING btree ("tenant_id", "id");
 --> statement-breakpoint
-ALTER TABLE "payment_intakes" ADD CONSTRAINT "payment_intakes_updated_by_user_id_users_id_fk" FOREIGN KEY ("updated_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+CREATE UNIQUE INDEX "payment_match_proposals_tenant_id_id_unique" ON "payment_match_proposals" USING btree ("tenant_id", "id");
 --> statement-breakpoint
-ALTER TABLE "payment_intakes" ADD CONSTRAINT "payment_intakes_posted_by_user_id_users_id_fk" FOREIGN KEY ("posted_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+CREATE UNIQUE INDEX "loan_renewals_tenant_id_id_unique" ON "loan_renewals" USING btree ("tenant_id", "id");
 --> statement-breakpoint
-ALTER TABLE "payment_evidence" ADD CONSTRAINT "payment_evidence_payment_intake_id_payment_intakes_id_fk" FOREIGN KEY ("payment_intake_id") REFERENCES "public"."payment_intakes"("id") ON DELETE no action ON UPDATE no action;
+CREATE UNIQUE INDEX "loan_adjustments_tenant_id_id_unique" ON "loan_adjustments" USING btree ("tenant_id", "id");
 --> statement-breakpoint
-ALTER TABLE "payment_evidence" ADD CONSTRAINT "payment_evidence_file_id_files_id_fk" FOREIGN KEY ("file_id") REFERENCES "public"."files"("id") ON DELETE no action ON UPDATE no action;
+CREATE UNIQUE INDEX "transactions_tenant_id_id_unique" ON "transactions" USING btree ("tenant_id", "id");
 --> statement-breakpoint
-ALTER TABLE "payment_evidence" ADD CONSTRAINT "payment_evidence_created_by_user_id_users_id_fk" FOREIGN KEY ("created_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "borrower_aliases" ADD CONSTRAINT "borrower_aliases_tenant_borrower_fk" FOREIGN KEY ("tenant_id", "borrower_id") REFERENCES "public"."borrowers"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "payment_evidence" ADD CONSTRAINT "payment_evidence_updated_by_user_id_users_id_fk" FOREIGN KEY ("updated_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "borrower_aliases" ADD CONSTRAINT "borrower_aliases_tenant_created_by_fk" FOREIGN KEY ("tenant_id", "created_by_user_id") REFERENCES "public"."users"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "payment_match_proposals" ADD CONSTRAINT "payment_match_proposals_payment_intake_id_payment_intakes_id_fk" FOREIGN KEY ("payment_intake_id") REFERENCES "public"."payment_intakes"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "borrower_aliases" ADD CONSTRAINT "borrower_aliases_tenant_updated_by_fk" FOREIGN KEY ("tenant_id", "updated_by_user_id") REFERENCES "public"."users"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "payment_match_proposals" ADD CONSTRAINT "payment_match_proposals_created_by_user_id_users_id_fk" FOREIGN KEY ("created_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "payment_intakes" ADD CONSTRAINT "payment_intakes_tenant_owner_fk" FOREIGN KEY ("tenant_id", "owner_user_id") REFERENCES "public"."users"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "payment_match_proposals" ADD CONSTRAINT "payment_match_proposals_updated_by_user_id_users_id_fk" FOREIGN KEY ("updated_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "payment_intakes" ADD CONSTRAINT "payment_intakes_tenant_duplicate_fk" FOREIGN KEY ("tenant_id", "duplicate_of_intake_id") REFERENCES "public"."payment_intakes"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "payment_match_allocations" ADD CONSTRAINT "payment_match_allocations_proposal_id_payment_match_proposals_id_fk" FOREIGN KEY ("proposal_id") REFERENCES "public"."payment_match_proposals"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "payment_intakes" ADD CONSTRAINT "payment_intakes_tenant_created_by_fk" FOREIGN KEY ("tenant_id", "created_by_user_id") REFERENCES "public"."users"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "payment_match_allocations" ADD CONSTRAINT "payment_match_allocations_borrower_id_borrowers_id_fk" FOREIGN KEY ("borrower_id") REFERENCES "public"."borrowers"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "payment_intakes" ADD CONSTRAINT "payment_intakes_tenant_updated_by_fk" FOREIGN KEY ("tenant_id", "updated_by_user_id") REFERENCES "public"."users"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "payment_match_allocations" ADD CONSTRAINT "payment_match_allocations_loan_id_loans_id_fk" FOREIGN KEY ("loan_id") REFERENCES "public"."loans"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "payment_intakes" ADD CONSTRAINT "payment_intakes_tenant_posted_by_fk" FOREIGN KEY ("tenant_id", "posted_by_user_id") REFERENCES "public"."users"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "payment_match_allocations" ADD CONSTRAINT "payment_match_allocations_schedule_id_loan_schedules_id_fk" FOREIGN KEY ("schedule_id") REFERENCES "public"."loan_schedules"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "payment_evidence" ADD CONSTRAINT "payment_evidence_tenant_intake_fk" FOREIGN KEY ("tenant_id", "payment_intake_id") REFERENCES "public"."payment_intakes"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "payment_match_allocations" ADD CONSTRAINT "payment_match_allocations_created_by_user_id_users_id_fk" FOREIGN KEY ("created_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "payment_evidence" ADD CONSTRAINT "payment_evidence_tenant_file_fk" FOREIGN KEY ("tenant_id", "file_id") REFERENCES "public"."files"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "payment_match_allocations" ADD CONSTRAINT "payment_match_allocations_updated_by_user_id_users_id_fk" FOREIGN KEY ("updated_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "payment_evidence" ADD CONSTRAINT "payment_evidence_tenant_created_by_fk" FOREIGN KEY ("tenant_id", "created_by_user_id") REFERENCES "public"."users"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "loan_renewals" ADD CONSTRAINT "loan_renewals_old_loan_id_loans_id_fk" FOREIGN KEY ("old_loan_id") REFERENCES "public"."loans"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "payment_evidence" ADD CONSTRAINT "payment_evidence_tenant_updated_by_fk" FOREIGN KEY ("tenant_id", "updated_by_user_id") REFERENCES "public"."users"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "loan_renewals" ADD CONSTRAINT "loan_renewals_new_loan_id_loans_id_fk" FOREIGN KEY ("new_loan_id") REFERENCES "public"."loans"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "payment_match_proposals" ADD CONSTRAINT "payment_match_proposals_tenant_intake_fk" FOREIGN KEY ("tenant_id", "payment_intake_id") REFERENCES "public"."payment_intakes"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "loan_renewals" ADD CONSTRAINT "loan_renewals_created_by_user_id_users_id_fk" FOREIGN KEY ("created_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "payment_match_proposals" ADD CONSTRAINT "payment_match_proposals_tenant_created_by_fk" FOREIGN KEY ("tenant_id", "created_by_user_id") REFERENCES "public"."users"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "loan_renewals" ADD CONSTRAINT "loan_renewals_updated_by_user_id_users_id_fk" FOREIGN KEY ("updated_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "payment_match_proposals" ADD CONSTRAINT "payment_match_proposals_tenant_updated_by_fk" FOREIGN KEY ("tenant_id", "updated_by_user_id") REFERENCES "public"."users"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "loan_renewals" ADD CONSTRAINT "loan_renewals_executed_by_user_id_users_id_fk" FOREIGN KEY ("executed_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "payment_match_allocations" ADD CONSTRAINT "payment_match_allocations_tenant_proposal_fk" FOREIGN KEY ("tenant_id", "proposal_id") REFERENCES "public"."payment_match_proposals"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "loan_renewals" ADD CONSTRAINT "loan_renewals_reversed_by_user_id_users_id_fk" FOREIGN KEY ("reversed_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "payment_match_allocations" ADD CONSTRAINT "payment_match_allocations_tenant_borrower_fk" FOREIGN KEY ("tenant_id", "borrower_id") REFERENCES "public"."borrowers"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "loan_adjustments" ADD CONSTRAINT "loan_adjustments_loan_id_loans_id_fk" FOREIGN KEY ("loan_id") REFERENCES "public"."loans"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "payment_match_allocations" ADD CONSTRAINT "payment_match_allocations_tenant_loan_fk" FOREIGN KEY ("tenant_id", "loan_id") REFERENCES "public"."loans"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "loan_adjustments" ADD CONSTRAINT "loan_adjustments_renewal_id_loan_renewals_id_fk" FOREIGN KEY ("renewal_id") REFERENCES "public"."loan_renewals"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "payment_match_allocations" ADD CONSTRAINT "payment_match_allocations_tenant_schedule_fk" FOREIGN KEY ("tenant_id", "schedule_id") REFERENCES "public"."loan_schedules"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "loan_adjustments" ADD CONSTRAINT "loan_adjustments_reversed_adjustment_id_loan_adjustments_id_fk" FOREIGN KEY ("reversed_adjustment_id") REFERENCES "public"."loan_adjustments"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "payment_match_allocations" ADD CONSTRAINT "payment_match_allocations_tenant_created_by_fk" FOREIGN KEY ("tenant_id", "created_by_user_id") REFERENCES "public"."users"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "loan_adjustments" ADD CONSTRAINT "loan_adjustments_created_by_user_id_users_id_fk" FOREIGN KEY ("created_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "payment_match_allocations" ADD CONSTRAINT "payment_match_allocations_tenant_updated_by_fk" FOREIGN KEY ("tenant_id", "updated_by_user_id") REFERENCES "public"."users"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "loan_adjustments" ADD CONSTRAINT "loan_adjustments_updated_by_user_id_users_id_fk" FOREIGN KEY ("updated_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "loan_renewals" ADD CONSTRAINT "loan_renewals_tenant_old_loan_fk" FOREIGN KEY ("tenant_id", "old_loan_id") REFERENCES "public"."loans"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "transactions" ADD CONSTRAINT "transactions_payment_intake_id_payment_intakes_id_fk" FOREIGN KEY ("payment_intake_id") REFERENCES "public"."payment_intakes"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "loan_renewals" ADD CONSTRAINT "loan_renewals_tenant_new_loan_fk" FOREIGN KEY ("tenant_id", "new_loan_id") REFERENCES "public"."loans"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
-ALTER TABLE "transactions" ADD CONSTRAINT "transactions_reversed_transaction_id_transactions_id_fk" FOREIGN KEY ("reversed_transaction_id") REFERENCES "public"."transactions"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "loan_renewals" ADD CONSTRAINT "loan_renewals_tenant_created_by_fk" FOREIGN KEY ("tenant_id", "created_by_user_id") REFERENCES "public"."users"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "loan_renewals" ADD CONSTRAINT "loan_renewals_tenant_updated_by_fk" FOREIGN KEY ("tenant_id", "updated_by_user_id") REFERENCES "public"."users"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "loan_renewals" ADD CONSTRAINT "loan_renewals_tenant_executed_by_fk" FOREIGN KEY ("tenant_id", "executed_by_user_id") REFERENCES "public"."users"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "loan_renewals" ADD CONSTRAINT "loan_renewals_tenant_reversed_by_fk" FOREIGN KEY ("tenant_id", "reversed_by_user_id") REFERENCES "public"."users"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "loan_adjustments" ADD CONSTRAINT "loan_adjustments_tenant_loan_fk" FOREIGN KEY ("tenant_id", "loan_id") REFERENCES "public"."loans"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "loan_adjustments" ADD CONSTRAINT "loan_adjustments_tenant_renewal_fk" FOREIGN KEY ("tenant_id", "renewal_id") REFERENCES "public"."loan_renewals"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "loan_adjustments" ADD CONSTRAINT "loan_adjustments_tenant_reversed_adjustment_fk" FOREIGN KEY ("tenant_id", "reversed_adjustment_id") REFERENCES "public"."loan_adjustments"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "loan_adjustments" ADD CONSTRAINT "loan_adjustments_tenant_created_by_fk" FOREIGN KEY ("tenant_id", "created_by_user_id") REFERENCES "public"."users"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "loan_adjustments" ADD CONSTRAINT "loan_adjustments_tenant_updated_by_fk" FOREIGN KEY ("tenant_id", "updated_by_user_id") REFERENCES "public"."users"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "transactions" ADD CONSTRAINT "transactions_tenant_payment_intake_fk" FOREIGN KEY ("tenant_id", "payment_intake_id") REFERENCES "public"."payment_intakes"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "transactions" ADD CONSTRAINT "transactions_tenant_reversed_transaction_fk" FOREIGN KEY ("tenant_id", "reversed_transaction_id") REFERENCES "public"."transactions"("tenant_id", "id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
 CREATE UNIQUE INDEX "borrower_aliases_tenant_borrower_normalized_unique" ON "borrower_aliases" USING btree ("tenant_id", "borrower_id", "normalized_alias");
 --> statement-breakpoint
@@ -281,19 +301,25 @@ INSERT INTO "payment_intakes" (
 )
 SELECT
 	t."tenant_id",
-	t."owner_user_id",
+	owner_user."id",
 	'legacy' AS "source",
 	'posted' AS "status",
 	t."amount",
 	COALESCE(t."transaction_date", t."created_at", now()),
 	'legacy-transaction:' || t."public_id"::text,
 	COALESCE(t."transaction_date", t."created_at", now()),
-	t."recorded_by_user_id",
-	t."recorded_by_user_id",
-	t."recorded_by_user_id",
+	actor_user."id",
+	actor_user."id",
+	actor_user."id",
 	COALESCE(t."created_at", now()),
 	COALESCE(t."updated_at", t."created_at", now())
-FROM "transactions" AS t;
+FROM "transactions" AS t
+LEFT JOIN "users" AS owner_user
+  ON owner_user."tenant_id" = t."tenant_id"
+ AND owner_user."id" = t."owner_user_id"
+LEFT JOIN "users" AS actor_user
+  ON actor_user."tenant_id" = t."tenant_id"
+ AND actor_user."id" = t."recorded_by_user_id";
 --> statement-breakpoint
 UPDATE "transactions" AS t
 SET
@@ -330,11 +356,14 @@ SELECT
 	'legacy:' || t."public_id"::text,
 	t."slip_url",
 	COALESCE(t."transaction_date", t."created_at", now()),
-	t."recorded_by_user_id",
-	t."recorded_by_user_id",
+	actor_user."id",
+	actor_user."id",
 	COALESCE(t."created_at", now()),
 	COALESCE(t."updated_at", t."created_at", now())
 FROM "transactions" AS t
+LEFT JOIN "users" AS actor_user
+  ON actor_user."tenant_id" = t."tenant_id"
+ AND actor_user."id" = t."recorded_by_user_id"
 WHERE t."slip_url" IS NOT NULL
   AND btrim(t."slip_url") <> '';
 --> statement-breakpoint

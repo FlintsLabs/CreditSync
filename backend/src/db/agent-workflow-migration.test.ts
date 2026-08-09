@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readMigrationFiles } from "drizzle-orm/migrator";
 
 const migrationTag = "0008_agent_workflow_foundation";
 const backendRoot = new URL("../../", import.meta.url).pathname;
@@ -19,9 +20,9 @@ describe("agent workflow migration contract", () => {
         const entries = journal.entries.filter((entry) => entry.tag === migrationTag);
 
         expect(entries).toHaveLength(1);
+        const workflowIndex = journal.entries.findIndex((entry) => entry.tag === migrationTag);
         expect(entries[0]?.idx).toBe(8);
-        expect(journal.entries.at(-2)?.tag).toBe("0007_user_record_visibility");
-        expect(journal.entries.at(-1)?.tag).toBe(migrationTag);
+        expect(journal.entries[workflowIndex - 1]?.tag).toBe("0007_user_record_visibility");
     });
 
     test("is additive and preserves legacy transaction columns", async () => {
@@ -81,6 +82,15 @@ if (!testDatabaseUrl) {
         const { drizzle } = await import("drizzle-orm/postgres-js");
         const sql = postgres(testDatabaseUrl, { max: 1 });
 
+        const postgresError = async (query: PromiseLike<unknown>): Promise<unknown> => {
+            try {
+                await query;
+                return undefined;
+            } catch (error) {
+                return error;
+            }
+        };
+
         const applySqlFile = async (path: string) => {
             const content = await Bun.file(path).text();
             for (const statement of content.split("--> statement-breakpoint")) {
@@ -112,11 +122,14 @@ if (!testDatabaseUrl) {
             expect(workflowTables).toHaveLength(7);
 
             await migrate(drizzle(sql), { migrationsFolder: `${backendRoot}drizzle` });
+            const workflowMigration = readMigrationFiles({ migrationsFolder: `${backendRoot}drizzle` })[8];
+            expect(workflowMigration).toBeDefined();
             const applied = await sql<{ count: string }[]>`
                 SELECT count(*)::text AS count
                 FROM drizzle.__drizzle_migrations
+                WHERE hash = ${workflowMigration!.hash}
             `;
-            expect(applied[0]?.count).toBe("9");
+            expect(applied[0]?.count).toBe("1");
 
             // Rebuild the already-confirmed-empty disposable database at the 0007
             // boundary so the additive migration can be exercised with legacy rows.
@@ -134,21 +147,33 @@ if (!testDatabaseUrl) {
 
             await sql.unsafe(`
                 INSERT INTO users (tenant_id, email, name, role)
-                VALUES ('tenant-a', 'task2-a@example.test', 'Task 2 A', 'owner');
+                VALUES
+                    ('tenant-a', 'task2-a@example.test', 'Task 2 A', 'owner'),
+                    ('tenant-b', 'task2-b@example.test', 'Task 2 B', 'owner');
                 INSERT INTO borrowers (tenant_id, owner_user_id, name)
                 SELECT 'tenant-a', id, 'Legacy Borrower' FROM users WHERE email = 'task2-a@example.test';
                 INSERT INTO loans (
                     tenant_id, owner_user_id, borrower_id, principal_amount,
-                    interest_rate, repayment_type, status
+                    interest_rate, repayment_type, installment_amount,
+                    total_installments, grace_period_days, late_fee_mode,
+                    late_fee_amount, start_date, next_due_date,
+                    outstanding_principal, outstanding_interest,
+                    outstanding_fees, status, cloned_from_loan_id
                 )
-                SELECT 'tenant-a', u.id, b.id, 1000, 10, 'daily', 'active'
+                SELECT 'tenant-a', u.id, b.id, 1000, 10, 'daily', 190,
+                       6, 2, 'fixed', 15, DATE '2026-08-01', DATE '2026-08-10',
+                       810, 90, 15, 'active', 77
                 FROM users u JOIN borrowers b ON b.tenant_id = u.tenant_id
                 WHERE u.email = 'task2-a@example.test';
                 INSERT INTO loan_schedules (
                     tenant_id, loan_id, installment_no, due_date,
-                    scheduled_total, remaining_due, status
+                    scheduled_principal, scheduled_interest, scheduled_fee,
+                    scheduled_total, paid_total, paid_penalty, overdue_days,
+                    remaining_due, status
                 )
-                SELECT 'tenant-a', id, 1, DATE '2026-08-10', 1100, 1100, 'pending' FROM loans;
+                SELECT 'tenant-a', id, 1, DATE '2026-08-10',
+                       150, 30, 10, 190, 75, 5, 3, 115, 'partial'
+                FROM loans;
                 INSERT INTO transactions (
                     tenant_id, owner_user_id, loan_id, amount, type, slip_url,
                     transaction_date, recorded_by_user_id
@@ -157,11 +182,19 @@ if (!testDatabaseUrl) {
                        TIMESTAMP '2026-08-09 10:00:00', u.id
                 FROM users u JOIN loans l ON l.tenant_id = u.tenant_id
                 WHERE u.email = 'task2-a@example.test';
-                CREATE TABLE task2_before AS
-                SELECT l.id AS loan_id, l.status AS loan_status,
-                       s.id AS schedule_id, s.status AS schedule_status,
-                       s.remaining_due
-                FROM loans l JOIN loan_schedules s ON s.loan_id = l.id;
+                INSERT INTO transactions (
+                    tenant_id, owner_user_id, loan_id, amount, type,
+                    transaction_date, recorded_by_user_id
+                )
+                SELECT 'tenant-a', owner.id, l.id, 110, 'repayment',
+                       TIMESTAMP '2026-08-09 11:00:00', recorder.id
+                FROM users owner
+                JOIN loans l ON l.tenant_id = owner.tenant_id
+                CROSS JOIN users recorder
+                WHERE owner.email = 'task2-a@example.test'
+                  AND recorder.email = 'task2-b@example.test';
+                CREATE TABLE task2_before_loans AS SELECT * FROM loans;
+                CREATE TABLE task2_before_schedules AS SELECT * FROM loan_schedules;
             `);
 
             await applySqlFile(migrationPath);
@@ -170,21 +203,44 @@ if (!testDatabaseUrl) {
                 intakes: number;
                 evidence: number;
                 linked: number;
-                unchanged: number;
+                transactionTotal: string;
+                intakeTotal: string;
+                sanitizedActors: number;
+                loanDifferences: number;
+                scheduleDifferences: number;
             }[]>`
                 SELECT
                     (SELECT count(*)::int FROM payment_intakes WHERE source = 'legacy' AND status = 'posted') AS intakes,
                     (SELECT count(*)::int FROM payment_evidence WHERE evidence_type = 'legacy_slip') AS evidence,
                     (SELECT count(*)::int FROM transactions WHERE payment_intake_id IS NOT NULL AND posted_at IS NOT NULL) AS linked,
-                    (SELECT count(*)::int
-                     FROM task2_before b
-                     JOIN loans l ON l.id = b.loan_id
-                     JOIN loan_schedules s ON s.id = b.schedule_id
-                     WHERE l.status = b.loan_status
-                       AND s.status = b.schedule_status
-                       AND s.remaining_due = b.remaining_due) AS unchanged
+                    (SELECT sum(amount)::text FROM transactions WHERE entry_type = 'repayment') AS "transactionTotal",
+                    (SELECT sum(amount)::text FROM payment_intakes WHERE source = 'legacy') AS "intakeTotal",
+                    (SELECT count(*)::int FROM payment_intakes
+                     WHERE source = 'legacy' AND amount = 110
+                       AND created_by_user_id IS NULL
+                       AND updated_by_user_id IS NULL
+                       AND posted_by_user_id IS NULL) AS "sanitizedActors",
+                    (SELECT count(*)::int FROM (
+                        (SELECT * FROM task2_before_loans EXCEPT ALL SELECT * FROM loans)
+                        UNION ALL
+                        (SELECT * FROM loans EXCEPT ALL SELECT * FROM task2_before_loans)
+                    ) AS loan_diff) AS "loanDifferences",
+                    (SELECT count(*)::int FROM (
+                        (SELECT * FROM task2_before_schedules EXCEPT ALL SELECT * FROM loan_schedules)
+                        UNION ALL
+                        (SELECT * FROM loan_schedules EXCEPT ALL SELECT * FROM task2_before_schedules)
+                    ) AS schedule_diff) AS "scheduleDifferences"
             `;
-            expect(backfill[0]).toEqual({ intakes: 1, evidence: 1, linked: 1, unchanged: 1 });
+            expect(backfill[0]).toEqual({
+                intakes: 2,
+                evidence: 1,
+                linked: 2,
+                transactionTotal: "300",
+                intakeTotal: "300",
+                sanitizedActors: 1,
+                loanDifferences: 0,
+                scheduleDifferences: 0,
+            });
 
             await sql.unsafe(`
                 INSERT INTO borrowers (tenant_id, owner_user_id, name)
@@ -199,17 +255,142 @@ if (!testDatabaseUrl) {
                 SELECT count(*)::int AS count FROM borrower_aliases WHERE normalized_alias = 'lek'
             `;
             expect(ambiguousAlias[0]?.count).toBe(2);
-            await expect(sql.unsafe(`
+            expect(await postgresError(sql.unsafe(`
                 INSERT INTO borrower_aliases (
                     tenant_id, borrower_id, alias, normalized_alias, status
                 )
                 SELECT tenant_id, id, 'LEK', 'lek', 'confirmed'
                 FROM borrowers ORDER BY id LIMIT 1
-            `)).rejects.toThrow();
+            `))).toBeDefined();
+
+            await sql.unsafe(`
+                INSERT INTO borrowers (tenant_id, owner_user_id, name)
+                SELECT 'tenant-b', id, 'Tenant B Borrower'
+                FROM users WHERE email = 'task2-b@example.test';
+                INSERT INTO loans (
+                    tenant_id, owner_user_id, borrower_id, principal_amount,
+                    interest_rate, repayment_type, status
+                )
+                SELECT 'tenant-b', u.id, b.id, 500, 10, 'daily', 'active'
+                FROM users u JOIN borrowers b ON b.tenant_id = u.tenant_id
+                WHERE u.email = 'task2-b@example.test';
+                INSERT INTO loan_schedules (
+                    tenant_id, loan_id, installment_no, due_date,
+                    scheduled_total, remaining_due, status
+                )
+                SELECT 'tenant-b', id, 1, DATE '2026-08-10', 550, 550, 'pending'
+                FROM loans WHERE tenant_id = 'tenant-b';
+
+                INSERT INTO payment_intakes (tenant_id, source, status, amount, idempotency_key)
+                VALUES
+                    ('tenant-a', 'web', 'draft', 10, 'shared-intake-key'),
+                    ('tenant-b', 'web', 'draft', 10, 'shared-intake-key');
+                INSERT INTO payment_intakes (tenant_id, source, status, amount, bank_reference_hash)
+                VALUES
+                    ('tenant-a', 'web', 'draft', 11, 'shared-bank-hash'),
+                    ('tenant-b', 'web', 'draft', 11, 'shared-bank-hash');
+                INSERT INTO payment_intakes (tenant_id, source, status, amount, qr_payload_hash)
+                VALUES
+                    ('tenant-a', 'web', 'draft', 12, 'shared-qr-hash'),
+                    ('tenant-b', 'web', 'draft', 12, 'shared-qr-hash');
+            `);
+            expect(await postgresError(sql`
+                INSERT INTO payment_intakes (tenant_id, source, status, amount, idempotency_key)
+                VALUES ('tenant-a', 'web', 'draft', 10, 'shared-intake-key')
+            `)).toBeDefined();
+            expect(await postgresError(sql`
+                INSERT INTO payment_intakes (tenant_id, source, status, amount, bank_reference_hash)
+                VALUES ('tenant-a', 'web', 'draft', 11, 'shared-bank-hash')
+            `)).toBeDefined();
+            expect(await postgresError(sql`
+                INSERT INTO payment_intakes (tenant_id, source, status, amount, qr_payload_hash)
+                VALUES ('tenant-a', 'web', 'draft', 12, 'shared-qr-hash')
+            `)).toBeDefined();
+
+            await sql.unsafe(`
+                INSERT INTO payment_evidence (
+                    tenant_id, payment_intake_id, evidence_type, status, evidence_hash
+                )
+                SELECT tenant_id, id, 'slip', 'ready', 'shared-evidence-hash'
+                FROM payment_intakes
+                WHERE idempotency_key = 'shared-intake-key';
+            `);
+            expect(await postgresError(sql.unsafe(`
+                INSERT INTO payment_evidence (
+                    tenant_id, payment_intake_id, evidence_type, status, evidence_hash
+                )
+                SELECT tenant_id, id, 'slip', 'ready', 'shared-evidence-hash'
+                FROM payment_intakes
+                WHERE tenant_id = 'tenant-a' AND idempotency_key = 'shared-intake-key'
+            `))).toBeDefined();
+
+            await sql.unsafe(`
+                INSERT INTO transactions (tenant_id, loan_id, amount, idempotency_key)
+                SELECT tenant_id, id, 1, 'shared-transaction-key'
+                FROM loans WHERE tenant_id IN ('tenant-a', 'tenant-b');
+            `);
+            expect(await postgresError(sql.unsafe(`
+                INSERT INTO transactions (tenant_id, loan_id, amount, idempotency_key)
+                SELECT tenant_id, id, 1, 'shared-transaction-key'
+                FROM loans WHERE tenant_id = 'tenant-a'
+            `))).toBeDefined();
+
+            await sql.unsafe(`
+                INSERT INTO loan_renewals (
+                    tenant_id, old_loan_id, status, preview_hash,
+                    requested_principal, outstanding_principal,
+                    idempotency_key, expires_at
+                )
+                SELECT tenant_id, id, 'preview', 'preview-' || tenant_id,
+                       principal_amount, outstanding_principal,
+                       'shared-renewal-key', now() + interval '1 hour'
+                FROM loans WHERE tenant_id IN ('tenant-a', 'tenant-b');
+            `);
+            expect(await postgresError(sql.unsafe(`
+                INSERT INTO loan_renewals (
+                    tenant_id, old_loan_id, status, preview_hash,
+                    requested_principal, outstanding_principal,
+                    idempotency_key, expires_at
+                )
+                SELECT tenant_id, id, 'preview', 'duplicate-preview',
+                       principal_amount, outstanding_principal,
+                       'shared-renewal-key', now() + interval '1 hour'
+                FROM loans WHERE tenant_id = 'tenant-a'
+            `))).toBeDefined();
+
+            await sql.unsafe(`
+                INSERT INTO loan_adjustments (
+                    tenant_id, loan_id, adjustment_type, amount, idempotency_key
+                )
+                SELECT tenant_id, id, 'cash_payout', 1, 'shared-adjustment-key'
+                FROM loans WHERE tenant_id IN ('tenant-a', 'tenant-b');
+            `);
+            expect(await postgresError(sql.unsafe(`
+                INSERT INTO loan_adjustments (
+                    tenant_id, loan_id, adjustment_type, amount, idempotency_key
+                )
+                SELECT tenant_id, id, 'cash_payout', 1, 'shared-adjustment-key'
+                FROM loans WHERE tenant_id = 'tenant-a'
+            `))).toBeDefined();
 
             const original = await sql<{ id: number; tenant_id: string; loan_id: number }[]>`
-                SELECT id, tenant_id, loan_id FROM transactions LIMIT 1
+                SELECT id, tenant_id, loan_id
+                FROM transactions
+                WHERE tenant_id = 'tenant-a' AND idempotency_key LIKE 'legacy-transaction:%'
+                ORDER BY id LIMIT 1
             `;
+            const tenantBLoan = await sql<{ id: number }[]>`
+                SELECT id FROM loans WHERE tenant_id = 'tenant-b'
+            `;
+            expect(await postgresError(sql`
+                INSERT INTO transactions (
+                    tenant_id, loan_id, amount, entry_type,
+                    reversed_transaction_id, idempotency_key, posted_at
+                ) VALUES (
+                    'tenant-b', ${tenantBLoan[0]!.id}, -190,
+                    'reversal', ${original[0]!.id}, 'cross-tenant-reverse', now()
+                )
+            `)).toBeDefined();
             await sql`
                 INSERT INTO transactions (
                     tenant_id, loan_id, amount, entry_type,
@@ -219,7 +400,7 @@ if (!testDatabaseUrl) {
                     'reversal', ${original[0]!.id}, 'reverse-1', now()
                 )
             `;
-            await expect(sql`
+            expect(await postgresError(sql`
                 INSERT INTO transactions (
                     tenant_id, loan_id, amount, entry_type,
                     reversed_transaction_id, idempotency_key, posted_at
@@ -227,14 +408,47 @@ if (!testDatabaseUrl) {
                     ${original[0]!.tenant_id}, ${original[0]!.loan_id}, -190,
                     'reversal', ${original[0]!.id}, 'reverse-2', now()
                 )
-            `).rejects.toThrow();
+            `)).toBeDefined();
+
+            const originalAdjustment = await sql<{ id: number; loan_id: number }[]>`
+                SELECT id, loan_id
+                FROM loan_adjustments
+                WHERE tenant_id = 'tenant-a' AND idempotency_key = 'shared-adjustment-key'
+            `;
+            expect(await postgresError(sql`
+                INSERT INTO loan_adjustments (
+                    tenant_id, loan_id, adjustment_type, amount,
+                    reversed_adjustment_id, idempotency_key
+                ) VALUES (
+                    'tenant-b', ${tenantBLoan[0]!.id}, 'reversal', -1,
+                    ${originalAdjustment[0]!.id}, 'cross-tenant-adjustment-reverse'
+                )
+            `)).toBeDefined();
+            await sql`
+                INSERT INTO loan_adjustments (
+                    tenant_id, loan_id, adjustment_type, amount,
+                    reversed_adjustment_id, idempotency_key
+                ) VALUES (
+                    'tenant-a', ${originalAdjustment[0]!.loan_id}, 'reversal', -1,
+                    ${originalAdjustment[0]!.id}, 'adjustment-reverse-1'
+                )
+            `;
+            expect(await postgresError(sql`
+                INSERT INTO loan_adjustments (
+                    tenant_id, loan_id, adjustment_type, amount,
+                    reversed_adjustment_id, idempotency_key
+                ) VALUES (
+                    'tenant-a', ${originalAdjustment[0]!.loan_id}, 'reversal', -1,
+                    ${originalAdjustment[0]!.id}, 'adjustment-reverse-2'
+                )
+            `)).toBeDefined();
 
             await sql`
                 INSERT INTO audit_logs (tenant_id, entity_type, entity_id, action)
                 VALUES ('tenant-a', 'transaction', '1', 'created')
             `;
-            await expect(sql`UPDATE audit_logs SET action = 'changed'`).rejects.toThrow(/append-only/);
-            await expect(sql`DELETE FROM audit_logs`).rejects.toThrow(/append-only/);
+            expect(String(await postgresError(sql`UPDATE audit_logs SET action = 'changed'`))).toMatch(/append-only/);
+            expect(String(await postgresError(sql`DELETE FROM audit_logs`))).toMatch(/append-only/);
         } finally {
             await sql.end();
         }

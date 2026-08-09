@@ -1,5 +1,5 @@
 {
-  "id": "61217153-db9f-40cb-af33-ca7ef9357596",
+  "id": "c2decc06-cb06-4a22-bef4-a36ecc92ec04",
   "prevId": "2256edfc-6c02-41b3-8d0c-450877e016a0",
   "version": "7",
   "dialect": "postgresql",
@@ -987,40 +987,46 @@
         }
       },
       "foreignKeys": {
-        "borrower_aliases_borrower_id_borrowers_id_fk": {
-          "name": "borrower_aliases_borrower_id_borrowers_id_fk",
+        "borrower_aliases_tenant_borrower_fk": {
+          "name": "borrower_aliases_tenant_borrower_fk",
           "tableFrom": "borrower_aliases",
           "tableTo": "borrowers",
           "columnsFrom": [
+            "tenant_id",
             "borrower_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "borrower_aliases_created_by_user_id_users_id_fk": {
-          "name": "borrower_aliases_created_by_user_id_users_id_fk",
+        "borrower_aliases_tenant_created_by_fk": {
+          "name": "borrower_aliases_tenant_created_by_fk",
           "tableFrom": "borrower_aliases",
           "tableTo": "users",
           "columnsFrom": [
+            "tenant_id",
             "created_by_user_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "borrower_aliases_updated_by_user_id_users_id_fk": {
-          "name": "borrower_aliases_updated_by_user_id_users_id_fk",
+        "borrower_aliases_tenant_updated_by_fk": {
+          "name": "borrower_aliases_tenant_updated_by_fk",
           "tableFrom": "borrower_aliases",
           "tableTo": "users",
           "columnsFrom": [
+            "tenant_id",
             "updated_by_user_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
@@ -1151,7 +1157,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "borrowers_tenant_id_id_unique": {
+          "name": "borrowers_tenant_id_id_unique",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "borrowers_owner_user_id_users_id_fk": {
           "name": "borrowers_owner_user_id_users_id_fk",
@@ -1341,7 +1369,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "files_tenant_id_id_unique": {
+          "name": "files_tenant_id_id_unique",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "files_owner_user_id_users_id_fk": {
           "name": "files_owner_user_id_users_id_fk",
@@ -1851,6 +1901,27 @@
         }
       },
       "indexes": {
+        "loan_adjustments_tenant_id_id_unique": {
+          "name": "loan_adjustments_tenant_id_id_unique",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "loan_adjustments_tenant_idempotency_unique": {
           "name": "loan_adjustments_tenant_idempotency_unique",
           "columns": [
@@ -1897,66 +1968,76 @@
         }
       },
       "foreignKeys": {
-        "loan_adjustments_loan_id_loans_id_fk": {
-          "name": "loan_adjustments_loan_id_loans_id_fk",
+        "loan_adjustments_tenant_loan_fk": {
+          "name": "loan_adjustments_tenant_loan_fk",
           "tableFrom": "loan_adjustments",
           "tableTo": "loans",
           "columnsFrom": [
+            "tenant_id",
             "loan_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "loan_adjustments_renewal_id_loan_renewals_id_fk": {
-          "name": "loan_adjustments_renewal_id_loan_renewals_id_fk",
+        "loan_adjustments_tenant_renewal_fk": {
+          "name": "loan_adjustments_tenant_renewal_fk",
           "tableFrom": "loan_adjustments",
           "tableTo": "loan_renewals",
           "columnsFrom": [
+            "tenant_id",
             "renewal_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "loan_adjustments_reversed_adjustment_id_loan_adjustments_id_fk": {
-          "name": "loan_adjustments_reversed_adjustment_id_loan_adjustments_id_fk",
+        "loan_adjustments_tenant_reversed_adjustment_fk": {
+          "name": "loan_adjustments_tenant_reversed_adjustment_fk",
           "tableFrom": "loan_adjustments",
           "tableTo": "loan_adjustments",
           "columnsFrom": [
+            "tenant_id",
             "reversed_adjustment_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "loan_adjustments_created_by_user_id_users_id_fk": {
-          "name": "loan_adjustments_created_by_user_id_users_id_fk",
+        "loan_adjustments_tenant_created_by_fk": {
+          "name": "loan_adjustments_tenant_created_by_fk",
           "tableFrom": "loan_adjustments",
           "tableTo": "users",
           "columnsFrom": [
+            "tenant_id",
             "created_by_user_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "loan_adjustments_updated_by_user_id_users_id_fk": {
-          "name": "loan_adjustments_updated_by_user_id_users_id_fk",
+        "loan_adjustments_tenant_updated_by_fk": {
+          "name": "loan_adjustments_tenant_updated_by_fk",
           "tableFrom": "loan_adjustments",
           "tableTo": "users",
           "columnsFrom": [
+            "tenant_id",
             "updated_by_user_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
@@ -2288,6 +2369,27 @@
         }
       },
       "indexes": {
+        "loan_renewals_tenant_id_id_unique": {
+          "name": "loan_renewals_tenant_id_id_unique",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "loan_renewals_tenant_idempotency_unique": {
           "name": "loan_renewals_tenant_idempotency_unique",
           "columns": [
@@ -2312,79 +2414,91 @@
         }
       },
       "foreignKeys": {
-        "loan_renewals_old_loan_id_loans_id_fk": {
-          "name": "loan_renewals_old_loan_id_loans_id_fk",
+        "loan_renewals_tenant_old_loan_fk": {
+          "name": "loan_renewals_tenant_old_loan_fk",
           "tableFrom": "loan_renewals",
           "tableTo": "loans",
           "columnsFrom": [
+            "tenant_id",
             "old_loan_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "loan_renewals_new_loan_id_loans_id_fk": {
-          "name": "loan_renewals_new_loan_id_loans_id_fk",
+        "loan_renewals_tenant_new_loan_fk": {
+          "name": "loan_renewals_tenant_new_loan_fk",
           "tableFrom": "loan_renewals",
           "tableTo": "loans",
           "columnsFrom": [
+            "tenant_id",
             "new_loan_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "loan_renewals_created_by_user_id_users_id_fk": {
-          "name": "loan_renewals_created_by_user_id_users_id_fk",
+        "loan_renewals_tenant_created_by_fk": {
+          "name": "loan_renewals_tenant_created_by_fk",
           "tableFrom": "loan_renewals",
           "tableTo": "users",
           "columnsFrom": [
+            "tenant_id",
             "created_by_user_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "loan_renewals_updated_by_user_id_users_id_fk": {
-          "name": "loan_renewals_updated_by_user_id_users_id_fk",
+        "loan_renewals_tenant_updated_by_fk": {
+          "name": "loan_renewals_tenant_updated_by_fk",
           "tableFrom": "loan_renewals",
           "tableTo": "users",
           "columnsFrom": [
+            "tenant_id",
             "updated_by_user_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "loan_renewals_executed_by_user_id_users_id_fk": {
-          "name": "loan_renewals_executed_by_user_id_users_id_fk",
+        "loan_renewals_tenant_executed_by_fk": {
+          "name": "loan_renewals_tenant_executed_by_fk",
           "tableFrom": "loan_renewals",
           "tableTo": "users",
           "columnsFrom": [
+            "tenant_id",
             "executed_by_user_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "loan_renewals_reversed_by_user_id_users_id_fk": {
-          "name": "loan_renewals_reversed_by_user_id_users_id_fk",
+        "loan_renewals_tenant_reversed_by_fk": {
+          "name": "loan_renewals_tenant_reversed_by_fk",
           "tableFrom": "loan_renewals",
           "tableTo": "users",
           "columnsFrom": [
+            "tenant_id",
             "reversed_by_user_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
@@ -2533,7 +2647,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "loan_schedules_tenant_id_id_unique": {
+          "name": "loan_schedules_tenant_id_id_unique",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "loan_schedules_loan_id_loans_id_fk": {
           "name": "loan_schedules_loan_id_loans_id_fk",
@@ -2717,7 +2853,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "loans_tenant_id_id_unique": {
+          "name": "loans_tenant_id_id_unique",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "loans_owner_user_id_users_id_fk": {
           "name": "loans_owner_user_id_users_id_fk",
@@ -2904,53 +3062,61 @@
         }
       },
       "foreignKeys": {
-        "payment_evidence_payment_intake_id_payment_intakes_id_fk": {
-          "name": "payment_evidence_payment_intake_id_payment_intakes_id_fk",
+        "payment_evidence_tenant_intake_fk": {
+          "name": "payment_evidence_tenant_intake_fk",
           "tableFrom": "payment_evidence",
           "tableTo": "payment_intakes",
           "columnsFrom": [
+            "tenant_id",
             "payment_intake_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "payment_evidence_file_id_files_id_fk": {
-          "name": "payment_evidence_file_id_files_id_fk",
+        "payment_evidence_tenant_file_fk": {
+          "name": "payment_evidence_tenant_file_fk",
           "tableFrom": "payment_evidence",
           "tableTo": "files",
           "columnsFrom": [
+            "tenant_id",
             "file_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "payment_evidence_created_by_user_id_users_id_fk": {
-          "name": "payment_evidence_created_by_user_id_users_id_fk",
+        "payment_evidence_tenant_created_by_fk": {
+          "name": "payment_evidence_tenant_created_by_fk",
           "tableFrom": "payment_evidence",
           "tableTo": "users",
           "columnsFrom": [
+            "tenant_id",
             "created_by_user_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "payment_evidence_updated_by_user_id_users_id_fk": {
-          "name": "payment_evidence_updated_by_user_id_users_id_fk",
+        "payment_evidence_tenant_updated_by_fk": {
+          "name": "payment_evidence_tenant_updated_by_fk",
           "tableFrom": "payment_evidence",
           "tableTo": "users",
           "columnsFrom": [
+            "tenant_id",
             "updated_by_user_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
@@ -3114,6 +3280,27 @@
         }
       },
       "indexes": {
+        "payment_intakes_tenant_id_id_unique": {
+          "name": "payment_intakes_tenant_id_id_unique",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "payment_intakes_tenant_idempotency_unique": {
           "name": "payment_intakes_tenant_idempotency_unique",
           "columns": [
@@ -3182,66 +3369,76 @@
         }
       },
       "foreignKeys": {
-        "payment_intakes_owner_user_id_users_id_fk": {
-          "name": "payment_intakes_owner_user_id_users_id_fk",
+        "payment_intakes_tenant_owner_fk": {
+          "name": "payment_intakes_tenant_owner_fk",
           "tableFrom": "payment_intakes",
           "tableTo": "users",
           "columnsFrom": [
+            "tenant_id",
             "owner_user_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "payment_intakes_duplicate_of_intake_id_payment_intakes_id_fk": {
-          "name": "payment_intakes_duplicate_of_intake_id_payment_intakes_id_fk",
+        "payment_intakes_tenant_duplicate_fk": {
+          "name": "payment_intakes_tenant_duplicate_fk",
           "tableFrom": "payment_intakes",
           "tableTo": "payment_intakes",
           "columnsFrom": [
+            "tenant_id",
             "duplicate_of_intake_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "payment_intakes_created_by_user_id_users_id_fk": {
-          "name": "payment_intakes_created_by_user_id_users_id_fk",
+        "payment_intakes_tenant_created_by_fk": {
+          "name": "payment_intakes_tenant_created_by_fk",
           "tableFrom": "payment_intakes",
           "tableTo": "users",
           "columnsFrom": [
+            "tenant_id",
             "created_by_user_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "payment_intakes_updated_by_user_id_users_id_fk": {
-          "name": "payment_intakes_updated_by_user_id_users_id_fk",
+        "payment_intakes_tenant_updated_by_fk": {
+          "name": "payment_intakes_tenant_updated_by_fk",
           "tableFrom": "payment_intakes",
           "tableTo": "users",
           "columnsFrom": [
+            "tenant_id",
             "updated_by_user_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "payment_intakes_posted_by_user_id_users_id_fk": {
-          "name": "payment_intakes_posted_by_user_id_users_id_fk",
+        "payment_intakes_tenant_posted_by_fk": {
+          "name": "payment_intakes_tenant_posted_by_fk",
           "tableFrom": "payment_intakes",
           "tableTo": "users",
           "columnsFrom": [
+            "tenant_id",
             "posted_by_user_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
@@ -3396,79 +3593,91 @@
         }
       },
       "foreignKeys": {
-        "payment_match_allocations_proposal_id_payment_match_proposals_id_fk": {
-          "name": "payment_match_allocations_proposal_id_payment_match_proposals_id_fk",
+        "payment_match_allocations_tenant_proposal_fk": {
+          "name": "payment_match_allocations_tenant_proposal_fk",
           "tableFrom": "payment_match_allocations",
           "tableTo": "payment_match_proposals",
           "columnsFrom": [
+            "tenant_id",
             "proposal_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "payment_match_allocations_borrower_id_borrowers_id_fk": {
-          "name": "payment_match_allocations_borrower_id_borrowers_id_fk",
+        "payment_match_allocations_tenant_borrower_fk": {
+          "name": "payment_match_allocations_tenant_borrower_fk",
           "tableFrom": "payment_match_allocations",
           "tableTo": "borrowers",
           "columnsFrom": [
+            "tenant_id",
             "borrower_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "payment_match_allocations_loan_id_loans_id_fk": {
-          "name": "payment_match_allocations_loan_id_loans_id_fk",
+        "payment_match_allocations_tenant_loan_fk": {
+          "name": "payment_match_allocations_tenant_loan_fk",
           "tableFrom": "payment_match_allocations",
           "tableTo": "loans",
           "columnsFrom": [
+            "tenant_id",
             "loan_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "payment_match_allocations_schedule_id_loan_schedules_id_fk": {
-          "name": "payment_match_allocations_schedule_id_loan_schedules_id_fk",
+        "payment_match_allocations_tenant_schedule_fk": {
+          "name": "payment_match_allocations_tenant_schedule_fk",
           "tableFrom": "payment_match_allocations",
           "tableTo": "loan_schedules",
           "columnsFrom": [
+            "tenant_id",
             "schedule_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "payment_match_allocations_created_by_user_id_users_id_fk": {
-          "name": "payment_match_allocations_created_by_user_id_users_id_fk",
+        "payment_match_allocations_tenant_created_by_fk": {
+          "name": "payment_match_allocations_tenant_created_by_fk",
           "tableFrom": "payment_match_allocations",
           "tableTo": "users",
           "columnsFrom": [
+            "tenant_id",
             "created_by_user_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "payment_match_allocations_updated_by_user_id_users_id_fk": {
-          "name": "payment_match_allocations_updated_by_user_id_users_id_fk",
+        "payment_match_allocations_tenant_updated_by_fk": {
+          "name": "payment_match_allocations_tenant_updated_by_fk",
           "tableFrom": "payment_match_allocations",
           "tableTo": "users",
           "columnsFrom": [
+            "tenant_id",
             "updated_by_user_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
@@ -3582,6 +3791,27 @@
         }
       },
       "indexes": {
+        "payment_match_proposals_tenant_id_id_unique": {
+          "name": "payment_match_proposals_tenant_id_id_unique",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "payment_match_proposals_tenant_intake_version_unique": {
           "name": "payment_match_proposals_tenant_intake_version_unique",
           "columns": [
@@ -3611,40 +3841,46 @@
         }
       },
       "foreignKeys": {
-        "payment_match_proposals_payment_intake_id_payment_intakes_id_fk": {
-          "name": "payment_match_proposals_payment_intake_id_payment_intakes_id_fk",
+        "payment_match_proposals_tenant_intake_fk": {
+          "name": "payment_match_proposals_tenant_intake_fk",
           "tableFrom": "payment_match_proposals",
           "tableTo": "payment_intakes",
           "columnsFrom": [
+            "tenant_id",
             "payment_intake_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "payment_match_proposals_created_by_user_id_users_id_fk": {
-          "name": "payment_match_proposals_created_by_user_id_users_id_fk",
+        "payment_match_proposals_tenant_created_by_fk": {
+          "name": "payment_match_proposals_tenant_created_by_fk",
           "tableFrom": "payment_match_proposals",
           "tableTo": "users",
           "columnsFrom": [
+            "tenant_id",
             "created_by_user_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "payment_match_proposals_updated_by_user_id_users_id_fk": {
-          "name": "payment_match_proposals_updated_by_user_id_users_id_fk",
+        "payment_match_proposals_tenant_updated_by_fk": {
+          "name": "payment_match_proposals_tenant_updated_by_fk",
           "tableFrom": "payment_match_proposals",
           "tableTo": "users",
           "columnsFrom": [
+            "tenant_id",
             "updated_by_user_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
@@ -4016,6 +4252,27 @@
         }
       },
       "indexes": {
+        "transactions_tenant_id_id_unique": {
+          "name": "transactions_tenant_id_id_unique",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "transactions_tenant_idempotency_unique": {
           "name": "transactions_tenant_idempotency_unique",
           "columns": [
@@ -4114,27 +4371,31 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "transactions_payment_intake_id_payment_intakes_id_fk": {
-          "name": "transactions_payment_intake_id_payment_intakes_id_fk",
+        "transactions_tenant_payment_intake_fk": {
+          "name": "transactions_tenant_payment_intake_fk",
           "tableFrom": "transactions",
           "tableTo": "payment_intakes",
           "columnsFrom": [
+            "tenant_id",
             "payment_intake_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "transactions_reversed_transaction_id_transactions_id_fk": {
-          "name": "transactions_reversed_transaction_id_transactions_id_fk",
+        "transactions_tenant_reversed_transaction_fk": {
+          "name": "transactions_tenant_reversed_transaction_fk",
           "tableFrom": "transactions",
           "tableTo": "transactions",
           "columnsFrom": [
+            "tenant_id",
             "reversed_transaction_id"
           ],
           "columnsTo": [
+            "tenant_id",
             "id"
           ],
           "onDelete": "no action",
@@ -4217,7 +4478,29 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "users_tenant_id_id_unique": {
+          "name": "users_tenant_id_id_unique",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {

@@ -23,11 +23,16 @@ function tableColumnNames(table: PgTable): string[] {
     return getTableConfig(table).columns.map((column) => column.name);
 }
 
-function uniqueIndexNames(table: PgTable): string[] {
-    return getTableConfig(table).indexes
-        .filter((index) => index.config.unique)
-        .map((index) => index.config.name)
-        .filter((name): name is string => name !== undefined);
+function uniqueIndexContract(table: PgTable, name: string) {
+    const index = getTableConfig(table).indexes.find((candidate) => candidate.config.name === name);
+    expect(index, `missing unique index ${name}`).toBeDefined();
+    expect(index?.config.unique, `${name} must be unique`).toBe(true);
+    return {
+        columns: index!.config.columns.map((column) => (column as { name?: string }).name),
+        where: index!.config.where
+            ? new PgDialect().sqlToQuery(index!.config.where).sql
+            : null,
+    };
 }
 
 describe("agent workflow Drizzle schema", () => {
@@ -51,26 +56,162 @@ describe("agent workflow Drizzle schema", () => {
         }
     });
 
-    test("models tenant-scoped duplicate and reversal invariants as unique indexes", () => {
-        const expectedIndexes: Record<string, string[]> = {
-            borrowerAliases: ["borrower_aliases_tenant_borrower_normalized_unique"],
-            paymentIntakes: [
-                "payment_intakes_tenant_idempotency_unique",
-                "payment_intakes_tenant_bank_reference_hash_unique",
-                "payment_intakes_tenant_qr_payload_hash_unique",
-            ],
-            paymentEvidence: ["payment_evidence_tenant_evidence_hash_unique"],
-            paymentMatchProposals: ["payment_match_proposals_tenant_intake_version_unique"],
-            loanRenewals: ["loan_renewals_tenant_idempotency_unique"],
-            loanAdjustments: ["loan_adjustments_tenant_idempotency_unique"],
-            transactions: [
-                "transactions_tenant_idempotency_unique",
-                "transactions_tenant_reversed_transaction_unique",
-            ],
+    test("models exact tenant-scoped unique index columns and nullable-key predicates", () => {
+        const expectedIndexes: Record<string, Record<string, { columns: string[]; where: string | null }>> = {
+            users: {
+                users_tenant_id_id_unique: { columns: ["tenant_id", "id"], where: null },
+            },
+            borrowers: {
+                borrowers_tenant_id_id_unique: { columns: ["tenant_id", "id"], where: null },
+            },
+            files: {
+                files_tenant_id_id_unique: { columns: ["tenant_id", "id"], where: null },
+            },
+            loans: {
+                loans_tenant_id_id_unique: { columns: ["tenant_id", "id"], where: null },
+            },
+            loanSchedules: {
+                loan_schedules_tenant_id_id_unique: { columns: ["tenant_id", "id"], where: null },
+            },
+            borrowerAliases: {
+                borrower_aliases_tenant_borrower_normalized_unique: {
+                    columns: ["tenant_id", "borrower_id", "normalized_alias"],
+                    where: null,
+                },
+            },
+            paymentIntakes: {
+                payment_intakes_tenant_id_id_unique: { columns: ["tenant_id", "id"], where: null },
+                payment_intakes_tenant_idempotency_unique: {
+                    columns: ["tenant_id", "idempotency_key"],
+                    where: '"payment_intakes"."idempotency_key" IS NOT NULL',
+                },
+                payment_intakes_tenant_bank_reference_hash_unique: {
+                    columns: ["tenant_id", "bank_reference_hash"],
+                    where: '"payment_intakes"."bank_reference_hash" IS NOT NULL',
+                },
+                payment_intakes_tenant_qr_payload_hash_unique: {
+                    columns: ["tenant_id", "qr_payload_hash"],
+                    where: '"payment_intakes"."qr_payload_hash" IS NOT NULL',
+                },
+            },
+            paymentEvidence: {
+                payment_evidence_tenant_evidence_hash_unique: {
+                    columns: ["tenant_id", "evidence_hash"],
+                    where: '"payment_evidence"."evidence_hash" IS NOT NULL',
+                },
+            },
+            paymentMatchProposals: {
+                payment_match_proposals_tenant_id_id_unique: { columns: ["tenant_id", "id"], where: null },
+                payment_match_proposals_tenant_intake_version_unique: {
+                    columns: ["tenant_id", "payment_intake_id", "version"],
+                    where: null,
+                },
+            },
+            loanRenewals: {
+                loan_renewals_tenant_id_id_unique: { columns: ["tenant_id", "id"], where: null },
+                loan_renewals_tenant_idempotency_unique: {
+                    columns: ["tenant_id", "idempotency_key"],
+                    where: '"loan_renewals"."idempotency_key" IS NOT NULL',
+                },
+            },
+            loanAdjustments: {
+                loan_adjustments_tenant_id_id_unique: { columns: ["tenant_id", "id"], where: null },
+                loan_adjustments_tenant_idempotency_unique: {
+                    columns: ["tenant_id", "idempotency_key"],
+                    where: '"loan_adjustments"."idempotency_key" IS NOT NULL',
+                },
+                loan_adjustments_tenant_reversed_adjustment_unique: {
+                    columns: ["tenant_id", "reversed_adjustment_id"],
+                    where: '"loan_adjustments"."reversed_adjustment_id" IS NOT NULL',
+                },
+            },
+            transactions: {
+                transactions_tenant_id_id_unique: { columns: ["tenant_id", "id"], where: null },
+                transactions_tenant_idempotency_unique: {
+                    columns: ["tenant_id", "idempotency_key"],
+                    where: '"transactions"."idempotency_key" IS NOT NULL',
+                },
+                transactions_tenant_reversed_transaction_unique: {
+                    columns: ["tenant_id", "reversed_transaction_id"],
+                    where: '"transactions"."reversed_transaction_id" IS NOT NULL',
+                },
+            },
         };
 
-        for (const [exportName, indexNames] of Object.entries(expectedIndexes)) {
-            expect(uniqueIndexNames(workflowTable(exportName))).toEqual(expect.arrayContaining(indexNames));
+        for (const [exportName, indexes] of Object.entries(expectedIndexes)) {
+            for (const [name, expected] of Object.entries(indexes)) {
+                expect(uniqueIndexContract(workflowTable(exportName), name)).toEqual(expected);
+            }
+        }
+    });
+
+    test("uses tenant-safe composite foreign keys for every new tenant-owned relationship", () => {
+        const expectedRelationships: Record<string, Record<string, string>> = {
+            borrowerAliases: {
+                borrower_id: "borrowers",
+                created_by_user_id: "users",
+                updated_by_user_id: "users",
+            },
+            paymentIntakes: {
+                owner_user_id: "users",
+                duplicate_of_intake_id: "payment_intakes",
+                created_by_user_id: "users",
+                updated_by_user_id: "users",
+                posted_by_user_id: "users",
+            },
+            paymentEvidence: {
+                payment_intake_id: "payment_intakes",
+                file_id: "files",
+                created_by_user_id: "users",
+                updated_by_user_id: "users",
+            },
+            paymentMatchProposals: {
+                payment_intake_id: "payment_intakes",
+                created_by_user_id: "users",
+                updated_by_user_id: "users",
+            },
+            paymentMatchAllocations: {
+                proposal_id: "payment_match_proposals",
+                borrower_id: "borrowers",
+                loan_id: "loans",
+                schedule_id: "loan_schedules",
+                created_by_user_id: "users",
+                updated_by_user_id: "users",
+            },
+            loanRenewals: {
+                old_loan_id: "loans",
+                new_loan_id: "loans",
+                created_by_user_id: "users",
+                updated_by_user_id: "users",
+                executed_by_user_id: "users",
+                reversed_by_user_id: "users",
+            },
+            loanAdjustments: {
+                loan_id: "loans",
+                renewal_id: "loan_renewals",
+                reversed_adjustment_id: "loan_adjustments",
+                created_by_user_id: "users",
+                updated_by_user_id: "users",
+            },
+            transactions: {
+                payment_intake_id: "payment_intakes",
+                reversed_transaction_id: "transactions",
+            },
+        };
+
+        for (const [exportName, relationships] of Object.entries(expectedRelationships)) {
+            const foreignKeys = getTableConfig(workflowTable(exportName)).foreignKeys;
+            for (const [idColumn, foreignTableName] of Object.entries(relationships)) {
+                const foreignKey = foreignKeys.find((candidate) => {
+                    const reference = candidate.reference();
+                    return reference.columns.some((column) => column.name === idColumn)
+                        && getTableConfig(reference.foreignTable).name === foreignTableName;
+                });
+                expect(foreignKey, `${exportName}.${idColumn} must have a foreign key`).toBeDefined();
+                const reference = foreignKey!.reference();
+                expect(reference.columns.map((column) => column.name)).toEqual(["tenant_id", idColumn]);
+                expect(reference.foreignColumns.map((column) => column.name)).toEqual(["tenant_id", "id"]);
+            }
         }
     });
 
@@ -97,6 +238,12 @@ describe("agent workflow Drizzle schema", () => {
             .find((column) => column.name === "posted_at");
         expect(postedAt?.notNull).toBe(true);
         expect(new PgDialect().sqlToQuery(postedAt?.default as SQL).sql).toBe("now()");
+
+        const legacyLoanBorrowerReference = getTableConfig(workflowTable("loans")).foreignKeys
+            .map((foreignKey) => foreignKey.reference())
+            .find((reference) => reference.columns.some((column) => column.name === "borrower_id"));
+        expect(legacyLoanBorrowerReference, "loans.borrower_id legacy FK must remain").toBeDefined();
+        expect(legacyLoanBorrowerReference?.foreignColumns.map((column) => column.name)).toEqual(["id"]);
     });
 
     test("constrains persisted workflow and actor statuses to the product vocabulary", () => {
