@@ -17,10 +17,10 @@ export interface LoanCalculationParams {
 export interface InstallmentSchedule {
     installmentNo: number;
     dueDate: string;
-    amount: number;
-    principalComponent: number;
-    interestComponent: number;
-    remainingPrincipal: number;
+    amount: string;
+    principalComponent: string;
+    interestComponent: string;
+    remainingPrincipal: string;
 }
 
 export interface PublicLoanCalculationParams {
@@ -157,10 +157,10 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
         schedule.push({
             installmentNo: i,
             dueDate: currentDate.format("YYYY-MM-DD"),
-            amount: rowTotal.toNumber(),
-            principalComponent: principalComponent.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
-            interestComponent: interestComponent.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
-            remainingPrincipal: remainingPrincipal.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber()
+            amount: rowTotal.toFixed(2),
+            principalComponent: principalComponent.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2),
+            interestComponent: interestComponent.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2),
+            remainingPrincipal: remainingPrincipal.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2)
         });
     }
 
@@ -182,10 +182,10 @@ export function calculatePublicLoanSchedule(params: PublicLoanCalculationParams)
     return schedule.map((row) => ({
         installmentNo: row.installmentNo,
         dueDate: row.dueDate,
-        amount: serializeMoney(row.amount),
-        principalComponent: serializeMoney(row.principalComponent),
-        interestComponent: serializeMoney(row.interestComponent),
-        remainingPrincipal: serializeMoney(row.remainingPrincipal),
+        amount: row.amount,
+        principalComponent: row.principalComponent,
+        interestComponent: row.interestComponent,
+        remainingPrincipal: row.remainingPrincipal,
     }));
 }
 

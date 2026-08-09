@@ -7,6 +7,7 @@ import {
     sumMoney,
 } from "./money";
 import { generateLoanSchedule } from "./loan-schedule";
+import { calculatePublicLoanSchedule } from "./calculator";
 
 describe("money public values", () => {
     // Break caught: accepting a malformed or negative API money value corrupts financial inputs.
@@ -121,6 +122,62 @@ describe("periodic schedule conservation", () => {
             row.scheduledInterest,
             row.scheduledFee,
         ]).toFixed(2))).toBe(true);
+    });
+});
+
+describe("large-value schedule precision", () => {
+    // Break caught: Decimal schedule values pass through Number and round 9007199254740993.00 down by one baht.
+    it("preserves huge monthly principal, interest, total, and remaining principal exactly", () => {
+        const [row] = generateLoanSchedule({
+            principal: "9007199254740993.00",
+            interestRate: "12.00",
+            termMonths: 1,
+            repaymentType: "monthly",
+            startDate: "2026-01-01",
+        });
+
+        expect(row).toMatchObject({
+            scheduledPrincipal: "9007199254740993.00",
+            scheduledInterest: "90071992547409.93",
+            scheduledTotal: "9097271247288402.93",
+            remainingDue: "9097271247288402.93",
+        });
+    });
+
+    // Break caught: sub-safe-integer installment values still lose cents when their magnitude has a coarse Number ULP.
+    it.each([
+        ["weekly", 4, "2251799813685248.25", "6755399441055744.75"],
+        ["daily", 30, "300239975158033.10", "8706959279582959.90"],
+    ] as const)("preserves every huge %s installment without Number conversion", (
+        repaymentType,
+        expectedCount,
+        expectedFirstPrincipal,
+        expectedFirstRemaining,
+    ) => {
+        const schedule = generateLoanSchedule({
+            principal: "9007199254740993.00",
+            interestRate: "0.00",
+            termMonths: 1,
+            repaymentType,
+            startDate: "2026-01-01",
+        });
+
+        expect(schedule).toHaveLength(expectedCount);
+        expect(schedule[0]).toMatchObject({
+            scheduledPrincipal: expectedFirstPrincipal,
+            scheduledInterest: "0.00",
+            scheduledTotal: expectedFirstPrincipal,
+        });
+        expect(sumMoney(schedule.map((row) => row.scheduledPrincipal)).toFixed(2))
+            .toBe("9007199254740993.00");
+        const publicSchedule = calculatePublicLoanSchedule({
+            principal: "9007199254740993.00",
+            interestRate: "0.00",
+            termMonths: 1,
+            repaymentType,
+            startDate: "2026-01-01",
+        });
+        expect(publicSchedule[0]?.remainingPrincipal).toBe(expectedFirstRemaining);
     });
 });
 

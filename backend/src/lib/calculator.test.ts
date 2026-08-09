@@ -16,8 +16,8 @@ describe("Loan Calculator", () => {
         // Total interest = 20000 * 0.15 * 1 = 3000
         // Total amount = 23000
         // Exact components conserve 23000.00; the final row carries the cent residual.
-        expect(schedule[0].amount).toBe(1916.67);
-        expect(schedule[11].amount).toBe(1916.63);
+        expect(schedule[0].amount).toBe("1916.67");
+        expect(schedule[11].amount).toBe("1916.63");
         expect(schedule[0].dueDate).toBe("2024-02-01");
     });
 
@@ -35,8 +35,8 @@ describe("Loan Calculator", () => {
         // Total interest = 4000
         // Total = 24000
         // Exact components conserve 24000.00; the final row carries the cent residual.
-        expect(schedule[0].amount).toBe(66.67);
-        expect(schedule[359].amount).toBe(65.47);
+        expect(schedule[0].amount).toBe("66.67");
+        expect(schedule[359].amount).toBe("65.47");
     });
 
     it("should calculate pro-rated closing amount", () => {

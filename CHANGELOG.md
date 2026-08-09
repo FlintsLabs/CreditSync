@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.2 - 2026-08-10
+
+### Fixed
+- Preserved scheduled-loan principal, interest, totals, and remaining balances above JavaScript's safe-integer range by carrying canonical money strings from the Decimal calculator through schedule generation and activation rollups.
+
+### Tests
+- Added exact large-value monthly, weekly, and daily schedule regressions plus PostgreSQL activation coverage for stored schedules and loan rollups.
+
 ## v0.3.1 - 2026-08-10
 
 ### Changed

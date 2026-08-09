@@ -36,10 +36,10 @@ export function generateLoanSchedule(input: GenerateLoanScheduleInput): Generate
     return schedule.map((row) => ({
         installmentNo: row.installmentNo,
         dueDate: row.dueDate,
-        scheduledPrincipal: row.principalComponent.toFixed(2),
-        scheduledInterest: row.interestComponent.toFixed(2),
+        scheduledPrincipal: row.principalComponent,
+        scheduledInterest: row.interestComponent,
         scheduledFee: "0.00",
-        scheduledTotal: row.amount.toFixed(2),
-        remainingDue: row.amount.toFixed(2),
+        scheduledTotal: row.amount,
+        remainingDue: row.amount,
     }));
 }

@@ -181,6 +181,36 @@ describe("loan application service", () => {
         expect(activated.outstandingPrincipal).toBe("9007199254740993.00");
     });
 
+    // Break caught: scheduled activation loses huge Decimal principal/interest before persisting rows and rollups.
+    integrationTest("keeps scheduled-loan activation exact beyond Number safe integers", async () => {
+        const actor = await seedUser("tenant-a", "scheduled-exact@example.test", "collector");
+        const ctx = context("tenant-a", actor.id);
+        const borrower = await createBorrower(ctx, { name: "Scheduled Exact Borrower" });
+        const draft = await createLoanDraft(ctx, {
+            borrowerPublicId: borrower.publicId,
+            principal: "9007199254740993.00",
+            interestRate: "12.00",
+            repaymentType: "monthly",
+            termMonths: 1,
+            startDate: "2026-08-10",
+        });
+
+        const activated = await activateLoan(ctx, draft.publicId);
+        const storedLoan = await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) });
+        const [schedule] = await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, storedLoan!.id));
+
+        expect(schedule).toMatchObject({
+            scheduledPrincipal: "9007199254740993.00",
+            scheduledInterest: "90071992547409.93",
+            scheduledTotal: "9097271247288402.93",
+            remainingDue: "9097271247288402.93",
+        });
+        expect(activated).toMatchObject({
+            outstandingPrincipal: "9007199254740993.00",
+            outstandingInterest: "90071992547409.93",
+        });
+    });
+
     // Break caught: two callers that reach activation together create duplicate schedule/allocation/audit sets.
     integrationTest("serializes simultaneous activation into one schedule and one initial allocation", async () => {
         const actor = await seedUser("tenant-a", "double-activation@example.test", "owner");
