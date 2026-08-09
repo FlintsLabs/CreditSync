@@ -15,6 +15,7 @@ import { auditLogsRoute } from "./modules/audit-logs";
 import { dashboardRoute } from "./modules/dashboard";
 import { reconciliationRoute } from "./modules/reconciliation";
 import { paymentIntakesRoute } from "./modules/payment-intakes";
+import { loanRenewalsRoute } from "./modules/loan-renewals";
 
 const isProd = process.env.NODE_ENV === "production";
 const corsOrigins = (process.env.CORS_ORIGINS || "")
@@ -26,7 +27,7 @@ const app = new Elysia()
     .use(cors({
         origin: isProd ? corsOrigins : true,
         credentials: true,
-        allowedHeaders: ['Content-Type', 'Authorization'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Request-ID', 'X-Correlation-ID'],
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']
     }))
     .use(swagger())
@@ -47,6 +48,7 @@ const app = new Elysia()
             .use(loansRoute)
             .use(transactionsRoute)
             .use(paymentIntakesRoute)
+            .use(loanRenewalsRoute)
             .use(auditLogsRoute)
             .use(dashboardRoute)
             .use(reconciliationRoute)

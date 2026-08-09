@@ -28,6 +28,7 @@ The repo already contains a working MVP foundation:
 - OCR endpoint for uploaded ID-card-like images
 - Loan calculation plus draft-review-activation flow
 - Payment intake, evidence, review, grouped allocation, posting, and compensating reversal workflow
+- Daily-loan renewal preview, confirmed execution, and compensating reversal workflow
 - Legacy repayment-history reads remain available; repayment writes use the payment-intake workflow exclusively
 - Closing summary calculation for loans
 - LINE webhook ingestion for image uploads
@@ -68,6 +69,14 @@ Some screens are still mock/demo oriented and not fully wired to live backend da
 - calculate closing balance based on elapsed time and payments already received
 
 ### 4. Transaction Management
+
+Daily-loan renewals use the authenticated `/loan-renewals` API:
+
+- `POST /loan-renewals/preview` accepts `oldLoanPublicId`, `requestedPrincipal`, optional `waivedCharges`, and a required `waiverReason` when any charge is waived.
+- `POST /loan-renewals/:id/execute` requires the persisted `previewHash`, `confirmed: true`, a non-blank `reason`, and an `Idempotency-Key` header.
+- `POST /loan-renewals/:id/reverse` requires a non-blank `reason` and `Idempotency-Key` header.
+
+Renewal previews derive principal from posted, non-reversed transaction components. Execution locks and recomputes that state, settles non-waived due interest/fees/penalties from proceeds, activates a fresh schedule, and carries funding composition proportionally. The outstanding-principal transfer is non-cash; only the net payout or collection is recorded as borrower cash. Reversal is blocked by unreversed downstream entries and appends accounting compensations without deleting the replacement schedule.
 
 - record repayments manually through payment intakes
 - upload repayment slips
@@ -198,6 +207,7 @@ Important variables include:
 - `EVIDENCE_UPLOAD_TTL_SECONDS`
 - `EVIDENCE_MAX_BYTES`
 - `PAYMENT_PREVIEW_TTL_SECONDS`
+- `RENEWAL_PREVIEW_TTL_SECONDS`
 - `STORAGE_PROVIDER`
 - `CACHE_URL`
 - `CACHE_TTL_SECONDS`
@@ -206,7 +216,7 @@ Important variables include:
 - `LINE_TENANT_ID`
 - `VITE_GOOGLE_CLIENT_ID`
 
-For file access, CreditSync stores an internal file reference and resolves it to a time-limited signed URL when the API returns borrower images, uploaded files, and repayment slips. With the default S3-compatible setup, keep `S3_ENDPOINT` for server-side uploads and `S3_PUBLIC_URL` for the browser-reachable hostname used in presigned download links. In the bundled production setup, `S3_PUBLIC_URL` should point to the frontend domain with a `/files` prefix because Nginx proxies `/files/*` to MinIO. Payment evidence uses signed S3-compatible PUTs with signed MIME, size, SHA-256 checksum, tenant, and intake metadata; the signer-returned expiry is persisted exactly, and finalization checks that timestamp plus stored-object metadata under row locks. It never accepts a caller-provided fetch URL. `EVIDENCE_UPLOAD_TTL_SECONDS` defaults to `300`, `EVIDENCE_MAX_BYTES` to `20971520` (20 MiB), and `PAYMENT_PREVIEW_TTL_SECONDS` to `900`. The evidence-intent workflow requires `STORAGE_PROVIDER=s3`; existing Azure Blob file reads/uploads remain available outside this workflow.
+For file access, CreditSync stores an internal file reference and resolves it to a time-limited signed URL when the API returns borrower images, uploaded files, and repayment slips. With the default S3-compatible setup, keep `S3_ENDPOINT` for server-side uploads and `S3_PUBLIC_URL` for the browser-reachable hostname used in presigned download links. In the bundled production setup, `S3_PUBLIC_URL` should point to the frontend domain with a `/files` prefix because Nginx proxies `/files/*` to MinIO. Payment evidence uses signed S3-compatible PUTs with signed MIME, size, SHA-256 checksum, tenant, and intake metadata; the signer-returned expiry is persisted exactly, and finalization checks that timestamp plus stored-object metadata under row locks. It never accepts a caller-provided fetch URL. `EVIDENCE_UPLOAD_TTL_SECONDS` defaults to `300`, `EVIDENCE_MAX_BYTES` to `20971520` (20 MiB), and both `PAYMENT_PREVIEW_TTL_SECONDS` and `RENEWAL_PREVIEW_TTL_SECONDS` default to `900`. The evidence-intent workflow requires `STORAGE_PROVIDER=s3`; existing Azure Blob file reads/uploads remain available outside this workflow.
 
 ### 3. Install dependencies
 

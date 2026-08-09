@@ -8,12 +8,14 @@
 - Added the v0.3.0 agent-workflow data foundation for borrower aliases, payment intake/evidence matching, transaction reversals, loan renewals and adjustments, tenant-scoped idempotency, and append-only audit history.
 - Added shared borrower and loan-application services with normalized alias search, public-ID presenters, command-context audit metadata, borrower portfolios, editable loan drafts, previews, and idempotent activation.
 - Added the complete payment-intake workflow: data-only capture, signed S3/MinIO evidence PUTs and verified finalization, hard-duplicate idempotency, semantic warnings, deterministic/explicit grouped matching, review queues, atomic posting, and compensating reversal.
+- Added the daily-loan renewal workflow with versioned expiring previews, exact posted-principal recovery, charge settlement or reasoned waiver, confirmed idempotent execution, proportional funding carry-forward, fresh schedules, and append-only reversal.
 - Added PostgreSQL and Dragonfly regression coverage for exact schedules and activation rollups, concurrent activation, the authenticated draft lifecycle, public funding DTOs, mutation audits, duplicate aliases, and cache invalidation, including large-value monthly, weekly, and daily money cases.
 
 ### Changed
 - Loan creation is now draft-first: `POST /loans` stores editable terms without a schedule, while `POST /loans/:id/activate` locks the terms and creates the schedule once. The current web wizard performs both steps to preserve its existing confirm-and-create flow.
 - Borrower and loan-application REST adapters now delegate to the shared services and use public UUID identifiers at their external command boundaries.
 - Payment REST adapters now delegate to the shared payment application service and use UUID command boundaries and exact money strings; legacy `GET /transactions` remains readable while legacy repayment writes return 405 so all balance mutations share one Decimal allocator and lock order.
+- Renewal REST adapters now expose preview, execute, and reverse commands under `/loan-renewals`, with UUID identifiers, exact money strings, explicit confirmation/reason fields, and required execution/reversal idempotency keys.
 - Loan schedule, closing, allocation-state, profitability, funding-allocation, and funding-reallocation REST payloads now expose public UUIDs and two-decimal money strings; funding mutations accept public funding UUIDs and money strings.
 - Updated the loan detail, matching, and closing frontend flows for the exact public loan DTOs.
 
@@ -27,6 +29,7 @@
 - Restored tenant cache invalidation after borrower updates so cached loan lists immediately reflect borrower-name changes.
 - Serialized payment preview/post/reversal state transitions with PostgreSQL row locks, rejected and marked stale proposals after concurrent balance changes, and kept schedule, loan, transaction, fund-ledger, and audit effects atomic and append-only.
 - Persisted exact signed-evidence expiry, hardened delayed signing/finalization races, attributed fund effects only to net economic funded shares, and restored exact schedule/loan lifecycle state on posting and reversal.
+- Derived renewal principal from posted non-reversed transaction components instead of cached balances, rejected stale or underfunded executions under PostgreSQL locks, and separated non-cash principal transfer from borrower cash adjustments.
 
 ## v0.2.4 - 2026-08-09
 
