@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { borrowers, loanSchedules, loans, paymentIntakes, transactions, users } from "../db/schema";
+import { auditLogs, borrowers, loanSchedules, loans, paymentIntakes, transactions, users } from "../db/schema";
 import { paymentIntakesRoute } from "./payment-intakes";
 import { transactionsRoute } from "./transactions";
 
@@ -99,9 +99,13 @@ describe("payment intake REST adapter", () => {
             method: "POST", body: JSON.stringify({ proposalPublicId: preview.body.publicId }),
         });
         expect(posted.body).toMatchObject({ status: "posted", transactions: [expect.objectContaining({ amount: "100.00" })] });
-        const reversed = await jsonRequest(app, `/payment-intakes/${created.body.publicId}/reverse`, token, { method: "POST" });
+        const reversed = await jsonRequest(app, `/payment-intakes/${created.body.publicId}/reverse`, token, {
+            method: "POST", body: JSON.stringify({ reason: "Bank correction confirmed" }),
+        });
         expect(reversed.body.status).toBe("reversed");
         expect(reversed.body.transactions).toHaveLength(2);
+        const reversalAudit = await db.select().from(auditLogs).where(eq(auditLogs.action, "reversed"));
+        expect(reversalAudit.at(-1)?.payload).toMatchObject({ reason: "Bank correction confirmed" });
     });
 
     // Break caught: the adapter accepts unsafe evidence MIME/URL-shaped payloads before the service validates them.

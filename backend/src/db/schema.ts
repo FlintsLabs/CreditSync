@@ -454,6 +454,7 @@ export const paymentIntakes = pgTable("payment_intakes", {
     qrPayloadHash: text("qr_payload_hash"),
     idempotencyKey: text("idempotency_key"),
     duplicateOfIntakeId: integer("duplicate_of_intake_id"),
+    warnings: jsonb("warnings").$type<Array<Record<string, unknown>>>(),
     notes: text("notes"),
     postedAt: timestamp("posted_at"),
     createdByUserId: integer("created_by_user_id"),

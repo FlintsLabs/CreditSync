@@ -354,7 +354,10 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
         allocations: z.array(explicitAllocation).max(1_000).optional(),
     }).strict(),
     "payment.post": z.object({ paymentIntakePublicId: uuid, proposalPublicId: uuid }).strict(),
-    "payment.reverse": z.object({ paymentIntakePublicId: uuid }).strict(),
+    "payment.reverse": z.object({
+        paymentIntakePublicId: uuid,
+        reason: shortText,
+    }).strict(),
     "loan.preview": z.object(loanTerms).strict(),
     "loan.draft": z.object({
         borrowerPublicId: uuid,

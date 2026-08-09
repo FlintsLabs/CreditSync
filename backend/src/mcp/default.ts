@@ -103,7 +103,9 @@ export function createDefaultMcpToolHandlers(
         asString(input, "paymentIntakePublicId"),
         { proposalPublicId: asString(input, "proposalPublicId") },
     ),
-    "payment.reverse": (ctx, input) => reversePayment(ctx, asString(input, "paymentIntakePublicId")),
+    "payment.reverse": (ctx, input) => reversePayment(ctx, asString(input, "paymentIntakePublicId"), {
+        reason: asString(input, "reason"),
+    }),
     "loan.preview": async (_ctx, input) => {
         try {
             return previewLoan(input as unknown as Parameters<typeof previewLoan>[0]);

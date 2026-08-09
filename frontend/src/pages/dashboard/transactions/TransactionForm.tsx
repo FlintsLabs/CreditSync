@@ -7,6 +7,7 @@ import { Loader2 } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { createPaymentWorkflow, type HttpClient } from "../../../lib/workflow-api";
+import { formatMoneyExact } from "../../../lib/workflow-model";
 
 interface LoanOption {
     id: string;
@@ -115,27 +116,20 @@ export default function TransactionForm() {
                 receivedAt: new Date(`${formData.date}T12:00:00`).toISOString(),
                 payerName: selectedLoan.borrowerName,
                 notes: formData.notes,
-                allocation: {
-                    borrowerPublicId: selectedLoan.borrowerPublicId,
-                    loanPublicId: selectedLoan.publicId,
-                    ...(formData.scheduleId ? { schedulePublicId: formData.scheduleId } : {}),
-                    amount: formData.amount,
-                },
             });
             if (result.duplicate) {
                 setErrorMessage(t("transactionsForm.errors.duplicate"));
                 return;
             }
-            if (result.status !== "posted") {
-                setErrorMessage(t("transactionsForm.errors.needsReview"));
-                navigate("/payments");
-                return;
-            }
-            navigate("/payments");
+            const reviewParams = new URLSearchParams({ intake: result.publicId, loanId: selectedLoan.publicId });
+            if (formData.scheduleId) reviewParams.set("scheduleId", formData.scheduleId);
+            navigate(`/payments?${reviewParams.toString()}`);
         } catch (error: unknown) {
             console.error("Record failed", error);
-            const apiError = error as { response?: { data?: { error?: string } } };
-            setErrorMessage(apiError.response?.data?.error || (error instanceof Error ? error.message : t("transactionsForm.errors.recordFailed", "Record failed")));
+            const code = (error as { response?: { data?: { code?: string } } }).response?.data?.code;
+            setErrorMessage(code
+                ? t(`domainErrors.${code}`, { defaultValue: t("transactionsForm.errors.recordFailed", "Record failed") })
+                : (error instanceof Error ? error.message : t("transactionsForm.errors.recordFailed", "Record failed")));
         } finally {
             setUploading(false);
         }
@@ -146,7 +140,7 @@ export default function TransactionForm() {
             <h2 className="text-3xl font-bold tracking-tight">{t("transactionsForm.title", "Record Repayment")}</h2>
 
             {errorMessage && (
-                <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
                     {errorMessage}
                 </div>
             )}
@@ -166,7 +160,7 @@ export default function TransactionForm() {
                             <option value="">{t("transactionsForm.selectLoan", "Select Loan...")}</option>
                             {loans.map((l) => (
                                 <option key={l.id} value={l.publicId ?? l.id}>
-                                    {t("transactionsForm.loanOption", { defaultValue: "Loan #{{id}} - {{name}} (Principal: {{amount}})", id: l.id, name: l.borrowerName, amount: Number(l.principal).toLocaleString(i18n.language) })}
+                                    {t("transactionsForm.loanOption", { defaultValue: "Loan #{{id}} - {{name}} (Principal: {{amount}})", id: l.id, name: l.borrowerName, amount: formatMoneyExact(String(l.principal), i18n.language) })}
                                 </option>
                             ))}
                         </select>
@@ -190,7 +184,7 @@ export default function TransactionForm() {
                             <option value="">{loadingSchedule ? t("common.loading", "Loading...") : t("transactionsForm.noSchedule", "No schedule selected")}</option>
                             {scheduleItems.map((item) => (
                                 <option key={item.id} value={item.publicId ?? item.id}>
-                                    #{item.installmentNo} • {item.dueDate} • {t("transactionsForm.dueNow", "Due now")} ฿{Number(item.totalDueNow ?? item.remainingDue).toLocaleString(i18n.language)}
+                                    #{item.installmentNo} • {new Intl.DateTimeFormat(i18n.language).format(new Date(`${item.dueDate}T00:00:00`))} • {t("transactionsForm.dueNow", "Due now")} {formatMoneyExact(item.totalDueNow ?? item.remainingDue, i18n.language)}
                                 </option>
                             ))}
                         </select>
@@ -200,9 +194,9 @@ export default function TransactionForm() {
                         <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
                             {t("transactionsForm.scheduleSummary", {
                                 defaultValue: "Due date: {{dueDate}} • Due now: ฿{{dueNow}} • Penalty: ฿{{penalty}}",
-                                dueDate: selectedSchedule.dueDate,
-                                dueNow: Number(selectedSchedule.totalDueNow ?? selectedSchedule.remainingDue).toLocaleString(i18n.language),
-                                penalty: Number(selectedSchedule.penaltyDue ?? 0).toLocaleString(i18n.language),
+                                dueDate: new Intl.DateTimeFormat(i18n.language).format(new Date(`${selectedSchedule.dueDate}T00:00:00`)),
+                                dueNow: formatMoneyExact(selectedSchedule.totalDueNow ?? selectedSchedule.remainingDue, i18n.language),
+                                penalty: formatMoneyExact(selectedSchedule.penaltyDue ?? "0.00", i18n.language),
                             })}
                         </div>
                     )}

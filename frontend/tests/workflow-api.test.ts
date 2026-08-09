@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import {
     createPaymentWorkflow,
     executeRenewal,
@@ -6,9 +6,6 @@ import {
     type HttpClient,
 } from "../src/lib/workflow-api";
 
-const BORROWER_ID = "019c3a5a-94ce-7f2c-8b08-f56852dca7a1";
-const LOAN_ID = "019c3a5a-94ce-7f2c-8b08-f56852dca7a2";
-const SCHEDULE_ID = "019c3a5a-94ce-7f2c-8b08-f56852dca7a3";
 const INTAKE_ID = "019c3a5a-94ce-7f2c-8b08-f56852dca7a4";
 const PROPOSAL_ID = "019c3a5a-94ce-7f2c-8b08-f56852dca7a5";
 
@@ -20,15 +17,13 @@ describe("workflow API contracts", () => {
         expect(() => normalizeMoney("12.345")).toThrow();
     });
 
-    test("records a repayment through intake, explicit preview, and post without the legacy endpoint", async () => {
+    test("creates a review-first payment without previewing or posting", async () => {
         const calls: Array<{ url: string; body: unknown }> = [];
         const client: HttpClient = {
             async get() { return { data: null }; },
             async post<T>(url: string, body?: unknown) {
                 calls.push({ url, body });
-                if (url === "/payment-intakes") return { data: { publicId: INTAKE_ID, duplicate: false } as T };
-                if (url.endsWith("/match-preview")) return { data: { publicId: PROPOSAL_ID, status: "ready" } as T };
-                return { data: { publicId: INTAKE_ID, status: "posted" } as T };
+                return { data: { publicId: INTAKE_ID, status: "draft", duplicate: false, warnings: [] } as T };
             },
         };
 
@@ -36,41 +31,37 @@ describe("workflow API contracts", () => {
             amount: "450",
             receivedAt: "2026-08-10T09:30:00.000Z",
             payerName: "Somchai",
-            allocation: {
-                borrowerPublicId: BORROWER_ID,
-                loanPublicId: LOAN_ID,
-                schedulePublicId: SCHEDULE_ID,
-                amount: "450",
-            },
         });
 
-        expect(result.status).toBe("posted");
-        expect(calls).toEqual([
-            {
-                url: "/payment-intakes",
-                body: {
-                    amount: "450.00",
-                    receivedAt: "2026-08-10T09:30:00.000Z",
-                    payerName: "Somchai",
-                    bankReference: null,
-                    notes: null,
-                },
-            },
-            {
-                url: `/payment-intakes/${INTAKE_ID}/match-preview`,
-                body: { allocations: [{
-                    borrowerPublicId: BORROWER_ID,
-                    loanPublicId: LOAN_ID,
-                    schedulePublicId: SCHEDULE_ID,
-                    amount: "450.00",
-                }] },
-            },
-            {
-                url: `/payment-intakes/${INTAKE_ID}/post`,
-                body: { proposalPublicId: PROPOSAL_ID },
-            },
-        ]);
+        expect(result.status).toBe("draft");
+        expect(calls).toEqual([{ url: "/payment-intakes", body: {
+            amount: "450.00", receivedAt: "2026-08-10T09:30:00.000Z",
+            payerName: "Somchai", bankReference: null, notes: null,
+        } }]);
         expect(calls.some((call) => call.url === "/transactions")).toBe(false);
+    });
+
+    test("preserves semantic duplicate warnings and never previews or posts them", async () => {
+        const calls: string[] = [];
+        const client: HttpClient = {
+            async get() { return { data: null }; },
+            async post<T>(url: string) {
+                calls.push(url);
+                return { data: {
+                    publicId: INTAKE_ID,
+                    status: "needs_review",
+                    duplicate: false,
+                    warnings: [{ code: "POSSIBLE_SEMANTIC_DUPLICATE", intakePublicIds: [PROPOSAL_ID] }],
+                } as T };
+            },
+        };
+
+        const result = await createPaymentWorkflow(client, {
+            amount: "450.00", receivedAt: "2026-08-10T09:30:00.000Z",
+        });
+
+        expect(result.warnings?.[0]).toMatchObject({ code: "POSSIBLE_SEMANTIC_DUPLICATE" });
+        expect(calls).toEqual(["/payment-intakes"]);
     });
 
     test("stops before preview and post when intake creation reports a duplicate", async () => {
@@ -86,11 +77,6 @@ describe("workflow API contracts", () => {
         const result = await createPaymentWorkflow(client, {
             amount: "450.00",
             receivedAt: "2026-08-10T09:30:00.000Z",
-            allocation: {
-                borrowerPublicId: BORROWER_ID,
-                loanPublicId: LOAN_ID,
-                amount: "450.00",
-            },
         });
 
         expect(result.duplicate).toBe(true);

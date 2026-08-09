@@ -19,19 +19,61 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+  },
+  {
+    files: [
+      'src/pages/auth/Login.tsx',
+      'src/pages/dashboard/PortfolioGraph.tsx',
+      'src/pages/dashboard/borrowers/BorrowerEditModal.tsx',
+      'src/pages/dashboard/borrowers/BorrowerForm.tsx',
+      'src/pages/dashboard/borrowers/BorrowerList.tsx',
+      'src/pages/dashboard/funds/FundDetail.tsx',
+      'src/pages/dashboard/loans/MatchingWorkspace.tsx',
+      'src/pages/dashboard/reconciliation/ReconciliationPage.tsx',
+      'src/pages/dashboard/transactions/TransactionList.tsx',
+    ],
+    rules: { '@typescript-eslint/no-explicit-any': 'off' },
+  },
+  {
+    files: [
+      'src/pages/dashboard/PortfolioGraph.tsx',
+      'src/pages/dashboard/loans/LoanList.tsx',
+      'src/pages/dashboard/transactions/TransactionList.tsx',
+    ],
+    rules: { '@typescript-eslint/no-unused-vars': 'off' },
+  },
+  {
+    files: [
+      'src/pages/dashboard/PortfolioGraph.tsx',
+      'src/pages/dashboard/borrowers/BorrowerForm.tsx',
+      'src/pages/dashboard/borrowers/BorrowerList.tsx',
+      'src/pages/dashboard/funds/FundDetail.tsx',
+      'src/pages/dashboard/funds/FundList.tsx',
+      'src/pages/dashboard/loans/LoanClosingModal.tsx',
+      'src/pages/dashboard/loans/MatchingWorkspace.tsx',
+      'src/pages/dashboard/reconciliation/ReconciliationPage.tsx',
+    ],
     rules: {
-      // The app predates React Compiler lint rules. Keep the established hook
-      // lifecycle until those screens can be migrated as a dedicated refactor.
       'react-hooks/set-state-in-effect': 'off',
       'react-hooks/immutability': 'off',
-      'react-refresh/only-export-components': 'off',
-      // TypeScript's production build remains strict; treat legacy lint debt as
-      // warnings so new workflow code can share the repository-wide lint gate.
-      '@typescript-eslint/no-explicit-any': 'warn',
-      '@typescript-eslint/no-unused-vars': 'warn',
-      '@typescript-eslint/no-empty-object-type': 'warn',
-      'prefer-const': 'warn',
-      'no-empty': 'warn',
     },
+  },
+  {
+    files: [
+      'src/pages/dashboard/funds/FundDetail.tsx',
+      'src/pages/dashboard/funds/FundList.tsx',
+      'src/pages/dashboard/loans/LoanClosingModal.tsx',
+      'src/pages/dashboard/loans/MatchingWorkspace.tsx',
+      'src/pages/dashboard/reconciliation/ReconciliationPage.tsx',
+    ],
+    rules: { 'react-hooks/exhaustive-deps': 'off' },
+  },
+  {
+    files: ['src/components/theme-provider.tsx', 'src/components/ui/badge.tsx'],
+    rules: { 'react-refresh/only-export-components': 'off' },
+  },
+  {
+    files: ['src/pages/dashboard/PortfolioGraph.tsx'],
+    rules: { 'prefer-const': 'off', 'no-empty': 'off' },
   },
 ])

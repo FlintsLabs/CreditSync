@@ -94,6 +94,9 @@
         "principalAmount": "Principal Amount (฿)",
         "interestRate": "Interest Rate (% per year)",
         "termMonths": "Term (Months)",
+        "totalInstallments": "Number of installments",
+        "installmentAmount": "Amount per installment (optional)",
+        "automatic": "Calculated automatically",
         "repaymentType": "Repayment Type",
         "startDate": "Start Date",
         "fundingSetup": "Funding setup",
@@ -166,7 +169,7 @@
         "installment": "Installment",
         "noSchedule": "No schedule selected",
         "dueNow": "Due now",
-        "scheduleSummary": "Due date: {{dueDate}} • Due now: ฿{{dueNow}} • Penalty: ฿{{penalty}}",
+        "scheduleSummary": "Due date: {{dueDate}} • Due now: {{dueNow}} • Penalty: {{penalty}}",
         "amount": "Amount (฿)",
         "date": "Transaction Date",
         "paymentMethod": "Payment Method",
@@ -228,7 +231,9 @@
             "auditId": "Audit ID",
             "correlationId": "Correlation ID",
             "requestId": "Request ID",
-            "unavailable": "Revision history is unavailable for this role."
+            "unavailable": "Revision history is unavailable for this role.",
+            "empty": "No revision history has been recorded yet.",
+            "failed": "Unable to load revision history."
         },
         "errors": {
             "load": "Unable to load the borrower portfolio.",
@@ -552,6 +557,7 @@
         "inbox": "Inbox",
         "empty": "No payment intakes yet.",
         "select": "Select an intake to review.",
+        "loadingDetail": "Loading payment detail...",
         "review": "Payment review",
         "unknownPayer": "Unknown payer",
         "duplicateWarning": "This intake is marked as a duplicate. Do not post it again.",
@@ -566,18 +572,27 @@
         "allocationAmount": "Allocation amount",
         "scheduleId": "Starting schedule UUID",
         "optionalUuid": "Optional UUID; allocation continues oldest-first",
+        "addAllocation": "Add allocation",
+        "removeAllocation": "Remove allocation",
         "previewVersion": "Preview version {{version}}",
         "previous": "Previous allocation",
         "previewTotal": "Preview total",
+        "enteredTotal": "Entered total",
         "difference": "Difference",
         "preview": "Preview allocation",
         "post": "Confirm and post",
         "reverse": "Reverse posted payment",
+        "reversalReason": "Reason for reversal",
+        "confirmReverse": "Confirm reversal",
+        "semanticReviewConfirmation": "I reviewed the possible duplicate matches and confirmed this is a separate payment.",
         "audit": "Audit trail",
         "auditId": "Audit ID",
         "correlationId": "Correlation ID",
         "requestId": "Request ID",
         "auditUnavailable": "Audit metadata is unavailable for this role.",
+        "auditEmpty": "No audit events have been recorded yet.",
+        "auditForbidden": "Your role cannot view this audit trail.",
+        "auditFailed": "Unable to load the audit trail.",
         "status": {
             "draft": "Draft", "needs_review": "Needs review", "ready": "Ready", "posted": "Posted",
             "reversed": "Reversed", "duplicate": "Duplicate", "pending": "Pending", "rejected": "Rejected", "stale": "Stale"
@@ -585,7 +600,9 @@
         "warnings": {
             "ALLOCATION_SUM_MISMATCH": "Allocation total does not match the intake amount.",
             "ALLOCATION_EXCEEDS_OBLIGATION": "Allocation exceeds the selected loan obligation.",
-            "BORROWER_NOT_CONFIRMED": "Payer could not be resolved to a confirmed borrower."
+            "BORROWER_NOT_CONFIRMED": "Payer could not be resolved to a confirmed borrower.",
+            "POSSIBLE_SEMANTIC_DUPLICATE": "Possible semantic duplicate found. Review the matching payments before posting.",
+            "UNKNOWN": "Review this allocation warning before continuing."
         },
         "errors": { "load": "Unable to load payment inbox.", "loadDetail": "Unable to load payment detail.", "action": "Payment action failed." }
     },
@@ -600,6 +617,9 @@
         "recoveredPrincipal": "Recovered principal",
         "oldOutstanding": "Old outstanding principal",
         "dueCharges": "Charges due",
+        "dueInterest": "Interest due",
+        "dueFees": "Fees due",
+        "duePenalties": "Penalties due",
         "waiver": "Waiver",
         "settlement": "Charge settlement",
         "cashPayout": "Net cash",
@@ -615,9 +635,23 @@
         "reverse": "Reverse renewal",
         "audit": "Audit trail",
         "auditId": "Audit ID", "correlationId": "Correlation ID", "requestId": "Request ID",
+        "auditLoading": "Loading audit trail...", "auditEmpty": "No renewal audit events yet.", "auditForbidden": "Your role cannot view this audit trail.", "auditFailed": "Unable to load the audit trail.",
         "cashDirection": { "payout": "Payout", "collection": "Collection", "none": "No cash movement" },
         "status": { "preview": "Preview", "executed": "Executed", "reversed": "Reversed", "expired": "Expired" },
         "errors": { "preview": "Unable to preview renewal.", "execute": "Unable to execute renewal.", "reverse": "Unable to reverse renewal." }
+    },
+    "auditActions": {
+        "created": "Created", "reviewed": "Reviewed", "previewed": "Previewed", "posted": "Posted", "reversed": "Reversed",
+        "duplicate_detected": "Duplicate detected", "confirmed": "Confirmed", "inactive": "Deactivated", "updated": "Updated",
+        "draft_created": "Draft created", "activated": "Activated", "executed": "Executed", "unknown": "Audit event"
+    },
+    "domainErrors": {
+        "INVALID_PAYMENT_AMOUNT": "Enter a valid payment amount.", "INVALID_PAYMENT_TARGET": "Select a valid payment target.",
+        "STALE_PAYMENT_PROPOSAL": "This preview is stale. Preview the allocation again.", "PAYMENT_NOT_READY": "Resolve the review warnings before posting.",
+        "REVERSAL_REASON_REQUIRED": "Enter a reason for the reversal.", "REVERSAL_NOT_LATEST": "Reverse later payments first.",
+        "INVALID_ALIAS": "Enter a valid alias.", "ALIAS_ALREADY_EXISTS": "That alias already exists.",
+        "STALE_RENEWAL_PREVIEW": "This renewal preview is stale. Create a new preview.", "WAIVER_REASON_REQUIRED": "Enter a reason for the waiver.",
+        "WAIVER_EXCEEDS_DUE_CHARGES": "The waiver cannot exceed the charges due."
     },
     "loanDetail": {
         "description": "Profitability, funding composition, and installment status in one view.",

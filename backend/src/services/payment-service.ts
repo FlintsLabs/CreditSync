@@ -117,6 +117,7 @@ function presentIntake(row: IntakeRow) {
         receivedAt: row.receivedAt,
         payerName: row.payerName,
         bankReference: row.bankReference,
+        warnings: row.warnings ?? [],
         notes: row.notes,
         postedAt: row.postedAt,
         createdAt: row.createdAt,
@@ -196,13 +197,14 @@ export async function createPaymentIntake(ctx: CommandContext, input: CreatePaym
                 tenantId: ctx.tenantId,
                 ownerUserId: ctx.actorUserId,
                 source: ctx.actorSource === "mcp" ? "mcp" : "web",
-                status: "draft",
+                status: warnings.length ? "needs_review" : "draft",
                 amount: serializeMoney(amount),
                 receivedAt,
                 payerName: input.payerName?.trim() || null,
                 bankReference: input.bankReference?.trim() || null,
                 bankReferenceHash,
                 qrPayloadHash,
+                warnings,
                 idempotencyKey: idempotencyKey ?? null,
                 notes: input.notes ?? null,
                 createdByUserId: ctx.actorUserId,
@@ -1126,7 +1128,9 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
     return result;
 }
 
-export async function reversePayment(ctx: CommandContext, intakePublicId: string) {
+export async function reversePayment(ctx: CommandContext, intakePublicId: string, input: { reason: string }) {
+    const reason = input.reason?.trim();
+    if (!reason) throw new DomainError("REVERSAL_REASON_REQUIRED", "Payment reversal requires a reason", 400);
     const accessible = await accessibleIntake(ctx, intakePublicId);
     const result = await db.transaction(async (tx) => {
         await tx.execute(sql`SELECT id FROM payment_intakes WHERE id = ${accessible.id} FOR UPDATE`);
@@ -1233,7 +1237,7 @@ export async function reversePayment(ctx: CommandContext, intakePublicId: string
             .returning().then((rows) => rows[0]!);
         await createAuditLog(tx, {
             ...auditContext(ctx), entityType: "payment_intake", entityId: reversed.publicId, action: "reversed",
-            payload: { reversedTransactionPublicIds: originals.map((item) => item.publicId), reversalTransactionPublicIds: reversals.map((item) => item.publicId), amount: reversed.amount },
+            payload: { reversedTransactionPublicIds: originals.map((item) => item.publicId), reversalTransactionPublicIds: reversals.map((item) => item.publicId), amount: reversed.amount, reason },
         });
         return postedResult(tx, reversed);
     });

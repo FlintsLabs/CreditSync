@@ -150,11 +150,14 @@ export const paymentIntakesRoute = new Elysia({ prefix: "/payment-intakes" })
         params: t.Object({ id: t.String() }),
         body: t.Object({ proposalPublicId: t.String() }),
     })
-    .post("/:id/reverse", async ({ params, user, request, set }) => {
+    .post("/:id/reverse", async ({ params, body, user, request, set }) => {
         if (!user) return unauthorized(set);
         try {
-            return await reversePayment(commandContext(user, request), params.id);
+            return await reversePayment(commandContext(user, request), params.id, body);
         } catch (error) {
             return domainFailure(error, set);
         }
-    }, { params: t.Object({ id: t.String() }) });
+    }, {
+        params: t.Object({ id: t.String() }),
+        body: t.Object({ reason: t.String() }),
+    });

@@ -6,6 +6,7 @@ import { Input } from "../../../components/ui/Input";
 import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/Card";
 import { ChevronRight, ChevronLeft, CheckCircle, AlertCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { buildLoanTermsInput, formatMoneyExact } from "../../../lib/workflow-model";
 
 interface Borrower {
     id: string;
@@ -39,23 +40,6 @@ interface LoanSchedulePreview {
     remainingPrincipal: string;
 }
 
-function toPublicMoney(value: string) {
-    const normalized = value.trim();
-    if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) {
-        throw new Error("Money must be a non-negative amount with at most two decimal places");
-    }
-    const [whole, fractional = ""] = normalized.split(".");
-    return `${whole}.${fractional.padEnd(2, "0")}`;
-}
-
-function toPositiveInteger(value: string, label: string) {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
-        throw new Error(`${label} must be a positive whole number`);
-    }
-    return parsed;
-}
-
 export default function LoanWizard() {
     const { t, i18n } = useTranslation();
     const currentUser = getStoredUser();
@@ -76,10 +60,18 @@ export default function LoanWizard() {
         interestRate: "15",
         termMonths: "12",
         repaymentType: "monthly",
-        startDate: new Date().toISOString().split("T")[0]
+        startDate: new Date().toISOString().split("T")[0],
+        totalInstallments: "",
+        installmentAmount: "",
     });
 
     const [schedule, setSchedule] = useState<LoanSchedulePreview[]>([]);
+    const date = (value: string) => new Intl.DateTimeFormat(i18n.language).format(new Date(`${value}T00:00:00`));
+    const money = (value: string) => formatMoneyExact(value, i18n.language);
+    const localizedError = (caught: unknown, fallbackKey: string) => {
+        const code = (caught as { response?: { data?: { code?: string } } }).response?.data?.code;
+        return code ? t(`domainErrors.${code}`, { defaultValue: t(fallbackKey) }) : t(fallbackKey);
+    };
 
     useEffect(() => {
         const loadDependencies = async () => {
@@ -109,13 +101,7 @@ export default function LoanWizard() {
 
     const calculateSchedule = async () => {
         try {
-            const res = await api.post("/loans/preview", {
-                principal: toPublicMoney(formData.principal),
-                interestRate: toPublicMoney(formData.interestRate),
-                termMonths: toPositiveInteger(formData.termMonths, "Term months"),
-                repaymentType: formData.repaymentType,
-                startDate: formData.startDate
-            });
+            const res = await api.post("/loans/preview", buildLoanTermsInput(formData));
             setSchedule(res.data?.schedule ?? []);
             return true;
         } catch (error) {
@@ -140,26 +126,16 @@ export default function LoanWizard() {
             setSubmitting(true);
             setErrorMessage("");
 
-            const total = schedule.length || toPositiveInteger(formData.termMonths, "Term months");
-            const amount = schedule.length > 0 ? schedule[0].amount : undefined;
-
             const draft = await api.post("/loans", {
                 borrowerPublicId: formData.borrowerId,
                 bankLoanPublicId: isTenantAdmin && formData.bankLoanId ? formData.bankLoanId : undefined,
-                principal: toPublicMoney(formData.principal),
-                interestRate: toPublicMoney(formData.interestRate),
-                repaymentType: formData.repaymentType,
-                termMonths: toPositiveInteger(formData.termMonths, "Term months"),
-                totalInstallments: total,
-                installmentAmount: amount,
-                startDate: formData.startDate
+                ...buildLoanTermsInput(formData),
             });
             setDraftId(draft.data.publicId);
             setStep(4);
         } catch (error: unknown) {
             console.error("Failed to create loan", error);
-            const apiError = error as { response?: { data?: { error?: string } } };
-            setErrorMessage(apiError.response?.data?.error || t("loanWizard.errors.create", "Failed to create the loan agreement."));
+            setErrorMessage(localizedError(error, "loanWizard.errors.create"));
         } finally {
             setSubmitting(false);
         }
@@ -172,8 +148,7 @@ export default function LoanWizard() {
             await api.post(`/loans/${draftId}/activate`);
             window.location.href = `/loans/${draftId}`;
         } catch (error: unknown) {
-            const apiError = error as { response?: { data?: { error?: string } } };
-            setErrorMessage(apiError.response?.data?.error || t("loanWizard.errors.activate"));
+            setErrorMessage(localizedError(error, "loanWizard.errors.activate"));
         } finally {
             setSubmitting(false);
         }
@@ -190,7 +165,7 @@ export default function LoanWizard() {
             </div>
 
             {errorMessage && (
-                <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive flex items-start gap-2">
+                <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive flex items-start gap-2">
                     <AlertCircle className="h-4 w-4 mt-0.5" />
                     <span>{errorMessage}</span>
                 </div>
@@ -218,7 +193,7 @@ export default function LoanWizard() {
                                 >
                                     <option value="">{t("loanWizard.selectBorrower", "Select Borrower...")}</option>
                                     {borrowers.map((b) => (
-                                        <option key={b.id} value={b.id}>
+                                        <option key={b.publicId} value={b.publicId}>
                                             {b.name} {b.idCardNumber ? `(${b.idCardNumber})` : ""}
                                         </option>
                                     ))}
@@ -235,7 +210,7 @@ export default function LoanWizard() {
                                     <option value="">{t("loanWizard.noneDrawdown", "None (Unmatched / Own Capital)")}</option>
                                     {drawdowns.map((item) => (
                                         <option key={item.publicId} value={item.publicId}>
-                                            #{item.id} {item.bankProfileId ? bankProfileNameById.get(item.bankProfileId) ?? "" : ""} ฿{Number(item.outstandingPrincipal ?? item.amount).toLocaleString(i18n.language)}
+                                            #{item.id} {item.bankProfileId ? bankProfileNameById.get(item.bankProfileId) ?? "" : ""} {money(item.outstandingPrincipal ?? item.amount)}
                                         </option>
                                     ))}
                                 </select>
@@ -248,10 +223,10 @@ export default function LoanWizard() {
                                         {t("loanWizard.source", "Source")}: {selectedDrawdownProfile?.name ?? t("loanWizard.unknownSource", "Unknown source")}
                                     </div>
                                     <div className="text-muted-foreground">
-                                        {t("loanWizard.outstandingPrincipal", "Outstanding principal")}: ฿{Number(selectedDrawdown.outstandingPrincipal ?? 0).toLocaleString(i18n.language)}
+                                        {t("loanWizard.outstandingPrincipal", "Outstanding principal")}: {money(selectedDrawdown.outstandingPrincipal ?? "0.00")}
                                     </div>
                                     <div className="text-muted-foreground">
-                                        {t("loanWizard.nextDue", "Next due")}: {selectedDrawdown.nextDueDate || t("loanWizard.notScheduled", "Not scheduled")}
+                                        {t("loanWizard.nextDue", "Next due")}: {selectedDrawdown.nextDueDate ? date(selectedDrawdown.nextDueDate) : t("loanWizard.notScheduled", "Not scheduled")}
                                     </div>
                                 </div>
                             )}
@@ -289,6 +264,18 @@ export default function LoanWizard() {
                                 <label>{t("loanWizard.startDate", "Start Date")}</label>
                                 <Input type="date" value={formData.startDate} onChange={(e) => setFormData({ ...formData, startDate: e.target.value })} />
                             </div>
+                            {formData.repaymentType === "daily" && (
+                                <>
+                                    <div className="grid gap-2">
+                                        <label>{t("loanWizard.totalInstallments")}</label>
+                                        <Input type="number" value={formData.totalInstallments} placeholder={t("loanWizard.automatic")} onChange={(e) => setFormData({ ...formData, totalInstallments: e.target.value })} />
+                                    </div>
+                                    <div className="grid gap-2">
+                                        <label>{t("loanWizard.installmentAmount")}</label>
+                                        <Input type="number" value={formData.installmentAmount} placeholder={t("loanWizard.automatic")} onChange={(e) => setFormData({ ...formData, installmentAmount: e.target.value })} />
+                                    </div>
+                                </>
+                            )}
                         </div>
                     )}
 
@@ -325,11 +312,11 @@ export default function LoanWizard() {
                                                 {schedule.map((row) => (
                                                     <tr key={row.installmentNo} className="border-t">
                                                         <td className="p-2">{row.installmentNo}</td>
-                                                        <td className="p-2">{row.dueDate}</td>
-                                                        <td className="p-2">฿{Number(row.amount).toLocaleString(i18n.language)}</td>
-                                                        <td className="p-2 text-muted-foreground">{Number(row.principalComponent).toLocaleString(i18n.language)}</td>
-                                                        <td className="p-2 text-destructive">{Number(row.interestComponent).toLocaleString(i18n.language)}</td>
-                                                        <td className="p-2">{Number(row.remainingPrincipal).toLocaleString(i18n.language)}</td>
+                                                        <td className="p-2">{date(row.dueDate)}</td>
+                                                        <td className="p-2">{money(row.amount)}</td>
+                                                        <td className="p-2 text-muted-foreground">{money(row.principalComponent)}</td>
+                                                        <td className="p-2 text-destructive">{money(row.interestComponent)}</td>
+                                                        <td className="p-2">{money(row.remainingPrincipal)}</td>
                                                     </tr>
                                                 ))}
                                             </tbody>

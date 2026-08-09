@@ -20,7 +20,6 @@ export interface PaymentWorkflowInput {
     payerName?: string;
     bankReference?: string;
     notes?: string;
-    allocation: PaymentAllocationInput;
 }
 
 export interface PaymentWorkflowResult {
@@ -47,33 +46,12 @@ function requireUuid(value: string, field: string) {
 }
 
 export async function createPaymentWorkflow(client: HttpClient, input: PaymentWorkflowInput) {
-    requireUuid(input.allocation.borrowerPublicId, "borrowerPublicId");
-    requireUuid(input.allocation.loanPublicId, "loanPublicId");
-    if (input.allocation.schedulePublicId) requireUuid(input.allocation.schedulePublicId, "schedulePublicId");
-
-    const intake = await client.post<PaymentWorkflowResult>("/payment-intakes", {
+    return client.post<PaymentWorkflowResult>("/payment-intakes", {
         amount: normalizeMoney(input.amount),
         receivedAt: input.receivedAt,
         payerName: input.payerName?.trim() || null,
         bankReference: input.bankReference?.trim() || null,
         notes: input.notes?.trim() || null,
-    }).then((response) => response.data);
-    if (intake.duplicate) return intake;
-
-    requireUuid(intake.publicId, "paymentIntakeId");
-    const proposal = await client.post<PaymentWorkflowResult>(`/payment-intakes/${intake.publicId}/match-preview`, {
-        allocations: [{
-            borrowerPublicId: input.allocation.borrowerPublicId,
-            loanPublicId: input.allocation.loanPublicId,
-            ...(input.allocation.schedulePublicId ? { schedulePublicId: input.allocation.schedulePublicId } : {}),
-            amount: normalizeMoney(input.allocation.amount),
-        }],
-    }).then((response) => response.data);
-    if (proposal.status !== "ready") return proposal;
-
-    requireUuid(proposal.publicId, "proposalPublicId");
-    return client.post<PaymentWorkflowResult>(`/payment-intakes/${intake.publicId}/post`, {
-        proposalPublicId: proposal.publicId,
     }).then((response) => response.data);
 }
 

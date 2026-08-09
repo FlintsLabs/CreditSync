@@ -292,7 +292,7 @@ describe("CreditSync stateless MCP contract", () => {
 
         const reversed = await client.callTool({
             name: "payment.reverse",
-            arguments: { paymentIntakePublicId: INTAKE_ID },
+            arguments: { paymentIntakePublicId: INTAKE_ID, reason: "Bank correction" },
         });
         expect(reversed.isError).toBe(true);
         expect(reversed.structuredContent).toEqual({

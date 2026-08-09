@@ -177,7 +177,15 @@ describe("payment application service", () => {
             amount: "500.00", receivedAt: "2026-08-10T10:03:00.000Z", payerName: " nok dee ",
         });
         expect(similar.duplicate).toBe(false);
+        expect(similar.status).toBe("needs_review");
         expect(similar.warnings).toEqual([expect.objectContaining({ code: "POSSIBLE_SEMANTIC_DUPLICATE" })]);
+        expect(await getPaymentIntake(context(actor), similar.publicId)).toMatchObject({
+            status: "needs_review",
+            warnings: [expect.objectContaining({ code: "POSSIBLE_SEMANTIC_DUPLICATE" })],
+        });
+        expect(await listPaymentIntakes(context(actor))).toEqual(expect.arrayContaining([
+            expect.objectContaining({ publicId: similar.publicId, warnings: [expect.objectContaining({ code: "POSSIBLE_SEMANTIC_DUPLICATE" })] }),
+        ]));
         expect(await db.select().from(paymentIntakes)).toHaveLength(2);
     });
 
@@ -368,8 +376,8 @@ describe("payment application service", () => {
             expect.objectContaining({ entryType: "principal_return_in", amount: "40.00" }),
         ]);
 
-        const reversed = await reversePayment(context(actor, "reverse-1"), intake.publicId);
-        const retried = await reversePayment(context(actor, "reverse-2"), intake.publicId);
+        const reversed = await reversePayment(context(actor, "reverse-1"), intake.publicId, { reason: "Bank correction" });
+        const retried = await reversePayment(context(actor, "reverse-2"), intake.publicId, { reason: "Bank correction" });
         expect(retried).toEqual(reversed);
         expect(reversed.status).toBe("reversed");
         expect(await db.select().from(transactions)).toEqual(expect.arrayContaining([
@@ -414,7 +422,7 @@ describe("payment application service", () => {
         ]);
         expect(credits.reduce((sum, entry) => sum.plus(entry.amount), new Decimal(0)).toFixed(2)).toBe("0.51");
 
-        await reversePayment(context(actor), intake.publicId);
+        await reversePayment(context(actor), intake.publicId, { reason: "Bank correction" });
         const allEntries = await db.select().from(fundLedgerEntries);
         for (const profile of [firstProfile!, secondProfile!]) {
             expect(allEntries.filter((entry) => entry.bankProfileId === profile.id).reduce((sum, entry) =>
@@ -464,8 +472,8 @@ describe("payment application service", () => {
             { borrowerPublicId: second.borrower.publicId, loanPublicId: second.loan.publicId, amount: "30.00" },
         ] });
         await postPayment(context(actor), intake.publicId, { proposalPublicId: postedProposal.publicId });
-        const reversed = await reversePayment(context(actor), intake.publicId);
-        expect(await reversePayment(context(actor), intake.publicId)).toEqual(reversed);
+        const reversed = await reversePayment(context(actor), intake.publicId, { reason: "Bank correction" });
+        expect(await reversePayment(context(actor), intake.publicId, { reason: "Bank correction" })).toEqual(reversed);
         expect(reversed.transactions).toHaveLength(4);
         const proposals = await db.select().from(paymentMatchProposals).where(eq(paymentMatchProposals.paymentIntakeId,
             (await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, intake.publicId) }))!.id
@@ -494,7 +502,7 @@ describe("payment application service", () => {
         const first = await postAmount("40.00", "2026-08-10T10:00:00.000Z");
         await postAmount("10.00", "2026-08-10T10:10:00.000Z");
 
-        await expect(reversePayment(context(actor), first.publicId))
+        await expect(reversePayment(context(actor), first.publicId, { reason: "Bank correction" }))
             .rejects.toMatchObject({ code: "REVERSAL_NOT_LATEST", status: 409 });
         expect(await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.id, seeded.schedules[0]!.id) }))
             .toMatchObject({ paidTotal: "50.00", remainingDue: "50.00" });
@@ -555,7 +563,7 @@ describe("payment application service", () => {
         expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) }))
             .toMatchObject({ nextDueDate: "2026-09-10", status: "active" });
 
-        await reversePayment(context(actor), intake.publicId);
+        await reversePayment(context(actor), intake.publicId, { reason: "Bank correction" });
         expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, seeded.loan.id)).orderBy(loanSchedules.installmentNo)).toEqual([
             expect.objectContaining({ remainingDue: "30.00", status: "overdue", overdueDays: 9 }),
             expect.objectContaining({ remainingDue: "70.00", status: "pending", overdueDays: 0 }),
@@ -570,7 +578,7 @@ describe("payment application service", () => {
         await postPayment(context(actor), payoff.publicId, { proposalPublicId: payoffPreview.publicId });
         expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) }))
             .toMatchObject({ nextDueDate: null, status: "paid" });
-        await reversePayment(context(actor), payoff.publicId);
+        await reversePayment(context(actor), payoff.publicId, { reason: "Bank correction" });
         expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) }))
             .toMatchObject({ nextDueDate: "2026-08-01", status: "active" });
     });

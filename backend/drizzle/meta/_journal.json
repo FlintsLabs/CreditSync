@@ -85,6 +85,13 @@
       "when": 1786302008286,
       "tag": "0011_loan_renewal_hardening",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1786305000000,
+      "tag": "0012_payment_review_warnings",
+      "breakpoints": true
     }
   ]
 }

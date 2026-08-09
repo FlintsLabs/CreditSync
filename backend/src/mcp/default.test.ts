@@ -160,11 +160,11 @@ describe("default MCP adapter integration", () => {
 
         const first = resultData(await client.callTool({
             name: "payment.reverse",
-            arguments: { paymentIntakePublicId: intakePublicId },
+            arguments: { paymentIntakePublicId: intakePublicId, reason: "Correct duplicate transfer" },
         }));
         const retry = resultData(await client.callTool({
             name: "payment.reverse",
-            arguments: { paymentIntakePublicId: intakePublicId },
+            arguments: { paymentIntakePublicId: intakePublicId, reason: "Correct duplicate transfer" },
         }));
 
         expect(first.data).toEqual(retry.data);
@@ -307,7 +307,10 @@ describe("default MCP adapter integration", () => {
             paymentIntakePublicId: intakePublicId,
             proposalPublicId: proposal.publicId,
         });
-        await call("payment.reverse", { paymentIntakePublicId: intakePublicId });
+        await call("payment.reverse", {
+            paymentIntakePublicId: intakePublicId,
+            reason: "Correct duplicate transfer",
+        });
 
         const renewal = (await call("renewal.preview", {
             oldLoanPublicId: loanPublicId,

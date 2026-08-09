@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.3.3 - 2026-08-10
+
+### Added
+- Added persisted semantic-duplicate review warnings and a required, audited reason for payment reversals across REST, MCP, and the web review flow.
+- Added Vitest/jsdom component coverage for payment splits, warning gates, intake-selection races, reversal confirmation, exact loan-term handoff, borrower alias/history states, and renewal retry idempotency.
+
+### Changed
+- Changed manual payment entry to create a review-first intake, allowing evidence and explicit multi-loan allocations to be reviewed before posting.
+- Restored recommended frontend lint severities globally and confined unavoidable legacy React/TypeScript exceptions to explicit existing files.
+
+### Fixed
+- Preserved identical user-entered daily-loan terms from preview through draft creation instead of deriving fixed terms from rounded preview rows.
+- Preserved exact public money strings in confirmation displays, retained payment preview baselines, ignored stale intake responses, and reused renewal execution/reversal keys for retries of the same intent.
+- Distinguished loading, empty, forbidden, and failed audit states; localized workflow domain errors and audit actions; and displayed renewal interest, fee, and penalty components separately.
+
 ## v0.3.2 - 2026-08-10
 
 ### Added

@@ -1,0 +1,148 @@
+import { act, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { api } from "../src/lib/api";
+import PaymentInbox from "../src/pages/dashboard/payments/PaymentInbox";
+
+vi.mock("../src/lib/api", () => ({ api: { get: vi.fn(), post: vi.fn() } }));
+
+const INTAKE_A = "019c3a5a-94ce-7f2c-8b08-f56852dca7a1";
+const INTAKE_B = "019c3a5a-94ce-7f2c-8b08-f56852dca7a2";
+const BORROWER_A = "019c3a5a-94ce-7f2c-8b08-f56852dca7a3";
+const BORROWER_B = "019c3a5a-94ce-7f2c-8b08-f56852dca7a4";
+const LOAN_A = "019c3a5a-94ce-7f2c-8b08-f56852dca7a5";
+const LOAN_B = "019c3a5a-94ce-7f2c-8b08-f56852dca7a6";
+
+const list = [
+    { publicId: INTAKE_A, status: "needs_review", amount: "30.30", receivedAt: "2026-08-10T09:30:00.000Z", payerName: "A" },
+    { publicId: INTAKE_B, status: "draft", amount: "40.00", receivedAt: "2026-08-10T10:30:00.000Z", payerName: "B" },
+];
+const loans = [
+    { publicId: LOAN_A, borrowerPublicId: BORROWER_A, borrowerName: "Borrower A", status: "active" },
+    { publicId: LOAN_B, borrowerPublicId: BORROWER_B, borrowerName: "Borrower B", status: "active" },
+];
+
+function detail(publicId: string) {
+    return {
+        ...list.find((item) => item.publicId === publicId)!,
+        warnings: publicId === INTAKE_A ? [{ code: "POSSIBLE_SEMANTIC_DUPLICATE", intakePublicIds: [INTAKE_B] }] : [],
+        evidence: [], latestProposal: null,
+    };
+}
+
+describe("PaymentInbox", () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.mocked(api.get).mockImplementation(async (url) => {
+            if (url === "/payment-intakes") return { data: list };
+            if (url === "/loans") return { data: loans };
+            if (url.startsWith("/payment-intakes/")) return { data: detail(url.split("/").at(-1)!) };
+            if (url === "/audit-logs") return { data: [] };
+            throw new Error(`Unexpected GET ${url}`);
+        });
+        vi.mocked(api.post).mockResolvedValue({ data: {
+            publicId: "019c3a5a-94ce-7f2c-8b08-f56852dca7af", status: "ready", version: 1,
+            totalAllocated: "30.30", allocations: [], warnings: [], expiresAt: "2026-08-10T12:00:00.000Z",
+        } });
+    });
+
+    test("adds and removes explicit allocation rows and previews the complete split", async () => {
+        const user = userEvent.setup();
+        render(<MemoryRouter><PaymentInbox /></MemoryRouter>);
+        await user.click(await screen.findByRole("button", { name: /^A/ }));
+
+        expect(await screen.findByText(/possible semantic duplicate/i)).toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: /add allocation/i }));
+        const rows = screen.getAllByTestId("allocation-row");
+        expect(rows).toHaveLength(2);
+
+        await user.selectOptions(within(rows[0]!).getByLabelText(/borrower loan/i), LOAN_A);
+        await user.clear(within(rows[0]!).getByLabelText(/allocation amount/i));
+        await user.type(within(rows[0]!).getByLabelText(/allocation amount/i), "10.10");
+        await user.selectOptions(within(rows[1]!).getByLabelText(/borrower loan/i), LOAN_B);
+        await user.type(within(rows[1]!).getByLabelText(/allocation amount/i), "20.20");
+        await user.click(screen.getByRole("button", { name: /preview allocation/i }));
+
+        await waitFor(() => expect(api.post).toHaveBeenCalledWith(`/payment-intakes/${INTAKE_A}/match-preview`, {
+            allocations: [
+                { borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, amount: "10.10" },
+                { borrowerPublicId: BORROWER_B, loanPublicId: LOAN_B, amount: "20.20" },
+            ],
+        }));
+        expect(screen.getAllByText(/30\.30/).length).toBeGreaterThan(0);
+        expect(screen.queryByRole("button", { name: /confirm and post/i })).not.toBeInTheDocument();
+        await user.click(screen.getByRole("checkbox", { name: /reviewed the possible duplicate/i }));
+        expect(screen.getByRole("button", { name: /confirm and post/i })).toBeInTheDocument();
+
+        await user.click(within(rows[1]!).getByRole("button", { name: /remove allocation/i }));
+        expect(screen.getAllByTestId("allocation-row")).toHaveLength(1);
+    });
+
+    test("ignores a stale detail response after selecting another intake", async () => {
+        const user = userEvent.setup();
+        let resolveA!: (value: { data: ReturnType<typeof detail> }) => void;
+        const pendingA = new Promise<{ data: ReturnType<typeof detail> }>((resolve) => { resolveA = resolve; });
+        vi.mocked(api.get).mockImplementation(async (url) => {
+            if (url === "/payment-intakes") return { data: list };
+            if (url === "/loans") return { data: loans };
+            if (url === `/payment-intakes/${INTAKE_A}`) return pendingA;
+            if (url === `/payment-intakes/${INTAKE_B}`) return { data: detail(INTAKE_B) };
+            if (url === "/audit-logs") return { data: [] };
+            throw new Error(`Unexpected GET ${url}`);
+        });
+        render(<MemoryRouter><PaymentInbox /></MemoryRouter>);
+        const buttonA = await screen.findByRole("button", { name: /^A/ });
+        const buttonB = await screen.findByRole("button", { name: /^B/ });
+        await user.click(buttonA);
+        await user.click(buttonB);
+        expect(await screen.findByText(INTAKE_B)).toBeInTheDocument();
+        await act(async () => resolveA({ data: detail(INTAKE_A) }));
+        expect(screen.getByText(INTAKE_B)).toBeInTheDocument();
+        expect(screen.queryByText(INTAKE_A)).not.toBeInTheDocument();
+    });
+
+    test("requires a second-step reason before reversing a posted payment", async () => {
+        const user = userEvent.setup();
+        vi.mocked(api.get).mockImplementation(async (url) => {
+            if (url === "/payment-intakes") return { data: list };
+            if (url === "/loans") return { data: loans };
+            if (url === `/payment-intakes/${INTAKE_B}`) return { data: { ...detail(INTAKE_B), status: "posted" } };
+            if (url === "/audit-logs") return { data: [] };
+            throw new Error(`Unexpected GET ${url}`);
+        });
+        render(<MemoryRouter><PaymentInbox /></MemoryRouter>);
+        await user.click(await screen.findByRole("button", { name: /^B/ }));
+        await user.click(await screen.findByRole("button", { name: /reverse posted payment/i }));
+        const confirm = screen.getByRole("button", { name: /confirm reversal/i });
+        expect(confirm).toBeDisabled();
+        await user.type(screen.getByLabelText(/reason for reversal/i), "Bank correction confirmed");
+        await user.click(confirm);
+        await waitFor(() => expect(api.post).toHaveBeenCalledWith(`/payment-intakes/${INTAKE_B}/reverse`, {
+            reason: "Bank correction confirmed",
+        }));
+    });
+
+    test("prepares and finalizes optional evidence before posting", async () => {
+        const user = userEvent.setup();
+        const evidenceId = "019c3a5a-94ce-7f2c-8b08-f56852dca7b0";
+        vi.mocked(api.post).mockImplementation(async (url) => {
+            if (url.endsWith("/evidence/upload-intents")) return { data: { publicId: evidenceId, status: "ready", duplicate: false } };
+            if (url.endsWith(`/evidence/${evidenceId}/finalize`)) return { data: { publicId: evidenceId, status: "ready" } };
+            throw new Error(`Unexpected POST ${url}`);
+        });
+        render(<MemoryRouter><PaymentInbox /></MemoryRouter>);
+        await user.click(await screen.findByRole("button", { name: /^B/ }));
+        const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+        const file = new File([new Uint8Array([1, 2, 3])], "slip.png", { type: "image/png" });
+        Object.defineProperty(file, "arrayBuffer", { value: async () => new Uint8Array([1, 2, 3]).buffer });
+        await user.upload(input, file);
+        await waitFor(() => expect(api.post).toHaveBeenCalledWith(`/payment-intakes/${INTAKE_B}/evidence/upload-intents`, {
+            mimeType: "image/png",
+            size: 3,
+            sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+            evidenceType: "slip",
+        }));
+        expect(api.post).toHaveBeenCalledWith(`/payment-intakes/${INTAKE_B}/evidence/${evidenceId}/finalize`);
+    });
+});
