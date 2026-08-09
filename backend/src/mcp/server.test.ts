@@ -206,6 +206,11 @@ describe("CreditSync stateless MCP contract", () => {
             arguments: { amount: "10", receivedAt: "2026-08-10T00:00:00.000Z", idempotencyKey: "retry-1" },
         });
         expect(malformedMoney.isError).toBe(true);
+        const negativeCommandMoney = await client.callTool({
+            name: "intake.create",
+            arguments: { amount: "-10.00", receivedAt: "2026-08-10T00:00:00.000Z", idempotencyKey: "retry-negative" },
+        });
+        expect(negativeCommandMoney.isError).toBe(true);
         const impossibleDate = await client.callTool({
             name: "loan.preview",
             arguments: {

@@ -29,6 +29,7 @@
 - Updated the loan detail, matching, and closing frontend flows for the exact public loan DTOs.
 
 ### Fixed
+- Hardened the v0.3.0 MCP contract with signed compensating-transaction outputs, PostgreSQL-backed actual-client coverage for all 20 default service mappings, and quota-preserving Dragonfly-to-memory fallback.
 - Hardened daily-loan renewals with exact integer-cent funding carry, shared loan-first funding locks, execution-time preview validation, tenant-safe funding provenance, stable concurrent idempotency, exact old-loan state restoration, and operation-scoped reversal replay protection.
 - Corrected backend source typing issues surfaced by the new typecheck gate without changing existing workflow behavior.
 - Restored bank-loan close timestamp persistence after repayment and hardened daily installment, public schedule-money, and allocation due-date validation.

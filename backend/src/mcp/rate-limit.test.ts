@@ -47,6 +47,24 @@ describe("MCP rate limiter", () => {
         });
     });
 
+    // Break caught: a cache outage after distributed requests restarts the local allowance at zero.
+    test("preserves requests already observed when Dragonfly fails mid-window", async () => {
+        let calls = 0;
+        const limiter = createMcpRateLimiter({
+            now: () => 1_000,
+            redisConsume: async () => {
+                calls += 1;
+                if (calls <= 2) return { count: calls, ttlSeconds: 45 };
+                throw new Error("Dragonfly unavailable");
+            },
+        });
+        const input = { key: "tenant-a:transition-token", max: 2, windowSeconds: 60 };
+
+        expect(await limiter.consume(input)).toEqual({ allowed: true, remaining: 1, retryAfterSeconds: 0 });
+        expect(await limiter.consume(input)).toEqual({ allowed: true, remaining: 0, retryAfterSeconds: 0 });
+        expect(await limiter.consume(input)).toEqual({ allowed: false, remaining: 0, retryAfterSeconds: 60 });
+    });
+
     test("bounds a real unavailable Dragonfly connection and immediately falls back", async () => {
         const warnings: string[] = [];
         const limiter = createMcpRateLimiter({

@@ -35,6 +35,7 @@ import {
     previewPaymentMatch,
     reversePayment,
     type CreatePaymentIntakeInput,
+    type EvidenceStorageGateway,
     type ExplicitPaymentAllocation,
     type PrepareEvidenceInput,
 } from "../services/payment-service";
@@ -44,11 +45,18 @@ import { parseMcpRuntimeConfig } from "./security";
 
 type ToolInput = Record<string, unknown>;
 
+export interface DefaultMcpDependencies {
+    evidenceGateway?: EvidenceStorageGateway;
+}
+
 function asString(input: ToolInput, field: string) {
     return input[field] as string;
 }
 
-const handlers: Record<McpToolName, McpToolHandler> = {
+export function createDefaultMcpToolHandlers(
+    dependencies: DefaultMcpDependencies = {},
+): Record<McpToolName, McpToolHandler> {
+    return {
     "borrower.search": (ctx, input) => searchBorrowers(ctx, { query: asString(input, "query") }),
     "borrower.portfolio": (ctx, input) => getBorrowerPortfolio(ctx, asString(input, "borrowerPublicId")),
     "borrower.create": (ctx, input) => createBorrower(ctx, input as unknown as BorrowerInput),
@@ -72,12 +80,18 @@ const handlers: Record<McpToolName, McpToolHandler> = {
     "intake.create": (ctx, input) => createPaymentIntake(ctx, input as unknown as CreatePaymentIntakeInput),
     "evidence.prepare": (ctx, input) => {
         const { paymentIntakePublicId, ...evidence } = input;
-        return preparePaymentEvidence(ctx, String(paymentIntakePublicId), evidence as unknown as PrepareEvidenceInput);
+        return preparePaymentEvidence(
+            ctx,
+            String(paymentIntakePublicId),
+            evidence as unknown as PrepareEvidenceInput,
+            dependencies.evidenceGateway,
+        );
     },
     "evidence.finalize": (ctx, input) => finalizePaymentEvidence(
         ctx,
         asString(input, "paymentIntakePublicId"),
         asString(input, "evidencePublicId"),
+        dependencies.evidenceGateway,
     ),
     "payment.preview": (ctx, input) => previewPaymentMatch(
         ctx,
@@ -115,7 +129,8 @@ const handlers: Record<McpToolName, McpToolHandler> = {
     "funding-source.list": (ctx, input) => listFundingSources(ctx, {
         status: input.status as "active" | "closed" | "all" | undefined,
     }),
-};
+    };
+}
 
 const auditTarget: Partial<Record<McpToolName, { entityType: string; action: string }>> = {
     "payment.post": { entityType: "payment_intake", action: "posted" },
@@ -136,7 +151,10 @@ function structuredLog(entry: Record<string, unknown>) {
     console.log(JSON.stringify(entry));
 }
 
-export function createDefaultMcpHttpPlugin(env: Record<string, string | undefined> = process.env) {
+export function createDefaultMcpHttpPlugin(
+    env: Record<string, string | undefined> = process.env,
+    dependencies: DefaultMcpDependencies = {},
+) {
     const config = parseMcpRuntimeConfig(env);
     const limiter = createMcpRateLimiter({
         cacheUrl: env.CACHE_URL,
@@ -144,7 +162,7 @@ export function createDefaultMcpHttpPlugin(env: Record<string, string | undefine
     });
     return createMcpHttpPlugin({
         config,
-        handlers,
+        handlers: createDefaultMcpToolHandlers(dependencies),
         consumeRateLimit: (input) => limiter.consume(input),
         logger: structuredLog,
         resolvePrincipal: async ({ tenantId, actorEmail }) => {

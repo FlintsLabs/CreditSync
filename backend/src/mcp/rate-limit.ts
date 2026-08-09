@@ -107,8 +107,12 @@ export function createMcpRateLimiter(input: CreateMcpRateLimiterInput = {}) {
     const memory = new Map<string, { count: number; expiresAt: number }>();
     let warned = false;
 
+    function memoryKey(request: McpRateLimitInput) {
+        return createHash("sha256").update(request.key).digest("hex");
+    }
+
     function consumeMemory(request: McpRateLimitInput): McpRateLimitResult {
-        const key = createHash("sha256").update(request.key).digest("hex");
+        const key = memoryKey(request);
         const currentTime = now();
         let bucket = memory.get(key);
         if (!bucket || bucket.expiresAt <= currentTime) {
@@ -124,11 +128,19 @@ export function createMcpRateLimiter(input: CreateMcpRateLimiterInput = {}) {
         };
     }
 
+    function alignMemoryCount(request: McpRateLimitInput, count: number) {
+        const key = memoryKey(request);
+        const bucket = memory.get(key);
+        if (bucket) bucket.count = Math.max(bucket.count, count);
+    }
+
     return {
         consume: async (request: McpRateLimitInput): Promise<McpRateLimitResult> => {
-            if (!redisConsume) return consumeMemory(request);
+            const localResult = consumeMemory(request);
+            if (!redisConsume) return localResult;
             try {
                 const result = await redisConsume(request);
+                alignMemoryCount(request, result.count);
                 const allowed = result.count <= request.max;
                 return {
                     allowed,
@@ -140,7 +152,7 @@ export function createMcpRateLimiter(input: CreateMcpRateLimiterInput = {}) {
                     warned = true;
                     input.onWarning?.("MCP_RATE_LIMIT_CACHE_UNAVAILABLE");
                 }
-                return consumeMemory(request);
+                return localResult;
             }
         },
     };

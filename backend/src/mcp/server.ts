@@ -51,6 +51,7 @@ export interface CreateMcpHttpPluginInput {
 
 const uuid = z.uuid();
 const money = z.string().regex(/^(0|[1-9]\d*)\.\d{2}$/).max(32);
+const signedMoney = z.string().regex(/^-?(0|[1-9]\d*)\.\d{2}$/).max(33);
 const date = z.iso.date();
 const dateTime = z.iso.datetime({ offset: true });
 const shortText = z.string().trim().min(1).max(500);
@@ -146,11 +147,11 @@ const proposalOutput = z.object({
 }).strict();
 const transactionOutput = z.object({
     ...publicEntity,
-    amount: money,
-    principalComponent: money,
-    interestComponent: money,
-    feeComponent: money,
-    penaltyComponent: money,
+    amount: signedMoney,
+    principalComponent: signedMoney,
+    interestComponent: signedMoney,
+    feeComponent: signedMoney,
+    penaltyComponent: signedMoney,
     entryType: z.string(),
     postedAt: nullableIsoDateTime.optional(),
 }).strict();
