@@ -12,11 +12,11 @@ interface LoanClosingModalProps {
 }
 
 interface ClosingSummary {
-    principal: number;
-    totalInterest: number;
-    totalPaid: number;
-    totalDue: number;
-    balance: number;
+    principal: string;
+    totalInterest: string;
+    totalPaid: string;
+    totalDue: string;
+    balance: string;
     daysSinceStart: number;
 }
 
@@ -50,7 +50,7 @@ export function LoanClosingModal({ loanId, open, onOpenChange }: LoanClosingModa
 
     const handleCopyToClipboard = () => {
         if (summary) {
-            const amount = summary.balance.toLocaleString(i18n.language, {
+            const amount = Number(summary.balance).toLocaleString(i18n.language, {
                 minimumFractionDigits: 2,
                 maximumFractionDigits: 2,
             });
@@ -86,23 +86,23 @@ export function LoanClosingModal({ loanId, open, onOpenChange }: LoanClosingModa
                     <div className="space-y-4 py-4">
                         <div className="flex justify-between items-center">
                             <span className="text-muted-foreground">{t("loanWizard.columns.principal", "Principal")}</span>
-                            <span className="font-mono">฿{summary.principal.toLocaleString(i18n.language)}</span>
+                            <span className="font-mono">฿{Number(summary.principal).toLocaleString(i18n.language)}</span>
                         </div>
                         <div className="flex justify-between items-center">
                             <span className="text-muted-foreground">{t("loanClosing.totalInterestAccrued", { defaultValue: "Total Interest Accrued ({{days}} days)", days: summary.daysSinceStart })}</span>
-                            <span className="font-mono text-blue-500">+ ฿{summary.totalInterest.toLocaleString(i18n.language)}</span>
+                            <span className="font-mono text-blue-500">+ ฿{Number(summary.totalInterest).toLocaleString(i18n.language)}</span>
                         </div>
                          <div className="flex justify-between items-center border-t pt-4">
                             <span className="text-muted-foreground">{t("loanClosing.totalAmountDue", "Total Amount Due")}</span>
-                            <span className="font-mono">฿{summary.totalDue.toLocaleString(i18n.language)}</span>
+                            <span className="font-mono">฿{Number(summary.totalDue).toLocaleString(i18n.language)}</span>
                         </div>
                         <div className="flex justify-between items-center">
                             <span className="text-muted-foreground">{t("loanClosing.totalRepaid", "Total Repaid")}</span>
-                            <span className="font-mono text-green-500">- ฿{summary.totalPaid.toLocaleString(i18n.language)}</span>
+                            <span className="font-mono text-green-500">- ฿{Number(summary.totalPaid).toLocaleString(i18n.language)}</span>
                         </div>
                         <div className="flex justify-between items-center text-xl font-bold border-t pt-4">
                             <span>{t("loanClosing.finalBalance", "Final Closing Balance")}</span>
-                            <span className="font-mono text-primary">฿{summary.balance.toLocaleString(i18n.language)}</span>
+                            <span className="font-mono text-primary">฿{Number(summary.balance).toLocaleString(i18n.language)}</span>
                         </div>
                     </div>
                 )}

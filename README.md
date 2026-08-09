@@ -246,6 +246,8 @@ Protected app navigation now keeps the dashboard overview at `/dashboard`, while
 
 Loan agreement creation is draft-first. `POST /api/loans` accepts borrower and optional funding-source public IDs and returns a draft without schedules. Draft terms can be changed with `PUT /api/loans/:id`; `POST /api/loans/:id/activate` locks the terms and creates schedules and the initial funding allocation once. Repeating activation is safe and returns the already-active agreement. The current loan wizard immediately activates after creating the draft so the existing user flow remains coherent until the dedicated draft UI is introduced.
 
+Loan-facing REST payloads use public UUIDs for loans, schedules, funding profiles, drawdowns, and allocations. Public money inputs and outputs use two-decimal strings (for example, `"500.00"`). This includes schedule and closing reads, allocation/profitability summaries, and funding allocation/reallocation mutations. Generated schedules conserve the exact principal-plus-interest obligation: each row's principal, interest, and fee components equal its scheduled total and remaining due, with any cent residual carried by the final installment.
+
 ### Dev vs Docker Quick Reference
 
 | Scenario | Infra | Backend | Frontend |

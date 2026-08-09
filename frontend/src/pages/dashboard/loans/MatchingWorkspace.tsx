@@ -23,10 +23,10 @@ interface LoanRow {
 }
 
 interface AllocationRow {
-    id: number;
+    id: string;
     allocatedAmount: string;
-    bankLoanId?: number | null;
-    bankProfileId?: number | null;
+    bankLoanPublicId?: string | null;
+    bankProfilePublicId?: string | null;
     bankProfileName?: string | null;
     allocationDate?: string;
     allocationType?: string;
@@ -34,7 +34,8 @@ interface AllocationRow {
 }
 
 interface DrawdownRow {
-    id: number;
+    id: string;
+    publicId?: string;
     bankProfileId: number | null;
     amount: string;
     outstandingPrincipal: string | null;
@@ -46,16 +47,16 @@ interface DrawdownRow {
 }
 
 interface LoanAllocationState {
-    loanId: number;
-    principalAmount: number;
-    netAllocatedPrincipal: number;
-    remainingGap: number;
-    overfundedAmount: number;
+    loanId: string;
+    principalAmount: string;
+    netAllocatedPrincipal: string;
+    remainingGap: string;
+    overfundedAmount: string;
     state: string;
 }
 
 interface DrawdownAllocationState {
-    bankLoanId: number;
+    bankLoanId: string;
     drawdownAmount: number;
     netAllocatedPrincipal: number;
     remainingCapacity: number;
@@ -64,12 +65,12 @@ interface DrawdownAllocationState {
 }
 
 interface LoanProfitability {
-    borrowerRevenueCollected: number;
-    fundCostPaid: number;
-    realizedSpread: number;
-    unrealizedSpread: number;
-    fundedPrincipal: number;
-    unallocatedPrincipalGap: number;
+    borrowerRevenueCollected: string;
+    fundCostPaid: string;
+    realizedSpread: string;
+    unrealizedSpread: string;
+    fundedPrincipal: string;
+    unallocatedPrincipalGap: string;
 }
 
 interface BankProfile {
@@ -91,7 +92,7 @@ export default function MatchingWorkspace() {
     const [bankProfiles, setBankProfiles] = useState<BankProfile[]>([]);
     const [selectedLoanId, setSelectedLoanId] = useState<string | null>(null);
     const [selectedLoanProfitability, setSelectedLoanProfitability] = useState<LoanProfitability | null>(null);
-    const [draftAllocations, setDraftAllocations] = useState<Record<number, string>>({});
+    const [draftAllocations, setDraftAllocations] = useState<Record<string, string>>({});
     const [allocationHistory, setAllocationHistory] = useState<AllocationRow[]>([]);
     const [reallocationForm, setReallocationForm] = useState({
         fromBankLoanId: "",
@@ -115,7 +116,9 @@ export default function MatchingWorkspace() {
             ]);
 
             const rawLoans = loansRes.data ?? [];
-            const rawDrawdowns = (drawdownsRes.data ?? []).filter((item: DrawdownRow) => item.status !== "closed");
+            const rawDrawdowns = (drawdownsRes.data ?? [])
+                .filter((item: DrawdownRow) => item.status !== "closed")
+                .map((item: DrawdownRow) => ({ ...item, id: item.publicId ?? String(item.id) }));
 
             const [loanStates, drawdownStates] = await Promise.all([
                 Promise.all(rawLoans.map((loan: LoanRow) => api.get(`/loans/${loan.id}/allocation-state`).then((res) => ({ loanId: loan.id, state: res.data as LoanAllocationState })))),
@@ -128,20 +131,20 @@ export default function MatchingWorkspace() {
                     Number(state?.netAllocatedPrincipal ?? 0),
                 ])
             );
-            const allocatedByDrawdown = new Map<number, number>(
+            const allocatedByDrawdown = new Map<string, number>(
                 drawdownStates.map(({ bankLoanId, state }) => [
                     bankLoanId,
                     Number(state?.netAllocatedPrincipal ?? 0),
                 ])
             );
             const loanStateById = new Map<string, LoanAllocationState>(loanStates.map(({ loanId, state }) => [loanId, state]));
-            const drawdownStateById = new Map<number, DrawdownAllocationState>(drawdownStates.map(({ bankLoanId, state }) => [bankLoanId, state]));
+            const drawdownStateById = new Map<string, DrawdownAllocationState>(drawdownStates.map(({ bankLoanId, state }) => [bankLoanId, state]));
 
             const normalizedLoans: LoanRow[] = rawLoans.map((loan: LoanRow) => ({
                 ...loan,
                 fundedAmount: Number((fundedByLoan.get(loan.id) ?? 0).toFixed(2)),
                 allocationState: loanStateById.get(loan.id)?.state,
-                remainingGap: Number((loanStateById.get(loan.id)?.remainingGap ?? 0).toFixed(2)),
+                remainingGap: Number(Number(loanStateById.get(loan.id)?.remainingGap ?? 0).toFixed(2)),
             }));
             const normalizedDrawdowns = rawDrawdowns.map((drawdown: DrawdownRow) => ({
                 ...drawdown,
@@ -181,7 +184,7 @@ export default function MatchingWorkspace() {
         [loans]
     );
 
-    const handleDraftChange = (drawdownId: number, value: string) => {
+    const handleDraftChange = (drawdownId: string, value: string) => {
         setDraftAllocations((prev) => ({
             ...prev,
             [drawdownId]: value,
@@ -233,7 +236,7 @@ export default function MatchingWorkspace() {
         }
 
         const entries = Object.entries(draftAllocations)
-            .map(([bankLoanId, value]) => ({ bankLoanId: Number(bankLoanId), amount: Number(value) }))
+            .map(([bankLoanPublicId, value]) => ({ bankLoanPublicId, amount: Number(value) }))
             .filter((item) => item.amount > 0);
 
         if (entries.length === 0) {
@@ -247,8 +250,8 @@ export default function MatchingWorkspace() {
 
             for (const entry of entries) {
                 await api.post(`/loans/${selectedLoan.id}/funding-allocations`, {
-                    bankLoanId: entry.bankLoanId,
-                    allocatedAmount: entry.amount,
+                    bankLoanPublicId: entry.bankLoanPublicId,
+                    allocatedAmount: entry.amount.toFixed(2),
                     allocationDate: new Date().toISOString().slice(0, 10),
                     allocationType: "initial",
                 });
@@ -265,16 +268,16 @@ export default function MatchingWorkspace() {
     };
 
     const currentAllocationByDrawdown = useMemo(() => {
-        const grouped = new Map<number, { bankLoanId: number; bankProfileName: string; amount: number }>();
+        const grouped = new Map<string, { bankLoanPublicId: string; bankProfileName: string; amount: number }>();
         for (const row of allocationHistory) {
-            if (!row.bankLoanId) continue;
-            const current = grouped.get(row.bankLoanId) ?? {
-                bankLoanId: row.bankLoanId,
-                bankProfileName: row.bankProfileName ?? (row.bankProfileId ? bankProfileNameById.get(row.bankProfileId) ?? t("matching.unknownSource", "Unknown source") : t("matching.unknownSource", "Unknown source")),
+            if (!row.bankLoanPublicId) continue;
+            const current = grouped.get(row.bankLoanPublicId) ?? {
+                bankLoanPublicId: row.bankLoanPublicId,
+                bankProfileName: row.bankProfileName ?? t("matching.unknownSource", "Unknown source"),
                 amount: 0,
             };
             current.amount += Number(row.allocatedAmount ?? 0);
-            grouped.set(row.bankLoanId, current);
+            grouped.set(row.bankLoanPublicId, current);
         }
         return Array.from(grouped.values()).filter((row) => Math.abs(row.amount) > 0.0001);
     }, [allocationHistory, bankProfileNameById]);
@@ -295,9 +298,9 @@ export default function MatchingWorkspace() {
             setErrorMessage("");
 
             await api.post(`/loans/${selectedLoanId}/funding-reallocations`, {
-                fromBankLoanId: Number(reallocationForm.fromBankLoanId),
-                toBankLoanId: Number(reallocationForm.toBankLoanId),
-                amount: Number(reallocationForm.amount),
+                fromBankLoanPublicId: reallocationForm.fromBankLoanId,
+                toBankLoanPublicId: reallocationForm.toBankLoanId,
+                amount: Number(reallocationForm.amount).toFixed(2),
                 allocationDate: new Date().toISOString().slice(0, 10),
                 note: reallocationForm.note || undefined,
             });
@@ -479,10 +482,10 @@ export default function MatchingWorkspace() {
                                         </div>
                                     ) : (
                                         currentAllocationByDrawdown.map((item) => (
-                                            <div key={item.bankLoanId} className="rounded border p-3 text-sm">
+                                            <div key={item.bankLoanPublicId} className="rounded border p-3 text-sm">
                                                 <div className="flex items-center justify-between gap-3">
                                                     <div>
-                                                        <div className="font-medium">{t("dashboardPage.drawdownLabel", { defaultValue: "Drawdown #{{id}}", id: item.bankLoanId })}</div>
+                                                        <div className="font-medium">{t("dashboardPage.drawdownLabel", { defaultValue: "Drawdown #{{id}}", id: item.bankLoanPublicId })}</div>
                                                         <div className="text-xs text-muted-foreground">{item.bankProfileName}</div>
                                                     </div>
                                                     <div className="font-medium">{formatCurrency(item.amount, i18n.language)}</div>
@@ -507,8 +510,8 @@ export default function MatchingWorkspace() {
                                         >
                                             <option value="">{t("matching.selectSource", "Select source...")}</option>
                                             {currentAllocationByDrawdown.map((item) => (
-                                                <option key={item.bankLoanId} value={item.bankLoanId}>
-                                                    #{item.bankLoanId} • {item.bankProfileName} • {formatCurrency(item.amount, i18n.language)}
+                                                <option key={item.bankLoanPublicId} value={item.bankLoanPublicId}>
+                                                    #{item.bankLoanPublicId} • {item.bankProfileName} • {formatCurrency(item.amount, i18n.language)}
                                                 </option>
                                             ))}
                                         </select>
@@ -654,10 +657,10 @@ export default function MatchingWorkspace() {
                                                 <div className="flex items-center justify-between gap-3">
                                                     <div>
                                                         <div className="font-medium">
-                                                            {row.allocationType} {row.bankLoanId ? `• ${t("dashboardPage.drawdownLabel", { defaultValue: "Drawdown #{{id}}", id: row.bankLoanId })}` : ""}
+                                                            {row.allocationType} {row.bankLoanPublicId ? `• ${t("dashboardPage.drawdownLabel", { defaultValue: "Drawdown #{{id}}", id: row.bankLoanPublicId })}` : ""}
                                                         </div>
                                                         <div className="text-xs text-muted-foreground">
-                                                            {row.bankProfileName ?? (row.bankProfileId ? bankProfileNameById.get(row.bankProfileId) ?? t("matching.unknownSource", "Unknown source") : t("matching.noSource", "No source"))} • {row.allocationDate || "-"}
+                                                            {row.bankProfileName ?? t("matching.noSource", "No source")} • {row.allocationDate || "-"}
                                                         </div>
                                                     </div>
                                                     <div className={`font-medium ${Number(row.allocatedAmount) < 0 ? "text-destructive" : "text-emerald-600"}`}>

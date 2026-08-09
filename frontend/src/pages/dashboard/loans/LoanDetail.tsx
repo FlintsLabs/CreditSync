@@ -25,15 +25,15 @@ interface LoanDetailData {
 }
 
 interface BorrowerData {
-    id: number;
+    id: string;
     publicId?: string;
     name: string;
     phone?: string | null;
 }
 
 interface LoanScheduleRow {
-    id: number;
-    publicId?: string;
+    id: string;
+    publicId: string;
     installmentNo: number;
     dueDate: string;
     scheduledTotal: string;
@@ -42,10 +42,8 @@ interface LoanScheduleRow {
 }
 
 interface AllocationRow {
-    id: number;
-    bankLoanId?: number | null;
+    id: string;
     bankLoanPublicId?: string | null;
-    bankProfileId?: number | null;
     bankProfilePublicId?: string | null;
     bankProfileName?: string | null;
     allocatedAmount: string;
@@ -55,35 +53,33 @@ interface AllocationRow {
 }
 
 interface LoanProfitability {
-    borrowerRevenueCollected: number;
-    fundCostPaid: number;
-    realizedSpread: number;
-    unrealizedSpread: number;
-    fundedPrincipal: number;
-    unallocatedPrincipalGap: number;
-    estimatedOutstandingFundingCost: number;
+    borrowerRevenueCollected: string;
+    fundCostPaid: string;
+    realizedSpread: string;
+    unrealizedSpread: string;
+    fundedPrincipal: string;
+    unallocatedPrincipalGap: string;
+    estimatedOutstandingFundingCost: string;
     fundingShare: number;
     fundingComposition: Array<{
-        bankLoanId: number;
-        bankLoanPublicId?: string | null;
-        bankProfileId: number | null;
-        bankProfilePublicId?: string | null;
-        netAllocatedPrincipal: number;
+        bankLoanPublicId: string | null;
+        bankProfilePublicId: string | null;
+        netAllocatedPrincipal: string;
         shareOfLoanPrincipal: number;
         shareOfDrawdown: number;
-        estimatedBankInterestPaid: number;
-        estimatedBankFeesPaid: number;
-        estimatedBankVatPaid: number;
-        estimatedBankPenaltiesPaid: number;
-        outstandingCostAllocated: number;
+        estimatedBankInterestPaid: string;
+        estimatedBankFeesPaid: string;
+        estimatedBankVatPaid: string;
+        estimatedBankPenaltiesPaid: string;
+        outstandingCostAllocated: string;
     }>;
 }
 
 interface LoanAllocationState {
-    principalAmount: number;
-    netAllocatedPrincipal: number;
-    remainingGap: number;
-    overfundedAmount: number;
+    principalAmount: string;
+    netAllocatedPrincipal: string;
+    remainingGap: string;
+    overfundedAmount: string;
     state: string;
 }
 
@@ -327,37 +323,37 @@ export default function LoanDetail() {
                                 {profitability?.fundingComposition?.length ? (
                                     <div className="space-y-3">
                                         {profitability.fundingComposition.map((item) => (
-                                            <div key={item.bankLoanId} className="rounded border p-3 text-sm">
+                                            <div key={item.bankLoanPublicId} className="rounded border p-3 text-sm">
                                                 <div className="flex items-center justify-between gap-3">
                                                     <div>
-                                                        <div className="font-medium">{t("dashboardPage.drawdownLabel", { defaultValue: "Drawdown #{{id}}", id: item.bankLoanId })}</div>
+                                                        <div className="font-medium">{t("dashboardPage.drawdownLabel", { defaultValue: "Drawdown #{{id}}", id: item.bankLoanPublicId })}</div>
                                                         <div className="text-xs text-muted-foreground">
                                                             {t("loanDetail.shareOfLoan", "Share of loan")}: {(item.shareOfLoanPrincipal * 100).toFixed(1)}% • {t("loanDetail.shareOfDrawdownCost", "Share of drawdown cost")}: {(item.shareOfDrawdown * 100).toFixed(1)}%
                                                         </div>
                                                     </div>
-                                                    <Link to={`/funds/${item.bankProfilePublicId ?? item.bankProfileId}?bankLoanId=${item.bankLoanPublicId ?? item.bankLoanId}`} className="text-primary text-xs hover:underline">
+                                                    <Link to={`/funds/${item.bankProfilePublicId}?bankLoanId=${item.bankLoanPublicId}`} className="text-primary text-xs hover:underline">
                                                         {t("loanDetail.openDrawdown", "Open drawdown")}
                                                     </Link>
                                                 </div>
                                                 <div className="mt-3 grid gap-3 md:grid-cols-3">
                                                     <div>
                                                         <div className="text-xs text-muted-foreground">{t("loanDetail.allocatedPrincipal", "Allocated principal")}</div>
-                                                        <div className="font-medium">{formatCurrency(item.netAllocatedPrincipal)}</div>
+                                                        <div className="font-medium">{formatCurrency(Number(item.netAllocatedPrincipal))}</div>
                                                     </div>
                                                     <div>
                                                         <div className="text-xs text-muted-foreground">{t("loanDetail.estimatedCostPaid", "Estimated cost paid")}</div>
                                                         <div className="font-medium">
                                                             {formatCurrency(
-                                                                item.estimatedBankInterestPaid +
-                                                                item.estimatedBankFeesPaid +
-                                                                item.estimatedBankVatPaid +
-                                                                item.estimatedBankPenaltiesPaid
+                                                                Number(item.estimatedBankInterestPaid) +
+                                                                Number(item.estimatedBankFeesPaid) +
+                                                                Number(item.estimatedBankVatPaid) +
+                                                                Number(item.estimatedBankPenaltiesPaid)
                                                             )}
                                                         </div>
                                                     </div>
                                                     <div>
                                                         <div className="text-xs text-muted-foreground">{t("loanDetail.outstandingCostAllocated", "Outstanding cost allocated")}</div>
-                                                        <div className="font-medium">{formatCurrency(item.outstandingCostAllocated)}</div>
+                                                        <div className="font-medium">{formatCurrency(Number(item.outstandingCostAllocated))}</div>
                                                     </div>
                                                 </div>
                                             </div>
@@ -418,7 +414,7 @@ export default function LoanDetail() {
                                             <div className="flex items-center justify-between gap-3">
                                                 <div>
                                                     <div className="font-medium">
-                                                        {row.allocationType} {row.bankLoanId ? `• Drawdown #${row.bankLoanId}` : ""}
+                                                        {row.allocationType} {row.bankLoanPublicId ? `• Drawdown #${row.bankLoanPublicId}` : ""}
                                                     </div>
                                                     <div className="text-xs text-muted-foreground">
                                                         {row.bankProfileName ?? t("matching.unknownSource", "Unknown source")} • {row.allocationDate ?? "-"}

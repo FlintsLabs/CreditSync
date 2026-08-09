@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { auditLogs, borrowerAliases, borrowers, loanSchedules, loans, users } from "../db/schema";
+import { withTenantCache } from "../lib/cache";
 import type { CommandContext } from "./command-context";
 import {
     addBorrowerAlias,
@@ -16,6 +17,7 @@ import {
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
+const cacheIntegrationTest = integrationEnabled && Boolean(process.env.CACHE_URL) ? test : test.skip;
 
 async function resetApplicationTables() {
     await db.execute(sql`TRUNCATE TABLE audit_logs, borrower_aliases, loan_schedules, loans, borrowers, users RESTART IDENTITY CASCADE`);
@@ -100,6 +102,38 @@ describe("borrower service", () => {
         });
     });
 
+    // Break caught: a normalized duplicate alias leaks PostgreSQL's unique-constraint exception.
+    integrationTest("returns a stable conflict for a duplicate normalized alias", async () => {
+        const actor = await seedUser("tenant-a", "duplicate-alias@example.test", "collector");
+        const ctx = context("tenant-a", actor.id);
+        const borrower = await createBorrower(ctx, { name: "Alias Borrower" });
+        await addBorrowerAlias(ctx, borrower.publicId, { alias: " Cash—Customer " });
+
+        await expect(addBorrowerAlias(ctx, borrower.publicId, { alias: "cash customer" }))
+            .rejects.toMatchObject({ code: "ALIAS_ALREADY_EXISTS", status: 409 });
+    });
+
+    // Break caught: borrower rename leaves cached loan-list borrowerName stale until TTL expiry.
+    cacheIntegrationTest("invalidates tenant caches after borrower updates", async () => {
+        const actor = await seedUser("tenant-a", "cache-invalidation@example.test", "collector");
+        const ctx = context("tenant-a", actor.id);
+        const borrower = await createBorrower(ctx, { name: "Cached Original" });
+        const cacheKey = `borrower-update-${crypto.randomUUID()}`;
+        const readName = () => withTenantCache({
+            tenantId: "tenant-a",
+            namespace: "loans",
+            key: cacheKey,
+            ttlSeconds: 60,
+            loader: async () => db.query.borrowers.findFirst({
+                where: eq(borrowers.publicId, borrower.publicId),
+            }).then((row) => row?.name ?? null),
+        });
+
+        expect(await readName()).toBe("Cached Original");
+        await updateBorrower(ctx, borrower.publicId, { name: "Fresh Name" });
+        expect(await readName()).toBe("Fresh Name");
+    });
+
     // Break caught: inactive aliases remain searchable or another owner can read a private portfolio.
     integrationTest("deactivates aliases and keeps borrower portfolios owner scoped", async () => {
         const first = await seedUser("tenant-a", "first@example.test", "collector");
@@ -118,6 +152,31 @@ describe("borrower service", () => {
         const alias = await addBorrowerAlias(context("tenant-a", first.id), borrower.publicId, { alias: "Cash Customer" });
         await confirmBorrowerAlias(context("tenant-a", first.id), alias.publicId);
         await deactivateBorrowerAlias(context("tenant-a", first.id), alias.publicId);
+
+        const aliasHistory = await db.select().from(auditLogs).where(eq(auditLogs.entityId, alias.publicId));
+        expect(aliasHistory.map((entry) => entry.action)).toEqual(["created", "confirmed", "inactive"]);
+        expect(aliasHistory).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                tenantId: "tenant-a",
+                actorUserId: first.id,
+                actorSource: "mcp",
+                requestId: "req-task-3",
+                correlationId: "corr-task-3",
+            }),
+        ]));
+        expect(aliasHistory[0]?.payload).toMatchObject({
+            before: null,
+            after: { publicId: alias.publicId, alias: "Cash Customer", status: "pending" },
+            borrowerPublicId: borrower.publicId,
+        });
+        expect(aliasHistory[1]?.payload).toMatchObject({
+            before: { publicId: alias.publicId, status: "pending" },
+            after: { publicId: alias.publicId, status: "confirmed" },
+        });
+        expect(aliasHistory[2]?.payload).toMatchObject({
+            before: { publicId: alias.publicId, status: "confirmed" },
+            after: { publicId: alias.publicId, status: "inactive" },
+        });
 
         const search = await searchBorrowers(context("tenant-a", first.id), { query: "cash customer" });
         expect(search.resolution).toBe("none");

@@ -90,11 +90,11 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
     if (!principalMoney.isFinite() || !interestRatePercent.isFinite() || principalMoney.isNegative() || interestRatePercent.isNegative()) {
         throw new Error("Loan principal and interest rate must be non-negative finite values");
     }
-    const totalInterest = principalMoney.times(interestRatePercent).div(100).times(termMonths).div(12);
+    const totalInterest = principalMoney.times(interestRatePercent).div(100).times(termMonths).div(12)
+        .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
     const totalAmount = principalMoney.plus(totalInterest);
 
     let installments = 0;
-    let installmentAmount = 0;
     let dailyInstallmentMoney: Decimal | undefined;
 
     // Determine number of installments based on type
@@ -109,15 +109,10 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
         dailyInstallmentMoney = params.installmentAmount === undefined
             ? undefined
             : new Decimal(params.installmentAmount).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-        installmentAmount = params.installmentAmount === undefined
-            ? totalAmount.div(installments).ceil().toNumber()
-            : dailyInstallmentMoney!.toNumber();
     } else if (repaymentType === "weekly") {
         installments = termMonths * 4;
-        installmentAmount = totalAmount.div(installments).ceil().toNumber();
     } else if (repaymentType === "monthly") {
         installments = termMonths;
-        installmentAmount = totalAmount.div(installments).ceil().toNumber();
     } else {
         // Floating: No fixed schedule, interest accrues daily
         return [];
@@ -151,6 +146,8 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
         allocatedPrincipal = allocatedPrincipal.plus(principalComponent);
         allocatedInterest = allocatedInterest.plus(interestComponent);
         remainingPrincipal = Decimal.max(0, remainingPrincipal.minus(principalComponent));
+        const rowTotal = principalComponent.plus(interestComponent)
+            .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
 
         // Validating dates
         if (repaymentType === "daily") currentDate = currentDate.add(1, 'day');
@@ -160,7 +157,7 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
         schedule.push({
             installmentNo: i,
             dueDate: currentDate.format("YYYY-MM-DD"),
-            amount: installmentAmount,
+            amount: rowTotal.toNumber(),
             principalComponent: principalComponent.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
             interestComponent: interestComponent.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
             remainingPrincipal: remainingPrincipal.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber()

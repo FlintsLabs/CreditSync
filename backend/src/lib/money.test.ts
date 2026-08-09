@@ -67,6 +67,63 @@ describe("daily fixed-installment schedule", () => {
     });
 });
 
+describe("periodic schedule conservation", () => {
+    // Break caught: repeating an upward-rounded monthly installment inflates a 100.00 obligation to 108.00.
+    it("conserves a non-even monthly principal across row totals and components", () => {
+        const schedule = generateLoanSchedule({
+            principal: "100.00",
+            interestRate: "0.00",
+            termMonths: 12,
+            repaymentType: "monthly",
+            startDate: "2026-01-01",
+        });
+
+        expect(schedule).toHaveLength(12);
+        expect(schedule[0]).toMatchObject({
+            scheduledPrincipal: "8.33",
+            scheduledInterest: "0.00",
+            scheduledTotal: "8.33",
+            remainingDue: "8.33",
+        });
+        expect(schedule[11]).toMatchObject({
+            scheduledPrincipal: "8.37",
+            scheduledInterest: "0.00",
+            scheduledTotal: "8.37",
+            remainingDue: "8.37",
+        });
+        expect(sumMoney(schedule.map((row) => row.scheduledPrincipal))).toEqual(parseMoney("100.00"));
+        expect(sumMoney(schedule.map((row) => row.scheduledInterest))).toEqual(parseMoney("0.00"));
+        expect(sumMoney(schedule.map((row) => row.scheduledTotal))).toEqual(parseMoney("100.00"));
+        expect(schedule.every((row) => row.scheduledTotal === sumMoney([
+            row.scheduledPrincipal,
+            row.scheduledInterest,
+            row.scheduledFee,
+        ]).toFixed(2))).toBe(true);
+    });
+
+    // Break caught: weekly/monthly computed schedules use an inflated constant amount instead of their exact components.
+    it.each([
+        ["weekly", 3, 12, "2500.00"],
+        ["monthly", 12, undefined, "2500.00"],
+    ] as const)("conserves a %s zero-interest obligation", (repaymentType, termMonths, totalInstallments, expected) => {
+        const schedule = generateLoanSchedule({
+            principal: "2500.00",
+            interestRate: "0.00",
+            termMonths,
+            repaymentType,
+            totalInstallments,
+            startDate: "2026-01-01",
+        });
+
+        expect(sumMoney(schedule.map((row) => row.scheduledTotal))).toEqual(parseMoney(expected));
+        expect(schedule.every((row) => row.scheduledTotal === sumMoney([
+            row.scheduledPrincipal,
+            row.scheduledInterest,
+            row.scheduledFee,
+        ]).toFixed(2))).toBe(true);
+    });
+});
+
 describe("oldest-first payment allocation", () => {
     const schedules = [
         {

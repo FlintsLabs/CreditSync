@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import Decimal from "decimal.js";
 import { and, eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
@@ -60,6 +61,12 @@ async function authToken(user: { id: number; email: string; role: string | null;
     return `${unsigned}.${signature}`;
 }
 
+async function jsonRequest(app: { handle(request: Request): Response | Promise<Response> }, path: string, init: RequestInit = {}) {
+    const response = await app.handle(new Request(`http://localhost${path}`, init));
+    const text = await response.text();
+    return { response, body: text ? JSON.parse(text) : null, text };
+}
+
 describe("loan application service", () => {
     // Break caught: preview returns floating-point money or persists a loan.
     test("previews exact public schedule money without persistence", () => {
@@ -103,10 +110,119 @@ describe("loan application service", () => {
 
         const history = await db.select().from(auditLogs).where(and(
             eq(auditLogs.entityId, draft.publicId),
-            eq(auditLogs.action, "activated"),
         ));
-        expect(history).toHaveLength(1);
-        expect(history[0]).toMatchObject({ actorSource: "web", requestId: "req-loan-task-3" });
+        expect(history.map((entry) => entry.action)).toEqual(["draft_created", "draft_updated", "activated"]);
+        expect(history).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                tenantId: "tenant-a",
+                actorUserId: actor.id,
+                actorSource: "web",
+                requestId: "req-loan-task-3",
+                correlationId: "corr-loan-task-3",
+            }),
+        ]));
+        expect(history[0]?.payload).toMatchObject({
+            before: null,
+            after: { publicId: draft.publicId, status: "draft", principal: "1200.00" },
+        });
+        expect(history[1]?.payload).toMatchObject({
+            before: { publicId: draft.publicId, status: "draft", principal: "1200.00" },
+            after: { publicId: draft.publicId, status: "draft", principal: "1500.00" },
+        });
+        expect(history[2]?.payload).toMatchObject({
+            before: { publicId: draft.publicId, status: "draft" },
+            after: { publicId: draft.publicId, status: "active" },
+            scheduleCount: 3,
+        });
+    });
+
+    // Break caught: activation stores 108.00 outstanding for a 100.00 zero-interest loan split over 12 months.
+    integrationTest("activation conserves non-even schedule and rollup money exactly", async () => {
+        const actor = await seedUser("tenant-a", "conservation@example.test", "collector");
+        const ctx = context("tenant-a", actor.id);
+        const borrower = await createBorrower(ctx, { name: "Exact Borrower" });
+        const draft = await createLoanDraft(ctx, {
+            borrowerPublicId: borrower.publicId,
+            principal: "100.00",
+            interestRate: "0.00",
+            repaymentType: "monthly",
+            termMonths: 12,
+            startDate: "2026-08-10",
+        });
+
+        const activated = await activateLoan(ctx, draft.publicId);
+        const rows = await db.select().from(loanSchedules).orderBy(loanSchedules.installmentNo);
+        const sum = (field: "scheduledPrincipal" | "scheduledInterest" | "scheduledTotal") =>
+            rows.reduce((total, row) => total.plus(row[field]), new Decimal(0)).toFixed(2);
+
+        expect(sum("scheduledPrincipal")).toBe("100.00");
+        expect(sum("scheduledInterest")).toBe("0.00");
+        expect(sum("scheduledTotal")).toBe("100.00");
+        expect(rows.every((row) => new Decimal(row.scheduledPrincipal).plus(row.scheduledInterest)
+            .plus(row.scheduledFee).toFixed(2) === row.scheduledTotal)).toBe(true);
+        expect(activated).toMatchObject({ outstandingPrincipal: "100.00", outstandingInterest: "0.00" });
+    });
+
+    // Break caught: floating activation converts an exact numeric principal through Number before storing its rollup.
+    integrationTest("keeps floating-loan activation principal exact beyond Number safe integers", async () => {
+        const actor = await seedUser("tenant-a", "floating-exact@example.test", "collector");
+        const ctx = context("tenant-a", actor.id);
+        const borrower = await createBorrower(ctx, { name: "Floating Exact Borrower" });
+        const draft = await createLoanDraft(ctx, {
+            borrowerPublicId: borrower.publicId,
+            principal: "9007199254740993.00",
+            interestRate: "0.00",
+            repaymentType: "floating",
+            termMonths: 1,
+            startDate: "2026-08-10",
+        });
+
+        const activated = await activateLoan(ctx, draft.publicId);
+        expect(activated.outstandingPrincipal).toBe("9007199254740993.00");
+    });
+
+    // Break caught: two callers that reach activation together create duplicate schedule/allocation/audit sets.
+    integrationTest("serializes simultaneous activation into one schedule and one initial allocation", async () => {
+        const actor = await seedUser("tenant-a", "double-activation@example.test", "owner");
+        const ctx = context("tenant-a", actor.id);
+        const borrower = await createBorrower(ctx, { name: "Concurrent Activation Borrower" });
+        const profile = await db.insert(bankProfiles).values({
+            tenantId: "tenant-a", name: "Concurrent Funding", type: "bank",
+        }).returning().then((rows) => rows[0]!);
+        const drawdown = await db.insert(bankLoans).values({
+            tenantId: "tenant-a", bankProfileId: profile.id, amount: "10000.00",
+        }).returning().then((rows) => rows[0]!);
+        const draft = await createLoanDraft(ctx, {
+            borrowerPublicId: borrower.publicId,
+            bankLoanPublicId: drawdown.publicId,
+            ...terms,
+        });
+        const stored = await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) });
+
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        let locked!: () => void;
+        const barrier = new Promise<void>((resolve) => { locked = resolve; });
+        const blocker = db.transaction(async (tx) => {
+            await tx.execute(sql`SELECT id FROM loans WHERE id = ${stored!.id} FOR UPDATE`);
+            locked();
+            await held;
+        });
+        await barrier;
+        const first = activateLoan(context("tenant-a", actor.id, "simultaneous-a"), draft.publicId);
+        const second = activateLoan(context("tenant-a", actor.id, "simultaneous-b"), draft.publicId);
+        await Bun.sleep(20);
+        release();
+        await blocker;
+        const [firstResult, secondResult] = await Promise.all([first, second]);
+
+        expect(firstResult).toEqual(secondResult);
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, stored!.id))).toHaveLength(3);
+        expect(await db.select().from(loanFundingAllocations).where(eq(loanFundingAllocations.loanId, stored!.id))).toHaveLength(1);
+        expect(await db.select().from(auditLogs).where(and(
+            eq(auditLogs.entityId, draft.publicId),
+            eq(auditLogs.action, "activated"),
+        ))).toHaveLength(1);
     });
 
     // Break caught: an active loan's financial terms can be edited through the draft command.
@@ -183,8 +299,92 @@ describe("loan application service", () => {
         expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, legacy.id))).toHaveLength(0);
     });
 
-    // Break caught: the funding reallocation REST path still validates a public loan UUID as numeric.
-    integrationTest("accepts a public loan ID on the funding reallocation REST route", async () => {
+    // Break caught: core loan REST adapters expose numeric database keys or accept numeric public money/source identifiers.
+    integrationTest("runs the draft lifecycle through REST with UUID IDs, money strings, and stable errors", async () => {
+        const owner = await seedUser("tenant-a", "rest-lifecycle@example.test", "owner");
+        const borrower = await createBorrower(context("tenant-a", owner.id), { name: "REST Borrower" });
+        const token = await authToken(owner);
+        const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+        const app = new Elysia().use(loansRoute);
+
+        const unauthorized = await jsonRequest(app, "/loans", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ borrowerPublicId: borrower.publicId, ...terms }),
+        });
+        expect(unauthorized.response.status).toBe(401);
+        expect(unauthorized.body).toMatchObject({ code: "UNAUTHORIZED" });
+
+        const created = await jsonRequest(app, "/loans", {
+            method: "POST", headers, body: JSON.stringify({ borrowerPublicId: borrower.publicId, ...terms }),
+        });
+        expect(created.response.status, created.text).toBe(200);
+        expect(created.body).toMatchObject({ id: created.body.publicId, status: "draft", principal: "1200.00" });
+        expect(created.body).not.toHaveProperty("borrowerId");
+
+        const updated = await jsonRequest(app, `/loans/${created.body.publicId}`, {
+            method: "PUT", headers, body: JSON.stringify({ principal: "100.00", interestRate: "0.00", termMonths: 12 }),
+        });
+        expect(updated.response.status, updated.text).toBe(200);
+        expect(updated.body).toMatchObject({ status: "draft", principal: "100.00" });
+
+        const activated = await jsonRequest(app, `/loans/${created.body.publicId}/activate`, { method: "POST", headers });
+        expect(activated.response.status, activated.text).toBe(200);
+        expect(activated.body).toMatchObject({ status: "active", outstandingPrincipal: "100.00" });
+        const retried = await jsonRequest(app, `/loans/${created.body.publicId}/activate`, { method: "POST", headers });
+        expect(retried.body).toEqual(activated.body);
+
+        const locked = await jsonRequest(app, `/loans/${created.body.publicId}`, {
+            method: "PUT", headers, body: JSON.stringify({ principal: "99.00" }),
+        });
+        expect(locked.response.status).toBe(409);
+        expect(locked.body).toMatchObject({ code: "LOAN_TERMS_LOCKED" });
+        const missing = await jsonRequest(app, "/loans/00000000-0000-0000-0000-000000000000", { headers });
+        expect(missing.response.status).toBe(404);
+        expect(missing.body).toMatchObject({ code: "LOAN_NOT_FOUND" });
+
+        const schedule = await jsonRequest(app, `/loans/${created.body.publicId}/schedule`, { headers });
+        expect(schedule.response.status, schedule.text).toBe(200);
+        expect(schedule.body).toHaveLength(12);
+        expect(schedule.body[0]).toMatchObject({
+            id: schedule.body[0].publicId,
+            loanPublicId: created.body.publicId,
+            scheduledPrincipal: "8.33",
+            scheduledTotal: "8.33",
+            remainingDue: "8.33",
+            penaltyDue: "0.00",
+            totalDueNow: "8.33",
+        });
+        expect(schedule.body[0]).not.toHaveProperty("loanId");
+
+        const state = await jsonRequest(app, `/loans/${created.body.publicId}/allocation-state`, { headers });
+        expect(state.body).toMatchObject({
+            loanId: created.body.publicId,
+            loanPublicId: created.body.publicId,
+            principalAmount: "100.00",
+            netAllocatedPrincipal: "0.00",
+            remainingGap: "100.00",
+            overfundedAmount: "0.00",
+        });
+        const closing = await jsonRequest(app, `/loans/${created.body.publicId}/closing-summary`, { headers });
+        expect(closing.body).toMatchObject({ loanId: created.body.publicId, principal: "100.00", totalPaid: "0.00" });
+        expect(typeof closing.body.balance).toBe("string");
+
+        const closed = await jsonRequest(app, `/loans/${created.body.publicId}/close`, {
+            method: "POST", headers, body: JSON.stringify({ note: "REST close" }),
+        });
+        expect(closed.response.status, closed.text).toBe(200);
+        expect(closed.body).toMatchObject({ id: created.body.publicId, publicId: created.body.publicId, status: "closed" });
+        expect(closed.body).not.toHaveProperty("borrowerId");
+        const duplicateClose = await jsonRequest(app, `/loans/${created.body.publicId}/close`, {
+            method: "POST", headers, body: JSON.stringify({}),
+        });
+        expect(duplicateClose.response.status).toBe(409);
+        expect(duplicateClose.body).toMatchObject({ code: "LOAN_ALREADY_CLOSED" });
+    });
+
+    // Break caught: funding allocation/reallocation REST paths accept internal numeric source IDs and return raw rows.
+    integrationTest("accepts and returns public funding UUIDs and two-decimal strings", async () => {
         const owner = await seedUser("tenant-a", "reallocation@example.test", "owner");
         const ctx = context("tenant-a", owner.id);
         const borrower = await createBorrower(ctx, { name: "Reallocation Borrower" });
@@ -197,34 +397,64 @@ describe("loan application service", () => {
             { tenantId: "tenant-a", bankProfileId: profile.id, amount: "2000.00" },
             { tenantId: "tenant-a", bankProfileId: profile.id, amount: "2000.00" },
         ]).returning();
-        await db.insert(loanFundingAllocations).values({
-            tenantId: "tenant-a",
-            bankProfileId: profile.id,
-            bankLoanId: source!.id,
-            loanId: storedLoan!.id,
-            allocatedAmount: "500.00",
-            allocationDate: "2026-08-10",
-            allocationType: "initial",
-            createdByUserId: owner.id,
-        });
-
         const app = new Elysia().use(loansRoute);
+        const headers = {
+            authorization: `Bearer ${await authToken(owner)}`,
+            "content-type": "application/json",
+        };
+        const allocated = await jsonRequest(app, `/loans/${loan.publicId}/funding-allocations`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+                bankLoanPublicId: source!.publicId,
+                allocatedAmount: "500.00",
+                allocationDate: "2026-08-10",
+            }),
+        });
+        expect(allocated.response.status, allocated.text).toBe(200);
+        expect(allocated.body).toMatchObject({
+            id: allocated.body.publicId,
+            loanPublicId: loan.publicId,
+            bankLoanPublicId: source!.publicId,
+            bankProfilePublicId: profile.publicId,
+            allocatedAmount: "500.00",
+        });
+        expect(allocated.body).not.toHaveProperty("bankLoanId");
+
+        const profitability = await jsonRequest(app, `/loans/${loan.publicId}/profitability`, { headers });
+        expect(profitability.response.status, profitability.text).toBe(200);
+        expect(profitability.body).toMatchObject({
+            loanId: loan.publicId,
+            loanPublicId: loan.publicId,
+            principalAmount: "1200.00",
+            fundedPrincipal: "500.00",
+            fundingComposition: [expect.objectContaining({
+                bankLoanPublicId: source!.publicId,
+                bankProfilePublicId: profile.publicId,
+                netAllocatedPrincipal: "500.00",
+            })],
+        });
+        expect(profitability.body.fundingComposition[0]).not.toHaveProperty("bankLoanId");
+        expect(profitability.body.fundingComposition[0]).not.toHaveProperty("bankProfileId");
+
         const response = await app.handle(new Request(`http://localhost/loans/${loan.publicId}/funding-reallocations`, {
             method: "POST",
-            headers: {
-                authorization: `Bearer ${await authToken(owner)}`,
-                "content-type": "application/json",
-            },
+            headers,
             body: JSON.stringify({
-                fromBankLoanId: source!.id,
-                toBankLoanId: target!.id,
-                amount: 100,
+                fromBankLoanPublicId: source!.publicId,
+                toBankLoanPublicId: target!.publicId,
+                amount: "100.00",
                 allocationDate: "2026-08-11",
             }),
         }));
 
         const responseText = await response.text();
         expect(response.status, responseText).toBe(200);
-        expect(JSON.parse(responseText) as unknown[]).toHaveLength(2);
+        const result = JSON.parse(responseText) as Array<Record<string, unknown>>;
+        expect(result).toHaveLength(2);
+        expect(result.every((row) => typeof row.id === "string" && typeof row.allocatedAmount === "string")).toBe(true);
+        expect(result[0]).not.toHaveProperty("bankLoanId");
+        expect(String(result[0]?.note)).toContain(target!.publicId);
+        expect(String(result[1]?.note)).toContain(source!.publicId);
     });
 });

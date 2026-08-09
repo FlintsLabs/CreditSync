@@ -12,7 +12,7 @@ import {
     updateBorrower,
 } from "../services/borrower-service";
 import type { CommandContext } from "../services/command-context";
-import { presentDomainError } from "../services/domain-error";
+import { DomainError, presentDomainError } from "../services/domain-error";
 
 type RouteUser = { id: number; tenantId: string };
 
@@ -42,6 +42,10 @@ function domainFailure(error: unknown, set: { status?: number | string }) {
     const presented = presentDomainError(error);
     set.status = presented.status;
     return presented.body;
+}
+
+function unauthorized(set: { status?: number | string }) {
+    return domainFailure(new DomainError("UNAUTHORIZED", "Unauthorized", 401), set);
 }
 
 const borrowerBody = t.Object({
@@ -85,7 +89,7 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
         }
     }, { body: t.Object({ file: t.File() }) })
     .get("/search", async ({ query, user, request, set }) => {
-        if (!user) return [];
+        if (!user) return unauthorized(set);
         try {
             const result = await searchBorrowers(commandContext(user, request), { query: query.q ?? "" });
             return { ...result, candidates: await Promise.all(result.candidates.map(withBorrowerMedia)) };
@@ -94,7 +98,7 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
         }
     }, { query: t.Object({ q: t.Optional(t.String()) }) })
     .get("/", async ({ user, request, set }) => {
-        if (!user) return [];
+        if (!user) return unauthorized(set);
         try {
             const result = await searchBorrowers(commandContext(user, request), { query: "" });
             return Promise.all(result.candidates.map(withBorrowerMedia));
@@ -103,7 +107,7 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
         }
     })
     .get("/:id/portfolio", async ({ params, user, request, set }) => {
-        if (!user) return domainFailure(new Error("Unauthorized"), set);
+        if (!user) return unauthorized(set);
         try {
             const portfolio = await getBorrowerPortfolio(commandContext(user, request), params.id);
             return { ...portfolio, borrower: await withBorrowerMedia(portfolio.borrower) };
@@ -112,7 +116,7 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
         }
     }, { params: t.Object({ id: t.String() }) })
     .get("/:id", async ({ params, user, request, set }) => {
-        if (!user) return null;
+        if (!user) return unauthorized(set);
         try {
             const portfolio = await getBorrowerPortfolio(commandContext(user, request), params.id);
             return withBorrowerMedia(portfolio.borrower);
@@ -121,7 +125,7 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
         }
     }, { params: t.Object({ id: t.String() }) })
     .post("/", async ({ body, user, request, set }) => {
-        if (!user) throw new Error("Unauthorized");
+        if (!user) return unauthorized(set);
         try {
             return withBorrowerMedia(await createBorrower(commandContext(user, request), body));
         } catch (error) {
@@ -129,7 +133,7 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
         }
     }, { body: borrowerBody })
     .put("/:id", async ({ params, body, user, request, set }) => {
-        if (!user) throw new Error("Unauthorized");
+        if (!user) return unauthorized(set);
         try {
             return withBorrowerMedia(await updateBorrower(commandContext(user, request), params.id, body));
         } catch (error) {
@@ -137,7 +141,7 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
         }
     }, { params: t.Object({ id: t.String() }), body: borrowerUpdateBody })
     .post("/:id/aliases", async ({ params, body, user, request, set }) => {
-        if (!user) throw new Error("Unauthorized");
+        if (!user) return unauthorized(set);
         try {
             return await addBorrowerAlias(commandContext(user, request), params.id, body);
         } catch (error) {
@@ -151,7 +155,7 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
         }),
     })
     .post("/aliases/:aliasId/confirm", async ({ params, user, request, set }) => {
-        if (!user) throw new Error("Unauthorized");
+        if (!user) return unauthorized(set);
         try {
             return await confirmBorrowerAlias(commandContext(user, request), params.aliasId);
         } catch (error) {
@@ -159,7 +163,7 @@ export const borrowersRoute = new Elysia({ prefix: "/borrowers" })
         }
     }, { params: t.Object({ aliasId: t.String() }) })
     .post("/aliases/:aliasId/deactivate", async ({ params, user, request, set }) => {
-        if (!user) throw new Error("Unauthorized");
+        if (!user) return unauthorized(set);
         try {
             return await deactivateBorrowerAlias(commandContext(user, request), params.aliasId);
         } catch (error) {

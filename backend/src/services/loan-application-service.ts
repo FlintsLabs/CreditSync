@@ -1,4 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
+import Decimal from "decimal.js";
 import { db } from "../db";
 import { bankLoans, borrowers, loanFundingAllocations, loanSchedules, loans, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
@@ -84,7 +85,7 @@ async function bankLoanFor(ctx: CommandContext, publicId?: string | null) {
     return row;
 }
 
-async function presentLoan(row: LoanRow) {
+export async function presentLoan(row: LoanRow) {
     const [borrower, bankLoan] = await Promise.all([
         db.query.borrowers.findFirst({ where: and(eq(borrowers.id, row.borrowerId), eq(borrowers.tenantId, row.tenantId)) }),
         row.bankLoanId === null ? null : db.query.bankLoans.findFirst({
@@ -257,9 +258,9 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
             throw new DomainError("INVALID_LOAN_TERMS", error instanceof Error ? error.message : "Invalid loan terms", 400);
         }
         const rollup = generated.length ? computeLoanRollup(generated.map((row) => ({ ...row, status: "pending" }))) : {
-            outstandingPrincipal: Number(current.principalAmount),
-            outstandingInterest: 0,
-            outstandingFees: 0,
+            outstandingPrincipal: new Decimal(current.principalAmount),
+            outstandingInterest: new Decimal(0),
+            outstandingFees: new Decimal(0),
             nextDueDate: null,
         };
         if (generated.length) {

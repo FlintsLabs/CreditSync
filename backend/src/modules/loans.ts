@@ -1,4 +1,5 @@
 import { Elysia, t } from "elysia";
+import Decimal from "decimal.js";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
@@ -16,11 +17,17 @@ import { createAuditLog } from "../lib/audit-log";
 import { canAccessTenantWideData, getAccessScopeCacheKey, loanAccessFilters } from "../lib/access";
 import { getLoanProfitabilitySummary } from "../lib/fund-settlement";
 import { computeOverdueSnapshot } from "../lib/overdue";
+import { parseMoney, serializeMoney } from "../lib/money";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
-import { findAccessibleBorrowerByPublicId, findAccessibleLoanByPublicId } from "../lib/public-id";
-import { activateLoan, createLoanDraft, getLoanApplication, previewLoan, updateLoanDraft } from "../services/loan-application-service";
+import {
+    findAccessibleBorrowerByPublicId,
+    findAccessibleLoanByPublicId,
+    findBankLoanByPublicId,
+    findBankProfileByPublicId,
+} from "../lib/public-id";
+import { activateLoan, createLoanDraft, getLoanApplication, presentLoan, previewLoan, updateLoanDraft } from "../services/loan-application-service";
 import type { CommandContext } from "../services/command-context";
-import { presentDomainError } from "../services/domain-error";
+import { DomainError, presentDomainError } from "../services/domain-error";
 
 type RouteUser = { id: number; tenantId: string };
 
@@ -42,14 +49,118 @@ function domainFailure(error: unknown, set: { status?: number | string }) {
     return presented.body;
 }
 
+function unauthorized(set: { status?: number | string }) {
+    return domainFailure(new DomainError("UNAUTHORIZED", "Unauthorized", 401), set);
+}
+
+function forbidden(set: { status?: number | string }) {
+    return domainFailure(new DomainError("FORBIDDEN", "Forbidden", 403), set);
+}
+
+function moneyInput(value: string, field: string) {
+    try {
+        return parseMoney(value);
+    } catch {
+        throw new DomainError("INVALID_MONEY", `${field} must be a non-negative string with exactly two decimals`, 400);
+    }
+}
+
+function serializeSignedMoney(value: Decimal.Value) {
+    const money = new Decimal(value);
+    if (!money.isFinite()) throw new DomainError("INVALID_MONEY", "Money must be finite", 500);
+    return money.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
+}
+
+type FundingAllocationRow = typeof loanFundingAllocations.$inferSelect;
+
+async function presentFundingAllocation(row: FundingAllocationRow) {
+    const [loan, bankProfile, bankLoan] = await Promise.all([
+        db.query.loans.findFirst({ where: and(eq(loans.id, row.loanId), eq(loans.tenantId, row.tenantId)) }),
+        row.bankProfileId === null ? null : db.query.bankProfiles.findFirst({
+            where: and(eq(bankProfiles.id, row.bankProfileId), eq(bankProfiles.tenantId, row.tenantId)),
+        }),
+        row.bankLoanId === null ? null : db.query.bankLoans.findFirst({
+            where: and(eq(bankLoans.id, row.bankLoanId), eq(bankLoans.tenantId, row.tenantId)),
+        }),
+    ]);
+    return {
+        id: row.publicId,
+        publicId: row.publicId,
+        loanPublicId: loan?.publicId ?? null,
+        bankProfilePublicId: bankProfile?.publicId ?? null,
+        bankLoanPublicId: bankLoan?.publicId ?? null,
+        allocatedAmount: serializeSignedMoney(row.allocatedAmount),
+        allocationDate: row.allocationDate,
+        allocationType: row.allocationType,
+        note: row.note,
+        createdAt: row.createdAt,
+    };
+}
+
+type LoanProfitabilitySummary = NonNullable<Awaited<ReturnType<typeof getLoanProfitabilitySummary>>>;
+
+async function presentLoanProfitability(
+    tenantId: string,
+    loanPublicId: string,
+    summary: LoanProfitabilitySummary,
+) {
+    const fundingComposition = await Promise.all(summary.fundingComposition.map(async (item) => {
+        const [bankLoan, bankProfile] = await Promise.all([
+            db.query.bankLoans.findFirst({
+                where: and(eq(bankLoans.id, item.bankLoanId), eq(bankLoans.tenantId, tenantId)),
+            }),
+            item.bankProfileId === null ? null : db.query.bankProfiles.findFirst({
+                where: and(eq(bankProfiles.id, item.bankProfileId), eq(bankProfiles.tenantId, tenantId)),
+            }),
+        ]);
+        return {
+            bankLoanPublicId: bankLoan?.publicId ?? null,
+            bankProfilePublicId: bankProfile?.publicId ?? null,
+            netAllocatedPrincipal: serializeSignedMoney(item.netAllocatedPrincipal),
+            shareOfLoanPrincipal: item.shareOfLoanPrincipal,
+            shareOfDrawdown: item.shareOfDrawdown,
+            estimatedBankInterestPaid: serializeSignedMoney(item.estimatedBankInterestPaid),
+            estimatedBankFeesPaid: serializeSignedMoney(item.estimatedBankFeesPaid),
+            estimatedBankVatPaid: serializeSignedMoney(item.estimatedBankVatPaid),
+            estimatedBankPenaltiesPaid: serializeSignedMoney(item.estimatedBankPenaltiesPaid),
+            outstandingCostAllocated: serializeSignedMoney(item.outstandingCostAllocated),
+        };
+    }));
+    const profileFundingComposition = await Promise.all(summary.profileFundingComposition.map(async (item) => {
+        const profile = await db.query.bankProfiles.findFirst({
+            where: and(eq(bankProfiles.id, item.bankProfileId), eq(bankProfiles.tenantId, tenantId)),
+        });
+        return {
+            bankProfilePublicId: profile?.publicId ?? null,
+            netAllocatedPrincipal: serializeSignedMoney(item.netAllocatedPrincipal),
+        };
+    }));
+    return {
+        loanId: loanPublicId,
+        loanPublicId,
+        principalAmount: serializeSignedMoney(summary.principalAmount),
+        fundedPrincipal: serializeSignedMoney(summary.fundedPrincipal),
+        unallocatedPrincipalGap: serializeSignedMoney(summary.unallocatedPrincipalGap),
+        borrowerRevenueCollected: serializeSignedMoney(summary.borrowerRevenueCollected),
+        fundCostPaid: serializeSignedMoney(summary.fundCostPaid),
+        realizedSpread: serializeSignedMoney(summary.realizedSpread),
+        unrealizedSpread: serializeSignedMoney(summary.unrealizedSpread),
+        realizedRoiPercent: summary.realizedRoiPercent,
+        estimatedOutstandingFundingCost: serializeSignedMoney(summary.estimatedOutstandingFundingCost),
+        fundingShare: summary.fundingShare,
+        fundingComposition,
+        profileFundingComposition,
+    };
+}
+
 const repaymentType = t.Union([
     t.Literal("daily"), t.Literal("weekly"), t.Literal("monthly"), t.Literal("floating"),
 ]);
 
 export const loansRoute = new Elysia({ prefix: "/loans" })
     .use(authPlugin)
-    .get("/", async ({ user, query }) => {
-        if (!user) return [];
+    .get("/", async ({ user, query, set }) => {
+        if (!user) return unauthorized(set);
 
         const conditions = loanAccessFilters(user);
         if (query.borrowerId) {
@@ -66,7 +177,8 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             namespace: "loans",
             key: `list:${scopeKey}:borrower=${query.borrowerId ?? "all"}`,
             ttlSeconds: 30,
-            loader: async () => await db.select({
+            loader: async () => {
+                const rows = await db.select({
                 id: loans.publicId,
                 publicId: loans.publicId,
                 borrowerId: borrowers.publicId,
@@ -83,7 +195,14 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                 .from(loans)
                 .leftJoin(borrowers, eq(loans.borrowerId, borrowers.id))
                 .where(and(...conditions))
-                .orderBy(desc(loans.createdAt)),
+                .orderBy(desc(loans.createdAt));
+                return rows.map((row) => ({
+                    ...row,
+                    principal: serializeMoney(row.principal),
+                    interestRate: serializeMoney(row.interestRate),
+                    installmentAmount: row.installmentAmount === null ? null : serializeMoney(row.installmentAmount),
+                }));
+            },
         });
     }, {
         query: t.Object({
@@ -92,8 +211,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
     })
     .get("/:id", async ({ params, user, request, set }) => {
         if (!user) {
-            set.status = 401;
-            return { error: "Unauthorized" };
+            return unauthorized(set);
         }
         const scopeKey = getAccessScopeCacheKey(user);
         try {
@@ -114,16 +232,12 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
     })
     .get("/:id/schedule", async ({ params, user, set }) => {
         if (!user) {
-            set.status = 401;
-            return { error: "Unauthorized" };
+            return unauthorized(set);
         }
 
         const loan = await findAccessibleLoanByPublicId(user, params.id);
 
-        if (!loan) {
-            set.status = 404;
-            return { error: "Loan not found" };
-        }
+        if (!loan) return domainFailure(new DomainError("LOAN_NOT_FOUND", "Loan not found", 404), set);
 
         const scopeKey = getAccessScopeCacheKey(user);
         return await withTenantCache({
@@ -151,12 +265,24 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                     });
 
                     return {
-                        ...row,
+                        id: row.publicId,
                         publicId: row.publicId,
+                        loanPublicId: loan.publicId,
+                        installmentNo: row.installmentNo,
+                        dueDate: row.dueDate,
+                        scheduledPrincipal: serializeMoney(row.scheduledPrincipal),
+                        scheduledInterest: serializeMoney(row.scheduledInterest),
+                        scheduledFee: serializeMoney(row.scheduledFee),
+                        scheduledTotal: serializeMoney(row.scheduledTotal),
+                        paidTotal: serializeMoney(row.paidTotal),
+                        paidPenalty: serializeMoney(row.paidPenalty),
+                        remainingDue: serializeMoney(row.remainingDue),
                         overdueDays: overdue.overdueDays,
                         penaltyDue: overdue.penaltyDue.toFixed(2),
                         totalDueNow: overdue.totalDueNow.toFixed(2),
                         status: overdue.effectiveStatus,
+                        createdAt: row.createdAt,
+                        updatedAt: row.updatedAt,
                     };
                 });
             },
@@ -168,16 +294,12 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
     })
     .get("/:id/funding-allocations", async ({ params, user, set }) => {
         if (!user) {
-            set.status = 401;
-            return { error: "Unauthorized" };
+            return unauthorized(set);
         }
 
         const loan = await findAccessibleLoanByPublicId(user, params.id);
 
-        if (!loan) {
-            set.status = 404;
-            return { error: "Loan not found" };
-        }
+        if (!loan) return domainFailure(new DomainError("LOAN_NOT_FOUND", "Loan not found", 404), set);
 
         const scopeKey = getAccessScopeCacheKey(user);
         return await withTenantCache({
@@ -185,30 +307,21 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             namespace: "loans",
             key: `funding-allocations:${loan.id}:${scopeKey}`,
             ttlSeconds: 20,
-            loader: async () => await db.select({
-                id: loanFundingAllocations.id,
-                bankLoanId: loanFundingAllocations.bankLoanId,
-                bankProfileId: loanFundingAllocations.bankProfileId,
-                loanPublicId: loans.publicId,
-                bankProfilePublicId: bankProfiles.publicId,
-                bankLoanPublicId: bankLoans.publicId,
-                allocatedAmount: loanFundingAllocations.allocatedAmount,
-                allocationDate: loanFundingAllocations.allocationDate,
-                allocationType: loanFundingAllocations.allocationType,
-                note: loanFundingAllocations.note,
-                bankProfileName: bankProfiles.name,
-            })
-                .from(loanFundingAllocations)
-                .leftJoin(bankProfiles, eq(loanFundingAllocations.bankProfileId, bankProfiles.id))
-                .leftJoin(bankLoans, eq(loanFundingAllocations.bankLoanId, bankLoans.id))
-                .leftJoin(loans, eq(loanFundingAllocations.loanId, loans.id))
-                .where(
+            loader: async () => {
+                const rows = await db.select().from(loanFundingAllocations).where(
                     and(
                         eq(loanFundingAllocations.loanId, loan.id),
                         eq(loanFundingAllocations.tenantId, user.tenantId)
                     )
                 )
-                .orderBy(desc(loanFundingAllocations.createdAt)),
+                    .orderBy(desc(loanFundingAllocations.createdAt));
+                return Promise.all(rows.map(async (row) => ({
+                    ...await presentFundingAllocation(row),
+                    bankProfileName: row.bankProfileId === null ? null : await db.query.bankProfiles.findFirst({
+                        where: and(eq(bankProfiles.id, row.bankProfileId), eq(bankProfiles.tenantId, user.tenantId)),
+                    }).then((profile) => profile?.name ?? null),
+                })));
+            },
         });
     }, {
         params: t.Object({
@@ -217,13 +330,11 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
     })
     .get("/:id/profitability", async ({ params, user, set }) => {
         if (!user) {
-            set.status = 401;
-            return { error: "Unauthorized" };
+            return unauthorized(set);
         }
 
         if (!canAccessTenantWideData(user)) {
-            set.status = 403;
-            return { error: "Forbidden" };
+            return forbidden(set);
         }
         const summary = await withTenantCache({
             tenantId: user.tenantId,
@@ -232,13 +343,12 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             ttlSeconds: 20,
             loader: async () => {
                 const loan = await findAccessibleLoanByPublicId(user, params.id);
-                return loan ? await getLoanProfitabilitySummary(user.tenantId, loan.id) : null;
+                if (!loan) return null;
+                const profitability = await getLoanProfitabilitySummary(user.tenantId, loan.id);
+                return profitability ? presentLoanProfitability(user.tenantId, loan.publicId, profitability) : null;
             },
         });
-        if (!summary) {
-            set.status = 404;
-            return { error: "Loan not found" };
-        }
+        if (!summary) return domainFailure(new DomainError("LOAN_NOT_FOUND", "Loan not found", 404), set);
 
         return summary;
     }, {
@@ -248,16 +358,12 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
     })
     .get("/:id/allocation-state", async ({ params, user, set }) => {
         if (!user) {
-            set.status = 401;
-            return { error: "Unauthorized" };
+            return unauthorized(set);
         }
 
         const loan = await findAccessibleLoanByPublicId(user, params.id);
 
-        if (!loan) {
-            set.status = 404;
-            return { error: "Loan not found" };
-        }
+        if (!loan) return domainFailure(new DomainError("LOAN_NOT_FOUND", "Loan not found", 404), set);
 
         const scopeKey = getAccessScopeCacheKey(user);
         return await withTenantCache({
@@ -273,24 +379,24 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                         eq(loanFundingAllocations.tenantId, user.tenantId),
                         eq(loanFundingAllocations.loanId, loan.id),
                     )
-                ).then((rows) => Number(rows[0]?.totalAllocated ?? 0));
+                ).then((rows) => new Decimal(rows[0]?.totalAllocated ?? 0));
 
-                const principalAmount = Number(loan.principalAmount ?? 0);
-                const remainingGap = Math.max(0, principalAmount - netAllocated);
-                const overfundedAmount = Math.max(0, netAllocated - principalAmount);
+                const principalAmount = new Decimal(loan.principalAmount ?? 0);
+                const remainingGap = Decimal.max(0, principalAmount.minus(netAllocated));
+                const overfundedAmount = Decimal.max(0, netAllocated.minus(principalAmount));
                 const state =
-                    netAllocated <= 0 ? "unfunded" :
-                    overfundedAmount > 0 ? "overfunded" :
-                    remainingGap <= 0.0001 ? "fully_funded" :
+                    netAllocated.lte(0) ? "unfunded" :
+                    overfundedAmount.gt(0) ? "overfunded" :
+                    remainingGap.isZero() ? "fully_funded" :
                     "partially_funded";
 
                 return {
-                    loanId: loan.id,
+                    loanId: loan.publicId,
                     loanPublicId: loan.publicId,
-                    principalAmount: Number(principalAmount.toFixed(2)),
-                    netAllocatedPrincipal: Number(netAllocated.toFixed(2)),
-                    remainingGap: Number(remainingGap.toFixed(2)),
-                    overfundedAmount: Number(overfundedAmount.toFixed(2)),
+                    principalAmount: serializeMoney(principalAmount),
+                    netAllocatedPrincipal: serializeMoney(netAllocated),
+                    remainingGap: serializeMoney(remainingGap),
+                    overfundedAmount: serializeMoney(overfundedAmount),
                     state,
                 };
             },
@@ -302,49 +408,50 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
     })
     .get("/:id/closing-summary", async ({ params, user, set }) => {
         if (!user) {
-            set.status = 401;
-            return { error: "Unauthorized" };
+            return unauthorized(set);
         }
 
         const loan = await findAccessibleLoanByPublicId(user, params.id);
 
-        if (!loan) {
-            set.status = 404;
-            return { error: "Loan not found" };
-        }
+        if (!loan) return domainFailure(new DomainError("LOAN_NOT_FOUND", "Loan not found", 404), set);
 
         const loanTransactions = await db.select()
             .from(transactions)
             .where(and(eq(transactions.loanId, loan.id), eq(transactions.tenantId, user.tenantId)));
 
-        return calculateLoanClosingSummary({ ...loan, startDate: loan.startDate ?? new Date() }, loanTransactions);
+        const summary = calculateLoanClosingSummary({ ...loan, startDate: loan.startDate ?? new Date() }, loanTransactions);
+        return {
+            loanId: loan.publicId,
+            loanPublicId: loan.publicId,
+            principal: serializeMoney(summary.principal),
+            totalInterest: serializeMoney(summary.totalInterest),
+            totalPaid: serializeMoney(summary.totalPaid),
+            totalDue: serializeMoney(summary.totalDue),
+            balance: summary.balance < 0 ? `-${serializeMoney(Math.abs(summary.balance))}` : serializeMoney(summary.balance),
+            daysSinceStart: summary.daysSinceStart,
+        };
     }, {
         params: t.Object({
             id: t.String()
         })
     })
-    .post("/:id/close", async ({ params, body, user, set }) => {
+    .post("/:id/close", async ({ params, body, user, request, set }) => {
         if (!user) {
-            set.status = 401;
-            return { error: "Unauthorized" };
+            return unauthorized(set);
         }
 
-            return await db.transaction(async (tx) => {
+        try {
+            const closed = await db.transaction(async (tx) => {
             const resolved = await findAccessibleLoanByPublicId(user, params.id);
             const loan = resolved ? await tx.query.loans.findFirst({
                 where: and(eq(loans.id, resolved.id), ...loanAccessFilters(user)),
             }) : null;
 
-            if (!loan) {
-                set.status = 404;
-                return { error: "Loan not found" };
-            }
+            if (!loan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
 
-            if (loan.status === "closed") {
-                set.status = 400;
-                return { error: "Loan is already closed" };
-            }
+            if (loan.status === "closed") throw new DomainError("LOAN_ALREADY_CLOSED", "Loan is already closed", 409);
 
+            const before = await getLoanApplication(commandContext(user, request), loan.publicId);
             const updated = await tx.update(loans)
                 .set({
                     status: "closed",
@@ -352,24 +459,29 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                 })
                 .where(eq(loans.id, loan.id))
                 .returning()
-                .then((rows) => rows[0]);
+                .then((rows) => rows[0]!);
+            const after = await presentLoan(updated);
 
             await createAuditLog(tx, {
                 tenantId: user.tenantId,
                 actorUserId: user.id,
                 entityType: "loan",
-                entityId: loan.id,
+                entityId: loan.publicId,
                 action: "closed",
                 payload: {
-                    before: loan,
-                    after: updated,
+                    before,
+                    after,
                     note: body.note,
                 },
             });
 
             await invalidateTenantCache(user.tenantId);
-            return updated;
+            return after;
         });
+            return closed;
+        } catch (error) {
+            return domainFailure(error, set);
+        }
     }, {
         params: t.Object({
             id: t.String(),
@@ -409,7 +521,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         }),
     })
     .post("/", async ({ body, user, request, set }) => {
-        if (!user) throw new Error("Unauthorized");
+        if (!user) return unauthorized(set);
         try {
             const created = await createLoanDraft(commandContext(user, request), body);
             await invalidateTenantCache(user.tenantId);
@@ -431,7 +543,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         })
     })
     .put("/:id", async ({ params, body, user, request, set }) => {
-        if (!user) throw new Error("Unauthorized");
+        if (!user) return unauthorized(set);
         try {
             const updated = await updateLoanDraft(commandContext(user, request), params.id, body);
             await invalidateTenantCache(user.tenantId);
@@ -451,7 +563,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         }),
     })
     .post("/:id/activate", async ({ params, user, request, set }) => {
-        if (!user) throw new Error("Unauthorized");
+        if (!user) return unauthorized(set);
         try {
             const activated = await activateLoan(commandContext(user, request), params.id);
             await invalidateTenantCache(user.tenantId);
@@ -461,12 +573,12 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         }
     }, { params: t.Object({ id: t.String() }) })
     .post("/:id/funding-allocations", async ({ params, body, user, set }) => {
-        if (!user) throw new Error("Unauthorized");
+        if (!user) return unauthorized(set);
         if (!canAccessTenantWideData(user)) {
-            set.status = 403;
-            return { error: "Forbidden" };
+            return forbidden(set);
         }
-
+        try {
+        const amount = moneyInput(body.allocatedAmount, "allocatedAmount");
         const created = await db.transaction(async (tx) => {
             const resolvedLoan = await findAccessibleLoanByPublicId(user, params.id);
             const loan = await tx.select().from(loans).where(
@@ -476,47 +588,50 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                 )
             ).then((rows) => rows[0]);
 
-            if (!loan) {
-                set.status = 404;
-                return { error: "Loan not found" };
-            }
+            if (!loan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
 
-            let sourceBankProfileId = body.bankProfileId ?? null;
-            if (body.bankLoanId) {
+            const requestedProfile = body.bankProfilePublicId
+                ? await findBankProfileByPublicId(user.tenantId, body.bankProfilePublicId)
+                : null;
+            if (body.bankProfilePublicId && !requestedProfile) {
+                throw new DomainError("BANK_PROFILE_NOT_FOUND", "Bank profile not found", 404);
+            }
+            const requestedDrawdown = body.bankLoanPublicId
+                ? await findBankLoanByPublicId(user.tenantId, body.bankLoanPublicId)
+                : null;
+            if (body.bankLoanPublicId && !requestedDrawdown) {
+                throw new DomainError("BANK_LOAN_NOT_FOUND", "Bank loan not found", 404);
+            }
+            let sourceBankProfileId = requestedProfile?.id ?? null;
+            if (requestedDrawdown) {
                 // Use a row lock to prevent concurrent allocations from exceeding capacity
                 const sourceDrawdown = await tx.execute(
-                    sql`SELECT * FROM bank_loans WHERE id = ${body.bankLoanId} AND tenant_id = ${user.tenantId} FOR UPDATE`
+                    sql`SELECT * FROM bank_loans WHERE id = ${requestedDrawdown.id} AND tenant_id = ${user.tenantId} FOR UPDATE`
                 ).then((res) => res[0] as typeof bankLoans.$inferSelect | undefined);
 
-                if (!sourceDrawdown) {
-                    set.status = 404;
-                    return { error: "Bank loan not found or access denied" };
-                }
+                if (!sourceDrawdown) throw new DomainError("BANK_LOAN_NOT_FOUND", "Bank loan not found", 404);
 
                 const sourceAllocation = await tx.select({
                     totalAllocated: sql<string>`coalesce(sum(${loanFundingAllocations.allocatedAmount}), 0)`,
                 }).from(loanFundingAllocations).where(
                     and(
-                        eq(loanFundingAllocations.bankLoanId, body.bankLoanId),
+                        eq(loanFundingAllocations.bankLoanId, requestedDrawdown.id),
                         eq(loanFundingAllocations.tenantId, user.tenantId)
                     )
-                ).then((rows) => Number(rows[0]?.totalAllocated ?? 0));
+                ).then((rows) => new Decimal(rows[0]?.totalAllocated ?? 0));
 
-                const sourceRemaining = Number(sourceDrawdown.amount) - sourceAllocation;
-                if (body.allocatedAmount > sourceRemaining + 0.0001) {
-                    set.status = 400;
-                    return {
-                        error: "Allocation exceeds remaining drawdown balance",
-                        sourceRemaining: Number(sourceRemaining.toFixed(2)),
-                    };
+                const sourceRemaining = new Decimal(sourceDrawdown.amount).minus(sourceAllocation);
+                if (amount.gt(sourceRemaining)) {
+                    throw new DomainError("ALLOCATION_EXCEEDS_DRAWDOWN", "Allocation exceeds remaining drawdown balance", 400, {
+                        sourceRemaining: serializeMoney(sourceRemaining),
+                    });
                 }
 
-                sourceBankProfileId = sourceDrawdown.bankProfileId;
+                sourceBankProfileId = requestedDrawdown.bankProfileId;
             }
 
-            if (!sourceBankProfileId && !body.bankLoanId) {
-                set.status = 400;
-                return { error: "Either bankProfileId or bankLoanId is required" };
+            if (!sourceBankProfileId && !requestedDrawdown) {
+                throw new DomainError("FUNDING_SOURCE_REQUIRED", "Either bankProfilePublicId or bankLoanPublicId is required", 400);
             }
 
             const currentAllocation = await tx.select({
@@ -526,23 +641,21 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                     eq(loanFundingAllocations.loanId, loan.id),
                     eq(loanFundingAllocations.tenantId, user.tenantId)
                 )
-            ).then((rows) => Number(rows[0]?.totalAllocated ?? 0));
+            ).then((rows) => new Decimal(rows[0]?.totalAllocated ?? 0));
 
-            const remainingLoanCapacity = Number(loan.principalAmount) - currentAllocation;
-            if (body.allocatedAmount > remainingLoanCapacity + 0.0001) {
-                set.status = 400;
-                return {
-                    error: "Allocation exceeds remaining unfunded principal",
-                    remainingCapacity: Number(remainingLoanCapacity.toFixed(2)),
-                };
+            const remainingLoanCapacity = new Decimal(loan.principalAmount).minus(currentAllocation);
+            if (amount.gt(remainingLoanCapacity)) {
+                throw new DomainError("ALLOCATION_EXCEEDS_PRINCIPAL", "Allocation exceeds remaining unfunded principal", 400, {
+                    remainingCapacity: serializeMoney(remainingLoanCapacity),
+                });
             }
 
             const created = await tx.insert(loanFundingAllocations).values({
                 tenantId: user.tenantId,
                 bankProfileId: sourceBankProfileId,
-                bankLoanId: body.bankLoanId,
+                bankLoanId: requestedDrawdown?.id ?? null,
                 loanId: loan.id,
-                allocatedAmount: body.allocatedAmount.toFixed(2),
+                allocatedAmount: serializeMoney(amount),
                 allocationDate: body.allocationDate,
                 allocationType: body.allocationType ?? "initial",
                 note: body.note,
@@ -553,23 +666,26 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                 tenantId: user.tenantId,
                 actorUserId: user.id,
                 entityType: "loan_funding_allocation",
-                entityId: created.id,
+                entityId: created.publicId,
                 action: "created",
-                payload: created,
+                payload: await presentFundingAllocation(created),
             });
 
-            return created;
+            return presentFundingAllocation(created);
         });
         await invalidateTenantCache(user.tenantId);
         return created;
+        } catch (error) {
+            return domainFailure(error, set);
+        }
     }, {
         params: t.Object({
             id: t.String(),
         }),
         body: t.Object({
-            bankProfileId: t.Optional(t.Number()),
-            bankLoanId: t.Optional(t.Number()),
-            allocatedAmount: t.Number(),
+            bankProfilePublicId: t.Optional(t.String()),
+            bankLoanPublicId: t.Optional(t.String()),
+            allocatedAmount: t.String(),
             allocationDate: t.String(),
             allocationType: t.Optional(t.Union([
                 t.Literal("initial"),
@@ -581,16 +697,14 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         })
     })
     .post("/:id/funding-reallocations", async ({ params, body, user, set }) => {
-        if (!user) throw new Error("Unauthorized");
+        if (!user) return unauthorized(set);
         if (!canAccessTenantWideData(user)) {
-            set.status = 403;
-            return { error: "Forbidden" };
+            return forbidden(set);
         }
+        try {
+        const amount = moneyInput(body.amount, "amount");
         const resolvedLoan = await findAccessibleLoanByPublicId(user, params.id);
-        if (!resolvedLoan) {
-            set.status = 404;
-            return { error: "Loan not found" };
-        }
+        if (!resolvedLoan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
 
         const createdRows = await db.transaction(async (tx) => {
             const loan = await tx.select().from(loans).where(
@@ -600,32 +714,27 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                 )
             ).then((rows) => rows[0]);
 
-            if (!loan) {
-                set.status = 404;
-                return { error: "Loan not found" };
-            }
+            if (!loan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
 
             const sourceDrawdown = await tx.select().from(bankLoans).where(
                 and(
-                    eq(bankLoans.id, body.fromBankLoanId),
+                    eq(bankLoans.publicId, body.fromBankLoanPublicId),
                     eq(bankLoans.tenantId, user.tenantId)
                 )
             ).then((rows) => rows[0]);
             const targetDrawdown = await tx.select().from(bankLoans).where(
                 and(
-                    eq(bankLoans.id, body.toBankLoanId),
+                    eq(bankLoans.publicId, body.toBankLoanPublicId),
                     eq(bankLoans.tenantId, user.tenantId)
                 )
             ).then((rows) => rows[0]);
 
             if (!sourceDrawdown || !targetDrawdown) {
-                set.status = 404;
-                return { error: "Source or target drawdown not found" };
+                throw new DomainError("BANK_LOAN_NOT_FOUND", "Source or target drawdown not found", 404);
             }
 
-            if (body.fromBankLoanId === body.toBankLoanId) {
-                set.status = 400;
-                return { error: "Source and target drawdowns must be different" };
+            if (body.fromBankLoanPublicId === body.toBankLoanPublicId) {
+                throw new DomainError("SAME_FUNDING_SOURCE", "Source and target drawdowns must be different", 400);
             }
 
             const currentSourceAllocation = await tx.select({
@@ -633,35 +742,31 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             }).from(loanFundingAllocations).where(
                 and(
                     eq(loanFundingAllocations.loanId, loan.id),
-                    eq(loanFundingAllocations.bankLoanId, body.fromBankLoanId),
+                    eq(loanFundingAllocations.bankLoanId, sourceDrawdown.id),
                     eq(loanFundingAllocations.tenantId, user.tenantId)
                 )
-            ).then((rows) => Number(rows[0]?.totalAllocated ?? 0));
+            ).then((rows) => new Decimal(rows[0]?.totalAllocated ?? 0));
 
-            if (body.amount > currentSourceAllocation + 0.0001) {
-                set.status = 400;
-                return {
-                    error: "Reallocation exceeds current allocation on the source drawdown",
-                    sourceAllocated: Number(currentSourceAllocation.toFixed(2)),
-                };
+            if (amount.gt(currentSourceAllocation)) {
+                throw new DomainError("REALLOCATION_EXCEEDS_SOURCE", "Reallocation exceeds current allocation on the source drawdown", 400, {
+                    sourceAllocated: serializeMoney(currentSourceAllocation),
+                });
             }
 
             const targetAllocation = await tx.select({
                 totalAllocated: sql<string>`coalesce(sum(${loanFundingAllocations.allocatedAmount}), 0)`,
             }).from(loanFundingAllocations).where(
                 and(
-                    eq(loanFundingAllocations.bankLoanId, body.toBankLoanId),
+                    eq(loanFundingAllocations.bankLoanId, targetDrawdown.id),
                     eq(loanFundingAllocations.tenantId, user.tenantId)
                 )
-            ).then((rows) => Number(rows[0]?.totalAllocated ?? 0));
+            ).then((rows) => new Decimal(rows[0]?.totalAllocated ?? 0));
 
-            const targetRemaining = Number(targetDrawdown.amount) - targetAllocation;
-            if (body.amount > targetRemaining + 0.0001) {
-                set.status = 400;
-                return {
-                    error: "Reallocation exceeds remaining target drawdown balance",
-                    targetRemaining: Number(targetRemaining.toFixed(2)),
-                };
+            const targetRemaining = new Decimal(targetDrawdown.amount).minus(targetAllocation);
+            if (amount.gt(targetRemaining)) {
+                throw new DomainError("REALLOCATION_EXCEEDS_TARGET", "Reallocation exceeds remaining target drawdown balance", 400, {
+                    targetRemaining: serializeMoney(targetRemaining),
+                });
             }
 
             const createdRows = await tx.insert(loanFundingAllocations).values([
@@ -670,10 +775,10 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                     bankProfileId: sourceDrawdown.bankProfileId,
                     bankLoanId: sourceDrawdown.id,
                     loanId: loan.id,
-                    allocatedAmount: (-body.amount).toFixed(2),
+                    allocatedAmount: amount.negated().toFixed(2),
                     allocationDate: body.allocationDate,
                     allocationType: "reallocation_out",
-                    note: body.note ?? `Reallocated out to drawdown #${targetDrawdown.id}`,
+                    note: body.note ?? `Reallocated out to drawdown ${targetDrawdown.publicId}`,
                     createdByUserId: user.id,
                 },
                 {
@@ -681,10 +786,10 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                     bankProfileId: targetDrawdown.bankProfileId,
                     bankLoanId: targetDrawdown.id,
                     loanId: loan.id,
-                    allocatedAmount: body.amount.toFixed(2),
+                    allocatedAmount: amount.toFixed(2),
                     allocationDate: body.allocationDate,
                     allocationType: "reallocation_in",
-                    note: body.note ?? `Reallocated in from drawdown #${sourceDrawdown.id}`,
+                    note: body.note ?? `Reallocated in from drawdown ${sourceDrawdown.publicId}`,
                     createdByUserId: user.id,
                 },
             ]).returning();
@@ -693,30 +798,33 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                 tenantId: user.tenantId,
                 actorUserId: user.id,
                 entityType: "loan_funding_reallocation",
-                entityId: `${createdRows[0].id}:${createdRows[1].id}`,
+                entityId: `${createdRows[0].publicId}:${createdRows[1].publicId}`,
                 action: "created",
                 payload: {
-                    loanId: loan.id,
-                    fromBankLoanId: sourceDrawdown.id,
-                    toBankLoanId: targetDrawdown.id,
-                    amount: body.amount.toFixed(2),
+                    loanPublicId: loan.publicId,
+                    fromBankLoanPublicId: sourceDrawdown.publicId,
+                    toBankLoanPublicId: targetDrawdown.publicId,
+                    amount: amount.toFixed(2),
                     allocationDate: body.allocationDate,
                     note: body.note,
                 },
             });
 
-            return createdRows;
+            return Promise.all(createdRows.map(presentFundingAllocation));
         });
         await invalidateTenantCache(user.tenantId);
         return createdRows;
+        } catch (error) {
+            return domainFailure(error, set);
+        }
     }, {
         params: t.Object({
             id: t.String(),
         }),
         body: t.Object({
-            fromBankLoanId: t.Number(),
-            toBankLoanId: t.Number(),
-            amount: t.Number(),
+            fromBankLoanPublicId: t.String(),
+            toBankLoanPublicId: t.String(),
+            amount: t.String(),
             allocationDate: t.String(),
             note: t.Optional(t.String()),
         })

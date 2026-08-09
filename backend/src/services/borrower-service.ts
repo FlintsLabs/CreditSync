@@ -3,6 +3,8 @@ import { db } from "../db";
 import { borrowerAliases, borrowers, loans, users } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import { canAccessTenantWideData } from "../lib/access";
+import { invalidateTenantCache } from "../lib/cache";
+import { serializeMoney } from "../lib/money";
 import { DomainError } from "./domain-error";
 import type { CommandContext } from "./command-context";
 
@@ -128,7 +130,7 @@ export async function updateBorrower(ctx: CommandContext, publicId: string, inpu
     if (input.name !== undefined && !input.name.trim()) {
         throw new DomainError("INVALID_BORROWER", "Borrower name is required", 400);
     }
-    return db.transaction(async (tx) => {
+    const updated = await db.transaction(async (tx) => {
         const row = await tx.update(borrowers).set({
             ...input,
             ...(input.name === undefined ? {} : { name: input.name.trim() }),
@@ -146,6 +148,8 @@ export async function updateBorrower(ctx: CommandContext, publicId: string, inpu
         });
         return after;
     });
+    await invalidateTenantCache(ctx.tenantId);
+    return updated;
 }
 
 export async function searchBorrowers(ctx: CommandContext, input: { query: string }) {
@@ -206,7 +210,15 @@ export async function addBorrowerAlias(
             status: "pending",
             createdByUserId: ctx.actorUserId,
             updatedByUserId: ctx.actorUserId,
-        }).returning().then((rows) => rows[0]!);
+        }).onConflictDoNothing({
+            target: [borrowerAliases.tenantId, borrowerAliases.borrowerId, borrowerAliases.normalizedAlias],
+        }).returning().then((rows) => rows[0]);
+        if (!row) {
+            throw new DomainError("ALIAS_ALREADY_EXISTS", "Borrower alias already exists", 409, {
+                borrowerPublicId,
+                normalizedAlias,
+            });
+        }
         const after = presentAlias(row);
         await createAuditLog(tx, {
             ...auditContext(ctx), entityType: "borrower_alias", entityId: row.publicId,
@@ -267,8 +279,8 @@ export async function getBorrowerPortfolio(ctx: CommandContext, borrowerPublicId
         loans: borrowerLoans.map((loan) => ({
             id: loan.publicId,
             publicId: loan.publicId,
-            principal: loan.principalAmount,
-            interestRate: loan.interestRate,
+            principal: serializeMoney(loan.principalAmount),
+            interestRate: serializeMoney(loan.interestRate),
             repaymentType: loan.repaymentType,
             status: loan.status,
             startDate: loan.startDate,

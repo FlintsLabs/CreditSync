@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.3.1 - 2026-08-10
+
+### Changed
+- Loan schedule, closing, allocation-state, profitability, funding-allocation, and funding-reallocation REST payloads now expose public UUIDs and two-decimal money strings; funding mutations accept public funding UUIDs and money strings.
+- Updated the loan detail, matching, and closing frontend flows for the exact public loan DTOs.
+
+### Fixed
+- Conserved principal, interest, fees, row totals, and remaining due across daily, weekly, and monthly schedules, including non-even final installments, without `Number` drift in activation rollups.
+- Mapped routine borrower and loan authorization, visibility, state, and duplicate-alias failures to stable domain error codes and statuses.
+- Restored tenant cache invalidation after borrower updates so cached loan lists immediately reflect borrower-name changes.
+
+### Tests
+- Added PostgreSQL coverage for exact activation balances, simultaneous activation idempotency, the authenticated draft-to-activation REST lifecycle, public funding DTOs, mutation audits, duplicate aliases, and Dragonfly-backed cache invalidation.
+
 ## v0.3.0 - 2026-08-09
 
 ### Added
