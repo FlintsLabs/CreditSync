@@ -16,6 +16,7 @@ import { dashboardRoute } from "./modules/dashboard";
 import { reconciliationRoute } from "./modules/reconciliation";
 import { paymentIntakesRoute } from "./modules/payment-intakes";
 import { loanRenewalsRoute } from "./modules/loan-renewals";
+import { createDefaultMcpHttpPlugin } from "./mcp/default";
 
 const isProd = process.env.NODE_ENV === "production";
 const corsOrigins = (process.env.CORS_ORIGINS || "")
@@ -32,9 +33,13 @@ const app = new Elysia()
     }))
     .use(swagger())
     .onRequest(({ request }) => {
-        console.log(`[${new Date().toISOString()}] ${request.method} ${request.url}`);
+        const pathname = new URL(request.url).pathname;
+        if (!pathname.startsWith("/mcp")) {
+            console.log(JSON.stringify({ event: "http_request", method: request.method, path: pathname }));
+        }
     })
     .get("/", () => "Hello CreditSync")
+    .use(createDefaultMcpHttpPlugin())
     .use(authPlugin)
     .use(authRoute)
     .use(webhookRoute) // Webhook has its own signature verification

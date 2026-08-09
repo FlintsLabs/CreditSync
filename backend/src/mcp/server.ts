@@ -1,0 +1,728 @@
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { Elysia } from "elysia";
+import { z } from "zod";
+import type { CommandContext } from "../services/command-context";
+import { DomainError } from "../services/domain-error";
+import { authenticateBearer, hostIsAllowed, type McpRuntimeConfig } from "./security";
+
+export const MCP_TOOL_NAMES = [
+    "borrower.search",
+    "borrower.portfolio",
+    "borrower.create",
+    "borrower.update",
+    "borrower.alias",
+    "intake.get",
+    "intake.list",
+    "intake.create",
+    "evidence.prepare",
+    "evidence.finalize",
+    "payment.preview",
+    "payment.post",
+    "payment.reverse",
+    "loan.preview",
+    "loan.draft",
+    "loan.activate",
+    "renewal.preview",
+    "renewal.execute",
+    "renewal.reverse",
+    "funding-source.list",
+] as const;
+
+export type McpToolName = (typeof MCP_TOOL_NAMES)[number];
+export type McpToolHandler = (ctx: CommandContext, input: Record<string, unknown>) => Promise<unknown>;
+
+export interface CreateMcpHttpPluginInput {
+    config: McpRuntimeConfig;
+    handlers: Record<McpToolName, McpToolHandler>;
+    resolvePrincipal: (input: { tenantId: string; actorEmail: string }) => Promise<{ tenantId: string; actorUserId: number }>;
+    consumeRateLimit: (input: { key: string; max: number; windowSeconds: number }) => Promise<{
+        allowed: boolean;
+        remaining: number;
+        retryAfterSeconds: number;
+    }>;
+    findAuditPublicIds: (input: {
+        ctx: CommandContext;
+        toolName: McpToolName;
+        result: unknown;
+    }) => Promise<string[]>;
+    logger: (entry: Record<string, unknown>) => void;
+}
+
+const uuid = z.uuid();
+const money = z.string().regex(/^(0|[1-9]\d*)\.\d{2}$/).max(32);
+const date = z.iso.date();
+const dateTime = z.iso.datetime({ offset: true });
+const shortText = z.string().trim().min(1).max(500);
+const optionalNullableText = z.string().trim().max(2_000).nullable().optional();
+
+const borrowerFields = {
+    name: z.string().trim().min(1).max(300),
+    idCardNumber: z.string().trim().max(100).nullable().optional(),
+    phone: z.string().trim().max(100).nullable().optional(),
+    address: z.string().trim().max(2_000).nullable().optional(),
+    creditScore: z.number().int().min(0).max(1_000).nullable().optional(),
+    notes: optionalNullableText,
+    idCardImageUrl: z.url().nullable().optional(),
+    tags: z.array(z.string().trim().min(1).max(100)).max(50).nullable().optional(),
+    googleMapsUrl: z.url().nullable().optional(),
+};
+
+const loanTerms = {
+    principal: money,
+    interestRate: money,
+    termMonths: z.number().int().positive().max(1_200),
+    repaymentType: z.enum(["daily", "weekly", "monthly", "floating"]),
+    startDate: date,
+    totalInstallments: z.number().int().positive().max(100_000).optional(),
+    installmentAmount: money.optional(),
+};
+
+const explicitAllocation = z.object({
+    borrowerPublicId: uuid,
+    loanPublicId: uuid,
+    schedulePublicId: uuid.optional(),
+    amount: money,
+}).strict();
+
+const isoDateTime = z.iso.datetime({ offset: true });
+const nullableIsoDateTime = isoDateTime.nullable();
+const warningSchema = z.record(z.string(), z.unknown());
+const publicEntity = { id: uuid.optional(), publicId: uuid };
+const borrowerOutput = z.object({
+    ...publicEntity,
+    name: z.string(),
+    idCardNumber: z.string().nullable().optional(),
+    phone: z.string().nullable().optional(),
+    address: z.string().nullable().optional(),
+    photoUrl: z.string().nullable().optional(),
+    idCardImageUrl: z.string().nullable().optional(),
+    creditScore: z.number().int().nullable().optional(),
+    tags: z.array(z.string()).nullable().optional(),
+    googleMapsUrl: z.string().nullable().optional(),
+    notes: z.string().nullable().optional(),
+    createdAt: nullableIsoDateTime.optional(),
+    updatedAt: nullableIsoDateTime.optional(),
+}).strict();
+const aliasOutput = z.object({
+    ...publicEntity,
+    alias: z.string(),
+    normalizedAlias: z.string(),
+    source: z.string(),
+    status: z.string(),
+    confirmedAt: nullableIsoDateTime.optional(),
+    createdAt: nullableIsoDateTime.optional(),
+    updatedAt: nullableIsoDateTime.optional(),
+}).strict();
+const intakeOutput = z.object({
+    ...publicEntity,
+    source: z.string().optional(),
+    status: z.string(),
+    amount: money.optional(),
+    receivedAt: isoDateTime.optional(),
+    payerName: z.string().nullable().optional(),
+    bankReference: z.string().nullable().optional(),
+    notes: z.string().nullable().optional(),
+    postedAt: nullableIsoDateTime.optional(),
+    createdAt: nullableIsoDateTime.optional(),
+    updatedAt: nullableIsoDateTime.optional(),
+}).strict();
+const proposalAllocationOutput = z.object({
+    ...publicEntity,
+    borrowerPublicId: uuid.optional(),
+    loanPublicId: uuid.optional(),
+    schedulePublicId: uuid.nullable().optional(),
+    amount: money,
+    matchReason: z.string().nullable().optional(),
+}).strict();
+const proposalOutput = z.object({
+    ...publicEntity,
+    version: z.number().int(),
+    status: z.string(),
+    warnings: z.array(warningSchema),
+    totalAllocated: money,
+    expiresAt: nullableIsoDateTime.optional(),
+    allocations: z.array(proposalAllocationOutput),
+}).strict();
+const transactionOutput = z.object({
+    ...publicEntity,
+    amount: money,
+    principalComponent: money,
+    interestComponent: money,
+    feeComponent: money,
+    penaltyComponent: money,
+    entryType: z.string(),
+    postedAt: nullableIsoDateTime.optional(),
+}).strict();
+const loanOutput = z.object({
+    ...publicEntity,
+    borrowerPublicId: uuid.nullable().optional(),
+    bankLoanPublicId: uuid.nullable().optional(),
+    principal: money,
+    principalAmount: money,
+    interestRate: money,
+    repaymentType: z.enum(["daily", "weekly", "monthly", "floating"]),
+    termMonths: z.number().int().nullable(),
+    installmentAmount: money.nullable(),
+    totalInstallments: z.number().int().nullable(),
+    startDate: date.nullable(),
+    nextDueDate: date.nullable(),
+    outstandingPrincipal: money,
+    outstandingInterest: money,
+    outstandingFees: money,
+    status: z.string().nullable(),
+    createdAt: nullableIsoDateTime.optional(),
+    updatedAt: nullableIsoDateTime.optional(),
+}).strict();
+const scheduleOutput = z.object({
+    installmentNo: z.number().int().positive(),
+    dueDate: date,
+    amount: money,
+    principalComponent: money,
+    interestComponent: money,
+    remainingPrincipal: money,
+}).strict();
+const renewalOutput = z.object({
+    ...publicEntity,
+    status: z.string(),
+    oldLoanPublicId: uuid,
+    newLoanPublicId: uuid.nullable().optional(),
+    previewHash: z.string().regex(/^v\d+:[0-9a-f]{64}$/i),
+    hashVersion: z.string().optional(),
+    principalPaid: money,
+    outstandingPrincipal: money,
+    dueInterest: money.optional(),
+    dueFees: money.optional(),
+    duePenalties: money.optional(),
+    dueCharges: money,
+    settlementAmount: money,
+    waivedCharges: money,
+    requestedPrincipal: money,
+    cashDirection: z.enum(["payout", "collection", "none"]),
+    cashAmount: money,
+    waiverReason: z.string().nullable().optional(),
+    reason: z.string().nullable().optional(),
+    expiresAt: nullableIsoDateTime.optional(),
+    executedAt: nullableIsoDateTime.optional(),
+    reversedAt: nullableIsoDateTime.optional(),
+    createdAt: nullableIsoDateTime.optional(),
+    updatedAt: nullableIsoDateTime.optional(),
+}).strict();
+const evidenceIntentOutput = z.object({
+    ...publicEntity,
+    filePublicId: uuid.nullable().optional(),
+    status: z.string().optional(),
+    objectKey: z.string().optional(),
+    uploadUrl: z.url().optional(),
+    expiresAt: isoDateTime.optional(),
+    requiredHeaders: z.record(z.string(), z.string()).optional(),
+    duplicate: z.boolean().optional(),
+    duplicateReason: z.string().nullable().optional(),
+    warnings: z.array(warningSchema).optional(),
+    intakePublicId: uuid.optional(),
+}).strict();
+const evidenceFinalOutput = z.object({
+    ...publicEntity,
+    status: z.string(),
+    sha256: z.string().regex(/^[0-9a-f]{64}$/i).nullable(),
+    filePublicId: uuid.nullable(),
+}).strict();
+const fundingDrawdownOutput = z.object({
+    publicId: uuid,
+    amount: money,
+    outstandingPrincipal: money.nullable(),
+    outstandingInterest: money.nullable(),
+    outstandingFees: money.nullable(),
+    outstandingPenalties: money.nullable(),
+    interestRate: money.nullable(),
+    startDate: date.nullable(),
+    termMonths: z.number().int().nullable(),
+    status: z.string().nullable(),
+}).strict();
+const fundingProfileOutput = z.object({
+    publicId: uuid,
+    name: z.string(),
+    type: z.string(),
+    providerName: z.string().nullable(),
+    status: z.string().nullable(),
+    creditLimit: money.nullable(),
+    accountingMode: z.string(),
+    reinvestProfitMode: z.string(),
+    drawdowns: z.array(fundingDrawdownOutput),
+}).strict();
+
+const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
+    "borrower.search": z.object({
+        resolution: z.enum(["none", "unique", "ambiguous", "candidates"]),
+        matchType: z.enum(["canonical", "confirmed_alias", "fuzzy"]).nullable().optional(),
+        candidates: z.array(borrowerOutput),
+    }).strict(),
+    "borrower.portfolio": z.object({
+        borrower: borrowerOutput,
+        aliases: z.array(aliasOutput),
+        loans: z.array(z.object({
+            ...publicEntity,
+            principal: money,
+            interestRate: money,
+            repaymentType: z.string(),
+            status: z.string().nullable(),
+            startDate: date.nullable(),
+            createdAt: nullableIsoDateTime.optional(),
+        }).strict()),
+    }).strict(),
+    "borrower.create": borrowerOutput,
+    "borrower.update": borrowerOutput,
+    "borrower.alias": aliasOutput,
+    "intake.get": intakeOutput.extend({
+        evidence: z.array(z.object({
+            ...publicEntity,
+            status: z.string(),
+            mimeType: z.string(),
+            size: z.number().int(),
+            sha256: z.string().regex(/^[0-9a-f]{64}$/i).nullable(),
+        }).strict()),
+        latestProposal: proposalOutput.nullable(),
+    }),
+    "intake.list": z.object({ items: z.array(intakeOutput) }).strict(),
+    "intake.create": z.union([
+        intakeOutput.extend({ duplicate: z.literal(false), duplicateReason: z.null(), warnings: z.array(warningSchema) }),
+        z.object({ ...publicEntity, status: z.string(), duplicate: z.literal(true), duplicateReason: z.string(), warnings: z.array(warningSchema) }).strict(),
+    ]),
+    "evidence.prepare": evidenceIntentOutput,
+    "evidence.finalize": evidenceFinalOutput,
+    "payment.preview": proposalOutput,
+    "payment.post": intakeOutput.extend({ transactions: z.array(transactionOutput) }),
+    "payment.reverse": intakeOutput.extend({ transactions: z.array(transactionOutput) }),
+    "loan.preview": z.object({
+        terms: z.object({ ...loanTerms }).strict(),
+        schedule: z.array(scheduleOutput),
+    }).strict(),
+    "loan.draft": loanOutput,
+    "loan.activate": loanOutput,
+    "renewal.preview": renewalOutput,
+    "renewal.execute": renewalOutput,
+    "renewal.reverse": renewalOutput,
+    "funding-source.list": z.object({ profiles: z.array(fundingProfileOutput) }).strict(),
+};
+
+const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
+    "borrower.search": z.object({ query: shortText }).strict(),
+    "borrower.portfolio": z.object({ borrowerPublicId: uuid }).strict(),
+    "borrower.create": z.object(borrowerFields).strict(),
+    "borrower.update": z.object({
+        borrowerPublicId: uuid,
+        changes: z.object(borrowerFields).partial().strict(),
+    }).strict(),
+    "borrower.alias": z.object({
+        action: z.enum(["add", "confirm", "deactivate"]),
+        borrowerPublicId: uuid.optional(),
+        aliasPublicId: uuid.optional(),
+        alias: z.string().trim().min(1).max(300).optional(),
+        source: z.enum(["manual", "payment", "import"]).optional(),
+    }).strict().superRefine((value, ctx) => {
+        if (value.action === "add" && (!value.borrowerPublicId || !value.alias)) {
+            ctx.addIssue({ code: "custom", message: "add requires borrowerPublicId and alias" });
+        }
+        if (value.action !== "add" && !value.aliasPublicId) {
+            ctx.addIssue({ code: "custom", message: `${value.action} requires aliasPublicId` });
+        }
+    }),
+    "intake.get": z.object({ paymentIntakePublicId: uuid }).strict(),
+    "intake.list": z.object({
+        status: z.enum(["draft", "needs_review", "ready", "posted", "reversed", "duplicate"]).optional(),
+    }).strict(),
+    "intake.create": z.object({
+        amount: money,
+        receivedAt: dateTime,
+        payerName: optionalNullableText,
+        bankReference: optionalNullableText,
+        qrPayload: optionalNullableText,
+        notes: optionalNullableText,
+        idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict(),
+    "evidence.prepare": z.object({
+        paymentIntakePublicId: uuid,
+        mimeType: z.enum(["image/jpeg", "image/png", "application/pdf"]),
+        size: z.number().int().positive(),
+        sha256: z.string().regex(/^[0-9a-f]{64}$/i),
+        evidenceType: z.enum(["slip", "qr"]).optional(),
+    }).strict(),
+    "evidence.finalize": z.object({ paymentIntakePublicId: uuid, evidencePublicId: uuid }).strict(),
+    "payment.preview": z.object({
+        paymentIntakePublicId: uuid,
+        allocations: z.array(explicitAllocation).max(1_000).optional(),
+    }).strict(),
+    "payment.post": z.object({ paymentIntakePublicId: uuid, proposalPublicId: uuid }).strict(),
+    "payment.reverse": z.object({ paymentIntakePublicId: uuid }).strict(),
+    "loan.preview": z.object(loanTerms).strict(),
+    "loan.draft": z.object({
+        borrowerPublicId: uuid,
+        bankLoanPublicId: uuid.nullable().optional(),
+        ...loanTerms,
+    }).strict(),
+    "loan.activate": z.object({ loanPublicId: uuid }).strict(),
+    "renewal.preview": z.object({
+        oldLoanPublicId: uuid,
+        requestedPrincipal: money,
+        waivedCharges: money.optional(),
+        waiverReason: optionalNullableText,
+    }).strict(),
+    "renewal.execute": z.object({
+        renewalPublicId: uuid,
+        previewHash: z.string().regex(/^v\d+:[0-9a-f]{64}$/i),
+        confirmed: z.literal(true),
+        reason: shortText,
+        idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict(),
+    "renewal.reverse": z.object({
+        renewalPublicId: uuid,
+        reason: shortText,
+        idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict(),
+    "funding-source.list": z.object({ status: z.enum(["active", "closed", "all"]).optional() }).strict(),
+};
+
+const safeErrorSchema = z.object({
+    code: z.string(),
+    message: z.string(),
+    retryable: z.boolean(),
+    reviewRequired: z.boolean(),
+    details: z.record(z.string(), z.unknown()),
+}).strict();
+
+function advertisedOutputSchema(toolName: McpToolName) {
+    return successOutputSchema(toolName);
+}
+
+function successOutputSchema(toolName: McpToolName) {
+    if (financialTools.has(toolName)) {
+        return z.object({
+            schemaVersion: z.literal("1.0"),
+            data: toolDataSchemas[toolName],
+            correlationId: uuid,
+            auditPublicIds: z.array(uuid).min(1),
+        }).strict();
+    }
+    return z.object({
+        schemaVersion: z.literal("1.0"),
+        data: toolDataSchemas[toolName],
+    }).strict();
+}
+
+const errorOutputSchema = z.object({
+    schemaVersion: z.literal("1.0"),
+    error: safeErrorSchema,
+}).strict();
+
+const readOnlyTools = new Set<McpToolName>([
+    "borrower.search",
+    "borrower.portfolio",
+    "intake.get",
+    "intake.list",
+    "loan.preview",
+    "funding-source.list",
+]);
+const destructiveTools = new Set<McpToolName>([
+    "borrower.update",
+    "borrower.alias",
+    "evidence.prepare",
+    "evidence.finalize",
+    "payment.preview",
+    "payment.post",
+    "payment.reverse",
+    "loan.activate",
+    "renewal.preview",
+    "renewal.execute",
+    "renewal.reverse",
+]);
+const financialTools = new Set<McpToolName>([
+    "payment.post",
+    "payment.reverse",
+    "loan.activate",
+    "renewal.execute",
+    "renewal.reverse",
+]);
+const idempotentTools = new Set<McpToolName>([
+    ...readOnlyTools,
+    "intake.create",
+    "payment.post",
+    "payment.reverse",
+    "loan.activate",
+    "renewal.execute",
+    "renewal.reverse",
+]);
+
+const toolDescriptions: Record<McpToolName, string> = {
+    "borrower.search": "Search accessible borrowers by canonical name or confirmed alias.",
+    "borrower.portfolio": "Get one accessible borrower portfolio by public UUID.",
+    "borrower.create": "Create a borrower in the configured MCP tenant.",
+    "borrower.update": "Update an accessible borrower by public UUID.",
+    "borrower.alias": "Add, confirm, or deactivate a borrower alias.",
+    "intake.get": "Get a payment intake, evidence, and latest proposal.",
+    "intake.list": "List accessible payment intakes, optionally by status.",
+    "intake.create": "Create an idempotent payment intake from supplied payment data.",
+    "evidence.prepare": "Prepare a signed upload for payment evidence.",
+    "evidence.finalize": "Verify and finalize uploaded payment evidence.",
+    "payment.preview": "Preview and persist a versioned payment match proposal.",
+    "payment.post": "Post a ready payment proposal atomically.",
+    "payment.reverse": "Reverse a posted payment with compensating entries.",
+    "loan.preview": "Preview an exact loan schedule without persistence.",
+    "loan.draft": "Create an editable loan draft.",
+    "loan.activate": "Activate a loan draft idempotently and create its schedule.",
+    "renewal.preview": "Preview a daily-loan renewal from current balances.",
+    "renewal.execute": "Execute a confirmed renewal idempotently.",
+    "renewal.reverse": "Reverse an executed renewal with compensating records.",
+    "funding-source.list": "List tenant funding profiles and drawdowns read-only.",
+};
+
+function titleFor(toolName: McpToolName) {
+    return toolName.split(/[.-]/u).map((part) => `${part[0]!.toUpperCase()}${part.slice(1)}`).join(" ");
+}
+
+function completionText(toolName: McpToolName) {
+    const words = toolName.replace(/[.-]/gu, " ");
+    return `${words[0]!.toUpperCase()}${words.slice(1)} completed.`;
+}
+
+function sanitizeDetails(details: Record<string, unknown> | undefined): Record<string, unknown> {
+    if (!details) return {};
+    const deniedKey = /(name|email|alias|phone|card|address|qr|reference|url|token|secret|hash)/i;
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(details)) {
+        if (deniedKey.test(key)) continue;
+        if (value === null || typeof value === "boolean" || typeof value === "number") {
+            sanitized[key] = value;
+            continue;
+        }
+        if (typeof value === "string" && value.length <= 500) {
+            sanitized[key] = value;
+            continue;
+        }
+        if (Array.isArray(value) && value.length <= 100 && value.every((item) => ["string", "number", "boolean"].includes(typeof item))) {
+            sanitized[key] = value;
+        }
+    }
+    return sanitized;
+}
+
+function safeToolError(error: unknown) {
+    if (error instanceof DomainError) {
+        return {
+            code: error.code,
+            message: error.message,
+            retryable: error.status === 429 || error.status >= 500,
+            reviewRequired: error.status === 409 || /(AMBIGUOUS|MISMATCH|REVIEW|STALE|NOT_LATEST|OUTPUT)/u.test(error.code),
+            details: sanitizeDetails(error.details),
+        };
+    }
+    return {
+        code: "INTERNAL_ERROR",
+        message: "The MCP tool could not complete the request",
+        retryable: true,
+        reviewRequired: false,
+        details: {},
+    };
+}
+
+function dataRecord(value: unknown): Record<string, unknown> {
+    const json = JSON.parse(JSON.stringify(value)) as unknown;
+    if (Array.isArray(json)) return { items: json };
+    if (json && typeof json === "object") return json as Record<string, unknown>;
+    return { value: json };
+}
+
+function createServer(input: CreateMcpHttpPluginInput, ctx: CommandContext) {
+    const server = new McpServer({ name: "creditsync", version: "1.0.0" }, {
+        capabilities: { tools: {} },
+        instructions: "CreditSync private tenant-scoped financial workflow tools. Preview before posting financial changes.",
+    });
+    for (const toolName of MCP_TOOL_NAMES) {
+        server.registerTool(toolName, {
+            title: titleFor(toolName),
+            description: toolDescriptions[toolName],
+            inputSchema: toolInputSchemas[toolName],
+            outputSchema: advertisedOutputSchema(toolName),
+            annotations: {
+                title: titleFor(toolName),
+                readOnlyHint: readOnlyTools.has(toolName),
+                destructiveHint: destructiveTools.has(toolName),
+                idempotentHint: idempotentTools.has(toolName),
+                openWorldHint: false,
+            },
+        }, async (rawInput) => {
+            const parsed = rawInput as Record<string, unknown>;
+            const idempotencyKey = typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey : undefined;
+            const { idempotencyKey: _removed, ...handlerInput } = parsed;
+            const toolContext: CommandContext = { ...ctx, idempotencyKey };
+            try {
+                const result = await input.handlers[toolName](toolContext, handlerInput);
+                const auditPublicIds = financialTools.has(toolName)
+                    ? await input.findAuditPublicIds({ ctx: toolContext, toolName, result })
+                    : undefined;
+                if (financialTools.has(toolName) && auditPublicIds?.length === 0) {
+                    throw new DomainError(
+                        "AUDIT_METADATA_UNAVAILABLE",
+                        "The financial command completed without retrievable public audit metadata",
+                        503,
+                    );
+                }
+                const structuredContent = successOutputSchema(toolName).safeParse({
+                    schemaVersion: "1.0",
+                    data: dataRecord(result),
+                    ...(financialTools.has(toolName) ? {
+                        correlationId: toolContext.correlationId,
+                        auditPublicIds: auditPublicIds ?? [],
+                    } : {}),
+                });
+                if (!structuredContent.success) {
+                    throw new DomainError(
+                        "INVALID_TOOL_OUTPUT",
+                        "The application service returned data outside the public MCP contract",
+                        422,
+                    );
+                }
+                return {
+                    content: [{ type: "text" as const, text: completionText(toolName) }],
+                    structuredContent: structuredContent.data,
+                };
+            } catch (error) {
+                const safeError = safeToolError(error);
+                input.logger({
+                    event: "mcp_tool_error",
+                    tool: toolName,
+                    requestId: toolContext.requestId,
+                    correlationId: toolContext.correlationId,
+                    code: safeError.code,
+                });
+                const structuredContent = errorOutputSchema.parse({ schemaVersion: "1.0", error: safeError });
+                return {
+                    isError: true,
+                    content: [{ type: "text" as const, text: `${safeError.code}: ${safeError.message}` }],
+                    structuredContent,
+                };
+            }
+        });
+    }
+    return server;
+}
+
+function httpError(status: number, code: string, message: string, retryable = false) {
+    return Response.json({ error: { code, message, retryable, reviewRequired: false, details: {} } }, {
+        status,
+        headers: { "cache-control": "no-store" },
+    });
+}
+
+const publicUuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function requestId(value: string | null) {
+    return value && publicUuidPattern.test(value) ? value : crypto.randomUUID();
+}
+
+function withRequestHeaders(response: Response, requestIdValue: string, correlationIdValue: string) {
+    const headers = new Headers(response.headers);
+    headers.set("x-request-id", requestIdValue);
+    headers.set("x-correlation-id", correlationIdValue);
+    headers.set("cache-control", "no-store");
+    return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+export function createMcpHttpPlugin(input: CreateMcpHttpPluginInput) {
+    return new Elysia({ name: "creditsync-mcp" })
+        .get("/mcp/health", ({ request }) => {
+            if (!hostIsAllowed(request.headers.get("host"), input.config.allowedHosts)) {
+                return httpError(403, "HOST_NOT_ALLOWED", "Host is not allowed");
+            }
+            return Response.json({ status: "ok", service: "creditsync-mcp", schemaVersion: "1.0" }, {
+                headers: { "cache-control": "no-store" },
+            });
+        })
+        .all("/mcp", async ({ request }) => {
+            const startedAt = performance.now();
+            const requestIdValue = requestId(request.headers.get("x-request-id"));
+            const correlationIdValue = requestId(request.headers.get("x-correlation-id"));
+            if (!hostIsAllowed(request.headers.get("host"), input.config.allowedHosts)) {
+                return withRequestHeaders(httpError(403, "HOST_NOT_ALLOWED", "Host is not allowed"), requestIdValue, correlationIdValue);
+            }
+            if (request.method !== "POST") {
+                const response = httpError(405, "METHOD_NOT_ALLOWED", "Only MCP POST requests are supported");
+                response.headers.set("allow", "POST");
+                return withRequestHeaders(response, requestIdValue, correlationIdValue);
+            }
+            const auth = authenticateBearer(request.headers.get("authorization"), input.config.tokenHashes);
+            if (!auth) {
+                return withRequestHeaders(httpError(401, "UNAUTHORIZED", "Unauthorized"), requestIdValue, correlationIdValue);
+            }
+            const rate = await input.consumeRateLimit({
+                key: `${input.config.tenantId}:${auth.tokenFingerprint}`,
+                max: input.config.rateLimitMax,
+                windowSeconds: input.config.rateLimitWindowSeconds,
+            });
+            if (!rate.allowed) {
+                const response = httpError(429, "RATE_LIMITED", "MCP request rate limit exceeded", true);
+                response.headers.set("retry-after", String(rate.retryAfterSeconds));
+                return withRequestHeaders(response, requestIdValue, correlationIdValue);
+            }
+            try {
+                const principal = await input.resolvePrincipal({
+                    tenantId: input.config.tenantId,
+                    actorEmail: input.config.actorEmail,
+                });
+                if (principal.tenantId !== input.config.tenantId) {
+                    throw new Error("MCP principal tenant mismatch");
+                }
+                const ctx: CommandContext = {
+                    tenantId: principal.tenantId,
+                    actorUserId: principal.actorUserId,
+                    actorSource: "mcp",
+                    requestId: requestIdValue,
+                    correlationId: correlationIdValue,
+                };
+                const server = createServer(input, ctx);
+                const transport = new WebStandardStreamableHTTPServerTransport({
+                    sessionIdGenerator: undefined,
+                    enableJsonResponse: true,
+                });
+                transport.onerror = () => input.logger({
+                    event: "mcp_transport_error",
+                    requestId: requestIdValue,
+                    correlationId: correlationIdValue,
+                });
+                try {
+                    await server.connect(transport);
+                    const handled = await transport.handleRequest(request);
+                    const body = handled.body ? await handled.arrayBuffer() : null;
+                    const response = new Response(body, {
+                        status: handled.status,
+                        statusText: handled.statusText,
+                        headers: handled.headers,
+                    });
+                    input.logger({
+                        event: "mcp_request",
+                        method: request.method,
+                        status: response.status,
+                        requestId: requestIdValue,
+                        correlationId: correlationIdValue,
+                        durationMs: Math.round(performance.now() - startedAt),
+                    });
+                    return withRequestHeaders(response, requestIdValue, correlationIdValue);
+                } finally {
+                    await server.close().catch(() => undefined);
+                }
+            } catch {
+                input.logger({
+                    event: "mcp_request_failed",
+                    method: request.method,
+                    status: 503,
+                    requestId: requestIdValue,
+                    correlationId: correlationIdValue,
+                    durationMs: Math.round(performance.now() - startedAt),
+                });
+                return withRequestHeaders(
+                    httpError(503, "MCP_UNAVAILABLE", "MCP service is temporarily unavailable", true),
+                    requestIdValue,
+                    correlationIdValue,
+                );
+            }
+        });
+}

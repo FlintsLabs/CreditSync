@@ -15,6 +15,8 @@
 - Added shared borrower and loan-application services with normalized alias search, public-ID presenters, command-context audit metadata, borrower portfolios, editable loan drafts, previews, and idempotent activation.
 - Added the complete payment-intake workflow: data-only capture, signed S3/MinIO evidence PUTs and verified finalization, hard-duplicate idempotency, semantic warnings, deterministic/explicit grouped matching, review queues, atomic posting, and compensating reversal.
 - Added the daily-loan renewal workflow with versioned expiring previews, exact posted-principal recovery, charge settlement or reasoned waiver, confirmed idempotent execution, proportional funding carry-forward, fresh schedules, and append-only reversal.
+- Added the private stateless Remote MCP server with 20 versioned borrower, payment, evidence, loan, renewal, and read-only funding-source tools backed directly by shared application services.
+- Added SHA-256 bearer-token rotation, fixed tenant/actor principals, host allowlisting, Dragonfly-backed rate limiting with a safe local fallback, sanitized correlation logging, and an MCP health check.
 - Added PostgreSQL and Dragonfly regression coverage for exact schedules and activation rollups, concurrent activation, the authenticated draft lifecycle, public funding DTOs, mutation audits, duplicate aliases, and cache invalidation, including large-value monthly, weekly, and daily money cases.
 
 ### Changed
@@ -22,6 +24,7 @@
 - Borrower and loan-application REST adapters now delegate to the shared services and use public UUID identifiers at their external command boundaries.
 - Payment REST adapters now delegate to the shared payment application service and use UUID command boundaries and exact money strings; legacy `GET /transactions` remains readable while legacy repayment writes return 405 so all balance mutations share one Decimal allocator and lock order.
 - Renewal REST adapters now expose preview, execute, and reverse commands under `/loan-renewals`, with UUID identifiers, exact money strings, explicit confirmation/reason fields, and required execution/reversal idempotency keys.
+- Production Nginx and backend Compose configuration now expose `/mcp` with streaming-safe proxy settings, preserved MCP/auth/correlation headers, and explicit private MCP environment configuration.
 - Loan schedule, closing, allocation-state, profitability, funding-allocation, and funding-reallocation REST payloads now expose public UUIDs and two-decimal money strings; funding mutations accept public funding UUIDs and money strings.
 - Updated the loan detail, matching, and closing frontend flows for the exact public loan DTOs.
 

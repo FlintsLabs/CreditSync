@@ -211,6 +211,12 @@ Important variables include:
 - `STORAGE_PROVIDER`
 - `CACHE_URL`
 - `CACHE_TTL_SECONDS`
+- `MCP_API_TOKEN_HASHES`
+- `MCP_ALLOWED_HOSTS`
+- `MCP_TENANT_ID`
+- `MCP_ACTOR_EMAIL`
+- `MCP_RATE_LIMIT_MAX`
+- `MCP_RATE_LIMIT_WINDOW_SECONDS`
 - `LINE_CHANNEL_SECRET`
 - `LINE_CHANNEL_ACCESS_TOKEN`
 - `LINE_TENANT_ID`
@@ -268,6 +274,41 @@ Loan agreement creation is draft-first. `POST /api/loans` accepts borrower and o
 
 Loan-facing REST payloads use public UUIDs for loans, schedules, funding profiles, drawdowns, and allocations. Public money inputs and outputs use two-decimal strings (for example, `"500.00"`). This includes schedule and closing reads, allocation/profitability summaries, and funding allocation/reallocation mutations. Generated schedules conserve the exact principal-plus-interest obligation: each row's principal, interest, and fee components equal its scheduled total and remaining due, with any cent residual carried by the final installment. Schedule money remains Decimal-safe internally and does not pass through JavaScript `number`, including for values above the safe-integer range.
 
+## Private Remote MCP
+
+CreditSync serves a private stateless Streamable HTTP MCP endpoint at `/mcp` in the existing backend process. Each HTTP request gets a fresh MCP server and Web Standard transport; there are no server sessions or legacy SSE endpoints. The adapter invokes the same borrower, payment, loan, and renewal application services as the web API directly—it does not call CreditSync REST routes internally. The unauthenticated `GET /mcp/health` response contains only service status and schema version.
+
+All MCP requests are bound to the server-side `MCP_TENANT_ID` and `MCP_ACTOR_EMAIL`. A client cannot submit or override tenant or actor identity. The configured actor must already exist in that tenant, and its normal CreditSync role/portfolio permissions still apply. Funding sources are list-only; the MCP surface has no generic SQL, arbitrary fetch, or funding mutation tool.
+
+The frozen schema-version `1.0` tool names are:
+
+```text
+borrower.search       borrower.portfolio    borrower.create
+borrower.update       borrower.alias        intake.get
+intake.list           intake.create         evidence.prepare
+evidence.finalize     payment.preview       payment.post
+payment.reverse       loan.preview          loan.draft
+loan.activate         renewal.preview       renewal.execute
+renewal.reverse       funding-source.list
+```
+
+Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Payment posting/reversal, loan activation, and renewal execution/reversal also return public correlation and audit IDs. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces.
+
+### Configure and rotate the bearer token
+
+Generate a high-entropy client token and calculate its SHA-256 hash locally. Keep the raw token only in the MCP client secret store; CreditSync receives only its hash:
+
+```bash
+MCP_RAW_TOKEN="$(openssl rand -hex 32)"
+printf '%s' "$MCP_RAW_TOKEN" | sha256sum
+```
+
+Set the resulting 64-character digest in `MCP_API_TOKEN_HASHES`, set `MCP_ALLOWED_HOSTS` to the external request host (comma-separated, without a URL scheme), and configure the fixed tenant/actor. Connect the client to `https://your-credit-sync-host.example/mcp` with `Authorization: Bearer <raw-token>`.
+
+For rotation, put the old and new hashes in `MCP_API_TOKEN_HASHES` separated by a comma, restart the backend, move clients to the new raw token, then remove the old hash and restart again. At most two unique hashes are accepted. Never commit the raw token, token hash, `.env`, or `.env.production`.
+
+`MCP_RATE_LIMIT_MAX` defaults to 60 requests per `MCP_RATE_LIMIT_WINDOW_SECONDS` (also 60). Dragonfly is used when `CACHE_URL` is available; an in-process limiter remains active if the cache is unavailable. `/mcp` logs only sanitized event, tool, status, request/correlation ID, and timing fields—never authorization headers or tool arguments.
+
 ### Dev vs Docker Quick Reference
 
 | Scenario | Infra | Backend | Frontend |
@@ -309,6 +350,10 @@ At minimum, update:
 - `FILE_URL_TTL_SECONDS`
 - `CACHE_URL`
 - `CACHE_TTL_SECONDS`
+- `MCP_API_TOKEN_HASHES`
+- `MCP_ALLOWED_HOSTS`
+- `MCP_TENANT_ID`
+- `MCP_ACTOR_EMAIL`
 
 ### 2. Start infra once
 
@@ -330,7 +375,7 @@ This exposes:
 - MinIO Console on `localhost:9013`
 - Dragonfly on `localhost:6381`
 
-The frontend container serves the React app through Nginx and proxies `/api` to the backend container.
+The frontend container serves the React app through Nginx and proxies `/api` and `/mcp` to the backend container. The MCP proxy keeps authorization, protocol, request, and correlation headers, disables response/request buffering, and uses extended read/send timeouts.
 When Cloudflare Tunnel is enabled in Docker, it should run on the shared `creditsync_runtime` network so hostnames like `frontend`, `backend`, and `minio` resolve directly inside the tunnel container.
 
 ### 4. Rebuild only what changed

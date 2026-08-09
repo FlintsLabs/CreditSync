@@ -6,6 +6,13 @@ services:
     restart: unless-stopped
     env_file:
       - ./.env.production
+    environment:
+      MCP_API_TOKEN_HASHES: ${MCP_API_TOKEN_HASHES}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS}
+      MCP_TENANT_ID: ${MCP_TENANT_ID}
+      MCP_ACTOR_EMAIL: ${MCP_ACTOR_EMAIL}
+      MCP_RATE_LIMIT_MAX: ${MCP_RATE_LIMIT_MAX:-60}
+      MCP_RATE_LIMIT_WINDOW_SECONDS: ${MCP_RATE_LIMIT_WINDOW_SECONDS:-60}
     command: ["/bin/sh", "-lc", "bun run migrate && bun run src/index.ts"]
     networks:
       - creditsync_runtime
