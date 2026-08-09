@@ -9,6 +9,7 @@
 ### Changed
 - Changed manual payment entry to create a review-first intake, allowing evidence and explicit multi-loan allocations to be reviewed before posting.
 - Restored recommended frontend lint severities globally and confined unavoidable legacy React/TypeScript exceptions to explicit existing files.
+- Recorded the independent-review fix matrix and final verification evidence in the Task 7 implementation report.
 
 ### Fixed
 - Preserved identical user-entered daily-loan terms from preview through draft creation instead of deriving fixed terms from rounded preview rows.
