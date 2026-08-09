@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.1 - 2026-08-10
+
+### Added
+- Added the approved Connected Capital design specification for the CreditSync favicon and PWA app icon asset set.
+
 ## v0.3.0 - 2026-08-09
 
 ### Added
