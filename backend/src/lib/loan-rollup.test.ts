@@ -32,4 +32,20 @@ describe("loan rollup exact money", () => {
         expect(rollup.outstandingFees.toFixed(2)).toBe("0.00");
         expect(rollup.nextDueDate).toBe("2026-02-01");
     });
+
+    // Break caught: a fee/interest-first payment is incorrectly prorated across every component.
+    it("rolls up mixed components using the same fee-interest-principal payment priority", () => {
+        const rollup = computeLoanRollup([{
+            dueDate: "2026-08-10",
+            scheduledPrincipal: "70.00",
+            scheduledInterest: "20.00",
+            scheduledFee: "10.00",
+            remainingDue: "70.00",
+            status: "partial",
+        }]);
+
+        expect(rollup.outstandingFees.toFixed(2)).toBe("0.00");
+        expect(rollup.outstandingInterest.toFixed(2)).toBe("0.00");
+        expect(rollup.outstandingPrincipal.toFixed(2)).toBe("70.00");
+    });
 });

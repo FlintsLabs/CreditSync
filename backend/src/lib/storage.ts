@@ -1,5 +1,5 @@
 import { BlobSASPermissions, BlobServiceClient, StorageSharedKeyCredential, generateBlobSASQueryParameters } from "@azure/storage-blob";
-import { CreateBucketCommand, GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { CreateBucketCommand, GetObjectCommand, HeadBucketCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 export type StorageProvider = "s3" | "azure-blob";
@@ -23,6 +23,23 @@ const azureAccountKey = process.env.AZURE_STORAGE_ACCOUNT_KEY;
 const azureEndpoint = process.env.AZURE_STORAGE_ENDPOINT || (azureAccountName ? `https://${azureAccountName}.blob.core.windows.net` : undefined);
 
 export const BUCKET_NAME = process.env.S3_BUCKET || process.env.AZURE_STORAGE_CONTAINER || "creditsync-files";
+
+export interface SignedPutRequest {
+    bucket?: string;
+    key: string;
+    contentType: string;
+    contentLength: number;
+    checksumSha256: string;
+    metadata: Record<string, string>;
+}
+
+export interface StoredObjectHead {
+    exists: boolean;
+    contentType: string | null;
+    contentLength: number | null;
+    checksumSha256: string | null;
+    metadata: Record<string, string>;
+}
 
 const s3 = new S3Client({
     region: "us-east-1",
@@ -88,6 +105,56 @@ async function ensureS3Bucket(bucket: string) {
     } catch {
         await s3.send(new CreateBucketCommand({ Bucket: bucket }));
         console.log(`Bucket ${bucket} created`);
+    }
+}
+
+function hexChecksumToBase64(value: string) {
+    return Buffer.from(value, "hex").toString("base64");
+}
+
+function base64ChecksumToHex(value: string | undefined) {
+    return value ? Buffer.from(value, "base64").toString("hex") : null;
+}
+
+export async function createSignedPutUrl(request: SignedPutRequest) {
+    if (storageProvider !== "s3") {
+        throw new Error("Payment evidence upload intents require S3-compatible storage");
+    }
+    const bucket = request.bucket ?? BUCKET_NAME;
+    await ensureS3Bucket(bucket);
+    const expiresIn = Math.max(60, Math.min(900, Number(process.env.EVIDENCE_UPLOAD_TTL_SECONDS ?? 300)));
+    const command = new PutObjectCommand({
+        Bucket: bucket,
+        Key: request.key,
+        ContentType: request.contentType,
+        ContentLength: request.contentLength,
+        ChecksumSHA256: hexChecksumToBase64(request.checksumSha256),
+        Metadata: request.metadata,
+    });
+    return {
+        uploadUrl: await getSignedUrl(s3Signer as any, command as any, { expiresIn }),
+        expiresAt: new Date(Date.now() + expiresIn * 1000),
+    };
+}
+
+export async function headStoredObject(key: string, bucket = BUCKET_NAME): Promise<StoredObjectHead> {
+    if (storageProvider !== "s3") {
+        throw new Error("Payment evidence finalization requires S3-compatible storage");
+    }
+    try {
+        const response = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key, ChecksumMode: "ENABLED" }));
+        return {
+            exists: true,
+            contentType: response.ContentType ?? null,
+            contentLength: response.ContentLength ?? null,
+            checksumSha256: base64ChecksumToHex(response.ChecksumSHA256),
+            metadata: response.Metadata ?? {},
+        };
+    } catch (error) {
+        if ((error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404) {
+            return { exists: false, contentType: null, contentLength: null, checksumSha256: null, metadata: {} };
+        }
+        throw error;
     }
 }
 

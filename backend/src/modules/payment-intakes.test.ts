@@ -1,0 +1,127 @@
+import { beforeEach, describe, expect, test } from "bun:test";
+import { sql } from "drizzle-orm";
+import { Elysia } from "elysia";
+import { db } from "../db";
+import { borrowers, loanSchedules, loans, users } from "../db/schema";
+import { paymentIntakesRoute } from "./payment-intakes";
+
+const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
+const integrationTest = integrationEnabled ? test : test.skip;
+
+async function resetApplicationTables() {
+    await db.execute(sql`TRUNCATE TABLE
+        audit_logs, fund_ledger_entries, payment_match_allocations,
+        payment_match_proposals, payment_evidence, transactions,
+        payment_intakes, loan_funding_allocations, loan_schedules,
+        loans, borrower_aliases, borrowers, bank_profiles, users
+        RESTART IDENTITY CASCADE`);
+}
+
+async function authToken(user: { id: number; email: string; role: string | null; tenantId: string }) {
+    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    const header = encode({ alg: "HS256", typ: "JWT" });
+    const payload = encode({ id: user.id, email: user.email, role: user.role, tenantId: user.tenantId });
+    const unsigned = `${header}.${payload}`;
+    const key = await crypto.subtle.importKey(
+        "raw",
+        new TextEncoder().encode(process.env.JWT_SECRET ?? "dev_jwt_secret_change_me"),
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"],
+    );
+    const signature = Buffer.from(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(unsigned))).toString("base64url");
+    return `${unsigned}.${signature}`;
+}
+
+async function jsonRequest(app: { handle(request: Request): Response | Promise<Response> }, path: string, token: string, init: RequestInit = {}) {
+    const headers = new Headers(init.headers);
+    headers.set("authorization", `Bearer ${token}`);
+    if (init.body) headers.set("content-type", "application/json");
+    const response = await app.handle(new Request(`http://localhost${path}`, { ...init, headers }));
+    const text = await response.text();
+    return { response, body: text ? JSON.parse(text) : null };
+}
+
+describe("payment intake REST adapter", () => {
+    if (integrationEnabled) beforeEach(resetApplicationTables);
+
+    // Break caught: REST implements its own matching/posting rules, drops command idempotency, or exposes numeric IDs/money.
+    integrationTest("runs create/list/get/review/preview/post/reversal through the shared application service", async () => {
+        const actor = await db.insert(users).values({
+            tenantId: "tenant-a", email: "payment-route@example.test", role: "owner",
+        }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({
+            tenantId: "tenant-a", ownerUserId: actor.id, name: "Route Borrower",
+        }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({
+            tenantId: "tenant-a", ownerUserId: actor.id, borrowerId: borrower.id,
+            principalAmount: "100.00", interestRate: "0.00", repaymentType: "monthly",
+            outstandingPrincipal: "100.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanSchedules).values({
+            tenantId: "tenant-a", loanId: loan.id, installmentNo: 1, dueDate: "2026-08-10",
+            scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00",
+            scheduledTotal: "100.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "100.00", status: "pending",
+        });
+        const token = await authToken(actor);
+        const app = new Elysia().use(paymentIntakesRoute);
+
+        const created = await jsonRequest(app, "/payment-intakes", token, {
+            method: "POST",
+            headers: { "idempotency-key": "rest-payment-1", "x-request-id": "req-rest-payment" },
+            body: JSON.stringify({ amount: "100.00", receivedAt: "2026-08-10T10:00:00.000Z", payerName: "Route Borrower" }),
+        });
+        expect(created.response.status).toBe(200);
+        expect(created.body).toMatchObject({ id: created.body.publicId, amount: "100.00", duplicate: false });
+
+        const list = await jsonRequest(app, "/payment-intakes", token);
+        const detail = await jsonRequest(app, `/payment-intakes/${created.body.publicId}`, token);
+        expect(list.body).toEqual([expect.objectContaining({ publicId: created.body.publicId, amount: "100.00" })]);
+        expect(detail.body).toMatchObject({ publicId: created.body.publicId, evidence: [] });
+
+        const reviewed = await jsonRequest(app, `/payment-intakes/${created.body.publicId}/review`, token, {
+            method: "POST", body: JSON.stringify({ status: "needs_review" }),
+        });
+        expect(reviewed.body.status).toBe("needs_review");
+        const queue = await jsonRequest(app, "/payment-intakes/review-queue", token);
+        expect(queue.body).toEqual([expect.objectContaining({ publicId: created.body.publicId })]);
+
+        const preview = await jsonRequest(app, `/payment-intakes/${created.body.publicId}/match-preview`, token, {
+            method: "POST",
+            body: JSON.stringify({ allocations: [{
+                borrowerPublicId: borrower.publicId, loanPublicId: loan.publicId, amount: "100.00",
+            }] }),
+        });
+        expect(preview.body).toMatchObject({ status: "ready", totalAllocated: "100.00" });
+
+        const posted = await jsonRequest(app, `/payment-intakes/${created.body.publicId}/post`, token, {
+            method: "POST", body: JSON.stringify({ proposalPublicId: preview.body.publicId }),
+        });
+        expect(posted.body).toMatchObject({ status: "posted", transactions: [expect.objectContaining({ amount: "100.00" })] });
+        const reversed = await jsonRequest(app, `/payment-intakes/${created.body.publicId}/reverse`, token, { method: "POST" });
+        expect(reversed.body.status).toBe("reversed");
+        expect(reversed.body.transactions).toHaveLength(2);
+    });
+
+    // Break caught: the adapter accepts unsafe evidence MIME/URL-shaped payloads before the service validates them.
+    integrationTest("returns stable domain errors for invalid evidence intent input", async () => {
+        const actor = await db.insert(users).values({ tenantId: "tenant-a", email: "evidence-route@example.test", role: "owner" })
+            .returning().then((rows) => rows[0]!);
+        const token = await authToken(actor);
+        const app = new Elysia().use(paymentIntakesRoute);
+        const created = await jsonRequest(app, "/payment-intakes", token, {
+            method: "POST", body: JSON.stringify({ amount: "10.00", receivedAt: "2026-08-10T10:00:00.000Z" }),
+        });
+        const invalid = await jsonRequest(app, `/payment-intakes/${created.body.publicId}/evidence/upload-intents`, token, {
+            method: "POST", body: JSON.stringify({ mimeType: "text/html", size: 12, sha256: "a".repeat(64), url: "http://127.0.0.1/admin" }),
+        });
+        expect(invalid.response.status).toBe(400);
+        expect(invalid.body).toMatchObject({ code: "INVALID_EVIDENCE" });
+
+        const invalidMoney = await jsonRequest(app, "/payment-intakes", token, {
+            method: "POST", body: JSON.stringify({ amount: "10", receivedAt: "2026-08-10T10:00:00.000Z" }),
+        });
+        expect(invalidMoney.response.status).toBe(400);
+        expect(invalidMoney.body).toMatchObject({ code: "INVALID_PAYMENT_AMOUNT" });
+    });
+});

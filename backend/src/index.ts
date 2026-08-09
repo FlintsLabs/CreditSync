@@ -14,6 +14,7 @@ import { webhookRoute } from "./modules/webhook";
 import { auditLogsRoute } from "./modules/audit-logs";
 import { dashboardRoute } from "./modules/dashboard";
 import { reconciliationRoute } from "./modules/reconciliation";
+import { paymentIntakesRoute } from "./modules/payment-intakes";
 
 const isProd = process.env.NODE_ENV === "production";
 const corsOrigins = (process.env.CORS_ORIGINS || "")
@@ -45,6 +46,7 @@ const app = new Elysia()
             .use(fundRolloversRoute)
             .use(loansRoute)
             .use(transactionsRoute)
+            .use(paymentIntakesRoute)
             .use(auditLogsRoute)
             .use(dashboardRoute)
             .use(reconciliationRoute)
