@@ -65,6 +65,12 @@ function moneyInput(value: string, field: string) {
     }
 }
 
+function requireMutableFundingLoan(loan: typeof loans.$inferSelect) {
+    if (["renewed", "canceled"].includes(loan.status ?? "")) {
+        throw new DomainError("LOAN_FUNDING_LOCKED", "Funding cannot be changed after a loan is renewed or canceled", 409);
+    }
+}
+
 function serializeSignedMoney(value: Decimal.Value) {
     const money = new Decimal(value);
     if (!money.isFinite()) throw new DomainError("INVALID_MONEY", "Money must be finite", 500);
@@ -581,14 +587,18 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         const amount = moneyInput(body.allocatedAmount, "allocatedAmount");
         const created = await db.transaction(async (tx) => {
             const resolvedLoan = await findAccessibleLoanByPublicId(user, params.id);
+            if (!resolvedLoan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+            await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${user.tenantId}
+                AND id = ${resolvedLoan.id} FOR UPDATE`);
             const loan = await tx.select().from(loans).where(
                 and(
-                    eq(loans.id, resolvedLoan?.id ?? -1),
+                    eq(loans.id, resolvedLoan.id),
                     ...loanAccessFilters(user)
                 )
             ).then((rows) => rows[0]);
 
             if (!loan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+            requireMutableFundingLoan(loan);
 
             const requestedProfile = body.bankProfilePublicId
                 ? await findBankProfileByPublicId(user.tenantId, body.bankProfilePublicId)
@@ -658,6 +668,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                 allocatedAmount: serializeMoney(amount),
                 allocationDate: body.allocationDate,
                 allocationType: body.allocationType ?? "initial",
+                allocationGroupId: crypto.randomUUID(),
                 note: body.note,
                 createdByUserId: user.id,
             }).returning().then((rows) => rows[0]);
@@ -707,6 +718,8 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         if (!resolvedLoan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
 
         const createdRows = await db.transaction(async (tx) => {
+            await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${user.tenantId}
+                AND id = ${resolvedLoan.id} FOR UPDATE`);
             const loan = await tx.select().from(loans).where(
                 and(
                     eq(loans.id, resolvedLoan.id),
@@ -715,6 +728,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             ).then((rows) => rows[0]);
 
             if (!loan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+            requireMutableFundingLoan(loan);
 
             const sourceDrawdown = await tx.select().from(bankLoans).where(
                 and(
@@ -736,6 +750,9 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             if (body.fromBankLoanPublicId === body.toBankLoanPublicId) {
                 throw new DomainError("SAME_FUNDING_SOURCE", "Source and target drawdowns must be different", 400);
             }
+            const bankLoanIds = [sourceDrawdown.id, targetDrawdown.id].sort((a, b) => a - b);
+            await tx.execute(sql`SELECT id FROM bank_loans WHERE tenant_id = ${user.tenantId}
+                AND id IN (${sql.join(bankLoanIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
 
             const currentSourceAllocation = await tx.select({
                 totalAllocated: sql<string>`coalesce(sum(${loanFundingAllocations.allocatedAmount}), 0)`,
@@ -769,6 +786,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                 });
             }
 
+            const allocationGroupId = crypto.randomUUID();
             const createdRows = await tx.insert(loanFundingAllocations).values([
                 {
                     tenantId: user.tenantId,
@@ -778,6 +796,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                     allocatedAmount: amount.negated().toFixed(2),
                     allocationDate: body.allocationDate,
                     allocationType: "reallocation_out",
+                    allocationGroupId,
                     note: body.note ?? `Reallocated out to drawdown ${targetDrawdown.publicId}`,
                     createdByUserId: user.id,
                 },
@@ -789,6 +808,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                     allocatedAmount: amount.toFixed(2),
                     allocationDate: body.allocationDate,
                     allocationType: "reallocation_in",
+                    allocationGroupId,
                     note: body.note ?? `Reallocated in from drawdown ${sourceDrawdown.publicId}`,
                     createdByUserId: user.id,
                 },

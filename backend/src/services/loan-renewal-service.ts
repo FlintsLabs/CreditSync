@@ -25,6 +25,7 @@ type RenewalRow = typeof loanRenewals.$inferSelect;
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const previewHashVersion = "v1";
+const defaultPreviewTtlSeconds = 900;
 
 export interface PreviewLoanRenewalInput {
     requestedPrincipal: string;
@@ -64,6 +65,13 @@ function renewalMoney(value: string | undefined, field: string, fallback = "0.00
     } catch {
         throw new DomainError("INVALID_RENEWAL_AMOUNT", `${field} must be a non-negative string with exactly two decimals`, 400, { field });
     }
+}
+
+function previewTtlSeconds() {
+    const configured = Number(process.env.RENEWAL_PREVIEW_TTL_SECONDS ?? defaultPreviewTtlSeconds);
+    return Number.isFinite(configured) && Number.isInteger(configured) && configured >= 60
+        ? configured
+        : defaultPreviewTtlSeconds;
 }
 
 async function actorFor(ctx: CommandContext, executor: Executor = db) {
@@ -302,7 +310,7 @@ export async function previewLoanRenewal(
             cashDirection: cash.cashDirection,
             cashAmount: serializeMoney(cash.cashAmount),
             reason: waiverReason,
-            expiresAt: new Date(asOf.getTime() + Math.max(60, Number(process.env.RENEWAL_PREVIEW_TTL_SECONDS ?? 900)) * 1000),
+            expiresAt: new Date(asOf.getTime() + previewTtlSeconds() * 1000),
             createdByUserId: ctx.actorUserId,
             updatedByUserId: ctx.actorUserId,
         }).returning().then((rows) => rows[0]!);
@@ -418,19 +426,35 @@ function groupFunding(rows: Array<typeof loanFundingAllocations.$inferSelect>) {
         .sort((a, b) => (a.bankProfileId ?? 0) - (b.bankProfileId ?? 0) || (a.bankLoanId ?? 0) - (b.bankLoanId ?? 0));
 }
 
-function proportionalFunding(
+export function allocateFundingByLargestRemainder(
     sources: ReturnType<typeof groupFunding>,
     requestedPrincipal: Decimal,
 ) {
-    const available = sources.reduce((total, row) => total.plus(row.amount), new Decimal(0));
-    let allocated = new Decimal(0);
-    return sources.map((source, index) => {
-        const amount = index === sources.length - 1
-            ? requestedPrincipal.minus(allocated)
-            : requestedPrincipal.times(source.amount).div(available).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-        allocated = allocated.plus(amount);
-        return { ...source, carryAmount: amount };
+    const availableCents = sources.reduce(
+        (total, row) => total.plus(row.amount.times(100).toDecimalPlaces(0, Decimal.ROUND_DOWN)),
+        new Decimal(0),
+    );
+    const requestedCents = requestedPrincipal.times(100).toDecimalPlaces(0, Decimal.ROUND_DOWN);
+    if (sources.length === 0 || availableCents.lte(0) || requestedCents.lte(0)) {
+        return sources.map((source) => ({ ...source, carryAmount: new Decimal(0) }));
+    }
+    const shares = sources.map((source, index) => {
+        const sourceCents = source.amount.times(100).toDecimalPlaces(0, Decimal.ROUND_DOWN);
+        const exact = requestedCents.times(sourceCents).div(availableCents);
+        const floorCents = exact.toDecimalPlaces(0, Decimal.ROUND_DOWN);
+        return { source, index, floorCents, remainder: exact.minus(floorCents) };
     });
+    const floorTotal = shares.reduce((total, row) => total.plus(row.floorCents), new Decimal(0));
+    const extraCentCount = requestedCents.minus(floorTotal).toNumber();
+    const ranked = [...shares].sort((a, b) => {
+        const remainderOrder = b.remainder.comparedTo(a.remainder);
+        return remainderOrder === 0 ? a.index - b.index : remainderOrder;
+    });
+    const receivesExtraCent = new Set(ranked.slice(0, extraCentCount).map((row) => row.index));
+    return shares.map(({ source, index, floorCents }) => ({
+        ...source,
+        carryAmount: floorCents.plus(receivesExtraCent.has(index) ? 1 : 0).div(100),
+    }));
 }
 
 export async function executeLoanRenewal(
@@ -440,13 +464,16 @@ export async function executeLoanRenewal(
 ) {
     const { reason, idempotencyKey } = requireExecution(ctx, input);
     const accessible = await accessibleRenewal(ctx, renewalPublicId);
-    const reusedKey = await db.query.loanRenewals.findFirst({ where: and(
-        eq(loanRenewals.tenantId, ctx.tenantId), eq(loanRenewals.idempotencyKey, idempotencyKey),
-    ) });
-    if (reusedKey && reusedKey.id !== accessible.renewal.id) {
-        throw new DomainError("IDEMPOTENCY_KEY_CONFLICT", "Idempotency-Key was already used for another renewal", 409);
-    }
     const result = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(
+            ${`loan-renewal-execute:${ctx.tenantId}:${idempotencyKey}`}, 0
+        ))`);
+        const reusedKey = await tx.query.loanRenewals.findFirst({ where: and(
+            eq(loanRenewals.tenantId, ctx.tenantId), eq(loanRenewals.idempotencyKey, idempotencyKey),
+        ) });
+        if (reusedKey && reusedKey.id !== accessible.renewal.id) {
+            throw new DomainError("IDEMPOTENCY_KEY_CONFLICT", "Idempotency-Key was already used for another renewal", 409);
+        }
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${accessible.oldLoan.id} FOR UPDATE`);
         await tx.execute(sql`SELECT id FROM loan_renewals WHERE tenant_id = ${ctx.tenantId} AND id = ${accessible.renewal.id} FOR UPDATE`);
         const locked = await accessibleRenewal(ctx, renewalPublicId, tx);
@@ -459,22 +486,23 @@ export async function executeLoanRenewal(
         if (renewal.status !== "preview") {
             throw new DomainError("RENEWAL_NOT_EXECUTABLE", "Loan renewal is not executable", 409);
         }
-        if (renewal.expiresAt.getTime() <= Date.now() || renewal.previewHash !== input.previewHash) {
-            await tx.update(loanRenewals).set({ status: "expired", updatedByUserId: ctx.actorUserId, updatedAt: new Date() })
+        const effectiveAt = new Date();
+        if (renewal.expiresAt.getTime() <= effectiveAt.getTime() || renewal.previewHash !== input.previewHash) {
+            await tx.update(loanRenewals).set({ status: "expired", updatedByUserId: ctx.actorUserId, updatedAt: effectiveAt })
                 .where(and(eq(loanRenewals.id, renewal.id), eq(loanRenewals.tenantId, ctx.tenantId)));
             return { stale: true as const };
         }
-        const snapshot = await renewalSnapshot(tx, ctx, oldLoan, renewal.createdAt);
+        const snapshot = await renewalSnapshot(tx, ctx, oldLoan, effectiveAt);
         const currentHash = previewHash(
             snapshot,
             new Decimal(renewal.requestedPrincipal),
             new Decimal(renewal.waivedCharges),
-            renewal.createdAt,
+            effectiveAt,
         );
         if (currentHash !== renewal.previewHash
             || !snapshot.outstandingPrincipal.eq(renewal.outstandingPrincipal)
             || !snapshot.dueCharges.eq(renewal.dueCharges)) {
-            await tx.update(loanRenewals).set({ status: "expired", updatedByUserId: ctx.actorUserId, updatedAt: new Date() })
+            await tx.update(loanRenewals).set({ status: "expired", updatedByUserId: ctx.actorUserId, updatedAt: effectiveAt })
                 .where(and(eq(loanRenewals.id, renewal.id), eq(loanRenewals.tenantId, ctx.tenantId)));
             return { stale: true as const };
         }
@@ -498,7 +526,6 @@ export async function executeLoanRenewal(
             });
         }
         let generated;
-        const effectiveAt = new Date();
         const startDate = effectiveAt.toISOString().slice(0, 10);
         try {
             generated = generateLoanSchedule({
@@ -557,7 +584,8 @@ export async function executeLoanRenewal(
                 status: "pending",
             })));
         }
-        const carry = proportionalFunding(funding, requestedPrincipal);
+        const carry = allocateFundingByLargestRemainder(funding, requestedPrincipal);
+        const allocationGroupId = crypto.randomUUID();
         for (const source of carry) {
             await tx.insert(loanFundingAllocations).values([{
                 tenantId: ctx.tenantId,
@@ -567,6 +595,8 @@ export async function executeLoanRenewal(
                 allocatedAmount: source.carryAmount.negated().toFixed(2),
                 allocationDate: startDate,
                 allocationType: "reallocation_out",
+                renewalId: renewal.id,
+                allocationGroupId,
                 note: `Transferred to renewal ${renewal.publicId}`,
                 createdByUserId: ctx.actorUserId,
             }, {
@@ -577,6 +607,8 @@ export async function executeLoanRenewal(
                 allocatedAmount: source.carryAmount.toFixed(2),
                 allocationDate: startDate,
                 allocationType: "reallocation_in",
+                renewalId: renewal.id,
+                allocationGroupId,
                 note: `Carried from loan ${oldLoan.publicId} via renewal ${renewal.publicId}`,
                 createdByUserId: ctx.actorUserId,
             }]);
@@ -636,6 +668,13 @@ export async function executeLoanRenewal(
             status: "executed",
             reason,
             idempotencyKey,
+            preExecutionLoanState: {
+                status: oldLoan.status ?? "active",
+                outstandingPrincipal: serializeMoney(oldLoan.outstandingPrincipal ?? "0.00"),
+                outstandingInterest: serializeMoney(oldLoan.outstandingInterest ?? "0.00"),
+                outstandingFees: serializeMoney(oldLoan.outstandingFees ?? "0.00"),
+                nextDueDate: oldLoan.nextDueDate ?? null,
+            },
             executedAt: effectiveAt,
             executedByUserId: ctx.actorUserId,
             updatedByUserId: ctx.actorUserId,
@@ -686,21 +725,46 @@ export async function reverseLoanRenewal(
         throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Renewal reversal requires a non-blank Idempotency-Key", 400);
     }
     const accessible = await accessibleRenewal(ctx, renewalPublicId);
+    const reversalRequestHash = createHash("sha256").update(JSON.stringify({
+        contract: "loan-renewal-reversal",
+        version: "v1",
+        renewalPublicId,
+        reason,
+    })).digest("hex");
     const result = await db.transaction(async (tx) => {
-        const ids = [accessible.oldLoan.id, accessible.renewal.newLoanId]
-            .filter((id): id is number => id !== null)
-            .sort((a, b) => a - b);
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(
+            ${`loan-renewal-reverse:${ctx.tenantId}:${idempotencyKey}`}, 0
+        ))`);
+        const reusedReversalKey = await tx.query.loanRenewals.findFirst({ where: and(
+            eq(loanRenewals.tenantId, ctx.tenantId),
+            eq(loanRenewals.reversalIdempotencyKey, idempotencyKey),
+        ) });
+        if (reusedReversalKey && reusedReversalKey.id !== accessible.renewal.id) {
+            throw new DomainError("REVERSAL_IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used for another renewal reversal", 409);
+        }
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId}
-            AND id IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
+            AND id = ${accessible.oldLoan.id} FOR UPDATE`);
         await tx.execute(sql`SELECT id FROM loan_renewals WHERE tenant_id = ${ctx.tenantId}
             AND id = ${accessible.renewal.id} FOR UPDATE`);
         const locked = await accessibleRenewal(ctx, renewalPublicId, tx);
         const renewal = locked.renewal;
         const oldLoan = locked.oldLoan;
-        if (renewal.status === "reversed") return presentExecution(tx, renewal, oldLoan);
+        if (renewal.status === "reversed") {
+            if (renewal.reversalIdempotencyKey === idempotencyKey
+                && renewal.reversalRequestHash === reversalRequestHash) {
+                return presentExecution(tx, renewal, oldLoan);
+            }
+            throw new DomainError(
+                "REVERSAL_IDEMPOTENCY_CONFLICT",
+                "Renewal reversal was already completed with a different idempotency key or payload",
+                409,
+            );
+        }
         if (renewal.status !== "executed" || renewal.newLoanId === null) {
             throw new DomainError("RENEWAL_NOT_REVERSIBLE", "Only an executed renewal can be reversed", 409);
         }
+        await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId}
+            AND id = ${renewal.newLoanId} FOR UPDATE`);
         const newLoan = await tx.query.loans.findFirst({ where: and(
             eq(loans.tenantId, ctx.tenantId), eq(loans.id, renewal.newLoanId),
         ) });
@@ -718,14 +782,24 @@ export async function reverseLoanRenewal(
             eq(loanFundingAllocations.tenantId, ctx.tenantId),
             eq(loanFundingAllocations.loanId, newLoan.id),
         )).orderBy(loanFundingAllocations.id);
-        const carryNote = `Carried from loan ${oldLoan.publicId} via renewal ${renewal.publicId}`;
         const carriedFunding = replacementFunding.filter((row: typeof loanFundingAllocations.$inferSelect) =>
-            row.allocationType === "reallocation_in" && row.note === carryNote);
+            row.renewalId === renewal.id
+            && row.allocationType === "reallocation_in"
+            && row.reversedAllocationId === null);
         const downstreamFunding = replacementFunding.filter((row: typeof loanFundingAllocations.$inferSelect) =>
-            row.allocationType !== "reallocation_in" || row.note !== carryNote);
-        if (activeDownstream.length > 0 || downstreamAdjustments.length > 0 || downstreamFunding.length > 0) {
+            row.renewalId !== renewal.id);
+        const downstreamFundingBalance = new Map<string, Decimal>();
+        for (const row of downstreamFunding) {
+            const key = `${row.bankProfileId ?? "none"}:${row.bankLoanId ?? "none"}`;
+            downstreamFundingBalance.set(
+                key,
+                (downstreamFundingBalance.get(key) ?? new Decimal(0)).plus(row.allocatedAmount),
+            );
+        }
+        const nonZeroFundingSources = [...downstreamFundingBalance.values()].filter((amount) => !amount.isZero());
+        if (activeDownstream.length > 0 || downstreamAdjustments.length > 0 || nonZeroFundingSources.length > 0) {
             throw new DomainError("RENEWAL_REVERSE_BLOCKED", "Reverse downstream replacement-loan entries first", 409, {
-                downstreamEntryCount: activeDownstream.length + downstreamAdjustments.length + downstreamFunding.length,
+                downstreamEntryCount: activeDownstream.length + downstreamAdjustments.length + nonZeroFundingSources.length,
             });
         }
         const originalAdjustments = await tx.select().from(loanAdjustments).where(and(
@@ -733,6 +807,11 @@ export async function reverseLoanRenewal(
             eq(loanAdjustments.renewalId, renewal.id),
             eq(loanAdjustments.status, "posted"),
         )).orderBy(loanAdjustments.id);
+        const oldCarryFunding = await tx.select().from(loanFundingAllocations).where(and(
+            eq(loanFundingAllocations.tenantId, ctx.tenantId),
+            eq(loanFundingAllocations.loanId, oldLoan.id),
+            eq(loanFundingAllocations.renewalId, renewal.id),
+        )).orderBy(loanFundingAllocations.id);
         const effectiveAt = new Date();
         for (const original of originalAdjustments) {
             if (original.adjustmentType === "reversal") continue;
@@ -756,6 +835,15 @@ export async function reverseLoanRenewal(
         }
         const reversalDate = effectiveAt.toISOString().slice(0, 10);
         for (const carried of carriedFunding) {
+            const transferred = oldCarryFunding.find((row) =>
+                row.allocationType === "reallocation_out"
+                && row.allocationGroupId === carried.allocationGroupId
+                && row.bankProfileId === carried.bankProfileId
+                && row.bankLoanId === carried.bankLoanId
+                && row.reversedAllocationId === null);
+            if (!transferred) {
+                throw new DomainError("RENEWAL_FUNDING_PROVENANCE_INVALID", "Renewal funding provenance is incomplete", 409);
+            }
             await tx.insert(loanFundingAllocations).values([{
                 tenantId: ctx.tenantId,
                 bankProfileId: carried.bankProfileId,
@@ -764,6 +852,9 @@ export async function reverseLoanRenewal(
                 allocatedAmount: new Decimal(carried.allocatedAmount).negated().toFixed(2),
                 allocationDate: reversalDate,
                 allocationType: "reallocation_out",
+                renewalId: renewal.id,
+                allocationGroupId: carried.allocationGroupId,
+                reversedAllocationId: carried.id,
                 note: `Reversed renewal ${renewal.publicId}`,
                 createdByUserId: ctx.actorUserId,
             }, {
@@ -774,13 +865,25 @@ export async function reverseLoanRenewal(
                 allocatedAmount: new Decimal(carried.allocatedAmount).toFixed(2),
                 allocationDate: reversalDate,
                 allocationType: "reallocation_in",
+                renewalId: renewal.id,
+                allocationGroupId: transferred.allocationGroupId,
+                reversedAllocationId: transferred.id,
                 note: `Restored from reversed renewal ${renewal.publicId}`,
                 createdByUserId: ctx.actorUserId,
             }]);
         }
-        const restoredOldStatus = new Decimal(renewal.outstandingPrincipal).gt(0)
-            || new Decimal(renewal.dueCharges).gt(0) ? "active" : "paid";
-        await tx.update(loans).set({ status: restoredOldStatus, updatedAt: effectiveAt }).where(and(
+        const priorState = renewal.preExecutionLoanState;
+        if (!priorState) {
+            throw new DomainError("RENEWAL_STATE_UNAVAILABLE", "Pre-execution loan state is unavailable", 409);
+        }
+        await tx.update(loans).set({
+            status: priorState.status,
+            outstandingPrincipal: priorState.outstandingPrincipal,
+            outstandingInterest: priorState.outstandingInterest,
+            outstandingFees: priorState.outstandingFees,
+            nextDueDate: priorState.nextDueDate,
+            updatedAt: effectiveAt,
+        }).where(and(
             eq(loans.id, oldLoan.id), eq(loans.tenantId, ctx.tenantId),
         ));
         await tx.update(loans).set({ status: "canceled", updatedAt: effectiveAt }).where(and(
@@ -789,6 +892,8 @@ export async function reverseLoanRenewal(
         const reversed = await tx.update(loanRenewals).set({
             status: "reversed",
             reason,
+            reversalIdempotencyKey: idempotencyKey,
+            reversalRequestHash,
             reversedAt: effectiveAt,
             reversedByUserId: ctx.actorUserId,
             updatedByUserId: ctx.actorUserId,
@@ -803,7 +908,7 @@ export async function reverseLoanRenewal(
             payload: {
                 oldLoanPublicId: oldLoan.publicId,
                 newLoanPublicId: newLoan.publicId,
-                restoredOldStatus,
+                restoredOldStatus: priorState.status,
                 canceledNewLoanStatus: "canceled",
                 adjustmentReversalCount: originalAdjustments.length,
                 fundingCompensationCount: carriedFunding.length * 2,

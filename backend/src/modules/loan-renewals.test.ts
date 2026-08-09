@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
 import { bankLoans, bankProfiles, borrowers, loanFundingAllocations, loanSchedules, loans, users } from "../db/schema";
 import { generateLoanSchedule } from "../lib/loan-schedule";
 import { loanRenewalsRoute } from "./loan-renewals";
+import { loansRoute } from "./loans";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
@@ -45,9 +46,13 @@ async function jsonRequest(
     return { response, body: text ? JSON.parse(text) : null };
 }
 
-async function seedRouteLoan() {
-    const tenantId = "tenant-renewal-route";
-    const actor = await db.insert(users).values({ tenantId, email: "renewal-route@example.test", role: "owner" })
+async function seedRouteLoan(options: { tenantId?: string; role?: "owner" | "manager" | "collector" | "viewer" } = {}) {
+    const tenantId = options.tenantId ?? "tenant-renewal-route";
+    const actor = await db.insert(users).values({
+        tenantId,
+        email: `renewal-route-${crypto.randomUUID()}@example.test`,
+        role: options.role ?? "owner",
+    })
         .returning().then((rows) => rows[0]!);
     const borrower = await db.insert(borrowers).values({ tenantId, ownerUserId: actor.id, name: "Route Borrower" })
         .returning().then((rows) => rows[0]!);
@@ -77,7 +82,7 @@ async function seedRouteLoan() {
         allocatedAmount: "1000.00", allocationDate: "2099-01-01", allocationType: "initial",
         createdByUserId: actor.id,
     });
-    return { actor, loan };
+    return { actor, loan, profile, drawdown };
 }
 
 describe("loan renewal REST adapter", () => {
@@ -142,5 +147,164 @@ describe("loan renewal REST adapter", () => {
         });
         expect(invalid.response.status).toBe(400);
         expect(invalid.body).toMatchObject({ code: "INVALID_PUBLIC_ID", details: { field: "oldLoanId" } });
+    });
+
+    integrationTest("returns one stable HTTP conflict for concurrent different renewals sharing an execution key", async () => {
+        const first = await seedRouteLoan();
+        const second = await seedRouteLoan({ tenantId: first.actor.tenantId });
+        const token = await authToken(first.actor);
+        const app = new Elysia().use(loanRenewalsRoute);
+        const preview = async (loanPublicId: string) => jsonRequest(app, "/loan-renewals/preview", token, {
+            method: "POST",
+            body: JSON.stringify({ oldLoanPublicId: loanPublicId, requestedPrincipal: "1000.00" }),
+        });
+        const [firstPreview, secondPreview] = await Promise.all([preview(first.loan.publicId), preview(second.loan.publicId)]);
+        let releaseLock!: () => void;
+        let markLocked!: () => void;
+        const release = new Promise<void>((resolve) => { releaseLock = resolve; });
+        const locked = new Promise<void>((resolve) => { markLocked = resolve; });
+        const blocker = db.transaction(async (tx) => {
+            await tx.execute(sql`SELECT id FROM loans WHERE id IN (${first.loan.id}, ${second.loan.id}) ORDER BY id FOR UPDATE`);
+            markLocked();
+            await release;
+        });
+        await locked;
+        const execute = (renewal: { body: any }) => jsonRequest(
+            app,
+            `/loan-renewals/${renewal.body.publicId}/execute`,
+            token,
+            {
+                method: "POST",
+                headers: { "idempotency-key": "shared-http-renewal-key" },
+                body: JSON.stringify({
+                    previewHash: renewal.body.previewHash,
+                    confirmed: true,
+                    reason: "HTTP concurrency proof",
+                }),
+            },
+        );
+        const firstPending = execute(firstPreview);
+        const secondPending = execute(secondPreview);
+        await Bun.sleep(50);
+        releaseLock();
+        await blocker;
+        const responses = await Promise.all([firstPending, secondPending]);
+        expect(responses.map((row) => row.response.status).sort()).toEqual([200, 409]);
+        expect(responses.find((row) => row.response.status === 409)?.body)
+            .toMatchObject({ code: "IDEMPOTENCY_KEY_CONFLICT" });
+    });
+
+    integrationTest("enforces collector ownership and tenant isolation on renewal HTTP endpoints", async () => {
+        const collectorLoan = await seedRouteLoan({ tenantId: "tenant-collector-scope", role: "collector" });
+        const otherOwnerLoan = await seedRouteLoan({ tenantId: "tenant-collector-scope", role: "collector" });
+        const crossTenantLoan = await seedRouteLoan({ tenantId: "tenant-other-scope", role: "owner" });
+        const token = await authToken(collectorLoan.actor);
+        const app = new Elysia().use(loanRenewalsRoute);
+        const preview = (loanPublicId: string) => jsonRequest(app, "/loan-renewals/preview", token, {
+            method: "POST",
+            body: JSON.stringify({ oldLoanPublicId: loanPublicId, requestedPrincipal: "1000.00" }),
+        });
+
+        expect((await preview(collectorLoan.loan.publicId)).response.status).toBe(200);
+        const sameTenantHidden = await preview(otherOwnerLoan.loan.publicId);
+        expect(sameTenantHidden.response.status).toBe(404);
+        expect(sameTenantHidden.body).toMatchObject({ code: "LOAN_NOT_FOUND" });
+        const crossTenantHidden = await preview(crossTenantLoan.loan.publicId);
+        expect(crossTenantHidden.response.status).toBe(404);
+        expect(crossTenantHidden.body).toMatchObject({ code: "LOAN_NOT_FOUND" });
+
+        const otherPreview = await jsonRequest(app, "/loan-renewals/preview", await authToken(otherOwnerLoan.actor), {
+            method: "POST",
+            body: JSON.stringify({ oldLoanPublicId: otherOwnerLoan.loan.publicId, requestedPrincipal: "1000.00" }),
+        });
+        const hiddenExecute = await jsonRequest(
+            app,
+            `/loan-renewals/${otherPreview.body.publicId}/execute`,
+            token,
+            {
+                method: "POST",
+                headers: { "idempotency-key": "collector-hidden-execute" },
+                body: JSON.stringify({
+                    previewHash: otherPreview.body.previewHash,
+                    confirmed: true,
+                    reason: "must remain hidden",
+                }),
+            },
+        );
+        expect(hiddenExecute.response.status).toBe(404);
+        expect(hiddenExecute.body).toMatchObject({ code: "RENEWAL_NOT_FOUND" });
+
+        const crossPreview = await jsonRequest(app, "/loan-renewals/preview", await authToken(crossTenantLoan.actor), {
+            method: "POST",
+            body: JSON.stringify({ oldLoanPublicId: crossTenantLoan.loan.publicId, requestedPrincipal: "1000.00" }),
+        });
+        const hiddenReverse = await jsonRequest(
+            app,
+            `/loan-renewals/${crossPreview.body.publicId}/reverse`,
+            token,
+            {
+                method: "POST",
+                headers: { "idempotency-key": "collector-cross-tenant-reverse" },
+                body: JSON.stringify({ reason: "must remain hidden" }),
+            },
+        );
+        expect(hiddenReverse.response.status).toBe(404);
+        expect(hiddenReverse.body).toMatchObject({ code: "RENEWAL_NOT_FOUND" });
+    });
+
+    integrationTest("serializes funding reallocation before renewal execution on the borrower loan lock", async () => {
+        const seeded = await seedRouteLoan();
+        const targetProfile = await db.insert(bankProfiles).values({
+            tenantId: seeded.actor.tenantId, name: "Route Target Fund", type: "bank",
+        }).returning().then((rows) => rows[0]!);
+        const targetDrawdown = await db.insert(bankLoans).values({
+            tenantId: seeded.actor.tenantId, bankProfileId: targetProfile.id, amount: "5000.00",
+        }).returning().then((rows) => rows[0]!);
+        const token = await authToken(seeded.actor);
+        const app = new Elysia().use(loanRenewalsRoute).use(loansRoute);
+        const preview = await jsonRequest(app, "/loan-renewals/preview", token, {
+            method: "POST",
+            body: JSON.stringify({ oldLoanPublicId: seeded.loan.publicId, requestedPrincipal: "1000.00" }),
+        });
+
+        let releaseLock!: () => void;
+        let markLocked!: () => void;
+        const release = new Promise<void>((resolve) => { releaseLock = resolve; });
+        const locked = new Promise<void>((resolve) => { markLocked = resolve; });
+        const blocker = db.transaction(async (tx) => {
+            await tx.execute(sql`SELECT id FROM loans WHERE id = ${seeded.loan.id} FOR UPDATE`);
+            markLocked();
+            await release;
+        });
+        await locked;
+        const executePending = jsonRequest(app, `/loan-renewals/${preview.body.publicId}/execute`, token, {
+            method: "POST",
+            headers: { "idempotency-key": "route-reallocation-race" },
+            body: JSON.stringify({ previewHash: preview.body.previewHash, confirmed: true, reason: "locked race" }),
+        });
+        await Bun.sleep(100);
+        const reallocationPending = jsonRequest(app, `/loans/${seeded.loan.publicId}/funding-reallocations`, token, {
+            method: "POST",
+            body: JSON.stringify({
+                fromBankLoanPublicId: seeded.drawdown.publicId,
+                toBankLoanPublicId: targetDrawdown.publicId,
+                amount: "100.00",
+                allocationDate: "2099-01-01",
+            }),
+        });
+        await Bun.sleep(20);
+        releaseLock();
+        await blocker;
+        const [reallocated, executed] = await Promise.all([reallocationPending, executePending]);
+        expect(executed.response.status).toBe(200);
+        expect(reallocated.response.status).toBe(409);
+        expect(reallocated.body).toMatchObject({ code: "LOAN_FUNDING_LOCKED" });
+
+        const replacement = await db.query.loans.findFirst({ where: eq(loans.publicId, executed.body.newLoanPublicId) });
+        const funding = await db.select().from(loanFundingAllocations)
+            .where(eq(loanFundingAllocations.loanId, replacement!.id)).orderBy(loanFundingAllocations.bankLoanId);
+        expect(funding.map((row) => ({ bankLoanId: row.bankLoanId, amount: row.allocatedAmount }))).toEqual([
+            { bankLoanId: seeded.drawdown.id, amount: "1000.00" },
+        ]);
     });
 });

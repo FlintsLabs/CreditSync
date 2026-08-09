@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, setSystemTime, test } from "bun:test";
+import Decimal from "decimal.js";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
@@ -16,7 +17,12 @@ import {
 } from "../db/schema";
 import { generateLoanSchedule } from "../lib/loan-schedule";
 import type { CommandContext } from "./command-context";
-import { executeLoanRenewal, previewLoanRenewal, reverseLoanRenewal } from "./loan-renewal-service";
+import {
+    allocateFundingByLargestRemainder,
+    executeLoanRenewal,
+    previewLoanRenewal,
+    reverseLoanRenewal,
+} from "./loan-renewal-service";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
@@ -50,6 +56,7 @@ function utcDateOffset(days: number) {
 
 async function seedDailyLoan(options: { paidInstallments?: number; allocatedAmount?: string } = {}) {
     const paidInstallments = options.paidInstallments ?? 10;
+    const seedId = crypto.randomUUID();
     const tenantId = "tenant-renewal";
     const actor = await db.insert(users).values({
         tenantId,
@@ -111,7 +118,7 @@ async function seedDailyLoan(options: { paidInstallments?: number; allocatedAmou
             feeComponent: "0.00",
             penaltyComponent: "0.00",
             entryType: "repayment",
-            idempotencyKey: `seed-payment-${schedule.installmentNo}`,
+            idempotencyKey: `seed-payment-${seedId}-${schedule.installmentNo}`,
             recordedByUserId: actor.id,
         });
     }
@@ -140,6 +147,33 @@ async function seedDailyLoan(options: { paidInstallments?: number; allocatedAmou
 
 describe("daily-loan renewal service", () => {
     if (integrationEnabled) beforeEach(resetRenewalTables);
+
+    test("distributes uneven funding in integer cents with an exact deterministic sum", () => {
+        const allocation = allocateFundingByLargestRemainder([
+            { bankProfileId: 1, bankLoanId: 11, amount: new Decimal("1.00") },
+            { bankProfileId: 2, bankLoanId: 22, amount: new Decimal("2.00") },
+            { bankProfileId: 3, bankLoanId: 33, amount: new Decimal("3.00") },
+        ], new Decimal("0.05"));
+
+        expect(allocation.map((row) => row.carryAmount.toFixed(2))).toEqual(["0.01", "0.02", "0.02"]);
+        expect(allocation.every((row) => row.carryAmount.gte(0))).toBe(true);
+        expect(allocation.reduce((sum, row) => sum.plus(row.carryAmount), new Decimal(0)).toFixed(2)).toBe("0.05");
+    });
+
+    test("never makes the final source negative when many one-cent sources share a smaller request", () => {
+        const allocation = allocateFundingByLargestRemainder(
+            Array.from({ length: 5 }, (_, index) => ({
+                bankProfileId: index + 1,
+                bankLoanId: index + 101,
+                amount: new Decimal("0.01"),
+            })),
+            new Decimal("0.03"),
+        );
+
+        expect(allocation.map((row) => row.carryAmount.toFixed(2))).toEqual(["0.01", "0.01", "0.01", "0.00", "0.00"]);
+        expect(allocation.every((row) => row.carryAmount.gte(0))).toBe(true);
+        expect(allocation.reduce((sum, row) => sum.plus(row.carryAmount), new Decimal(0)).toFixed(2)).toBe("0.03");
+    });
 
     // Break caught: renewal uses cached/scheduled balances instead of actual posted, non-reversed principal.
     integrationTest("previews the exact 2500/190/15 principal recovery after ten paid installments", async () => {
@@ -282,6 +316,35 @@ describe("daily-loan renewal service", () => {
         expect(persisted?.reason).toBe("approved hardship waiver");
     });
 
+    integrationTest("records cash collection and post-execution charge settlement and waiver entries", async () => {
+        const seeded = await seedDailyLoan({ paidInstallments: 9 });
+        const preview = await previewLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id),
+            seeded.oldLoan.publicId,
+            { requestedPrincipal: "1000.00", waivedCharges: "3.33", waiverReason: "approved partial waiver" },
+        );
+        expect(preview).toMatchObject({
+            outstandingPrincipal: "999.97",
+            dueCharges: "23.33",
+            settlementAmount: "20.00",
+            cashDirection: "collection",
+            cashAmount: "19.97",
+        });
+        await executeLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "execute-cash-collection"), preview.publicId,
+            { previewHash: preview.previewHash, confirmed: true, reason: "collect renewal shortfall" },
+        );
+        const renewal = await db.query.loanRenewals.findFirst({ where: eq(loanRenewals.publicId, preview.publicId) });
+        const adjustments = await db.select().from(loanAdjustments)
+            .where(eq(loanAdjustments.renewalId, renewal!.id)).orderBy(loanAdjustments.id);
+        expect(adjustments.map((row) => ({ type: row.adjustmentType, amount: row.amount }))).toEqual([
+            { type: "principal_transfer", amount: "999.97" },
+            { type: "charge_settlement", amount: "20.00" },
+            { type: "charge_waiver", amount: "3.33" },
+            { type: "cash_collection", amount: "19.97" },
+        ]);
+    });
+
     // Break caught: concurrent retries create duplicate replacement loans/schedules or record principal transfer as cash.
     integrationTest("executes an explicitly confirmed renewal once with fresh schedule and exact cash/non-cash records", async () => {
         const seeded = await seedDailyLoan();
@@ -369,21 +432,26 @@ describe("daily-loan renewal service", () => {
         });
         expect(await db.select().from(loans).where(eq(loans.clonedFromLoanId, seeded.oldLoan.id))).toHaveLength(1);
         expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, replacement!.id))).toHaveLength(15);
-        expect(await db.select().from(loanFundingAllocations)
-            .where(eq(loanFundingAllocations.loanId, replacement!.id)).orderBy(loanFundingAllocations.id))
-            .toEqual([expect.objectContaining({
+        const renewalRow = await db.query.loanRenewals.findFirst({ where: eq(loanRenewals.publicId, preview.publicId) });
+        const replacementFunding = await db.select().from(loanFundingAllocations)
+            .where(eq(loanFundingAllocations.loanId, replacement!.id)).orderBy(loanFundingAllocations.id);
+        expect(replacementFunding).toEqual([expect.objectContaining({
                 bankProfileId: seeded.profile.id,
                 bankLoanId: seeded.drawdown.id,
                 allocatedAmount: "1500.00",
                 allocationType: "reallocation_in",
+                renewalId: renewalRow!.id,
             }), expect.objectContaining({
                 bankProfileId: secondProfile.id,
                 bankLoanId: secondDrawdown.id,
                 allocatedAmount: "1000.00",
                 allocationType: "reallocation_in",
+                renewalId: renewalRow!.id,
             })]);
+        expect(new Set(replacementFunding.map((row) => row.allocationGroupId)).size).toBe(1);
+        expect(replacementFunding[0]!.allocationGroupId).toMatch(/^[0-9a-f-]{36}$/);
         expect((await db.select().from(loanAdjustments).where(eq(loanAdjustments.renewalId,
-            (await db.query.loanRenewals.findFirst({ where: eq(loanRenewals.publicId, preview.publicId) }))!.id,
+            renewalRow!.id,
         )).orderBy(loanAdjustments.id)).map((row) => ({ type: row.adjustmentType, amount: row.amount }))).toEqual([
             { type: "principal_transfer", amount: "833.30" },
             { type: "cash_payout", amount: "1666.70" },
@@ -393,6 +461,49 @@ describe("daily-loan renewal service", () => {
             eq(auditLogs.entityId, preview.publicId),
             eq(auditLogs.action, "executed"),
         ))).toHaveLength(1);
+    });
+
+    integrationTest("resolves concurrent same-key executions of different renewals as one success and one stable conflict", async () => {
+        const firstSeed = await seedDailyLoan();
+        const secondSeed = await seedDailyLoan();
+        const firstPreview = await previewLoanRenewal(
+            context(firstSeed.tenantId, firstSeed.actor.id), firstSeed.oldLoan.publicId, { requestedPrincipal: "2500.00" },
+        );
+        const secondPreview = await previewLoanRenewal(
+            context(secondSeed.tenantId, secondSeed.actor.id), secondSeed.oldLoan.publicId, { requestedPrincipal: "2500.00" },
+        );
+        let releaseLock!: () => void;
+        let markLocked!: () => void;
+        const release = new Promise<void>((resolve) => { releaseLock = resolve; });
+        const locked = new Promise<void>((resolve) => { markLocked = resolve; });
+        const blocker = db.transaction(async (tx) => {
+            await tx.execute(sql`SELECT id FROM loans WHERE id IN (${firstSeed.oldLoan.id}, ${secondSeed.oldLoan.id}) ORDER BY id FOR UPDATE`);
+            markLocked();
+            await release;
+        });
+        await locked;
+        const execute = (seeded: typeof firstSeed, preview: typeof firstPreview) => executeLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "shared-concurrent-execution-key"),
+            preview.publicId,
+            { previewHash: preview.previewHash, confirmed: true, reason: "concurrent different renewal" },
+        );
+        const firstPending = execute(firstSeed, firstPreview);
+        const secondPending = execute(secondSeed, secondPreview);
+        await Bun.sleep(20);
+        releaseLock();
+        await blocker;
+        const settled = await Promise.allSettled([firstPending, secondPending]);
+
+        expect(settled.filter((row) => row.status === "fulfilled")).toHaveLength(1);
+        const rejected = settled.find((row) => row.status === "rejected") as PromiseRejectedResult;
+        expect(rejected.reason).toMatchObject({ code: "IDEMPOTENCY_KEY_CONFLICT", status: 409 });
+        const replacements = await db.select().from(loans).where(sql`${loans.clonedFromLoanId} IS NOT NULL`);
+        expect(replacements).toHaveLength(1);
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, replacements[0]!.id))).toHaveLength(15);
+        expect(await db.select().from(loanAdjustments)).toHaveLength(2);
+        expect(await db.select().from(loanRenewals).where(eq(loanRenewals.status, "executed"))).toHaveLength(1);
+        expect(await db.select().from(loanRenewals).where(eq(loanRenewals.status, "preview"))).toHaveLength(1);
+        expect(await db.select().from(auditLogs).where(eq(auditLogs.action, "executed"))).toHaveLength(1);
     });
 
     // Break caught: execute trusts a persisted preview after new principal is posted to the old loan.
@@ -429,6 +540,65 @@ describe("daily-loan renewal service", () => {
         expect(await db.select().from(loans).where(eq(loans.clonedFromLoanId, seeded.oldLoan.id))).toHaveLength(0);
     });
 
+    integrationTest("expires and rejects a preview whose explicit TTL has elapsed", async () => {
+        const seeded = await seedDailyLoan();
+        const preview = await previewLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id), seeded.oldLoan.publicId, { requestedPrincipal: "2500.00" },
+        );
+        await db.update(loanRenewals).set({ expiresAt: new Date(Date.now() - 1_000) })
+            .where(eq(loanRenewals.publicId, preview.publicId));
+
+        await expect(executeLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "expired-renewal-preview"), preview.publicId,
+            { previewHash: preview.previewHash, confirmed: true, reason: "expired attempt" },
+        )).rejects.toMatchObject({ code: "STALE_RENEWAL_PREVIEW", status: 409 });
+        expect(await db.query.loanRenewals.findFirst({ where: eq(loanRenewals.publicId, preview.publicId) }))
+            .toMatchObject({ status: "expired", newLoanId: null });
+    });
+
+    integrationTest("expires a preview when a due day and daily penalty change before its TTL", async () => {
+        setSystemTime(new Date("2026-08-10T23:59:00.000Z"));
+        try {
+            const seeded = await seedDailyLoan();
+            await db.update(loans).set({ lateFeeMode: "daily_percent", lateFeeAmount: "1.00" })
+                .where(eq(loans.id, seeded.oldLoan.id));
+            const preview = await previewLoanRenewal(
+                context(seeded.tenantId, seeded.actor.id), seeded.oldLoan.publicId, { requestedPrincipal: "2500.00" },
+            );
+            expect(preview.dueCharges).toBe("0.00");
+            await db.update(loanRenewals).set({ createdAt: new Date("2026-08-10T23:59:00.000Z") })
+                .where(eq(loanRenewals.publicId, preview.publicId));
+
+            setSystemTime(new Date("2026-08-11T00:01:00.000Z"));
+            await expect(executeLoanRenewal(
+                context(seeded.tenantId, seeded.actor.id, "midnight-stale-renewal"),
+                preview.publicId,
+                { previewHash: preview.previewHash, confirmed: true, reason: "crossed due boundary" },
+            )).rejects.toMatchObject({ code: "STALE_RENEWAL_PREVIEW", status: 409 });
+            expect(await db.query.loanRenewals.findFirst({ where: eq(loanRenewals.publicId, preview.publicId) }))
+                .toMatchObject({ status: "expired", newLoanId: null });
+        } finally {
+            setSystemTime();
+        }
+    });
+
+    integrationTest("falls back to a stable preview TTL when the environment value is invalid", async () => {
+        const previous = process.env.RENEWAL_PREVIEW_TTL_SECONDS;
+        process.env.RENEWAL_PREVIEW_TTL_SECONDS = "not-a-number";
+        setSystemTime(new Date("2026-08-10T12:00:00.000Z"));
+        try {
+            const seeded = await seedDailyLoan();
+            const preview = await previewLoanRenewal(
+                context(seeded.tenantId, seeded.actor.id), seeded.oldLoan.publicId, { requestedPrincipal: "2500.00" },
+            );
+            expect(preview.expiresAt.toISOString()).toBe("2026-08-10T12:15:00.000Z");
+        } finally {
+            setSystemTime();
+            if (previous === undefined) delete process.env.RENEWAL_PREVIEW_TTL_SECONDS;
+            else process.env.RENEWAL_PREVIEW_TTL_SECONDS = previous;
+        }
+    });
+
     // Break caught: execution silently creates an underfunded replacement loan.
     integrationTest("rejects execution when existing allocations cannot fund the requested principal", async () => {
         const seeded = await seedDailyLoan({ allocatedAmount: "2000.00" });
@@ -463,7 +633,7 @@ describe("daily-loan renewal service", () => {
         );
         const replacement = await db.query.loans.findFirst({ where: eq(loans.publicId, executed.newLoanPublicId) });
         const schedule = await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.loanId, replacement!.id) });
-        await db.insert(transactions).values({
+        const downstreamPayment = await db.insert(transactions).values({
             tenantId: seeded.tenantId,
             ownerUserId: seeded.actor.id,
             loanId: replacement!.id,
@@ -476,7 +646,7 @@ describe("daily-loan renewal service", () => {
             entryType: "repayment",
             idempotencyKey: "downstream-replacement-payment",
             recordedByUserId: seeded.actor.id,
-        });
+        }).returning().then((rows) => rows[0]!);
 
         await expect(reverseLoanRenewal(
             context(seeded.tenantId, seeded.actor.id, "blocked-renewal-reverse"),
@@ -491,6 +661,79 @@ describe("daily-loan renewal service", () => {
             .toMatchObject({ status: "executed" });
         expect(await db.query.loans.findFirst({ where: eq(loans.id, replacement!.id) }))
             .toMatchObject({ status: "active" });
+
+        await db.insert(transactions).values({
+            tenantId: seeded.tenantId,
+            ownerUserId: seeded.actor.id,
+            loanId: replacement!.id,
+            scheduleId: schedule!.id,
+            amount: "-190.00",
+            principalComponent: "-166.67",
+            interestComponent: "-23.33",
+            feeComponent: "0.00",
+            penaltyComponent: "0.00",
+            entryType: "reversal",
+            reversedTransactionId: downstreamPayment.id,
+            idempotencyKey: "reverse-downstream-replacement-payment",
+            recordedByUserId: seeded.actor.id,
+        });
+        const reversed = await reverseLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "reverse-after-downstream-reversal"), preview.publicId,
+            { reason: "downstream payment was reversed" },
+        );
+        expect(reversed.status).toBe("reversed");
+    });
+
+    integrationTest("locks the reloaded replacement loan before checking a racing payment", async () => {
+        const seeded = await seedDailyLoan();
+        const preview = await previewLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id), seeded.oldLoan.publicId, { requestedPrincipal: "2500.00" },
+        );
+        const executed = await executeLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "execute-before-payment-race"), preview.publicId,
+            { previewHash: preview.previewHash, confirmed: true, reason: "prepare payment race" },
+        );
+        const replacement = await db.query.loans.findFirst({ where: eq(loans.publicId, executed.newLoanPublicId) });
+        const schedule = await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.loanId, replacement!.id) });
+        let releaseLock!: () => void;
+        let markLocked!: () => void;
+        const release = new Promise<void>((resolve) => { releaseLock = resolve; });
+        const locked = new Promise<void>((resolve) => { markLocked = resolve; });
+        const payment = db.transaction(async (tx) => {
+            await tx.execute(sql`SELECT id FROM loans WHERE id = ${replacement!.id} FOR UPDATE`);
+            markLocked();
+            await release;
+            await tx.insert(transactions).values({
+                tenantId: seeded.tenantId,
+                ownerUserId: seeded.actor.id,
+                loanId: replacement!.id,
+                scheduleId: schedule!.id,
+                amount: "190.00",
+                principalComponent: "166.67",
+                interestComponent: "23.33",
+                feeComponent: "0.00",
+                penaltyComponent: "0.00",
+                entryType: "repayment",
+                idempotencyKey: "payment-racing-renewal-reversal",
+                recordedByUserId: seeded.actor.id,
+            });
+        });
+        await locked;
+        const reversalPending = reverseLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "reverse-racing-payment"), preview.publicId,
+            { reason: "must observe committed payment" },
+        );
+        await Bun.sleep(50);
+        releaseLock();
+        await payment;
+
+        await expect(reversalPending).rejects.toMatchObject({
+            code: "RENEWAL_REVERSE_BLOCKED",
+            status: 409,
+            details: { downstreamEntryCount: 1 },
+        });
+        expect(await db.query.loanRenewals.findFirst({ where: eq(loanRenewals.publicId, preview.publicId) }))
+            .toMatchObject({ status: "executed" });
     });
 
     // Break caught: reversal cancels a replacement loan while leaving a downstream funding allocation attached.
@@ -512,8 +755,8 @@ describe("daily-loan renewal service", () => {
             loanId: replacement!.id,
             allocatedAmount: "1.00",
             allocationDate: replacement!.startDate!,
-            allocationType: "manual_adjustment",
-            note: "Downstream funding correction",
+            allocationType: "reallocation_in",
+            note: `Carried from loan ${seeded.oldLoan.publicId} via renewal ${preview.publicId}`,
             createdByUserId: seeded.actor.id,
         });
 
@@ -528,6 +771,144 @@ describe("daily-loan renewal service", () => {
         });
         expect(await db.query.loans.findFirst({ where: eq(loans.id, replacement!.id) }))
             .toMatchObject({ status: "active" });
+    });
+
+    integrationTest("allows reversal after downstream funding reallocations are economically compensated", async () => {
+        const seeded = await seedDailyLoan();
+        const secondProfile = await db.insert(bankProfiles).values({
+            tenantId: seeded.tenantId, name: "Compensation Fund", type: "bank",
+        }).returning().then((rows) => rows[0]!);
+        const secondDrawdown = await db.insert(bankLoans).values({
+            tenantId: seeded.tenantId, bankProfileId: secondProfile.id, amount: "5000.00",
+        }).returning().then((rows) => rows[0]!);
+        const preview = await previewLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id), seeded.oldLoan.publicId, { requestedPrincipal: "2500.00" },
+        );
+        const executed = await executeLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "execute-before-compensated-funding"), preview.publicId,
+            { previewHash: preview.previewHash, confirmed: true, reason: "test funding lifecycle" },
+        );
+        const replacement = await db.query.loans.findFirst({ where: eq(loans.publicId, executed.newLoanPublicId) });
+        await db.insert(loanFundingAllocations).values([
+            {
+                tenantId: seeded.tenantId, bankProfileId: seeded.profile.id, bankLoanId: seeded.drawdown.id,
+                loanId: replacement!.id, allocatedAmount: "-100.00", allocationDate: replacement!.startDate!,
+                allocationType: "reallocation_out", allocationGroupId: crypto.randomUUID(), createdByUserId: seeded.actor.id,
+            },
+            {
+                tenantId: seeded.tenantId, bankProfileId: secondProfile.id, bankLoanId: secondDrawdown.id,
+                loanId: replacement!.id, allocatedAmount: "100.00", allocationDate: replacement!.startDate!,
+                allocationType: "reallocation_in", allocationGroupId: crypto.randomUUID(), createdByUserId: seeded.actor.id,
+            },
+            {
+                tenantId: seeded.tenantId, bankProfileId: secondProfile.id, bankLoanId: secondDrawdown.id,
+                loanId: replacement!.id, allocatedAmount: "-100.00", allocationDate: replacement!.startDate!,
+                allocationType: "reallocation_out", allocationGroupId: crypto.randomUUID(), createdByUserId: seeded.actor.id,
+            },
+            {
+                tenantId: seeded.tenantId, bankProfileId: seeded.profile.id, bankLoanId: seeded.drawdown.id,
+                loanId: replacement!.id, allocatedAmount: "100.00", allocationDate: replacement!.startDate!,
+                allocationType: "reallocation_in", allocationGroupId: crypto.randomUUID(), createdByUserId: seeded.actor.id,
+            },
+        ]);
+
+        const reversed = await reverseLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "reverse-after-compensated-funding"), preview.publicId,
+            { reason: "downstream funding is net zero" },
+        );
+        expect(reversed.status).toBe("reversed");
+    });
+
+    integrationTest("restores an active fully-settled old loan from its exact pre-execution state", async () => {
+        const seeded = await seedDailyLoan({ paidInstallments: 15 });
+        await db.update(loans).set({
+            status: "active",
+            outstandingPrincipal: "0.00",
+            outstandingInterest: "0.00",
+            outstandingFees: "0.00",
+            nextDueDate: null,
+        }).where(eq(loans.id, seeded.oldLoan.id));
+        const preview = await previewLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id), seeded.oldLoan.publicId, { requestedPrincipal: "2500.00" },
+        );
+        await executeLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "execute-active-zero-state"), preview.publicId,
+            { previewHash: preview.previewHash, confirmed: true, reason: "state restoration case" },
+        );
+        const persisted = await db.query.loanRenewals.findFirst({ where: eq(loanRenewals.publicId, preview.publicId) });
+        expect(persisted?.preExecutionLoanState).toEqual({
+            status: "active",
+            outstandingPrincipal: "0.00",
+            outstandingInterest: "0.00",
+            outstandingFees: "0.00",
+            nextDueDate: null,
+        });
+
+        await reverseLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "reverse-active-zero-state"), preview.publicId,
+            { reason: "restore original state" },
+        );
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.oldLoan.id) })).toMatchObject({
+            status: "active",
+            outstandingPrincipal: "0.00",
+            outstandingInterest: "0.00",
+            outstandingFees: "0.00",
+            nextDueDate: null,
+        });
+    });
+
+    integrationTest("restores an originally paid old loan as paid", async () => {
+        const seeded = await seedDailyLoan({ paidInstallments: 15 });
+        await db.update(loans).set({
+            status: "paid", outstandingPrincipal: "0.00", outstandingInterest: "0.00", outstandingFees: "0.00",
+        }).where(eq(loans.id, seeded.oldLoan.id));
+        const preview = await previewLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id), seeded.oldLoan.publicId, { requestedPrincipal: "2500.00" },
+        );
+        await executeLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "execute-paid-state"), preview.publicId,
+            { previewHash: preview.previewHash, confirmed: true, reason: "paid state case" },
+        );
+        await reverseLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "reverse-paid-state"), preview.publicId,
+            { reason: "restore paid state" },
+        );
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.oldLoan.id) }))
+            .toMatchObject({ status: "paid", outstandingPrincipal: "0.00" });
+    });
+
+    integrationTest("reloads execution state when reversal was queued behind execution", async () => {
+        const seeded = await seedDailyLoan();
+        const preview = await previewLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id), seeded.oldLoan.publicId, { requestedPrincipal: "2500.00" },
+        );
+        let releaseLock!: () => void;
+        let markLocked!: () => void;
+        const release = new Promise<void>((resolve) => { releaseLock = resolve; });
+        const locked = new Promise<void>((resolve) => { markLocked = resolve; });
+        const blocker = db.transaction(async (tx) => {
+            await tx.execute(sql`SELECT id FROM loans WHERE id = ${seeded.oldLoan.id} FOR UPDATE`);
+            markLocked();
+            await release;
+        });
+        await locked;
+        const executionPending = executeLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "execute-before-queued-reverse"), preview.publicId,
+            { previewHash: preview.previewHash, confirmed: true, reason: "execute while queued" },
+        );
+        await Bun.sleep(100);
+        const reversalPending = reverseLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "queued-reverse-after-execute"), preview.publicId,
+            { reason: "reverse immediately after execution" },
+        );
+        await Bun.sleep(20);
+        releaseLock();
+        await blocker;
+        const [executed, reversed] = await Promise.all([executionPending, reversalPending]);
+        expect(executed.status).toBe("executed");
+        expect(reversed.status).toBe("reversed");
+        expect(await db.query.loans.findFirst({ where: eq(loans.publicId, executed.newLoanPublicId) }))
+            .toMatchObject({ status: "canceled" });
     });
 
     // Break caught: reversal deletes execution rows or fails to restore old/new loan and funding states exactly once.
@@ -550,6 +931,17 @@ describe("daily-loan renewal service", () => {
 
         const first = await reverse();
         const retry = await reverse();
+
+        await expect(reverseLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "different-renewal-reversal-key"),
+            preview.publicId,
+            { reason: "operator corrected renewal" },
+        )).rejects.toMatchObject({ code: "REVERSAL_IDEMPOTENCY_CONFLICT", status: 409 });
+        await expect(reverseLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "successful-renewal-reverse"),
+            preview.publicId,
+            { reason: "changed retry payload" },
+        )).rejects.toMatchObject({ code: "REVERSAL_IDEMPOTENCY_CONFLICT", status: 409 });
 
         expect(retry).toEqual(first);
         expect(first).toMatchObject({

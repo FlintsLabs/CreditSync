@@ -78,6 +78,13 @@
       "when": 1786299738393,
       "tag": "0010_payment_evidence_expiry",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1786302008286,
+      "tag": "0011_loan_renewal_hardening",
+      "breakpoints": true
     }
   ]
 }

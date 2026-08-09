@@ -76,7 +76,7 @@ Daily-loan renewals use the authenticated `/loan-renewals` API:
 - `POST /loan-renewals/:id/execute` requires the persisted `previewHash`, `confirmed: true`, a non-blank `reason`, and an `Idempotency-Key` header.
 - `POST /loan-renewals/:id/reverse` requires a non-blank `reason` and `Idempotency-Key` header.
 
-Renewal previews derive principal from posted, non-reversed transaction components. Execution locks and recomputes that state, settles non-waived due interest/fees/penalties from proceeds, activates a fresh schedule, and carries funding composition proportionally. The outstanding-principal transfer is non-cash; only the net payout or collection is recorded as borrower cash. Reversal is blocked by unreversed downstream entries and appends accounting compensations without deleting the replacement schedule.
+Renewal previews derive principal from posted, non-reversed transaction components. Execution locks and recomputes balances, due-day charges, penalties, and funding at execution time; previews become stale when any hashed state changes. Funding mutations and renewals serialize on the borrower loan before reading allocation state, and funding carry uses deterministic integer-cent largest-remainder allocation with tenant-safe renewal/group provenance. The outstanding-principal transfer is non-cash; only the net payout or collection is recorded as borrower cash. Reversal keys are operation-scoped, exact pre-execution loan state is restored, and reversal is blocked only by net active downstream transactions, adjustments, or funding before append-only compensations are written. Invalid `RENEWAL_PREVIEW_TTL_SECONDS` values fall back to 900 seconds.
 
 - record repayments manually through payment intakes
 - upload repayment slips

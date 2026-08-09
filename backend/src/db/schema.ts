@@ -222,10 +222,28 @@ export const loanFundingAllocations = pgTable("loan_funding_allocations", {
     allocatedAmount: numeric("allocated_amount").notNull(),
     allocationDate: date("allocation_date").notNull(),
     allocationType: text("allocation_type").default("initial").notNull(), // initial, manual_adjustment, reallocation_in, reallocation_out
+    renewalId: integer("renewal_id"),
+    allocationGroupId: uuid("allocation_group_id"),
+    reversedAllocationId: integer("reversed_allocation_id"),
     note: text("note"),
     createdByUserId: integer("created_by_user_id").references(() => users.id),
     createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => [
+    uniqueIndex("loan_funding_allocations_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("loan_funding_allocations_tenant_reversed_allocation_unique")
+        .on(table.tenantId, table.reversedAllocationId)
+        .where(sql`${table.reversedAllocationId} IS NOT NULL`),
+    foreignKey({
+        name: "loan_funding_allocations_tenant_renewal_fk",
+        columns: [table.tenantId, table.renewalId],
+        foreignColumns: [loanRenewals.tenantId, loanRenewals.id],
+    }),
+    foreignKey({
+        name: "loan_funding_allocations_tenant_reversed_allocation_fk",
+        columns: [table.tenantId, table.reversedAllocationId],
+        foreignColumns: [table.tenantId, table.id],
+    }),
+]);
 
 // Transactions (Repayments from Borrowers)
 export const transactions = pgTable("transactions", {
@@ -637,6 +655,15 @@ export const loanRenewals = pgTable("loan_renewals", {
     cashAmount: numeric("cash_amount").default("0").notNull(),
     reason: text("reason"),
     idempotencyKey: text("idempotency_key"),
+    reversalIdempotencyKey: text("reversal_idempotency_key"),
+    reversalRequestHash: text("reversal_request_hash"),
+    preExecutionLoanState: jsonb("pre_execution_loan_state").$type<{
+        status: string;
+        outstandingPrincipal: string;
+        outstandingInterest: string;
+        outstandingFees: string;
+        nextDueDate: string | null;
+    }>(),
     expiresAt: timestamp("expires_at").notNull(),
     executedAt: timestamp("executed_at"),
     reversedAt: timestamp("reversed_at"),
@@ -651,6 +678,9 @@ export const loanRenewals = pgTable("loan_renewals", {
     uniqueIndex("loan_renewals_tenant_idempotency_unique")
         .on(table.tenantId, table.idempotencyKey)
         .where(sql`${table.idempotencyKey} IS NOT NULL`),
+    uniqueIndex("loan_renewals_tenant_reversal_idempotency_unique")
+        .on(table.tenantId, table.reversalIdempotencyKey)
+        .where(sql`${table.reversalIdempotencyKey} IS NOT NULL`),
     check("loan_renewals_status_check", sql`${table.status} IN ('preview', 'executed', 'reversed', 'expired')`),
     check("loan_renewals_cash_direction_check", sql`${table.cashDirection} IS NULL OR ${table.cashDirection} IN ('payout', 'collection', 'none')`),
     foreignKey({
