@@ -311,10 +311,12 @@ export default function LoanWizard() {
                                 <label>{t("loanWizard.principalAmount", "Principal Amount (฿)")}</label>
                                 <Input type="number" value={formData.principal} onChange={(e) => setFormData({ ...formData, principal: e.target.value })} />
                             </div>
-                            <div className="grid gap-2">
-                                <label>{t("loanWizard.interestRate", "Interest Rate (% per year)")}</label>
-                                <Input type="number" value={formData.interestRate} onChange={(e) => setFormData({ ...formData, interestRate: e.target.value })} />
-                            </div>
+                            {formData.repaymentType !== "floating" && (
+                                <div className="grid gap-2">
+                                    <label>{t("loanWizard.interestRate", "Interest Rate (% per year)")}</label>
+                                    <Input type="number" value={formData.interestRate} onChange={(e) => setFormData({ ...formData, interestRate: e.target.value })} />
+                                </div>
+                            )}
                             <div className="grid gap-2">
                                 <label>{t("loanWizard.termMonths", "Term (Months)")}</label>
                                 <Input type="number" value={formData.termMonths} onChange={(e) => setFormData({ ...formData, termMonths: e.target.value })} />
