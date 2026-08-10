@@ -9,6 +9,7 @@
 - Added Decimal-based normalization for fixed daily loans entered from a proposed daily payment or from flat daily interest terms.
 - Added additive daily-loan entry metadata and service previews so the selected input method is auditable alongside derived schedule terms.
 - Added optional daily-loan entry contracts to REST and remote MCP loan preview and draft workflows.
+- Added the daily-loan wizard flow for day/month durations, borrower-proposed payments, flat-interest terms, and localized calculation summaries.
 
 ### Fixed
 - Removed the duplicate custom calendar icon from the loan start-date field; the browser-native date control remains fully clickable.

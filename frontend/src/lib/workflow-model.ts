@@ -8,6 +8,12 @@ export interface LoanTermsForm {
     startDate: string;
     totalInstallments?: string;
     installmentAmount?: string;
+    dailyDurationUnit?: "days" | "months";
+    dailyDurationValue?: string;
+    dailyEntryMode?: "daily_payment" | "daily_interest";
+    dailyPayment?: string;
+    dailyInterestInputMode?: "percent" | "fixed_amount" | "per_thousand";
+    dailyInterestInputValue?: string;
 }
 
 export interface AllocationDraft extends PaymentAllocationInput {
@@ -29,6 +35,13 @@ export function buildLoanTermsInput(form: LoanTermsForm) {
         startDate: string;
         totalInstallments?: number;
         installmentAmount?: string;
+        dailyEntry?: {
+            durationUnit: "days" | "months";
+            durationValue: number;
+            entryMode: "daily_payment" | "daily_interest";
+            dailyPayment?: string;
+            interestInput?: { mode: "percent" | "fixed_amount" | "per_thousand"; value: string };
+        };
     } = {
         principal: normalizeMoney(form.principal),
         interestRate: normalizeMoney(form.interestRate),
@@ -36,6 +49,20 @@ export function buildLoanTermsInput(form: LoanTermsForm) {
         repaymentType: form.repaymentType,
         startDate: form.startDate,
     };
+    if (form.repaymentType === "daily" && form.dailyEntryMode) {
+        const durationUnit = form.dailyDurationUnit;
+        if (!durationUnit) throw new Error("dailyDurationUnit is required");
+        const dailyEntry = { durationUnit, durationValue: positiveInteger(form.dailyDurationValue ?? "", "dailyDurationValue"), entryMode: form.dailyEntryMode } as NonNullable<typeof terms.dailyEntry>;
+        if (form.dailyEntryMode === "daily_payment") {
+            if (!form.dailyPayment?.trim()) throw new Error("dailyPayment is required");
+            dailyEntry.dailyPayment = normalizeMoney(form.dailyPayment);
+        } else {
+            if (!form.dailyInterestInputMode || !form.dailyInterestInputValue?.trim()) throw new Error("daily interest input is required");
+            dailyEntry.interestInput = { mode: form.dailyInterestInputMode, value: form.dailyInterestInputValue.trim() };
+        }
+        terms.dailyEntry = dailyEntry;
+        return terms;
+    }
     const hasFixedCount = Boolean(form.totalInstallments?.trim());
     const hasFixedAmount = Boolean(form.installmentAmount?.trim());
     if (hasFixedCount !== hasFixedAmount) throw new Error("Fixed installment count and amount must be entered together");

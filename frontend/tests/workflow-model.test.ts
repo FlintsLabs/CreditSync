@@ -45,6 +45,20 @@ describe("workflow view models", () => {
         })).toMatchObject({ totalInstallments: 360, installmentAmount: "3.20" });
     });
 
+    test("sends a daily entry source without calculating financial terms in the browser", () => {
+        expect(buildLoanTermsInput({
+            principal: "2500", interestRate: "0", termMonths: "1", repaymentType: "daily", startDate: "2026-08-10",
+            dailyDurationUnit: "days", dailyDurationValue: "15", dailyEntryMode: "daily_payment", dailyPayment: "200",
+        })).toMatchObject({
+            principal: "2500.00", interestRate: "0.00", termMonths: 1,
+            dailyEntry: { durationUnit: "days", durationValue: 15, entryMode: "daily_payment", dailyPayment: "200.00" },
+        });
+        expect(buildLoanTermsInput({
+            principal: "2000", interestRate: "0", termMonths: "1", repaymentType: "daily", startDate: "2026-08-10",
+            dailyDurationUnit: "days", dailyDurationValue: "10", dailyEntryMode: "daily_interest", dailyInterestInputMode: "percent", dailyInterestInputValue: "1.5",
+        }).dailyEntry).toEqual({ durationUnit: "days", durationValue: 10, entryMode: "daily_interest", interestInput: { mode: "percent", value: "1.5" } });
+    });
+
     test("sums and subtracts money exactly beyond Number safe integer range", () => {
         expect(sumMoney(["9007199254740993.10", "0.20", "6.70"])).toBe("9007199254741000.00");
         expect(moneyDifference("9007199254741000.00", "9007199254740993.10")).toBe("6.90");
