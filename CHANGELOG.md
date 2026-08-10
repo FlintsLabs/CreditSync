@@ -10,6 +10,7 @@
 - Added an approved design specification for auditable floating daily-interest loans with per-thousand and percent rate modes, first-day treatment, accrual ledger, explicit payment allocation, and MCP/Web parity.
 - Added an approved design specification for direct own-capital funding, configurable 2.00% annual opportunity cost, capacity enforcement, and cash-versus-economic profitability reporting.
 - Added a task-by-task implementation plan for direct own-capital selection, capacity enforcement, and non-cash economic profitability.
+- Added the additive own-capital opportunity-cost policy migration with a non-negative annual rate defaulting to 2.00%.
 
 ### Fixed
 - Corrected the direct-own-capital plan's five-day 2% annual opportunity-cost example to ฿1.37 for a ฿5,000 allocation.

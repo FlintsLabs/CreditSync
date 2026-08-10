@@ -60,6 +60,7 @@ export const bankProfiles = pgTable("bank_profiles", {
     creditLimit: numeric("credit_limit"),
     accountingMode: text("accounting_mode").default("external_liability").notNull(), // external_liability, capital_pool
     reinvestProfitMode: text("reinvest_profit_mode").default("manual_distribution").notNull(), // manual_distribution, retain_in_pool
+    opportunityCostRate: numeric("opportunity_cost_rate").notNull().default("2.00"), // Annual non-cash cost for capital pools
     createdAt: timestamp("created_at").defaultNow(),
     updatedAt: timestamp("updated_at").defaultNow(),
 });

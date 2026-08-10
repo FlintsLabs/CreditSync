@@ -92,6 +92,13 @@
       "when": 1786305000000,
       "tag": "0012_payment_review_warnings",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1786310000000,
+      "tag": "0013_own_capital_direct_funding",
+      "breakpoints": true
     }
   ]
 }
