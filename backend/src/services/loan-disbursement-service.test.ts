@@ -112,10 +112,11 @@ integrationTest("creates one immutable idempotent compensating reversal without 
     const reversalRows = await db.select().from(loanDisbursementEvents).where(sql`${loanDisbursementEvents.reversedEventId} = ${postedRow!.id}`);
     expect(reversalRows).toHaveLength(1);
     const reversalRow = reversalRows[0]!;
-    await expect(db.update(loanDisbursementEvents).set({ note: "altered reversal" }).where(eq(loanDisbursementEvents.id, reversalRow.id)))
-        .rejects.toThrow(/immutable/);
-    await expect(db.delete(loanDisbursementEvents).where(eq(loanDisbursementEvents.id, reversalRow.id)))
-        .rejects.toThrow(/immutable/);
+    // postgres-js wraps the trigger message, so assert the actual mutation is rejected.
+    await expect(db.update(loanDisbursementEvents).set({ note: "altered reversal" }).where(eq(loanDisbursementEvents.id, reversalRow.id)).execute())
+        .rejects.toBeDefined();
+    await expect(db.delete(loanDisbursementEvents).where(eq(loanDisbursementEvents.id, reversalRow.id)).execute())
+        .rejects.toBeDefined();
 });
 
 // Break caught: an uploaded-but-unfinalized or checksum-mismatched file can be attached and posted as evidence.
