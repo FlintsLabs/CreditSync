@@ -4,6 +4,7 @@
 
 ### Added
 - Added an approved borrower-card identity design specification covering responsive one/two-column layout, sensitive Thai-ID masking, full-value copy behavior, avatar hierarchy, localization, accessibility, and verification requirements.
+- Added a task-by-task implementation plan for the approved borrower-card identity design.
 
 ## v0.3.4 - 2026-08-10
 
