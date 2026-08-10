@@ -5,6 +5,9 @@
 ### Added
 - Added an approved Thai-first landing and login redesign specification focused on a trustworthy operations overview, clear Google sign-in entry, localization, accessibility, and verification boundaries.
 
+### Fixed
+- Removed the duplicate custom calendar icon from the loan start-date field; the browser-native date control remains fully clickable.
+
 ## v0.3.5 - 2026-08-10
 
 ### Added
