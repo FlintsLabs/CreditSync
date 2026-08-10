@@ -61,4 +61,11 @@ describe("BorrowerDetail", () => {
             "/borrowers/aliases/22222222-2222-4222-8222-222222222222/confirm",
         ));
     });
+
+    it("uses a compact responsive avatar in the borrower header", async () => {
+        renderDetail();
+
+        const avatar = await screen.findByTestId("borrower-detail-avatar");
+        expect(avatar).toHaveClass("h-[72px]", "w-[72px]", "md:h-20", "md:w-20");
+    });
 });

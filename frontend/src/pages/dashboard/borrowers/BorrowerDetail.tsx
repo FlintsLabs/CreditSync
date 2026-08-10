@@ -106,7 +106,7 @@ export default function BorrowerDetail() {
         <div className="space-y-6">
             <div className="border-b pb-5">
                 <Link to="/borrowers" className="mb-4 flex items-center text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="mr-1 h-4 w-4" />{t("borrowerDetail.back")}</Link>
-                <div className="flex items-center gap-5"><Avatar className="h-20 w-20"><AvatarImage src={borrower.photoUrl ?? undefined} /><AvatarFallback>{initials(borrower.name)}</AvatarFallback></Avatar><div><h1 className="text-3xl font-bold">{borrower.name}</h1><div className="mt-2 flex flex-wrap gap-2">{borrower.tags?.map((tag) => <Badge key={tag} variant="secondary">{tag}</Badge>)}<Badge variant="outline" className="font-mono">{borrower.publicId}</Badge></div></div></div>
+                <div className="flex items-center gap-5"><Avatar className="h-[72px] w-[72px] md:h-20 md:w-20" data-testid="borrower-detail-avatar"><AvatarImage src={borrower.photoUrl ?? undefined} /><AvatarFallback>{initials(borrower.name)}</AvatarFallback></Avatar><div><h1 className="text-3xl font-bold">{borrower.name}</h1><div className="mt-2 flex flex-wrap gap-2">{borrower.tags?.map((tag) => <Badge key={tag} variant="secondary">{tag}</Badge>)}<Badge variant="outline" className="font-mono">{borrower.publicId}</Badge></div></div></div>
             </div>
             {error && <div role="alert" className="rounded border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
             <div className="grid gap-5 md:grid-cols-3">
