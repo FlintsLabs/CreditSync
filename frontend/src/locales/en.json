@@ -402,6 +402,7 @@
         "create": "Create Loan",
         "search": "Borrower or loan #",
         "loanLabel": "Loan #{{id}}",
+        "originalPrincipal": "Original principal",
         "repaymentType": "Repayment type",
         "installmentSummary": "{{amount}} per installment · {{count}} installments",
         "noFixedSchedule": "Floating repayment has no fixed schedule",

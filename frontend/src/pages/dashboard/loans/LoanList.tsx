@@ -15,6 +15,7 @@ interface LoanRow {
     publicId: string;
     borrowerName: string;
     principal: string;
+    outstandingPrincipal: string;
     status: string;
     createdAt: string;
     repaymentType: string;
@@ -158,7 +159,10 @@ export default function LoanList() {
                         <CardContent className="flex-grow flex flex-col justify-between">
                             <div className="space-y-3">
                                 <div>
-                                    <div className="text-2xl font-bold mb-2">{formatMoneyExact(loan.principal, i18n.language)}</div>
+                                    <div className="text-2xl font-bold">{formatMoneyExact(loan.outstandingPrincipal, i18n.language)}</div>
+                                    <p className="mt-1 mb-2 text-xs text-muted-foreground">
+                                        / {t("loans.originalPrincipal", "Original principal")} {formatMoneyExact(loan.principal, i18n.language)}
+                                    </p>
                                     <p className={cn(
                                         "text-xs font-semibold uppercase",
                                         loan.status === "active" ? "text-green-600" : "text-gray-500"

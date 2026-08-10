@@ -534,7 +534,12 @@ describe("loan application service", () => {
 
         const list = await jsonRequest(app, "/loans", { headers });
         expect(list.response.status, list.text).toBe(200);
-        expect(list.body[0]).toMatchObject({ publicId: created.body.publicId, startDate: "2026-08-10" });
+        expect(list.body[0]).toMatchObject({
+            publicId: created.body.publicId,
+            principal: "1200.00",
+            outstandingPrincipal: "0.00",
+            startDate: "2026-08-10",
+        });
 
         const updated = await jsonRequest(app, `/loans/${created.body.publicId}`, {
             method: "PUT", headers, body: JSON.stringify({ principal: "100.00", interestRate: "0.00", termMonths: 12 }),
@@ -545,6 +550,11 @@ describe("loan application service", () => {
         const activated = await jsonRequest(app, `/loans/${created.body.publicId}/activate`, { method: "POST", headers });
         expect(activated.response.status, activated.text).toBe(200);
         expect(activated.body).toMatchObject({ status: "active", outstandingPrincipal: "100.00" });
+        const activeList = await jsonRequest(app, "/loans", { headers });
+        expect(activeList.body[0]).toMatchObject({
+            principal: "100.00",
+            outstandingPrincipal: "100.00",
+        });
         const retried = await jsonRequest(app, `/loans/${created.body.publicId}/activate`, { method: "POST", headers });
         expect(retried.body).toEqual(activated.body);
 
