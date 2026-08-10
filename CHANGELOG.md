@@ -10,6 +10,7 @@
 
 ### Changed
 - Changed the Borrowers list to a one-column mobile and two-column desktop grid using the privacy-aware identity card.
+- Changed borrower-card sizing to use the available list width, keeping a single card full-width in a narrow content panel while fitting additional columns only when they have room.
 
 ### Fixed
 - Replaced customer national-ID examples in the borrower-card implementation plan with synthetic test data so sensitive identity data is not committed to source control.

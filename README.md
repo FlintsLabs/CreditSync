@@ -2,7 +2,7 @@
 
 ## Borrower identity privacy
 
-Borrower list cards mask Thai national IDs by default. The card's copy action intentionally copies the complete stored value for authorized owner workflows; use the borrower detail or edit flow when the full value must be viewed or updated.
+Borrower list cards mask Thai national IDs by default. The card's copy action intentionally copies the complete stored value for authorized owner workflows; use the borrower detail or edit flow when the full value must be viewed or updated. The list adapts its card columns to the available content width, so a narrow main panel keeps one full-width card rather than a cramped half-width column.
 
 CreditSync is a mobile-first loan management system for lenders who need to track funding sources, borrower profiles, loan contracts, repayments, and closing balances in one place.
 

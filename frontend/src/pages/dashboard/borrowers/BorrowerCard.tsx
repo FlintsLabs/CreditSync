@@ -77,7 +77,7 @@ export default function BorrowerCard({ borrower, onEdit }: BorrowerCardProps) {
   const borrowerName = borrower.name || t("common.unknown", "Unknown");
 
   return (
-    <Card className="rounded-xl border-l-4 border-l-primary/50 transition-all hover:shadow-md">
+    <Card className="w-full rounded-xl border-l-4 border-l-primary/50 transition-all hover:shadow-md">
       <CardHeader className="flex min-w-0 flex-row items-start gap-3 pb-2">
         <Avatar className="h-12 w-12 shrink-0 border-2 border-white shadow-sm">
           <AvatarImage src={borrower.photoUrl ?? undefined} />

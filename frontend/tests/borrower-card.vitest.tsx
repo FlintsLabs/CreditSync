@@ -68,7 +68,7 @@ describe("BorrowerCard", () => {
     expect(screen.queryByRole("button", { name: /copy id card/i })).not.toBeInTheDocument();
   });
 
-  test("uses a one-column mobile and two-column md borrower grid", async () => {
+  test("sizes columns from the available list width instead of the viewport", async () => {
     vi.mocked(api.get).mockResolvedValue({
       data: [borrower, { ...borrower, id: 2, publicId: "22222222-2222-4222-8222-222222222222", name: "Second Borrower" }],
     });
@@ -80,7 +80,7 @@ describe("BorrowerCard", () => {
     );
 
     const grid = await screen.findByTestId("borrower-card-grid");
-    expect(grid).toHaveClass("grid-cols-1", "md:grid-cols-2");
-    expect(grid).not.toHaveClass("lg:grid-cols-3");
+    expect(grid).toHaveClass("grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))]");
+    expect(grid.firstElementChild).toHaveClass("w-full");
   });
 });

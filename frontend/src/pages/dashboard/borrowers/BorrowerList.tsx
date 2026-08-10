@@ -69,7 +69,7 @@ export default function BorrowerList() {
                     </Link>
                 </div>
             ) : (
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-2" data-testid="borrower-card-grid">
+                <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] gap-4" data-testid="borrower-card-grid">
                     {borrowers.map((borrower) => (
                         <BorrowerCard borrower={borrower} key={borrower.id} onEdit={handleEdit} />
                     ))}
