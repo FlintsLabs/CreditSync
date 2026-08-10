@@ -22,6 +22,7 @@
 - Documented the approved responsive layout for funding-source details at tablet and compact-desktop widths.
 
 ### Fixed
+- Kept the payment-intake origin-loan migration test additive after later migrations are registered.
 - Signed every payment/disbursement evidence header returned to upload clients and added floating-loan compensating reversal support.
 - Ordered new intermediary composite-key indexes before their tenant-safe foreign keys so the additive migration applies cleanly to a fresh PostgreSQL database.
 - Made funding-source summaries and loan allocations readable in tablet and compact-desktop layouts without content collisions.

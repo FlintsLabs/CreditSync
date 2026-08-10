@@ -11,7 +11,7 @@ test("registers an additive tenant-safe origin loan for payment intakes", async 
     const { paymentIntakes } = await import("./schema");
     const config = getTableConfig(paymentIntakes);
 
-    expect(journal.entries.at(-1)).toMatchObject({ idx: 22, tag: "0022_payment_intake_origin_loan" });
+    expect(journal.entries).toContainEqual(expect.objectContaining({ idx: 22, tag: "0022_payment_intake_origin_loan" }));
     expect(migration).toContain('ALTER TABLE "payment_intakes" ADD COLUMN "origin_loan_id" integer');
     expect(migration).toContain('FOREIGN KEY ("tenant_id", "origin_loan_id") REFERENCES "loans"("tenant_id", "id")');
     expect(migration).not.toMatch(/\bDROP\b/i);
