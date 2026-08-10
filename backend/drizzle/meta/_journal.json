@@ -127,6 +127,13 @@
       "when": 1786312000000,
       "tag": "0017_floating_loan_disbursements",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1786312500000,
+      "tag": "0018_daily_loan_entry_metadata",
+      "breakpoints": true
     }
   ]
 }

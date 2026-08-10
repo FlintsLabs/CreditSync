@@ -16,8 +16,11 @@ import { serializeMoney } from "../lib/money";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import { calculateDailyInterest, nextInterestDate, normalizeFloatingDailyInterest, type FloatingDailyInterest } from "../lib/floating-daily-interest";
+import { normalizeDailyLoanEntry, type DailyLoanEntryInput, type NormalizedDailyLoanEntry } from "../lib/daily-loan-entry";
 
 type LoanRow = typeof loans.$inferSelect;
+
+type DailyLoanEntryMetadata = Pick<NormalizedDailyLoanEntry, "durationUnit" | "durationValue" | "entryMode" | "dailyPayment" | "interestInput" | "flatDailyRatePercent">;
 
 export interface LoanDraftInput extends PublicLoanCalculationParams {
     borrowerPublicId: string;
@@ -115,6 +118,28 @@ export async function presentLoan(row: LoanRow) {
     ]);
     const principal = serializeMoney(row.principalAmount);
     const interestRate = serializeMoney(row.interestRate);
+    const dailyEntry: DailyLoanEntryMetadata | null = row.dailyEntryMode && row.dailyTermUnit && row.dailyTermValue && row.dailyFlatRatePercent
+        ? {
+            durationUnit: row.dailyTermUnit as DailyLoanEntryMetadata["durationUnit"],
+            durationValue: row.dailyTermValue,
+            entryMode: row.dailyEntryMode as DailyLoanEntryMetadata["entryMode"],
+            dailyPayment: row.dailyEntryMode === "daily_payment" && row.installmentAmount !== null ? serializeMoney(row.installmentAmount) : null,
+            interestInput: row.dailyEntryMode === "daily_interest" && row.dailyInterestInputMode && row.dailyInterestInputValue
+                ? { mode: row.dailyInterestInputMode as NonNullable<DailyLoanEntryMetadata["interestInput"]>["mode"], value: row.dailyInterestInputMode === "fixed_amount" ? serializeMoney(row.dailyInterestInputValue) : new Decimal(row.dailyInterestInputValue).toFixed(4) }
+                : null,
+            flatDailyRatePercent: new Decimal(row.dailyFlatRatePercent).toFixed(4),
+        }
+        : null;
+    const dailyLoanCalculation = dailyEntry === null
+        ? null
+        : normalizeDailyLoanEntry({
+            principal,
+            durationUnit: dailyEntry.durationUnit,
+            durationValue: dailyEntry.durationValue,
+            entryMode: dailyEntry.entryMode,
+            ...(dailyEntry.dailyPayment === null ? {} : { dailyPayment: dailyEntry.dailyPayment }),
+            ...(dailyEntry.interestInput === null ? {} : { interestInput: dailyEntry.interestInput }),
+        });
     return {
         id: row.publicId,
         publicId: row.publicId,
@@ -127,6 +152,8 @@ export async function presentLoan(row: LoanRow) {
         floatingDailyInterest: row.dailyInterestMode && row.dailyInterestRate && row.firstDayTreatment
             ? { mode: row.dailyInterestMode as FloatingDailyInterest["mode"], rate: row.dailyInterestRate, firstDayTreatment: row.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"] }
             : null,
+        dailyEntry,
+        dailyLoanCalculation,
         repaymentType: row.repaymentType,
         termMonths: row.termMonths,
         installmentAmount: row.installmentAmount === null ? null : serializeMoney(row.installmentAmount),
@@ -142,23 +169,48 @@ export async function presentLoan(row: LoanRow) {
     };
 }
 
-function normalizeTerms(input: PublicLoanCalculationParams) {
+function existingDailyEntry(row: LoanRow): DailyLoanEntryInput | undefined {
+    if (!row.dailyEntryMode || !row.dailyTermUnit || !row.dailyTermValue) return undefined;
+    if (row.dailyEntryMode === "daily_payment" && row.installmentAmount !== null) {
+        return { durationUnit: row.dailyTermUnit as DailyLoanEntryInput["durationUnit"], durationValue: row.dailyTermValue, entryMode: "daily_payment", dailyPayment: serializeMoney(row.installmentAmount) };
+    }
+    if (row.dailyEntryMode === "daily_interest" && row.dailyInterestInputMode && row.dailyInterestInputValue) {
+        return {
+            durationUnit: row.dailyTermUnit as DailyLoanEntryInput["durationUnit"], durationValue: row.dailyTermValue, entryMode: "daily_interest",
+            interestInput: { mode: row.dailyInterestInputMode as NonNullable<DailyLoanEntryInput["interestInput"]>["mode"], value: row.dailyInterestInputMode === "fixed_amount" ? serializeMoney(row.dailyInterestInputValue) : new Decimal(row.dailyInterestInputValue).toFixed(4) },
+        };
+    }
+    return undefined;
+}
+
+function normalizeTerms(input: PublicLoanCalculationParams): { terms: ReturnType<typeof normalizePublicLoanTerms>; dailyEntry: NormalizedDailyLoanEntry | null } {
     try {
-        return normalizePublicLoanTerms(input);
+        if (input.dailyEntry !== undefined && input.repaymentType !== "daily") throw new Error("Daily entry requires daily repayment");
+        const dailyEntry = input.dailyEntry === undefined ? null : normalizeDailyLoanEntry({ principal: input.principal, ...input.dailyEntry });
+        return {
+            terms: normalizePublicLoanTerms({
+                ...input,
+                interestRate: dailyEntry ? "0.00" : input.interestRate,
+                termMonths: dailyEntry?.termMonths ?? input.termMonths,
+                totalInstallments: dailyEntry?.totalInstallments ?? input.totalInstallments,
+                installmentAmount: dailyEntry?.installmentAmount ?? input.installmentAmount,
+            }),
+            dailyEntry,
+        };
     } catch (error) {
         throw new DomainError("INVALID_LOAN_TERMS", error instanceof Error ? error.message : "Invalid loan terms", 400);
     }
 }
 
 export function previewLoan(input: PublicLoanCalculationParams) {
-    const terms = normalizeTerms(input);
+    const { terms, dailyEntry } = normalizeTerms(input);
     const policy = input.repaymentType === "floating" && input.floatingDailyInterest
         ? normalizeFloatingDailyInterest(input.floatingDailyInterest) : null;
     if (input.repaymentType === "floating" && !policy) throw new DomainError("INVALID_LOAN_TERMS", "Floating loans require a daily interest policy", 400);
     if (input.repaymentType !== "floating" && input.floatingDailyInterest) throw new DomainError("INVALID_LOAN_TERMS", "Daily interest policy requires floating repayment", 400);
     try {
         const schedule = calculatePublicLoanSchedule({ ...input, ...terms });
-        if (!policy) return { terms, schedule };
+        if (!policy) return { terms, schedule, dailyLoanCalculation: dailyEntry };
         const dailyInterestAtCurrentPrincipal = calculateDailyInterest(terms.principal, policy);
         const firstDayInterest = policy.firstDayTreatment === "deduct" ? dailyInterestAtCurrentPrincipal : "0.00";
         return { terms, schedule, floatingDailyInterest: policy, firstDayInterest, dailyInterestAtCurrentPrincipal, netDisbursement: serializeMoney(new Decimal(terms.principal).minus(firstDayInterest)), nextInterestDate: nextInterestDate(input.startDate, policy.firstDayTreatment) };
@@ -175,7 +227,7 @@ export async function createLoanDraft(ctx: CommandContext, input: LoanDraftInput
     if (input.bankLoanPublicId && input.bankProfilePublicId) {
         throw new DomainError("FUNDING_SOURCE_CONFLICT", "Choose either a drawdown or an own-capital profile", 400);
     }
-    const terms = normalizeTerms(input);
+    const { terms, dailyEntry } = normalizeTerms(input);
     const policy = input.repaymentType === "floating" && input.floatingDailyInterest
         ? normalizeFloatingDailyInterest(input.floatingDailyInterest) : null;
     if (input.repaymentType === "floating" && !policy) throw new DomainError("INVALID_LOAN_TERMS", "Floating loans require a daily interest policy", 400);
@@ -195,6 +247,12 @@ export async function createLoanDraft(ctx: CommandContext, input: LoanDraftInput
             dailyInterestRate: policy?.rate ?? null,
             firstDayTreatment: policy?.firstDayTreatment ?? null,
             interestStartDate: policy ? input.startDate : null,
+            dailyTermUnit: dailyEntry?.durationUnit ?? null,
+            dailyTermValue: dailyEntry?.durationValue ?? null,
+            dailyEntryMode: dailyEntry?.entryMode ?? null,
+            dailyInterestInputMode: dailyEntry?.interestInput?.mode ?? null,
+            dailyInterestInputValue: dailyEntry?.interestInput?.value ?? null,
+            dailyFlatRatePercent: dailyEntry?.flatDailyRatePercent ?? null,
             principalAmount: terms.principal,
             interestRate: terms.interestRate,
             repaymentType: terms.repaymentType,
@@ -242,7 +300,7 @@ export async function updateLoanDraft(ctx: CommandContext, publicId: string, inp
     if (bankLoan && fundingProfile) {
         throw new DomainError("FUNDING_SOURCE_CONFLICT", "Choose either a drawdown or an own-capital profile", 400);
     }
-    const merged = normalizeTerms({
+    const mergedInput: PublicLoanCalculationParams = {
         principal: input.principal ?? serializeMoney(existing.principalAmount),
         interestRate: input.interestRate ?? serializeMoney(existing.interestRate),
         repaymentType: (input.repaymentType ?? existing.repaymentType) as RepaymentType,
@@ -252,7 +310,10 @@ export async function updateLoanDraft(ctx: CommandContext, publicId: string, inp
             ? existing.installmentAmount === null ? undefined : serializeMoney(existing.installmentAmount)
             : input.installmentAmount,
         startDate: input.startDate ?? existing.startDate ?? new Date().toISOString().slice(0, 10),
-    });
+        dailyEntry: input.dailyEntry ?? existingDailyEntry(existing),
+    };
+    if ((input.repaymentType ?? existing.repaymentType) !== "daily") delete mergedInput.dailyEntry;
+    const { terms: merged, dailyEntry } = normalizeTerms(mergedInput);
     return db.transaction(async (tx) => {
         const row = await tx.update(loans).set({
             borrowerId: borrower.id,
@@ -264,6 +325,12 @@ export async function updateLoanDraft(ctx: CommandContext, publicId: string, inp
             termMonths: merged.repaymentType === "floating" ? null : merged.termMonths,
             totalInstallments: merged.totalInstallments,
             installmentAmount: merged.installmentAmount,
+            dailyTermUnit: dailyEntry?.durationUnit ?? null,
+            dailyTermValue: dailyEntry?.durationValue ?? null,
+            dailyEntryMode: dailyEntry?.entryMode ?? null,
+            dailyInterestInputMode: dailyEntry?.interestInput?.mode ?? null,
+            dailyInterestInputValue: dailyEntry?.interestInput?.value ?? null,
+            dailyFlatRatePercent: dailyEntry?.flatDailyRatePercent ?? null,
             startDate: input.startDate ?? existing.startDate,
             updatedAt: new Date(),
         }).where(and(

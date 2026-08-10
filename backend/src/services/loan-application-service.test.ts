@@ -76,6 +76,21 @@ describe("loan application service", () => {
         expect(preview.schedule[0]).toMatchObject({ amount: "412.00", principalComponent: "400.00" });
     });
 
+    test("previews a daily-entry loan with derived terms and calculation", () => {
+        const preview = previewLoan({
+            principal: "2500.00",
+            interestRate: "0.00",
+            repaymentType: "daily",
+            termMonths: 1,
+            startDate: "2026-08-10",
+            dailyEntry: { durationUnit: "days", durationValue: 15, entryMode: "daily_payment", dailyPayment: "200.00" },
+        });
+
+        expect(preview.terms).toMatchObject({ totalInstallments: 15, installmentAmount: "200.00", interestRate: "0.00" });
+        expect(preview.dailyLoanCalculation).toMatchObject({ totalInterest: "500.00", totalInstallments: 15, flatDailyRatePercent: "1.3333" });
+        expect(preview.schedule).toHaveLength(15);
+    });
+
     if (integrationEnabled) beforeEach(resetApplicationTables);
 
     // Break caught: POST-style creation activates immediately or retrying activation duplicates schedules.

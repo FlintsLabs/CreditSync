@@ -173,6 +173,12 @@ export const loans = pgTable("loans", {
     dailyInterestRate: numeric("daily_interest_rate"),
     firstDayTreatment: text("first_day_treatment"), // deduct, start_next_day
     interestStartDate: date("interest_start_date"),
+    dailyTermUnit: text("daily_term_unit"), // days, months; scheduled daily loans only
+    dailyTermValue: integer("daily_term_value"),
+    dailyEntryMode: text("daily_entry_mode"), // daily_payment, daily_interest
+    dailyInterestInputMode: text("daily_interest_input_mode"), // percent, fixed_amount, per_thousand
+    dailyInterestInputValue: numeric("daily_interest_input_value"),
+    dailyFlatRatePercent: numeric("daily_flat_rate_percent"),
     principalAmount: numeric("principal_amount").notNull(),
     interestRate: numeric("interest_rate").notNull(), // Calculated rate for borrower
     repaymentType: text("repayment_type").notNull(), // "daily", "monthly", "floating"
