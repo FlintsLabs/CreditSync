@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.6 - 2026-08-10
+
+### Added
+- Added an approved Thai-first landing and login redesign specification focused on a trustworthy operations overview, clear Google sign-in entry, localization, accessibility, and verification boundaries.
+
 ## v0.3.5 - 2026-08-10
 
 ### Added
