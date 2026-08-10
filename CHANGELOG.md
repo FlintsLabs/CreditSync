@@ -3,6 +3,8 @@
 ## v0.3.6 - 2026-08-10
 
 ### Added
+- Added the localized loan-detail disbursement ledger UI with draft, optional signed-upload evidence, posting, and compensating reversal controls.
+- Added fixed daily-repayment term summaries and clear own-capital versus bank-drawdown funding labels on loan details.
 - Added an approved Thai-first landing and login redesign specification focused on a trustworthy operations overview, clear Google sign-in entry, localization, accessibility, and verification boundaries.
 - Added an approved design for entering fixed daily loans from either a borrower-proposed daily payment or a flat daily-interest term.
 - Added a task-by-task implementation plan for daily loan entry modes, shared Decimal calculations, API/MCP parity, and wizard verification.
