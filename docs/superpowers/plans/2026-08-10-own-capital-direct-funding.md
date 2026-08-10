@@ -101,8 +101,8 @@ it("reports a 2% own-capital cost without treating it as cash fund cost", async 
   const summary = await getLoanProfitabilitySummary(tenantId, ownCapitalLoan.id, asOf("2026-08-11"));
 
   expect(summary.fundCostPaid).toBe(0);
-  expect(summary.opportunityCostAccrued).toBe(2.74);
-  expect(summary.economicSpread).toBe(summary.borrowerRevenueCollected - 2.74);
+  expect(summary.opportunityCostAccrued).toBe(1.37);
+  expect(summary.economicSpread).toBe(summary.borrowerRevenueCollected - 1.37);
 });
 ```
 

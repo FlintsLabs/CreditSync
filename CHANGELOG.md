@@ -11,6 +11,9 @@
 - Added an approved design specification for direct own-capital funding, configurable 2.00% annual opportunity cost, capacity enforcement, and cash-versus-economic profitability reporting.
 - Added a task-by-task implementation plan for direct own-capital selection, capacity enforcement, and non-cash economic profitability.
 
+### Fixed
+- Corrected the direct-own-capital plan's five-day 2% annual opportunity-cost example to ฿1.37 for a ฿5,000 allocation.
+
 ### Changed
 - Changed the Borrowers list to a one-column mobile and two-column desktop grid using the privacy-aware identity card.
 - Changed borrower-card sizing to use the available list width, keeping a single card full-width in a narrow content panel while fitting additional columns only when they have room.
