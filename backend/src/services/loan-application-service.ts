@@ -15,6 +15,7 @@ import { computeLoanRollup } from "../lib/loan-rollup";
 import { serializeMoney } from "../lib/money";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
+import { calculateDailyInterest, nextInterestDate, normalizeFloatingDailyInterest, type FloatingDailyInterest } from "../lib/floating-daily-interest";
 
 type LoanRow = typeof loans.$inferSelect;
 
@@ -123,6 +124,9 @@ export async function presentLoan(row: LoanRow) {
         principal,
         principalAmount: principal,
         interestRate,
+        floatingDailyInterest: row.dailyInterestMode && row.dailyInterestRate && row.firstDayTreatment
+            ? { mode: row.dailyInterestMode as FloatingDailyInterest["mode"], rate: row.dailyInterestRate, firstDayTreatment: row.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"] }
+            : null,
         repaymentType: row.repaymentType,
         termMonths: row.termMonths,
         installmentAmount: row.installmentAmount === null ? null : serializeMoney(row.installmentAmount),
@@ -148,8 +152,16 @@ function normalizeTerms(input: PublicLoanCalculationParams) {
 
 export function previewLoan(input: PublicLoanCalculationParams) {
     const terms = normalizeTerms(input);
+    const policy = input.repaymentType === "floating" && input.floatingDailyInterest
+        ? normalizeFloatingDailyInterest(input.floatingDailyInterest) : null;
+    if (input.repaymentType === "floating" && !policy) throw new DomainError("INVALID_LOAN_TERMS", "Floating loans require a daily interest policy", 400);
+    if (input.repaymentType !== "floating" && input.floatingDailyInterest) throw new DomainError("INVALID_LOAN_TERMS", "Daily interest policy requires floating repayment", 400);
     try {
-        return { terms, schedule: calculatePublicLoanSchedule({ ...input, ...terms }) };
+        const schedule = calculatePublicLoanSchedule({ ...input, ...terms });
+        if (!policy) return { terms, schedule };
+        const dailyInterestAtCurrentPrincipal = calculateDailyInterest(terms.principal, policy);
+        const firstDayInterest = policy.firstDayTreatment === "deduct" ? dailyInterestAtCurrentPrincipal : "0.00";
+        return { terms, schedule, floatingDailyInterest: policy, firstDayInterest, dailyInterestAtCurrentPrincipal, netDisbursement: serializeMoney(new Decimal(terms.principal).minus(firstDayInterest)), nextInterestDate: nextInterestDate(input.startDate, policy.firstDayTreatment) };
     } catch (error) {
         throw new DomainError("INVALID_LOAN_TERMS", error instanceof Error ? error.message : "Invalid loan terms", 400);
     }
@@ -164,6 +176,9 @@ export async function createLoanDraft(ctx: CommandContext, input: LoanDraftInput
         throw new DomainError("FUNDING_SOURCE_CONFLICT", "Choose either a drawdown or an own-capital profile", 400);
     }
     const terms = normalizeTerms(input);
+    const policy = input.repaymentType === "floating" && input.floatingDailyInterest
+        ? normalizeFloatingDailyInterest(input.floatingDailyInterest) : null;
+    if (input.repaymentType === "floating" && !policy) throw new DomainError("INVALID_LOAN_TERMS", "Floating loans require a daily interest policy", 400);
     const [borrower, bankLoan, fundingProfile] = await Promise.all([
         accessibleBorrower(ctx, input.borrowerPublicId),
         bankLoanFor(ctx, input.bankLoanPublicId),
@@ -176,6 +191,10 @@ export async function createLoanDraft(ctx: CommandContext, input: LoanDraftInput
             borrowerId: borrower.id,
             bankLoanId: bankLoan?.id ?? null,
             fundingBankProfileId: fundingProfile?.id ?? null,
+            dailyInterestMode: policy?.mode ?? null,
+            dailyInterestRate: policy?.rate ?? null,
+            firstDayTreatment: policy?.firstDayTreatment ?? null,
+            interestStartDate: policy ? input.startDate : null,
             principalAmount: terms.principal,
             interestRate: terms.interestRate,
             repaymentType: terms.repaymentType,

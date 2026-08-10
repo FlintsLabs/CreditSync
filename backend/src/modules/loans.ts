@@ -162,6 +162,11 @@ async function presentLoanProfitability(
 const repaymentType = t.Union([
     t.Literal("daily"), t.Literal("weekly"), t.Literal("monthly"), t.Literal("floating"),
 ]);
+const floatingDailyInterest = t.Object({
+    mode: t.Union([t.Literal("per_thousand"), t.Literal("percent")]),
+    rate: t.String(),
+    firstDayTreatment: t.Union([t.Literal("deduct"), t.Literal("start_next_day")]),
+});
 
 export const loansRoute = new Elysia({ prefix: "/loans" })
     .use(authPlugin)
@@ -510,7 +515,8 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             repaymentType,
             startDate: t.String(),
             totalInstallments: t.Optional(t.Number()),
-            installmentAmount: t.Optional(t.String())
+            installmentAmount: t.Optional(t.String()),
+            floatingDailyInterest: t.Optional(floatingDailyInterest),
         })
     })
     .post("/preview", ({ body, set }) => {
@@ -524,6 +530,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             principal: t.String(), interestRate: t.String(), termMonths: t.Number(),
             repaymentType, startDate: t.String(), totalInstallments: t.Optional(t.Number()),
             installmentAmount: t.Optional(t.String()),
+            floatingDailyInterest: t.Optional(floatingDailyInterest),
         }),
     })
     .post("/", async ({ body, user, request, set }) => {
@@ -546,6 +553,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             termMonths: t.Number(),
             totalInstallments: t.Optional(t.Number()),
             installmentAmount: t.Optional(t.String()),
+            floatingDailyInterest: t.Optional(floatingDailyInterest),
             startDate: t.String()
         })
     })
@@ -567,6 +575,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             principal: t.Optional(t.String()), interestRate: t.Optional(t.String()),
             repaymentType: t.Optional(repaymentType), termMonths: t.Optional(t.Number()),
             totalInstallments: t.Optional(t.Number()), installmentAmount: t.Optional(t.String()),
+            floatingDailyInterest: t.Optional(floatingDailyInterest),
             startDate: t.Optional(t.String()),
         }),
     })

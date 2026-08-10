@@ -65,6 +65,9 @@ export default function LoanWizard() {
         interestRate: "15",
         termMonths: "12",
         repaymentType: "monthly",
+        dailyInterestMode: "per_thousand",
+        dailyInterestRate: "15",
+        firstDayTreatment: "start_next_day",
         startDate: new Date().toISOString().split("T")[0],
         totalInstallments: "",
         installmentAmount: "",
@@ -108,7 +111,16 @@ export default function LoanWizard() {
 
     const calculateSchedule = async () => {
         try {
-            const res = await api.post("/loans/preview", buildLoanTermsInput(formData));
+            const res = await api.post("/loans/preview", {
+                ...buildLoanTermsInput({ ...formData, interestRate: formData.repaymentType === "floating" ? "0" : formData.interestRate }),
+                ...(formData.repaymentType === "floating" ? {
+                    floatingDailyInterest: {
+                        mode: formData.dailyInterestMode,
+                        rate: formData.dailyInterestRate,
+                        firstDayTreatment: formData.firstDayTreatment,
+                    },
+                } : {}),
+            });
             setSchedule(res.data?.schedule ?? []);
             return true;
         } catch (error) {
@@ -137,7 +149,12 @@ export default function LoanWizard() {
                 borrowerPublicId: formData.borrowerId,
                 bankLoanPublicId: isTenantAdmin && formData.bankLoanId ? formData.bankLoanId : undefined,
                 bankProfilePublicId: isTenantAdmin && formData.bankProfileId ? formData.bankProfileId : undefined,
-                ...buildLoanTermsInput(formData),
+                floatingDailyInterest: formData.repaymentType === "floating" ? {
+                    mode: formData.dailyInterestMode as "per_thousand" | "percent",
+                    rate: formData.dailyInterestRate,
+                    firstDayTreatment: formData.firstDayTreatment as "deduct" | "start_next_day",
+                } : undefined,
+                ...buildLoanTermsInput({ ...formData, interestRate: formData.repaymentType === "floating" ? "0" : formData.interestRate }),
             });
             setDraftId(draft.data.publicId);
             setStep(4);
@@ -207,6 +224,28 @@ export default function LoanWizard() {
                                     ))}
                                 </select>
                             </div>
+                            {formData.repaymentType === "floating" && (
+                                <>
+                                    <div className="grid gap-2">
+                                        <label>{t("loanWizard.dailyInterestMode", "Daily interest method")}</label>
+                                        <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={formData.dailyInterestMode} onChange={(e) => setFormData({ ...formData, dailyInterestMode: e.target.value })}>
+                                            <option value="per_thousand">{t("loanWizard.dailyInterestPerThousand", "Baht per ฿1,000 per day")}</option>
+                                            <option value="percent">{t("loanWizard.dailyInterestPercent", "% per day")}</option>
+                                        </select>
+                                    </div>
+                                    <div className="grid gap-2">
+                                        <label>{formData.dailyInterestMode === "per_thousand" ? t("loanWizard.dailyInterestRatePerThousand", "Rate per ฿1,000 / day") : t("loanWizard.dailyInterestRatePercent", "Rate % / day")}</label>
+                                        <Input type="number" min="0.0001" step="0.0001" value={formData.dailyInterestRate} onChange={(e) => setFormData({ ...formData, dailyInterestRate: e.target.value })} />
+                                    </div>
+                                    <div className="grid gap-2 md:col-span-2">
+                                        <label>{t("loanWizard.firstDayTreatment", "First-day interest")}</label>
+                                        <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={formData.firstDayTreatment} onChange={(e) => setFormData({ ...formData, firstDayTreatment: e.target.value })}>
+                                            <option value="start_next_day">{t("loanWizard.startNextDay", "Start charging on the next day")}</option>
+                                            <option value="deduct">{t("loanWizard.deductFirstDay", "Deduct the first day's interest from payout")}</option>
+                                        </select>
+                                    </div>
+                                </>
+                            )}
                             <div className="grid gap-2">
                                 <label>{t("loanWizard.fundingSource", "Funding Source (Optional)")}</label>
                                 <select

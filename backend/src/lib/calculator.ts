@@ -31,6 +31,11 @@ export interface PublicLoanCalculationParams {
     startDate: string;
     totalInstallments?: number;
     installmentAmount?: string;
+    floatingDailyInterest?: {
+        mode: "per_thousand" | "percent";
+        rate: string;
+        firstDayTreatment: "deduct" | "start_next_day";
+    };
 }
 
 export interface PublicInstallmentSchedule {

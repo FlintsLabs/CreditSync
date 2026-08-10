@@ -77,6 +77,10 @@ const loanTerms = {
     startDate: date,
     totalInstallments: z.number().int().positive().max(100_000).optional(),
     installmentAmount: money.optional(),
+    floatingDailyInterest: z.object({
+        mode: z.enum(["per_thousand", "percent"]), rate: z.string().regex(/^\d+(?:\.\d{1,4})?$/),
+        firstDayTreatment: z.enum(["deduct", "start_next_day"]),
+    }).optional(),
 };
 
 const explicitAllocation = z.object({
@@ -164,6 +168,7 @@ const loanOutput = z.object({
     principal: money,
     principalAmount: money,
     interestRate: money,
+    floatingDailyInterest: z.object({ mode: z.enum(["per_thousand", "percent"]), rate: z.string(), firstDayTreatment: z.enum(["deduct", "start_next_day"]) }).nullable().optional(),
     repaymentType: z.enum(["daily", "weekly", "monthly", "floating"]),
     termMonths: z.number().int().nullable(),
     installmentAmount: money.nullable(),
