@@ -658,6 +658,10 @@ async function stateHash(executor: Executor, intake: IntakeRow, allocations: Arr
             lateFeeMode: item.lateFeeMode,
             lateFeeAmount: item.lateFeeAmount,
             gracePeriodDays: item.gracePeriodDays,
+            outstandingPrincipal: item.outstandingPrincipal,
+            outstandingInterest: item.outstandingInterest,
+            dailyInterestMode: item.dailyInterestMode,
+            dailyInterestRate: item.dailyInterestRate,
             updatedAt: item.updatedAt?.toISOString(),
         })),
         schedules: scheduleRows.map((item: typeof loanSchedules.$inferSelect) => ({
@@ -1002,6 +1006,8 @@ async function postedResult(executor: Executor, intake: IntakeRow) {
 
 async function refreshLoanRollups(tx: Executor, tenantId: string, loanIds: number[]) {
     for (const loanId of [...new Set(loanIds)]) {
+        const loan = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, tenantId), eq(loans.id, loanId)) });
+        if (loan?.repaymentType === "floating") continue;
         const schedules = await tx.select().from(loanSchedules).where(and(
             eq(loanSchedules.tenantId, tenantId), eq(loanSchedules.loanId, loanId),
         )).orderBy(loanSchedules.installmentNo);
