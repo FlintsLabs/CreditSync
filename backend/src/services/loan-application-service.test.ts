@@ -190,6 +190,11 @@ describe("loan application service", () => {
             repaymentType: "floating",
             termMonths: 1,
             startDate: "2026-08-10",
+            floatingDailyInterest: {
+                mode: "per_thousand",
+                rate: "1.0000",
+                firstDayTreatment: "start_next_day",
+            },
         });
 
         const activated = await activateLoan(ctx, draft.publicId);
