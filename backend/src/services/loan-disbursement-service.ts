@@ -132,7 +132,7 @@ function presentEvent(event: EventRow, evidenceFilePublicIds: string[] = []) {
     return {
         id: event.publicId, publicId: event.publicId, grossAmount: serializeMoney(event.grossAmount), loanAttributedAmount: serializeMoney(event.loanAttributedAmount),
         channel: event.channel, status: event.status, payeeHint: event.payeeHint, note: event.note, disbursedAt: event.disbursedAt,
-        postedAt: event.postedAt, reversedAt: event.reversedAt, reversedEventId: event.reversedEventId, evidenceFilePublicIds,
+        postedAt: event.postedAt, reversedAt: event.reversedAt, evidenceFilePublicIds,
     };
 }
 

@@ -42,11 +42,23 @@ import {
 import { createMcpRateLimiter } from "./rate-limit";
 import { createMcpHttpPlugin, type McpToolHandler, type McpToolName } from "./server";
 import { parseMcpRuntimeConfig } from "./security";
+import {
+    createDisbursementDraft,
+    finalizeDisbursementEvidence,
+    listLoanDisbursements,
+    postDisbursement,
+    prepareDisbursementEvidence,
+    reverseDisbursement,
+    type DisbursementEvidenceStorageGateway,
+    type CreateDisbursementDraftInput,
+    type PrepareDisbursementEvidenceInput,
+} from "../services/loan-disbursement-service";
 
 type ToolInput = Record<string, unknown>;
 
 export interface DefaultMcpDependencies {
     evidenceGateway?: EvidenceStorageGateway;
+    disbursementEvidenceGateway?: DisbursementEvidenceStorageGateway;
 }
 
 function asString(input: ToolInput, field: string) {
@@ -121,6 +133,18 @@ export function createDefaultMcpToolHandlers(
     },
     "loan.draft": (ctx, input) => createLoanDraft(ctx, input as unknown as LoanDraftInput),
     "loan.activate": (ctx, input) => activateLoan(ctx, asString(input, "loanPublicId")),
+    "loan.disbursement.list": (ctx, input) => listLoanDisbursements(ctx, asString(input, "loanPublicId")),
+    "loan.disbursement.draft": (ctx, input) => {
+        const { loanPublicId, ...draft } = input;
+        return createDisbursementDraft(ctx, String(loanPublicId), draft as unknown as CreateDisbursementDraftInput);
+    },
+    "loan.disbursement.evidence.prepare": (ctx, input) => {
+        const { disbursementPublicId, ...evidence } = input;
+        return prepareDisbursementEvidence(ctx, String(disbursementPublicId), evidence as unknown as PrepareDisbursementEvidenceInput, dependencies.disbursementEvidenceGateway);
+    },
+    "loan.disbursement.evidence.finalize": (ctx, input) => finalizeDisbursementEvidence(ctx, asString(input, "disbursementPublicId"), asString(input, "evidencePublicId"), dependencies.disbursementEvidenceGateway),
+    "loan.disbursement.post": (ctx, input) => postDisbursement(ctx, asString(input, "disbursementPublicId")),
+    "loan.disbursement.reverse": (ctx, input) => reverseDisbursement(ctx, asString(input, "disbursementPublicId"), asString(input, "reason")),
     "renewal.preview": (ctx, input) => previewLoanRenewal(ctx, asString(input, "oldLoanPublicId"), {
         requestedPrincipal: asString(input, "requestedPrincipal"),
         waivedCharges: input.waivedCharges as string | undefined,
@@ -144,6 +168,8 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "payment.post": { entityType: "payment_intake", action: "posted" },
     "payment.reverse": { entityType: "payment_intake", action: "reversed" },
     "loan.activate": { entityType: "loan", action: "activated" },
+    "loan.disbursement.post": { entityType: "loan_disbursement", action: "posted" },
+    "loan.disbursement.reverse": { entityType: "loan_disbursement", action: "reversed" },
     "renewal.execute": { entityType: "loan_renewal", action: "executed" },
     "renewal.reverse": { entityType: "loan_renewal", action: "reversed" },
 };

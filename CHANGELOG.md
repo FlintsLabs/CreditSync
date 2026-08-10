@@ -16,6 +16,7 @@
 - Added a tenant-scoped loan-disbursement application service for draft lifecycle, posting, compensating reversals, Decimal-safe variance summaries, evidence attachment, and audit history.
 - Added durable idempotency and checksum-verified evidence-intent persistence for loan-disbursement posts and reversals.
 - Added reproducible disposable-PostgreSQL coverage for concurrent loan-disbursement posting and evidence-prepare retries.
+- Added authenticated REST and Remote MCP adapters for loan-disbursement drafts, evidence, posting, reversal, and variance reads with UUID-only identifiers and exact money strings.
 
 ### Fixed
 - Enforced tenant-safe event/file evidence links and blocked update or deletion of posted loan-disbursement ledger records at the database layer.

@@ -73,6 +73,7 @@ Some screens are still mock/demo oriented and not fully wired to live backend da
 - use separate preview, draft-save, and activation confirmations in the web wizard
 - preview installment breakdown
 - calculate closing balance based on elapsed time and payments already received
+- record actual borrower cash, bank-transfer, or adjustment disbursements independently of approved loan terms
 
 ### 4. Transaction Management
 
@@ -94,6 +95,8 @@ Renewal previews derive principal from posted, non-reversed transaction componen
 - post schedule, loan, and fund effects atomically, then correct posted payments with append-only compensating reversals
 
 The authenticated payment API is rooted at `/payment-intakes`. It exposes create/list/get and review-queue operations, `/:id/evidence/upload-intents`, `/:id/evidence/:evidenceId/finalize`, `/:id/match-preview`, `/:id/post`, `/:id/review`, and `/:id/reverse`. REST reversal requires a non-blank operator `reason`, which is preserved in the audit event. To preserve the frozen MCP schema-version 1.0 contract, `payment.reverse` continues to accept the legacy `{ paymentIntakePublicId }` input and uses a stable compatibility audit reason when the optional `reason` is absent; new MCP callers should provide it. All command IDs are UUIDs and all public money values are two-decimal strings. `GET /transactions` remains available for legacy repayment history, but `POST /transactions` returns `405 LEGACY_REPAYMENT_WRITE_DISABLED`; all repayment writes must use `/payment-intakes` so one Decimal allocator and one PostgreSQL lock order govern balances.
+
+The authenticated loan-disbursement API is rooted at `/loans/:loanPublicId/disbursements`. It provides list, draft create/update, `/:disbursementId/evidence/upload-intents`, `/:disbursementId/evidence/:evidenceId/finalize`, `/:disbursementId/post`, and `/:disbursementId/reverse` operations. Gross transfer and loan-attributed amounts are exact two-decimal strings; grouped transfers require a note. Post and reverse require an `Idempotency-Key`, and reversal also requires a non-blank reason. These ledger events do not change approved principal, schedules, or funding allocations.
 
 The web app exposes `/payments` as the human review inbox. It persists and shows semantic-duplicate warnings, requires an explicit warning acknowledgment, accepts optional signed evidence, edits any number of exact allocations across borrowers/loans/schedules, retains the previous proposal for a meaningful difference view, and requires a ready preview of the exact current editor revision before posting. Allocation edits are locked while previewing; every edit/add/remove/selection change invalidates the ready proposal, and stale responses are discarded. Reversal uses a separate reason-confirmation step. The manual repayment shortcut creates the intake and opens it in this review screen with the selected loan/schedule suggested; it never auto-posts or calls the disabled legacy write endpoint.
 
@@ -297,7 +300,7 @@ CreditSync serves a private stateless Streamable HTTP MCP endpoint at `/mcp` in 
 
 All MCP requests are bound to the server-side `MCP_TENANT_ID` and `MCP_ACTOR_EMAIL`. A client cannot submit or override tenant or actor identity. The configured actor must already exist in that tenant, and its normal CreditSync role/portfolio permissions still apply. Funding sources are list-only; the MCP surface has no generic SQL, arbitrary fetch, or funding mutation tool.
 
-The frozen schema-version `1.0` tool names are:
+The backend schema-version `1.0` tool names are:
 
 ```text
 borrower.search       borrower.portfolio    borrower.create
@@ -307,9 +310,12 @@ evidence.finalize     payment.preview       payment.post
 payment.reverse       loan.preview          loan.draft
 loan.activate         renewal.preview       renewal.execute
 renewal.reverse       funding-source.list
+loan.disbursement.list       loan.disbursement.draft
+loan.disbursement.evidence.prepare  loan.disbursement.evidence.finalize
+loan.disbursement.post       loan.disbursement.reverse
 ```
 
-Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Payment posting/reversal, loan activation, and renewal execution/reversal also return public correlation and audit IDs. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces.
+Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Payment posting/reversal, loan activation, renewal execution/reversal, and disbursement post/reverse also return public correlation and audit IDs. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces. The bundled Plugin `1.0.0` keeps its separately committed 20-tool snapshot until its contract package is regenerated.
 
 ### Configure and rotate the bearer token
 
