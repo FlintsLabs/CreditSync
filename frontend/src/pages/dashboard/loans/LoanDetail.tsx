@@ -308,7 +308,7 @@ export default function LoanDetail() {
                         </Card>
                     </div>
 
-                    <LoanDisbursements loanPublicId={loan.publicId ?? loan.id} formatCurrency={formatCurrency} />
+                    <LoanDisbursements loanPublicId={loan.publicId ?? loan.id} />
 
                     <Card>
                         <CardHeader>

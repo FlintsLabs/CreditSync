@@ -83,5 +83,17 @@ test("registers durable disbursement request keys and evidence readiness migrati
     expect(sql).toContain('loan_disbursement_events_tenant_reversal_idempotency_unique');
     expect(sql).toContain('loan_disbursement_events_tenant_reversed_event_unique');
     expect(sql).toContain('loan_disbursement_evidence_intents_tenant_hash_unique');
-    expect(journal.entries.at(-1)?.tag).toBe("0020_loan_disbursement_service_hardening");
+    expect(journal.entries.some((entry: { tag: string }) => entry.tag === "0020_loan_disbursement_service_hardening")).toBe(true);
+});
+
+test("registers immutable compensating reversal records while retaining the draft transition", async () => {
+    const [journal, sql] = await Promise.all([
+        Bun.file(`${backendRoot}drizzle/meta/_journal.json`).json(),
+        Bun.file(`${backendRoot}drizzle/0021_loan_disbursement_reversal_immutability.sql`).text(),
+    ]);
+
+    expect(sql).toContain('CREATE OR REPLACE FUNCTION reject_posted_loan_disbursement_event_mutation()');
+    expect(sql).toContain('OLD."status" <> \'draft\'');
+    expect(sql).toContain("non-draft records are immutable");
+    expect(journal.entries.at(-1)?.tag).toBe("0021_loan_disbursement_reversal_immutability");
 });

@@ -23,6 +23,7 @@
 - Released CreditSync Plugin `2.1.0` with the additive disbursement orchestration skill and executable lifecycle safety evals for evidence ordering, variance, confirmation, idempotency, schedule immutability, and reasoned reversal.
 
 ### Fixed
+- Made compensating loan-disbursement reversal records immutable at the PostgreSQL boundary and preserved exact decimal-string disbursement values throughout the UI payload and grouped-transfer validation.
 - Replaced the loan-wizard daily-calculation `any` with the exact response shape so the frontend lint gate is clean.
 - Open the evidence popup synchronously before resolving its signed URL, preventing normal browser popup blockers from discarding the evidence view.
 - Resolved evidence access URLs through the authenticated API client and made the protected file access route accept file public UUIDs.

@@ -89,8 +89,8 @@ integrationTest("posts an editable draft once and locks it afterward", async () 
     expect(await db.select().from(auditLogs).where(and(eq(auditLogs.entityId, draft.publicId), eq(auditLogs.action, "posted")))).toHaveLength(1);
 });
 
-// Break caught: reversals alter or delete the original event, or retries create multiple compensating events.
-integrationTest("creates one idempotent compensating reversal without changing the loan", async () => {
+// Break caught: a compensating reversal can be edited or deleted directly, silently restoring the original payout.
+integrationTest("creates one immutable idempotent compensating reversal without changing the loan", async () => {
     const owner = await actor();
     const loan = await loanFor(owner);
     const original = await createDisbursementDraft(context(owner), loan.publicId, {
@@ -109,7 +109,13 @@ integrationTest("creates one idempotent compensating reversal without changing t
         .rejects.toMatchObject({ code: "REVERSAL_IDEMPOTENCY_CONFLICT", status: 409 });
     expect(await db.query.loans.findFirst({ where: eq(loans.id, loan.id) })).toMatchObject({ principalAmount: "5000.00", outstandingPrincipal: "5000.00" });
     const postedRow = await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, posted.publicId) });
-    expect(await db.select().from(loanDisbursementEvents).where(sql`${loanDisbursementEvents.reversedEventId} = ${postedRow!.id}`)).toHaveLength(1);
+    const reversalRows = await db.select().from(loanDisbursementEvents).where(sql`${loanDisbursementEvents.reversedEventId} = ${postedRow!.id}`);
+    expect(reversalRows).toHaveLength(1);
+    const reversalRow = reversalRows[0]!;
+    await expect(db.update(loanDisbursementEvents).set({ note: "altered reversal" }).where(eq(loanDisbursementEvents.id, reversalRow.id)))
+        .rejects.toThrow(/immutable/);
+    await expect(db.delete(loanDisbursementEvents).where(eq(loanDisbursementEvents.id, reversalRow.id)))
+        .rejects.toThrow(/immutable/);
 });
 
 // Break caught: an uploaded-but-unfinalized or checksum-mismatched file can be attached and posted as evidence.

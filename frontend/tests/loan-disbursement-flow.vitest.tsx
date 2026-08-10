@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LoanDetail from "../src/pages/dashboard/loans/LoanDetail";
+import { LoanDisbursements } from "../src/pages/dashboard/loans/LoanDisbursements";
 import { api, resolveFileAccessUrl } from "../src/lib/api";
 
 vi.mock("../src/lib/api", () => ({ api: { get: vi.fn(), post: vi.fn(), put: vi.fn() }, resolveFileAccessUrl: vi.fn() }));
@@ -102,5 +103,42 @@ describe("loan disbursement view", () => {
         await user.click(screen.getByRole("button", { name: /confirm reversal/i }));
         await waitFor(() => expect(api.post).toHaveBeenCalledWith(`/loans/${LOAN_ID}/disbursements/${EVENT_ID}/reverse`, { reason: "Transfer cancelled" }, expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) })));
         expect(await screen.findByText(/reversed/i)).toBeInTheDocument();
+    });
+
+    it("keeps an unsafe-integer disbursement amount exact in the draft payload", async () => {
+        const exactAmount = "9007199254740992.01";
+        vi.mocked(api.get).mockResolvedValue({ data: ledger([]) });
+        vi.mocked(api.post).mockResolvedValue({ data: {
+            publicId: EVENT_ID, status: "draft", grossAmount: exactAmount, loanAttributedAmount: exactAmount,
+            channel: "cash", evidenceFilePublicIds: [],
+        } });
+        const user = userEvent.setup();
+
+        render(<LoanDisbursements loanPublicId={LOAN_ID} />);
+        await user.click(await screen.findByRole("button", { name: /add disbursement/i }));
+        const inputs = screen.getAllByRole("textbox");
+        await user.type(inputs[0]!, exactAmount);
+        await user.type(inputs[1]!, exactAmount);
+        await user.selectOptions(screen.getByRole("combobox"), "cash");
+        await user.click(screen.getByRole("button", { name: /save draft/i }));
+
+        await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+            `/loans/${LOAN_ID}/disbursements`,
+            expect.objectContaining({ grossAmount: exactAmount, loanAttributedAmount: exactAmount }),
+        ));
+    });
+
+    it("requires a grouped-transfer explanation for distinct unsafe-integer amounts", async () => {
+        vi.mocked(api.get).mockResolvedValue({ data: ledger([]) });
+        const user = userEvent.setup();
+
+        render(<LoanDisbursements loanPublicId={LOAN_ID} />);
+        await user.click(await screen.findByRole("button", { name: /add disbursement/i }));
+        const inputs = screen.getAllByRole("textbox");
+        await user.type(inputs[0]!, "9007199254740992.01");
+        await user.type(inputs[1]!, "9007199254740992.00");
+
+        expect(screen.getByLabelText(/grouped transfer explanation/i)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /save draft/i })).toBeDisabled();
     });
 });

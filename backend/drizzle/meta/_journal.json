@@ -148,6 +148,13 @@
       "when": 1786313500000,
       "tag": "0020_loan_disbursement_service_hardening",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1786314000000,
+      "tag": "0021_loan_disbursement_reversal_immutability",
+      "breakpoints": true
     }
   ]
 }
