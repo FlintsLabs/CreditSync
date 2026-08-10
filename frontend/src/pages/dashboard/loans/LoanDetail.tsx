@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, CalendarDays, User2 } from "lucide-react";
+import { ArrowLeft, CalendarDays, Copy, User2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../../lib/api";
 import { getStoredUser, isTenantAdminUser } from "../../../lib/session";
@@ -100,6 +100,7 @@ export default function LoanDetail() {
     const isTenantAdmin = isTenantAdminUser(currentUser);
     const [loading, setLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState("");
+    const [copiedLoanId, setCopiedLoanId] = useState(false);
     const [loan, setLoan] = useState<LoanDetailData | null>(null);
     const [borrower, setBorrower] = useState<BorrowerData | null>(null);
     const [schedule, setSchedule] = useState<LoanScheduleRow[]>([]);
@@ -161,10 +162,9 @@ export default function LoanDetail() {
                 <Button variant="ghost" size="icon" onClick={() => navigate("/loans")}>
                     <ArrowLeft className="h-4 w-4" />
                 </Button>
-                <div>
-                    <h2 className="text-2xl font-bold tracking-tight">
-                        {loading ? t("common.loading", "Loading...") : t("loans.loanLabel", { defaultValue: "Loan #{{id}}", id: loan?.id ?? "" })}
-                    </h2>
+                <div className="min-w-0">
+                    <h2 className="text-2xl font-bold tracking-tight">{loading ? t("common.loading", "Loading...") : t("loanDetail.title", "Loan agreement")}</h2>
+                    {!loading && loan?.publicId && <div className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground"><span className="shrink-0">{t("loanDetail.loanId", "ID")}:</span><code className="truncate font-mono">{loan.publicId}</code><button type="button" className="shrink-0 rounded p-1 hover:bg-muted" aria-label={t("loanDetail.copyLoanId", "Copy loan ID")} title={t("loanDetail.copyLoanId", "Copy loan ID")} onClick={() => { void navigator.clipboard.writeText(loan.publicId); setCopiedLoanId(true); window.setTimeout(() => setCopiedLoanId(false), 2000); }}><Copy className="h-3.5 w-3.5" /></button>{copiedLoanId && <span className="shrink-0 text-emerald-600">{t("loanDetail.copied", "Copied")}</span>}</div>}
                     <p className="text-muted-foreground">{t("loanDetail.description", "Profitability, funding composition, and installment status in one view.")}</p>
                 </div>
             </div>

@@ -15,6 +15,9 @@
 - Removed the duplicate custom calendar icon from the loan start-date field; the browser-native date control remains fully clickable.
 
 ### Changed
+- Simplified the loan-detail title and moved the full public loan ID into a compact copyable secondary line.
+
+### Changed
 - Moved repayment-type selection to the start of the loan-terms form so the remaining inputs follow the selected repayment workflow.
 
 ## v0.3.5 - 2026-08-10

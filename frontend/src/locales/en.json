@@ -691,6 +691,10 @@
         "WAIVER_EXCEEDS_DUE_CHARGES": "The waiver cannot exceed the charges due."
     },
     "loanDetail": {
+        "title": "Loan agreement",
+        "loanId": "ID",
+        "copyLoanId": "Copy loan ID",
+        "copied": "Copied",
         "description": "Profitability, funding composition, and installment status in one view.",
         "missing": "This loan does not exist anymore.",
         "unknownBorrower": "Unknown borrower",
