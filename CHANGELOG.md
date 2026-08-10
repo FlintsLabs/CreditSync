@@ -20,6 +20,7 @@
 - Added reproducible disposable-PostgreSQL coverage for concurrent loan-disbursement posting and evidence-prepare retries.
 - Added authenticated REST and Remote MCP adapters for loan-disbursement drafts, evidence, posting, reversal, and variance reads with UUID-only identifiers and exact money strings.
 - Released CreditSync Plugin `2.0.0` with the regenerated frozen 26-tool MCP contract, preserving MCP payload schema version `1.0`.
+- Added the Plugin `2.0.0` disbursement orchestration skill and executable lifecycle safety evals for evidence ordering, variance, confirmation, idempotency, schedule immutability, and reasoned reversal.
 
 ### Fixed
 - Open the evidence popup synchronously before resolving its signed URL, preventing normal browser popup blockers from discarding the evidence view.

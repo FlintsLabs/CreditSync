@@ -23,3 +23,11 @@ This example is a contract fixture, not permission to derive a live renewal from
 - Due interest, fees, and penalties must be collected or waived with a reason before renewal execution.
 - Renewal reversal is blocked while the replacement loan has active downstream transactions, adjustments, or funding changes.
 - MCP may list funding sources but never create or mutate them.
+
+## Loan disbursements
+
+- A loan disbursement is an actual, append-only ledger event. It does not create, recalculate, or mutate the approved loan schedule.
+- Inspect `loan.disbursement.list` before a draft and display its backend-provided approved principal, net disbursed amount, signed variance, and status. Under- or over-disbursement is a warning requiring an explicit human decision; never silently make amounts fit.
+- The evidence lifecycle is draft first, then `loan.disbursement.evidence.prepare`, unchanged-byte PUT using only the returned headers, and `loan.disbursement.evidence.finalize`. Do not use draft `evidenceFilePublicIds` or expose signed URLs.
+- `loan.disbursement.post` requires explicit confirmation and a stable idempotency key. Reuse that key only to retry the identical post; a key conflict or locked draft stops for review.
+- `loan.disbursement.reverse` requires explicit human confirmation, a non-blank reason, and its own stable idempotency key. It posts a compensating event rather than deleting the original.

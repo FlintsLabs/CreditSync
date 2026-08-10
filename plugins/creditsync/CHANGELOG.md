@@ -5,6 +5,7 @@
 ### Added
 
 - Added the six frozen loan-disbursement MCP tool contracts for list, draft, evidence prepare/finalize, post, and reversal.
+- Added the `manage-disbursements` skill, root routing, and scripted positive/negative lifecycle evals for variance, evidence ordering, confirmation, idempotency, schedule immutability, and reasoned reversal.
 
 ### Compatibility
 

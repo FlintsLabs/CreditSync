@@ -8,7 +8,7 @@ import { canonicalContractJson, captureAdvertisedMcpContract } from "./mcp-contr
 
 const pluginRoot = resolve(import.meta.dir, "..");
 const repositoryRoot = resolve(pluginRoot, "../..");
-const expectedSkills = ["creditsync", "manage-borrowers", "reconcile-payments", "manage-loans", "renew-daily-loan"];
+const expectedSkills = ["creditsync", "manage-borrowers", "reconcile-payments", "manage-loans", "manage-disbursements", "renew-daily-loan"];
 const expectedReferences = ["matching-policy.md", "financial-rules.md", "error-recovery.md", "mcp-tool-contract.json"];
 const forbiddenEntries = [".mcp.json", "hooks.json", "hooks", "ui", "oauth.json"];
 export const PRIVATE_APP_ID_PLACEHOLDER = "plugin_asdk_app_REPLACE_AFTER_PRIVATE_REGISTRATION";
@@ -158,5 +158,5 @@ if (import.meta.main) {
     }
     const app = await parseJson(resolve(pluginRoot, ".app.json")) as { apps?: Record<string, { id?: string }> };
     const registration = classifyPrivateAppId(app.apps?.creditsync?.id);
-    console.log(`CreditSync plugin validation passed (2.0.0, 5 skills, 26 tools, no bundled MCP/secrets; private app: ${registration}${registration === "placeholder" ? ", non-live" : ""}).`);
+    console.log(`CreditSync plugin validation passed (2.0.0, 6 skills, 26 tools, no bundled MCP/secrets; private app: ${registration}${registration === "placeholder" ? ", non-live" : ""}).`);
 }
