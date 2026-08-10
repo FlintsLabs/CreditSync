@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.7 - 2026-08-11
+
+### Added
+- Added source-level funding-usage reads and a localized funding-source table showing the borrower contracts funded by each source, their net allocation, route, allocation date, outstanding principal, and status.
+
+### Fixed
+- Made own-capital availability and utilization subtract net direct loan allocations instead of only bank drawdowns, while keeping external-source credit availability based on issued drawdowns.
+- Clarified that own-capital allocations are direct and do not create a bank drawdown record.
+
 ## v0.3.6 - 2026-08-10
 
 ### Added

@@ -1,7 +1,7 @@
 import { Elysia, t } from "elysia";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { bankLoans, bankProfiles, loanFundingAllocations } from "../db/schema";
+import { bankLoans, bankProfiles, borrowers, loanFundingAllocations, loans } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
 import { isTenantAdminUser } from "../lib/access";
 import { calculateOpportunityCost, deriveProfitabilityMetrics, getBankProfileSettlementSummary } from "../lib/fund-settlement";
@@ -9,6 +9,13 @@ import Decimal from "decimal.js";
 import { createAuditLog } from "../lib/audit-log";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
 import { findBankProfileByPublicId } from "../lib/public-id";
+import { serializeMoney } from "../lib/money";
+
+function serializeSignedMoney(value: Decimal.Value): string {
+    const amount = new Decimal(value);
+    if (!amount.isFinite()) throw new Error("Funding usage amount must be finite");
+    return amount.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
+}
 
 function bangkokBusinessDate(now = new Date()) {
     const parts = new Intl.DateTimeFormat("en-CA", {
@@ -51,6 +58,130 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
             loader: async () => [profile],
         });
         return result[0];
+    })
+    .get("/:id/funding-usage", async ({ params: { id }, query, user, set }) => {
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
+        }
+        const profile = await findBankProfileByPublicId(user.tenantId, id);
+        if (!profile) {
+            set.status = 404;
+            return { error: "Bank profile not found" };
+        }
+
+        const includeSettled = query.includeSettled === "true";
+        return await withTenantCache({
+            tenantId: user.tenantId,
+            namespace: "bank-profiles",
+            key: `funding-usage:${profile.id}:settled=${includeSettled}`,
+            ttlSeconds: 20,
+            loader: async () => {
+                const [allocationRows, drawdowns] = await Promise.all([
+                    db.select({
+                        loanId: loanFundingAllocations.loanId,
+                        loanPublicId: loans.publicId,
+                        borrowerPublicId: borrowers.publicId,
+                        borrowerName: borrowers.name,
+                        loanStatus: loans.status,
+                        principalAmount: loans.principalAmount,
+                        outstandingPrincipal: loans.outstandingPrincipal,
+                        allocatedAmount: loanFundingAllocations.allocatedAmount,
+                        allocationDate: loanFundingAllocations.allocationDate,
+                        bankLoanId: loanFundingAllocations.bankLoanId,
+                        bankLoanPublicId: bankLoans.publicId,
+                    }).from(loanFundingAllocations)
+                        .leftJoin(loans, eq(loanFundingAllocations.loanId, loans.id))
+                        .leftJoin(borrowers, eq(loans.borrowerId, borrowers.id))
+                        .leftJoin(bankLoans, eq(loanFundingAllocations.bankLoanId, bankLoans.id))
+                        .where(and(
+                            eq(loanFundingAllocations.tenantId, user.tenantId),
+                            eq(loanFundingAllocations.bankProfileId, profile.id),
+                        )),
+                    db.select({ amount: bankLoans.amount }).from(bankLoans).where(and(
+                        eq(bankLoans.tenantId, user.tenantId),
+                        eq(bankLoans.bankProfileId, profile.id),
+                    )),
+                ]);
+
+                const byLoan = new Map<number, {
+                    loanPublicId: string;
+                    borrowerPublicId: string | null;
+                    borrowerName: string | null;
+                    loanStatus: string;
+                    principalAmount: string;
+                    outstandingPrincipal: string;
+                    netAllocatedAmount: Decimal;
+                    latestAllocationDate: string;
+                    routes: Map<string, { type: "direct" | "drawdown"; bankLoanPublicId: string | null; netAllocatedAmount: Decimal }>;
+                }>();
+                for (const row of allocationRows) {
+                    if (!row.loanPublicId || !row.loanStatus || row.principalAmount === null || row.outstandingPrincipal === null) continue;
+                    const current = byLoan.get(row.loanId) ?? {
+                        loanPublicId: row.loanPublicId,
+                        borrowerPublicId: row.borrowerPublicId,
+                        borrowerName: row.borrowerName,
+                        loanStatus: row.loanStatus,
+                        principalAmount: row.principalAmount,
+                        outstandingPrincipal: row.outstandingPrincipal,
+                        netAllocatedAmount: new Decimal(0),
+                        latestAllocationDate: row.allocationDate,
+                        routes: new Map(),
+                    };
+                    const type = row.bankLoanId === null ? "direct" as const : "drawdown" as const;
+                    const routeKey = row.bankLoanId === null ? "direct" : `drawdown:${row.bankLoanId}`;
+                    const route = current.routes.get(routeKey) ?? { type, bankLoanPublicId: row.bankLoanPublicId, netAllocatedAmount: new Decimal(0) };
+                    const amount = new Decimal(row.allocatedAmount);
+                    current.netAllocatedAmount = current.netAllocatedAmount.plus(amount);
+                    route.netAllocatedAmount = route.netAllocatedAmount.plus(amount);
+                    current.routes.set(routeKey, route);
+                    if (row.allocationDate > current.latestAllocationDate) current.latestAllocationDate = row.allocationDate;
+                    byLoan.set(row.loanId, current);
+                }
+
+                const allocatedLoans = [...byLoan.values()].filter((row) => row.netAllocatedAmount.gt(0));
+                const netAllocatedPrincipal = allocatedLoans.reduce((total, row) => total.plus(row.netAllocatedAmount), new Decimal(0));
+                const drawdownTotal = drawdowns.reduce((total, row) => total.plus(row.amount), new Decimal(0));
+                const creditLimit = new Decimal(profile.creditLimit ?? 0);
+                const capitalPool = profile.accountingMode === "capital_pool";
+                const utilizedAmount = capitalPool ? netAllocatedPrincipal : drawdownTotal;
+                const availableAmount = creditLimit.minus(utilizedAmount);
+                const utilizationPercent = creditLimit.gt(0)
+                    ? utilizedAmount.times(100).div(creditLimit).toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+                    : new Decimal(0);
+                const allocations = allocatedLoans
+                    .filter((row) => includeSettled || new Decimal(row.outstandingPrincipal).gt(0))
+                    .sort((left, right) => right.latestAllocationDate.localeCompare(left.latestAllocationDate))
+                    .map((row) => ({
+                        loanPublicId: row.loanPublicId,
+                        borrowerPublicId: row.borrowerPublicId,
+                        borrowerName: row.borrowerName,
+                        loanStatus: row.loanStatus,
+                        principalAmount: serializeMoney(row.principalAmount),
+                        outstandingPrincipal: serializeMoney(row.outstandingPrincipal),
+                        netAllocatedAmount: serializeMoney(row.netAllocatedAmount),
+                        latestAllocationDate: row.latestAllocationDate,
+                        fundingRoutes: [...row.routes.values()]
+                            .filter((route) => route.netAllocatedAmount.gt(0))
+                            .map((route) => ({
+                                type: route.type,
+                                bankLoanPublicId: route.bankLoanPublicId,
+                                netAllocatedAmount: serializeMoney(route.netAllocatedAmount),
+                            })),
+                    }));
+
+                return {
+                    accountingMode: profile.accountingMode,
+                    creditLimit: serializeMoney(creditLimit),
+                    netAllocatedPrincipal: serializeMoney(netAllocatedPrincipal),
+                    availableAmount: serializeSignedMoney(availableAmount),
+                    utilizationPercent: utilizationPercent.toFixed(2),
+                    allocations,
+                };
+            },
+        });
+    }, {
+        query: t.Object({ includeSettled: t.Optional(t.String()) }),
     })
     .get("/:id/settlement-summary", async ({ params: { id }, user, set }) => {
         if (!isTenantAdminUser(user)) {
