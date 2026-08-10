@@ -34,4 +34,4 @@ test_database_url="postgres://$database_user:$database_password@127.0.0.1:$host_
 
 cd "$(dirname "$0")/.."
 DATABASE_URL="$test_database_url" bun run migrate
-DATABASE_URL="$test_database_url" TEST_DATABASE_URL="$test_database_url" bun test "$@"
+DATABASE_URL="$test_database_url" TEST_DATABASE_URL="$test_database_url" bun test --max-concurrency=1 "$@"

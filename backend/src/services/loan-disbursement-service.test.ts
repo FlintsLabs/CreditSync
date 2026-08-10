@@ -98,19 +98,26 @@ integrationTest("creates one immutable idempotent compensating reversal without 
     });
     const posted = await postDisbursement(context(owner, "post-reverse"), original.publicId);
 
-    const [reversal, retried] = await Promise.all([
+    const results = await Promise.all([
         reverseDisbursement(context(owner, "reverse-key"), posted.publicId, "wrong payout"),
         reverseDisbursement(context(owner, "reverse-key"), posted.publicId, "wrong payout"),
     ]);
+    const reversal = results.find((result) => !result.duplicate)!;
+    const retried = results.find((result) => result.duplicate)!;
 
     expect(reversal).toMatchObject({ status: "reversed", reversedEventPublicId: posted.publicId });
     expect(retried).toMatchObject({ publicId: reversal.publicId, status: "reversed", duplicate: true, reversedEventPublicId: posted.publicId });
+    expect(results.map((result) => result.duplicate).sort()).toEqual([false, true]);
     await expect(reverseDisbursement(context(owner, "other-reverse-key"), posted.publicId, "wrong payout"))
         .rejects.toMatchObject({ code: "REVERSAL_IDEMPOTENCY_CONFLICT", status: 409 });
     expect(await db.query.loans.findFirst({ where: eq(loans.id, loan.id) })).toMatchObject({ principalAmount: "5000.00", outstandingPrincipal: "5000.00" });
     const postedRow = await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, posted.publicId) });
     const reversalRows = await db.select().from(loanDisbursementEvents).where(sql`${loanDisbursementEvents.reversedEventId} = ${postedRow!.id}`);
     expect(reversalRows).toHaveLength(1);
+    expect(await db.select().from(auditLogs).where(and(
+        eq(auditLogs.entityId, reversal.publicId),
+        eq(auditLogs.action, "reversed"),
+    ))).toHaveLength(1);
     const reversalRow = reversalRows[0]!;
     // postgres-js wraps the trigger message, so assert the actual mutation is rejected.
     await expect(db.update(loanDisbursementEvents).set({ note: "altered reversal" }).where(eq(loanDisbursementEvents.id, reversalRow.id)).execute())

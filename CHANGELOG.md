@@ -23,6 +23,7 @@
 - Released CreditSync Plugin `2.1.0` with the additive disbursement orchestration skill and executable lifecycle safety evals for evidence ordering, variance, confirmation, idempotency, schedule immutability, and reasoned reversal.
 
 ### Fixed
+- Made concurrent loan-disbursement reversal verification order-independent while requiring exactly one durable creation, one idempotent replay, and one reversal audit record; serialized the shared disposable PostgreSQL suite to prevent cross-test database interference.
 - Made compensating loan-disbursement reversal records immutable at the PostgreSQL boundary and preserved exact decimal-string disbursement values throughout the UI payload and grouped-transfer validation.
 - Executed the reversal immutability assertions against PostgreSQL instead of only constructing query builders.
 - Replaced the loan-wizard daily-calculation `any` with the exact response shape so the frontend lint gate is clean.
