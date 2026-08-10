@@ -3,6 +3,7 @@
 ## v0.3.7 - 2026-08-11
 
 ### Added
+- Added an exact Decimal payment-health kernel for scheduled arrears, grace periods, late fees, and next-day floating-interest overdue classification.
 - Added a task-by-task implementation plan for exact scheduled and floating loan payment-health summaries, localized card indicators, detail badges, and full verification.
 - Added an approved design for localized payment-health indicators on loan-list cards, including fixed-schedule arrears and next-day floating daily-interest overdue rules.
 - Added a task-by-task implementation plan for the approved intermediary collection/remittance ledger, manual workspace, evidence viewer, MCP orchestration, controlled intake migration, and full verification.
