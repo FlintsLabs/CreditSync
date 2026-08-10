@@ -22,6 +22,7 @@
 ### Fixed
 - Enforced tenant-safe event/file evidence links and blocked update or deletion of posted loan-disbursement ledger records at the database layer.
 - Returned source-bank-profile public UUIDs on disbursement events and rejected nested REST event commands whose parent loan UUID does not match.
+- Rejected draft evidence-ID arrays consistently in REST and MCP instead of silently discarding them; evidence must follow the signed prepare/finalize lifecycle.
 - Removed the duplicate custom calendar icon from the loan start-date field; the browser-native date control remains fully clickable.
 
 ### Changed

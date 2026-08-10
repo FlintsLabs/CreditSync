@@ -35,6 +35,16 @@ export interface CreateDisbursementDraftInput {
 export type UpdateDisbursementDraftInput = Partial<CreateDisbursementDraftInput>;
 export interface PrepareDisbursementEvidenceInput { mimeType: string; size: number; sha256: string; originalName?: string | null }
 
+export function rejectDisbursementDraftEvidenceIds(input: unknown) {
+    if (input && typeof input === "object" && "evidenceFilePublicIds" in input) {
+        throw new DomainError(
+            "EVIDENCE_ATTACH_AFTER_DRAFT",
+            "Create the draft first, then prepare and finalize evidence for that disbursement",
+            400,
+        );
+    }
+}
+
 export function disbursementReversalRequestHash(disbursementPublicId: string, reason: string) {
     return createHash("sha256").update(JSON.stringify({
         contract: "loan-disbursement-reversal", version: "v1", disbursementPublicId, reason,

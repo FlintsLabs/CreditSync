@@ -12,6 +12,8 @@ This private Codex plugin orchestrates the CreditSync MCP app for borrower ident
 
 The package does not contain an MCP URL, bearer token, `.mcp.json`, OAuth configuration, hooks, plugin UI, or funding mutation capability. It references a private registered app so credentials remain in Codex/server secret storage.
 
+For a loan disbursement with optional evidence, call `loan.disbursement.draft` first, then `loan.disbursement.evidence.prepare` and `loan.disbursement.evidence.finalize` with the returned draft UUID. Draft input deliberately rejects `evidenceFilePublicIds`; only finalized evidence can be linked to a draft.
+
 ## Register before installation
 
 1. Deploy CreditSync and verify authenticated `https://<creditsync-host>/mcp` access.

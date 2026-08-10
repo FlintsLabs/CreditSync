@@ -455,6 +455,7 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
         payeeHint: optionalNullableText,
         note: optionalNullableText,
         disbursedAt: dateTime,
+        evidenceFilePublicIds: z.array(uuid).max(100).optional(),
     }).strict(),
     "loan.disbursement.evidence.prepare": z.object({
         disbursementPublicId: uuid,

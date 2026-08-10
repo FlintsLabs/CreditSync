@@ -10,6 +10,10 @@
 
 - Released a new major plugin package because the frozen tool catalogue grows from 20 to 26 tools. The MCP payload schema version remains `1.0`.
 
+### Fixed
+
+- Made `loan.disbursement.draft` reject evidence-ID arrays with a stable instruction to use the durable evidence prepare/finalize lifecycle.
+
 ## 1.0.0 - 2026-08-10
 
 ### Added

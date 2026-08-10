@@ -35,6 +35,7 @@ import {
     listLoanDisbursements,
     postDisbursement,
     prepareDisbursementEvidence,
+    rejectDisbursementDraftEvidenceIds,
     reverseDisbursement,
     updateDisbursementDraft,
 } from "../services/loan-disbursement-service";
@@ -346,6 +347,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
     .post("/:id/disbursements", async ({ params, body, user, request, set }) => {
         if (!user) return unauthorized(set);
         try {
+            rejectDisbursementDraftEvidenceIds(body);
             const created = await createDisbursementDraft(commandContext(user, request), params.id, body);
             await invalidateTenantCache(user.tenantId);
             return created;
@@ -356,6 +358,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
     .put("/:id/disbursements/:disbursementId", async ({ params, body, user, request, set }) => {
         if (!user) return unauthorized(set);
         try {
+            rejectDisbursementDraftEvidenceIds(body);
             const ctx = commandContext(user, request);
             await assertDisbursementParentLoan(ctx, params.id, params.disbursementId);
             const updated = await updateDisbursementDraft(ctx, params.disbursementId, body);

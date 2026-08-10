@@ -48,6 +48,7 @@ import {
     listLoanDisbursements,
     postDisbursement,
     prepareDisbursementEvidence,
+    rejectDisbursementDraftEvidenceIds,
     reverseDisbursement,
     type DisbursementEvidenceStorageGateway,
     type CreateDisbursementDraftInput,
@@ -136,6 +137,7 @@ export function createDefaultMcpToolHandlers(
     "loan.disbursement.list": (ctx, input) => listLoanDisbursements(ctx, asString(input, "loanPublicId")),
     "loan.disbursement.draft": (ctx, input) => {
         const { loanPublicId, ...draft } = input;
+        rejectDisbursementDraftEvidenceIds(draft);
         return createDisbursementDraft(ctx, String(loanPublicId), draft as unknown as CreateDisbursementDraftInput);
     },
     "loan.disbursement.evidence.prepare": (ctx, input) => {

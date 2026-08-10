@@ -76,6 +76,19 @@ describe("loan disbursement REST adapter", () => {
         expect(result.response.status).toBe(422);
     });
 
+    integrationTest("rejects evidence IDs on draft commands and requires the dedicated prepare-finalize lifecycle", async () => {
+        const actor = await db.insert(users).values({ tenantId: "tenant-disbursement-evidence-boundary", email: "evidence-boundary@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId: actor.tenantId, ownerUserId: actor.id, name: "Evidence boundary borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({ tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "100.00", interestRate: "0.00", repaymentType: "floating", outstandingPrincipal: "100.00", status: "active" }).returning().then((rows) => rows[0]!);
+        const token = await authToken(actor);
+        const app = new Elysia().use(loansRoute);
+        const result = await jsonRequest(app, `/loans/${loan.publicId}/disbursements`, token, {
+            method: "POST", body: JSON.stringify({ grossAmount: "100.00", loanAttributedAmount: "100.00", channel: "cash", disbursedAt: "2026-08-10T00:00:00.000Z", evidenceFilePublicIds: ["0198c481-3e2b-7000-8000-000000000098"] }),
+        });
+        expect(result.response.status).toBe(400);
+        expect(result.body).toMatchObject({ code: "EVIDENCE_ATTACH_AFTER_DRAFT" });
+    });
+
     integrationTest("returns not found when an event-scoped route is rooted under another accessible loan", async () => {
         const actor = await db.insert(users).values({ tenantId: "tenant-disbursement-parent", email: "parent@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
         const borrower = await db.insert(borrowers).values({ tenantId: actor.tenantId, ownerUserId: actor.id, name: "Parent check borrower" }).returning().then((rows) => rows[0]!);
