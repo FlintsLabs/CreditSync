@@ -5,6 +5,7 @@
 ### Added
 - Added an approved Thai-first landing and login redesign specification focused on a trustworthy operations overview, clear Google sign-in entry, localization, accessibility, and verification boundaries.
 - Added an approved design for entering fixed daily loans from either a borrower-proposed daily payment or a flat daily-interest term.
+- Added a task-by-task implementation plan for daily loan entry modes, shared Decimal calculations, API/MCP parity, and wizard verification.
 
 ### Fixed
 - Removed the duplicate custom calendar icon from the loan start-date field; the browser-native date control remains fully clickable.
