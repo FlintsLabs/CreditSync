@@ -1,10 +1,24 @@
 # Changelog
 
+## v0.3.8 - 2026-08-11
+
+### Added
+- Added a shared account navigation and safe local sign-out contract, plus the approved implementation plan for the unified Account and Preferences page.
+- Added the localized, read-only Account and Preferences page with explicit language and appearance choices, accessible feedback, session controls, and safe identity fallbacks.
+
+### Changed
+- Connected Profile, Settings, desktop/mobile navigation, and the legacy `/dashboard/settings` path to the canonical protected Account and Preferences destination.
+- Documented that account identity is read-only and display preferences remain device-local rather than backend-synchronized.
+
+### Fixed
+- Kept appearance changes active in memory when browser theme persistence is unavailable.
+
 ## v0.3.7 - 2026-08-11
 
 ### Added
 - Added a task-by-task implementation plan for exact scheduled and floating loan payment-health summaries, localized card indicators, detail badges, and full verification.
 - Added an approved design for localized payment-health indicators on loan-list cards, including fixed-schedule arrears and next-day floating daily-interest overdue rules.
+- Added an approved unified Account and Preferences design with read-only Google/tenant identity, client-side language and theme controls, functional navigation, and safe logout behavior.
 - Added a task-by-task implementation plan for the approved intermediary collection/remittance ledger, manual workspace, evidence viewer, MCP orchestration, controlled intake migration, and full verification.
 - Added an approved manual-first, AI-assisted design for two-leg intermediary collections and grouped remittances, including explicit balance allocation, exceptional manual approval, evidence viewing, immutable posting, and MCP safety boundaries.
 - Added an approved design for shared date/date-time inputs with right-aligned picker icons and expandable quick-repayment notes.

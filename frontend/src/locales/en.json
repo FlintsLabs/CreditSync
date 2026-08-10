@@ -49,9 +49,49 @@
     },
     "appbar": {
         "account": "Open account menu",
+        "accountFor": "Open account menu for {{name}}",
         "profile": "Profile",
         "settings": "Settings",
         "logout": "Log out"
+    },
+    "accountPreferences": {
+        "title": "Account & Preferences",
+        "description": "Your identity comes from your authorized Google and tenant account. Display preferences apply only to you.",
+        "profile": {
+            "title": "Profile",
+            "description": "Read-only account identity",
+            "name": "Name",
+            "email": "Email",
+            "role": "Tenant role",
+            "unknownName": "Profile unavailable",
+            "unknownEmail": "Email unavailable",
+            "unknownRole": "Role unavailable"
+        },
+        "roles": {
+            "owner": "Owner",
+            "manager": "Manager",
+            "collector": "Collector",
+            "viewer": "Viewer"
+        },
+        "preferences": {
+            "title": "Preferences",
+            "description": "Changes apply immediately on this device.",
+            "language": "Language",
+            "thai": "Thai",
+            "english": "English",
+            "appearance": "Appearance",
+            "light": "Light",
+            "dark": "Dark",
+            "system": "System",
+            "changed": "{{preference}} changed to {{value}}.",
+            "notPersisted": "The change is active, but could not be saved on this device."
+        },
+        "session": {
+            "title": "Session",
+            "description": "Sign out of CreditSync on this device.",
+            "signedInAs": "Signed in as {{email}}",
+            "signOut": "Sign out"
+        }
     },
     "nav": {
         "dashboard": "Dashboard",
@@ -60,7 +100,9 @@
         "payments": "Payment Inbox",
         "reconciliation": "Reconciliation",
         "settings": "Settings",
-        "language": "Language"
+        "language": "Language",
+        "openNavigation": "Open navigation",
+        "closeNavigation": "Close navigation"
     },
     "login": {
         "title": "Sign in to manage your lending portfolio",

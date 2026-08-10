@@ -49,9 +49,49 @@
     },
     "appbar": {
         "account": "เปิดเมนูบัญชีผู้ใช้",
+        "accountFor": "เปิดเมนูบัญชีของ {{name}}",
         "profile": "โปรไฟล์",
         "settings": "ตั้งค่า",
         "logout": "ออกจากระบบ"
+    },
+    "accountPreferences": {
+        "title": "บัญชีและการตั้งค่า",
+        "description": "ข้อมูลระบุตัวตนมาจากบัญชี Google และบัญชีผู้เช่าที่ได้รับอนุญาต ส่วนการแสดงผลมีผลเฉพาะกับคุณ",
+        "profile": {
+            "title": "โปรไฟล์",
+            "description": "ข้อมูลบัญชีแบบอ่านอย่างเดียว",
+            "name": "ชื่อ",
+            "email": "อีเมล",
+            "role": "บทบาทในระบบ",
+            "unknownName": "ไม่มีข้อมูลโปรไฟล์",
+            "unknownEmail": "ไม่มีข้อมูลอีเมล",
+            "unknownRole": "ไม่มีข้อมูลบทบาท"
+        },
+        "roles": {
+            "owner": "เจ้าของ",
+            "manager": "ผู้จัดการ",
+            "collector": "ผู้ติดตามชำระ",
+            "viewer": "ผู้ดูข้อมูล"
+        },
+        "preferences": {
+            "title": "การตั้งค่า",
+            "description": "การเปลี่ยนแปลงมีผลทันทีบนอุปกรณ์นี้",
+            "language": "ภาษา",
+            "thai": "ไทย",
+            "english": "อังกฤษ",
+            "appearance": "รูปแบบการแสดงผล",
+            "light": "สว่าง",
+            "dark": "มืด",
+            "system": "ตามระบบ",
+            "changed": "เปลี่ยน{{preference}}เป็น{{value}}แล้ว",
+            "notPersisted": "การเปลี่ยนแปลงมีผลแล้ว แต่ไม่สามารถบันทึกบนอุปกรณ์นี้ได้"
+        },
+        "session": {
+            "title": "เซสชัน",
+            "description": "ออกจากระบบ CreditSync บนอุปกรณ์นี้",
+            "signedInAs": "เข้าสู่ระบบในชื่อ {{email}}",
+            "signOut": "ออกจากระบบ"
+        }
     },
     "nav": {
         "dashboard": "แดชบอร์ด",
@@ -60,7 +100,9 @@
         "payments": "กล่องรับชำระ",
         "reconciliation": "กระทบยอด",
         "settings": "ตั้งค่า",
-        "language": "ภาษา"
+        "language": "ภาษา",
+        "openNavigation": "เปิดเมนูนำทาง",
+        "closeNavigation": "ปิดเมนูนำทาง"
     },
     "login": {
         "title": "เข้าสู่ระบบเพื่อจัดการพอร์ตสินเชื่อของคุณ",

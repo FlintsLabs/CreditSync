@@ -7,6 +7,7 @@ import AppBar, { UserAccountMenu } from "../components/AppBar";
 import { useTranslation } from "react-i18next";
 import { Button } from "../components/ui/Button";
 import { getStoredUser, isTenantAdminUser } from "../lib/session";
+import { SETTINGS_PATH } from "../lib/account";
 
 export default function DashboardLayout() {
     const location = useLocation();
@@ -26,7 +27,7 @@ export default function DashboardLayout() {
             { name: t("nav.reconciliation", "Reconciliation"), href: "/reconciliation", icon: ScanSearch },
             { name: t("dashboard.funds", "Funds"), href: "/funds", icon: Wallet },
         ] : []),
-        { name: t("nav.settings", "Settings"), href: "/dashboard/settings", icon: Settings },
+        { name: t("nav.settings", "Settings"), href: SETTINGS_PATH, icon: Settings },
     ];
 
     return (
@@ -66,6 +67,7 @@ export default function DashboardLayout() {
                 {/* Mobile Header (Visible only on Mobile) */}
                 <header className="sticky top-0 z-30 flex h-16 items-center border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 md:hidden">
                     <Button
+                        aria-label={isMobileMenuOpen ? t("nav.closeNavigation") : t("nav.openNavigation")}
                         variant="ghost"
                         size="icon"
                         className="-ml-2 mr-2"

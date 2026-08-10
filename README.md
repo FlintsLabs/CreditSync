@@ -55,6 +55,8 @@ Some screens are still mock/demo oriented and not fully wired to live backend da
 - tenant admins (`owner`, `manager`) can see all tenant data, while `collector` and `viewer` accounts are scoped to records they own
 - first Google login in a tenant becomes `owner`; later auto-created users default to `viewer`
 
+Account identity and tenant role are read-only values supplied by the authorized Google and tenant account. The protected `/settings` page provides immediate Thai/English language and Light/Dark/System appearance preferences for the current device; these preferences are not synchronized through the backend. Signing out removes the local CreditSync session while retaining display preferences.
+
 ### 2. Borrower Management
 
 - create and edit borrower profiles
