@@ -3,6 +3,7 @@
 ## v0.3.7 - 2026-08-11
 
 ### Added
+- Added an approved manual-first, AI-assisted design for two-leg intermediary collections and grouped remittances, including explicit balance allocation, exceptional manual approval, evidence viewing, immutable posting, and MCP safety boundaries.
 - Added an approved design for shared date/date-time inputs with right-aligned picker icons and expandable quick-repayment notes.
 - Added loan-list cards that show outstanding principal with a muted original-principal reference.
 - Added an approved design for loan-list cards to show outstanding and original principal together.
