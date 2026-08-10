@@ -34,4 +34,24 @@ describe("public loan schedule contract", () => {
             remainingPrincipal: "2333.33",
         });
     });
+
+    it("builds the exact schedule from a daily-entry calculation", () => {
+        const schedule = calculatePublicLoanSchedule({
+            principal: "2500.00",
+            interestRate: "0.00",
+            termMonths: 1,
+            repaymentType: "daily",
+            startDate: "2026-01-01",
+            dailyEntry: {
+                durationUnit: "days",
+                durationValue: 15,
+                entryMode: "daily_payment",
+                dailyPayment: "200.00",
+            },
+        });
+
+        expect(schedule).toHaveLength(15);
+        expect(schedule[0]).toMatchObject({ amount: "200.00", principalComponent: "166.67", interestComponent: "33.33" });
+        expect(schedule[14]).toMatchObject({ amount: "200.00", principalComponent: "166.62", interestComponent: "33.38", remainingPrincipal: "0.00" });
+    });
 });

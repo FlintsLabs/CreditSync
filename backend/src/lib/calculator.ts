@@ -1,6 +1,7 @@
 import dayjs from "dayjs";
 import Decimal from "decimal.js";
 import { parseMoney, serializeMoney } from "./money";
+import { normalizeDailyLoanEntry, type DailyLoanEntryInput } from "./daily-loan-entry";
 
 export type RepaymentType = "daily" | "weekly" | "monthly" | "floating";
 
@@ -31,6 +32,7 @@ export interface PublicLoanCalculationParams {
     startDate: string;
     totalInstallments?: number;
     installmentAmount?: string;
+    dailyEntry?: DailyLoanEntryInput;
     floatingDailyInterest?: {
         mode: "per_thousand" | "percent";
         rate: string;
@@ -173,7 +175,17 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
 }
 
 export function calculatePublicLoanSchedule(params: PublicLoanCalculationParams): PublicInstallmentSchedule[] {
-    const terms = normalizePublicLoanTerms(params);
+    const dailyEntry = params.dailyEntry === undefined ? null : (() => {
+        if (params.repaymentType !== "daily") throw new Error("Daily entry requires daily repayment");
+        return normalizeDailyLoanEntry({ principal: params.principal, ...params.dailyEntry });
+    })();
+    const terms = normalizePublicLoanTerms({
+        ...params,
+        interestRate: dailyEntry ? "0.00" : params.interestRate,
+        termMonths: dailyEntry?.termMonths ?? params.termMonths,
+        totalInstallments: dailyEntry?.totalInstallments ?? params.totalInstallments,
+        installmentAmount: dailyEntry?.installmentAmount ?? params.installmentAmount,
+    });
     const schedule = calculateLoanSchedule({
         principal: parseMoney(terms.principal),
         interestRate: parseMoney(terms.interestRate),
