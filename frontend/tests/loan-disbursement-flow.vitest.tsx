@@ -31,7 +31,10 @@ describe("loan disbursement view", () => {
     });
 
     it("resolves a public evidence UUID through the authenticated client before opening it", async () => {
-        const open = vi.spyOn(window, "open").mockImplementation(() => null);
+        let resolveUrl!: (url: string) => void;
+        const pendingUrl = new Promise<string>((resolve) => { resolveUrl = resolve; });
+        const popup = { location: { href: "" }, close: vi.fn() } as unknown as Window;
+        const open = vi.spyOn(window, "open").mockReturnValue(popup);
         vi.mocked(api.get).mockImplementation(async (url) => {
             if (url === `/loans/${LOAN_ID}`) return { data: loan };
             if (url === `/loans/${LOAN_ID}/schedule` || url === `/loans/${LOAN_ID}/funding-allocations`) return { data: [] };
@@ -39,14 +42,16 @@ describe("loan disbursement view", () => {
             if (url === `/loans/${LOAN_ID}/disbursements`) return { data: ledger() };
             throw new Error(`Unexpected GET ${url}`);
         });
-        vi.mocked(resolveFileAccessUrl).mockResolvedValue("https://signed.example/evidence");
+        vi.mocked(resolveFileAccessUrl).mockReturnValue(pendingUrl);
         renderDetail();
         expect((await screen.findAllByText(/THB\s*600\.00/)).length).toBeGreaterThan(0);
         expect(screen.getByText("Borrower wallet")).toBeInTheDocument();
         expect(screen.getByText(/66666666-6666-4666-8666-666666666666/)).toBeInTheDocument();
         await userEvent.setup().click(screen.getByRole("button", { name: /evidence/i }));
+        expect(open).toHaveBeenCalledWith("", "_blank", "noopener,noreferrer");
         await waitFor(() => expect(resolveFileAccessUrl).toHaveBeenCalledWith(FILE_ID));
-        expect(open).toHaveBeenCalledWith("https://signed.example/evidence", "_blank", "noopener,noreferrer");
+        resolveUrl("https://signed.example/evidence");
+        await waitFor(() => expect(popup.location.href).toBe("https://signed.example/evidence"));
         open.mockRestore();
     });
 

@@ -22,6 +22,7 @@
 - Released CreditSync Plugin `2.0.0` with the regenerated frozen 26-tool MCP contract, preserving MCP payload schema version `1.0`.
 
 ### Fixed
+- Open the evidence popup synchronously before resolving its signed URL, preventing normal browser popup blockers from discarding the evidence view.
 - Resolved evidence access URLs through the authenticated API client and made the protected file access route accept file public UUIDs.
 - Aligned the loan-detail disbursement UI with the ledger REST response, retained idempotency headers for post/reverse retries, refreshed compensating reversals, and exposed source, payee, and evidence details.
 - Enforced tenant-safe event/file evidence links and blocked update or deletion of posted loan-disbursement ledger records at the database layer.

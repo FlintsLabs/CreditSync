@@ -82,9 +82,11 @@ export function LoanDisbursements({ loanPublicId, formatCurrency }: { loanPublic
         } catch { setMessage(t("loanDetail.disbursements.errors.evidence")); } finally { setBusy(false); }
     };
     const openEvidence = async (filePublicId: string) => {
+        const popup = window.open("", "_blank", "noopener,noreferrer");
+        if (!popup) { setMessage(t("loanDetail.disbursements.errors.evidence")); return; }
         setBusy(true); setMessage("");
-        try { window.open(await resolveFileAccessUrl(filePublicId), "_blank", "noopener,noreferrer"); }
-        catch { setMessage(t("loanDetail.disbursements.errors.evidence")); } finally { setBusy(false); }
+        try { popup.location.href = await resolveFileAccessUrl(filePublicId); }
+        catch { popup.close(); setMessage(t("loanDetail.disbursements.errors.evidence")); } finally { setBusy(false); }
     };
     const differs = Boolean(draft && draft.grossAmount && draft.loanAttributedAmount && Number(draft.grossAmount) !== Number(draft.loanAttributedAmount));
     const canSave = Boolean(draft && validMoney(draft.grossAmount) && validMoney(draft.loanAttributedAmount) && (!differs || draft.note.trim()));
