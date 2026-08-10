@@ -23,11 +23,11 @@ test("registers the additive immutable loan disbursement ledger migration", asyn
     expect(sql).toContain('CREATE FUNCTION reject_posted_loan_disbursement_event_mutation()');
     expect(sql).toContain('BEFORE UPDATE OR DELETE ON "loan_disbursement_events"');
     expect(sql).toContain("loan_disbursement_events posted records are immutable");
-    expect(journal.entries.at(-1)?.tag).toBe("0019_loan_disbursement_events");
+    expect(journal.entries.some((entry: { tag: string }) => entry.tag === "0019_loan_disbursement_events")).toBe(true);
 });
 
 test("declares disbursement events and tenant-scoped evidence links", async () => {
-    const { loanDisbursementEvidence, loanDisbursementEvents } = await import("./schema");
+    const { loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents } = await import("./schema");
     const eventConfig = getTableConfig(loanDisbursementEvents);
     const evidenceConfig = getTableConfig(loanDisbursementEvidence);
 
@@ -47,6 +47,12 @@ test("declares disbursement events and tenant-scoped evidence links", async () =
         "tenant_id", "loan_disbursement_event_id", "file_id", "created_at",
     ]));
     expect(evidenceConfig.indexes.some((index) => index.config.name === "loan_disbursement_evidence_event_file_unique")).toBe(true);
+    const intentConfig = getTableConfig(loanDisbursementEvidenceIntents);
+    expect(intentConfig.columns.map((column) => column.name)).toEqual(expect.arrayContaining([
+        "public_id", "tenant_id", "loan_disbursement_event_id", "file_id", "status", "evidence_hash",
+        "mime_type", "declared_size", "upload_expires_at", "finalized_at",
+    ]));
+    expect(intentConfig.indexes.some((index) => index.config.name === "loan_disbursement_evidence_intents_tenant_hash_unique" && index.config.unique)).toBe(true);
     for (const [columnName, foreignTableName] of [
         ["loan_disbursement_event_id", "loan_disbursement_events"],
         ["file_id", "files"],
@@ -61,4 +67,21 @@ test("declares disbursement events and tenant-scoped evidence links", async () =
         expect(reference.columns.map((column) => column.name)).toEqual(["tenant_id", columnName]);
         expect(reference.foreignColumns.map((column) => column.name)).toEqual(["tenant_id", "id"]);
     }
+});
+
+test("registers durable disbursement request keys and evidence readiness migration", async () => {
+    const [journal, sql] = await Promise.all([
+        Bun.file(`${backendRoot}drizzle/meta/_journal.json`).json(),
+        Bun.file(`${backendRoot}drizzle/0020_loan_disbursement_service_hardening.sql`).text(),
+    ]);
+
+    expect(sql).toContain('"post_idempotency_key" text');
+    expect(sql).toContain('"reversal_idempotency_key" text');
+    expect(sql).toContain('"reversal_request_hash" text');
+    expect(sql).toContain('CREATE TABLE "loan_disbursement_evidence_intents"');
+    expect(sql).toContain('loan_disbursement_events_tenant_post_idempotency_unique');
+    expect(sql).toContain('loan_disbursement_events_tenant_reversal_idempotency_unique');
+    expect(sql).toContain('loan_disbursement_events_tenant_reversed_event_unique');
+    expect(sql).toContain('loan_disbursement_evidence_intents_tenant_hash_unique');
+    expect(journal.entries.at(-1)?.tag).toBe("0020_loan_disbursement_service_hardening");
 });

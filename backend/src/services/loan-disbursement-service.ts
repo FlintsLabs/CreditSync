@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { auditLogs, bankProfiles, files, loanDisbursementEvidence, loanDisbursementEvents, loans, users } from "../db/schema";
+import { auditLogs, bankProfiles, files, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loans, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import { parseMoney, serializeMoney } from "../lib/money";
 import { BUCKET_NAME, createSignedPutUrl, headStoredObject, toStorageReference, type SignedPutRequest, type StoredObjectHead } from "../lib/storage";
@@ -35,6 +35,18 @@ export interface CreateDisbursementDraftInput {
 export type UpdateDisbursementDraftInput = Partial<CreateDisbursementDraftInput>;
 export interface PrepareDisbursementEvidenceInput { mimeType: string; size: number; sha256: string; originalName?: string | null }
 
+export function disbursementReversalRequestHash(disbursementPublicId: string, reason: string) {
+    return createHash("sha256").update(JSON.stringify({
+        contract: "loan-disbursement-reversal", version: "v1", disbursementPublicId, reason,
+    })).digest("hex");
+}
+
+export function evidenceIntentExpired(intent: { uploadExpiresAt: Date | null; createdAt: Date | null }, now = new Date()) {
+    if (intent.uploadExpiresAt) return intent.uploadExpiresAt.getTime() <= now.getTime();
+    const graceMs = Math.max(60, Math.min(900, Number(process.env.EVIDENCE_UPLOAD_TTL_SECONDS ?? 300))) * 1000;
+    return (intent.createdAt?.getTime() ?? now.getTime()) + graceMs <= now.getTime();
+}
+
 function auditContext(ctx: CommandContext) {
     return { tenantId: ctx.tenantId, actorUserId: ctx.actorUserId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId };
 }
@@ -55,6 +67,14 @@ function dateTime(value: string) {
 }
 
 function normalizedText(value: string | null | undefined) { return value?.trim() || null; }
+
+function editableSnapshot(event: EventRow) {
+    return {
+        grossAmount: serializeMoney(event.grossAmount), loanAttributedAmount: serializeMoney(event.loanAttributedAmount),
+        channel: event.channel, sourceBankProfileId: event.sourceBankProfileId, payeeHint: event.payeeHint,
+        note: event.note, disbursedAt: event.disbursedAt?.toISOString() ?? null,
+    };
+}
 
 async function actorFor(ctx: CommandContext, executor: Executor = db) {
     if (ctx.actorUserId === null) return null;
@@ -165,7 +185,7 @@ export async function updateDisbursementDraft(ctx: CommandContext, disbursementP
         const updated = await tx.update(loanDisbursementEvents).set({ ...values, payeeHint: normalizedText(merged.payeeHint), ...(input.sourceBankProfilePublicId === undefined ? {} : { sourceBankProfileId: sourceProfile?.id ?? null }) })
             .where(and(eq(loanDisbursementEvents.id, current.id), eq(loanDisbursementEvents.status, "draft"))).returning().then((rows) => rows[0]);
         if (!updated) throw new DomainError("DISBURSEMENT_LOCKED", "Posted or reversed disbursements cannot be edited", 409);
-        await writeAudit(tx, ctx, updated, "draft_updated", { grossAmount: values.grossAmount, loanAttributedAmount: values.loanAttributedAmount });
+        await writeAudit(tx, ctx, updated, "draft_updated", { before: editableSnapshot(current), after: editableSnapshot(updated) });
         return presentEvent(updated, await evidenceIds(ctx, updated.id, tx));
     });
 }
@@ -192,10 +212,34 @@ export async function postDisbursement(ctx: CommandContext, disbursementPublicId
     if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required to post a disbursement", 400);
     const { event } = await accessibleEvent(ctx, disbursementPublicId);
     return db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`loan-disbursement-post:${ctx.tenantId}:${idempotencyKey}`}, 0))`);
+        const reusedKey = await tx.query.loanDisbursementEvents.findFirst({ where: and(
+            eq(loanDisbursementEvents.tenantId, ctx.tenantId), eq(loanDisbursementEvents.postIdempotencyKey, idempotencyKey),
+        ) });
+        if (reusedKey && reusedKey.id !== event.id) {
+            throw new DomainError("IDEMPOTENCY_KEY_CONFLICT", "Idempotency-Key was already used for another disbursement post", 409);
+        }
         const current = await lockEventAndLoan(tx, ctx, event.id);
-        if (current.status === "posted") return { ...presentEvent(current, await evidenceIds(ctx, current.id, tx)), duplicate: true, auditPublicId: null, correlationId: ctx.correlationId };
+        if (current.status === "posted") {
+            if (current.postIdempotencyKey === idempotencyKey) {
+                return { ...presentEvent(current, await evidenceIds(ctx, current.id, tx)), duplicate: true, auditPublicId: null, correlationId: ctx.correlationId };
+            }
+            throw new DomainError("DISBURSEMENT_ALREADY_POSTED", "Disbursement was already posted with another idempotency key", 409);
+        }
         if (current.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Reversed disbursements cannot be posted", 409);
-        const updated = await tx.update(loanDisbursementEvents).set({ status: "posted", postedAt: new Date() })
+        const attached = await tx.select().from(loanDisbursementEvidence).where(and(
+            eq(loanDisbursementEvidence.tenantId, ctx.tenantId), eq(loanDisbursementEvidence.loanDisbursementEventId, current.id),
+        ));
+        for (const attachment of attached) {
+            const intent = await tx.query.loanDisbursementEvidenceIntents.findFirst({ where: and(
+                eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId),
+                eq(loanDisbursementEvidenceIntents.loanDisbursementEventId, current.id),
+                eq(loanDisbursementEvidenceIntents.fileId, attachment.fileId),
+                eq(loanDisbursementEvidenceIntents.status, "ready"),
+            ) });
+            if (!intent) throw new DomainError("EVIDENCE_NOT_FINALIZED", "Every attached evidence file must be finalized before posting", 409);
+        }
+        const updated = await tx.update(loanDisbursementEvents).set({ status: "posted", postedAt: new Date(), postIdempotencyKey: idempotencyKey })
             .where(and(eq(loanDisbursementEvents.id, current.id), eq(loanDisbursementEvents.status, "draft"))).returning().then((rows) => rows[0]);
         if (!updated) throw new DomainError("DISBURSEMENT_LOCKED", "Disbursement can no longer be posted", 409);
         const audit = await writeAudit(tx, ctx, updated, "posted", { idempotencyKey, grossAmount: serializeMoney(updated.grossAmount), loanAttributedAmount: serializeMoney(updated.loanAttributedAmount) });
@@ -209,15 +253,29 @@ export async function reverseDisbursement(ctx: CommandContext, disbursementPubli
     const note = reason.trim();
     if (!note) throw new DomainError("REVERSAL_REASON_REQUIRED", "A reversal reason is required", 400);
     const { event } = await accessibleEvent(ctx, disbursementPublicId);
+    const reversalRequestHash = disbursementReversalRequestHash(disbursementPublicId, note);
     return db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`loan-disbursement-reverse:${ctx.tenantId}:${idempotencyKey}`}, 0))`);
+        const reusedKey = await tx.query.loanDisbursementEvents.findFirst({ where: and(
+            eq(loanDisbursementEvents.tenantId, ctx.tenantId), eq(loanDisbursementEvents.reversalIdempotencyKey, idempotencyKey),
+        ) });
+        if (reusedKey && (reusedKey.reversedEventId !== event.id || reusedKey.reversalRequestHash !== reversalRequestHash)) {
+            throw new DomainError("REVERSAL_IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used for another reversal or payload", 409);
+        }
         const original = await lockEventAndLoan(tx, ctx, event.id);
         if (original.status !== "posted") throw new DomainError("DISBURSEMENT_NOT_POSTED", "Only posted disbursements can be reversed", 409);
         const existing = await tx.query.loanDisbursementEvents.findFirst({ where: and(eq(loanDisbursementEvents.tenantId, ctx.tenantId), eq(loanDisbursementEvents.reversedEventId, original.id)) });
-        if (existing) return { ...presentEvent(existing, await evidenceIds(ctx, existing.id, tx)), reversedEventPublicId: original.publicId, duplicate: true, auditPublicId: null, correlationId: ctx.correlationId };
+        if (existing) {
+            if (existing.reversalIdempotencyKey === idempotencyKey && existing.reversalRequestHash === reversalRequestHash) {
+                return { ...presentEvent(existing, await evidenceIds(ctx, existing.id, tx)), reversedEventPublicId: original.publicId, duplicate: true, auditPublicId: null, correlationId: ctx.correlationId };
+            }
+            throw new DomainError("REVERSAL_IDEMPOTENCY_CONFLICT", "Disbursement was already reversed with another idempotency key or reason", 409);
+        }
         const reversal = await tx.insert(loanDisbursementEvents).values({
             tenantId: ctx.tenantId, loanId: original.loanId, grossAmount: original.grossAmount, loanAttributedAmount: original.loanAttributedAmount,
             channel: original.channel, sourceBankProfileId: original.sourceBankProfileId, payeeHint: original.payeeHint, status: "reversed", reversedEventId: original.id,
             note, disbursedAt: original.disbursedAt, postedAt: new Date(), reversedAt: new Date(), createdByUserId: ctx.actorUserId,
+            reversalIdempotencyKey: idempotencyKey, reversalRequestHash,
         }).returning().then((rows) => rows[0]!);
         const audit = await writeAudit(tx, ctx, reversal, "reversed", { reversedEventPublicId: original.publicId, reason: note, idempotencyKey });
         return { ...presentEvent(reversal), reversedEventPublicId: original.publicId, duplicate: false, auditPublicId: audit.publicId, correlationId: ctx.correlationId };
@@ -225,35 +283,114 @@ export async function reverseDisbursement(ctx: CommandContext, disbursementPubli
 }
 
 export async function prepareDisbursementEvidence(ctx: CommandContext, disbursementPublicId: string, input: PrepareDisbursementEvidenceInput, gateway: DisbursementEvidenceStorageGateway = defaultEvidenceGateway) {
-    if (!allowedEvidenceTypes.has(input.mimeType) || !Number.isInteger(input.size) || input.size <= 0 || !sha256Pattern.test(input.sha256)) {
+    const maxBytes = Math.max(1, Number(process.env.EVIDENCE_MAX_BYTES ?? 20 * 1024 * 1024));
+    if (!allowedEvidenceTypes.has(input.mimeType) || !Number.isSafeInteger(input.size) || input.size <= 0 || input.size > maxBytes || !sha256Pattern.test(input.sha256)) {
         throw new DomainError("INVALID_EVIDENCE", "Evidence must have an allowed MIME type, positive size, and SHA-256 checksum", 400);
     }
     const { event } = await accessibleEvent(ctx, disbursementPublicId);
     if (event.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Evidence can only be prepared for a draft", 409);
+    const sha256 = input.sha256.toLowerCase();
+    const existing = await db.query.loanDisbursementEvidenceIntents.findFirst({ where: and(
+        eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId), eq(loanDisbursementEvidenceIntents.evidenceHash, sha256),
+    ) });
+    if (existing) {
+        if (existing.loanDisbursementEventId !== event.id) {
+            if (existing.status === "pending" && evidenceIntentExpired(existing)) {
+                await db.transaction(async (tx) => {
+                    await tx.execute(sql`SELECT id FROM loan_disbursement_evidence_intents WHERE tenant_id = ${ctx.tenantId} AND id = ${existing.id} FOR UPDATE`);
+                    const current = await tx.query.loanDisbursementEvidenceIntents.findFirst({ where: and(eq(loanDisbursementEvidenceIntents.id, existing.id), eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId)) });
+                    if (current?.status === "pending" && evidenceIntentExpired(current)) {
+                        await tx.delete(loanDisbursementEvidenceIntents).where(eq(loanDisbursementEvidenceIntents.id, current.id));
+                        await tx.delete(files).where(and(eq(files.id, current.fileId), eq(files.tenantId, ctx.tenantId)));
+                    }
+                });
+                return prepareDisbursementEvidence(ctx, disbursementPublicId, input, gateway);
+            }
+            throw new DomainError("EVIDENCE_HASH_CONFLICT", "Evidence checksum belongs to another disbursement", 409);
+        }
+        const file = await db.query.files.findFirst({ where: and(eq(files.id, existing.fileId), eq(files.tenantId, ctx.tenantId)) });
+        if (!file) throw new DomainError("EVIDENCE_FILE_NOT_FOUND", "Evidence file not found", 404);
+        if (existing.status === "ready") return { id: existing.publicId, publicId: existing.publicId, filePublicId: file.publicId, status: "ready" as const };
+        if (existing.mimeType !== input.mimeType || existing.declaredSize !== input.size) throw new DomainError("EVIDENCE_HASH_CONFLICT", "Existing evidence intent has different metadata", 409);
+        if (evidenceIntentExpired(existing)) {
+            await db.transaction(async (tx) => {
+                const current = await tx.query.loanDisbursementEvidenceIntents.findFirst({ where: and(eq(loanDisbursementEvidenceIntents.id, existing.id), eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId)) });
+                if (current?.status === "pending" && evidenceIntentExpired(current)) {
+                    await tx.delete(loanDisbursementEvidenceIntents).where(eq(loanDisbursementEvidenceIntents.id, current.id));
+                    await tx.delete(files).where(and(eq(files.id, current.fileId), eq(files.tenantId, ctx.tenantId)));
+                }
+            });
+            return prepareDisbursementEvidence(ctx, disbursementPublicId, input, gateway);
+        }
+        const signed = await gateway.preparePut({ bucket: file.bucket, key: file.key, contentType: input.mimeType, contentLength: input.size, checksumSha256: sha256, metadata: { tenant: ctx.tenantId, disbursement: event.publicId } });
+        await db.transaction(async (tx) => {
+            const current = await lockEventAndLoan(tx, ctx, event.id);
+            if (current.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Evidence can only be prepared for a draft", 409);
+            await tx.update(loanDisbursementEvidenceIntents).set({ uploadExpiresAt: signed.expiresAt, updatedByUserId: ctx.actorUserId, updatedAt: new Date() })
+                .where(and(eq(loanDisbursementEvidenceIntents.id, existing.id), eq(loanDisbursementEvidenceIntents.status, "pending")));
+        });
+        return { id: existing.publicId, publicId: existing.publicId, filePublicId: file.publicId, objectKey: file.key, uploadUrl: signed.uploadUrl, expiresAt: signed.expiresAt, requiredHeaders: { "content-type": input.mimeType, "x-amz-checksum-sha256": Buffer.from(sha256, "hex").toString("base64"), "x-amz-meta-tenant": ctx.tenantId, "x-amz-meta-disbursement": event.publicId } };
+    }
     const key = `loan-disbursement-evidence/${ctx.tenantId}/${event.publicId}/${crypto.randomUUID()}`;
-    const signed = await gateway.preparePut({ bucket: BUCKET_NAME, key, contentType: input.mimeType, contentLength: input.size, checksumSha256: input.sha256.toLowerCase(), metadata: { tenant: ctx.tenantId, disbursement: event.publicId } });
-    return db.transaction(async (tx) => {
-        const current = await lockEventAndLoan(tx, ctx, event.id);
-        if (current.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Evidence can only be prepared for a draft", 409);
-        const file = await tx.insert(files).values({ tenantId: ctx.tenantId, ownerUserId: ctx.actorUserId, bucket: BUCKET_NAME, key, originalName: normalizedText(input.originalName), mimeType: input.mimeType, size: input.size, url: toStorageReference({ provider: "s3", bucket: BUCKET_NAME, key }) }).returning().then((rows) => rows[0]!);
-        return { filePublicId: file.publicId, objectKey: key, uploadUrl: signed.uploadUrl, expiresAt: signed.expiresAt, requiredHeaders: { "content-type": input.mimeType, "x-amz-checksum-sha256": Buffer.from(input.sha256, "hex").toString("base64"), "x-amz-meta-tenant": ctx.tenantId, "x-amz-meta-disbursement": event.publicId } };
-    });
+    let created: { file: typeof files.$inferSelect; intent: typeof loanDisbursementEvidenceIntents.$inferSelect };
+    try {
+        created = await db.transaction(async (tx) => {
+            const current = await lockEventAndLoan(tx, ctx, event.id);
+            if (current.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Evidence can only be prepared for a draft", 409);
+            const file = await tx.insert(files).values({ tenantId: ctx.tenantId, ownerUserId: ctx.actorUserId, bucket: BUCKET_NAME, key, originalName: normalizedText(input.originalName), mimeType: input.mimeType, size: input.size, url: toStorageReference({ provider: "s3", bucket: BUCKET_NAME, key }) }).returning().then((rows) => rows[0]!);
+            const intent = await tx.insert(loanDisbursementEvidenceIntents).values({ tenantId: ctx.tenantId, loanDisbursementEventId: event.id, fileId: file.id, status: "pending", evidenceHash: sha256, mimeType: input.mimeType, declaredSize: input.size, createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((rows) => rows[0]!);
+            return { file, intent };
+        });
+    } catch (error) {
+        const databaseError = error as { code?: string; cause?: { code?: string } };
+        if (databaseError.code === "23505" || databaseError.cause?.code === "23505") {
+            throw new DomainError("EVIDENCE_HASH_CONFLICT", "Evidence checksum was reserved concurrently; retry the request", 409);
+        }
+        throw error;
+    }
+    let signed: Awaited<ReturnType<DisbursementEvidenceStorageGateway["preparePut"]>>;
+    try {
+        signed = await gateway.preparePut({ bucket: BUCKET_NAME, key, contentType: input.mimeType, contentLength: input.size, checksumSha256: sha256, metadata: { tenant: ctx.tenantId, disbursement: event.publicId } });
+        await db.transaction(async (tx) => {
+            const current = await lockEventAndLoan(tx, ctx, event.id);
+            if (current.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Evidence can only be prepared for a draft", 409);
+            await tx.update(loanDisbursementEvidenceIntents).set({ uploadExpiresAt: signed.expiresAt, updatedByUserId: ctx.actorUserId, updatedAt: new Date() })
+                .where(and(eq(loanDisbursementEvidenceIntents.id, created.intent.id), eq(loanDisbursementEvidenceIntents.status, "pending")));
+        });
+    } catch (error) {
+        await db.transaction(async (tx) => {
+            await tx.delete(loanDisbursementEvidenceIntents).where(and(eq(loanDisbursementEvidenceIntents.id, created.intent.id), eq(loanDisbursementEvidenceIntents.status, "pending")));
+            await tx.delete(files).where(and(eq(files.id, created.file.id), eq(files.tenantId, ctx.tenantId)));
+        });
+        throw error;
+    }
+    return { id: created.intent.publicId, publicId: created.intent.publicId, filePublicId: created.file.publicId, objectKey: key, uploadUrl: signed.uploadUrl, expiresAt: signed.expiresAt, requiredHeaders: { "content-type": input.mimeType, "x-amz-checksum-sha256": Buffer.from(sha256, "hex").toString("base64"), "x-amz-meta-tenant": ctx.tenantId, "x-amz-meta-disbursement": event.publicId } };
 }
 
-export async function finalizeDisbursementEvidence(ctx: CommandContext, disbursementPublicId: string, filePublicId: string, gateway: DisbursementEvidenceStorageGateway = defaultEvidenceGateway) {
-    requirePublicId(filePublicId, "filePublicId");
+export async function finalizeDisbursementEvidence(ctx: CommandContext, disbursementPublicId: string, evidencePublicId: string, gateway: DisbursementEvidenceStorageGateway = defaultEvidenceGateway) {
+    requirePublicId(evidencePublicId, "evidencePublicId");
     const { event } = await accessibleEvent(ctx, disbursementPublicId);
-    const file = await db.query.files.findFirst({ where: and(eq(files.publicId, filePublicId), eq(files.tenantId, ctx.tenantId)) });
+    const intent = await db.query.loanDisbursementEvidenceIntents.findFirst({ where: and(eq(loanDisbursementEvidenceIntents.publicId, evidencePublicId), eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId), eq(loanDisbursementEvidenceIntents.loanDisbursementEventId, event.id)) });
+    if (!intent) throw new DomainError("EVIDENCE_NOT_FOUND", "Disbursement evidence not found", 404);
+    const file = await db.query.files.findFirst({ where: and(eq(files.id, intent.fileId), eq(files.tenantId, ctx.tenantId)) });
     if (!file) throw new DomainError("EVIDENCE_FILE_NOT_FOUND", "Evidence file not found", 404);
+    if (intent.status === "ready") return { id: intent.publicId, publicId: intent.publicId, filePublicId: file.publicId, status: "ready" as const, sha256: intent.evidenceHash };
     const head = await gateway.head(file.key, file.bucket);
-    if (!head.exists || head.contentType !== file.mimeType || head.contentLength !== file.size || head.metadata.tenant !== ctx.tenantId || head.metadata.disbursement !== event.publicId) {
+    if (!head.exists || head.contentType !== intent.mimeType || head.contentLength !== intent.declaredSize || head.checksumSha256?.toLowerCase() !== intent.evidenceHash || head.metadata.tenant !== ctx.tenantId || head.metadata.disbursement !== event.publicId) {
         throw new DomainError("EVIDENCE_METADATA_MISMATCH", "Stored evidence metadata, size, type, or ownership does not match", 409);
     }
     return db.transaction(async (tx) => {
         const current = await lockEventAndLoan(tx, ctx, event.id);
         if (current.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Evidence can only be finalized for a draft", 409);
+        const locked = await tx.query.loanDisbursementEvidenceIntents.findFirst({ where: and(eq(loanDisbursementEvidenceIntents.id, intent.id), eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId)) });
+        if (!locked) throw new DomainError("EVIDENCE_NOT_FOUND", "Disbursement evidence not found", 404);
+        if (locked.status === "ready") return { id: locked.publicId, publicId: locked.publicId, filePublicId: file.publicId, status: "ready" as const, sha256: locked.evidenceHash };
+        if (evidenceIntentExpired(locked)) throw new DomainError("EVIDENCE_UPLOAD_EXPIRED", "Evidence upload intent has expired", 409);
+        const updated = await tx.update(loanDisbursementEvidenceIntents).set({ status: "ready", finalizedAt: new Date(), updatedByUserId: ctx.actorUserId, updatedAt: new Date() })
+            .where(and(eq(loanDisbursementEvidenceIntents.id, locked.id), eq(loanDisbursementEvidenceIntents.status, "pending"))).returning().then((rows) => rows[0]);
+        if (!updated) throw new DomainError("EVIDENCE_FINALIZE_CONFLICT", "Evidence can no longer be finalized", 409);
         await tx.insert(loanDisbursementEvidence).values({ tenantId: ctx.tenantId, loanDisbursementEventId: current.id, fileId: file.id }).onConflictDoNothing();
-        await writeAudit(tx, ctx, current, "evidence_finalized", { filePublicId });
-        return { filePublicId, status: "ready" as const };
+        await writeAudit(tx, ctx, current, "evidence_finalized", { evidencePublicId: updated.publicId, filePublicId: file.publicId, sha256: updated.evidenceHash });
+        return { id: updated.publicId, publicId: updated.publicId, filePublicId: file.publicId, status: "ready" as const, sha256: updated.evidenceHash };
     });
 }

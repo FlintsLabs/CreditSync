@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { auditLogs, borrowers, loanDisbursementEvents, loanSchedules, loans, users } from "../db/schema";
+import { auditLogs, borrowers, files, loanDisbursementEvidence, loanDisbursementEvents, loanSchedules, loans, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import {
     createDisbursementDraft,
+    disbursementReversalRequestHash,
+    evidenceIntentExpired,
+    finalizeDisbursementEvidence,
     listLoanDisbursements,
     postDisbursement,
+    prepareDisbursementEvidence,
     reverseDisbursement,
     updateDisbursementDraft,
 } from "./loan-disbursement-service";
@@ -37,8 +41,18 @@ async function loanFor(user: { id: number; tenantId: string }, principal = "5000
     }).returning().then((rows) => rows[0]!);
 }
 
-beforeEach(reset);
-afterEach(reset);
+if (process.env.TEST_DATABASE_URL) {
+    beforeEach(reset);
+    afterEach(reset);
+}
+
+// Break caught: a reversal replay hash ignores the reason, or a persisted signer expiry is not enforced.
+test("binds reversal replay hashes to target and reason and expires persisted upload intents", () => {
+    expect(disbursementReversalRequestHash("00000000-0000-4000-8000-000000000001", "wrong payout"))
+        .not.toBe(disbursementReversalRequestHash("00000000-0000-4000-8000-000000000001", "corrected reason"));
+    expect(evidenceIntentExpired({ uploadExpiresAt: new Date(Date.now() - 1), createdAt: new Date() })).toBe(true);
+    expect(evidenceIntentExpired({ uploadExpiresAt: new Date(Date.now() + 60_000), createdAt: new Date() })).toBe(false);
+});
 
 // Break caught: netting gross rather than attributed amounts, or including reversed postings, reports a false loan payout.
 integrationTest("lists tenant-scoped attributed disbursement totals and variance", async () => {
@@ -84,13 +98,59 @@ integrationTest("creates one idempotent compensating reversal without changing t
     });
     const posted = await postDisbursement(context(owner, "post-reverse"), original.publicId);
 
-    const reversal = await reverseDisbursement(context(owner, "reverse-key"), posted.publicId, "wrong payout");
-    const retried = await reverseDisbursement(context(owner, "reverse-key"), posted.publicId, "wrong payout");
+    const [reversal, retried] = await Promise.all([
+        reverseDisbursement(context(owner, "reverse-key"), posted.publicId, "wrong payout"),
+        reverseDisbursement(context(owner, "reverse-key"), posted.publicId, "wrong payout"),
+    ]);
 
     expect(reversal).toMatchObject({ status: "reversed", reversedEventPublicId: posted.publicId });
-    expect(retried).toEqual(reversal);
+    expect(retried).toMatchObject({ publicId: reversal.publicId, status: "reversed", duplicate: true, reversedEventPublicId: posted.publicId });
+    await expect(reverseDisbursement(context(owner, "other-reverse-key"), posted.publicId, "wrong payout"))
+        .rejects.toMatchObject({ code: "REVERSAL_IDEMPOTENCY_CONFLICT", status: 409 });
     expect(await db.query.loans.findFirst({ where: eq(loans.id, loan.id) })).toMatchObject({ principalAmount: "5000.00", outstandingPrincipal: "5000.00" });
-    expect(await db.select().from(loanDisbursementEvents).where(sql`${loanDisbursementEvents.reversedEventId} = ${posted.id}`)).toHaveLength(1);
+    const postedRow = await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, posted.publicId) });
+    expect(await db.select().from(loanDisbursementEvents).where(sql`${loanDisbursementEvents.reversedEventId} = ${postedRow!.id}`)).toHaveLength(1);
+});
+
+// Break caught: an uploaded-but-unfinalized or checksum-mismatched file can be attached and posted as evidence.
+integrationTest("persists and verifies evidence readiness before a linked file can be posted", async () => {
+    const owner = await actor();
+    const loan = await loanFor(owner);
+    const draft = await createDisbursementDraft(context(owner), loan.publicId, {
+        grossAmount: "5.00", loanAttributedAmount: "5.00", channel: "cash", disbursedAt: "2026-08-10T10:00:00.000Z",
+    });
+    const checksum = "a".repeat(64);
+    const gateway = {
+        preparePut: async () => ({ uploadUrl: "https://storage.example.test/signed", expiresAt: new Date(Date.now() + 60_000) }),
+        head: async () => ({ exists: true, contentType: "image/png", contentLength: 12, checksumSha256: checksum, metadata: { tenant: owner.tenantId, disbursement: draft.publicId } }),
+    };
+    const prepared = await prepareDisbursementEvidence(context(owner), draft.publicId, { mimeType: "image/png", size: 12, sha256: checksum }, gateway);
+    const file = await db.query.files.findFirst({ where: eq(files.publicId, prepared.filePublicId) });
+    const event = await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, draft.publicId) });
+    await db.insert(loanDisbursementEvidence).values({ tenantId: owner.tenantId, loanDisbursementEventId: event!.id, fileId: file!.id });
+
+    await expect(postDisbursement(context(owner, "evidence-post"), draft.publicId)).rejects.toMatchObject({ code: "EVIDENCE_NOT_FINALIZED", status: 409 });
+    await expect(finalizeDisbursementEvidence(context(owner), draft.publicId, prepared.publicId, { ...gateway, head: async () => ({ exists: true, contentType: "image/png", contentLength: 12, checksumSha256: "b".repeat(64), metadata: { tenant: owner.tenantId, disbursement: draft.publicId } }) }))
+        .rejects.toMatchObject({ code: "EVIDENCE_METADATA_MISMATCH", status: 409 });
+    expect(await finalizeDisbursementEvidence(context(owner), draft.publicId, prepared.publicId, gateway)).toMatchObject({ status: "ready", sha256: checksum, filePublicId: prepared.filePublicId });
+    await expect(postDisbursement(context(owner, "evidence-post"), draft.publicId)).resolves.toMatchObject({ status: "posted" });
+});
+
+// Break caught: draft changes lack an auditable old/new value, and post keys can be reused for another event.
+integrationTest("records complete draft before/after state and rejects a post-key conflict", async () => {
+    const owner = await actor();
+    const loan = await loanFor(owner, "10.00");
+    const draft = await createDisbursementDraft(context(owner), loan.publicId, {
+        grossAmount: "10.00", loanAttributedAmount: "10.00", channel: "cash", payeeHint: "old payee", note: "old note", disbursedAt: "2026-08-10T10:00:00.000Z",
+    });
+    expect((await listLoanDisbursements(context(owner), loan.publicId)).summary.status).toBe("under_disbursed");
+    await updateDisbursementDraft(context(owner), draft.publicId, { channel: "adjustment", payeeHint: "new payee", note: "new note", disbursedAt: "2026-08-11T10:00:00.000Z" });
+    const audit = await db.select().from(auditLogs).where(and(eq(auditLogs.entityId, draft.publicId), eq(auditLogs.action, "draft_updated"))).then((rows) => rows[0]!);
+    expect(audit.payload).toMatchObject({ before: { channel: "cash", payeeHint: "old payee", note: "old note" }, after: { channel: "adjustment", payeeHint: "new payee", note: "new note" } });
+    await postDisbursement(context(owner, "shared-post-key"), draft.publicId);
+    expect((await listLoanDisbursements(context(owner), loan.publicId)).summary.status).toBe("matched");
+    const second = await createDisbursementDraft(context(owner), loan.publicId, { grossAmount: "1.00", loanAttributedAmount: "1.00", channel: "cash", disbursedAt: "2026-08-12T10:00:00.000Z" });
+    await expect(postDisbursement(context(owner, "shared-post-key"), second.publicId)).rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_CONFLICT", status: 409 });
 });
 
 // Break caught: a draft from another tenant can be read or modified by guessing its UUID.
