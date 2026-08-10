@@ -3,6 +3,7 @@
 ## v0.3.7 - 2026-08-11
 
 ### Added
+- Added an approved design for shared date/date-time inputs with right-aligned picker icons and expandable quick-repayment notes.
 - Added loan-list cards that show outstanding principal with a muted original-principal reference.
 - Added an approved design for loan-list cards to show outstanding and original principal together.
 - Added source-level funding-usage reads and a localized funding-source table showing the borrower contracts funded by each source, their net allocation, route, allocation date, outstanding principal, and status.
