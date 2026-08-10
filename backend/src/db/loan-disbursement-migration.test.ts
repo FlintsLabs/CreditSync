@@ -95,5 +95,5 @@ test("registers immutable compensating reversal records while retaining the draf
     expect(sql).toContain('CREATE OR REPLACE FUNCTION reject_posted_loan_disbursement_event_mutation()');
     expect(sql).toContain('OLD."status" <> \'draft\'');
     expect(sql).toContain("non-draft records are immutable");
-    expect(journal.entries.at(-1)?.tag).toBe("0021_loan_disbursement_reversal_immutability");
+    expect(journal.entries.some((entry: { tag: string }) => entry.tag === "0021_loan_disbursement_reversal_immutability")).toBe(true);
 });

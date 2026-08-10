@@ -20,6 +20,11 @@ interface LoanOption {
     status?: string;
 }
 
+interface BorrowerOption {
+    publicId: string;
+    name: string;
+}
+
 interface LoanScheduleItem {
     id: string;
     publicId: string;
@@ -37,24 +42,54 @@ export default function TransactionForm() {
     const navigate = useNavigate();
     const [searchParams] = useSearchParams();
     const [loans, setLoans] = useState<LoanOption[]>([]);
+    const [borrowers, setBorrowers] = useState<BorrowerOption[]>([]);
     const [scheduleItems, setScheduleItems] = useState<LoanScheduleItem[]>([]);
     const [uploading, setUploading] = useState(false);
     const [loadingSchedule, setLoadingSchedule] = useState(false);
     const [errorMessage, setErrorMessage] = useState("");
 
     const [formData, setFormData] = useState({
+        borrowerId: searchParams.get("borrowerId") ?? "",
         loanId: searchParams.get("loanId") ?? "",
         scheduleId: searchParams.get("scheduleId") ?? "",
         amount: "",
-        date: new Date().toISOString().split("T")[0],
-        notes: ""
+        receivedAt: new Date().toISOString().slice(0, 16),
+        bankReference: "",
+        notes: "",
     });
 
     useEffect(() => {
-        api.get("/loans")
-            .then((res) => setLoans(res.data ?? []))
+        Promise.all([api.get("/borrowers"), api.get("/loans")])
+            .then(([borrowerRes, loanRes]) => {
+                const loadedLoans = (loanRes.data ?? []).filter((loan: LoanOption) => loan.status === "active");
+                setBorrowers(borrowerRes.data ?? []);
+                setLoans(loadedLoans);
+                const requestedLoanId = searchParams.get("loanId");
+                const requestedLoan = loadedLoans.find((loan: LoanOption) => loan.publicId === requestedLoanId);
+                if (requestedLoan) {
+                    setFormData((previous) => ({ ...previous, borrowerId: requestedLoan.borrowerPublicId, loanId: requestedLoan.publicId }));
+                }
+            })
             .catch(() => setErrorMessage(t("transactionsForm.errors.loadLoans", "Unable to load loans.")));
-    }, [t]);
+    }, [searchParams, t]);
+
+    const borrowerLoans = useMemo(
+        () => formData.borrowerId
+            ? loans.filter((loan) => loan.borrowerPublicId === formData.borrowerId)
+            : [],
+        [formData.borrowerId, loans]
+    );
+
+    const selectBorrower = (borrowerId: string) => {
+        const matchingLoans = loans.filter((loan) => loan.borrowerPublicId === borrowerId);
+        setFormData((previous) => ({
+            ...previous,
+            borrowerId,
+            loanId: matchingLoans.length === 1 ? matchingLoans[0]!.publicId : "",
+            scheduleId: "",
+            amount: "",
+        }));
+    };
 
     useEffect(() => {
         const loadSchedule = async () => {
@@ -113,9 +148,11 @@ export default function TransactionForm() {
             if (!selectedLoan) throw new Error(t("transactionsForm.errors.selectLoan"));
             const result = await createPaymentWorkflow(api as unknown as HttpClient, {
                 amount: formData.amount,
-                receivedAt: new Date(`${formData.date}T12:00:00`).toISOString(),
+                receivedAt: new Date(formData.receivedAt).toISOString(),
                 payerName: selectedLoan.borrowerName,
+                bankReference: formData.bankReference,
                 notes: formData.notes,
+                originLoanPublicId: selectedLoan.publicId,
             });
             if (result.duplicate) {
                 setErrorMessage(t("transactionsForm.errors.duplicate"));
@@ -151,15 +188,30 @@ export default function TransactionForm() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                     <div className="grid gap-2">
-                        <label>{t("transactionsForm.loan", "Select Loan Agreement")}</label>
+                        <label htmlFor="borrower">{t("transactionsForm.borrower", "Borrower")}</label>
                         <select
+                            id="borrower"
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                            value={formData.borrowerId}
+                            onChange={(event) => selectBorrower(event.target.value)}
+                        >
+                            <option value="">{t("transactionsForm.selectBorrower", "Select borrower...")}</option>
+                            {borrowers.map((borrower) => <option key={borrower.publicId} value={borrower.publicId}>{borrower.name}</option>)}
+                        </select>
+                    </div>
+
+                    <div className="grid gap-2">
+                        <label htmlFor="loan">{t("transactionsForm.loan", "Select Loan Agreement")}</label>
+                        <select
+                            id="loan"
                             className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                             value={formData.loanId}
-                            onChange={(e) => setFormData({ ...formData, loanId: e.target.value })}
+                            disabled={!formData.borrowerId}
+                            onChange={(e) => setFormData({ ...formData, loanId: e.target.value, scheduleId: "", amount: "" })}
                         >
                             <option value="">{t("transactionsForm.selectLoan", "Select Loan...")}</option>
-                            {loans.map((l) => (
-                                <option key={l.id} value={l.publicId ?? l.id}>
+                            {borrowerLoans.map((l) => (
+                                <option key={l.publicId ?? l.id} value={l.publicId ?? l.id}>
                                     {t("transactionsForm.loanOption", { defaultValue: "Loan #{{id}} - {{name}} (Principal: {{amount}})", id: l.id, name: l.borrowerName, amount: formatMoneyExact(String(l.principal), i18n.language) })}
                                 </option>
                             ))}
@@ -167,8 +219,9 @@ export default function TransactionForm() {
                     </div>
 
                     <div className="grid gap-2">
-                        <label>{t("transactionsForm.installment", "Installment")}</label>
+                        <label htmlFor="installment">{t("transactionsForm.installment", "Installment")}</label>
                         <select
+                            id="installment"
                             className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                             value={formData.scheduleId}
                             onChange={(e) => {
@@ -202,18 +255,23 @@ export default function TransactionForm() {
                     )}
 
                     <div className="grid gap-2">
-                        <label>{t("transactionsForm.amount", "Amount (฿)")}</label>
-                        <Input type="number" value={formData.amount} onChange={(e) => setFormData({ ...formData, amount: e.target.value })} />
+                        <label htmlFor="amount">{t("transactionsForm.amount", "Amount (฿)")}</label>
+                        <Input id="amount" type="number" value={formData.amount} onChange={(e) => setFormData({ ...formData, amount: e.target.value })} />
                     </div>
 
                     <div className="grid gap-2">
-                        <label>{t("transactionsForm.date", "Transaction Date")}</label>
-                        <Input type="date" value={formData.date} onChange={(e) => setFormData({ ...formData, date: e.target.value })} />
+                        <label htmlFor="received-at">{t("transactionsForm.receivedAt", "Received date and time")}</label>
+                        <Input id="received-at" type="datetime-local" value={formData.receivedAt} onChange={(e) => setFormData({ ...formData, receivedAt: e.target.value })} />
                     </div>
 
                     <div className="grid gap-2">
-                        <label>{t("transactionsForm.notes", "Notes")}</label>
-                        <Input value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} />
+                        <label htmlFor="bank-reference">{t("transactionsForm.reference", "Bank reference")}</label>
+                        <Input id="bank-reference" value={formData.bankReference} onChange={(e) => setFormData({ ...formData, bankReference: e.target.value })} />
+                    </div>
+
+                    <div className="grid gap-2">
+                        <label htmlFor="notes">{t("transactionsForm.notes", "Notes")}</label>
+                        <Input id="notes" value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} />
                     </div>
 
                     <p className="text-xs text-muted-foreground">{t("transactionsForm.intakeNotice")}</p>

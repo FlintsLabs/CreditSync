@@ -3,7 +3,7 @@ import { Outlet, Link, useLocation } from "react-router-dom";
 import { LayoutDashboard, Users, Wallet, FileText, Settings, Activity, Menu, X, ArrowRightLeft, ScanSearch, Inbox } from "lucide-react";
 import { cn } from "../lib/utils";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
-import AppBar from "../components/AppBar";
+import AppBar, { UserAccountMenu } from "../components/AppBar";
 import { useTranslation } from "react-i18next";
 import { Button } from "../components/ui/Button";
 import { getStoredUser, isTenantAdminUser } from "../lib/session";
@@ -73,7 +73,11 @@ export default function DashboardLayout() {
                     >
                         {isMobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
                     </Button>
-                    <span className="font-bold text-lg">CreditSync</span>
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                        <img aria-hidden="true" className="h-7 w-7 shrink-0 rounded-md" src="/favicon.svg" />
+                        <span className="truncate text-lg font-bold">CreditSync</span>
+                    </div>
+                    <UserAccountMenu />
                 </header>
 
                 {/* Mobile Sidebar Overlay (Slide-in) */}
@@ -88,7 +92,7 @@ export default function DashboardLayout() {
                         {/* Sidebar Panel */}
                         <div className="relative flex w-[80%] max-w-xs flex-col bg-card shadow-2xl animate-in slide-in-from-left duration-300">
                             <div className="p-4 border-b">
-                                <AppBar />
+                                <AppBar showAccount={false} />
                             </div>
 
                             <div className="flex-1 overflow-y-auto p-4">

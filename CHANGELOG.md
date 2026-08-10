@@ -3,6 +3,8 @@
 ## v0.3.6 - 2026-08-10
 
 ### Added
+- Added loan-scoped repayment-intake history, including quick-capture source links and legacy allocation/transaction discovery without altering posted financial records.
+- Added a borrower-first repayment capture flow, responsive desktop dialog/mobile full form handoff, and localized separation between borrower payouts and borrower repayments.
 - Added the approved loan-list contract-summary design: localized repayment terms, clearly labelled start/creation dates, and removal of internal funding/profitability metrics from list cards.
 - Added the localized loan-detail disbursement ledger UI with draft, optional signed-upload evidence, posting, and compensating reversal controls.
 - Added fixed daily-repayment term summaries and clear own-capital versus bank-drawdown funding labels on loan details.
@@ -24,6 +26,8 @@
 - Released CreditSync Plugin `2.1.0` with the additive disbursement orchestration skill and executable lifecycle safety evals for evidence ordering, variance, confirmation, idempotency, schedule immutability, and reasoned reversal.
 
 ### Fixed
+- Moved the mobile account avatar into the top header and added the shared favicon mark beside the CreditSync title.
+- Reduced borrower-card header and action-row vertical padding for a denser mobile list without changing the shared card component.
 - Clarified loan-list cards with localized repayment terms, start dates, Bangkok creation timestamps, and no per-card funding/profitability lookups.
 - Made v0.3.6 loan-disbursement history visibly identify grouped posted and reversed transfers with localized exact gross and loan-attributed amounts.
 - Made concurrent loan-disbursement reversal verification order-independent while requiring exactly one durable creation, one idempotent replay, and one reversal audit record; serialized the shared disposable PostgreSQL suite to prevent cross-test database interference.

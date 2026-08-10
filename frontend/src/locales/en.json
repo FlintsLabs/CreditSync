@@ -48,6 +48,7 @@
         "close": "Close"
     },
     "appbar": {
+        "account": "Open account menu",
         "profile": "Profile",
         "settings": "Settings",
         "logout": "Log out"
@@ -193,6 +194,8 @@
     "transactionsForm": {
         "title": "Record Repayment",
         "details": "Transaction Details",
+        "borrower": "Borrower",
+        "selectBorrower": "Select borrower...",
         "loan": "Select Loan Agreement",
         "selectLoan": "Select Loan...",
         "loanOption": "Loan #{{id}} - {{name}} (Principal: {{amount}})",
@@ -202,6 +205,7 @@
         "scheduleSummary": "Due date: {{dueDate}} • Due now: {{dueNow}} • Penalty: {{penalty}}",
         "amount": "Amount (฿)",
         "date": "Transaction Date",
+        "receivedAt": "Received date and time",
         "paymentMethod": "Payment Method",
         "reference": "Reference",
         "note": "Note",
@@ -713,6 +717,33 @@
             "status": { "under_disbursed": "Under-disbursed", "matched": "Matched", "over_disbursed": "Over-disbursed" },
             "recordStatus": { "draft": "Draft", "posted": "Posted", "reversed": "Reversed" },
             "errors": { "load": "Unable to load disbursements.", "save": "Unable to save the disbursement draft.", "post": "Unable to post the disbursement.", "reverse": "Unable to reverse the disbursement.", "evidence": "Unable to upload evidence." }
+        },
+        "repaymentHistory": {
+            "title": "Repayments received",
+            "description": "Every payment received from the borrower for this agreement, including drafts and reversals.",
+            "record": "Record repayment",
+            "empty": "No repayment intakes have been recorded for this agreement.",
+            "receivedAt": "Received at",
+            "amount": "Received amount",
+            "reference": "Bank reference",
+            "allocation": "Latest allocation",
+            "postedComponents": "Posted allocation",
+            "principal": "Principal",
+            "interest": "Interest",
+            "fee": "Fee",
+            "penalty": "Penalty",
+            "continue": "Open payment review",
+            "quickCaptureTitle": "Record repayment",
+            "quickCaptureDescription": "Capture the incoming payment now, then review its allocation before posting.",
+            "saveAndReview": "Continue to payment review",
+            "status": {
+                "draft": "Draft",
+                "needs_review": "Needs review",
+                "ready": "Ready to post",
+                "posted": "Posted",
+                "reversed": "Reversed",
+                "duplicate": "Duplicate"
+            }
         },
         "loanId": "ID",
         "copyLoanId": "Copy loan ID",

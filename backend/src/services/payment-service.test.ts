@@ -167,6 +167,36 @@ describe("payment application service", () => {
         expect(JSON.stringify(await db.select().from(auditLogs))).not.toContain("raw-qr-is-hashed-only");
     });
 
+    // Break caught: a quick-capture intake loses its source loan or can attach to a loan outside the actor's portfolio.
+    integrationTest("persists an accessible origin loan on payment intake capture", async () => {
+        const actor = await seedUser("tenant-origin");
+        const { borrower, loan } = await seedLoan({ actor, borrowerName: "Origin borrower", schedules: [{ total: "100.00" }] });
+        const created = await createPaymentIntake(context(actor, "origin-loan-capture"), {
+            amount: "100.00",
+            receivedAt: "2026-08-11T10:00:00.000Z",
+            payerName: borrower.name,
+            originLoanPublicId: loan.publicId,
+        });
+
+        expect(created).toMatchObject({ originLoanPublicId: loan.publicId, amount: "100.00" });
+        expect(await db.query.paymentIntakes.findFirst()).toMatchObject({ originLoanId: loan.id });
+        expect(await db.select().from(auditLogs).where(eq(auditLogs.action, "created")))
+            .toEqual([expect.objectContaining({ payload: expect.objectContaining({ originLoanPublicId: loan.publicId }) })]);
+    });
+
+    // Break caught: a collector can attach a payment intake to another collector's loan.
+    integrationTest("rejects an origin loan outside the actor's portfolio", async () => {
+        const owner = await seedUser("tenant-origin-access", "collector");
+        const otherCollector = await seedUser("tenant-origin-access", "collector");
+        const { loan } = await seedLoan({ actor: owner, borrowerName: "Private borrower", schedules: [{ total: "100.00" }] });
+
+        await expect(createPaymentIntake(context(otherCollector, "origin-loan-forbidden"), {
+            amount: "100.00",
+            receivedAt: "2026-08-11T10:00:00.000Z",
+            originLoanPublicId: loan.publicId,
+        })).rejects.toMatchObject({ code: "LOAN_NOT_FOUND", status: 404 });
+    });
+
     // Break caught: amount/time/name similarity is promoted to a destructive duplicate decision.
     integrationTest("keeps semantic duplicates and reports a warning only", async () => {
         const actor = await seedUser();
