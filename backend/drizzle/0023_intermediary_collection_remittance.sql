@@ -97,6 +97,11 @@ CREATE TABLE "intermediary_remittance_proposals" (
     CONSTRAINT "intermediary_remittance_proposals_status_check" CHECK ("status" IN ('needs_review', 'ready', 'stale', 'expired'))
 );--> statement-breakpoint
 
+-- Referenced composite keys must exist before PostgreSQL accepts the tenant-safe foreign keys below.
+CREATE UNIQUE INDEX "intermediaries_tenant_id_id_unique" ON "intermediaries" ("tenant_id", "id");--> statement-breakpoint
+CREATE UNIQUE INDEX "intermediary_collections_tenant_id_id_unique" ON "intermediary_collections" ("tenant_id", "id");--> statement-breakpoint
+CREATE UNIQUE INDEX "intermediary_remittances_tenant_id_id_unique" ON "intermediary_remittances" ("tenant_id", "id");--> statement-breakpoint
+
 ALTER TABLE "intermediaries" ADD CONSTRAINT "intermediaries_tenant_owner_fk" FOREIGN KEY ("tenant_id", "owner_user_id") REFERENCES "users"("tenant_id", "id");--> statement-breakpoint
 ALTER TABLE "intermediaries" ADD CONSTRAINT "intermediaries_tenant_created_by_fk" FOREIGN KEY ("tenant_id", "created_by_user_id") REFERENCES "users"("tenant_id", "id");--> statement-breakpoint
 ALTER TABLE "intermediaries" ADD CONSTRAINT "intermediaries_tenant_updated_by_fk" FOREIGN KEY ("tenant_id", "updated_by_user_id") REFERENCES "users"("tenant_id", "id");--> statement-breakpoint
@@ -120,13 +125,10 @@ ALTER TABLE "intermediary_remittance_allocations" ADD CONSTRAINT "intermediary_a
 ALTER TABLE "intermediary_remittance_proposals" ADD CONSTRAINT "intermediary_proposals_tenant_remittance_fk" FOREIGN KEY ("tenant_id", "remittance_id") REFERENCES "intermediary_remittances"("tenant_id", "id");--> statement-breakpoint
 ALTER TABLE "intermediary_remittance_proposals" ADD CONSTRAINT "intermediary_proposals_tenant_created_by_fk" FOREIGN KEY ("tenant_id", "created_by_user_id") REFERENCES "users"("tenant_id", "id");--> statement-breakpoint
 
-CREATE UNIQUE INDEX "intermediaries_tenant_id_id_unique" ON "intermediaries" ("tenant_id", "id");--> statement-breakpoint
 CREATE UNIQUE INDEX "intermediaries_tenant_normalized_name_unique" ON "intermediaries" ("tenant_id", "normalized_name");--> statement-breakpoint
-CREATE UNIQUE INDEX "intermediary_collections_tenant_id_id_unique" ON "intermediary_collections" ("tenant_id", "id");--> statement-breakpoint
 CREATE UNIQUE INDEX "intermediary_collections_tenant_idempotency_unique" ON "intermediary_collections" ("tenant_id", "idempotency_key");--> statement-breakpoint
 CREATE UNIQUE INDEX "intermediary_collections_tenant_bank_reference_unique" ON "intermediary_collections" ("tenant_id", "bank_reference_hash") WHERE "bank_reference_hash" IS NOT NULL;--> statement-breakpoint
 CREATE INDEX "intermediary_collections_tenant_intermediary_status_idx" ON "intermediary_collections" ("tenant_id", "intermediary_id", "status");--> statement-breakpoint
-CREATE UNIQUE INDEX "intermediary_remittances_tenant_id_id_unique" ON "intermediary_remittances" ("tenant_id", "id");--> statement-breakpoint
 CREATE UNIQUE INDEX "intermediary_remittances_tenant_idempotency_unique" ON "intermediary_remittances" ("tenant_id", "idempotency_key");--> statement-breakpoint
 CREATE UNIQUE INDEX "intermediary_remittances_tenant_bank_reference_unique" ON "intermediary_remittances" ("tenant_id", "bank_reference_hash") WHERE "bank_reference_hash" IS NOT NULL;--> statement-breakpoint
 CREATE UNIQUE INDEX "intermediary_remittances_tenant_post_key_unique" ON "intermediary_remittances" ("tenant_id", "post_idempotency_key") WHERE "post_idempotency_key" IS NOT NULL;--> statement-breakpoint

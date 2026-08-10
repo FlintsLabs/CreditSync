@@ -3,6 +3,7 @@
 ## v0.3.7 - 2026-08-11
 
 ### Added
+- Added manual intermediary creation/search/update and idempotent borrower-to-intermediary collection capture that preserves exact amounts and effective dates without posting a loan transaction.
 - Added the tenant-scoped intermediary, borrower-collection, grouped-remittance, explicit-allocation, and versioned-proposal ledger schema with exact-money checks, active reservation uniqueness, and immutable settled/post records.
 - Added a task-by-task implementation plan for the approved intermediary collection/remittance ledger, manual workspace, evidence viewer, MCP orchestration, controlled intake migration, and full verification.
 - Added an approved manual-first, AI-assisted design for two-leg intermediary collections and grouped remittances, including explicit balance allocation, exceptional manual approval, evidence viewing, immutable posting, and MCP safety boundaries.
@@ -17,6 +18,7 @@
 - Documented the approved responsive layout for funding-source details at tablet and compact-desktop widths.
 
 ### Fixed
+- Ordered new intermediary composite-key indexes before their tenant-safe foreign keys so the additive migration applies cleanly to a fresh PostgreSQL database.
 - Made funding-source summaries and loan allocations readable in tablet and compact-desktop layouts without content collisions.
 - Preserved the frozen MCP `intake.create` output contract after repayment-history responses gained an origin-loan reference.
 - Made own-capital availability and utilization subtract net direct loan allocations instead of only bank drawdowns, while keeping external-source credit availability based on issued drawdowns.
