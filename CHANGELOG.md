@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.9 - 2026-08-11
+
+### Added
+- Added the approved Dashboard Daily Command Center design and selected visual reference, covering action-first hierarchy, exact dashboard money contracts, resilient section loading, responsive behavior, localization, accessibility, and design QA.
+
 ## v0.3.8 - 2026-08-11
 
 ### Added
