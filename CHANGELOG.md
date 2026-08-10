@@ -3,6 +3,7 @@
 ## v0.3.7 - 2026-08-11
 
 ### Added
+- Added authenticated REST endpoints for manual intermediary setup, collection capture and approval, remittance draft selection, preview, posting, and reversal.
 - Added tenant-admin manual approval and reasoned compensating reversal for intermediary collections, preserving original borrower-paid dates and immutable repayment history.
 - Added atomic posting for exact intermediary remittance selections, creating one immutable loan payment per collection at the original borrower-to-intermediary payment timestamp.
 - Added idempotent intermediary remittance drafts with persisted explicit collection selection, exact Decimal balance summaries, exclusive active reservations, and versioned ready/needs-review previews.

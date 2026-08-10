@@ -160,6 +160,30 @@ export async function createIntermediaryRemittance(ctx: CommandContext, input: {
     });
 }
 
+export async function getIntermediaryRemittance(ctx: CommandContext, publicId: string) {
+    await actorFor(ctx);
+    const row = await db.query.intermediaryRemittances.findFirst({ where: and(eq(intermediaryRemittances.tenantId, ctx.tenantId), eq(intermediaryRemittances.publicId, publicId)) });
+    if (!row) throw new DomainError("INTERMEDIARY_REMITTANCE_NOT_FOUND", "Remittance not found", 404);
+    const selection = await remittanceSelection(db, ctx.tenantId, row.id);
+    return { ...presentRemittance(row, selection.selected), collectionPublicIds: selection.collections.map((collection: typeof intermediaryCollections.$inferSelect) => collection.publicId) };
+}
+
+export async function listIntermediaryRemittances(ctx: CommandContext, filters: { intermediaryPublicId?: string; status?: string } = {}) {
+    await actorFor(ctx);
+    const conditions = [eq(intermediaryRemittances.tenantId, ctx.tenantId)];
+    if (filters.status) conditions.push(eq(intermediaryRemittances.status, filters.status));
+    if (filters.intermediaryPublicId) {
+        const intermediary = await db.query.intermediaries.findFirst({ where: and(eq(intermediaries.tenantId, ctx.tenantId), eq(intermediaries.publicId, filters.intermediaryPublicId)) });
+        if (!intermediary) return [];
+        conditions.push(eq(intermediaryRemittances.intermediaryId, intermediary.id));
+    }
+    const rows = await db.select().from(intermediaryRemittances).where(and(...conditions)).orderBy(desc(intermediaryRemittances.receivedAt));
+    return Promise.all(rows.map(async (row: typeof intermediaryRemittances.$inferSelect) => {
+        const selection = await remittanceSelection(db, ctx.tenantId, row.id);
+        return presentRemittance(row, selection.selected);
+    }));
+}
+
 async function remittanceSelection(executor: any, tenantId: string, remittanceId: number) {
     const allocations = await executor.select().from(intermediaryRemittanceAllocations).where(and(eq(intermediaryRemittanceAllocations.tenantId, tenantId), eq(intermediaryRemittanceAllocations.remittanceId, remittanceId), sql`${intermediaryRemittanceAllocations.releasedAt} IS NULL`)).orderBy(intermediaryRemittanceAllocations.allocationOrder);
     const collections = allocations.length ? await executor.select().from(intermediaryCollections).where(and(eq(intermediaryCollections.tenantId, tenantId), inArray(intermediaryCollections.id, allocations.map((row: typeof intermediaryRemittanceAllocations.$inferSelect) => row.collectionId)))) : [];
