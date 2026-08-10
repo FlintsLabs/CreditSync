@@ -108,6 +108,11 @@ if (!testDatabaseUrl) {
         };
 
         try {
+            // The suite migrates its disposable database before running tests. Recreate
+            // the schema here so this migration contract owns its required 0000 state.
+            await sql.unsafe("DROP SCHEMA public CASCADE");
+            await sql.unsafe("DROP SCHEMA drizzle CASCADE");
+            await sql.unsafe("CREATE SCHEMA public");
             const existingTables = await sql<{ count: string }[]>`
                 SELECT count(*)::text AS count
                 FROM information_schema.tables
@@ -140,8 +145,8 @@ if (!testDatabaseUrl) {
             `;
             expect(applied[0]?.count).toBe("1");
 
-            // Rebuild the already-confirmed-empty disposable database at the 0007
-            // boundary so the additive migration can be exercised with legacy rows.
+            // Rebuild the disposable database at the 0007 boundary so the additive
+            // migration can be exercised with legacy rows.
             await sql.unsafe("DROP SCHEMA public CASCADE");
             await sql.unsafe("DROP SCHEMA drizzle CASCADE");
             await sql.unsafe("CREATE SCHEMA public");
@@ -458,6 +463,20 @@ if (!testDatabaseUrl) {
             `;
             expect(String(await postgresError(sql`UPDATE audit_logs SET action = 'changed'`))).toMatch(/append-only/);
             expect(String(await postgresError(sql`DELETE FROM audit_logs`))).toMatch(/append-only/);
+
+            // Leave the shared disposable target in the same fully migrated state
+            // required by the rest of the integration suite.
+            await sql.unsafe("DROP SCHEMA public CASCADE");
+            await sql.unsafe("DROP SCHEMA IF EXISTS drizzle CASCADE");
+            await sql.unsafe("CREATE SCHEMA public");
+            await migrate(drizzle(sql), { migrationsFolder: `${backendRoot}drizzle` });
+            const latestTables = await sql<{ count: string }[]>`
+                SELECT count(*)::text AS count
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name = 'loan_disbursements'
+            `;
+            expect(latestTables[0]?.count).toBe("1");
         } finally {
             await sql.end();
         }

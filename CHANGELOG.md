@@ -34,6 +34,8 @@
 - Rejected draft evidence-ID arrays consistently in REST and MCP instead of silently discarding them; evidence must follow the signed prepare/finalize lifecycle.
 - Updated the loan-wizard regression test to exercise the accessible daily repayment radio chip and current daily-entry payload.
 - Removed the duplicate custom calendar icon from the loan start-date field; the browser-native date control remains fully clickable.
+- Made the disposable PostgreSQL migration integration test self-isolate from an already-migrated suite database and restore the latest migration state afterwards.
+- Corrected the floating-loan precision activation regression to supply the required daily-interest policy before asserting exact Decimal persistence.
 
 ### Changed
 - Simplified the loan-detail title and moved the full public loan ID into a compact copyable secondary line.
