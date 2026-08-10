@@ -1,8 +1,12 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import BorrowerCard from "../src/pages/dashboard/borrowers/BorrowerCard";
+import BorrowerList from "../src/pages/dashboard/borrowers/BorrowerList";
+import { api } from "../src/lib/api";
+
+vi.mock("../src/lib/api", () => ({ api: { get: vi.fn() } }));
 
 const borrower = {
   id: 1,
@@ -23,6 +27,10 @@ afterEach(() => {
     configurable: true,
     value: originalClipboard,
   });
+});
+
+beforeEach(() => {
+  vi.clearAllMocks();
 });
 
 describe("BorrowerCard", () => {
@@ -58,5 +66,21 @@ describe("BorrowerCard", () => {
 
     expect(screen.getByText(/no id card/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /copy id card/i })).not.toBeInTheDocument();
+  });
+
+  test("uses a one-column mobile and two-column md borrower grid", async () => {
+    vi.mocked(api.get).mockResolvedValue({
+      data: [borrower, { ...borrower, id: 2, publicId: "22222222-2222-4222-8222-222222222222", name: "Second Borrower" }],
+    });
+
+    render(
+      <MemoryRouter>
+        <BorrowerList />
+      </MemoryRouter>,
+    );
+
+    const grid = await screen.findByTestId("borrower-card-grid");
+    expect(grid).toHaveClass("grid-cols-1", "md:grid-cols-2");
+    expect(grid).not.toHaveClass("lg:grid-cols-3");
   });
 });

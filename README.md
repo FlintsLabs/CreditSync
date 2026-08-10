@@ -1,5 +1,9 @@
 # CreditSync
 
+## Borrower identity privacy
+
+Borrower list cards mask Thai national IDs by default. The card's copy action intentionally copies the complete stored value for authorized owner workflows; use the borrower detail or edit flow when the full value must be viewed or updated.
+
 CreditSync is a mobile-first loan management system for lenders who need to track funding sources, borrower profiles, loan contracts, repayments, and closing balances in one place.
 
 The stack is built around Bun + Elysia on the backend, React + Vite on the frontend, PostgreSQL for relational data, MinIO for file storage, and Dragonfly for Redis-compatible caching.

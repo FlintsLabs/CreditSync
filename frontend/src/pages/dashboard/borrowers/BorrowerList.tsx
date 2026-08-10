@@ -1,13 +1,11 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/Button";
-import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "../../../components/ui/Card";
-import { Plus, Search, Edit2, Eye, MapPin, Users } from "lucide-react";
+import { Plus, Search, Users } from "lucide-react";
 import { Input } from "../../../components/ui/Input";
 import { Link } from "react-router-dom";
-import { Avatar, AvatarImage, AvatarFallback } from "../../../components/ui/avatar";
-import { Badge } from "../../../components/ui/badge";
 import BorrowerEditModal from "./BorrowerEditModal";
+import BorrowerCard from "./BorrowerCard";
 import { useTranslation } from "react-i18next";
 
 export default function BorrowerList() {
@@ -34,16 +32,6 @@ export default function BorrowerList() {
     const handleEdit = (borrower: any) => {
         setSelectedBorrower(borrower);
         setEditModalOpen(true);
-    };
-
-    const getInitials = (name: string) => {
-        if (!name) return "U";
-        return name
-            .split(" ")
-            .map((n) => n[0])
-            .slice(0, 2)
-            .join("")
-            .toUpperCase();
     };
 
     return (
@@ -81,63 +69,9 @@ export default function BorrowerList() {
                     </Link>
                 </div>
             ) : (
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                    {borrowers.map((b) => (
-                        <Card key={b.id} className="rounded-xl hover:shadow-md transition-all border-l-4 border-l-primary/50">
-                            <CardHeader className="flex flex-row items-center gap-4 pb-2">
-                                <Avatar className="h-14 w-14 border-2 border-white shadow-sm">
-                                    <AvatarImage src={b.photoUrl} />
-                                    <AvatarFallback className="bg-primary/10 text-primary font-bold">
-                                        {getInitials(b.name)}
-                                    </AvatarFallback>
-                                </Avatar>
-                                <div className="overflow-hidden">
-                                    <CardTitle className="text-lg truncate">{b.name}</CardTitle>
-                                    <div className="text-xs text-muted-foreground truncate flex items-center gap-1">
-                                        {b.idCardNumber || t("borrowers.noIdCard", "No ID Card")}
-                                    </div>
-                                    {b.tags && b.tags.length > 0 && (
-                                        <div className="flex flex-wrap gap-1 mt-1">
-                                            {b.tags.slice(0, 3).map((tag: string) => (
-                                                <Badge key={tag} variant="secondary" className="text-[10px] px-1 py-0 h-4">
-                                                    {tag}
-                                                </Badge>
-                                            ))}
-                                            {b.tags.length > 3 && (
-                                                <span className="text-[10px] text-muted-foreground">+{b.tags.length - 3}</span>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                            </CardHeader>
-                            <CardContent className="pb-2">
-                                <div className="text-sm space-y-1">
-                                    <p className="flex justify-between">
-                                        <span className="text-muted-foreground">{t("borrowers.phone", "Phone")}:</span>
-                                        <span>{b.phone || "-"}</span>
-                                    </p>
-                                    <p className="flex justify-between">
-                                        <span className="text-muted-foreground">{t("borrowers.creditScore", "Credit Score")}:</span>
-                                        <span className={b.creditScore > 700 ? "text-green-600 font-bold" : "text-amber-600"}>{b.creditScore}</span>
-                                    </p>
-                                    {b.googleMapsUrl && (
-                                        <a href={b.googleMapsUrl} target="_blank" rel="noreferrer" className="flex items-center text-xs text-blue-500 hover:underline mt-1">
-                                            <MapPin className="h-3 w-3 mr-1" /> {t("borrowers.viewMap", "View Map Location")}
-                                        </a>
-                                    )}
-                                </div>
-                            </CardContent>
-                            <CardFooter className="flex justify-end gap-2 pt-2 border-t bg-muted/20 rounded-b-xl">
-                                <Button variant="ghost" size="sm" onClick={() => handleEdit(b)} className="h-8 rounded-full">
-                                    <Edit2 className="h-3 w-3 mr-1" /> {t("common.edit", "Edit")}
-                                </Button>
-                                <Link to={`/borrowers/${b.publicId ?? b.id}`}>
-                                    <Button size="sm" variant="outline" className="h-8 rounded-full">
-                                        <Eye className="h-3 w-3 mr-1" /> {t("common.details", "Details")}
-                                    </Button>
-                                </Link>
-                            </CardFooter>
-                        </Card>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2" data-testid="borrower-card-grid">
+                    {borrowers.map((borrower) => (
+                        <BorrowerCard borrower={borrower} key={borrower.id} onEdit={handleEdit} />
                     ))}
                 </div>
             )}

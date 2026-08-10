@@ -8,6 +8,9 @@
 - Added Thai national-ID formatting and masking utilities for privacy-aware borrower-list presentation.
 - Added a responsive borrower identity card with masked ID display, an accessible full-value copy action, and localized copy feedback.
 
+### Changed
+- Changed the Borrowers list to a one-column mobile and two-column desktop grid using the privacy-aware identity card.
+
 ### Fixed
 - Replaced customer national-ID examples in the borrower-card implementation plan with synthetic test data so sensitive identity data is not committed to source control.
 
