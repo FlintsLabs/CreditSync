@@ -13,6 +13,7 @@
 - Added an approved design for an auditable multi-payout loan disbursement ledger with grouped-transfer attribution and optional evidence.
 - Added a task-by-task implementation plan for the loan disbursement ledger, evidence workflow, REST/MCP adapters, and loan-detail UI.
 - Added an additive immutable loan-disbursement event ledger schema with grouped-transfer attribution, source/payee metadata, reversal links, and optional evidence links.
+- Added a tenant-scoped loan-disbursement application service for draft lifecycle, posting, compensating reversals, Decimal-safe variance summaries, evidence attachment, and audit history.
 
 ### Fixed
 - Enforced tenant-safe event/file evidence links and blocked update or deletion of posted loan-disbursement ledger records at the database layer.
