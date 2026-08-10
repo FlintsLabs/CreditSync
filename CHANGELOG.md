@@ -14,6 +14,7 @@
 - Added Decimal-based annual opportunity-cost calculation for capital-pool reporting without creating a cash expense.
 - Added an additive direct-capital funding-profile reference on loan drafts and active loans, mutually exclusive with a bank drawdown.
 - Added direct own-capital selection to loan drafts, activation-time capacity enforcement, an initial profile allocation, and the same public contract through REST and MCP.
+- Added non-cash own-capital opportunity cost and economic spread to the funding-profile profitability response and detail view.
 
 ### Fixed
 - Corrected the direct-own-capital plan's five-day 2% annual opportunity-cost example to ฿1.37 for a ฿5,000 allocation.

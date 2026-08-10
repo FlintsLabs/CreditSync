@@ -100,6 +100,8 @@ interface SourceProfitability {
     netCashPosition: number;
     realizedRoiPercent: number;
     carryForwardAvailable: number;
+    opportunityCostAccrued?: number;
+    economicSpread?: number;
 }
 
 interface DrawdownProfitability {
@@ -606,6 +608,18 @@ export default function FundDetail() {
                                     <span>{t("fundDetail.realizedRoi", "Realized ROI")}</span>
                                     <span className="font-medium">{Number(sourceProfitability?.realizedRoiPercent ?? 0).toLocaleString()}%</span>
                                 </div>
+                                {fund.accountingMode === "capital_pool" && (
+                                    <>
+                                        <div className="flex justify-between">
+                                            <span>{t("fundDetail.opportunityCost", "Opportunity cost (non-cash)")}</span>
+                                            <span className="font-medium">฿{Number(sourceProfitability?.opportunityCostAccrued ?? 0).toLocaleString(i18n.language)}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span>{t("fundDetail.economicSpread", "Economic spread")}</span>
+                                            <span className="font-medium">฿{Number(sourceProfitability?.economicSpread ?? 0).toLocaleString(i18n.language)}</span>
+                                        </div>
+                                    </>
+                                )}
                             </CardContent>
                         </Card>
                     </div>

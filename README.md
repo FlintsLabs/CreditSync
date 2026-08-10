@@ -285,6 +285,8 @@ Active or paid daily-loan detail pages include the renewal control. The operator
 
 Loan-facing REST payloads use public UUIDs for loans, schedules, funding profiles, drawdowns, and allocations. Public money inputs and outputs use two-decimal strings (for example, `"500.00"`). This includes schedule and closing reads, allocation/profitability summaries, and funding allocation/reallocation mutations. Generated schedules conserve the exact principal-plus-interest obligation: each row's principal, interest, and fee components equal its scheduled total and remaining due, with any cent residual carried by the final installment. Schedule money remains Decimal-safe internally and does not pass through JavaScript `number`, including for values above the safe-integer range.
 
+For an own-capital pool, the profile profitability response also reports `opportunityCostAccrued` and `economicSpread`. Opportunity cost is calculated from each positive allocation date through the current Bangkok calendar date at the profile's annual rate; it is analytical only and never creates a borrower charge, cash movement, or financial transaction.
+
 ## Private Remote MCP
 
 CreditSync serves a private stateless Streamable HTTP MCP endpoint at `/mcp` in the existing backend process. Each HTTP request gets a fresh MCP server and Web Standard transport; there are no server sessions or legacy SSE endpoints. The adapter invokes the same borrower, payment, loan, and renewal application services as the web API directly—it does not call CreditSync REST routes internally. The unauthenticated `GET /mcp/health` response contains only service status and schema version.

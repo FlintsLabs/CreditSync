@@ -295,6 +295,8 @@
         "deficitBalance": "ยอดขาด",
         "sourceProfitability": "ความคุ้มทุนของแหล่งเงิน",
         "realizedRoi": "ROI ที่รับรู้แล้ว",
+        "opportunityCost": "ต้นทุนค่าเสียโอกาส (ไม่ใช่เงินสด)",
+        "economicSpread": "ส่วนต่างเชิงเศรษฐกิจ",
         "enableOwnCapital": "ใช้เป็นทุนตัวเอง (2% ต่อปี)",
         "addDrawdown": "เพิ่มรายการเบิกใช้",
         "repaymentCycle": "รอบการชำระ",

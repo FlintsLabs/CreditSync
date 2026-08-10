@@ -4,10 +4,19 @@ import { db } from "../db";
 import { bankLoans, bankProfiles, loanFundingAllocations } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
 import { isTenantAdminUser } from "../lib/access";
-import { deriveProfitabilityMetrics, getBankProfileSettlementSummary } from "../lib/fund-settlement";
+import { calculateOpportunityCost, deriveProfitabilityMetrics, getBankProfileSettlementSummary } from "../lib/fund-settlement";
+import Decimal from "decimal.js";
 import { createAuditLog } from "../lib/audit-log";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
 import { findBankProfileByPublicId } from "../lib/public-id";
+
+function bangkokBusinessDate(now = new Date()) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(now);
+    const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value;
+    return `${value("year")}-${value("month")}-${value("day")}`;
+}
 
 export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
     .use(authPlugin)
@@ -104,11 +113,31 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
                 eq(loanFundingAllocations.bankProfileId, bankProfileId),
             )
         ).then((rows) => Number(rows[0]?.totalAllocated ?? 0));
+                const allocations = profile.accountingMode === "capital_pool"
+                    ? await db.select({ allocatedAmount: loanFundingAllocations.allocatedAmount, allocationDate: loanFundingAllocations.allocationDate })
+                        .from(loanFundingAllocations).where(and(
+                            eq(loanFundingAllocations.tenantId, user.tenantId),
+                            eq(loanFundingAllocations.bankProfileId, bankProfileId),
+                        ))
+                    : [];
+                const asOfDate = bangkokBusinessDate();
+                const opportunityCostAccrued = allocations.reduce((total, allocation) => {
+                    if (new Decimal(allocation.allocatedAmount).lte(0)) return total;
+                    return total.plus(calculateOpportunityCost({
+                        principal: allocation.allocatedAmount,
+                        annualRate: profile.opportunityCostRate,
+                        allocationDate: allocation.allocationDate,
+                        asOfDate,
+                    }));
+                }, new Decimal(0)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+                const metrics = deriveProfitabilityMetrics(summary, Math.max(0, deployedPrincipal));
 
                 return {
                     ...summary,
                     bankProfileId,
-                    ...deriveProfitabilityMetrics(summary, Math.max(0, deployedPrincipal)),
+                    ...metrics,
+                    opportunityCostAccrued: Number(opportunityCostAccrued.toFixed(2)),
+                    economicSpread: Number(new Decimal(metrics.realizedSpread).minus(opportunityCostAccrued).toFixed(2)),
                 };
             },
         });

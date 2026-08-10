@@ -295,6 +295,8 @@
         "deficitBalance": "Deficit balance",
         "sourceProfitability": "Source Profitability",
         "realizedRoi": "Realized ROI",
+        "opportunityCost": "Opportunity cost (non-cash)",
+        "economicSpread": "Economic spread",
         "enableOwnCapital": "Use as own capital (2% p.a.)",
         "addDrawdown": "Add Drawdown",
         "repaymentCycle": "Repayment Cycle",
