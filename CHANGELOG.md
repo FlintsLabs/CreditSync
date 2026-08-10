@@ -22,6 +22,7 @@
 - Released CreditSync Plugin `2.0.0` with the regenerated frozen 26-tool MCP contract, preserving MCP payload schema version `1.0`.
 
 ### Fixed
+- Aligned the loan-detail disbursement UI with the ledger REST response, retained idempotency headers for post/reverse retries, refreshed compensating reversals, and exposed source, payee, and evidence details.
 - Enforced tenant-safe event/file evidence links and blocked update or deletion of posted loan-disbursement ledger records at the database layer.
 - Returned source-bank-profile public UUIDs on disbursement events and rejected nested REST event commands whose parent loan UUID does not match.
 - Rejected draft evidence-ID arrays consistently in REST and MCP instead of silently discarding them; evidence must follow the signed prepare/finalize lifecycle.

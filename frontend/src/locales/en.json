@@ -701,7 +701,7 @@
         "bankDrawdown": { "title": "Bank drawdown", "description": "Funding is allocated from a specific drawdown." },
         "disbursements": {
             "title": "Disbursements", "description": "Record actual borrower payouts separately from approved loan terms.", "add": "Add disbursement", "approved": "Approved principal", "net": "Net disbursed", "variance": "Variance",
-            "gross": "Gross amount", "attributed": "Attributed amount", "channel": "Channel", "disbursedAt": "Disbursed at", "groupExplanation": "Grouped transfer explanation", "saveDraft": "Save draft", "addEvidence": "Add evidence", "post": "Post disbursement", "reverse": "Reverse disbursement", "reversalReason": "Reversal reason", "confirmReverse": "Confirm reversal", "empty": "No disbursements have been recorded.",
+            "gross": "Gross amount", "attributed": "Attributed amount", "channel": "Channel", "disbursedAt": "Disbursed at", "sourceProfile": "Source profile", "payeeHint": "Payee hint", "optional": "Optional", "evidence": "Evidence", "groupExplanation": "Grouped transfer explanation", "saveDraft": "Save draft", "addEvidence": "Add evidence", "post": "Post disbursement", "reverse": "Reverse disbursement", "reversalReason": "Reversal reason", "confirmReverse": "Confirm reversal", "empty": "No disbursements have been recorded.",
             "grouped": "Grouped transfer: gross {{gross}}, attributed to this loan {{attributed}}.",
             "channels": { "bank_transfer": "Bank transfer", "cash": "Cash", "adjustment": "Adjustment" },
             "status": { "under_disbursed": "Under-disbursed", "matched": "Matched", "over_disbursed": "Over-disbursed" },
