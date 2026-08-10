@@ -235,6 +235,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
                 interestRate: loans.interestRate,
                 installmentAmount: loans.installmentAmount,
                 totalInstallments: loans.totalInstallments,
+                startDate: loans.startDate,
             })
                 .from(loans)
                 .leftJoin(borrowers, eq(loans.borrowerId, borrowers.id))

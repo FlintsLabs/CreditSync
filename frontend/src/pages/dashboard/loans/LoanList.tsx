@@ -8,27 +8,19 @@ import { Link } from "react-router-dom";
 import { cn } from "../../../lib/utils";
 import { LoanClosingModal } from "./LoanClosingModal";
 import { useTranslation } from "react-i18next";
+import { formatMoneyExact } from "../../../lib/workflow-model";
 
 interface LoanRow {
     id: string;
     publicId: string;
     borrowerName: string;
-    principal: string | number;
+    principal: string;
     status: string;
     createdAt: string;
     repaymentType: string;
-    fundedAmount?: number;
-    allocationState?: string;
-    remainingGap?: number;
-    realizedSpread?: number;
-    unrealizedSpread?: number;
-}
-
-function formatCurrency(value: number, locale?: string) {
-    return `฿${value.toLocaleString(locale, {
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 2,
-    })}`;
+    installmentAmount: string | null;
+    totalInstallments: number | null;
+    startDate: string | null;
 }
 
 export default function LoanList() {
@@ -44,24 +36,7 @@ export default function LoanList() {
         const fetchLoans = async () => {
             try {
                 const res = await api.get("/loans");
-                const rawLoans: LoanRow[] = res.data ?? [];
-                const enrichedLoans = await Promise.all(
-                    rawLoans.map(async (loan) => {
-                        const [allocationStateRes, profitabilityRes] = await Promise.all([
-                            api.get(`/loans/${loan.id}/allocation-state`),
-                            api.get(`/loans/${loan.id}/profitability`),
-                        ]);
-                        return {
-                            ...loan,
-                            fundedAmount: Number(allocationStateRes.data?.netAllocatedPrincipal ?? 0),
-                            allocationState: allocationStateRes.data?.state,
-                            remainingGap: Number(allocationStateRes.data?.remainingGap ?? 0),
-                            realizedSpread: Number(profitabilityRes.data?.realizedSpread ?? 0),
-                            unrealizedSpread: Number(profitabilityRes.data?.unrealizedSpread ?? 0),
-                        };
-                    })
-                );
-                setLoans(enrichedLoans);
+                setLoans(res.data ?? []);
             } catch (error) {
                 console.error("Failed to load loans");
             }
@@ -77,16 +52,13 @@ export default function LoanList() {
                 loan.borrowerName?.toLowerCase().includes(searchText) ||
                 String(loan.id).includes(searchText);
             const matchesStatus = statusFilter === "all" || loan.status === statusFilter;
-            const matchesFunding = fundingFilter === "all" || (loan.allocationState ?? "unfunded") === fundingFilter;
+            const matchesFunding = fundingFilter === "all";
             return matchesSearch && matchesStatus && matchesFunding;
         });
 
         return filtered.sort((a, b) => {
             if (sortBy === "newest") return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
             if (sortBy === "oldest") return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-            if (sortBy === "largest_gap") return Number(b.remainingGap ?? 0) - Number(a.remainingGap ?? 0);
-            if (sortBy === "best_spread") return Number(b.realizedSpread ?? 0) - Number(a.realizedSpread ?? 0);
-            if (sortBy === "worst_spread") return Number(a.realizedSpread ?? 0) - Number(b.realizedSpread ?? 0);
             return 0;
         });
     }, [fundingFilter, loans, search, sortBy, statusFilter]);
@@ -186,53 +158,23 @@ export default function LoanList() {
                         <CardContent className="flex-grow flex flex-col justify-between">
                             <div className="space-y-3">
                                 <div>
-                                    <div className="text-2xl font-bold mb-2">{formatCurrency(Number(loan.principal), i18n.language)}</div>
+                                    <div className="text-2xl font-bold mb-2">{formatMoneyExact(loan.principal, i18n.language)}</div>
                                     <p className={cn(
                                         "text-xs font-semibold uppercase",
                                         loan.status === "active" ? "text-green-600" : "text-gray-500"
                                     )}>{loan.status}</p>
                                 </div>
 
-                                <div className="grid grid-cols-2 gap-3 text-xs">
-                                    <div>
-                                        <div className="text-muted-foreground">{t("loans.fundingState", "Funding state")}</div>
-                                        <div className="font-medium capitalize">
-                                            {(loan.allocationState ?? "unfunded").replaceAll("_", " ")}
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <div className="text-muted-foreground">{t("loans.remainingGap", "Remaining gap")}</div>
-                                        <div className={cn(
-                                            "font-medium",
-                                            Number(loan.remainingGap ?? 0) > 0 ? "text-destructive" : "text-emerald-600"
-                                        )}>
-                                            {formatCurrency(Number(loan.remainingGap ?? 0), i18n.language)}
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <div className="text-muted-foreground">{t("funds.metrics.realizedSpread", "Realized spread")}</div>
-                                        <div className={cn(
-                                            "font-medium",
-                                            Number(loan.realizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"
-                                        )}>
-                                            {formatCurrency(Number(loan.realizedSpread ?? 0), i18n.language)}
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <div className="text-muted-foreground">{t("loans.unrealizedSpread", "Unrealized spread")}</div>
-                                        <div className={cn(
-                                            "font-medium",
-                                            Number(loan.unrealizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"
-                                        )}>
-                                            {formatCurrency(Number(loan.unrealizedSpread ?? 0), i18n.language)}
-                                        </div>
-                                    </div>
+                                <div className="space-y-2 text-xs">
+                                    <div><div className="text-muted-foreground">{t("loans.repaymentType", "Repayment type")}</div><div className="font-medium">{t(`loanWizard.repaymentOptions.${loan.repaymentType}`)}</div></div>
+                                    {loan.repaymentType === "floating" ? <div className="text-muted-foreground">{t("loans.noFixedSchedule", "Floating repayment has no fixed schedule")}</div> : <div className="font-medium">{t("loans.installmentSummary", { amount: formatMoneyExact(loan.installmentAmount ?? "0.00", i18n.language), count: loan.totalInstallments ?? 0 })}</div>}
+                                    <div><div className="text-muted-foreground">{t("loans.startDate", "Start date")}</div><div className="font-medium">{loan.startDate ? new Intl.DateTimeFormat(i18n.language, { timeZone: "Asia/Bangkok" }).format(new Date(`${loan.startDate}T00:00:00+07:00`)) : t("loans.notSet", "Not set")}</div></div>
                                 </div>
                             </div>
 
                             <div className="flex items-center text-sm text-muted-foreground mt-4">
                                 <Calendar className="mr-2 h-4 w-4 flex-shrink-0" />
-                                <span>{new Date(loan.createdAt).toLocaleDateString(i18n.language)}</span>
+                                <span>{t("loans.createdAt", "Created at")}: {new Intl.DateTimeFormat(i18n.language, { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Bangkok" }).format(new Date(loan.createdAt))}</span>
                             </div>
                         </CardContent>
                     </Card>

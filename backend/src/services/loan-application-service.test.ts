@@ -532,6 +532,10 @@ describe("loan application service", () => {
         expect(created.body).toMatchObject({ id: created.body.publicId, status: "draft", principal: "1200.00" });
         expect(created.body).not.toHaveProperty("borrowerId");
 
+        const list = await jsonRequest(app, "/loans", { headers });
+        expect(list.response.status, list.text).toBe(200);
+        expect(list.body[0]).toMatchObject({ publicId: created.body.publicId, startDate: "2026-08-10" });
+
         const updated = await jsonRequest(app, `/loans/${created.body.publicId}`, {
             method: "PUT", headers, body: JSON.stringify({ principal: "100.00", interestRate: "0.00", termMonths: 12 }),
         });
