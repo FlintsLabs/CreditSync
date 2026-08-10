@@ -13,6 +13,7 @@
 - Documented the approved responsive layout for funding-source details at tablet and compact-desktop widths.
 
 ### Fixed
+- Preserved the frozen MCP `intake.create` output contract after repayment-history responses gained an origin-loan reference.
 - Made own-capital availability and utilization subtract net direct loan allocations instead of only bank drawdowns, while keeping external-source credit availability based on issued drawdowns.
 - Clarified that own-capital allocations are direct and do not create a bank drawdown record.
 - Isolated funding-usage integration tests from tenant-cache state between disposable database resets.
