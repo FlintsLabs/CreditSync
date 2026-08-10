@@ -1,7 +1,7 @@
 {
   "name": "creditsync",
-  "version": "1.0.0",
-  "description": "Private CreditSync borrower, payment reconciliation, loan, renewal, and reversal workflows for Codex.",
+  "version": "2.1.0",
+  "description": "Private CreditSync borrower, payment reconciliation, loan disbursement, renewal, and reversal workflows for Codex.",
   "author": {
     "name": "CreditSync"
   },
@@ -10,14 +10,15 @@
     "borrowers",
     "payments",
     "loans",
-    "reconciliation"
+    "reconciliation",
+    "disbursements"
   ],
   "skills": "./skills/",
   "apps": "./.app.json",
   "interface": {
     "displayName": "CreditSync",
     "shortDescription": "Review and manage private CreditSync workflows.",
-    "longDescription": "Use the private CreditSync app to resolve borrowers, capture optional payment evidence, review and post allocations, activate loans, renew daily loans, and create audited reversals.",
+    "longDescription": "Use the private CreditSync app to resolve borrowers, capture optional payment and disbursement evidence, review and post allocations, activate loans, record audited loan disbursements, renew daily loans, and create audited reversals.",
     "developerName": "CreditSync",
     "category": "Productivity",
     "capabilities": [
@@ -27,7 +28,8 @@
     "defaultPrompt": [
       "Review the CreditSync payment inbox.",
       "Find a borrower and show outstanding loans.",
-      "Preview a daily-loan renewal."
+      "Preview a daily-loan renewal.",
+      "Record a loan disbursement with evidence."
     ],
     "brandColor": "#075985"
   }

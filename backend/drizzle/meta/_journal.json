@@ -134,6 +134,27 @@
       "when": 1786312500000,
       "tag": "0018_daily_loan_entry_metadata",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786313000000,
+      "tag": "0019_loan_disbursement_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1786313500000,
+      "tag": "0020_loan_disbursement_service_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1786314000000,
+      "tag": "0021_loan_disbursement_reversal_immutability",
+      "breakpoints": true
     }
   ]
 }

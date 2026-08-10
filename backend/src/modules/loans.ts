@@ -28,6 +28,17 @@ import {
 import { activateLoan, createLoanDraft, getLoanApplication, presentLoan, previewLoan, updateLoanDraft } from "../services/loan-application-service";
 import type { CommandContext } from "../services/command-context";
 import { DomainError, presentDomainError } from "../services/domain-error";
+import {
+    createDisbursementDraft,
+    assertDisbursementParentLoan,
+    finalizeDisbursementEvidence,
+    listLoanDisbursements,
+    postDisbursement,
+    prepareDisbursementEvidence,
+    rejectDisbursementDraftEvidenceIds,
+    reverseDisbursement,
+    updateDisbursementDraft,
+} from "../services/loan-disbursement-service";
 
 type RouteUser = { id: number; tenantId: string };
 
@@ -177,6 +188,18 @@ const dailyEntry = t.Object({
         value: t.String(),
     })),
 });
+const disbursementChannel = t.Union([t.Literal("bank_transfer"), t.Literal("cash"), t.Literal("adjustment")]);
+const disbursementDraftBody = t.Object({
+    grossAmount: t.String({ pattern: "^(0|[1-9]\\d*)\\.\\d{2}$", maxLength: 32 }),
+    loanAttributedAmount: t.String({ pattern: "^(0|[1-9]\\d*)\\.\\d{2}$", maxLength: 32 }),
+    channel: disbursementChannel,
+    sourceBankProfilePublicId: t.Optional(t.Nullable(t.String({ format: "uuid" }))),
+    payeeHint: t.Optional(t.Nullable(t.String({ maxLength: 500 }))),
+    note: t.Optional(t.Nullable(t.String({ maxLength: 2000 }))),
+    disbursedAt: t.String({ format: "date-time" }),
+    evidenceFilePublicIds: t.Optional(t.Array(t.String({ format: "uuid" }), { maxItems: 100 })),
+});
+const disbursementDraftUpdateBody = t.Partial(disbursementDraftBody);
 
 export const loansRoute = new Elysia({ prefix: "/loans" })
     .use(authPlugin)
@@ -313,6 +336,82 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             id: t.String(),
         })
     })
+    .get("/:id/disbursements", async ({ params, user, request, set }) => {
+        if (!user) return unauthorized(set);
+        try {
+            return await listLoanDisbursements(commandContext(user, request), params.id);
+        } catch (error) {
+            return domainFailure(error, set);
+        }
+    }, { params: t.Object({ id: t.String({ format: "uuid" }) }) })
+    .post("/:id/disbursements", async ({ params, body, user, request, set }) => {
+        if (!user) return unauthorized(set);
+        try {
+            rejectDisbursementDraftEvidenceIds(body);
+            const created = await createDisbursementDraft(commandContext(user, request), params.id, body);
+            await invalidateTenantCache(user.tenantId);
+            return created;
+        } catch (error) {
+            return domainFailure(error, set);
+        }
+    }, { params: t.Object({ id: t.String({ format: "uuid" }) }), body: disbursementDraftBody })
+    .put("/:id/disbursements/:disbursementId", async ({ params, body, user, request, set }) => {
+        if (!user) return unauthorized(set);
+        try {
+            rejectDisbursementDraftEvidenceIds(body);
+            const ctx = commandContext(user, request);
+            await assertDisbursementParentLoan(ctx, params.id, params.disbursementId);
+            const updated = await updateDisbursementDraft(ctx, params.disbursementId, body);
+            await invalidateTenantCache(user.tenantId);
+            return updated;
+        } catch (error) {
+            return domainFailure(error, set);
+        }
+    }, { params: t.Object({ id: t.String({ format: "uuid" }), disbursementId: t.String({ format: "uuid" }) }), body: disbursementDraftUpdateBody })
+    .post("/:id/disbursements/:disbursementId/evidence/upload-intents", async ({ params, body, user, request, set }) => {
+        if (!user) return unauthorized(set);
+        try {
+            const ctx = commandContext(user, request);
+            await assertDisbursementParentLoan(ctx, params.id, params.disbursementId);
+            return await prepareDisbursementEvidence(ctx, params.disbursementId, body);
+        } catch (error) {
+            return domainFailure(error, set);
+        }
+    }, { params: t.Object({ id: t.String({ format: "uuid" }), disbursementId: t.String({ format: "uuid" }) }), body: t.Object({ mimeType: t.Union([t.Literal("image/jpeg"), t.Literal("image/png"), t.Literal("application/pdf")]), size: t.Integer({ minimum: 1 }), sha256: t.String({ pattern: "^[0-9a-fA-F]{64}$" }), originalName: t.Optional(t.Nullable(t.String({ maxLength: 500 }))) }) })
+    .post("/:id/disbursements/:disbursementId/evidence/:evidenceId/finalize", async ({ params, user, request, set }) => {
+        if (!user) return unauthorized(set);
+        try {
+            const ctx = commandContext(user, request);
+            await assertDisbursementParentLoan(ctx, params.id, params.disbursementId);
+            return await finalizeDisbursementEvidence(ctx, params.disbursementId, params.evidenceId);
+        } catch (error) {
+            return domainFailure(error, set);
+        }
+    }, { params: t.Object({ id: t.String({ format: "uuid" }), disbursementId: t.String({ format: "uuid" }), evidenceId: t.String({ format: "uuid" }) }) })
+    .post("/:id/disbursements/:disbursementId/post", async ({ params, user, request, set }) => {
+        if (!user) return unauthorized(set);
+        try {
+            const ctx = commandContext(user, request);
+            await assertDisbursementParentLoan(ctx, params.id, params.disbursementId);
+            const posted = await postDisbursement(ctx, params.disbursementId);
+            await invalidateTenantCache(user.tenantId);
+            return posted;
+        } catch (error) {
+            return domainFailure(error, set);
+        }
+    }, { params: t.Object({ id: t.String({ format: "uuid" }), disbursementId: t.String({ format: "uuid" }) }), body: t.Object({}) })
+    .post("/:id/disbursements/:disbursementId/reverse", async ({ params, body, user, request, set }) => {
+        if (!user) return unauthorized(set);
+        try {
+            const ctx = commandContext(user, request);
+            await assertDisbursementParentLoan(ctx, params.id, params.disbursementId);
+            const reversed = await reverseDisbursement(ctx, params.disbursementId, body.reason);
+            await invalidateTenantCache(user.tenantId);
+            return reversed;
+        } catch (error) {
+            return domainFailure(error, set);
+        }
+    }, { params: t.Object({ id: t.String({ format: "uuid" }), disbursementId: t.String({ format: "uuid" }) }), body: t.Object({ reason: t.String({ minLength: 1, maxLength: 2_000 }) }) })
     .get("/:id/funding-allocations", async ({ params, user, set }) => {
         if (!user) {
             return unauthorized(set);

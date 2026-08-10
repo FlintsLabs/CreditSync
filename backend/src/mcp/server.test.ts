@@ -12,6 +12,7 @@ const TOKEN = "contract-secret";
 const BORROWER_ID = "0198c481-3e2b-7000-8000-000000000001";
 const INTAKE_ID = "0198c481-3e2b-7000-8000-000000000002";
 const AUDIT_ID = "0198c481-3e2b-7000-8000-000000000003";
+const DISBURSEMENT_ID = "0198c481-3e2b-7000-8000-000000000004";
 
 const runningApps: Array<{ stop(): Promise<unknown> | unknown }> = [];
 
@@ -83,6 +84,64 @@ function clientFor(baseUrl: string, token = TOKEN) {
 }
 
 describe("CreditSync stateless MCP contract", () => {
+    test("advertises closed loan-disbursement tools with financial audit metadata", async () => {
+        let observed: Record<string, unknown> | undefined;
+        const baseUrl = await startServer({
+            toolHandlers: {
+                "loan.disbursement.draft": async (_ctx, input) => {
+                    observed = input;
+                    return {
+                        id: DISBURSEMENT_ID, publicId: DISBURSEMENT_ID,
+                        grossAmount: "100.00", loanAttributedAmount: "100.00",
+                        channel: "cash", status: "draft", sourceBankProfilePublicId: BORROWER_ID, payeeHint: null, note: null,
+                        disbursedAt: "2026-08-10T00:00:00.000Z", postedAt: null, reversedAt: null,
+                        evidenceFilePublicIds: [],
+                    };
+                },
+                "loan.disbursement.post": async () => ({
+                    id: DISBURSEMENT_ID, publicId: DISBURSEMENT_ID,
+                    grossAmount: "100.00", loanAttributedAmount: "100.00",
+                    channel: "cash", status: "posted", sourceBankProfilePublicId: BORROWER_ID, payeeHint: null, note: null,
+                    disbursedAt: "2026-08-10T00:00:00.000Z", postedAt: "2026-08-10T00:01:00.000Z", reversedAt: null,
+                    evidenceFilePublicIds: [], duplicate: false,
+                    auditPublicId: AUDIT_ID, correlationId: AUDIT_ID,
+                }),
+            },
+        });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const listed = await client.listTools();
+        const draftTool = listed.tools.find((tool) => tool.name === "loan.disbursement.draft");
+        const postTool = listed.tools.find((tool) => tool.name === "loan.disbursement.post");
+        expect(draftTool?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
+        expect(postTool?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false });
+        const draft = await client.callTool({
+            name: "loan.disbursement.draft",
+            arguments: {
+                loanPublicId: BORROWER_ID, grossAmount: "100.00", loanAttributedAmount: "100.00",
+                channel: "cash", disbursedAt: "2026-08-10T00:00:00.000Z",
+            },
+        });
+        expect(draft.isError).not.toBe(true);
+        expect(draft.structuredContent).toMatchObject({ schemaVersion: "1.0", data: { publicId: DISBURSEMENT_ID, status: "draft", grossAmount: "100.00", sourceBankProfilePublicId: BORROWER_ID } });
+        expect(observed).toMatchObject({ loanPublicId: BORROWER_ID, grossAmount: "100.00", loanAttributedAmount: "100.00", channel: "cash" });
+        const malformed = await client.callTool({
+            name: "loan.disbursement.draft",
+            arguments: {
+                loanPublicId: BORROWER_ID, grossAmount: "100", loanAttributedAmount: "100.00",
+                channel: "wire", disbursedAt: "not-a-date",
+            },
+        });
+        expect(malformed.isError).toBe(true);
+        const posted = await client.callTool({
+            name: "loan.disbursement.post",
+            arguments: { disbursementPublicId: DISBURSEMENT_ID, idempotencyKey: "post-disbursement-1" },
+        });
+        expect(posted.isError).not.toBe(true);
+        expect(posted.structuredContent).toMatchObject({ schemaVersion: "1.0", data: { status: "posted" }, auditPublicIds: [AUDIT_ID] });
+        await client.close();
+    });
+
     test("an actual MCP client initializes, lists every frozen tool, and calls shared handlers", async () => {
         let observedContext: CommandContext | undefined;
         const baseUrl = await startServer({
@@ -123,6 +182,8 @@ describe("CreditSync stateless MCP contract", () => {
             "payment.post",
             "payment.reverse",
             "loan.activate",
+            "loan.disbursement.post",
+            "loan.disbursement.reverse",
             "renewal.preview",
             "renewal.execute",
             "renewal.reverse",

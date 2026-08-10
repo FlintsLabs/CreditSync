@@ -86,6 +86,73 @@ describe("CreditSync executable orchestration evals", () => {
         ]);
     });
 
+    test("disbursement lifecycle preserves the evidence order, idempotency boundaries, and compensating reversal", async () => {
+        const result = await runEvalScenario("disbursement-full-lifecycle");
+        expect(result.outcome).toBe("completed");
+        expect(result.effects).toEqual(["disbursement-evidence.put"]);
+        expect(result.calls.map((call) => call.name)).toEqual([
+            "loan.disbursement.list",
+            "loan.disbursement.draft",
+            "loan.disbursement.evidence.prepare",
+            "loan.disbursement.evidence.finalize",
+            "loan.disbursement.list",
+            "loan.disbursement.post",
+            "loan.disbursement.list",
+            "loan.disbursement.reverse",
+        ]);
+        expect(result.calls.at(-3)?.arguments).toEqual({
+            disbursementPublicId: "0198c481-3e2b-7000-8000-000000000051",
+            idempotencyKey: "disbursement-post-20260810-1",
+        });
+        expect(result.calls.at(-1)?.arguments).toEqual({
+            disbursementPublicId: "0198c481-3e2b-7000-8000-000000000051",
+            reason: "Owner confirmed duplicate payout record",
+            idempotencyKey: "disbursement-reverse-20260810-1",
+        });
+    });
+
+    test("disbursement variance and schedule-change requests stop before a financial write", async () => {
+        const variance = await runEvalScenario("disbursement-variance-without-confirmation");
+        expect(variance).toMatchObject({ outcome: "stopped", stopReason: "variance-review-required" });
+        expect(variance.calls.some((call) => call.name === "loan.disbursement.post")).toBe(false);
+
+        const schedule = await runEvalScenario("disbursement-schedule-mutation");
+        expect(schedule).toMatchObject({ outcome: "stopped", stopReason: "disbursement-cannot-mutate-schedule" });
+        expect(schedule.calls.map((call) => call.name)).toEqual(["loan.disbursement.list"]);
+    });
+
+    test("disbursement stops for missing confirmation and idempotency-key conflict", async () => {
+        const unconfirmed = await runEvalScenario("disbursement-missing-post-confirmation");
+        expect(unconfirmed).toMatchObject({ outcome: "stopped", stopReason: "disbursement-post-confirmation-required" });
+        expect(unconfirmed.calls.some((call) => call.name === "loan.disbursement.post")).toBe(false);
+
+        const conflict = await runEvalScenario("disbursement-idempotency-conflict");
+        expect(conflict).toMatchObject({ outcome: "stopped", stopReason: "disbursement-idempotency-conflict" });
+        expect(conflict.calls.map((call) => call.name)).toEqual(["loan.disbursement.draft", "loan.disbursement.post"]);
+    });
+
+    test("disbursement evidence retries and failures do not create an unsafe upload or post", async () => {
+        const ready = await runEvalScenario("disbursement-evidence-ready-retry");
+        expect(ready.outcome).toBe("completed");
+        expect(ready.effects).toEqual([]);
+        expect(ready.calls.map((call) => call.name)).not.toContain("loan.disbursement.evidence.finalize");
+
+        for (const id of ["disbursement-evidence-expired-upload", "disbursement-evidence-checksum-conflict", "disbursement-evidence-finalize-mismatch"]) {
+            const result = await runEvalScenario(id);
+            expect(result.outcome, id).toBe("stopped");
+            expect(result.calls.some((call) => call.name === "loan.disbursement.post"), id).toBe(false);
+        }
+        expect((await runEvalScenario("disbursement-evidence-expired-upload")).effects).toEqual([]);
+        expect((await runEvalScenario("disbursement-evidence-checksum-conflict")).effects).toEqual([]);
+    });
+
+    test("disbursement reversal re-lists and selects an exact posted event", async () => {
+        const result = await runEvalScenario("disbursement-reversal-event-not-posted");
+        expect(result).toMatchObject({ outcome: "stopped", stopReason: "disbursement-posted-event-not-found" });
+        expect(result.calls.at(-1)?.name).toBe("loan.disbursement.list");
+        expect(result.calls.some((call) => call.name === "loan.disbursement.reverse")).toBe(false);
+    });
+
     test("renewal reversal derives IDs from a same-task execute result and retained pre-execution borrower", async () => {
         const execution = await runEvalScenario("renewal-execute");
         const renewal = await runEvalScenario("renewal-reversal");

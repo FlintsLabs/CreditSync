@@ -44,6 +44,17 @@ interface LoanSchedulePreview {
     remainingPrincipal: string;
 }
 
+interface DailyLoanCalculation {
+    totalInstallments: number;
+    installmentAmount: string;
+    totalRepayment: string;
+    totalInterest: string;
+    dailyInterest: string;
+    flatDailyRatePercent: string;
+    flatMonthlyRatePercent: string;
+    flatAnnualRatePercent: string;
+}
+
 export default function LoanWizard() {
     const { t, i18n } = useTranslation();
     const currentUser = getStoredUser();
@@ -56,7 +67,7 @@ export default function LoanWizard() {
     const [submitting, setSubmitting] = useState(false);
     const [errorMessage, setErrorMessage] = useState("");
     const [draftId, setDraftId] = useState("");
-    const [dailyCalculation, setDailyCalculation] = useState<any>(null);
+    const [dailyCalculation, setDailyCalculation] = useState<DailyLoanCalculation | null>(null);
 
     const [formData, setFormData] = useState({
         borrowerId: "",

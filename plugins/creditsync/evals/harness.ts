@@ -12,9 +12,12 @@ const LOAN_A = "0198c481-3e2b-7000-8000-000000000031";
 const LOAN_B = "0198c481-3e2b-7000-8000-000000000032";
 const LOAN_C = "0198c481-3e2b-7000-8000-000000000033";
 const DRAFT = "0198c481-3e2b-7000-8000-000000000034";
+const DISBURSEMENT = "0198c481-3e2b-7000-8000-000000000051";
+const DISBURSEMENT_EVIDENCE = "0198c481-3e2b-7000-8000-000000000052";
 const RENEWAL = "0198c481-3e2b-7000-8000-000000000041";
 const PREVIEW_HASH = `v1:${"a".repeat(64)}`;
 const FILE_HASH = "b".repeat(64);
+const DISBURSEMENT_FILE_HASH = "c".repeat(64);
 
 export type ToolCall = { name: McpToolName; arguments: Record<string, unknown> };
 type ScriptedError = { code: string; message: string; details?: Record<string, unknown> };
@@ -213,6 +216,93 @@ async function loanActivation(mcp: ScriptedMcp) {
     return { outcome: "completed" } as const;
 }
 
+const disbursementDraftArgs = {
+    loanPublicId: LOAN_A,
+    grossAmount: "2500.00",
+    loanAttributedAmount: "2500.00",
+    channel: "bank_transfer",
+    disbursedAt: "2026-08-10T11:00:00+07:00",
+    payeeHint: "Borrower verified payout account",
+} as const;
+
+async function disbursementLifecycle(mcp: ScriptedMcp, options: { postConfirmed?: boolean; reverseConfirmed?: boolean } = {}) {
+    await mcp.call("loan.disbursement.list", { loanPublicId: LOAN_A });
+    const draft = await mcp.call("loan.disbursement.draft", disbursementDraftArgs);
+    const evidence = await disbursementEvidence(mcp, draft.publicId as string);
+    if (evidence.outcome === "stopped") return evidence;
+    const current = await mcp.call("loan.disbursement.list", { loanPublicId: LOAN_A });
+    if ((current.summary as { status: string }).status !== "matched") return { outcome: "stopped", stopReason: "variance-review-required" } as const;
+    if (!options.postConfirmed) return { outcome: "stopped", stopReason: "disbursement-post-confirmation-required" } as const;
+    await mcp.call("loan.disbursement.post", {
+        disbursementPublicId: draft.publicId as string,
+        idempotencyKey: "disbursement-post-20260810-1",
+    });
+    if (!options.reverseConfirmed) return { outcome: "completed" } as const;
+    const afterPost = await mcp.call("loan.disbursement.list", { loanPublicId: LOAN_A });
+    const posted = (afterPost.events as Array<{ publicId: string; status: string }>).find(
+        (event) => event.publicId === draft.publicId && event.status === "posted",
+    );
+    if (!posted) return { outcome: "stopped", stopReason: "disbursement-posted-event-not-found" } as const;
+    await mcp.call("loan.disbursement.reverse", {
+        disbursementPublicId: posted.publicId,
+        reason: "Owner confirmed duplicate payout record",
+        idempotencyKey: "disbursement-reverse-20260810-1",
+    });
+    return { outcome: "completed" } as const;
+}
+
+async function disbursementEvidence(mcp: ScriptedMcp, disbursementPublicId: string) {
+    let prepared: Record<string, unknown>;
+    try {
+        prepared = await mcp.call("loan.disbursement.evidence.prepare", {
+            disbursementPublicId,
+            mimeType: "image/jpeg",
+            size: 4096,
+            sha256: DISBURSEMENT_FILE_HASH,
+            originalName: "payout-slip.jpg",
+        });
+    } catch (error) {
+        if (error instanceof ScriptedMcpError && error.code === "EVIDENCE_HASH_CONFLICT") {
+            return { outcome: "stopped", stopReason: "disbursement-evidence-conflict" } as const;
+        }
+        throw error;
+    }
+    if (prepared.status === "ready") return { outcome: "completed", evidenceStatus: "ready" } as const;
+    const expiresAt = typeof prepared.expiresAt === "string" ? Date.parse(prepared.expiresAt) : Number.NaN;
+    if (typeof prepared.uploadUrl !== "string" || !prepared.requiredHeaders || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+        return { outcome: "stopped", stopReason: "disbursement-evidence-upload-unavailable" } as const;
+    }
+    mcp.effect("disbursement-evidence.put");
+    try {
+        await mcp.call("loan.disbursement.evidence.finalize", {
+            disbursementPublicId,
+            evidencePublicId: prepared.publicId as string,
+        });
+    } catch (error) {
+        if (error instanceof ScriptedMcpError && ["EVIDENCE_MISMATCH", "EVIDENCE_NOT_FOUND", "EVIDENCE_NOT_ATTACHED"].includes(error.code)) {
+            return { outcome: "stopped", stopReason: "disbursement-evidence-finalize-failed" } as const;
+        }
+        throw error;
+    }
+    return { outcome: "completed", evidenceStatus: "finalized" } as const;
+}
+
+async function disbursementIdempotencyConflict(mcp: ScriptedMcp) {
+    const draft = await mcp.call("loan.disbursement.draft", disbursementDraftArgs);
+    try {
+        await mcp.call("loan.disbursement.post", {
+            disbursementPublicId: draft.publicId as string,
+            idempotencyKey: "disbursement-post-20260810-1",
+        });
+        return { outcome: "completed" } as const;
+    } catch (error) {
+        if (error instanceof ScriptedMcpError && error.code === "IDEMPOTENCY_KEY_CONFLICT") {
+            return { outcome: "stopped", stopReason: "disbursement-idempotency-conflict" } as const;
+        }
+        throw error;
+    }
+}
+
 async function renewalExecute(mcp: ScriptedMcp, operatorConfirmed = true) {
     await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A });
     const preview = await mcp.call("renewal.preview", { oldLoanPublicId: LOAN_A, requestedPrincipal: "2500.00" });
@@ -370,6 +460,19 @@ const SCENARIOS: Record<string, Scenario> = {
         ],
         run: loanActivation,
     },
+    "disbursement-full-lifecycle": {
+        script: [
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [] } },
+            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft" } },
+            { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: 4096, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, uploadUrl: "https://storage.example/upload", requiredHeaders: { "content-type": "image/jpeg" }, expiresAt: "2099-01-01T00:00:00+00:00" } },
+            { name: "loan.disbursement.evidence.finalize", arguments: { disbursementPublicId: DISBURSEMENT, evidencePublicId: DISBURSEMENT_EVIDENCE }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, status: "ready" } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [{ publicId: DISBURSEMENT, status: "draft" }] } },
+            { name: "loan.disbursement.post", arguments: { disbursementPublicId: DISBURSEMENT, idempotencyKey: "disbursement-post-20260810-1" }, result: { publicId: DISBURSEMENT, status: "posted", duplicate: false } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [{ publicId: DISBURSEMENT, status: "posted" }] } },
+            { name: "loan.disbursement.reverse", arguments: { disbursementPublicId: DISBURSEMENT, reason: "Owner confirmed duplicate payout record", idempotencyKey: "disbursement-reverse-20260810-1" }, result: { publicId: DISBURSEMENT, status: "reversed", duplicate: false } },
+        ],
+        run: (mcp) => disbursementLifecycle(mcp, { postConfirmed: true, reverseConfirmed: true }),
+    },
     "renewal-execute": {
         script: [
             { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
@@ -422,6 +525,83 @@ const SCENARIOS: Record<string, Scenario> = {
     "active-loan-edit": {
         script: [{ name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, status: "active" }] } }],
         run: async (mcp) => { await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A }); return { outcome: "stopped", stopReason: "immutable-active-terms" }; },
+    },
+    "disbursement-variance-without-confirmation": {
+        script: [
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [] } },
+            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft" } },
+            { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: 4096, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, uploadUrl: "https://storage.example/upload", requiredHeaders: { "content-type": "image/jpeg" }, expiresAt: "2099-01-01T00:00:00+00:00" } },
+            { name: "loan.disbursement.evidence.finalize", arguments: { disbursementPublicId: DISBURSEMENT, evidencePublicId: DISBURSEMENT_EVIDENCE }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, status: "ready" } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2300.00", variance: "-200.00", status: "under_disbursed" }, events: [{ publicId: DISBURSEMENT, status: "draft" }] } },
+        ],
+        run: (mcp) => disbursementLifecycle(mcp),
+    },
+    "disbursement-missing-post-confirmation": {
+        script: [
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [] } },
+            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft" } },
+            { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: 4096, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, uploadUrl: "https://storage.example/upload", requiredHeaders: { "content-type": "image/jpeg" }, expiresAt: "2099-01-01T00:00:00+00:00" } },
+            { name: "loan.disbursement.evidence.finalize", arguments: { disbursementPublicId: DISBURSEMENT, evidencePublicId: DISBURSEMENT_EVIDENCE }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, status: "ready" } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [{ publicId: DISBURSEMENT, status: "draft" }] } },
+        ],
+        run: (mcp) => disbursementLifecycle(mcp),
+    },
+    "disbursement-evidence-ready-retry": {
+        script: [
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [] } },
+            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft" } },
+            { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: 4096, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, status: "ready" } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [{ publicId: DISBURSEMENT, status: "draft" }] } },
+            { name: "loan.disbursement.post", arguments: { disbursementPublicId: DISBURSEMENT, idempotencyKey: "disbursement-post-20260810-1" }, result: { publicId: DISBURSEMENT, status: "posted", duplicate: false } },
+        ],
+        run: (mcp) => disbursementLifecycle(mcp, { postConfirmed: true }),
+    },
+    "disbursement-evidence-expired-upload": {
+        script: [
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [] } },
+            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft" } },
+            { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: 4096, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, uploadUrl: "https://storage.example/upload", requiredHeaders: { "content-type": "image/jpeg" }, expiresAt: "2000-01-01T00:00:00+00:00" } },
+        ],
+        run: (mcp) => disbursementLifecycle(mcp, { postConfirmed: true }),
+    },
+    "disbursement-evidence-finalize-mismatch": {
+        script: [
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [] } },
+            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft" } },
+            { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: 4096, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, uploadUrl: "https://storage.example/upload", requiredHeaders: { "content-type": "image/jpeg" }, expiresAt: "2099-01-01T00:00:00+00:00" } },
+            { name: "loan.disbursement.evidence.finalize", arguments: { disbursementPublicId: DISBURSEMENT, evidencePublicId: DISBURSEMENT_EVIDENCE }, error: { code: "EVIDENCE_MISMATCH", message: "Evidence checksum or metadata does not match" } },
+        ],
+        run: (mcp) => disbursementLifecycle(mcp, { postConfirmed: true }),
+    },
+    "disbursement-evidence-checksum-conflict": {
+        script: [
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [] } },
+            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft" } },
+            { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: 4096, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, error: { code: "EVIDENCE_HASH_CONFLICT", message: "Evidence checksum belongs to another disbursement" } },
+        ],
+        run: (mcp) => disbursementLifecycle(mcp, { postConfirmed: true }),
+    },
+    "disbursement-reversal-event-not-posted": {
+        script: [
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [] } },
+            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft" } },
+            { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: 4096, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, status: "ready" } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [{ publicId: DISBURSEMENT, status: "draft" }] } },
+            { name: "loan.disbursement.post", arguments: { disbursementPublicId: DISBURSEMENT, idempotencyKey: "disbursement-post-20260810-1" }, result: { publicId: DISBURSEMENT, status: "posted", duplicate: false } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [{ publicId: DISBURSEMENT, status: "draft" }] } },
+        ],
+        run: (mcp) => disbursementLifecycle(mcp, { postConfirmed: true, reverseConfirmed: true }),
+    },
+    "disbursement-idempotency-conflict": {
+        script: [
+            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft" } },
+            { name: "loan.disbursement.post", arguments: { disbursementPublicId: DISBURSEMENT, idempotencyKey: "disbursement-post-20260810-1" }, error: { code: "IDEMPOTENCY_KEY_CONFLICT", message: "Idempotency-Key was already used for another disbursement post" } },
+        ],
+        run: disbursementIdempotencyConflict,
+    },
+    "disbursement-schedule-mutation": {
+        script: [{ name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [] } }],
+        run: async (mcp) => { await mcp.call("loan.disbursement.list", { loanPublicId: LOAN_A }); return { outcome: "stopped", stopReason: "disbursement-cannot-mutate-schedule" }; },
     },
     "renewal-unsettled-charges": {
         script: [

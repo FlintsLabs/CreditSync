@@ -3,6 +3,8 @@
 ## v0.3.6 - 2026-08-10
 
 ### Added
+- Added the localized loan-detail disbursement ledger UI with draft, optional signed-upload evidence, posting, and compensating reversal controls.
+- Added fixed daily-repayment term summaries and clear own-capital versus bank-drawdown funding labels on loan details.
 - Added an approved Thai-first landing and login redesign specification focused on a trustworthy operations overview, clear Google sign-in entry, localization, accessibility, and verification boundaries.
 - Added an approved design for entering fixed daily loans from either a borrower-proposed daily payment or a flat daily-interest term.
 - Added a task-by-task implementation plan for daily loan entry modes, shared Decimal calculations, API/MCP parity, and wizard verification.
@@ -12,8 +14,25 @@
 - Added the daily-loan wizard flow for day/month durations, borrower-proposed payments, flat-interest terms, and localized calculation summaries.
 - Added an approved design for an auditable multi-payout loan disbursement ledger with grouped-transfer attribution and optional evidence.
 - Added a task-by-task implementation plan for the loan disbursement ledger, evidence workflow, REST/MCP adapters, and loan-detail UI.
+- Added an additive immutable loan-disbursement event ledger schema with grouped-transfer attribution, source/payee metadata, reversal links, and optional evidence links.
+- Added a tenant-scoped loan-disbursement application service for draft lifecycle, posting, compensating reversals, Decimal-safe variance summaries, evidence attachment, and audit history.
+- Added durable idempotency and checksum-verified evidence-intent persistence for loan-disbursement posts and reversals.
+- Added reproducible disposable-PostgreSQL coverage for concurrent loan-disbursement posting and evidence-prepare retries.
+- Added authenticated REST and Remote MCP adapters for loan-disbursement drafts, evidence, posting, reversal, and variance reads with UUID-only identifiers and exact money strings.
+- Released CreditSync Plugin `2.0.0` with the regenerated frozen 26-tool MCP contract, preserving MCP payload schema version `1.0`.
+- Released CreditSync Plugin `2.1.0` with the additive disbursement orchestration skill and executable lifecycle safety evals for evidence ordering, variance, confirmation, idempotency, schedule immutability, and reasoned reversal.
 
 ### Fixed
+- Made concurrent loan-disbursement reversal verification order-independent while requiring exactly one durable creation, one idempotent replay, and one reversal audit record; serialized the shared disposable PostgreSQL suite to prevent cross-test database interference.
+- Made compensating loan-disbursement reversal records immutable at the PostgreSQL boundary and preserved exact decimal-string disbursement values throughout the UI payload and grouped-transfer validation.
+- Executed the reversal immutability assertions against PostgreSQL instead of only constructing query builders.
+- Replaced the loan-wizard daily-calculation `any` with the exact response shape so the frontend lint gate is clean.
+- Open the evidence popup synchronously before resolving its signed URL, preventing normal browser popup blockers from discarding the evidence view.
+- Resolved evidence access URLs through the authenticated API client and made the protected file access route accept file public UUIDs.
+- Aligned the loan-detail disbursement UI with the ledger REST response, retained idempotency headers for post/reverse retries, refreshed compensating reversals, and exposed source, payee, and evidence details.
+- Enforced tenant-safe event/file evidence links and blocked update or deletion of posted loan-disbursement ledger records at the database layer.
+- Returned source-bank-profile public UUIDs on disbursement events and rejected nested REST event commands whose parent loan UUID does not match.
+- Rejected draft evidence-ID arrays consistently in REST and MCP instead of silently discarding them; evidence must follow the signed prepare/finalize lifecycle.
 - Updated the loan-wizard regression test to exercise the accessible daily repayment radio chip and current daily-entry payload.
 - Removed the duplicate custom calendar icon from the loan start-date field; the browser-native date control remains fully clickable.
 - Made the disposable PostgreSQL migration integration test self-isolate from an already-migrated suite database and restore the latest migration state afterwards.

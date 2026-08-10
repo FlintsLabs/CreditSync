@@ -3,6 +3,7 @@ import {
     check,
     date,
     foreignKey,
+    index,
     integer,
     jsonb,
     numeric,
@@ -359,6 +360,46 @@ export const fundRolloverEntries = pgTable("fund_rollover_entries", {
     createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const loanDisbursementEvents = pgTable("loan_disbursement_events", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    loanId: integer("loan_id").references(() => loans.id).notNull(),
+    grossAmount: numeric("gross_amount").notNull(),
+    loanAttributedAmount: numeric("loan_attributed_amount").notNull(),
+    channel: text("channel").notNull(),
+    sourceBankProfileId: integer("source_bank_profile_id").references(() => bankProfiles.id),
+    payeeHint: text("payee_hint"),
+    status: text("status").default("draft").notNull(),
+    reversedEventId: integer("reversed_event_id"),
+    note: text("note"),
+    disbursedAt: timestamp("disbursed_at"),
+    postedAt: timestamp("posted_at"),
+    reversedAt: timestamp("reversed_at"),
+    postIdempotencyKey: text("post_idempotency_key"),
+    reversalIdempotencyKey: text("reversal_idempotency_key"),
+    reversalRequestHash: text("reversal_request_hash"),
+    createdByUserId: integer("created_by_user_id").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+    index("loan_disbursement_events_tenant_loan_status_idx").on(table.tenantId, table.loanId, table.status),
+    uniqueIndex("loan_disbursement_events_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("loan_disbursement_events_tenant_post_idempotency_unique").on(table.tenantId, table.postIdempotencyKey)
+        .where(sql`${table.postIdempotencyKey} IS NOT NULL`),
+    uniqueIndex("loan_disbursement_events_tenant_reversal_idempotency_unique").on(table.tenantId, table.reversalIdempotencyKey)
+        .where(sql`${table.reversalIdempotencyKey} IS NOT NULL`),
+    uniqueIndex("loan_disbursement_events_tenant_reversed_event_unique").on(table.tenantId, table.reversedEventId)
+        .where(sql`${table.reversedEventId} IS NOT NULL`),
+    check("loan_disbursement_events_channel_check", sql`${table.channel} IN ('bank_transfer', 'cash', 'adjustment')`),
+    check("loan_disbursement_events_status_check", sql`${table.status} IN ('draft', 'posted', 'reversed')`),
+    check("loan_disbursement_events_money_check", sql`${table.grossAmount} >= 0 AND ${table.loanAttributedAmount} >= 0`),
+    foreignKey({
+        name: "loan_disbursement_events_reversed_event_fk",
+        columns: [table.reversedEventId],
+        foreignColumns: [table.id],
+    }),
+]);
+
 export const fundLedgerEntries = pgTable("fund_ledger_entries", {
     id: serial("id").primaryKey(),
     publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
@@ -409,6 +450,57 @@ export const files = pgTable("files", {
     createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
     uniqueIndex("files_tenant_id_id_unique").on(table.tenantId, table.id),
+]);
+
+export const loanDisbursementEvidence = pgTable("loan_disbursement_evidence", {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId,
+    loanDisbursementEventId: integer("loan_disbursement_event_id").notNull(),
+    fileId: integer("file_id").notNull(),
+    createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+    uniqueIndex("loan_disbursement_evidence_event_file_unique").on(table.loanDisbursementEventId, table.fileId),
+    foreignKey({
+        name: "loan_disbursement_evidence_tenant_event_fk",
+        columns: [table.tenantId, table.loanDisbursementEventId],
+        foreignColumns: [loanDisbursementEvents.tenantId, loanDisbursementEvents.id],
+    }),
+    foreignKey({
+        name: "loan_disbursement_evidence_tenant_file_fk",
+        columns: [table.tenantId, table.fileId],
+        foreignColumns: [files.tenantId, files.id],
+    }),
+]);
+
+export const loanDisbursementEvidenceIntents = pgTable("loan_disbursement_evidence_intents", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    loanDisbursementEventId: integer("loan_disbursement_event_id").notNull(),
+    fileId: integer("file_id").notNull(),
+    status: text("status").default("pending").notNull(),
+    evidenceHash: text("evidence_hash").notNull(),
+    mimeType: text("mime_type").notNull(),
+    declaredSize: integer("declared_size").notNull(),
+    uploadExpiresAt: timestamp("upload_expires_at"),
+    finalizedAt: timestamp("finalized_at"),
+    createdByUserId: integer("created_by_user_id").references(() => users.id),
+    updatedByUserId: integer("updated_by_user_id").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+    uniqueIndex("loan_disbursement_evidence_intents_tenant_hash_unique").on(table.tenantId, table.evidenceHash),
+    check("loan_disbursement_evidence_intents_status_check", sql`${table.status} IN ('pending', 'ready')`),
+    foreignKey({
+        name: "loan_disbursement_evidence_intents_tenant_event_fk",
+        columns: [table.tenantId, table.loanDisbursementEventId],
+        foreignColumns: [loanDisbursementEvents.tenantId, loanDisbursementEvents.id],
+    }),
+    foreignKey({
+        name: "loan_disbursement_evidence_intents_tenant_file_fk",
+        columns: [table.tenantId, table.fileId],
+        foreignColumns: [files.tenantId, files.id],
+    }),
 ]);
 
 // Bot Uploads (Unprocessed images from Webhooks)

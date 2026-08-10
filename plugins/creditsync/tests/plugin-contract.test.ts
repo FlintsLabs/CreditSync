@@ -14,11 +14,11 @@ async function json(path: string) {
     return JSON.parse(await readFile(resolve(pluginRoot, path), "utf8")) as Record<string, unknown>;
 }
 
-describe("CreditSync plugin 1.0.0 contract", () => {
+describe("CreditSync plugin 2.1.0 contract", () => {
     test("manifest exposes only the private app and orchestration skills", async () => {
         const manifest = await json(".codex-plugin/plugin.json");
         expect(manifest.name).toBe("creditsync");
-        expect(manifest.version).toBe("1.0.0");
+        expect(manifest.version).toBe("2.1.0");
         expect(manifest.skills).toBe("./skills/");
         expect(manifest.apps).toBe("./.app.json");
         expect(manifest).not.toHaveProperty("mcpServers");
@@ -39,12 +39,13 @@ describe("CreditSync plugin 1.0.0 contract", () => {
         expect(raw).not.toMatch(/bearer|token|secret/iu);
     });
 
-    test("all five skills and their required references are discoverable", async () => {
+    test("all six skills and their required references are discoverable", async () => {
         const skills = [
             "creditsync",
             "manage-borrowers",
             "reconcile-payments",
             "manage-loans",
+            "manage-disbursements",
             "renew-daily-loan",
         ];
         for (const skill of skills) {
@@ -77,7 +78,7 @@ describe("CreditSync plugin 1.0.0 contract", () => {
         const contract = await json("references/mcp-tool-contract.json") as unknown as FrozenMcpContract;
         expect(contract.schemaVersion).toBe("1.0");
         expect(contract.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
-        expect(contract.tools).toHaveLength(20);
+        expect(contract.tools).toHaveLength(26);
         expect(contract.tools.every((tool) => tool.inputSchema && tool.outputSchema && tool.annotations)).toBe(true);
         const advertised = await captureAdvertisedMcpContract();
         expect(canonicalContractJson(contract)).toBe(canonicalContractJson(advertised));
@@ -96,6 +97,9 @@ describe("CreditSync plugin 1.0.0 contract", () => {
             "payment-split-loans",
             "payment-split-borrowers-intermediary",
             "payment-partial",
+            "loan-draft-activation",
+            "disbursement-full-lifecycle",
+            "disbursement-evidence-ready-retry",
             "renewal-execute",
             "payment-reversal",
             "ambiguous-nickname",
@@ -103,6 +107,14 @@ describe("CreditSync plugin 1.0.0 contract", () => {
             "duplicate-reference",
             "duplicate-evidence-hash",
             "active-loan-edit",
+            "disbursement-variance-without-confirmation",
+            "disbursement-missing-post-confirmation",
+            "disbursement-evidence-expired-upload",
+            "disbursement-evidence-finalize-mismatch",
+            "disbursement-evidence-checksum-conflict",
+            "disbursement-reversal-event-not-posted",
+            "disbursement-idempotency-conflict",
+            "disbursement-schedule-mutation",
             "renewal-unsettled-charges",
             "renewal-missing-confirmation",
             "renewal-reversal-without-result",
@@ -110,7 +122,21 @@ describe("CreditSync plugin 1.0.0 contract", () => {
             "renewal-reversal-blocked",
             "unauthorized-access",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
-        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(11);
+        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(19);
+    });
+
+    test("disbursement skill preserves ledger, variance, evidence, confirmation, and reversal boundaries", async () => {
+        const skill = await readFile(resolve(pluginRoot, "skills/manage-disbursements/SKILL.md"), "utf8");
+        expect(skill).toContain("`loan.disbursement.draft`");
+        expect(skill).toContain("`loan.disbursement.evidence.prepare`");
+        expect(skill).toContain("`loan.disbursement.evidence.finalize`");
+        expect(skill).toContain("unchanged bytes");
+        expect(skill).toContain("explicit confirmation");
+        expect(skill).toContain("stable post idempotency key");
+        expect(skill).toContain("specific non-blank reason");
+        expect(skill).toContain("`status: ready`");
+        expect(skill).toContain("exact event with `status: posted`");
+        expect(skill).toContain("never changes approved principal, installment amounts, due dates, or the schedule");
     });
 
     test("repo marketplace resolves the plugin from its declared local path", async () => {
@@ -129,7 +155,7 @@ describe("CreditSync plugin 1.0.0 contract", () => {
         expect(existsSync(resolve(pluginRoot, "scripts/validate.ts"))).toBe(true);
         expect(existsSync(resolve(pluginRoot, "assets/README.md"))).toBe(true);
         for (const forbidden of [".mcp.json", "hooks.json", "hooks", "ui", "oauth.json"]) {
-            expect(existsSync(resolve(pluginRoot, forbidden)), `${forbidden} must stay out of 1.0.0`).toBe(false);
+            expect(existsSync(resolve(pluginRoot, forbidden)), `${forbidden} must stay out of 2.1.0`).toBe(false);
         }
     });
 });

@@ -73,6 +73,7 @@ Some screens are still mock/demo oriented and not fully wired to live backend da
 - use separate preview, draft-save, and activation confirmations in the web wizard
 - preview installment breakdown
 - calculate closing balance based on elapsed time and payments already received
+- record actual borrower cash, bank-transfer, or adjustment disbursements independently of approved loan terms
 
 ### 4. Transaction Management
 
@@ -94,6 +95,8 @@ Renewal previews derive principal from posted, non-reversed transaction componen
 - post schedule, loan, and fund effects atomically, then correct posted payments with append-only compensating reversals
 
 The authenticated payment API is rooted at `/payment-intakes`. It exposes create/list/get and review-queue operations, `/:id/evidence/upload-intents`, `/:id/evidence/:evidenceId/finalize`, `/:id/match-preview`, `/:id/post`, `/:id/review`, and `/:id/reverse`. REST reversal requires a non-blank operator `reason`, which is preserved in the audit event. To preserve the frozen MCP schema-version 1.0 contract, `payment.reverse` continues to accept the legacy `{ paymentIntakePublicId }` input and uses a stable compatibility audit reason when the optional `reason` is absent; new MCP callers should provide it. All command IDs are UUIDs and all public money values are two-decimal strings. `GET /transactions` remains available for legacy repayment history, but `POST /transactions` returns `405 LEGACY_REPAYMENT_WRITE_DISABLED`; all repayment writes must use `/payment-intakes` so one Decimal allocator and one PostgreSQL lock order govern balances.
+
+The authenticated loan-disbursement API is rooted at `/loans/:loanPublicId/disbursements`. It provides list, draft create/update, `/:disbursementId/evidence/upload-intents`, `/:disbursementId/evidence/:evidenceId/finalize`, `/:disbursementId/post`, and `/:disbursementId/reverse` operations. Gross transfer and loan-attributed amounts are exact two-decimal strings; grouped transfers require a note. Draft commands deliberately reject `evidenceFilePublicIds`: create the draft first, then prepare a signed evidence upload and finalize that evidence against the draft. Post and reverse require an `Idempotency-Key`, and reversal also requires a non-blank reason. These ledger events do not change approved principal, schedules, or funding allocations.
 
 The web app exposes `/payments` as the human review inbox. It persists and shows semantic-duplicate warnings, requires an explicit warning acknowledgment, accepts optional signed evidence, edits any number of exact allocations across borrowers/loans/schedules, retains the previous proposal for a meaningful difference view, and requires a ready preview of the exact current editor revision before posting. Allocation edits are locked while previewing; every edit/add/remove/selection change invalidates the ready proposal, and stale responses are discarded. Reversal uses a separate reason-confirmation step. The manual repayment shortcut creates the intake and opens it in this review screen with the selected loan/schedule suggested; it never auto-posts or calls the disabled legacy write endpoint.
 
@@ -142,7 +145,7 @@ The web app exposes `/payments` as the human review inbox. It persists and shows
 │   ├── src/lib/          # api client, auth helpers, i18n
 │   └── src/pages/        # landing, login, dashboard screens
 ├── docs/                 # ADRs and planning docs
-├── plugins/creditsync/   # Private Codex plugin 1.0.0, skills, evals, and validation
+├── plugins/creditsync/   # Private Codex plugin 2.0.0, skills, evals, and validation
 ├── k8s/                  # Kubernetes manifests
 ├── docker-compose.yml    # local development infra
 ├── docker-compose.infra.yml  # production-style infra including dragonfly cache
@@ -285,6 +288,8 @@ Floating loans can instead use a daily-interest policy: a fixed baht rate per �
 
 For a scheduled daily loan, the wizard can start from either the borrower’s proposed daily payment or a flat daily-interest term (% per day, baht per day, or baht per ฿1,000). Choose a duration in days or 30-day months; CreditSync derives the other value, displays flat daily/monthly/annual reference rates, and creates an exact schedule whose final row absorbs rounding differences.
 
+Loan detail shows these fixed daily terms separately from the repayment schedule. It also identifies a direct own-capital allocation as a capital-pool allocation rather than an unmatched bank drawdown. The Disbursements card records actual borrower payouts independently from the approved principal and schedule: save an editable draft, optionally use the signed evidence-upload/finalize flow, then post it. Posted rows are immutable; corrections use a reasoned compensating reversal and a new draft. A grouped transfer must record the gross transfer and the amount attributed to this loan, with an explanation when they differ.
+
 Active or paid daily-loan detail pages include the renewal control. The operator sees recovered principal, old outstanding principal, separate due interest/fee/penalty components, aggregate charges, waivers, settlement, net payout or collection, and the full replacement schedule before checking an explicit confirmation. Execution and reversal use separate stable retry keys and show explicit empty, unavailable, failed, or populated audit states with localized action labels.
 
 Loan-facing REST payloads use public UUIDs for loans, schedules, funding profiles, drawdowns, and allocations. Public money inputs and outputs use two-decimal strings (for example, `"500.00"`). This includes schedule and closing reads, allocation/profitability summaries, and funding allocation/reallocation mutations. Generated schedules conserve the exact principal-plus-interest obligation: each row's principal, interest, and fee components equal its scheduled total and remaining due, with any cent residual carried by the final installment. Schedule money remains Decimal-safe internally and does not pass through JavaScript `number`, including for values above the safe-integer range.
@@ -297,7 +302,7 @@ CreditSync serves a private stateless Streamable HTTP MCP endpoint at `/mcp` in 
 
 All MCP requests are bound to the server-side `MCP_TENANT_ID` and `MCP_ACTOR_EMAIL`. A client cannot submit or override tenant or actor identity. The configured actor must already exist in that tenant, and its normal CreditSync role/portfolio permissions still apply. Funding sources are list-only; the MCP surface has no generic SQL, arbitrary fetch, or funding mutation tool.
 
-The frozen schema-version `1.0` tool names are:
+The backend schema-version `1.0` tool names are:
 
 ```text
 borrower.search       borrower.portfolio    borrower.create
@@ -307,9 +312,12 @@ evidence.finalize     payment.preview       payment.post
 payment.reverse       loan.preview          loan.draft
 loan.activate         renewal.preview       renewal.execute
 renewal.reverse       funding-source.list
+loan.disbursement.list       loan.disbursement.draft
+loan.disbursement.evidence.prepare  loan.disbursement.evidence.finalize
+loan.disbursement.post       loan.disbursement.reverse
 ```
 
-Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Payment posting/reversal, loan activation, and renewal execution/reversal also return public correlation and audit IDs. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces.
+Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Payment posting/reversal, loan activation, renewal execution/reversal, and disbursement post/reverse also return public correlation and audit IDs. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces. The bundled Plugin `2.0.0` freezes the matching 26-tool backend contract.
 
 ### Configure and rotate the bearer token
 
@@ -331,7 +339,7 @@ For rotation, put the old and new hashes in `MCP_API_TOKEN_HASHES` separated by 
 
 ## Private CreditSync Plugin
 
-The repository includes CreditSync Plugin `1.0.0` under [`plugins/creditsync`](./plugins/creditsync). It combines five orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
+The repository includes CreditSync Plugin `2.0.0` under [`plugins/creditsync`](./plugins/creditsync). It combines five orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
 
 Before installation, register the deployed MCP endpoint as a private Codex app and replace the conspicuous `plugin_asdk_app_REPLACE_AFTER_PRIVATE_REGISTRATION` value in `plugins/creditsync/.app.json` with the returned `plugin_asdk_app...` technical ID. Then validate and install from the repository marketplace:
 
@@ -438,6 +446,14 @@ Backend tests can be run with:
 cd backend
 bun test
 ```
+
+Database-backed service tests are opt-in and require `TEST_DATABASE_URL` to point to a disposable database. To create an isolated ephemeral PostgreSQL 18 container with a dynamically assigned host port, migrate it, run a focused test, and remove it automatically:
+
+```bash
+./backend/scripts/test-disposable-postgres.sh src/services/loan-disbursement-service.test.ts
+```
+
+The script deliberately does not use the local development database. To use a separately provisioned disposable database instead, set both `DATABASE_URL` and `TEST_DATABASE_URL` to that database before running `bun test`.
 
 Current tests cover:
 

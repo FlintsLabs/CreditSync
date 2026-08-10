@@ -8,6 +8,7 @@ import { Button } from "../../../components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/Card";
 import appI18n from "../../../lib/i18n";
 import { LoanRenewalPanel } from "./LoanRenewalPanel";
+import { LoanDisbursements } from "./LoanDisbursements";
 
 interface LoanDetailData {
     id: string;
@@ -25,6 +26,17 @@ interface LoanDetailData {
     outstandingInterest: string | null;
     outstandingFees: string | null;
     status: string;
+    bankProfilePublicId?: string | null;
+    bankLoanPublicId?: string | null;
+    dailyLoanCalculation?: {
+        durationUnit: "days" | "weeks" | "months";
+        durationValue: number;
+        totalInstallments: number;
+        installmentAmount: string;
+        totalInterest: string;
+        dailyInterest: string;
+        flatDailyRatePercent: string;
+    } | null;
 }
 
 interface BorrowerData {
@@ -185,6 +197,20 @@ export default function LoanDetail() {
                 </Card>
             ) : (
                 <>
+                    {loan.repaymentType === "daily" && loan.dailyLoanCalculation && (
+                        <Card>
+                            <CardHeader><CardTitle>{t("loanDetail.dailyTerms.title", "Daily repayment terms")}</CardTitle></CardHeader>
+                            <CardContent className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-6">
+                                <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.duration", "Duration")}</div><div className="font-medium">{loan.dailyLoanCalculation.durationValue} {t(`loanDetail.dailyTerms.units.${loan.dailyLoanCalculation.durationUnit}`, loan.dailyLoanCalculation.durationUnit)}</div></div>
+                                <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.agreedInstallment", "Agreed instalment")}</div><div className="font-medium">{formatCurrency(Number(loan.dailyLoanCalculation.installmentAmount))}</div></div>
+                                <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.installments", "Total instalments")}</div><div className="font-medium">{loan.dailyLoanCalculation.totalInstallments}</div></div>
+                                <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.totalInterest", "Total interest")}</div><div className="font-medium">{formatCurrency(Number(loan.dailyLoanCalculation.totalInterest))}</div></div>
+                                <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.dailyInterest", "Daily interest")}</div><div className="font-medium">{formatCurrency(Number(loan.dailyLoanCalculation.dailyInterest))}</div></div>
+                                <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.flatRate", "Flat daily rate")}</div><div className="font-medium">{Number(loan.dailyLoanCalculation.flatDailyRatePercent).toFixed(4)}%</div></div>
+                            </CardContent>
+                            <CardContent className="pt-0 text-xs text-muted-foreground">{t("loanDetail.dailyTerms.notice", "The agreed instalment is fixed. A smaller payment leaves the scheduled remainder due; early settlement requires its own preview.")}</CardContent>
+                        </Card>
+                    )}
                     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                         <Card>
                             <CardHeader className="pb-2">
@@ -209,6 +235,8 @@ export default function LoanDetail() {
                                 <CardTitle className="text-sm font-medium text-muted-foreground">{t("loanDetail.loanPosition", "Loan Position")}</CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-2 text-sm">
+                                {loan.bankProfilePublicId && !loan.bankLoanPublicId && <div className="rounded bg-muted p-2 text-xs"><span className="font-medium">{t("loanDetail.ownCapital.title", "Own capital")}</span><span className="text-muted-foreground"> · {t("loanDetail.ownCapital.description", "Allocated directly from a capital pool; this is not a bank drawdown.")}</span></div>}
+                                {loan.bankLoanPublicId && <div className="rounded bg-muted p-2 text-xs"><span className="font-medium">{t("loanDetail.bankDrawdown.title", "Bank drawdown")}</span><span className="text-muted-foreground"> · {t("loanDetail.bankDrawdown.description", "Funding is allocated from a specific drawdown.")}</span></div>}
                                 <div className="flex justify-between">
                                     <span>{t("loanWizard.columns.principal", "Principal")}</span>
                                     <span className="font-medium">{formatCurrency(Number(loan.principalAmount ?? 0))}</span>
@@ -279,6 +307,8 @@ export default function LoanDetail() {
                             </CardContent>
                         </Card>
                     </div>
+
+                    <LoanDisbursements loanPublicId={loan.publicId ?? loan.id} />
 
                     <Card>
                         <CardHeader>
@@ -360,6 +390,10 @@ export default function LoanDetail() {
                                                 </div>
                                             </div>
                                         ))}
+                                    </div>
+                                ) : loan.bankProfilePublicId && !loan.bankLoanPublicId ? (
+                                    <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
+                                        {t("loanDetail.ownCapital.noDrawdown", "This loan is funded directly from own capital, not an unmatched drawdown.")}
                                     </div>
                                 ) : (
                                     <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">

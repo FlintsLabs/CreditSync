@@ -692,6 +692,22 @@
     },
     "loanDetail": {
         "title": "Loan agreement",
+        "dailyTerms": {
+            "title": "Daily repayment terms", "duration": "Duration", "agreedInstallment": "Agreed instalment", "installments": "Total instalments", "totalInterest": "Total interest", "dailyInterest": "Daily interest", "flatRate": "Flat daily rate",
+            "notice": "The agreed instalment is fixed. A smaller payment leaves the scheduled remainder due; early settlement requires its own preview.",
+            "units": { "days": "days", "weeks": "weeks", "months": "months" }
+        },
+        "ownCapital": { "title": "Own capital", "description": "Allocated directly from a capital pool; this is not a bank drawdown.", "noDrawdown": "This loan is funded directly from own capital, not an unmatched drawdown." },
+        "bankDrawdown": { "title": "Bank drawdown", "description": "Funding is allocated from a specific drawdown." },
+        "disbursements": {
+            "title": "Disbursements", "description": "Record actual borrower payouts separately from approved loan terms.", "add": "Add disbursement", "approved": "Approved principal", "net": "Net disbursed", "variance": "Variance",
+            "gross": "Gross amount", "attributed": "Attributed amount", "channel": "Channel", "disbursedAt": "Disbursed at", "sourceProfile": "Source profile", "payeeHint": "Payee hint", "optional": "Optional", "evidence": "Evidence", "groupExplanation": "Grouped transfer explanation", "saveDraft": "Save draft", "addEvidence": "Add evidence", "post": "Post disbursement", "reverse": "Reverse disbursement", "reversalReason": "Reversal reason", "confirmReverse": "Confirm reversal", "empty": "No disbursements have been recorded.",
+            "grouped": "Grouped transfer: gross {{gross}}, attributed to this loan {{attributed}}.",
+            "channels": { "bank_transfer": "Bank transfer", "cash": "Cash", "adjustment": "Adjustment" },
+            "status": { "under_disbursed": "Under-disbursed", "matched": "Matched", "over_disbursed": "Over-disbursed" },
+            "recordStatus": { "draft": "Draft", "posted": "Posted", "reversed": "Reversed" },
+            "errors": { "load": "Unable to load disbursements.", "save": "Unable to save the disbursement draft.", "post": "Unable to post the disbursement.", "reverse": "Unable to reverse the disbursement.", "evidence": "Unable to upload evidence." }
+        },
         "loanId": "ID",
         "copyLoanId": "Copy loan ID",
         "copied": "Copied",

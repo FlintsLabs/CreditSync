@@ -18,6 +18,7 @@ import {
     users,
 } from "../db/schema";
 import type { EvidenceStorageGateway } from "../services/payment-service";
+import type { DisbursementEvidenceStorageGateway } from "../services/loan-disbursement-service";
 import { createDefaultMcpHttpPlugin } from "./default";
 import { MCP_TOOL_NAMES, type McpToolName } from "./server";
 
@@ -68,7 +69,7 @@ function runtimeEnv() {
     };
 }
 
-async function startDefaultServer(options?: { evidenceGateway: EvidenceStorageGateway }) {
+async function startDefaultServer(options?: { evidenceGateway?: EvidenceStorageGateway; disbursementEvidenceGateway?: DisbursementEvidenceStorageGateway }) {
     const app = new Elysia().use(createDefaultMcpHttpPlugin(runtimeEnv(), options)).listen({ hostname: "127.0.0.1", port: 0 });
     runningApps.push(app);
     const client = new Client({ name: "creditsync-default-adapter-test", version: "1.0.0" });
@@ -92,6 +93,24 @@ function resultData(result: Awaited<ReturnType<Client["callTool"]>>) {
 }
 
 describe("default MCP adapter integration", () => {
+    integrationTest("rejects evidence IDs on disbursement draft so callers use prepare then finalize", async () => {
+        const actor = await db.insert(users).values({ tenantId: TENANT_ID, email: ACTOR_EMAIL, role: "owner" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId: TENANT_ID, ownerUserId: actor.id, name: "MCP evidence boundary borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({ tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "100.00", interestRate: "0.00", repaymentType: "floating", outstandingPrincipal: "100.00", status: "active" }).returning().then((rows) => rows[0]!);
+        const { client } = await startDefaultServer();
+        const result = await client.callTool({
+            name: "loan.disbursement.draft",
+            arguments: {
+                loanPublicId: loan.publicId, grossAmount: "100.00", loanAttributedAmount: "100.00",
+                channel: "cash", disbursedAt: "2026-08-10T00:00:00.000Z",
+                evidenceFilePublicIds: ["0198c481-3e2b-7000-8000-000000000098"],
+            },
+        });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({ schemaVersion: "1.0", error: { code: "EVIDENCE_ATTACH_AFTER_DRAFT" } });
+        await client.close();
+    });
+
     // Break caught: an already-overallocated source turns loan activation into INTERNAL_ERROR instead of a stable capacity rejection.
     integrationTest("returns stable zero remaining capacity and rolls back MCP activation on an overallocated drawdown", async () => {
         const actor = await db.insert(users).values({
@@ -320,7 +339,7 @@ describe("default MCP adapter integration", () => {
                 metadata: {},
             },
         };
-        const { client, transport } = await startDefaultServer({ evidenceGateway });
+        const { client, transport } = await startDefaultServer({ evidenceGateway, disbursementEvidenceGateway: evidenceGateway });
         const listed = await client.listTools();
         expect(listed.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
         const called: McpToolName[] = [];
@@ -361,6 +380,34 @@ describe("default MCP adapter integration", () => {
         })).data;
         const loanPublicId = String(drafted.publicId);
         await call("loan.activate", { loanPublicId });
+        const disbursement = (await call("loan.disbursement.draft", {
+            loanPublicId,
+            grossAmount: "100.00",
+            loanAttributedAmount: "100.00",
+            channel: "cash",
+            disbursedAt: "2026-08-10T00:00:00.000Z",
+        })).data;
+        const disbursementPublicId = String(disbursement.publicId);
+        await call("loan.disbursement.list", { loanPublicId });
+        const disbursementEvidence = (await call("loan.disbursement.evidence.prepare", {
+            disbursementPublicId,
+            mimeType: "image/png",
+            size: 4,
+            sha256: "b".repeat(64),
+        })).data;
+        await call("loan.disbursement.evidence.finalize", {
+            disbursementPublicId,
+            evidencePublicId: disbursementEvidence.publicId,
+        });
+        await call("loan.disbursement.post", {
+            disbursementPublicId,
+            idempotencyKey: "mcp-all-tools-disbursement-post",
+        });
+        await call("loan.disbursement.reverse", {
+            disbursementPublicId,
+            reason: "MCP all-tools disbursement reversal",
+            idempotencyKey: "mcp-all-tools-disbursement-reverse",
+        });
 
         const intake = (await call("intake.create", {
             amount: "40.00",
