@@ -8,7 +8,7 @@ import { canAccessTenantWideData } from "../lib/access";
 import { parseMoney, serializeMoney } from "../lib/money";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
-import { postPayment, previewPaymentMatch } from "./payment-service";
+import { postPayment, previewPaymentMatch, reversePayment } from "./payment-service";
 
 export function normalizeIntermediaryText(value: string) {
     return value.normalize("NFKC").toLocaleLowerCase("und")
@@ -36,7 +36,7 @@ function presentIntermediary(row: typeof intermediaries.$inferSelect) {
 }
 
 function presentCollection(row: typeof intermediaryCollections.$inferSelect) {
-    return { publicId: row.publicId, intermediaryId: row.intermediaryId, borrowerId: row.borrowerId, loanId: row.loanId, amount: serializeMoney(row.amount), borrowerPaidAt: row.borrowerPaidAt.toISOString(), status: row.status, bankReference: row.bankReference, note: row.note, createdAt: row.createdAt, updatedAt: row.updatedAt };
+    return { publicId: row.publicId, intermediaryId: row.intermediaryId, borrowerId: row.borrowerId, loanId: row.loanId, amount: serializeMoney(row.amount), borrowerPaidAt: row.borrowerPaidAt.toISOString(), status: row.status, bankReference: row.bankReference, note: row.note, manualApprovalReason: row.manualApprovalReason, createdAt: row.createdAt, updatedAt: row.updatedAt };
 }
 
 export async function createIntermediary(ctx: CommandContext, input: { name: string; aliases?: string[]; notes?: string | null }) {
@@ -222,7 +222,10 @@ export async function postIntermediaryRemittance(ctx: CommandContext, publicId: 
         const remittance = await tx.query.intermediaryRemittances.findFirst({ where: and(eq(intermediaryRemittances.tenantId, ctx.tenantId), eq(intermediaryRemittances.publicId, publicId)) });
         if (!remittance) throw new DomainError("INTERMEDIARY_REMITTANCE_NOT_FOUND", "Remittance not found", 404);
         await tx.execute(sql`SELECT id FROM intermediary_remittances WHERE id = ${remittance.id} FOR UPDATE`);
-        if (remittance.status === "posted") return presentRemittance(remittance, new Decimal(remittance.grossAmount));
+        if (remittance.status === "posted") {
+            if (remittance.postIdempotencyKey !== postKey) throw new DomainError("REMITTANCE_POST_IDEMPOTENCY_CONFLICT", "Remittance was posted with a different idempotency key", 409);
+            return presentRemittance(remittance, new Decimal(remittance.grossAmount));
+        }
         const proposal = await tx.query.intermediaryRemittanceProposals.findFirst({ where: and(eq(intermediaryRemittanceProposals.tenantId, ctx.tenantId), eq(intermediaryRemittanceProposals.publicId, input.proposalPublicId), eq(intermediaryRemittanceProposals.remittanceId, remittance.id)) });
         if (!proposal || proposal.status !== "ready" || proposal.expiresAt.getTime() < Date.now()) throw new DomainError("STALE_REMITTANCE_PROPOSAL", "Remittance proposal is not ready or has expired", 409);
         const latest = await tx.select().from(intermediaryRemittanceProposals).where(and(eq(intermediaryRemittanceProposals.tenantId, ctx.tenantId), eq(intermediaryRemittanceProposals.remittanceId, remittance.id))).orderBy(desc(intermediaryRemittanceProposals.version)).then((rows) => rows[0]);
@@ -252,4 +255,66 @@ export async function postIntermediaryRemittance(ctx: CommandContext, publicId: 
         return presentRemittance(posted, selection.selected);
     });
     return result;
+}
+
+export async function manualApproveIntermediaryCollection(ctx: CommandContext, publicId: string, input: { reason: string; confirmed: boolean }) {
+    if (!input.confirmed) throw new DomainError("MANUAL_APPROVAL_CONFIRMATION_REQUIRED", "Explicit confirmation is required", 400);
+    const reason = input.reason?.trim();
+    if (!reason) throw new DomainError("MANUAL_APPROVAL_REASON_REQUIRED", "Manual approval requires a reason", 400);
+    if (!ctx.idempotencyKey?.trim()) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Idempotency key is required", 400);
+    const actor = await actorFor(ctx);
+    if (!actor || !canAccessTenantWideData({ role: actor.role ?? "viewer" })) throw new DomainError("TENANT_ADMIN_REQUIRED", "Tenant owner or manager permission is required", 403);
+    return db.transaction(async (tx) => {
+        const collection = await tx.query.intermediaryCollections.findFirst({ where: and(eq(intermediaryCollections.tenantId, ctx.tenantId), eq(intermediaryCollections.publicId, publicId)) });
+        if (!collection) throw new DomainError("INTERMEDIARY_COLLECTION_NOT_FOUND", "Intermediary collection not found", 404);
+        await tx.execute(sql`SELECT id FROM intermediary_collections WHERE id = ${collection.id} FOR UPDATE`);
+        if (collection.status === "manual_approved") {
+            if (collection.manualApprovalReason !== reason) throw new DomainError("MANUAL_APPROVAL_IDEMPOTENCY_CONFLICT", "Collection was manually approved with a different reason", 409);
+            return presentCollection(collection);
+        }
+        if (collection.status !== "pending_remittance") throw new DomainError("MANUAL_APPROVAL_NOT_ALLOWED", "Only an unallocated pending collection can be manually approved", 409);
+        const [borrower, loan] = await Promise.all([
+            tx.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, ctx.tenantId), eq(borrowers.id, collection.borrowerId)) }),
+            tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, collection.loanId)) }),
+        ]);
+        if (!borrower || !loan) throw new DomainError("COLLECTION_TARGET_NOT_FOUND", "Collection borrower or loan no longer exists", 409);
+        const intake = await tx.insert(paymentIntakes).values({ tenantId: ctx.tenantId, ownerUserId: collection.ownerUserId, source: ctx.actorSource === "mcp" ? "mcp" : "web", status: "draft", amount: serializeMoney(collection.amount), receivedAt: collection.borrowerPaidAt, payerName: borrower.name, bankReference: collection.bankReference, bankReferenceHash: collection.bankReferenceHash, idempotencyKey: `intermediary-manual:${collection.publicId}`, notes: `Manual intermediary approval: ${reason}`, originLoanId: loan.id, warnings: [], createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((rows) => rows[0]!);
+        const proposal = await previewPaymentMatch(ctx, intake.publicId, { allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: loan.publicId, amount: serializeMoney(collection.amount) }] }, tx);
+        if (proposal.status !== "ready") throw new DomainError("MANUAL_APPROVAL_PAYMENT_NOT_READY", "Collection payment requires review", 409, { warnings: proposal.warnings });
+        await postPayment(ctx, intake.publicId, { proposalPublicId: proposal.publicId }, tx);
+        const approved = await tx.update(intermediaryCollections).set({ status: "manual_approved", manualApprovalReason: reason, postedPaymentIntakeId: intake.id, approvedByUserId: actor.id, settledAt: new Date(), updatedByUserId: actor.id, updatedAt: new Date() }).where(eq(intermediaryCollections.id, collection.id)).returning().then((rows) => rows[0]!);
+        await createAuditLog(tx, { ...auditContext(ctx), entityType: "intermediary_collection", entityId: approved.publicId, action: "manual_approved", payload: { reason, paymentIntakePublicId: intake.publicId, amount: serializeMoney(approved.amount), borrowerPaidAt: approved.borrowerPaidAt.toISOString() } });
+        return presentCollection(approved);
+    });
+}
+
+export async function reverseIntermediaryRemittance(ctx: CommandContext, publicId: string, input: { reason: string }) {
+    const reason = input.reason?.trim();
+    if (!reason) throw new DomainError("REVERSAL_REASON_REQUIRED", "Remittance reversal requires a reason", 400);
+    const reversalKey = ctx.idempotencyKey?.trim();
+    if (!reversalKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Idempotency key is required", 400);
+    const actor = await actorFor(ctx);
+    if (!actor || !canAccessTenantWideData({ role: actor.role ?? "viewer" })) throw new DomainError("TENANT_ADMIN_REQUIRED", "Tenant owner or manager permission is required", 403);
+    return db.transaction(async (tx) => {
+        const remittance = await tx.query.intermediaryRemittances.findFirst({ where: and(eq(intermediaryRemittances.tenantId, ctx.tenantId), eq(intermediaryRemittances.publicId, publicId)) });
+        if (!remittance) throw new DomainError("INTERMEDIARY_REMITTANCE_NOT_FOUND", "Remittance not found", 404);
+        await tx.execute(sql`SELECT id FROM intermediary_remittances WHERE id = ${remittance.id} FOR UPDATE`);
+        if (remittance.status === "reversed") {
+            if (remittance.reversalIdempotencyKey !== reversalKey || remittance.reversalReason !== reason) throw new DomainError("REMITTANCE_REVERSAL_IDEMPOTENCY_CONFLICT", "Remittance was reversed with a different key or reason", 409);
+            return { ...presentRemittance(remittance, new Decimal(remittance.grossAmount)), reversalReason: remittance.reversalReason };
+        }
+        if (remittance.status !== "posted") throw new DomainError("REMITTANCE_NOT_POSTED", "Only a posted remittance can be reversed", 409);
+        const selection = await remittanceSelection(tx, ctx.tenantId, remittance.id);
+        const ordered = [...selection.collections].sort((a, b) => b.borrowerPaidAt.getTime() - a.borrowerPaidAt.getTime() || b.id - a.id);
+        for (const collection of ordered) {
+            if (collection.status !== "settled" || !collection.postedPaymentIntakeId) throw new DomainError("REMITTANCE_REVERSAL_BLOCKED", "Every remittance collection must still be settled", 409);
+            const intake = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, collection.postedPaymentIntakeId)) });
+            if (!intake) throw new DomainError("REMITTANCE_REVERSAL_BLOCKED", "A posted collection payment is missing", 409);
+            await reversePayment(ctx, intake.publicId, { reason }, tx);
+            await tx.update(intermediaryCollections).set({ status: "reversed", reversedAt: new Date(), updatedByUserId: actor.id, updatedAt: new Date() }).where(eq(intermediaryCollections.id, collection.id));
+        }
+        const reversed = await tx.update(intermediaryRemittances).set({ status: "reversed", reversalIdempotencyKey: reversalKey, reversalReason: reason, reversedByUserId: actor.id, reversedAt: new Date(), updatedByUserId: actor.id, updatedAt: new Date() }).where(eq(intermediaryRemittances.id, remittance.id)).returning().then((rows) => rows[0]!);
+        await createAuditLog(tx, { ...auditContext(ctx), entityType: "intermediary_remittance", entityId: reversed.publicId, action: "reversed", payload: { reason, collectionPublicIds: ordered.map((row) => row.publicId), amount: serializeMoney(reversed.grossAmount) } });
+        return { ...presentRemittance(reversed), reversalReason: reversed.reversalReason };
+    });
 }

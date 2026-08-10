@@ -146,6 +146,18 @@ BEGIN
         RAISE EXCEPTION 'immutable intermediary financial records cannot be deleted';
     END IF;
     IF TG_OP = 'UPDATE' AND OLD.status IN ('settled', 'manual_approved', 'posted', 'reversed') THEN
+        IF TG_TABLE_NAME = 'intermediary_collections'
+            AND OLD.status IN ('settled', 'manual_approved') AND NEW.status = 'reversed'
+            AND (to_jsonb(NEW) - ARRAY['status', 'reversed_at', 'updated_by_user_id', 'updated_at'])
+                = (to_jsonb(OLD) - ARRAY['status', 'reversed_at', 'updated_by_user_id', 'updated_at']) THEN
+            RETURN NEW;
+        END IF;
+        IF TG_TABLE_NAME = 'intermediary_remittances'
+            AND OLD.status = 'posted' AND NEW.status = 'reversed'
+            AND (to_jsonb(NEW) - ARRAY['status', 'reversal_idempotency_key', 'reversal_reason', 'reversed_by_user_id', 'reversed_at', 'updated_by_user_id', 'updated_at'])
+                = (to_jsonb(OLD) - ARRAY['status', 'reversal_idempotency_key', 'reversal_reason', 'reversed_by_user_id', 'reversed_at', 'updated_by_user_id', 'updated_at']) THEN
+            RETURN NEW;
+        END IF;
         RAISE EXCEPTION 'immutable intermediary financial records cannot be updated';
     END IF;
     RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;

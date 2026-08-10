@@ -3,7 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { borrowers, intermediaries, intermediaryCollections, loans, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
-import { createIntermediary, createIntermediaryCollection, createIntermediaryRemittance, normalizeIntermediaryText, postIntermediaryRemittance, previewIntermediaryRemittance, saveRemittanceAllocations } from "./intermediary-service";
+import { createIntermediary, createIntermediaryCollection, createIntermediaryRemittance, manualApproveIntermediaryCollection, normalizeIntermediaryText, postIntermediaryRemittance, previewIntermediaryRemittance, reverseIntermediaryRemittance, saveRemittanceAllocations } from "./intermediary-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
 
@@ -62,5 +62,32 @@ describe("intermediary collection service", () => {
             ["75.00", "2026-08-07T07:51:00.000Z"],
             ["125.00", "2026-08-08T08:37:00.000Z"],
         ]);
+
+        const reversed = await reverseIntermediaryRemittance({ ...base, idempotencyKey: "reverse-r-1" }, remittance.publicId, { reason: "Intermediary transfer was recalled" });
+        expect(reversed).toMatchObject({ status: "reversed", reversalReason: "Intermediary transfer was recalled" });
+        expect((await db.select().from(transactions).orderBy(transactions.id)).map((row) => row.entryType)).toEqual(["repayment", "repayment", "reversal", "reversal"]);
+        expect((await db.select().from(intermediaryCollections).orderBy(intermediaryCollections.id)).map((row) => row.status)).toEqual(["reversed", "reversed"]);
+    });
+
+    integrationTest("requires a tenant admin and reason to manually approve one collection", async () => {
+        await db.execute(sql`TRUNCATE TABLE audit_logs, intermediary_remittance_proposals,
+            intermediary_remittance_allocations, intermediary_remittances, intermediary_collections,
+            intermediaries, transactions, payment_intakes, loans, borrowers, users RESTART IDENTITY CASCADE`);
+        const owner = await db.insert(users).values({ tenantId: "tenant-a", email: "manual-owner@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const collector = await db.insert(users).values({ tenantId: owner.tenantId, email: "manual-collector@example.test", role: "collector" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId: owner.tenantId, ownerUserId: owner.id, name: "Manual Borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({ tenantId: owner.tenantId, ownerUserId: owner.id, borrowerId: borrower.id, principalAmount: "5000.00", interestRate: "0.00", repaymentType: "floating", outstandingPrincipal: "5000.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" }).returning().then((rows) => rows[0]!);
+        const base: CommandContext = { tenantId: owner.tenantId, actorUserId: owner.id, actorSource: "web", requestId: "req-manual", correlationId: "corr-manual" };
+        const intermediary = await createIntermediary(base, { name: "Manual Collector" });
+        const collection = await createIntermediaryCollection({ ...base, idempotencyKey: "manual-c-1" }, { intermediaryPublicId: intermediary.publicId, borrowerPublicId: borrower.publicId, loanPublicId: loan.publicId, amount: "75.00", borrowerPaidAt: "2026-08-07T14:51:00+07:00" });
+
+        await expect(manualApproveIntermediaryCollection({ ...base, actorUserId: collector.id, idempotencyKey: "manual-post-denied" }, collection.publicId, { reason: "Cash exception", confirmed: true })).rejects.toMatchObject({ code: "TENANT_ADMIN_REQUIRED" });
+        await expect(manualApproveIntermediaryCollection({ ...base, idempotencyKey: "manual-post-empty" }, collection.publicId, { reason: " ", confirmed: true })).rejects.toMatchObject({ code: "MANUAL_APPROVAL_REASON_REQUIRED" });
+        const approved = await manualApproveIntermediaryCollection({ ...base, idempotencyKey: "manual-post-1" }, collection.publicId, { reason: "Verified directly with lender", confirmed: true });
+        expect(approved).toMatchObject({ status: "manual_approved", amount: "75.00", borrowerPaidAt: "2026-08-07T07:51:00.000Z" });
+        expect((await db.select().from(transactions))[0]?.transactionDate?.toISOString()).toBe("2026-08-07T07:51:00.000Z");
+
+        const remittance = await createIntermediaryRemittance({ ...base, idempotencyKey: "manual-r-1" }, { intermediaryPublicId: intermediary.publicId, grossAmount: "75.00", receivedAt: "2026-08-11T09:00:00+07:00" });
+        await expect(saveRemittanceAllocations(base, remittance.publicId, { collectionPublicIds: [collection.publicId] })).rejects.toMatchObject({ code: "INVALID_COLLECTION_SELECTION" });
     });
 });

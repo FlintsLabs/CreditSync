@@ -3,6 +3,7 @@
 ## v0.3.7 - 2026-08-11
 
 ### Added
+- Added tenant-admin manual approval and reasoned compensating reversal for intermediary collections, preserving original borrower-paid dates and immutable repayment history.
 - Added atomic posting for exact intermediary remittance selections, creating one immutable loan payment per collection at the original borrower-to-intermediary payment timestamp.
 - Added idempotent intermediary remittance drafts with persisted explicit collection selection, exact Decimal balance summaries, exclusive active reservations, and versioned ready/needs-review previews.
 - Added manual intermediary creation/search/update and idempotent borrower-to-intermediary collection capture that preserves exact amounts and effective dates without posting a loan transaction.
@@ -20,6 +21,7 @@
 - Documented the approved responsive layout for funding-source details at tablet and compact-desktop widths.
 
 ### Fixed
+- Signed every payment/disbursement evidence header returned to upload clients and added floating-loan compensating reversal support.
 - Ordered new intermediary composite-key indexes before their tenant-safe foreign keys so the additive migration applies cleanly to a fresh PostgreSQL database.
 - Made funding-source summaries and loan allocations readable in tablet and compact-desktop layouts without content collisions.
 - Preserved the frozen MCP `intake.create` output contract after repayment-history responses gained an origin-loan reference.

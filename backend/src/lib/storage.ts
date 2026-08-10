@@ -41,6 +41,8 @@ export interface StoredObjectHead {
     metadata: Record<string, string>;
 }
 
+export type SignedPutResult = { uploadUrl: string; expiresAt: Date; requiredHeaders: Record<string, string> };
+
 const s3 = new S3Client({
     region: "us-east-1",
     endpoint: s3Endpoint,
@@ -116,6 +118,23 @@ function base64ChecksumToHex(value: string | undefined) {
     return value ? Buffer.from(value, "base64").toString("hex") : null;
 }
 
+export function signedPutRequiredHeaders(request: SignedPutRequest): Record<string, string> {
+    return {
+        "content-type": request.contentType,
+        "x-amz-checksum-sha256": hexChecksumToBase64(request.checksumSha256),
+        ...Object.fromEntries(Object.entries(request.metadata).map(([key, value]) => [`x-amz-meta-${key.toLocaleLowerCase()}`, value])),
+    };
+}
+
+export function signedPutSigningOptions(request: SignedPutRequest, expiresIn: number) {
+    const requiredHeaders = signedPutRequiredHeaders(request);
+    return {
+        expiresIn,
+        signableHeaders: new Set(["content-type"]),
+        unhoistableHeaders: new Set(Object.keys(requiredHeaders).filter((header) => header.startsWith("x-amz-"))),
+    };
+}
+
 export async function createSignedPutUrl(request: SignedPutRequest) {
     if (storageProvider !== "s3") {
         throw new Error("Payment evidence upload intents require S3-compatible storage");
@@ -131,9 +150,11 @@ export async function createSignedPutUrl(request: SignedPutRequest) {
         ChecksumSHA256: hexChecksumToBase64(request.checksumSha256),
         Metadata: request.metadata,
     });
+    const requiredHeaders = signedPutRequiredHeaders(request);
     return {
-        uploadUrl: await getSignedUrl(s3Signer as any, command as any, { expiresIn }),
+        uploadUrl: await getSignedUrl(s3Signer as any, command as any, signedPutSigningOptions(request, expiresIn)),
         expiresAt: new Date(Date.now() + expiresIn * 1000),
+        requiredHeaders,
     };
 }
 
