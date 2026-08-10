@@ -19,6 +19,12 @@
 - Added a task-by-task implementation plan for exact scheduled and floating loan payment-health summaries, localized card indicators, detail badges, and full verification.
 - Added an approved design for localized payment-health indicators on loan-list cards, including fixed-schedule arrears and next-day floating daily-interest overdue rules.
 - Added an approved unified Account and Preferences design with read-only Google/tenant identity, client-side language and theme controls, functional navigation, and safe logout behavior.
+- Added authenticated REST endpoints for manual intermediary setup, collection capture and approval, remittance draft selection, preview, posting, and reversal.
+- Added tenant-admin manual approval and reasoned compensating reversal for intermediary collections, preserving original borrower-paid dates and immutable repayment history.
+- Added atomic posting for exact intermediary remittance selections, creating one immutable loan payment per collection at the original borrower-to-intermediary payment timestamp.
+- Added idempotent intermediary remittance drafts with persisted explicit collection selection, exact Decimal balance summaries, exclusive active reservations, and versioned ready/needs-review previews.
+- Added manual intermediary creation/search/update and idempotent borrower-to-intermediary collection capture that preserves exact amounts and effective dates without posting a loan transaction.
+- Added the tenant-scoped intermediary, borrower-collection, grouped-remittance, explicit-allocation, and versioned-proposal ledger schema with exact-money checks, active reservation uniqueness, and immutable settled/post records.
 - Added a task-by-task implementation plan for the approved intermediary collection/remittance ledger, manual workspace, evidence viewer, MCP orchestration, controlled intake migration, and full verification.
 - Added an approved manual-first, AI-assisted design for two-leg intermediary collections and grouped remittances, including explicit balance allocation, exceptional manual approval, evidence viewing, immutable posting, and MCP safety boundaries.
 - Added an approved design for shared date/date-time inputs with right-aligned picker icons and expandable quick-repayment notes.
@@ -32,6 +38,9 @@
 - Documented the approved responsive layout for funding-source details at tablet and compact-desktop widths.
 
 ### Fixed
+- Kept the payment-intake origin-loan migration test additive after later migrations are registered.
+- Signed every payment/disbursement evidence header returned to upload clients and added floating-loan compensating reversal support.
+- Ordered new intermediary composite-key indexes before their tenant-safe foreign keys so the additive migration applies cleanly to a fresh PostgreSQL database.
 - Made funding-source summaries and loan allocations readable in tablet and compact-desktop layouts without content collisions.
 - Preserved the frozen MCP `intake.create` output contract after repayment-history responses gained an origin-loan reference.
 - Made own-capital availability and utilization subtract net direct loan allocations instead of only bank drawdowns, while keeping external-source credit availability based on issued drawdowns.

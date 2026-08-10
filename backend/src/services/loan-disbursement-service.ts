@@ -13,7 +13,7 @@ type Executor = any;
 type EventRow = typeof loanDisbursementEvents.$inferSelect;
 
 export interface DisbursementEvidenceStorageGateway {
-    preparePut(request: SignedPutRequest): Promise<{ uploadUrl: string; expiresAt: Date }>;
+    preparePut(request: SignedPutRequest): Promise<{ uploadUrl: string; expiresAt: Date; requiredHeaders?: Record<string, string> }>;
     head(key: string, bucket?: string): Promise<StoredObjectHead>;
 }
 
@@ -352,7 +352,7 @@ export async function prepareDisbursementEvidence(ctx: CommandContext, disbursem
             await tx.update(loanDisbursementEvidenceIntents).set({ uploadExpiresAt: signed.expiresAt, updatedByUserId: ctx.actorUserId, updatedAt: new Date() })
                 .where(and(eq(loanDisbursementEvidenceIntents.id, existing.id), eq(loanDisbursementEvidenceIntents.status, "pending")));
         });
-        return { id: existing.publicId, publicId: existing.publicId, filePublicId: file.publicId, objectKey: file.key, uploadUrl: signed.uploadUrl, expiresAt: signed.expiresAt, requiredHeaders: { "content-type": input.mimeType, "x-amz-checksum-sha256": Buffer.from(sha256, "hex").toString("base64"), "x-amz-meta-tenant": ctx.tenantId, "x-amz-meta-disbursement": event.publicId } };
+        return { id: existing.publicId, publicId: existing.publicId, filePublicId: file.publicId, objectKey: file.key, uploadUrl: signed.uploadUrl, expiresAt: signed.expiresAt, requiredHeaders: signed.requiredHeaders ?? { "content-type": input.mimeType, "x-amz-checksum-sha256": Buffer.from(sha256, "hex").toString("base64"), "x-amz-meta-tenant": ctx.tenantId, "x-amz-meta-disbursement": event.publicId } };
     }
     const key = `loan-disbursement-evidence/${ctx.tenantId}/${event.publicId}/${crypto.randomUUID()}`;
     let created: { file: typeof files.$inferSelect; intent: typeof loanDisbursementEvidenceIntents.$inferSelect };
@@ -387,7 +387,7 @@ export async function prepareDisbursementEvidence(ctx: CommandContext, disbursem
         });
         throw error;
     }
-    return { id: created.intent.publicId, publicId: created.intent.publicId, filePublicId: created.file.publicId, objectKey: key, uploadUrl: signed.uploadUrl, expiresAt: signed.expiresAt, requiredHeaders: { "content-type": input.mimeType, "x-amz-checksum-sha256": Buffer.from(sha256, "hex").toString("base64"), "x-amz-meta-tenant": ctx.tenantId, "x-amz-meta-disbursement": event.publicId } };
+    return { id: created.intent.publicId, publicId: created.intent.publicId, filePublicId: created.file.publicId, objectKey: key, uploadUrl: signed.uploadUrl, expiresAt: signed.expiresAt, requiredHeaders: signed.requiredHeaders ?? { "content-type": input.mimeType, "x-amz-checksum-sha256": Buffer.from(sha256, "hex").toString("base64"), "x-amz-meta-tenant": ctx.tenantId, "x-amz-meta-disbursement": event.publicId } };
 }
 
 export async function finalizeDisbursementEvidence(ctx: CommandContext, disbursementPublicId: string, evidencePublicId: string, gateway: DisbursementEvidenceStorageGateway = defaultEvidenceGateway) {

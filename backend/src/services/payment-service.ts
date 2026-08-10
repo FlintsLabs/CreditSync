@@ -42,7 +42,7 @@ type ProposalRow = typeof paymentMatchProposals.$inferSelect;
 type AllocationRow = typeof paymentMatchAllocations.$inferSelect;
 
 export interface EvidenceStorageGateway {
-    preparePut(request: SignedPutRequest): Promise<{ uploadUrl: string; expiresAt: Date }>;
+    preparePut(request: SignedPutRequest): Promise<{ uploadUrl: string; expiresAt: Date; requiredHeaders?: Record<string, string> }>;
     head(key: string, bucket?: string): Promise<StoredObjectHead>;
 }
 
@@ -509,7 +509,7 @@ export async function preparePaymentEvidence(
             objectKey: existingFile.key,
             uploadUrl: resigned.uploadUrl,
             expiresAt: resigned.expiresAt,
-            requiredHeaders: {
+            requiredHeaders: resigned.requiredHeaders ?? {
                 "content-type": input.mimeType,
                 "x-amz-checksum-sha256": Buffer.from(sha256, "hex").toString("base64"),
                 "x-amz-meta-tenant": ctx.tenantId,
@@ -571,7 +571,7 @@ export async function preparePaymentEvidence(
             mimeType: input.mimeType,
             size: input.size,
             url: toStorageReference({ provider: "s3", bucket: BUCKET_NAME, key }),
-        }).returning().then((rows) => rows[0]!);
+        }).returning().then((rows: Array<typeof files.$inferSelect>) => rows[0]!);
         const evidence = await tx.insert(paymentEvidence).values({
             tenantId: ctx.tenantId,
             paymentIntakeId: intake.id,
@@ -583,7 +583,7 @@ export async function preparePaymentEvidence(
             declaredSize: input.size,
             createdByUserId: ctx.actorUserId,
             updatedByUserId: ctx.actorUserId,
-        }).returning().then((rows) => rows[0]!);
+        }).returning().then((rows: Array<typeof paymentEvidence.$inferSelect>) => rows[0]!);
         return { file, evidence };
         });
     } catch (error) {
@@ -629,7 +629,7 @@ export async function preparePaymentEvidence(
         objectKey: key,
         uploadUrl: signed.uploadUrl,
         expiresAt: signed.expiresAt,
-        requiredHeaders: {
+        requiredHeaders: signed.requiredHeaders ?? {
             "content-type": input.mimeType,
             "x-amz-checksum-sha256": Buffer.from(sha256, "hex").toString("base64"),
             "x-amz-meta-tenant": ctx.tenantId,
@@ -934,10 +934,11 @@ export async function previewPaymentMatch(
     ctx: CommandContext,
     intakePublicId: string,
     input: { allocations?: ExplicitPaymentAllocation[] },
+    executor?: Executor,
 ) {
-    const existing = await accessibleIntake(ctx, intakePublicId);
+    const existing = await accessibleIntake(ctx, intakePublicId, executor ?? db);
     if (["posted", "reversed", "duplicate"].includes(existing.status)) throw new DomainError("PAYMENT_INTAKE_IMMUTABLE", "This intake cannot be matched", 409);
-    return db.transaction(async (tx) => {
+    const run = async (tx: Executor) => {
         await tx.execute(sql`SELECT id FROM payment_intakes WHERE id = ${existing.id} FOR UPDATE`);
         const intake = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.id, existing.id), eq(paymentIntakes.tenantId, ctx.tenantId)) });
         if (!intake) throw new DomainError("PAYMENT_INTAKE_NOT_FOUND", "Payment intake not found", 404);
@@ -977,7 +978,7 @@ export async function previewPaymentMatch(
             expiresAt: new Date(Date.now() + Math.max(60, Number(process.env.PAYMENT_PREVIEW_TTL_SECONDS ?? 900)) * 1000),
             createdByUserId: ctx.actorUserId,
             updatedByUserId: ctx.actorUserId,
-        }).returning().then((rows) => rows[0]!);
+        }).returning().then((rows: ProposalRow[]) => rows[0]!);
         const rows = match.expanded.length ? await tx.insert(paymentMatchAllocations).values(match.expanded.map((item, index) => ({
             tenantId: ctx.tenantId,
             proposalId: proposal.id,
@@ -997,8 +998,9 @@ export async function previewPaymentMatch(
             ...auditContext(ctx), entityType: "payment_match_proposal", entityId: proposal.publicId, action: "previewed",
             payload: { intakePublicId: intake.publicId, version, status, totalAllocated: serializeMoney(requestedTotal), warningCodes: warnings.map((item) => item.code) },
         });
-        return presentProposal(proposal, rows.map((row, index) => ({ ...row, ...match.expanded[index] })), serializeMoney(requestedTotal));
-    });
+        return presentProposal(proposal, rows.map((row: AllocationRow, index: number) => ({ ...row, ...match.expanded[index] })), serializeMoney(requestedTotal));
+    };
+    return executor ? run(executor) : db.transaction(run);
 }
 
 function signed(value: Decimal.Value) {
@@ -1123,10 +1125,10 @@ async function refreshLoanRollups(tx: Executor, tenantId: string, loanIds: numbe
     }
 }
 
-export async function postPayment(ctx: CommandContext, intakePublicId: string, input: { proposalPublicId: string }) {
-    const accessible = await accessibleIntake(ctx, intakePublicId);
+export async function postPayment(ctx: CommandContext, intakePublicId: string, input: { proposalPublicId: string }, executor?: Executor) {
+    const accessible = await accessibleIntake(ctx, intakePublicId, executor ?? db);
     requirePublicId(input.proposalPublicId, "proposalId");
-    const result = await db.transaction(async (tx) => {
+    const run = async (tx: Executor) => {
         await tx.execute(sql`SELECT id FROM payment_intakes WHERE id = ${accessible.id} FOR UPDATE`);
         const intake = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.id, accessible.id), eq(paymentIntakes.tenantId, ctx.tenantId)) });
         if (!intake) throw new DomainError("PAYMENT_INTAKE_NOT_FOUND", "Payment intake not found", 404);
@@ -1146,13 +1148,13 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
         }
         const latest = await tx.select().from(paymentMatchProposals).where(and(
             eq(paymentMatchProposals.tenantId, ctx.tenantId), eq(paymentMatchProposals.paymentIntakeId, intake.id),
-        )).orderBy(desc(paymentMatchProposals.version)).then((rows) => rows[0]);
+        )).orderBy(desc(paymentMatchProposals.version)).then((rows: ProposalRow[]) => rows[0]);
         if (latest?.id !== proposal.id) throw new DomainError("STALE_PAYMENT_PROPOSAL", "A newer payment proposal exists", 409);
         const allocations = await tx.select().from(paymentMatchAllocations).where(and(
             eq(paymentMatchAllocations.tenantId, ctx.tenantId), eq(paymentMatchAllocations.proposalId, proposal.id),
         )).orderBy(paymentMatchAllocations.allocationOrder);
-        const loanIds = [...new Set(allocations.map((item) => item.loanId))].sort((a, b) => a - b);
-        const scheduleIds = [...new Set(allocations.map((item) => item.scheduleId).filter((id): id is number => id !== null))].sort((a, b) => a - b);
+        const loanIds: number[] = [...new Set<number>(allocations.map((item: AllocationRow) => item.loanId))].sort((a, b) => a - b);
+        const scheduleIds: number[] = [...new Set<number>(allocations.map((item: AllocationRow) => item.scheduleId).filter((id: number | null): id is number => id !== null))].sort((a, b) => a - b);
         if (loanIds.length) await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(loanIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
         if (scheduleIds.length) await tx.execute(sql`SELECT id FROM loan_schedules WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(scheduleIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
         const actor = await actorFor(ctx, tx);
@@ -1160,7 +1162,7 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
             const targetLoans = loanIds.length ? await tx.select().from(loans).where(and(
                 eq(loans.tenantId, ctx.tenantId), inArray(loans.id, loanIds),
             )) : [];
-            const borrowerIds = [...new Set(targetLoans.map((item: typeof loans.$inferSelect) => item.borrowerId))];
+            const borrowerIds: number[] = [...new Set<number>(targetLoans.map((item: typeof loans.$inferSelect) => item.borrowerId))];
             const targetBorrowers = borrowerIds.length ? await tx.select().from(borrowers).where(and(
                 eq(borrowers.tenantId, ctx.tenantId), inArray(borrowers.id, borrowerIds),
             )) : [];
@@ -1198,7 +1200,7 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
                         remainingInterest = remainingInterest.minus(applied);
                     }
                 }
-                const transaction = await tx.insert(transactions).values({ tenantId: ctx.tenantId, ownerUserId: loan.ownerUserId ?? ctx.actorUserId, loanId: loan.id, amount: signed(allocation.amount), principalComponent: signed(principal), interestComponent: signed(interest), feeComponent: "0.00", penaltyComponent: "0.00", type: "repayment", transactionDate: intake.receivedAt, recordedByUserId: ctx.actorUserId, paymentIntakeId: intake.id, entryType: "repayment", idempotencyKey: `payment:${intake.publicId}:${allocation.publicId}`, postedAt: new Date() }).returning().then((rows) => rows[0]!);
+                const transaction = await tx.insert(transactions).values({ tenantId: ctx.tenantId, ownerUserId: loan.ownerUserId ?? ctx.actorUserId, loanId: loan.id, amount: signed(allocation.amount), principalComponent: signed(principal), interestComponent: signed(interest), feeComponent: "0.00", penaltyComponent: "0.00", type: "repayment", transactionDate: intake.receivedAt, recordedByUserId: ctx.actorUserId, paymentIntakeId: intake.id, entryType: "repayment", idempotencyKey: `payment:${intake.publicId}:${allocation.publicId}`, postedAt: new Date() }).returning().then((rows: Array<typeof transactions.$inferSelect>) => rows[0]!);
                 createdTransactions.push(transaction);
                 await writeFundEffects(tx, ctx, loan.id, transaction.id, intake.receivedAt, { fee: new Decimal(0), interest, principal, penalty: new Decimal(0) });
                 continue;
@@ -1241,7 +1243,7 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
                 entryType: "repayment",
                 idempotencyKey: `payment:${intake.publicId}:${allocation.publicId}`,
                 postedAt: new Date(),
-            }).returning().then((rows) => rows[0]!);
+            }).returning().then((rows: Array<typeof transactions.$inferSelect>) => rows[0]!);
             createdTransactions.push(transaction);
             await writeFundEffects(tx, ctx, loan.id, transaction.id, intake.receivedAt, components);
         }
@@ -1253,25 +1255,26 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
         const posted = await tx.update(paymentIntakes).set({
             status: "posted", postedAt: new Date(), postedByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId, updatedAt: new Date(),
         }).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, intake.id)))
-            .returning().then((rows) => rows[0]!);
+            .returning().then((rows: IntakeRow[]) => rows[0]!);
         await createAuditLog(tx, {
             ...auditContext(ctx), entityType: "payment_intake", entityId: posted.publicId, action: "posted",
             payload: { proposalPublicId: proposal.publicId, version: proposal.version, transactionPublicIds: createdTransactions.map((item) => item.publicId), amount: posted.amount },
         });
         return { ...presentIntake(posted), transactions: createdTransactions.map(presentTransaction) };
-    });
+    };
+    const result = executor ? await run(executor) : await db.transaction(run);
     if ("stale" in result) {
         throw new DomainError("STALE_PAYMENT_PROPOSAL", "Payment proposal no longer matches current balances", 409);
     }
-    await invalidateTenantCache(ctx.tenantId);
+    if (!executor) await invalidateTenantCache(ctx.tenantId);
     return result;
 }
 
-export async function reversePayment(ctx: CommandContext, intakePublicId: string, input: { reason: string }) {
+export async function reversePayment(ctx: CommandContext, intakePublicId: string, input: { reason: string }, executor?: Executor) {
     const reason = input.reason?.trim();
     if (!reason) throw new DomainError("REVERSAL_REASON_REQUIRED", "Payment reversal requires a reason", 400);
-    const accessible = await accessibleIntake(ctx, intakePublicId);
-    const result = await db.transaction(async (tx) => {
+    const accessible = await accessibleIntake(ctx, intakePublicId, executor ?? db);
+    const run = async (tx: Executor) => {
         await tx.execute(sql`SELECT id FROM payment_intakes WHERE id = ${accessible.id} FOR UPDATE`);
         const intake = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.id, accessible.id), eq(paymentIntakes.tenantId, ctx.tenantId)) });
         if (!intake) throw new DomainError("PAYMENT_INTAKE_NOT_FOUND", "Payment intake not found", 404);
@@ -1280,18 +1283,17 @@ export async function reversePayment(ctx: CommandContext, intakePublicId: string
         const originals = await tx.select().from(transactions).where(and(
             eq(transactions.tenantId, ctx.tenantId), eq(transactions.paymentIntakeId, intake.id), eq(transactions.entryType, "repayment"),
         )).orderBy(transactions.id);
-        const loanIds = [...new Set(originals.map((item) => item.loanId))].sort((a, b) => a - b);
-        const scheduleIds = [...new Set(originals.map((item) => item.scheduleId).filter((id): id is number => id !== null))].sort((a, b) => a - b);
+        const loanIds: number[] = [...new Set<number>(originals.map((item: typeof transactions.$inferSelect) => item.loanId))].sort((a, b) => a - b);
+        const scheduleIds: number[] = [...new Set<number>(originals.map((item: typeof transactions.$inferSelect) => item.scheduleId).filter((id: number | null): id is number => id !== null))].sort((a, b) => a - b);
         if (loanIds.length) await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(loanIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
         if (scheduleIds.length) await tx.execute(sql`SELECT id FROM loan_schedules WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(scheduleIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
         const reversals: Array<typeof transactions.$inferSelect> = [];
         for (const original of originals) {
             const existing = await tx.query.transactions.findFirst({ where: and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.reversedTransactionId, original.id)) });
             if (existing) { reversals.push(existing); continue; }
-            if (!original.scheduleId) throw new DomainError("REVERSAL_TARGET_MISSING", "Original transaction has no schedule", 409);
             const laterRepayments = (await tx.select().from(transactions).where(and(
                 eq(transactions.tenantId, ctx.tenantId),
-                eq(transactions.scheduleId, original.scheduleId),
+                original.scheduleId ? eq(transactions.scheduleId, original.scheduleId) : and(eq(transactions.loanId, original.loanId), sql`${transactions.scheduleId} IS NULL`),
                 eq(transactions.entryType, "repayment"),
                 gt(transactions.id, original.id),
             ))).filter((row: typeof transactions.$inferSelect) => row.paymentIntakeId !== intake.id);
@@ -1300,30 +1302,21 @@ export async function reversePayment(ctx: CommandContext, intakePublicId: string
                     eq(transactions.tenantId, ctx.tenantId), eq(transactions.reversedTransactionId, later.id),
                 ) });
                 if (!laterReversal) {
-                    throw new DomainError("REVERSAL_NOT_LATEST", "Reverse later payments on this schedule first", 409);
+                    throw new DomainError("REVERSAL_NOT_LATEST", "Reverse later payments on this loan allocation first", 409);
                 }
             }
-            const schedule = await tx.query.loanSchedules.findFirst({ where: and(eq(loanSchedules.id, original.scheduleId), eq(loanSchedules.tenantId, ctx.tenantId)) });
-            if (!schedule) throw new DomainError("REVERSAL_TARGET_MISSING", "Original schedule no longer exists", 409);
-            const loan = await tx.query.loans.findFirst({ where: and(eq(loans.id, original.loanId), eq(loans.tenantId, ctx.tenantId)) });
-            if (!loan) throw new DomainError("REVERSAL_TARGET_MISSING", "Original loan no longer exists", 409);
-            const nonPenalty = new Decimal(original.principalComponent).plus(original.interestComponent).plus(original.feeComponent);
-            const restoredPaid = Decimal.max(0, new Decimal(schedule.paidTotal).minus(nonPenalty));
-            const restoredPenalty = Decimal.max(0, new Decimal(schedule.paidPenalty).minus(original.penaltyComponent));
-            const restoredRemaining = new Decimal(schedule.remainingDue).plus(nonPenalty);
-            const lifecycle = scheduleLifecycle(loan, schedule, {
-                paidTotal: restoredPaid,
-                paidPenalty: restoredPenalty,
-                remainingDue: restoredRemaining,
-            }, intake.receivedAt);
-            await tx.update(loanSchedules).set({
-                paidTotal: signed(restoredPaid),
-                paidPenalty: signed(restoredPenalty),
-                remainingDue: signed(restoredRemaining),
-                overdueDays: lifecycle.overdueDays,
-                status: lifecycle.status,
-                updatedAt: new Date(),
-            }).where(and(eq(loanSchedules.id, schedule.id), eq(loanSchedules.tenantId, ctx.tenantId)));
+            if (original.scheduleId) {
+                const schedule = await tx.query.loanSchedules.findFirst({ where: and(eq(loanSchedules.id, original.scheduleId), eq(loanSchedules.tenantId, ctx.tenantId)) });
+                if (!schedule) throw new DomainError("REVERSAL_TARGET_MISSING", "Original schedule no longer exists", 409);
+                const loan = await tx.query.loans.findFirst({ where: and(eq(loans.id, original.loanId), eq(loans.tenantId, ctx.tenantId)) });
+                if (!loan) throw new DomainError("REVERSAL_TARGET_MISSING", "Original loan no longer exists", 409);
+                const nonPenalty = new Decimal(original.principalComponent).plus(original.interestComponent).plus(original.feeComponent);
+                const restoredPaid = Decimal.max(0, new Decimal(schedule.paidTotal).minus(nonPenalty));
+                const restoredPenalty = Decimal.max(0, new Decimal(schedule.paidPenalty).minus(original.penaltyComponent));
+                const restoredRemaining = new Decimal(schedule.remainingDue).plus(nonPenalty);
+                const lifecycle = scheduleLifecycle(loan, schedule, { paidTotal: restoredPaid, paidPenalty: restoredPenalty, remainingDue: restoredRemaining }, intake.receivedAt);
+                await tx.update(loanSchedules).set({ paidTotal: signed(restoredPaid), paidPenalty: signed(restoredPenalty), remainingDue: signed(restoredRemaining), overdueDays: lifecycle.overdueDays, status: lifecycle.status, updatedAt: new Date() }).where(and(eq(loanSchedules.id, schedule.id), eq(loanSchedules.tenantId, ctx.tenantId)));
+            }
             const reversal = await tx.insert(transactions).values({
                 tenantId: ctx.tenantId,
                 ownerUserId: original.ownerUserId,
@@ -1342,7 +1335,7 @@ export async function reversePayment(ctx: CommandContext, intakePublicId: string
                 reversedTransactionId: original.id,
                 idempotencyKey: `reversal:${original.publicId}`,
                 postedAt: new Date(),
-            }).returning().then((rows) => rows[0]!);
+            }).returning().then((rows: Array<typeof transactions.$inferSelect>) => rows[0]!);
             reversals.push(reversal);
             const ledger = await tx.select().from(fundLedgerEntries).where(and(
                 eq(fundLedgerEntries.tenantId, ctx.tenantId), eq(fundLedgerEntries.transactionId, original.id),
@@ -1373,13 +1366,14 @@ export async function reversePayment(ctx: CommandContext, intakePublicId: string
         }
         const reversed = await tx.update(paymentIntakes).set({ status: "reversed", updatedByUserId: ctx.actorUserId, updatedAt: new Date() })
             .where(and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, intake.id)))
-            .returning().then((rows) => rows[0]!);
+            .returning().then((rows: Array<typeof paymentIntakes.$inferSelect>) => rows[0]!);
         await createAuditLog(tx, {
             ...auditContext(ctx), entityType: "payment_intake", entityId: reversed.publicId, action: "reversed",
-            payload: { reversedTransactionPublicIds: originals.map((item) => item.publicId), reversalTransactionPublicIds: reversals.map((item) => item.publicId), amount: reversed.amount, reason },
+            payload: { reversedTransactionPublicIds: originals.map((item: typeof transactions.$inferSelect) => item.publicId), reversalTransactionPublicIds: reversals.map((item) => item.publicId), amount: reversed.amount, reason },
         });
         return postedResult(tx, reversed);
-    });
-    await invalidateTenantCache(ctx.tenantId);
+    };
+    const result = executor ? await run(executor) : await db.transaction(run);
+    if (!executor) await invalidateTenantCache(ctx.tenantId);
     return result;
 }
