@@ -4,6 +4,7 @@
 
 ### Added
 - Added a shared account navigation and safe local sign-out contract, plus the approved implementation plan for the unified Account and Preferences page.
+- Added the localized, read-only Account and Preferences page with explicit language and appearance choices, accessible feedback, session controls, and safe identity fallbacks.
 
 ### Fixed
 - Kept appearance changes active in memory when browser theme persistence is unavailable.
