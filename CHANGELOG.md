@@ -3,6 +3,7 @@
 ## v0.3.5 - 2026-08-10
 
 ### Added
+- Added additive schema support for floating daily-interest loan policies and date-unique immutable interest accrual records.
 - Added an approved borrower-card identity design specification covering responsive one/two-column layout, sensitive Thai-ID masking, full-value copy behavior, avatar hierarchy, localization, accessibility, and verification requirements.
 - Added a task-by-task implementation plan for the approved borrower-card identity design.
 - Added Thai national-ID formatting and masking utilities for privacy-aware borrower-list presentation.

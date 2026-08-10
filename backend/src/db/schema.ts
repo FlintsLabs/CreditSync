@@ -169,6 +169,10 @@ export const loans = pgTable("loans", {
     borrowerId: integer("borrower_id").references(() => borrowers.id).notNull(),
     bankLoanId: integer("bank_loan_id").references(() => bankLoans.id), // Traceability to source
     fundingBankProfileId: integer("funding_bank_profile_id").references(() => bankProfiles.id), // Direct own-capital source
+    dailyInterestMode: text("daily_interest_mode"), // per_thousand, percent; floating loans only
+    dailyInterestRate: numeric("daily_interest_rate"),
+    firstDayTreatment: text("first_day_treatment"), // deduct, start_next_day
+    interestStartDate: date("interest_start_date"),
     principalAmount: numeric("principal_amount").notNull(),
     interestRate: numeric("interest_rate").notNull(), // Calculated rate for borrower
     repaymentType: text("repayment_type").notNull(), // "daily", "monthly", "floating"
@@ -213,6 +217,26 @@ export const loanSchedules = pgTable("loan_schedules", {
     updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
     uniqueIndex("loan_schedules_tenant_id_id_unique").on(table.tenantId, table.id),
+]);
+
+export const loanInterestAccruals = pgTable("loan_interest_accruals", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    loanId: integer("loan_id").references(() => loans.id).notNull(),
+    accrualDate: date("accrual_date").notNull(),
+    openingPrincipal: numeric("opening_principal").notNull(),
+    rateMode: text("rate_mode").notNull(),
+    rate: numeric("rate").notNull(),
+    interestAmount: numeric("interest_amount").notNull(),
+    status: text("status").default("accrued").notNull(),
+    sourceTransactionId: integer("source_transaction_id").references(() => transactions.id),
+    reversedAccrualId: integer("reversed_accrual_id"),
+    createdByUserId: integer("created_by_user_id").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+    uniqueIndex("loan_interest_accruals_tenant_loan_date_unique").on(table.tenantId, table.loanId, table.accrualDate),
+    uniqueIndex("loan_interest_accruals_tenant_id_unique").on(table.tenantId, table.id),
 ]);
 
 export const loanFundingAllocations = pgTable("loan_funding_allocations", {
