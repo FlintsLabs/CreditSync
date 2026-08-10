@@ -439,6 +439,14 @@ cd backend
 bun test
 ```
 
+Database-backed service tests are opt-in and require `TEST_DATABASE_URL` to point to a disposable database. To create an isolated ephemeral PostgreSQL 18 container with a dynamically assigned host port, migrate it, run a focused test, and remove it automatically:
+
+```bash
+./backend/scripts/test-disposable-postgres.sh src/services/loan-disbursement-service.test.ts
+```
+
+The script deliberately does not use the local development database. To use a separately provisioned disposable database instead, set both `DATABASE_URL` and `TEST_DATABASE_URL` to that database before running `bun test`.
+
 Current tests cover:
 
 - OCR smoke test

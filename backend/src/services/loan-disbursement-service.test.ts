@@ -136,6 +136,45 @@ integrationTest("persists and verifies evidence readiness before a linked file c
     await expect(postDisbursement(context(owner, "evidence-post"), draft.publicId)).resolves.toMatchObject({ status: "posted" });
 });
 
+// Break caught: retrying a pending upload creates a second intent/file instead of returning the same durable capability.
+integrationTest("reuses a pending evidence intent when prepare is retried", async () => {
+    const owner = await actor();
+    const loan = await loanFor(owner);
+    const draft = await createDisbursementDraft(context(owner), loan.publicId, {
+        grossAmount: "5.00", loanAttributedAmount: "5.00", channel: "cash", disbursedAt: "2026-08-10T10:00:00.000Z",
+    });
+    let signed = 0;
+    const gateway = {
+        preparePut: async () => ({ uploadUrl: `https://storage.example.test/signed/${++signed}`, expiresAt: new Date(Date.now() + 60_000) }),
+        head: async () => ({ exists: false, contentType: null, contentLength: null, checksumSha256: null, metadata: {} }),
+    };
+    const input = { mimeType: "image/png", size: 12, sha256: "c".repeat(64) };
+
+    const first = await prepareDisbursementEvidence(context(owner), draft.publicId, input, gateway);
+    const retry = await prepareDisbursementEvidence(context(owner), draft.publicId, input, gateway);
+
+    expect(retry).toMatchObject({ publicId: first.publicId, filePublicId: first.filePublicId, objectKey: first.objectKey });
+    expect(retry.uploadUrl).not.toBe(first.uploadUrl);
+    expect(signed).toBe(2);
+});
+
+// Break caught: concurrent post attempts write duplicate audits or both claim the initial transition.
+integrationTest("serializes concurrent post attempts into one post and one replay", async () => {
+    const owner = await actor();
+    const loan = await loanFor(owner);
+    const draft = await createDisbursementDraft(context(owner), loan.publicId, {
+        grossAmount: "5.00", loanAttributedAmount: "5.00", channel: "cash", disbursedAt: "2026-08-10T10:00:00.000Z",
+    });
+
+    const results = await Promise.all([
+        postDisbursement(context(owner, "concurrent-post"), draft.publicId),
+        postDisbursement(context(owner, "concurrent-post"), draft.publicId),
+    ]);
+
+    expect(results.map((result) => result.duplicate).sort()).toEqual([false, true]);
+    expect(await db.select().from(auditLogs).where(and(eq(auditLogs.entityId, draft.publicId), eq(auditLogs.action, "posted")))).toHaveLength(1);
+});
+
 // Break caught: draft changes lack an auditable old/new value, and post keys can be reused for another event.
 integrationTest("records complete draft before/after state and rejects a post-key conflict", async () => {
     const owner = await actor();
