@@ -81,6 +81,16 @@ const loanTerms = {
         mode: z.enum(["per_thousand", "percent"]), rate: z.string().regex(/^\d+(?:\.\d{1,4})?$/),
         firstDayTreatment: z.enum(["deduct", "start_next_day"]),
     }).optional(),
+    dailyEntry: z.object({
+        durationUnit: z.enum(["days", "months"]),
+        durationValue: z.number().int().positive().max(100_000),
+        entryMode: z.enum(["daily_payment", "daily_interest"]),
+        dailyPayment: money.optional(),
+        interestInput: z.object({
+            mode: z.enum(["percent", "fixed_amount", "per_thousand"]),
+            value: z.string().regex(/^\d+(?:\.\d{1,4})?$/),
+        }).optional(),
+    }).optional(),
 };
 
 const explicitAllocation = z.object({
@@ -169,6 +179,14 @@ const loanOutput = z.object({
     principalAmount: money,
     interestRate: money,
     floatingDailyInterest: z.object({ mode: z.enum(["per_thousand", "percent"]), rate: z.string(), firstDayTreatment: z.enum(["deduct", "start_next_day"]) }).nullable().optional(),
+    dailyEntry: z.object({
+        durationUnit: z.enum(["days", "months"]), durationValue: z.number().int().positive(), entryMode: z.enum(["daily_payment", "daily_interest"]),
+        dailyPayment: money.nullable(), interestInput: z.object({ mode: z.enum(["percent", "fixed_amount", "per_thousand"]), value: z.string() }).nullable(), flatDailyRatePercent: z.string(),
+    }).nullable().optional(),
+    dailyLoanCalculation: z.object({
+        totalInstallments: z.number().int().positive(), installmentAmount: money, totalRepayment: money, totalInterest: money, dailyInterest: money,
+        flatDailyRatePercent: z.string(), flatMonthlyRatePercent: z.string(), flatAnnualRatePercent: z.string(),
+    }).nullable().optional(),
     repaymentType: z.enum(["daily", "weekly", "monthly", "floating"]),
     termMonths: z.number().int().nullable(),
     installmentAmount: money.nullable(),
@@ -304,6 +322,10 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "loan.preview": z.object({
         terms: z.object({ ...loanTerms }).strict(),
         schedule: z.array(scheduleOutput),
+        dailyLoanCalculation: z.object({
+            totalInstallments: z.number().int().positive(), installmentAmount: money, totalRepayment: money, totalInterest: money, dailyInterest: money,
+            flatDailyRatePercent: z.string(), flatMonthlyRatePercent: z.string(), flatAnnualRatePercent: z.string(),
+        }).nullable(),
     }).strict(),
     "loan.draft": loanOutput,
     "loan.activate": loanOutput,

@@ -167,6 +167,16 @@ const floatingDailyInterest = t.Object({
     rate: t.String(),
     firstDayTreatment: t.Union([t.Literal("deduct"), t.Literal("start_next_day")]),
 });
+const dailyEntry = t.Object({
+    durationUnit: t.Union([t.Literal("days"), t.Literal("months")]),
+    durationValue: t.Integer({ minimum: 1, maximum: 100_000 }),
+    entryMode: t.Union([t.Literal("daily_payment"), t.Literal("daily_interest")]),
+    dailyPayment: t.Optional(t.String()),
+    interestInput: t.Optional(t.Object({
+        mode: t.Union([t.Literal("percent"), t.Literal("fixed_amount"), t.Literal("per_thousand")]),
+        value: t.String(),
+    })),
+});
 
 export const loansRoute = new Elysia({ prefix: "/loans" })
     .use(authPlugin)
@@ -517,6 +527,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             totalInstallments: t.Optional(t.Number()),
             installmentAmount: t.Optional(t.String()),
             floatingDailyInterest: t.Optional(floatingDailyInterest),
+            dailyEntry: t.Optional(dailyEntry),
         })
     })
     .post("/preview", ({ body, set }) => {
@@ -531,6 +542,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             repaymentType, startDate: t.String(), totalInstallments: t.Optional(t.Number()),
             installmentAmount: t.Optional(t.String()),
             floatingDailyInterest: t.Optional(floatingDailyInterest),
+            dailyEntry: t.Optional(dailyEntry),
         }),
     })
     .post("/", async ({ body, user, request, set }) => {
@@ -554,6 +566,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             totalInstallments: t.Optional(t.Number()),
             installmentAmount: t.Optional(t.String()),
             floatingDailyInterest: t.Optional(floatingDailyInterest),
+            dailyEntry: t.Optional(dailyEntry),
             startDate: t.String()
         })
     })
@@ -576,6 +589,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             repaymentType: t.Optional(repaymentType), termMonths: t.Optional(t.Number()),
             totalInstallments: t.Optional(t.Number()), installmentAmount: t.Optional(t.String()),
             floatingDailyInterest: t.Optional(floatingDailyInterest),
+            dailyEntry: t.Optional(dailyEntry),
             startDate: t.Optional(t.String()),
         }),
     })
