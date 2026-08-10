@@ -128,6 +128,7 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
                 referenceNo: body.referenceNo,
                 accountingMode: body.accountingMode ?? "external_liability",
                 reinvestProfitMode: body.reinvestProfitMode ?? "manual_distribution",
+                opportunityCostRate: body.opportunityCostRate?.toString() ?? "2.00",
                 note: body.note,
             }).returning();
 
@@ -153,6 +154,7 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
             referenceNo: t.Optional(t.String()),
             accountingMode: t.Optional(t.String()),
             reinvestProfitMode: t.Optional(t.String()),
+            opportunityCostRate: t.Optional(t.Union([t.Number(), t.String()])),
             note: t.Optional(t.String()),
         })
     })
@@ -182,6 +184,7 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
                 referenceNo: body.referenceNo,
                 accountingMode: body.accountingMode,
                 reinvestProfitMode: body.reinvestProfitMode,
+                opportunityCostRate: body.opportunityCostRate?.toString(),
                 note: body.note,
                 status: body.status,
                 updatedAt: new Date(),
@@ -217,6 +220,7 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
             referenceNo: t.Optional(t.String()),
             accountingMode: t.Optional(t.String()),
             reinvestProfitMode: t.Optional(t.String()),
+            opportunityCostRate: t.Optional(t.Union([t.Number(), t.String()])),
             note: t.Optional(t.String()),
             status: t.Optional(t.String()),
         })

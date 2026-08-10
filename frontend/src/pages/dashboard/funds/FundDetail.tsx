@@ -10,10 +10,17 @@ import { Input } from "../../../components/ui/Input";
 
 interface BankProfile {
     id: number;
+    publicId?: string;
     name: string;
     type: string;
     creditLimit: string | null;
     accountingMode?: string;
+    opportunityCostRate?: string | null;
+    providerName?: string | null;
+    referenceNo?: string | null;
+    reinvestProfitMode?: string | null;
+    note?: string | null;
+    status?: string | null;
 }
 
 interface BankLoan {
@@ -173,6 +180,7 @@ export default function FundDetail() {
     const [rolloverDate, setRolloverDate] = useState(new Date().toISOString().slice(0, 10));
     const [rolloverType, setRolloverType] = useState("surplus_transfer");
     const [rolloverNote, setRolloverNote] = useState("");
+    const [capitalModeSubmitting, setCapitalModeSubmitting] = useState(false);
     const targetBankLoanId = searchParams.get("bankLoanId");
     const targetScheduleId = searchParams.get("scheduleId");
 
@@ -458,6 +466,32 @@ export default function FundDetail() {
         [allFunds, fund?.id]
     );
 
+    const enableOwnCapital = async () => {
+        if (!fund || !id) return;
+        try {
+            setCapitalModeSubmitting(true);
+            setErrorMessage("");
+            await api.put(`/bank-profiles/${id}`, {
+                name: fund.name,
+                type: fund.type,
+                creditLimit: fund.creditLimit ?? "0.00",
+                providerName: fund.providerName ?? undefined,
+                referenceNo: fund.referenceNo ?? undefined,
+                accountingMode: "capital_pool",
+                reinvestProfitMode: fund.reinvestProfitMode ?? "manual_distribution",
+                opportunityCostRate: fund.opportunityCostRate ?? "2.00",
+                note: fund.note ?? undefined,
+                status: fund.status ?? "active",
+            });
+            await loadFund(id);
+        } catch (error) {
+            console.error("Failed to enable own capital", error);
+            setErrorMessage(t("fundDetail.errors.enableOwnCapital", "Unable to enable this source as own capital."));
+        } finally {
+            setCapitalModeSubmitting(false);
+        }
+    };
+
     return (
         <div className="space-y-6">
             <div className="flex items-center gap-4">
@@ -472,6 +506,13 @@ export default function FundDetail() {
                         {fund?.type === "bank" ? t("fund_detail.revolving_credit") : t("funds.capital")}
                     </p>
                 </div>
+                {fund?.type === "personal" && fund.accountingMode !== "capital_pool" && (
+                    <Button type="button" variant="outline" className="ml-auto" onClick={enableOwnCapital} disabled={capitalModeSubmitting}>
+                        {capitalModeSubmitting
+                            ? t("common.saving", "Saving...")
+                            : t("fundDetail.enableOwnCapital", "Use as own capital (2% p.a.)")}
+                    </Button>
+                )}
             </div>
 
             {errorMessage && (

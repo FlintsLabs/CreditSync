@@ -28,7 +28,11 @@ interface DrawdownOption {
 
 interface BankProfile {
     id: number;
+    publicId: string;
     name: string;
+    creditLimit: string | null;
+    accountingMode?: string | null;
+    status?: string | null;
 }
 
 interface LoanSchedulePreview {
@@ -56,6 +60,7 @@ export default function LoanWizard() {
     const [formData, setFormData] = useState({
         borrowerId: "",
         bankLoanId: "",
+        bankProfileId: "",
         principal: "",
         interestRate: "15",
         termMonths: "12",
@@ -97,6 +102,8 @@ export default function LoanWizard() {
 
     const selectedDrawdown = drawdowns.find((item) => item.publicId === formData.bankLoanId);
     const selectedDrawdownProfile = bankProfiles.find((item) => item.id === selectedDrawdown?.bankProfileId);
+    const ownCapitalProfiles = bankProfiles.filter((item) => item.accountingMode === "capital_pool" && item.status !== "inactive");
+    const selectedOwnCapital = ownCapitalProfiles.find((item) => item.publicId === formData.bankProfileId);
     const bankProfileNameById = new Map(bankProfiles.map((item) => [item.id, item.name]));
 
     const calculateSchedule = async () => {
@@ -129,6 +136,7 @@ export default function LoanWizard() {
             const draft = await api.post("/loans", {
                 borrowerPublicId: formData.borrowerId,
                 bankLoanPublicId: isTenantAdmin && formData.bankLoanId ? formData.bankLoanId : undefined,
+                bankProfilePublicId: isTenantAdmin && formData.bankProfileId ? formData.bankProfileId : undefined,
                 ...buildLoanTermsInput(formData),
             });
             setDraftId(draft.data.publicId);
@@ -174,7 +182,7 @@ export default function LoanWizard() {
             <Card>
                 <CardHeader>
                     <CardTitle>
-                        {step === 1 && t("loanWizard.steps.select", "Step 1: Select Borrower & Drawdown")}
+                        {step === 1 && t("loanWizard.steps.select", "Step 1: Select Borrower & Funding")}
                         {step === 2 && t("loanWizard.steps.terms", "Step 2: Loan Terms")}
                         {step === 3 && t("loanWizard.steps.review", "Step 3: Review & Confirm")}
                         {step === 4 && t("loanWizard.steps.activate")}
@@ -200,19 +208,35 @@ export default function LoanWizard() {
                                 </select>
                             </div>
                             <div className="grid gap-2">
-                                <label>{t("loanWizard.drawdown", "Funding Drawdown (Optional)")}</label>
+                                <label>{t("loanWizard.fundingSource", "Funding Source (Optional)")}</label>
                                 <select
                                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                    value={formData.bankLoanId}
-                                    onChange={(e) => setFormData({ ...formData, bankLoanId: e.target.value })}
+                                    value={formData.bankLoanId ? `drawdown:${formData.bankLoanId}` : formData.bankProfileId ? `capital:${formData.bankProfileId}` : ""}
+                                    onChange={(e) => {
+                                        const [kind, publicId] = e.target.value.split(":");
+                                        setFormData({
+                                            ...formData,
+                                            bankLoanId: kind === "drawdown" ? publicId ?? "" : "",
+                                            bankProfileId: kind === "capital" ? publicId ?? "" : "",
+                                        });
+                                    }}
                                     disabled={loadingDependencies}
                                 >
-                                    <option value="">{t("loanWizard.noneDrawdown", "None (Unmatched / Own Capital)")}</option>
-                                    {drawdowns.map((item) => (
-                                        <option key={item.publicId} value={item.publicId}>
-                                            #{item.id} {item.bankProfileId ? bankProfileNameById.get(item.bankProfileId) ?? "" : ""} {money(item.outstandingPrincipal ?? item.amount)}
-                                        </option>
-                                    ))}
+                                    <option value="">{t("loanWizard.noneDrawdown", "None (allocate later)")}</option>
+                                    <optgroup label={t("loanWizard.ownCapital", "Own capital")}>
+                                        {ownCapitalProfiles.map((item) => (
+                                            <option key={item.publicId} value={`capital:${item.publicId}`}>
+                                                {item.name} — {money(item.creditLimit ?? "0.00")}
+                                            </option>
+                                        ))}
+                                    </optgroup>
+                                    <optgroup label={t("loanWizard.drawdowns", "Bank drawdowns")}>
+                                        {drawdowns.map((item) => (
+                                            <option key={item.publicId} value={`drawdown:${item.publicId}`}>
+                                                #{item.id} {item.bankProfileId ? bankProfileNameById.get(item.bankProfileId) ?? "" : ""} {money(item.outstandingPrincipal ?? item.amount)}
+                                            </option>
+                                        ))}
+                                    </optgroup>
                                 </select>
                             </div>
 
@@ -227,6 +251,15 @@ export default function LoanWizard() {
                                     </div>
                                     <div className="text-muted-foreground">
                                         {t("loanWizard.nextDue", "Next due")}: {selectedDrawdown.nextDueDate ? date(selectedDrawdown.nextDueDate) : t("loanWizard.notScheduled", "Not scheduled")}
+                                    </div>
+                                </div>
+                            )}
+                            {selectedOwnCapital && (
+                                <div className="rounded-lg border bg-muted/30 p-4 text-sm">
+                                    <div className="font-medium">{t("loanWizard.selectedOwnCapital", "Selected own capital")}</div>
+                                    <div className="mt-1 text-muted-foreground">{selectedOwnCapital.name}</div>
+                                    <div className="text-muted-foreground">
+                                        {t("loanWizard.availableCapital", "Capital pool limit")}: {money(selectedOwnCapital.creditLimit ?? "0.00")}
                                     </div>
                                 </div>
                             )}
@@ -286,6 +319,8 @@ export default function LoanWizard() {
                                 <div className="mt-1 text-muted-foreground">
                                     {formData.bankLoanId
                                         ? t("loanWizard.review.withDrawdown", { defaultValue: "This loan will be created against drawdown #{{id}}.", id: formData.bankLoanId })
+                                        : formData.bankProfileId
+                                            ? t("loanWizard.review.withOwnCapital", { defaultValue: "This loan will use own capital from {{name}}.", name: selectedOwnCapital?.name ?? formData.bankProfileId })
                                         : t("loanWizard.review.withoutDrawdown", "This loan will be created without a matched drawdown and can be allocated later.")}
                                 </div>
                             </div>

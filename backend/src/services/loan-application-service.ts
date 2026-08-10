@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import Decimal from "decimal.js";
 import { db } from "../db";
-import { bankLoans, borrowers, loanFundingAllocations, loanSchedules, loans, users } from "../db/schema";
+import { bankLoans, bankProfiles, borrowers, loanFundingAllocations, loanSchedules, loans, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
 import {
@@ -21,6 +21,7 @@ type LoanRow = typeof loans.$inferSelect;
 export interface LoanDraftInput extends PublicLoanCalculationParams {
     borrowerPublicId: string;
     bankLoanPublicId?: string | null;
+    bankProfilePublicId?: string | null;
 }
 
 export type LoanDraftUpdateInput = Partial<LoanDraftInput>;
@@ -85,11 +86,30 @@ async function bankLoanFor(ctx: CommandContext, publicId?: string | null) {
     return row;
 }
 
+async function ownCapitalProfileFor(ctx: CommandContext, publicId?: string | null) {
+    if (!publicId) return null;
+    const actor = await actorFor(ctx);
+    if (actor && !canAccessTenantWideData({ role: actor.role ?? "viewer" })) {
+        throw new DomainError("FORBIDDEN", "Funding sources require tenant-wide access", 403);
+    }
+    const row = await db.query.bankProfiles.findFirst({
+        where: and(eq(bankProfiles.publicId, publicId), eq(bankProfiles.tenantId, ctx.tenantId)),
+    });
+    if (!row) throw new DomainError("BANK_PROFILE_NOT_FOUND", "Funding profile not found", 404);
+    if (row.status !== "active" || row.accountingMode !== "capital_pool") {
+        throw new DomainError("INVALID_CAPITAL_SOURCE", "Funding profile must be an active own-capital pool", 400);
+    }
+    return row;
+}
+
 export async function presentLoan(row: LoanRow) {
-    const [borrower, bankLoan] = await Promise.all([
+    const [borrower, bankLoan, fundingProfile] = await Promise.all([
         db.query.borrowers.findFirst({ where: and(eq(borrowers.id, row.borrowerId), eq(borrowers.tenantId, row.tenantId)) }),
         row.bankLoanId === null ? null : db.query.bankLoans.findFirst({
             where: and(eq(bankLoans.id, row.bankLoanId), eq(bankLoans.tenantId, row.tenantId)),
+        }),
+        row.fundingBankProfileId === null ? null : db.query.bankProfiles.findFirst({
+            where: and(eq(bankProfiles.id, row.fundingBankProfileId), eq(bankProfiles.tenantId, row.tenantId)),
         }),
     ]);
     const principal = serializeMoney(row.principalAmount);
@@ -99,6 +119,7 @@ export async function presentLoan(row: LoanRow) {
         publicId: row.publicId,
         borrowerPublicId: borrower?.publicId ?? null,
         bankLoanPublicId: bankLoan?.publicId ?? null,
+        bankProfilePublicId: fundingProfile?.publicId ?? null,
         principal,
         principalAmount: principal,
         interestRate,
@@ -139,10 +160,14 @@ export async function getLoanApplication(ctx: CommandContext, publicId: string) 
 }
 
 export async function createLoanDraft(ctx: CommandContext, input: LoanDraftInput) {
+    if (input.bankLoanPublicId && input.bankProfilePublicId) {
+        throw new DomainError("FUNDING_SOURCE_CONFLICT", "Choose either a drawdown or an own-capital profile", 400);
+    }
     const terms = normalizeTerms(input);
-    const [borrower, bankLoan] = await Promise.all([
+    const [borrower, bankLoan, fundingProfile] = await Promise.all([
         accessibleBorrower(ctx, input.borrowerPublicId),
         bankLoanFor(ctx, input.bankLoanPublicId),
+        ownCapitalProfileFor(ctx, input.bankProfilePublicId),
     ]);
     return db.transaction(async (tx) => {
         const row = await tx.insert(loans).values({
@@ -150,6 +175,7 @@ export async function createLoanDraft(ctx: CommandContext, input: LoanDraftInput
             ownerUserId: ctx.actorUserId,
             borrowerId: borrower.id,
             bankLoanId: bankLoan?.id ?? null,
+            fundingBankProfileId: fundingProfile?.id ?? null,
             principalAmount: terms.principal,
             interestRate: terms.interestRate,
             repaymentType: terms.repaymentType,
@@ -188,6 +214,15 @@ export async function updateLoanDraft(ctx: CommandContext, publicId: string, inp
     const bankLoan = input.bankLoanPublicId === undefined
         ? currentBankLoan
         : await bankLoanFor(ctx, input.bankLoanPublicId);
+    const currentFundingProfile = existing.fundingBankProfileId === null ? null : await db.query.bankProfiles.findFirst({
+        where: and(eq(bankProfiles.id, existing.fundingBankProfileId), eq(bankProfiles.tenantId, ctx.tenantId)),
+    });
+    const fundingProfile = input.bankProfilePublicId === undefined
+        ? currentFundingProfile
+        : await ownCapitalProfileFor(ctx, input.bankProfilePublicId);
+    if (bankLoan && fundingProfile) {
+        throw new DomainError("FUNDING_SOURCE_CONFLICT", "Choose either a drawdown or an own-capital profile", 400);
+    }
     const merged = normalizeTerms({
         principal: input.principal ?? serializeMoney(existing.principalAmount),
         interestRate: input.interestRate ?? serializeMoney(existing.interestRate),
@@ -203,6 +238,7 @@ export async function updateLoanDraft(ctx: CommandContext, publicId: string, inp
         const row = await tx.update(loans).set({
             borrowerId: borrower.id,
             bankLoanId: bankLoan?.id ?? null,
+            fundingBankProfileId: fundingProfile?.id ?? null,
             principalAmount: merged.principal,
             interestRate: merged.interestRate,
             repaymentType: merged.repaymentType,
@@ -244,6 +280,7 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
         }
 
         let fundingSource: typeof bankLoans.$inferSelect | null = null;
+        let ownCapitalProfile: typeof bankProfiles.$inferSelect | null = null;
         if (current.bankLoanId) {
             const lockedSource = await tx.execute(sql`SELECT id FROM bank_loans
                 WHERE id = ${current.bankLoanId} AND tenant_id = ${ctx.tenantId} FOR UPDATE`);
@@ -265,6 +302,30 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
             const sourceRemaining = new Decimal(fundingSource.amount).minus(sourceAllocation);
             if (new Decimal(current.principalAmount).gt(sourceRemaining)) {
                 throw new DomainError("ALLOCATION_EXCEEDS_DRAWDOWN", "Allocation exceeds remaining drawdown balance", 400, {
+                    sourceRemaining: serializeMoney(Decimal.max(0, sourceRemaining)),
+                });
+            }
+        }
+        if (current.fundingBankProfileId) {
+            const lockedSource = await tx.execute(sql`SELECT id FROM bank_profiles
+                WHERE id = ${current.fundingBankProfileId} AND tenant_id = ${ctx.tenantId} FOR UPDATE`);
+            if (!lockedSource.length) throw new DomainError("BANK_PROFILE_NOT_FOUND", "Funding profile not found", 404);
+            ownCapitalProfile = await tx.query.bankProfiles.findFirst({
+                where: and(eq(bankProfiles.id, current.fundingBankProfileId), eq(bankProfiles.tenantId, ctx.tenantId)),
+            }) ?? null;
+            if (!ownCapitalProfile) throw new DomainError("BANK_PROFILE_NOT_FOUND", "Funding profile not found", 404);
+            if (ownCapitalProfile.status !== "active" || ownCapitalProfile.accountingMode !== "capital_pool") {
+                throw new DomainError("INVALID_CAPITAL_SOURCE", "Funding profile must be an active own-capital pool", 400);
+            }
+            const sourceAllocation = await tx.select({
+                totalAllocated: sql<string>`coalesce(sum(${loanFundingAllocations.allocatedAmount}), 0)`,
+            }).from(loanFundingAllocations).where(and(
+                eq(loanFundingAllocations.bankProfileId, ownCapitalProfile.id),
+                eq(loanFundingAllocations.tenantId, ctx.tenantId),
+            )).then((rows) => new Decimal(rows[0]?.totalAllocated ?? 0));
+            const sourceRemaining = new Decimal(ownCapitalProfile.creditLimit ?? 0).minus(sourceAllocation);
+            if (new Decimal(current.principalAmount).gt(sourceRemaining)) {
+                throw new DomainError("ALLOCATION_EXCEEDS_CAPITAL", "Allocation exceeds remaining own-capital balance", 400, {
                     sourceRemaining: serializeMoney(Decimal.max(0, sourceRemaining)),
                 });
             }
@@ -305,11 +366,11 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
                 status: "pending",
             })));
         }
-        if (fundingSource) {
+        if (fundingSource || ownCapitalProfile) {
             await tx.insert(loanFundingAllocations).values({
                 tenantId: ctx.tenantId,
-                bankProfileId: fundingSource.bankProfileId,
-                bankLoanId: fundingSource.id,
+                bankProfileId: fundingSource?.bankProfileId ?? ownCapitalProfile!.id,
+                bankLoanId: fundingSource?.id ?? null,
                 loanId: current.id,
                 allocatedAmount: serializeMoney(current.principalAmount),
                 allocationDate: current.startDate ?? new Date().toISOString().slice(0, 10),

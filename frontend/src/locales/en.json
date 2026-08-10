@@ -84,7 +84,12 @@
         "borrower": "Borrower",
         "selectBorrower": "Select Borrower...",
         "drawdown": "Funding Drawdown (Optional)",
-        "noneDrawdown": "None (Unmatched / Own Capital)",
+        "fundingSource": "Funding Source (Optional)",
+        "ownCapital": "Own capital",
+        "drawdowns": "Bank drawdowns",
+        "noneDrawdown": "None (allocate later)",
+        "selectedOwnCapital": "Selected own capital",
+        "availableCapital": "Capital pool limit",
         "selectedDrawdown": "Selected drawdown",
         "source": "Source",
         "unknownSource": "Unknown source",
@@ -118,6 +123,7 @@
         },
         "review": {
             "withDrawdown": "This loan will be created against drawdown #{{id}}.",
+            "withOwnCapital": "This loan will use own capital from {{name}}.",
             "withoutDrawdown": "This loan will be created without a matched drawdown and can be allocated later."
         },
         "columns": {
@@ -289,6 +295,7 @@
         "deficitBalance": "Deficit balance",
         "sourceProfitability": "Source Profitability",
         "realizedRoi": "Realized ROI",
+        "enableOwnCapital": "Use as own capital (2% p.a.)",
         "addDrawdown": "Add Drawdown",
         "repaymentCycle": "Repayment Cycle",
         "fixedInstallmentOverride": "Fixed Installment Override",
@@ -331,6 +338,7 @@
         "errors": {
             "notFound": "Funding source not found.",
             "loadFund": "Unable to load the funding source right now.",
+            "enableOwnCapital": "Unable to enable this source as own capital.",
             "loadDrawdownSchedule": "Unable to load the drawdown schedule right now.",
             "completeDrawdown": "Please complete amount, interest rate, and start date before saving the drawdown.",
             "createDrawdown": "Unable to create the drawdown right now.",

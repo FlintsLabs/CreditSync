@@ -160,6 +160,7 @@ const loanOutput = z.object({
     ...publicEntity,
     borrowerPublicId: uuid.nullable().optional(),
     bankLoanPublicId: uuid.nullable().optional(),
+    bankProfilePublicId: uuid.nullable().optional(),
     principal: money,
     principalAmount: money,
     interestRate: money,
@@ -363,6 +364,7 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
     "loan.draft": z.object({
         borrowerPublicId: uuid,
         bankLoanPublicId: uuid.nullable().optional(),
+        bankProfilePublicId: uuid.nullable().optional(),
         ...loanTerms,
     }).strict(),
     "loan.activate": z.object({ loanPublicId: uuid }).strict(),

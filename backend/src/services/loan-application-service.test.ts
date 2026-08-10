@@ -255,6 +255,34 @@ describe("loan application service", () => {
         ))).toHaveLength(1);
     });
 
+    // Break caught: a capital-pool profile is accepted as a draft source but is not
+    // persisted, capacity-checked, or recorded as the loan's initial allocation.
+    integrationTest("activates a draft directly from available own capital", async () => {
+        const actor = await seedUser("tenant-a", "own-capital@example.test", "owner");
+        const ctx = context("tenant-a", actor.id);
+        const borrower = await createBorrower(ctx, { name: "Own Capital Borrower" });
+        const profile = await db.insert(bankProfiles).values({
+            tenantId: "tenant-a", name: "Owner Capital", type: "personal_savings",
+            accountingMode: "capital_pool", creditLimit: "1500.00",
+        }).returning().then((rows) => rows[0]!);
+
+        const draft = await createLoanDraft(ctx, {
+            borrowerPublicId: borrower.publicId,
+            bankProfilePublicId: profile.publicId,
+            ...terms,
+            principal: "1200.00",
+        });
+        expect(draft).toMatchObject({ bankProfilePublicId: profile.publicId, status: "draft" });
+
+        const activated = await activateLoan(ctx, draft.publicId);
+        expect(activated).toMatchObject({ bankProfilePublicId: profile.publicId, status: "active" });
+        const allocation = await db.query.loanFundingAllocations.findFirst({
+            where: and(eq(loanFundingAllocations.tenantId, "tenant-a"), eq(loanFundingAllocations.loanId,
+                (await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) }))!.id)),
+        });
+        expect(allocation).toMatchObject({ bankProfileId: profile.id, bankLoanId: null, allocatedAmount: "1200.00" });
+    });
+
     // Break caught: activating another draft ignores signed source allocations and overdraws one bank drawdown.
     integrationTest("rejects serial activation beyond net drawdown capacity and rolls back every activation effect", async () => {
         const actor = await seedUser("tenant-a", "serial-capacity@example.test", "owner");

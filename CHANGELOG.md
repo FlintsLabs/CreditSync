@@ -13,12 +13,15 @@
 - Added the additive own-capital opportunity-cost policy migration with a non-negative annual rate defaulting to 2.00%.
 - Added Decimal-based annual opportunity-cost calculation for capital-pool reporting without creating a cash expense.
 - Added an additive direct-capital funding-profile reference on loan drafts and active loans, mutually exclusive with a bank drawdown.
+- Added direct own-capital selection to loan drafts, activation-time capacity enforcement, an initial profile allocation, and the same public contract through REST and MCP.
 
 ### Fixed
 - Corrected the direct-own-capital plan's five-day 2% annual opportunity-cost example to ฿1.37 for a ฿5,000 allocation.
 - Corrected the direct-own-capital design and plan to persist a selected direct-capital profile on the loan draft before activation.
 
 ### Changed
+- Changed new personal funding sources to default to an own-capital pool with a configurable 2.00% annual non-cash opportunity-cost rate, and added an explicit conversion action for existing personal sources.
+- Changed the loan wizard to group own capital, bank drawdowns, and unallocated funding choices.
 - Changed the Borrowers list to a one-column mobile and two-column desktop grid using the privacy-aware identity card.
 - Changed borrower-card sizing to use the available list width, keeping a single card full-width in a narrow content panel while fitting additional columns only when they have room.
 - Changed the borrower-detail profile avatar to 72px on small screens and 80px from `md` upward, reducing visual weight without losing profile hierarchy.

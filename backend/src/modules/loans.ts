@@ -539,6 +539,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         body: t.Object({
             borrowerPublicId: t.String(),
             bankLoanPublicId: t.Optional(t.Nullable(t.String())),
+            bankProfilePublicId: t.Optional(t.Nullable(t.String())),
             principal: t.String(),
             interestRate: t.String(),
             repaymentType,
@@ -562,6 +563,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
         body: t.Object({
             borrowerPublicId: t.Optional(t.String()),
             bankLoanPublicId: t.Optional(t.Nullable(t.String())),
+            bankProfilePublicId: t.Optional(t.Nullable(t.String())),
             principal: t.Optional(t.String()), interestRate: t.Optional(t.String()),
             repaymentType: t.Optional(repaymentType), termMonths: t.Optional(t.Number()),
             totalInstallments: t.Optional(t.Number()), installmentAmount: t.Optional(t.String()),

@@ -108,6 +108,8 @@ export default function FundList() {
                 name: newName.trim(),
                 type: newType,
                 creditLimit: newLimit || "0",
+                accountingMode: newType === "personal" ? "capital_pool" : "external_liability",
+                opportunityCostRate: newType === "personal" ? "2.00" : "0.00",
             });
             resetCreateForm();
             await fetchFunds();
