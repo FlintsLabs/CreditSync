@@ -3,6 +3,7 @@
 ## v0.3.6 - 2026-08-10
 
 ### Added
+- Added the approved loan-list contract-summary design: localized repayment terms, clearly labelled start/creation dates, and removal of internal funding/profitability metrics from list cards.
 - Added the localized loan-detail disbursement ledger UI with draft, optional signed-upload evidence, posting, and compensating reversal controls.
 - Added fixed daily-repayment term summaries and clear own-capital versus bank-drawdown funding labels on loan details.
 - Added an approved Thai-first landing and login redesign specification focused on a trustworthy operations overview, clear Google sign-in entry, localization, accessibility, and verification boundaries.
