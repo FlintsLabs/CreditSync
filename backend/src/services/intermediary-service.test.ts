@@ -3,7 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { borrowers, intermediaries, intermediaryCollections, loans, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
-import { createIntermediary, createIntermediaryCollection, createIntermediaryRemittance, normalizeIntermediaryText, previewIntermediaryRemittance, saveRemittanceAllocations } from "./intermediary-service";
+import { createIntermediary, createIntermediaryCollection, createIntermediaryRemittance, normalizeIntermediaryText, postIntermediaryRemittance, previewIntermediaryRemittance, saveRemittanceAllocations } from "./intermediary-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
 
@@ -54,5 +54,13 @@ describe("intermediary collection service", () => {
         expect(exact).toMatchObject({ selectedTotal: "200.00", remainingBalance: "0.00", status: "ready" });
         const exactPreview = await previewIntermediaryRemittance(base, remittance.publicId);
         expect(exactPreview).toMatchObject({ version: 2, status: "ready", selectedTotal: "200.00", remainingBalance: "0.00", collectionPublicIds: [collectionA.publicId, collectionB.publicId] });
+
+        const posted = await postIntermediaryRemittance({ ...base, idempotencyKey: "post-r-1" }, remittance.publicId, { proposalPublicId: exactPreview.publicId, confirmed: true });
+        expect(posted).toMatchObject({ status: "posted", grossAmount: "200.00", selectedTotal: "200.00", remainingBalance: "0.00" });
+        const postedTransactions = await db.select().from(transactions).orderBy(transactions.transactionDate);
+        expect(postedTransactions.map((row) => [row.amount, row.transactionDate!.toISOString()])).toEqual([
+            ["75.00", "2026-08-07T07:51:00.000Z"],
+            ["125.00", "2026-08-08T08:37:00.000Z"],
+        ]);
     });
 });

@@ -2,12 +2,13 @@ import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, intermediaries, intermediaryCollections, intermediaryRemittanceAllocations, intermediaryRemittanceProposals, intermediaryRemittances, loans, users } from "../db/schema";
+import { borrowers, intermediaries, intermediaryCollections, intermediaryRemittanceAllocations, intermediaryRemittanceProposals, intermediaryRemittances, loans, paymentIntakes, users } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import { canAccessTenantWideData } from "../lib/access";
 import { parseMoney, serializeMoney } from "../lib/money";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
+import { postPayment, previewPaymentMatch } from "./payment-service";
 
 export function normalizeIntermediaryText(value: string) {
     return value.normalize("NFKC").toLocaleLowerCase("und")
@@ -210,4 +211,45 @@ export async function previewIntermediaryRemittance(ctx: CommandContext, publicI
         const proposal = await tx.insert(intermediaryRemittanceProposals).values({ tenantId: ctx.tenantId, remittanceId: remittance.id, version: (prior[0]?.version ?? 0) + 1, status, selectedTotal: serializeMoney(selection.selected), remainingBalance: remaining.toFixed(2), stateHash, warnings: remaining.isZero() ? [] : [{ code: remaining.gt(0) ? "REMITTANCE_UNDER_ALLOCATED" : "REMITTANCE_OVER_ALLOCATED", amount: remaining.abs().toFixed(2) }], expiresAt: new Date(Date.now() + 15 * 60_000), createdByUserId: ctx.actorUserId }).returning().then((rows) => rows[0]!);
         return { publicId: proposal.publicId, version: proposal.version, status, grossAmount: serializeMoney(remittance.grossAmount), selectedTotal: serializeMoney(selection.selected), remainingBalance: remaining.toFixed(2), warnings: proposal.warnings, expiresAt: proposal.expiresAt, collectionPublicIds: selection.collections.map((row: typeof intermediaryCollections.$inferSelect) => row.publicId) };
     });
+}
+
+export async function postIntermediaryRemittance(ctx: CommandContext, publicId: string, input: { proposalPublicId: string; confirmed: boolean }) {
+    if (!input.confirmed) throw new DomainError("REMITTANCE_CONFIRMATION_REQUIRED", "Explicit confirmation is required", 400);
+    const postKey = ctx.idempotencyKey?.trim();
+    if (!postKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Idempotency key is required", 400);
+    await actorFor(ctx);
+    const result = await db.transaction(async (tx) => {
+        const remittance = await tx.query.intermediaryRemittances.findFirst({ where: and(eq(intermediaryRemittances.tenantId, ctx.tenantId), eq(intermediaryRemittances.publicId, publicId)) });
+        if (!remittance) throw new DomainError("INTERMEDIARY_REMITTANCE_NOT_FOUND", "Remittance not found", 404);
+        await tx.execute(sql`SELECT id FROM intermediary_remittances WHERE id = ${remittance.id} FOR UPDATE`);
+        if (remittance.status === "posted") return presentRemittance(remittance, new Decimal(remittance.grossAmount));
+        const proposal = await tx.query.intermediaryRemittanceProposals.findFirst({ where: and(eq(intermediaryRemittanceProposals.tenantId, ctx.tenantId), eq(intermediaryRemittanceProposals.publicId, input.proposalPublicId), eq(intermediaryRemittanceProposals.remittanceId, remittance.id)) });
+        if (!proposal || proposal.status !== "ready" || proposal.expiresAt.getTime() < Date.now()) throw new DomainError("STALE_REMITTANCE_PROPOSAL", "Remittance proposal is not ready or has expired", 409);
+        const latest = await tx.select().from(intermediaryRemittanceProposals).where(and(eq(intermediaryRemittanceProposals.tenantId, ctx.tenantId), eq(intermediaryRemittanceProposals.remittanceId, remittance.id))).orderBy(desc(intermediaryRemittanceProposals.version)).then((rows) => rows[0]);
+        if (latest?.id !== proposal.id) throw new DomainError("STALE_REMITTANCE_PROPOSAL", "A newer remittance proposal exists", 409);
+        const selection = await remittanceSelection(tx, ctx.tenantId, remittance.id);
+        if (!selection.selected.eq(remittance.grossAmount) || selection.collections.length === 0) throw new DomainError("REMITTANCE_BALANCE_NOT_ZERO", "Selected collections must exactly equal the remittance", 409);
+        const currentHash = createHash("sha256").update(JSON.stringify({ remittance: remittance.publicId, gross: serializeMoney(remittance.grossAmount), collections: selection.collections.map((row: typeof intermediaryCollections.$inferSelect) => [row.publicId, serializeMoney(row.amount), row.status]) })).digest("hex");
+        if (currentHash !== proposal.stateHash) throw new DomainError("STALE_REMITTANCE_PROPOSAL", "Remittance proposal no longer matches current state", 409);
+        await tx.execute(sql`SELECT id FROM intermediary_collections WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(selection.collections.map((row: typeof intermediaryCollections.$inferSelect) => sql`${row.id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
+        for (const collection of selection.collections) {
+            if (collection.status !== "allocated") throw new DomainError("STALE_REMITTANCE_PROPOSAL", "A selected collection is no longer allocated", 409);
+            const [borrower, loan] = await Promise.all([
+                tx.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, ctx.tenantId), eq(borrowers.id, collection.borrowerId)) }),
+                tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, collection.loanId)) }),
+            ]);
+            if (!borrower || !loan) throw new DomainError("STALE_REMITTANCE_PROPOSAL", "Collection target no longer exists", 409);
+            const intake = await tx.insert(paymentIntakes).values({ tenantId: ctx.tenantId, ownerUserId: collection.ownerUserId, source: ctx.actorSource === "mcp" ? "mcp" : "web", status: "draft", amount: serializeMoney(collection.amount), receivedAt: collection.borrowerPaidAt, payerName: borrower.name, bankReference: collection.bankReference, bankReferenceHash: collection.bankReferenceHash, idempotencyKey: `intermediary:${collection.publicId}`, notes: `Settled by intermediary remittance ${remittance.publicId}`, originLoanId: loan.id, warnings: [], createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((rows) => rows[0]!);
+            await createAuditLog(tx, { ...auditContext(ctx), entityType: "payment_intake", entityId: intake.publicId, action: "created", payload: { amount: serializeMoney(collection.amount), receivedAt: collection.borrowerPaidAt.toISOString(), originLoanPublicId: loan.publicId, intermediaryCollectionPublicId: collection.publicId, remittancePublicId: remittance.publicId } });
+            const paymentProposal = await previewPaymentMatch(ctx, intake.publicId, { allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: loan.publicId, amount: serializeMoney(collection.amount) }] }, tx);
+            if (paymentProposal.status !== "ready") throw new DomainError("REMITTANCE_PAYMENT_NOT_READY", "A collection payment requires review", 409, { collectionPublicId: collection.publicId, warnings: paymentProposal.warnings });
+            await postPayment(ctx, intake.publicId, { proposalPublicId: paymentProposal.publicId }, tx);
+            await tx.update(intermediaryCollections).set({ status: "settled", postedPaymentIntakeId: intake.id, settledAt: new Date(), updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(eq(intermediaryCollections.id, collection.id));
+        }
+        await tx.update(intermediaryRemittanceProposals).set({ status: "stale" }).where(and(eq(intermediaryRemittanceProposals.remittanceId, remittance.id), sql`${intermediaryRemittanceProposals.id} <> ${proposal.id}`));
+        const posted = await tx.update(intermediaryRemittances).set({ status: "posted", postIdempotencyKey: postKey, postedByUserId: ctx.actorUserId, postedAt: new Date(), updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(eq(intermediaryRemittances.id, remittance.id)).returning().then((rows) => rows[0]!);
+        await createAuditLog(tx, { ...auditContext(ctx), entityType: "intermediary_remittance", entityId: posted.publicId, action: "posted", payload: { proposalPublicId: proposal.publicId, collectionPublicIds: selection.collections.map((row: typeof intermediaryCollections.$inferSelect) => row.publicId), amount: serializeMoney(posted.grossAmount) } });
+        return presentRemittance(posted, selection.selected);
+    });
+    return result;
 }

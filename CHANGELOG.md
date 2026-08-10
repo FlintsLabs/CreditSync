@@ -3,6 +3,7 @@
 ## v0.3.7 - 2026-08-11
 
 ### Added
+- Added atomic posting for exact intermediary remittance selections, creating one immutable loan payment per collection at the original borrower-to-intermediary payment timestamp.
 - Added idempotent intermediary remittance drafts with persisted explicit collection selection, exact Decimal balance summaries, exclusive active reservations, and versioned ready/needs-review previews.
 - Added manual intermediary creation/search/update and idempotent borrower-to-intermediary collection capture that preserves exact amounts and effective dates without posting a loan transaction.
 - Added the tenant-scoped intermediary, borrower-collection, grouped-remittance, explicit-allocation, and versioned-proposal ledger schema with exact-money checks, active reservation uniqueness, and immutable settled/post records.
