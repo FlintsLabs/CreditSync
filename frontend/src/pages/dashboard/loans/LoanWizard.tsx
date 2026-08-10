@@ -4,7 +4,7 @@ import { getStoredUser, isTenantAdminUser } from "../../../lib/session";
 import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
 import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/Card";
-import { ChevronRight, ChevronLeft, CheckCircle, AlertCircle } from "lucide-react";
+import { ChevronRight, ChevronLeft, CheckCircle, AlertCircle, CalendarDays } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { buildLoanTermsInput, formatMoneyExact } from "../../../lib/workflow-model";
 
@@ -336,7 +336,16 @@ export default function LoanWizard() {
                             </div>
                             <div className="grid gap-2">
                                 <label>{t("loanWizard.startDate", "Start Date")}</label>
-                                <Input type="date" value={formData.startDate} onChange={(e) => setFormData({ ...formData, startDate: e.target.value })} />
+                                <div className="relative">
+                                    <Input
+                                        type="date"
+                                        value={formData.startDate}
+                                        onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
+                                        onClick={(event) => event.currentTarget.showPicker?.()}
+                                        className="pr-11"
+                                    />
+                                    <CalendarDays className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+                                </div>
                             </div>
                             {formData.repaymentType === "daily" && (
                                 <>
