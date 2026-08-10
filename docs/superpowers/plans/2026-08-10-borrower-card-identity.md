@@ -54,8 +54,8 @@ import { formatThaiNationalId, maskThaiNationalId } from "../src/lib/thai-nation
 
 describe("Thai national-ID presentation", () => {
     test("formats and masks a 13-digit ID without changing its raw value", () => {
-        expect(formatThaiNationalId("3160500322370")).toBe("3-1605-00322-37-0");
-        expect(maskThaiNationalId("3160500322370")).toBe("3-1605-•••••-37-0");
+        expect(formatThaiNationalId("1234567890123")).toBe("1-2345-67890-12-3");
+        expect(maskThaiNationalId("1234567890123")).toBe("1-2345-•••••-12-3");
     });
 
     test("returns null for absent, non-numeric, or wrong-length values", () => {
@@ -125,10 +125,10 @@ test("masks the displayed ID and copies only the raw full value", async () => {
     Object.assign(navigator, { clipboard: { writeText } });
     render(<MemoryRouter><BorrowerCard borrower={borrower} onEdit={vi.fn()} /></MemoryRouter>);
 
-    expect(screen.getByText("3-1605-•••••-37-0")).toBeInTheDocument();
-    expect(screen.queryByText("3-1605-00322-37-0")).not.toBeInTheDocument();
+    expect(screen.getByText("1-2345-•••••-12-3")).toBeInTheDocument();
+    expect(screen.queryByText("1-2345-67890-12-3")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /copy id card/i }));
-    expect(writeText).toHaveBeenCalledWith("3160500322370");
+    expect(writeText).toHaveBeenCalledWith("1234567890123");
     expect(await screen.findByRole("status")).toHaveTextContent(/copied/i);
 });
 
@@ -267,4 +267,3 @@ git commit -m "feat: integrate privacy-aware borrower cards"
 - **Spec coverage:** Task 1 covers pure ID formatting/masking; Task 2 covers avatar hierarchy, aliases, accessibility, localized copy feedback, missing-ID behavior, and raw-copy safety; Task 3 covers full-width mobile, two columns from `md`, retained actions, documentation, and three-width visual verification.
 - **Placeholder scan:** No incomplete tasks, generic test instructions, or undefined interfaces remain.
 - **Type consistency:** Task 1 exports the two exact utility names consumed in Task 2. Task 2 exports `BorrowerCard`, which Task 3 imports. `BorrowerList` continues to own `handleEdit` and only delegates rendering to the card.
-
