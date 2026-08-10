@@ -108,6 +108,7 @@ The web app exposes `/payments` as the human review inbox. It persists and shows
 - define funding sources / bank profiles
 - model upstream bank borrowing and downstream borrower lending separately
 - prepare data structure for ROI and traceability analysis
+- show each source's net borrower-loan allocations, including direct own-capital allocations and allocations routed through bank drawdowns
 
 ### 6. File and Bot Integration
 
@@ -286,6 +287,8 @@ The frontend uses `/api` as the API base path and expects Vite proxy configurati
 Protected app navigation now keeps the dashboard overview at `/dashboard`, while resource sections live at first-level routes such as `/funds/:id`, `/borrowers/:id`, and `/loans/:id`. URL-facing resource identifiers are moving to `uuidv7`-style public IDs, while internal numeric IDs remain in the database for joins and accounting logic.
 
 Loan agreement creation is draft-first. `POST /api/loans` accepts a borrower and either an optional drawdown UUID (`bankLoanPublicId`) or an active own-capital profile UUID (`bankProfilePublicId`), never both, and returns a draft without schedules. Draft terms can be changed with `PUT /api/loans/:id`; `POST /api/loans/:id/activate` locks the terms, checks the selected source's signed remaining capacity, then creates schedules and exactly one initial funding allocation. Repeating activation is safe and returns the already-active agreement. The web wizard groups own capital, bank drawdowns, and unallocated loans; an existing personal source can be explicitly converted to an own-capital pool at its detail page, with a default non-cash 2.00% annual opportunity-cost rate.
+
+Funding-source detail pages expose `GET /api/bank-profiles/:id/funding-usage`. The page shows current net borrower-loan allocations for the source and can include settled loans for historical review. Own-capital pools use their credit limit less net allocations as available capital; they allocate directly to borrower loans and intentionally do not create bank-drawdown records. External-liability sources retain drawdown-based available credit while showing the borrower loans funded through their drawdowns.
 
 Floating loans can instead use a daily-interest policy: a fixed baht rate per ฿1,000 per day or a daily percentage. The wizard makes the rate mode and first-day treatment explicit. Daily accruals use Bangkok calendar dates and Decimal rounding; payments apply accrued interest before principal, and a first-day deduction is recorded as a separate immutable disbursement amount.
 

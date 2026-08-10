@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui
 import { useTranslation } from "react-i18next";
 import { api } from "../../../lib/api";
 import { Input } from "../../../components/ui/Input";
+import { formatMoneyExact } from "../../../lib/workflow-model";
 
 interface BankProfile {
     id: number;
@@ -139,6 +140,31 @@ interface FundRolloverEntry {
     note: string | null;
 }
 
+interface FundingUsageAllocation {
+    loanPublicId: string;
+    borrowerPublicId: string | null;
+    borrowerName: string | null;
+    loanStatus: string;
+    principalAmount: string;
+    outstandingPrincipal: string;
+    netAllocatedAmount: string;
+    latestAllocationDate: string;
+    fundingRoutes: Array<{
+        type: "direct" | "drawdown";
+        bankLoanPublicId: string | null;
+        netAllocatedAmount: string;
+    }>;
+}
+
+interface FundingUsage {
+    accountingMode: string;
+    creditLimit: string;
+    netAllocatedPrincipal: string;
+    availableAmount: string;
+    utilizationPercent: string;
+    allocations: FundingUsageAllocation[];
+}
+
 export default function FundDetail() {
     const { t, i18n } = useTranslation();
     const navigate = useNavigate();
@@ -154,6 +180,8 @@ export default function FundDetail() {
     const [selectedAllocations, setSelectedAllocations] = useState<Allocation[]>([]);
     const [settlementSummary, setSettlementSummary] = useState<SettlementSummary | null>(null);
     const [sourceProfitability, setSourceProfitability] = useState<SourceProfitability | null>(null);
+    const [fundingUsage, setFundingUsage] = useState<FundingUsage | null>(null);
+    const [includeSettledFunding, setIncludeSettledFunding] = useState(false);
     const [rollovers, setRollovers] = useState<FundRolloverEntry[]>([]);
     const [selectedDrawdownProfitability, setSelectedDrawdownProfitability] = useState<DrawdownProfitability | null>(null);
     const [selectedDrawdownAllocationState, setSelectedDrawdownAllocationState] = useState<DrawdownAllocationState | null>(null);
@@ -187,13 +215,14 @@ export default function FundDetail() {
     const targetScheduleId = searchParams.get("scheduleId");
 
     const loadFund = async (fundId: string) => {
-        const [fundRes, loansRes, profilesRes, settlementRes, profitabilityRes, rolloversRes] = await Promise.all([
+        const [fundRes, loansRes, profilesRes, settlementRes, profitabilityRes, rolloversRes, usageRes] = await Promise.all([
             api.get(`/bank-profiles/${fundId}`),
             api.get("/bank-loans", { params: { bankProfileId: fundId } }),
             api.get("/bank-profiles"),
             api.get(`/bank-profiles/${fundId}/settlement-summary`),
             api.get(`/bank-profiles/${fundId}/profitability`),
             api.get("/fund-rollovers", { params: { bankProfileId: fundId } }),
+            api.get(`/bank-profiles/${fundId}/funding-usage`),
         ]);
 
         setFund(fundRes.data ?? null);
@@ -202,6 +231,14 @@ export default function FundDetail() {
         setSettlementSummary(settlementRes.data ?? null);
         setSourceProfitability(profitabilityRes.data ?? null);
         setRollovers(rolloversRes.data ?? []);
+        setFundingUsage(usageRes.data ?? null);
+    };
+
+    const loadFundingUsage = async (fundId: string, includeSettled: boolean) => {
+        const response = await api.get(`/bank-profiles/${fundId}/funding-usage`, {
+            params: includeSettled ? { includeSettled: "true" } : undefined,
+        });
+        setFundingUsage(response.data ?? null);
     };
 
     useEffect(() => {
@@ -352,7 +389,7 @@ export default function FundDetail() {
                 installmentAmount: drawdownInstallmentAmount ? Number(drawdownInstallmentAmount) : undefined,
             });
 
-            await loadFund(String(fund.id));
+            await loadFund(fund.publicId ?? id ?? String(fund.id));
             resetDrawdownForm();
         } catch (error) {
             console.error("Failed to create drawdown", error);
@@ -446,7 +483,7 @@ export default function FundDetail() {
                 note: rolloverNote || undefined,
             });
 
-            await loadFund(String(fund.id));
+            await loadFund(fund.publicId ?? id ?? String(fund.id));
             setRolloverTargetProfileId("");
             setRolloverAmount("");
             setRolloverType("surplus_transfer");
@@ -459,10 +496,10 @@ export default function FundDetail() {
         }
     };
 
-    const fundLimit = Number(fund?.creditLimit ?? 0);
-    const utilizedAmount = bankLoans.reduce((sum, loan) => sum + Number(loan.amount ?? 0), 0);
-    const availableAmount = Math.max(0, fundLimit - utilizedAmount);
-    const utilizationRate = fundLimit > 0 ? (utilizedAmount / fundLimit) * 100 : 0;
+    const fundLimit = fundingUsage?.creditLimit ?? fund?.creditLimit ?? "0.00";
+    const availableAmount = fundingUsage?.availableAmount ?? "0.00";
+    const allocatedAmount = fundingUsage?.netAllocatedPrincipal ?? "0.00";
+    const utilizationRate = Number(fundingUsage?.utilizationPercent ?? "0.00");
     const rolloverTargets = useMemo(
         () => allFunds.filter((item) => item.id !== fund?.id),
         [allFunds, fund?.id]
@@ -536,17 +573,24 @@ export default function FundDetail() {
                     <div className="grid gap-4 md:grid-cols-3">
                         <Card>
                             <CardHeader className="pb-2">
-                                <CardTitle className="text-sm font-medium text-muted-foreground">{t("fund_detail.available_credit", "Available Credit")}</CardTitle>
+                                <CardTitle className="text-sm font-medium text-muted-foreground">
+                                    {fund.accountingMode === "capital_pool"
+                                        ? t("fundDetail.availableOwnCapital", "Available own capital")
+                                        : t("fund_detail.available_credit", "Available Credit")}
+                                </CardTitle>
                             </CardHeader>
                             <CardContent>
                                 <div className="flex items-center gap-3">
                                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
                                         {fund.type === "bank" ? <Building2 className="h-5 w-5" /> : <Wallet className="h-5 w-5" />}
                                     </div>
-                                    <div className="text-3xl font-bold">฿{availableAmount.toLocaleString(i18n.language)}</div>
+                                    <div className="text-3xl font-bold">{formatMoneyExact(availableAmount, i18n.language)}</div>
                                 </div>
                                 <div className="mt-3 text-xs text-muted-foreground">
-                                    {t("funds.limit")}: ฿{fundLimit.toLocaleString(i18n.language)}
+                                    {t("funds.limit")}: {formatMoneyExact(fundLimit, i18n.language)}
+                                </div>
+                                <div className="mt-1 text-xs text-muted-foreground">
+                                    {t("fundDetail.allocatedToLoans", "Allocated to borrower loans")}: {formatMoneyExact(allocatedAmount, i18n.language)}
                                 </div>
                                 <div className="mt-3 h-2 w-full rounded-full bg-muted">
                                     <div className="h-2 rounded-full bg-primary" style={{ width: `${Math.min(utilizationRate, 100)}%` }} />
@@ -624,7 +668,74 @@ export default function FundDetail() {
                         </Card>
                     </div>
 
+                    <Card>
+                        <CardHeader className="pb-2">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div>
+                                    <CardTitle>{t("fundDetail.fundingUsageTitle", "Loans using this funding source")}</CardTitle>
+                                    <p className="text-sm text-muted-foreground">{t("fundDetail.fundingUsageDescription", "Net funding allocated to each borrower loan.")}</p>
+                                </div>
+                                <label className="flex items-center gap-2 text-sm">
+                                    <input
+                                        type="checkbox"
+                                        checked={includeSettledFunding}
+                                        onChange={(event) => {
+                                            const next = event.target.checked;
+                                            setIncludeSettledFunding(next);
+                                            if (id) void loadFundingUsage(id, next);
+                                        }}
+                                    />
+                                    {t("fundDetail.includeSettledLoans", "Include settled loans")}
+                                </label>
+                            </div>
+                        </CardHeader>
+                        <CardContent>
+                            {!fundingUsage ? (
+                                <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">{t("common.loading", "Loading...")}</div>
+                            ) : fundingUsage.allocations.length === 0 ? (
+                                <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">{t("fundDetail.noFundingUsage", "No borrower loans are currently allocated from this funding source.")}</div>
+                            ) : (
+                                <div className="overflow-x-auto">
+                                    <table className="w-full min-w-[760px] text-sm">
+                                        <thead><tr className="border-b text-left">
+                                            <th className="py-2 pr-3">{t("fundDetail.contract", "Contract")}</th>
+                                            <th className="py-2 pr-3">{t("fundDetail.borrower", "Borrower")}</th>
+                                            <th className="py-2 pr-3">{t("fundDetail.fundingRoute", "Funding route")}</th>
+                                            <th className="py-2 pr-3 text-right">{t("fundDetail.netAllocated", "Net allocated")}</th>
+                                            <th className="py-2 pr-3">{t("fundDetail.latestAllocation", "Latest allocation")}</th>
+                                            <th className="py-2 pr-3 text-right">{t("loanWizard.outstandingPrincipal", "Outstanding principal")}</th>
+                                            <th className="py-2">{t("common.status", "Status")}</th>
+                                        </tr></thead>
+                                        <tbody>{fundingUsage.allocations.map((allocation) => {
+                                            const routes = allocation.fundingRoutes;
+                                            const routeLabel = routes.length !== 1
+                                                ? t("fundDetail.multipleFundingRoutes", "Multiple funding routes")
+                                                : routes[0]?.type === "direct"
+                                                    ? t("fundDetail.directAllocation", "Direct own-capital allocation")
+                                                    : t("fundDetail.drawdownAllocation", { defaultValue: "Drawdown {{id}}", id: routes[0]?.bankLoanPublicId ?? "-" });
+                                            return <tr key={allocation.loanPublicId} className="border-b last:border-0">
+                                                <td className="py-3 pr-3"><Link className="text-primary hover:underline" to={`/loans/${allocation.loanPublicId}`}>{allocation.loanPublicId}</Link></td>
+                                                <td className="py-3 pr-3">{allocation.borrowerName ?? "-"}</td>
+                                                <td className="py-3 pr-3">{routeLabel}</td>
+                                                <td className="py-3 pr-3 text-right">{formatMoneyExact(allocation.netAllocatedAmount, i18n.language)}</td>
+                                                <td className="py-3 pr-3">{allocation.latestAllocationDate}</td>
+                                                <td className="py-3 pr-3 text-right">{formatMoneyExact(allocation.outstandingPrincipal, i18n.language)}</td>
+                                                <td className="py-3 capitalize">{allocation.loanStatus}</td>
+                                            </tr>;
+                                        })}</tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+
                     <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
+                        {fund.accountingMode === "capital_pool" ? (
+                            <Card>
+                                <CardHeader className="pb-2"><CardTitle className="text-sm font-medium">{t("fundDetail.directCapitalTitle", "Direct own-capital allocation")}</CardTitle></CardHeader>
+                                <CardContent><p className="text-sm text-muted-foreground">{t("fundDetail.directCapitalDescription", "Own capital is allocated directly to borrower loans and does not create a bank drawdown.")}</p></CardContent>
+                            </Card>
+                        ) : (
                         <Card>
                             <CardHeader className="pb-2">
                                 <div className="flex items-center justify-between gap-4">
@@ -717,6 +828,7 @@ export default function FundDetail() {
                                 )}
                             </CardContent>
                         </Card>
+                        )}
 
                         <Card>
                             <CardHeader className="pb-2">
