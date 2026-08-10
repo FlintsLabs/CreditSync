@@ -6,6 +6,7 @@
 - Added an approved borrower-card identity design specification covering responsive one/two-column layout, sensitive Thai-ID masking, full-value copy behavior, avatar hierarchy, localization, accessibility, and verification requirements.
 - Added a task-by-task implementation plan for the approved borrower-card identity design.
 - Added Thai national-ID formatting and masking utilities for privacy-aware borrower-list presentation.
+- Added a responsive borrower identity card with masked ID display, an accessible full-value copy action, and localized copy feedback.
 
 ### Fixed
 - Replaced customer national-ID examples in the borrower-card implementation plan with synthetic test data so sensitive identity data is not committed to source control.

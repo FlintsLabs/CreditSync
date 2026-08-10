@@ -196,6 +196,9 @@
         "emptyTitle": "No Borrowers Found",
         "emptyDescription": "Get started by creating your first borrower profile to track loans and credit scores.",
         "noIdCard": "No ID Card",
+        "copyIdCard": "Copy ID card for {{name}}",
+        "idCardCopied": "ID card copied.",
+        "idCardCopyFailed": "Unable to copy ID card.",
         "phone": "Phone",
         "creditScore": "Credit Score",
         "viewMap": "View Map Location"
