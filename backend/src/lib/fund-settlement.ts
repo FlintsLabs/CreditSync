@@ -1,4 +1,5 @@
 import { and, eq, inArray } from "drizzle-orm";
+import Decimal from "decimal.js";
 import { db } from "../db";
 import {
     bankLoanRepayments,
@@ -9,6 +10,26 @@ import {
     loans,
     transactions,
 } from "../db/schema";
+
+export function calculateOpportunityCost(input: {
+    principal: string;
+    annualRate: string;
+    allocationDate: string;
+    asOfDate: string;
+}) {
+    const start = Date.parse(`${input.allocationDate}T00:00:00Z`);
+    const end = Date.parse(`${input.asOfDate}T00:00:00Z`);
+    const elapsedDays = Number.isFinite(start) && Number.isFinite(end)
+        ? Math.max(0, Math.floor((end - start) / 86_400_000))
+        : 0;
+    return new Decimal(input.principal)
+        .times(input.annualRate)
+        .div(100)
+        .times(elapsedDays)
+        .div(365)
+        .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+        .toFixed(2);
+}
 
 interface AllocationLike {
     loanId: number;

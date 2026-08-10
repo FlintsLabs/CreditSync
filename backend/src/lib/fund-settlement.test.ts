@@ -1,7 +1,16 @@
 import { describe, expect, it } from "bun:test";
-import { computeFundSettlementSummary } from "./fund-settlement";
+import { calculateOpportunityCost, computeFundSettlementSummary } from "./fund-settlement";
 
 describe("Fund Settlement Summary Calculator", () => {
+    it("calculates a 2% annual own-capital opportunity cost without cash side effects", () => {
+        expect(calculateOpportunityCost({
+            principal: "5000.00",
+            annualRate: "2.00",
+            allocationDate: "2026-08-06",
+            asOfDate: "2026-08-11",
+        })).toBe("1.37");
+    });
+
     it("should calculate realized spread correctly for a simple fully-funded case", () => {
         // Scenario: 
         // 1 bank loan of 10,000 at 5% interest
