@@ -105,6 +105,18 @@ describe("loan disbursement view", () => {
         expect(await screen.findByText(/reversed/i)).toBeInTheDocument();
     });
 
+    it("shows exact gross and attributed amounts for grouped posted and reversed history", async () => {
+        const groupedHistory = [
+            ledger().events[0],
+            { ...ledger().events[0], publicId: REVERSAL_ID, status: "reversed", reversedEventPublicId: EVENT_ID, evidenceFilePublicIds: [] },
+        ];
+        vi.mocked(api.get).mockResolvedValue({ data: ledger(groupedHistory) });
+
+        render(<LoanDisbursements loanPublicId={LOAN_ID} />);
+
+        expect(await screen.findAllByText(/Grouped transfer: gross THB\s+700\.00, attributed to this loan THB\s+600\.00\./)).toHaveLength(2);
+    });
+
     it("keeps an unsafe-integer disbursement amount exact in the draft payload", async () => {
         const exactAmount = "9007199254740992.01";
         vi.mocked(api.get).mockResolvedValue({ data: ledger([]) });
