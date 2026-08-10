@@ -542,8 +542,11 @@
         }
     },
     "dashboardPage": {
-        "title": "Operations Dashboard",
-        "description": "Incoming cash, outgoing obligations, and funding gaps in one view",
+        "eyebrow": "Daily command center",
+        "title": "Today’s operations",
+        "description": "See cash movement, urgent work, and the next repayments that need attention.",
+        "live": "Live",
+        "installment": "Installment #{{number}}",
         "drawdownLabel": "Drawdown #{{id}}",
         "nextDue": "Next due {{date}}",
         "available": "Available",
@@ -575,9 +578,22 @@
             "openMatchingWorkspace": "Open Matching Workspace",
             "recordPayment": "Record Payment",
             "recordThisPayment": "Record This Payment",
-            "recordFundRepayment": "Record Fund Repayment"
+            "recordFundRepayment": "Record Fund Repayment",
+            "retry": "Try again",
+            "viewAll": "View all {{count}}",
+            "showLess": "Show less",
+            "openDetails": "Open financial details"
         },
         "sections": {
+            "cashToday": "Cash due today",
+            "cashTodayDescription": "Scheduled inflow and obligations as of today",
+            "priorities": "Needs attention",
+            "prioritiesDescription": "Ordered by operational urgency",
+            "borrowerDueDescription": "Borrower installments due now",
+            "fundDueDescription": "Fund obligations due now",
+            "details": "Financial details",
+            "detailsDescription": "Funding, reconciliation, and profitability signals",
+            "profitability": "Profitability",
             "fundingAlerts": "Funding Alerts",
             "underfundedLoans": "Underfunded Loans",
             "unallocatedDrawdowns": "Unallocated Drawdowns",
@@ -586,6 +602,7 @@
             "fundDueQueue": "Fund Due Queue"
         },
         "empty": {
+            "noPriorities": "Everything urgent is clear. No action is needed right now.",
             "noUnderfundedLoans": "No underfunded loans right now.",
             "noUnallocatedDrawdowns": "No unallocated drawdowns right now.",
             "noBorrowerDue": "No borrower installments are due right now.",
@@ -600,7 +617,18 @@
             "missingBorrowerSlip": "Borrower payments missing slip"
         },
         "errors": {
-            "load": "Unable to load the live dashboard right now."
+            "load": "Unable to load the live dashboard right now.",
+            "section": "This section could not be loaded."
+        },
+        "status": { "overdue": "Overdue", "pending": "Pending", "due": "Due", "paid": "Paid", "partial": "Partially paid", "scheduled": "Scheduled" },
+        "priorities": {
+            "overdueBorrowers": { "title": "Collect overdue borrower payments", "description": "Open a repayment prefill and record collection" },
+            "overdueFunds": { "title": "Pay overdue fund obligations", "description": "Review the fund schedule before recording payment" },
+            "underfundedLoans": { "title": "Resolve underfunded loans", "description": "Match approved principal to an available source" },
+            "missingFundSchedule": { "title": "Link fund repayments", "description": "Resolve repayments without a schedule reference" },
+            "unallocatedDrawdowns": { "title": "Allocate available drawdowns", "description": "Put unused source capital to work" },
+            "pendingReviews": { "title": "Review pending payment evidence", "description": "Check bank imports and LINE/OCR intake" },
+            "missingSlips": { "title": "Complete missing payment slips", "description": "Add or verify borrower payment evidence" }
         }
     },
     "reconciliation": {

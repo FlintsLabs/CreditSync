@@ -1,127 +1,88 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { AlertTriangle, ArrowRightLeft, CalendarClock, CreditCard, DollarSign, Users } from "lucide-react";
-import { api } from "../../lib/api";
-import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/Card";
-import { Button } from "../../components/ui/Button";
-import { Badge } from "../../components/ui/badge";
+import { AlertCircle, ArrowRight, BanknoteArrowDown, BanknoteArrowUp, CircleDollarSign, RefreshCw, ShieldAlert, Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { api } from "../../lib/api";
+import { formatMoneyExact } from "../../lib/workflow-model";
 import { getStoredUser, isTenantAdminUser } from "../../lib/session";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/Button";
+import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/Card";
+import {
+    buildDashboardPriorities,
+    compareMoney,
+    type BorrowerDueItem,
+    type DashboardPriority,
+    type DashboardSummary,
+    type FundDueItem,
+    type FundingAlerts,
+    type ProfitabilitySummary,
+    type ReconciliationStatus,
+} from "./dashboard-model";
 
-interface DashboardSummary {
-    dueFromBorrowersToday: number;
-    dueToFundsToday: number;
-    netPositionToday: number;
-    overdueBorrowerCount: number;
-    overdueFundCount: number;
-    underfundedLoanCount: number;
-    unallocatedDrawdownCount: number;
+type Resource<T> = { data: T | null; loading: boolean; error: boolean };
+
+function useDashboardResource<T>(path: string, fallback: T) {
+    const fallbackRef = useRef(fallback);
+    const [state, setState] = useState<Resource<T>>({ data: null, loading: true, error: false });
+    useEffect(() => {
+        let active = true;
+        void api.get(path).then((response) => {
+            if (active) setState({ data: response.data ?? fallbackRef.current, loading: false, error: false });
+        }).catch((error) => {
+            console.error(`Failed to load dashboard resource ${path}`, error);
+            if (active) setState({ data: null, loading: false, error: true });
+        });
+        return () => { active = false; };
+    }, [path]);
+    const retry = useCallback(async () => {
+        setState((current) => ({ ...current, loading: true, error: false }));
+        try {
+            const response = await api.get(path);
+            setState({ data: response.data ?? fallbackRef.current, loading: false, error: false });
+        } catch (error) {
+            console.error(`Failed to load dashboard resource ${path}`, error);
+            setState((current) => ({ ...current, loading: false, error: true }));
+        }
+    }, [path]);
+    return { ...state, retry };
 }
 
-interface BorrowerDueItem {
-    scheduleId: number;
-    schedulePublicId?: string;
-    dueDate: string;
-    remainingDue: string;
-    penaltyDue?: string;
-    totalDueNow?: string;
-    overdueDays?: number;
-    status: string;
-    installmentNo: number;
-    loanId: number;
-    loanPublicId?: string;
-    borrowerName: string;
-    repaymentType: string;
+function Skeleton({ className = "h-8 w-28" }: { className?: string }) {
+    return <div className={`animate-pulse rounded-md bg-muted ${className}`} aria-hidden="true" />;
 }
 
-interface FundDueItem {
-    scheduleId: number;
-    schedulePublicId?: string;
-    dueDate: string;
-    remainingDue: string;
-    penaltyDue?: string;
-    totalDueNow?: string;
-    overdueDays?: number;
-    status: string;
-    installmentNo: number;
-    bankLoanId: number;
-    bankLoanPublicId?: string;
-    bankProfileId: number | null;
-    bankProfilePublicId?: string | null;
-    note: string | null;
+function SectionError({ retry }: { retry: () => Promise<void> }) {
+    const { t } = useTranslation();
+    return <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-destructive/25 bg-destructive/5 p-4 text-sm">
+        <span className="flex items-center gap-2"><AlertCircle className="h-4 w-4 text-destructive" />{t("dashboardPage.errors.section")}</span>
+        <Button size="sm" variant="outline" onClick={() => void retry()}><RefreshCw className="mr-2 h-3.5 w-3.5" />{t("dashboardPage.actions.retry")}</Button>
+    </div>;
 }
 
-interface FundingAlerts {
-    underfundedLoans: Array<{
-        id: number;
-        publicId?: string;
-        borrowerName: string;
-        principalAmount: number;
-        fundedAmount: number;
-        gap: number;
-    }>;
-    unallocatedDrawdowns: Array<{
-        id: number;
-        publicId?: string;
-        bankProfileId: number | null;
-        bankProfilePublicId?: string | null;
-        totalAmount: number;
-        allocatedAmount: number;
-        availableAmount: number;
-        nextDueDate: string | null;
-    }>;
+function MoneyMetric({ label, value, icon, tone = "default" }: { label: string; value: string; icon: ReactNode; tone?: "default" | "positive" | "negative" }) {
+    const { i18n } = useTranslation();
+    const color = tone === "positive" ? "text-emerald-500" : tone === "negative" ? "text-destructive" : "text-foreground";
+    return <div className="min-w-0 rounded-xl border border-border/70 bg-background/45 p-4">
+        <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">{icon}{label}</div>
+        <div className={`mt-2 truncate text-xl font-semibold tabular-nums sm:text-2xl ${color}`}>{formatMoneyExact(value, i18n.language)}</div>
+    </div>;
 }
 
-interface ReconciliationStatus {
-    unreconciledBorrowerPayments: number;
-    recordedFundRepayments: number;
-    fundRepaymentsMissingScheduleLink: number;
-    pendingBankImports: number;
-    pendingManualReviews: number;
-    borrowerPaymentsMissingSlip: number;
+function PriorityRow({ item, onOpen }: { item: DashboardPriority; onOpen: () => void }) {
+    const { t } = useTranslation();
+    const tone = item.tone === "danger" ? "border-destructive/30 bg-destructive/5" : item.tone === "warning" ? "border-amber-500/30 bg-amber-500/5" : "border-primary/20 bg-primary/5";
+    return <button type="button" onClick={onOpen} className={`group flex w-full items-center gap-3 rounded-xl border p-3 text-left transition hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-sm ${tone}`}>
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-background font-semibold tabular-nums shadow-sm">{item.count}</span>
+        <span className="min-w-0 flex-1"><span className="block font-medium">{t(`dashboardPage.priorities.${item.key}.title`)}</span><span className="block truncate text-xs text-muted-foreground">{t(`dashboardPage.priorities.${item.key}.description`)}</span></span>
+        <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground transition group-hover:translate-x-0.5 group-hover:text-foreground" />
+    </button>;
 }
 
-interface ProfitabilitySummary {
-    borrowerRevenueCollected: number;
-    fundCostPaid: number;
-    realizedSpread: number;
-    unrealizedSpread: number;
-    deployedPrincipal: number;
-    netCashPosition: number;
-    realizedRoiPercent: number;
-    carryForwardAvailable: number;
-}
-
-function formatCurrency(value: number, locale?: string) {
-    return `฿${value.toLocaleString(locale, {
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 2,
-    })}`;
-}
-
-function isPastDue(date: string) {
-    return date < new Date().toISOString().slice(0, 10);
-}
-
-function QueueBadge({ dueDate, status }: { dueDate: string; status: string }) {
-    return (
-        <Badge variant={isPastDue(dueDate) ? "destructive" : "secondary"}>
-            {status}
-        </Badge>
-    );
-}
-
-function openBorrowerRepayment(navigate: ReturnType<typeof useNavigate>, item: BorrowerDueItem) {
-    navigate(`/transactions/new?loanId=${item.loanPublicId ?? item.loanId}&scheduleId=${item.schedulePublicId ?? item.scheduleId}`);
-}
-
-function openFundRepayment(navigate: ReturnType<typeof useNavigate>, item: FundDueItem) {
-    if (!item.bankProfilePublicId && !item.bankProfileId) {
-        navigate("/funds");
-        return;
-    }
-
-    navigate(`/funds/${item.bankProfilePublicId ?? item.bankProfileId}?bankLoanId=${item.bankLoanPublicId ?? item.bankLoanId}&scheduleId=${item.schedulePublicId ?? item.scheduleId}`);
+function StatusBadge({ status }: { status: string }) {
+    const { t } = useTranslation();
+    const overdue = status === "overdue";
+    return <Badge variant={overdue ? "destructive" : "secondary"}>{t(`dashboardPage.status.${status}`, { defaultValue: t("dashboardPage.status.pending") })}</Badge>;
 }
 
 export default function Dashboard() {
@@ -129,399 +90,64 @@ export default function Dashboard() {
     const navigate = useNavigate();
     const currentUser = getStoredUser();
     const isTenantAdmin = isTenantAdminUser(currentUser);
-    const [loading, setLoading] = useState(true);
-    const [errorMessage, setErrorMessage] = useState("");
-    const [summary, setSummary] = useState<DashboardSummary | null>(null);
-    const [borrowerQueue, setBorrowerQueue] = useState<BorrowerDueItem[]>([]);
-    const [fundQueue, setFundQueue] = useState<FundDueItem[]>([]);
-    const [alerts, setAlerts] = useState<FundingAlerts>({ underfundedLoans: [], unallocatedDrawdowns: [] });
-    const [reconciliation, setReconciliation] = useState<ReconciliationStatus | null>(null);
-    const [profitability, setProfitability] = useState<ProfitabilitySummary | null>(null);
+    const [showAllBorrowers, setShowAllBorrowers] = useState(false);
+    const [showAllFunds, setShowAllFunds] = useState(false);
 
-    useEffect(() => {
-        if (!isTenantAdmin) {
-            navigate("/loans", { replace: true });
-            return;
-        }
+    const summary = useDashboardResource<DashboardSummary>("/dashboard/summary", { dueFromBorrowersToday: "0.00", dueToFundsToday: "0.00", netPositionToday: "0.00", overdueBorrowerCount: 0, overdueFundCount: 0, underfundedLoanCount: 0, unallocatedDrawdownCount: 0 });
+    const borrowerQueue = useDashboardResource<BorrowerDueItem[]>("/dashboard/borrower-due-queue", []);
+    const fundQueue = useDashboardResource<FundDueItem[]>("/dashboard/fund-due-queue", []);
+    const alerts = useDashboardResource<FundingAlerts>("/dashboard/funding-alerts", { underfundedLoans: [], unallocatedDrawdowns: [] });
+    const reconciliation = useDashboardResource<ReconciliationStatus>("/dashboard/reconciliation-status", { unreconciledBorrowerPayments: 0, recordedFundRepayments: 0, fundRepaymentsMissingScheduleLink: 0, pendingBankImports: 0, pendingManualReviews: 0, borrowerPaymentsMissingSlip: 0 });
+    const profitability = useDashboardResource<ProfitabilitySummary>("/dashboard/profitability-summary", { borrowerRevenueCollected: "0.00", fundCostPaid: "0.00", realizedSpread: "0.00", unrealizedSpread: "0.00", deployedPrincipal: "0.00", netCashPosition: "0.00", realizedRoiPercent: "0.00", carryForwardAvailable: "0.00" });
 
-        const loadDashboard = async () => {
-            try {
-                setLoading(true);
-                setErrorMessage("");
+    useEffect(() => { if (!isTenantAdmin) navigate("/loans", { replace: true }); }, [isTenantAdmin, navigate]);
+    const priorities = useMemo(() => buildDashboardPriorities({ summary: summary.data, reconciliation: reconciliation.data }), [summary.data, reconciliation.data]);
+    const netTone = compareMoney(summary.data?.netPositionToday ?? "0.00", "0.00") < 0 ? "negative" : "positive";
+    const formatDate = (value: string) => new Intl.DateTimeFormat(i18n.language, { day: "numeric", month: "short", year: "numeric" }).format(new Date(`${value}T00:00:00`));
+    const openBorrower = (item: BorrowerDueItem) => navigate(`/transactions/new?loanId=${item.loanPublicId ?? item.loanId}&scheduleId=${item.schedulePublicId ?? item.scheduleId}`);
+    const openFund = (item: FundDueItem) => item.bankProfilePublicId || item.bankProfileId
+        ? navigate(`/funds/${item.bankProfilePublicId ?? item.bankProfileId}?bankLoanId=${item.bankLoanPublicId ?? item.bankLoanId}&scheduleId=${item.schedulePublicId ?? item.scheduleId}`)
+        : navigate("/funds");
 
-                const [summaryRes, borrowerQueueRes, fundQueueRes, alertsRes, reconciliationRes, profitabilityRes] = await Promise.all([
-                    api.get("/dashboard/summary"),
-                    api.get("/dashboard/borrower-due-queue"),
-                    api.get("/dashboard/fund-due-queue"),
-                    api.get("/dashboard/funding-alerts"),
-                    api.get("/dashboard/reconciliation-status"),
-                    api.get("/dashboard/profitability-summary"),
-                ]);
+    if (!isTenantAdmin) return null;
+    return <main className="flex-1 space-y-6 p-4 pb-10 pt-6 lg:p-8" aria-labelledby="dashboard-title">
+        <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+            <div className="max-w-2xl"><div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-primary"><Sparkles className="h-4 w-4" />{t("dashboardPage.eyebrow")}</div><h1 id="dashboard-title" className="text-3xl font-bold tracking-tight sm:text-4xl">{t("dashboardPage.title")}</h1><p className="mt-2 text-sm text-muted-foreground sm:text-base">{t("dashboardPage.description")}</p></div>
+            <div className="grid grid-cols-2 gap-2 sm:flex"><Button className="col-span-2" onClick={() => navigate("/transactions/new")}><CircleDollarSign className="mr-2 h-4 w-4" />{t("dashboardPage.actions.recordBorrowerPayment")}</Button><Button variant="outline" onClick={() => navigate("/matching")}>{t("dashboardPage.actions.openMatching")}</Button><Button variant="outline" onClick={() => navigate("/funds")}>{t("dashboardPage.actions.openFunds")}</Button></div>
+        </header>
 
-                setSummary(summaryRes.data ?? null);
-                setBorrowerQueue(borrowerQueueRes.data ?? []);
-                setFundQueue(fundQueueRes.data ?? []);
-                setAlerts(alertsRes.data ?? { underfundedLoans: [], unallocatedDrawdowns: [] });
-                setReconciliation(reconciliationRes.data ?? null);
-                setProfitability(profitabilityRes.data ?? null);
-            } catch (error) {
-                console.error("Failed to load dashboard", error);
-                setErrorMessage(t("dashboardPage.errors.load", "Unable to load the live dashboard right now."));
-            } finally {
-                setLoading(false);
-            }
-        };
-
-        loadDashboard();
-    }, [isTenantAdmin, navigate, t]);
-
-    const borrowerDueNow = useMemo(() => borrowerQueue.slice(0, 8), [borrowerQueue]);
-    const fundDueNow = useMemo(() => fundQueue.slice(0, 8), [fundQueue]);
-    const overdueTotal = (summary?.overdueBorrowerCount ?? 0) + (summary?.overdueFundCount ?? 0);
-
-    return (
-        <div className="flex-1 space-y-8 p-4 pt-6">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div>
-                    <h2 className="text-3xl font-bold tracking-tight">{t("dashboardPage.title", "Operations Dashboard")}</h2>
-                    <p className="text-sm text-muted-foreground">
-                        {t("dashboardPage.description", "Incoming cash, outgoing obligations, and funding gaps in one view")}
-                    </p>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                    <Button variant="outline" onClick={() => navigate("/transactions/new")}>
-                        {t("dashboardPage.actions.recordBorrowerPayment", "Record Borrower Payment")}
-                    </Button>
-                    <Button variant="outline" onClick={() => navigate("/funds")}>
-                        {t("dashboardPage.actions.openFunds", "Open Funds")}
-                    </Button>
-                    <Button onClick={() => navigate("/matching")}>
-                        {t("dashboardPage.actions.openMatching", "Open Matching")}
-                    </Button>
-                </div>
+        <section aria-labelledby="cash-heading" className="overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-primary/5 shadow-sm">
+            <div className="flex items-center justify-between border-b border-border/70 px-5 py-4"><div><h2 id="cash-heading" className="font-semibold">{t("dashboardPage.sections.cashToday")}</h2><p className="text-xs text-muted-foreground">{t("dashboardPage.sections.cashTodayDescription")}</p></div><Badge variant="secondary">{t("dashboardPage.live")}</Badge></div>
+            <div className="grid gap-3 p-4 sm:grid-cols-3 sm:p-5" aria-busy={summary.loading}>
+                {summary.error ? <div className="sm:col-span-3"><SectionError retry={summary.retry} /></div> : summary.loading ? <><Skeleton className="h-24"/><Skeleton className="h-24"/><Skeleton className="h-24"/></> : <><MoneyMetric label={t("dashboardPage.cards.dueFromBorrowers")} value={summary.data?.dueFromBorrowersToday ?? "0.00"} icon={<BanknoteArrowDown className="h-4 w-4 text-emerald-500" />} /><MoneyMetric label={t("dashboardPage.cards.dueToFunds")} value={summary.data?.dueToFundsToday ?? "0.00"} icon={<BanknoteArrowUp className="h-4 w-4 text-amber-500" />} /><MoneyMetric label={t("dashboardPage.cards.netPosition")} value={summary.data?.netPositionToday ?? "0.00"} tone={netTone} icon={<CircleDollarSign className="h-4 w-4" />} /></>}
             </div>
+        </section>
 
-            {errorMessage && (
-                <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                    {errorMessage}
-                </div>
-            )}
+        <div className="grid gap-6 xl:grid-cols-[0.88fr_1.4fr]">
+            <Card className="h-fit border-primary/20"><CardHeader><CardTitle className="flex items-center gap-2"><ShieldAlert className="h-5 w-5 text-primary" />{t("dashboardPage.sections.priorities")}</CardTitle><p className="text-sm text-muted-foreground">{t("dashboardPage.sections.prioritiesDescription")}</p></CardHeader><CardContent className="space-y-2" aria-busy={summary.loading || reconciliation.loading}>{summary.error && reconciliation.error ? <SectionError retry={async () => { await Promise.all([summary.retry(), reconciliation.retry()]); }} /> : priorities.length ? priorities.map((item) => <PriorityRow key={item.key} item={item} onOpen={() => navigate(item.href)} />) : (summary.loading || reconciliation.loading) ? <><Skeleton className="h-16 w-full"/><Skeleton className="h-16 w-full"/></> : <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">{t("dashboardPage.empty.noPriorities")}</div>}</CardContent></Card>
 
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <Card>
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">{t("dashboardPage.cards.dueFromBorrowers", "Due from Borrowers")}</CardTitle>
-                        <DollarSign className="h-4 w-4 text-muted-foreground" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold">{loading ? "..." : formatCurrency(summary?.dueFromBorrowersToday ?? 0, i18n.language)}</div>
-                        <p className="text-xs text-muted-foreground">{t("dashboardPage.cards.dueFromBorrowersDesc", "Scheduled cash expected from borrower schedules")}</p>
-                    </CardContent>
-                </Card>
+            <div className="grid gap-6 lg:grid-cols-2">
+                <Card><CardHeader className="flex flex-row items-start justify-between gap-3"><div><CardTitle>{t("dashboardPage.sections.borrowerDueQueue")}</CardTitle><p className="mt-1 text-xs text-muted-foreground">{t("dashboardPage.sections.borrowerDueDescription")}</p></div><Badge>{borrowerQueue.data?.length ?? 0}</Badge></CardHeader><CardContent className="space-y-2" aria-busy={borrowerQueue.loading}>{borrowerQueue.error ? <SectionError retry={borrowerQueue.retry} /> : borrowerQueue.loading ? <><Skeleton className="h-20 w-full"/><Skeleton className="h-20 w-full"/></> : borrowerQueue.data?.length ? <>{borrowerQueue.data.slice(0, showAllBorrowers ? undefined : 5).map((item) => <button key={item.scheduleId} type="button" onClick={() => openBorrower(item)} className="group flex w-full items-center justify-between gap-3 rounded-xl border p-3 text-left hover:border-primary/40 hover:bg-muted/40"><span className="min-w-0"><span className="block truncate font-medium">{item.borrowerName}</span><span className="block text-xs text-muted-foreground">{t("dashboardPage.installment", { number: item.installmentNo })} · {formatDate(item.dueDate)}</span></span><span className="shrink-0 text-right"><span className="block font-semibold tabular-nums">{formatMoneyExact(item.totalDueNow ?? item.remainingDue, i18n.language)}</span><StatusBadge status={item.status} /></span></button>)}{borrowerQueue.data.length > 5 && <Button className="w-full" variant="ghost" onClick={() => setShowAllBorrowers((value) => !value)}>{showAllBorrowers ? t("dashboardPage.actions.showLess") : t("dashboardPage.actions.viewAll", { count: borrowerQueue.data.length })}</Button>}</> : <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">{t("dashboardPage.empty.noBorrowerDue")}</div>}</CardContent></Card>
 
-                <Card>
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">{t("dashboardPage.cards.dueToFunds", "Due to Funds")}</CardTitle>
-                        <CreditCard className="h-4 w-4 text-muted-foreground" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold">{loading ? "..." : formatCurrency(summary?.dueToFundsToday ?? 0, i18n.language)}</div>
-                        <p className="text-xs text-muted-foreground">{t("dashboardPage.cards.dueToFundsDesc", "Scheduled repayments due back to funds or banks")}</p>
-                    </CardContent>
-                </Card>
-
-                <Card>
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">{t("dashboardPage.cards.netPosition", "Net Position Today")}</CardTitle>
-                        <CalendarClock className="h-4 w-4 text-muted-foreground" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className={`text-2xl font-bold ${(summary?.netPositionToday ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                            {loading ? "..." : formatCurrency(summary?.netPositionToday ?? 0, i18n.language)}
-                        </div>
-                        <p className="text-xs text-muted-foreground">{t("dashboardPage.cards.netPositionDesc", "Incoming due today minus outgoing obligations due today")}</p>
-                    </CardContent>
-                </Card>
-
-                <Card>
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">{t("dashboardPage.cards.overdueItems", "Overdue Items")}</CardTitle>
-                        <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold">{loading ? "..." : overdueTotal}</div>
-                        <p className="text-xs text-muted-foreground">
-                            {t("dashboardPage.cards.overdueBreakdown", { defaultValue: "Borrowers {{borrowers}} • Funds {{funds}}", borrowers: summary?.overdueBorrowerCount ?? 0, funds: summary?.overdueFundCount ?? 0 })}
-                        </p>
-                    </CardContent>
-                </Card>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <Card>
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">{t("dashboardPage.cards.borrowerRevenue", "Borrower Revenue Collected")}</CardTitle>
-                        <DollarSign className="h-4 w-4 text-muted-foreground" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold">{loading ? "..." : formatCurrency(profitability?.borrowerRevenueCollected ?? 0, i18n.language)}</div>
-                        <p className="text-xs text-muted-foreground">{t("dashboardPage.cards.borrowerRevenueDesc", "Collected interest, fees, and penalties")}</p>
-                    </CardContent>
-                </Card>
-
-                <Card>
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">{t("dashboardPage.cards.fundCostPaid", "Fund Cost Paid")}</CardTitle>
-                        <CreditCard className="h-4 w-4 text-muted-foreground" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold">{loading ? "..." : formatCurrency(profitability?.fundCostPaid ?? 0, i18n.language)}</div>
-                        <p className="text-xs text-muted-foreground">{t("dashboardPage.cards.fundCostPaidDesc", "Upstream interest, fees, VAT, and penalties already paid")}</p>
-                    </CardContent>
-                </Card>
-
-                <Card>
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">{t("dashboardPage.cards.realizedSpread", "Realized Spread")}</CardTitle>
-                        <CalendarClock className="h-4 w-4 text-muted-foreground" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className={`text-2xl font-bold ${(profitability?.realizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                            {loading ? "..." : formatCurrency(profitability?.realizedSpread ?? 0, i18n.language)}
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                            ROI {profitability?.realizedRoiPercent?.toFixed(2) ?? "0.00"}% on deployed principal
-                        </p>
-                    </CardContent>
-                </Card>
-
-                <Card>
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">{t("dashboardPage.cards.unrealizedSpread", "Unrealized Spread")}</CardTitle>
-                        <AlertTriangle className="h-4 w-4 text-muted-foreground" />
-                    </CardHeader>
-                    <CardContent>
-                        <div className={`text-2xl font-bold ${(profitability?.unrealizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                            {loading ? "..." : formatCurrency(profitability?.unrealizedSpread ?? 0, i18n.language)}
-                        </div>
-                        <p className="text-xs text-muted-foreground">{t("dashboardPage.cards.unrealizedSpreadDesc", "Spread still locked in open contracts and installments")}</p>
-                    </CardContent>
-                </Card>
-            </div>
-
-            <div className="grid gap-4 xl:grid-cols-[1.3fr_0.9fr]">
-                <Card>
-                    <CardHeader className="flex flex-row items-center justify-between">
-                        <CardTitle>{t("dashboardPage.sections.fundingAlerts", "Funding Alerts")}</CardTitle>
-                        <Button size="sm" variant="outline" onClick={() => navigate("/matching")}>
-                            {t("dashboardPage.actions.openMatchingWorkspace", "Open Matching Workspace")}
-                        </Button>
-                    </CardHeader>
-                    <CardContent className="grid gap-4 lg:grid-cols-2">
-                        <div className="space-y-3">
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2 text-sm font-medium">
-                                    <Users className="h-4 w-4" />
-                                    {t("dashboardPage.sections.underfundedLoans", "Underfunded Loans")}
-                                </div>
-                                <Badge>{summary?.underfundedLoanCount ?? 0}</Badge>
-                            </div>
-
-                            {alerts.underfundedLoans.length === 0 ? (
-                                <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
-                                    {t("dashboardPage.empty.noUnderfundedLoans", "No underfunded loans right now.")}
-                                </div>
-                            ) : (
-                                alerts.underfundedLoans.slice(0, 6).map((loan) => (
-                                    <button
-                                        key={loan.id}
-                                        type="button"
-                                        className="w-full rounded border p-3 text-left transition hover:border-primary/40 hover:bg-muted/50"
-                                        onClick={() => navigate("/matching")}
-                                    >
-                                        <div className="flex items-center justify-between gap-3">
-                                            <div>
-                                                <div className="font-medium">{loan.borrowerName}</div>
-                                                <div className="text-xs text-muted-foreground">
-                                                    {t("dashboardPage.loanFundingSummary", { defaultValue: "Loan #{{id}} • Funded {{funded}} / {{principal}}", id: loan.id, funded: formatCurrency(loan.fundedAmount, i18n.language), principal: formatCurrency(loan.principalAmount, i18n.language) })}
-                                                </div>
-                                            </div>
-                                            <div className="text-right">
-                                                <div className="font-medium text-destructive">{formatCurrency(loan.gap, i18n.language)}</div>
-                                                <div className="text-xs text-muted-foreground">{t("loans.remainingGap", "Gap")}</div>
-                                            </div>
-                                        </div>
-                                    </button>
-                                ))
-                            )}
-                        </div>
-
-                        <div className="space-y-3">
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2 text-sm font-medium">
-                                    <ArrowRightLeft className="h-4 w-4" />
-                                    {t("dashboardPage.sections.unallocatedDrawdowns", "Unallocated Drawdowns")}
-                                </div>
-                                <Badge>{summary?.unallocatedDrawdownCount ?? 0}</Badge>
-                            </div>
-
-                            {alerts.unallocatedDrawdowns.length === 0 ? (
-                                <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
-                                    {t("dashboardPage.empty.noUnallocatedDrawdowns", "No unallocated drawdowns right now.")}
-                                </div>
-                            ) : (
-                                alerts.unallocatedDrawdowns.slice(0, 6).map((drawdown) => (
-                                    <button
-                                        key={drawdown.id}
-                                        type="button"
-                                        className="w-full rounded border p-3 text-left transition hover:border-primary/40 hover:bg-muted/50"
-                                        onClick={() => navigate("/funds")}
-                                    >
-                                        <div className="flex items-center justify-between gap-3">
-                                            <div>
-                                                <div className="font-medium">{t("dashboardPage.drawdownLabel", { defaultValue: "Drawdown #{{id}}", id: drawdown.id })}</div>
-                                                <div className="text-xs text-muted-foreground">
-                                                    {t("dashboardPage.nextDue", { defaultValue: "Next due {{date}}", date: drawdown.nextDueDate || t("loanWizard.notScheduled", "Not scheduled") })}
-                                                </div>
-                                            </div>
-                                            <div className="text-right">
-                                                <div className="font-medium">{formatCurrency(drawdown.availableAmount, i18n.language)}</div>
-                                                <div className="text-xs text-muted-foreground">{t("dashboardPage.available", "Available")}</div>
-                                            </div>
-                                        </div>
-                                    </button>
-                                ))
-                            )}
-                        </div>
-                    </CardContent>
-                </Card>
-
-                <Card>
-                    <CardHeader>
-                        <CardTitle>{t("dashboardPage.sections.reconciliationStatus", "Reconciliation Status")}</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3 text-sm">
-                        <div className="rounded border p-3">
-                            <div className="flex items-center justify-between gap-3">
-                                <span className="text-muted-foreground">{t("dashboardPage.reconciliation.unmatchedBorrowerPayments", "Borrower payments not matched to schedule")}</span>
-                                <span className="font-medium">{reconciliation?.unreconciledBorrowerPayments ?? 0}</span>
-                            </div>
-                        </div>
-                        <div className="rounded border p-3">
-                            <div className="flex items-center justify-between gap-3">
-                                <span className="text-muted-foreground">{t("dashboardPage.reconciliation.recordedFundRepayments", "Recorded fund repayments")}</span>
-                                <span className="font-medium">{reconciliation?.recordedFundRepayments ?? 0}</span>
-                            </div>
-                        </div>
-                        <div className="rounded border p-3">
-                            <div className="flex items-center justify-between gap-3">
-                                <span className="text-muted-foreground">{t("dashboardPage.reconciliation.missingFundScheduleLink", "Fund repayments missing schedule link")}</span>
-                                <span className="font-medium text-destructive">{reconciliation?.fundRepaymentsMissingScheduleLink ?? 0}</span>
-                            </div>
-                        </div>
-                        <div className="rounded border p-3">
-                            <div className="flex items-center justify-between gap-3">
-                                <span className="text-muted-foreground">{t("dashboardPage.reconciliation.pendingBankImports", "Raw bank statement imports pending review")}</span>
-                                <span className="font-medium">{reconciliation?.pendingBankImports ?? 0}</span>
-                            </div>
-                        </div>
-                        <div className="rounded border p-3">
-                            <div className="flex items-center justify-between gap-3">
-                                <span className="text-muted-foreground">{t("dashboardPage.reconciliation.pendingManualReviews", "Pending LINE/OCR uploads review")}</span>
-                                <span className="font-medium">{reconciliation?.pendingManualReviews ?? 0}</span>
-                            </div>
-                        </div>
-                        <div className="rounded border p-3">
-                            <div className="flex items-center justify-between gap-3">
-                                <span className="text-muted-foreground">{t("dashboardPage.reconciliation.missingBorrowerSlip", "Borrower payments missing slip")}</span>
-                                <span className="font-medium text-amber-600">{reconciliation?.borrowerPaymentsMissingSlip ?? 0}</span>
-                            </div>
-                        </div>
-                    </CardContent>
-                </Card>
-            </div>
-
-            <div className="grid gap-4 xl:grid-cols-2">
-                <Card>
-                    <CardHeader className="flex flex-row items-center justify-between">
-                        <CardTitle>{t("dashboardPage.sections.borrowerDueQueue", "Borrower Due Queue")}</CardTitle>
-                        <Button size="sm" variant="outline" onClick={() => navigate("/transactions/new")}>
-                            {t("dashboardPage.actions.recordPayment", "Record Payment")}
-                        </Button>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                        {borrowerDueNow.length === 0 ? (
-                            <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
-                                {t("dashboardPage.empty.noBorrowerDue", "No borrower installments are due right now.")}
-                            </div>
-                        ) : (
-                            borrowerDueNow.map((item) => (
-                                <div key={item.scheduleId} className="rounded border p-3">
-                                    <div className="flex items-center justify-between gap-3">
-                                        <div>
-                                            <div className="font-medium">{item.borrowerName}</div>
-                                            <div className="text-xs text-muted-foreground">
-                                                {t("dashboardPage.borrowerQueueItem", { defaultValue: "Loan #{{loanId}} • Installment #{{installmentNo}} • {{repaymentType}}", loanId: item.loanId, installmentNo: item.installmentNo, repaymentType: item.repaymentType })}
-                                            </div>
-                                            <div className="text-xs text-muted-foreground">{t("dashboardPage.dueLabel", { defaultValue: "Due {{date}}", date: item.dueDate })}</div>
-                                        </div>
-                                        <div className="text-right">
-                                            <div className="font-medium">{formatCurrency(Number(item.totalDueNow ?? item.remainingDue), i18n.language)}</div>
-                                            <QueueBadge dueDate={item.dueDate} status={item.status} />
-                                        </div>
-                                    </div>
-                                    <div className="mt-3 flex justify-end">
-                                        <Button size="sm" variant="outline" onClick={() => openBorrowerRepayment(navigate, item)}>
-                                            {t("dashboardPage.actions.recordThisPayment", "Record This Payment")}
-                                        </Button>
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </CardContent>
-                </Card>
-
-                <Card>
-                    <CardHeader className="flex flex-row items-center justify-between">
-                        <CardTitle>{t("dashboardPage.sections.fundDueQueue", "Fund Due Queue")}</CardTitle>
-                        <Button size="sm" variant="outline" onClick={() => navigate("/funds")}>
-                            {t("dashboardPage.actions.openFunds", "Open Funds")}
-                        </Button>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                        {fundDueNow.length === 0 ? (
-                            <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
-                                {t("dashboardPage.empty.noFundDue", "No fund repayments are due right now.")}
-                            </div>
-                        ) : (
-                            fundDueNow.map((item) => (
-                                <div key={item.scheduleId} className="rounded border p-3">
-                                    <div className="flex items-center justify-between gap-3">
-                                        <div>
-                                            <div className="font-medium">{t("dashboardPage.drawdownLabel", { defaultValue: "Drawdown #{{id}}", id: item.bankLoanId })}</div>
-                                            <div className="text-xs text-muted-foreground">
-                                                {t("dashboardPage.fundQueueItem", { defaultValue: "Installment #{{installmentNo}} • Fund #{{fundId}}", installmentNo: item.installmentNo, fundId: item.bankProfileId ?? "-" })}
-                                            </div>
-                                            <div className="text-xs text-muted-foreground">
-                                                {t("dashboardPage.dueLabel", { defaultValue: "Due {{date}}", date: item.dueDate })}{item.note ? ` • ${item.note}` : ""}
-                                            </div>
-                                        </div>
-                                        <div className="text-right">
-                                            <div className="font-medium">{formatCurrency(Number(item.totalDueNow ?? item.remainingDue), i18n.language)}</div>
-                                            <QueueBadge dueDate={item.dueDate} status={item.status} />
-                                        </div>
-                                    </div>
-                                    <div className="mt-3 flex justify-end">
-                                        <Button size="sm" variant="outline" onClick={() => openFundRepayment(navigate, item)}>
-                                            {t("dashboardPage.actions.recordFundRepayment", "Record Fund Repayment")}
-                                        </Button>
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </CardContent>
-                </Card>
+                <Card><CardHeader className="flex flex-row items-start justify-between gap-3"><div><CardTitle>{t("dashboardPage.sections.fundDueQueue")}</CardTitle><p className="mt-1 text-xs text-muted-foreground">{t("dashboardPage.sections.fundDueDescription")}</p></div><Badge>{fundQueue.data?.length ?? 0}</Badge></CardHeader><CardContent className="space-y-2" aria-busy={fundQueue.loading}>{fundQueue.error ? <SectionError retry={fundQueue.retry} /> : fundQueue.loading ? <><Skeleton className="h-20 w-full"/><Skeleton className="h-20 w-full"/></> : fundQueue.data?.length ? <>{fundQueue.data.slice(0, showAllFunds ? undefined : 5).map((item) => <button key={item.scheduleId} type="button" onClick={() => openFund(item)} className="group flex w-full items-center justify-between gap-3 rounded-xl border p-3 text-left hover:border-primary/40 hover:bg-muted/40"><span className="min-w-0"><span className="block truncate font-medium">{t("dashboardPage.drawdownLabel", { id: item.bankLoanId })}</span><span className="block text-xs text-muted-foreground">{t("dashboardPage.installment", { number: item.installmentNo })} · {formatDate(item.dueDate)}</span></span><span className="shrink-0 text-right"><span className="block font-semibold tabular-nums">{formatMoneyExact(item.totalDueNow ?? item.remainingDue, i18n.language)}</span><StatusBadge status={item.status} /></span></button>)}{fundQueue.data.length > 5 && <Button className="w-full" variant="ghost" onClick={() => setShowAllFunds((value) => !value)}>{showAllFunds ? t("dashboardPage.actions.showLess") : t("dashboardPage.actions.viewAll", { count: fundQueue.data.length })}</Button>}</> : <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">{t("dashboardPage.empty.noFundDue")}</div>}</CardContent></Card>
             </div>
         </div>
-    );
+
+        <section aria-labelledby="details-heading"><div className="mb-3"><h2 id="details-heading" className="text-lg font-semibold">{t("dashboardPage.sections.details")}</h2><p className="text-sm text-muted-foreground">{t("dashboardPage.sections.detailsDescription")}</p></div>
+            <div className="hidden gap-4 md:grid md:grid-cols-3"><DetailCards alerts={alerts} reconciliation={reconciliation} profitability={profitability} /></div>
+            <details className="rounded-xl border bg-card p-4 md:hidden"><summary className="cursor-pointer font-medium">{t("dashboardPage.actions.openDetails")}</summary><div className="mt-4 space-y-4"><DetailCards alerts={alerts} reconciliation={reconciliation} profitability={profitability} /></div></details>
+        </section>
+    </main>;
+}
+
+function DetailCards({ alerts, reconciliation, profitability }: { alerts: ReturnType<typeof useDashboardResource<FundingAlerts>>; reconciliation: ReturnType<typeof useDashboardResource<ReconciliationStatus>>; profitability: ReturnType<typeof useDashboardResource<ProfitabilitySummary>> }) {
+    const { t, i18n } = useTranslation();
+    const items = [
+        { key: "underfunded", label: t("dashboardPage.sections.underfundedLoans"), value: alerts.data?.underfundedLoans.length ?? 0 },
+        { key: "unallocated", label: t("dashboardPage.sections.unallocatedDrawdowns"), value: alerts.data?.unallocatedDrawdowns.length ?? 0 },
+        { key: "unmatched", label: t("dashboardPage.reconciliation.unmatchedBorrowerPayments"), value: reconciliation.data?.unreconciledBorrowerPayments ?? 0 },
+    ];
+    return <><Card><CardHeader><CardTitle className="text-base">{t("dashboardPage.sections.fundingAlerts")}</CardTitle></CardHeader><CardContent className="space-y-3">{alerts.error ? <SectionError retry={alerts.retry} /> : alerts.loading ? <Skeleton className="h-24 w-full"/> : items.slice(0, 2).map((item) => <div key={item.key} className="flex justify-between text-sm"><span className="text-muted-foreground">{item.label}</span><strong>{item.value}</strong></div>)}</CardContent></Card>
+        <Card><CardHeader><CardTitle className="text-base">{t("dashboardPage.sections.reconciliationStatus")}</CardTitle></CardHeader><CardContent className="space-y-3">{reconciliation.error ? <SectionError retry={reconciliation.retry} /> : reconciliation.loading ? <Skeleton className="h-24 w-full"/> : <>{items.slice(2).map((item) => <div key={item.key} className="flex justify-between text-sm"><span className="text-muted-foreground">{item.label}</span><strong>{item.value}</strong></div>)}<div className="flex justify-between text-sm"><span className="text-muted-foreground">{t("dashboardPage.reconciliation.pendingManualReviews")}</span><strong>{reconciliation.data?.pendingManualReviews ?? 0}</strong></div></>}</CardContent></Card>
+        <Card><CardHeader><CardTitle className="text-base">{t("dashboardPage.sections.profitability")}</CardTitle></CardHeader><CardContent className="space-y-3">{profitability.error ? <SectionError retry={profitability.retry} /> : profitability.loading ? <Skeleton className="h-24 w-full"/> : <><div className="flex justify-between gap-2 text-sm"><span className="text-muted-foreground">{t("dashboardPage.cards.realizedSpread")}</span><strong className="tabular-nums">{formatMoneyExact(profitability.data?.realizedSpread ?? "0.00", i18n.language)}</strong></div><div className="flex justify-between gap-2 text-sm"><span className="text-muted-foreground">{t("dashboardPage.cards.unrealizedSpread")}</span><strong className="tabular-nums">{formatMoneyExact(profitability.data?.unrealizedSpread ?? "0.00", i18n.language)}</strong></div></>}</CardContent></Card></>;
 }

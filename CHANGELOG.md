@@ -9,6 +9,9 @@
 ### Fixed
 - Preserved exact decimal-string money across dashboard totals, funding gaps, available drawdowns, comparisons, and sorting beyond the JavaScript safe-integer range.
 
+### Changed
+- Rebuilt the responsive operations dashboard as a Daily Command Center with a consolidated cash position, urgency-ranked actions, five-item repayment queues, localized statuses, independent loading and retry states, and collapsible mobile financial details.
+
 ## v0.3.8 - 2026-08-11
 
 ### Added
