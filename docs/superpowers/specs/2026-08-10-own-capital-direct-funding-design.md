@@ -15,7 +15,7 @@ Only profiles with `accountingMode: "capital_pool"` are eligible for direct own-
 
 ## Capacity and allocation
 
-Add `opportunity_cost_rate numeric not null default 2.00` to `bank_profiles`, constrained to a non-negative value. Capacity for own capital is:
+Add `opportunity_cost_rate numeric not null default 2.00` to `bank_profiles`, constrained to a non-negative value. Add nullable `funding_bank_profile_id` to `loans`, referencing `bank_profiles`, so a draft retains the selected direct-capital source until activation. A loan may have either `bank_loan_id` or `funding_bank_profile_id`, never both. Capacity for own capital is:
 
 `max(0, creditLimit - sum(net loan_funding_allocations for the profile))`.
 

@@ -15,6 +15,7 @@
 
 ### Fixed
 - Corrected the direct-own-capital plan's five-day 2% annual opportunity-cost example to ฿1.37 for a ฿5,000 allocation.
+- Corrected the direct-own-capital design and plan to persist a selected direct-capital profile on the loan draft before activation.
 
 ### Changed
 - Changed the Borrowers list to a one-column mobile and two-column desktop grid using the privacy-aware identity card.

@@ -31,6 +31,7 @@
 
 **Interfaces:**
 - `bankProfiles.opportunityCostRate` is a non-negative numeric annual percent, defaulting to `"2.00"`.
+- `loans.fundingBankProfileId` is nullable and retains a direct capital source while a loan is draft or active; it cannot coexist with `bankLoanId`.
 - Existing rows retain their accounting mode and receive `"2.00"` without being made capital pools.
 
 - [ ] **Step 1: Write the failing migration assertions**
@@ -61,10 +62,16 @@ ALTER TABLE bank_profiles
 ALTER TABLE bank_profiles
   ADD CONSTRAINT bank_profiles_opportunity_cost_rate_nonnegative
   CHECK (opportunity_cost_rate >= 0);
+ALTER TABLE loans ADD COLUMN funding_bank_profile_id integer;
+ALTER TABLE loans ADD CONSTRAINT loans_funding_bank_profile_fk
+  FOREIGN KEY (funding_bank_profile_id) REFERENCES bank_profiles(id);
+ALTER TABLE loans ADD CONSTRAINT loans_one_funding_source_check
+  CHECK (bank_loan_id IS NULL OR funding_bank_profile_id IS NULL);
 ```
 
 ```ts
 opportunityCostRate: numeric("opportunity_cost_rate").notNull().default("2.00"),
+fundingBankProfileId: integer("funding_bank_profile_id").references(() => bankProfiles.id),
 ```
 
 - [ ] **Step 4: Verify the migration is additive and green**
