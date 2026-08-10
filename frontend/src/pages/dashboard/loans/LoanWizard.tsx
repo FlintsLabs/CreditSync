@@ -285,6 +285,16 @@ export default function LoanWizard() {
 
                     {step === 2 && (
                         <div className="grid gap-4 md:grid-cols-2">
+                            <div className="grid gap-2 md:col-span-2">
+                                <label>{t("loanWizard.repaymentType", "Repayment Type")}</label>
+                                <div className="flex flex-wrap gap-2" role="radiogroup">
+                                    {(["monthly", "daily", "weekly", "floating"] as const).map((type) => (
+                                        <button key={type} type="button" role="radio" aria-checked={formData.repaymentType === type} onClick={() => setFormData({ ...formData, repaymentType: type })} className={`rounded-full border px-3 py-2 text-sm transition-colors ${formData.repaymentType === type ? "border-primary bg-primary text-primary-foreground" : "border-input bg-background hover:bg-muted"}`}>
+                                            {t(`loanWizard.repaymentOptions.${type}`)}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
                             <div className="grid gap-2">
                                 <label>{t("loanWizard.principalAmount", "Principal Amount (฿)")}</label>
                                 <Input type="number" value={formData.principal} onChange={(e) => setFormData({ ...formData, principal: e.target.value })} />
@@ -301,16 +311,6 @@ export default function LoanWizard() {
                                     <Input type="number" value={formData.termMonths} onChange={(e) => setFormData({ ...formData, termMonths: e.target.value })} />
                                 </div>
                             )}
-                            <div className="grid gap-2 md:col-span-2">
-                                <label>{t("loanWizard.repaymentType", "Repayment Type")}</label>
-                                <div className="flex flex-wrap gap-2" role="radiogroup">
-                                    {(["monthly", "daily", "weekly", "floating"] as const).map((type) => (
-                                        <button key={type} type="button" role="radio" aria-checked={formData.repaymentType === type} onClick={() => setFormData({ ...formData, repaymentType: type })} className={`rounded-full border px-3 py-2 text-sm transition-colors ${formData.repaymentType === type ? "border-primary bg-primary text-primary-foreground" : "border-input bg-background hover:bg-muted"}`}>
-                                            {t(`loanWizard.repaymentOptions.${type}`)}
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
                             <div className="grid gap-2">
                                 <label>{t("loanWizard.startDate", "Start Date")}</label>
                                 <Input
