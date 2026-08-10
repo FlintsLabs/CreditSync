@@ -7,6 +7,7 @@
 - Added a task-by-task implementation plan for the approved borrower-card identity design.
 - Added Thai national-ID formatting and masking utilities for privacy-aware borrower-list presentation.
 - Added a responsive borrower identity card with masked ID display, an accessible full-value copy action, and localized copy feedback.
+- Added an approved design specification for auditable floating daily-interest loans with per-thousand and percent rate modes, first-day treatment, accrual ledger, explicit payment allocation, and MCP/Web parity.
 
 ### Changed
 - Changed the Borrowers list to a one-column mobile and two-column desktop grid using the privacy-aware identity card.
