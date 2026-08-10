@@ -6,6 +6,11 @@ export const api = axios.create({
     baseURL: "/api",
 });
 
+export async function resolveFileAccessUrl(filePublicId: string): Promise<string> {
+    const response = await api.get(`/files/${filePublicId}/access-url`);
+    return response.data.url;
+}
+
 api.interceptors.request.use((config) => {
     const token = localStorage.getItem("token");
     if (token) {

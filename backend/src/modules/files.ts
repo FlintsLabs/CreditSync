@@ -108,9 +108,10 @@ export const filesRoute = new Elysia({ prefix: "/files" })
             return { error: "Unauthorized" };
         }
 
+        const isPublicId = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
         const fileRecord = await db.select()
             .from(files)
-            .where(and(eq(files.id, Number(id)), ...fileAccessFilters(user)))
+            .where(and(isPublicId ? eq(files.publicId, id) : eq(files.id, Number(id)), ...fileAccessFilters(user)))
             .then((rows) => rows[0]);
 
         if (!fileRecord) {

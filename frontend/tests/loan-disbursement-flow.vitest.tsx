@@ -3,9 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LoanDetail from "../src/pages/dashboard/loans/LoanDetail";
-import { api } from "../src/lib/api";
+import { api, resolveFileAccessUrl } from "../src/lib/api";
 
-vi.mock("../src/lib/api", () => ({ api: { get: vi.fn(), post: vi.fn(), put: vi.fn() } }));
+vi.mock("../src/lib/api", () => ({ api: { get: vi.fn(), post: vi.fn(), put: vi.fn() }, resolveFileAccessUrl: vi.fn() }));
 
 const LOAN_ID = "11111111-1111-4111-8111-111111111111";
 const EVENT_ID = "33333333-3333-4333-8333-333333333333";
@@ -30,12 +30,47 @@ describe("loan disbursement view", () => {
         });
     });
 
-    it("renders the nested ledger contract with source, payee, and evidence access", async () => {
+    it("resolves a public evidence UUID through the authenticated client before opening it", async () => {
+        const open = vi.spyOn(window, "open").mockImplementation(() => null);
+        vi.mocked(api.get).mockImplementation(async (url) => {
+            if (url === `/loans/${LOAN_ID}`) return { data: loan };
+            if (url === `/loans/${LOAN_ID}/schedule` || url === `/loans/${LOAN_ID}/funding-allocations`) return { data: [] };
+            if (url === `/loans/${LOAN_ID}/allocation-state`) return { data: { state: "unallocated", netAllocatedPrincipal: "0.00", remainingGap: "1000.00", overfundedAmount: "0.00" } };
+            if (url === `/loans/${LOAN_ID}/disbursements`) return { data: ledger() };
+            throw new Error(`Unexpected GET ${url}`);
+        });
+        vi.mocked(resolveFileAccessUrl).mockResolvedValue("https://signed.example/evidence");
         renderDetail();
         expect((await screen.findAllByText(/THB\s*600\.00/)).length).toBeGreaterThan(0);
         expect(screen.getByText("Borrower wallet")).toBeInTheDocument();
         expect(screen.getByText(/66666666-6666-4666-8666-666666666666/)).toBeInTheDocument();
-        expect(screen.getByRole("link", { name: /evidence/i })).toHaveAttribute("href", `/api/files/${FILE_ID}/access-url`);
+        await userEvent.setup().click(screen.getByRole("button", { name: /evidence/i }));
+        await waitFor(() => expect(resolveFileAccessUrl).toHaveBeenCalledWith(FILE_ID));
+        expect(open).toHaveBeenCalledWith("https://signed.example/evidence", "_blank", "noopener,noreferrer");
+        open.mockRestore();
+    });
+
+    it("posts a draft with an Idempotency-Key and refreshes the posted summary", async () => {
+        const draft = { ...ledger().events[0], status: "draft", evidenceFilePublicIds: [] };
+        let reads = 0;
+        vi.mocked(api.get).mockImplementation(async (url) => {
+            if (url === `/loans/${LOAN_ID}/disbursements`) {
+                reads += 1;
+                return { data: reads === 1 ? ledger([draft]) : { ...ledger([{ ...draft, status: "posted" }]), summary: { approvedPrincipal: "1000.00", netDisbursed: "600.00", variance: "-400.00", status: "under_disbursed" } } };
+            }
+            if (url === `/loans/${LOAN_ID}`) return { data: loan };
+            if (url === `/loans/${LOAN_ID}/schedule` || url === `/loans/${LOAN_ID}/funding-allocations`) return { data: [] };
+            if (url === `/loans/${LOAN_ID}/allocation-state`) return { data: { state: "unallocated", netAllocatedPrincipal: "0.00", remainingGap: "1000.00", overfundedAmount: "0.00" } };
+            throw new Error(`Unexpected GET ${url}`);
+        });
+        vi.mocked(api.post).mockResolvedValue({ data: { ...draft, status: "posted" } });
+        const user = userEvent.setup();
+        renderDetail();
+        await user.click(await screen.findByRole("button", { name: /bank transfer.*draft/i }));
+        await user.click(screen.getByRole("button", { name: /post disbursement/i }));
+        await waitFor(() => expect(api.post).toHaveBeenCalledWith(`/loans/${LOAN_ID}/disbursements/${EVENT_ID}/post`, {}, expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) })));
+        expect(await screen.findByRole("button", { name: /bank transfer.*posted/i })).toBeInTheDocument();
+        expect(api.get.mock.calls.filter(([url]) => url === `/loans/${LOAN_ID}/disbursements`)).toHaveLength(2);
     });
 
     it("posts and reverses with retained Idempotency-Key headers and refreshes the event history", async () => {
