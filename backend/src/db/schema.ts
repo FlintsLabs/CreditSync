@@ -3,6 +3,7 @@ import {
     check,
     date,
     foreignKey,
+    index,
     integer,
     jsonb,
     numeric,
@@ -359,6 +360,36 @@ export const fundRolloverEntries = pgTable("fund_rollover_entries", {
     createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const loanDisbursementEvents = pgTable("loan_disbursement_events", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    loanId: integer("loan_id").references(() => loans.id).notNull(),
+    grossAmount: numeric("gross_amount").notNull(),
+    loanAttributedAmount: numeric("loan_attributed_amount").notNull(),
+    channel: text("channel").notNull(),
+    sourceBankProfileId: integer("source_bank_profile_id").references(() => bankProfiles.id),
+    payeeHint: text("payee_hint"),
+    status: text("status").default("draft").notNull(),
+    reversedEventId: integer("reversed_event_id"),
+    note: text("note"),
+    disbursedAt: timestamp("disbursed_at"),
+    postedAt: timestamp("posted_at"),
+    reversedAt: timestamp("reversed_at"),
+    createdByUserId: integer("created_by_user_id").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+    index("loan_disbursement_events_tenant_loan_status_idx").on(table.tenantId, table.loanId, table.status),
+    check("loan_disbursement_events_channel_check", sql`${table.channel} IN ('bank_transfer', 'cash', 'adjustment')`),
+    check("loan_disbursement_events_status_check", sql`${table.status} IN ('draft', 'posted', 'reversed')`),
+    check("loan_disbursement_events_money_check", sql`${table.grossAmount} >= 0 AND ${table.loanAttributedAmount} >= 0`),
+    foreignKey({
+        name: "loan_disbursement_events_reversed_event_fk",
+        columns: [table.reversedEventId],
+        foreignColumns: [table.id],
+    }),
+]);
+
 export const fundLedgerEntries = pgTable("fund_ledger_entries", {
     id: serial("id").primaryKey(),
     publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
@@ -409,6 +440,16 @@ export const files = pgTable("files", {
     createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
     uniqueIndex("files_tenant_id_id_unique").on(table.tenantId, table.id),
+]);
+
+export const loanDisbursementEvidence = pgTable("loan_disbursement_evidence", {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId,
+    loanDisbursementEventId: integer("loan_disbursement_event_id").references(() => loanDisbursementEvents.id).notNull(),
+    fileId: integer("file_id").references(() => files.id).notNull(),
+    createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+    uniqueIndex("loan_disbursement_evidence_event_file_unique").on(table.loanDisbursementEventId, table.fileId),
 ]);
 
 // Bot Uploads (Unprocessed images from Webhooks)
