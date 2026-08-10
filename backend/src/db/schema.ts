@@ -380,6 +380,7 @@ export const loanDisbursementEvents = pgTable("loan_disbursement_events", {
     createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
     index("loan_disbursement_events_tenant_loan_status_idx").on(table.tenantId, table.loanId, table.status),
+    uniqueIndex("loan_disbursement_events_tenant_id_id_unique").on(table.tenantId, table.id),
     check("loan_disbursement_events_channel_check", sql`${table.channel} IN ('bank_transfer', 'cash', 'adjustment')`),
     check("loan_disbursement_events_status_check", sql`${table.status} IN ('draft', 'posted', 'reversed')`),
     check("loan_disbursement_events_money_check", sql`${table.grossAmount} >= 0 AND ${table.loanAttributedAmount} >= 0`),
@@ -445,11 +446,21 @@ export const files = pgTable("files", {
 export const loanDisbursementEvidence = pgTable("loan_disbursement_evidence", {
     id: serial("id").primaryKey(),
     tenantId: tenantId,
-    loanDisbursementEventId: integer("loan_disbursement_event_id").references(() => loanDisbursementEvents.id).notNull(),
-    fileId: integer("file_id").references(() => files.id).notNull(),
+    loanDisbursementEventId: integer("loan_disbursement_event_id").notNull(),
+    fileId: integer("file_id").notNull(),
     createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
     uniqueIndex("loan_disbursement_evidence_event_file_unique").on(table.loanDisbursementEventId, table.fileId),
+    foreignKey({
+        name: "loan_disbursement_evidence_tenant_event_fk",
+        columns: [table.tenantId, table.loanDisbursementEventId],
+        foreignColumns: [loanDisbursementEvents.tenantId, loanDisbursementEvents.id],
+    }),
+    foreignKey({
+        name: "loan_disbursement_evidence_tenant_file_fk",
+        columns: [table.tenantId, table.fileId],
+        foreignColumns: [files.tenantId, files.id],
+    }),
 ]);
 
 // Bot Uploads (Unprocessed images from Webhooks)

@@ -15,6 +15,7 @@
 - Added an additive immutable loan-disbursement event ledger schema with grouped-transfer attribution, source/payee metadata, reversal links, and optional evidence links.
 
 ### Fixed
+- Enforced tenant-safe event/file evidence links and blocked update or deletion of posted loan-disbursement ledger records at the database layer.
 - Removed the duplicate custom calendar icon from the loan start-date field; the browser-native date control remains fully clickable.
 
 ### Changed
