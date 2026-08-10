@@ -1,0 +1,61 @@
+import Decimal from "decimal.js";
+
+export type FloatingDailyInterest = {
+    mode: "per_thousand" | "percent";
+    rate: string;
+    firstDayTreatment: "deduct" | "start_next_day";
+};
+
+export function normalizeFloatingDailyInterest(input: FloatingDailyInterest): FloatingDailyInterest {
+    if (input.mode !== "per_thousand" && input.mode !== "percent") throw new Error("Daily interest mode is invalid");
+    if (input.firstDayTreatment !== "deduct" && input.firstDayTreatment !== "start_next_day") {
+        throw new Error("First-day treatment is invalid");
+    }
+    const rate = new Decimal(input.rate);
+    if (!rate.isFinite() || rate.lte(0) || rate.decimalPlaces() > 4) {
+        throw new Error("Daily interest rate must be a positive decimal with at most four places");
+    }
+    return { mode: input.mode, rate: rate.toFixed(4), firstDayTreatment: input.firstDayTreatment };
+}
+
+export function calculateDailyInterest(openingPrincipal: string, policy: FloatingDailyInterest) {
+    const normalized = normalizeFloatingDailyInterest(policy);
+    const principal = new Decimal(openingPrincipal);
+    if (!principal.isFinite() || principal.lt(0)) throw new Error("Opening principal is invalid");
+    const amount = normalized.mode === "per_thousand"
+        ? principal.div(1000).times(normalized.rate)
+        : principal.times(normalized.rate).div(100);
+    return amount.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
+}
+
+function dateAtMidnight(date: string) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Business date must use YYYY-MM-DD");
+    const value = new Date(`${date}T00:00:00Z`);
+    if (Number.isNaN(value.valueOf()) || value.toISOString().slice(0, 10) !== date) throw new Error("Business date is invalid");
+    return value;
+}
+
+function formatDate(value: Date) {
+    return value.toISOString().slice(0, 10);
+}
+
+export function interestDatesThrough(startDate: string, throughDate: string, firstDayTreatment: FloatingDailyInterest["firstDayTreatment"]) {
+    const start = dateAtMidnight(startDate);
+    const through = dateAtMidnight(throughDate);
+    if (through < start) return [];
+    if (firstDayTreatment !== "deduct" && firstDayTreatment !== "start_next_day") throw new Error("First-day treatment is invalid");
+    if (firstDayTreatment === "start_next_day") start.setUTCDate(start.getUTCDate() + 1);
+    const dates: string[] = [];
+    while (start <= through) {
+        dates.push(formatDate(start));
+        start.setUTCDate(start.getUTCDate() + 1);
+    }
+    return dates;
+}
+
+export function nextInterestDate(startDate: string, firstDayTreatment: FloatingDailyInterest["firstDayTreatment"]) {
+    const start = dateAtMidnight(startDate);
+    if (firstDayTreatment === "deduct") return formatDate(start);
+    start.setUTCDate(start.getUTCDate() + 1);
+    return formatDate(start);
+}
