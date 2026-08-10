@@ -1,5 +1,15 @@
 # CreditSync Plugin Changelog
 
+## 2.0.0 - 2026-08-10
+
+### Added
+
+- Added the six frozen loan-disbursement MCP tool contracts for list, draft, evidence prepare/finalize, post, and reversal.
+
+### Compatibility
+
+- Released a new major plugin package because the frozen tool catalogue grows from 20 to 26 tools. The MCP payload schema version remains `1.0`.
+
 ## 1.0.0 - 2026-08-10
 
 ### Added

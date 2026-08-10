@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { Elysia } from "elysia";
 import { sql } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, loans, users } from "../db/schema";
+import { bankProfiles, borrowers, loans, users } from "../db/schema";
 import { loansRoute } from "./loans";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
@@ -39,13 +39,14 @@ describe("loan disbursement REST adapter", () => {
         const actor = await db.insert(users).values({ tenantId: "tenant-disbursement-route", email: "route@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
         const borrower = await db.insert(borrowers).values({ tenantId: actor.tenantId, ownerUserId: actor.id, name: "Route borrower" }).returning().then((rows) => rows[0]!);
         const loan = await db.insert(loans).values({ tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "100.00", interestRate: "0.00", repaymentType: "floating", outstandingPrincipal: "100.00", status: "active" }).returning().then((rows) => rows[0]!);
+        const sourceProfile = await db.insert(bankProfiles).values({ tenantId: actor.tenantId, name: "Route source", type: "bank" }).returning().then((rows) => rows[0]!);
         const token = await authToken(actor);
         const app = new Elysia().use(loansRoute);
         const created = await jsonRequest(app, `/loans/${loan.publicId}/disbursements`, token, {
-            method: "POST", body: JSON.stringify({ grossAmount: "120.00", loanAttributedAmount: "100.00", channel: "bank_transfer", note: "Grouped transfer", payeeHint: "Borrower", disbursedAt: "2026-08-10T00:00:00.000Z" }),
+            method: "POST", body: JSON.stringify({ grossAmount: "120.00", loanAttributedAmount: "100.00", channel: "bank_transfer", sourceBankProfilePublicId: sourceProfile.publicId, note: "Grouped transfer", payeeHint: "Borrower", disbursedAt: "2026-08-10T00:00:00.000Z" }),
         });
         expect(created.response.status).toBe(200);
-        expect(created.body).toMatchObject({ id: created.body.publicId, grossAmount: "120.00", loanAttributedAmount: "100.00", status: "draft" });
+        expect(created.body).toMatchObject({ id: created.body.publicId, grossAmount: "120.00", loanAttributedAmount: "100.00", sourceBankProfilePublicId: sourceProfile.publicId, status: "draft" });
         const updated = await jsonRequest(app, `/loans/${loan.publicId}/disbursements/${created.body.publicId}`, token, {
             method: "PUT", body: JSON.stringify({ payeeHint: "Updated payee" }),
         });
@@ -55,7 +56,7 @@ describe("loan disbursement REST adapter", () => {
             method: "POST", headers: { "idempotency-key": "route-disbursement-post" }, body: JSON.stringify({}),
         });
         expect(posted.response.status).toBe(200);
-        expect(posted.body).toMatchObject({ publicId: created.body.publicId, status: "posted", auditPublicId: expect.any(String), correlationId: expect.any(String) });
+        expect(posted.body).toMatchObject({ publicId: created.body.publicId, sourceBankProfilePublicId: sourceProfile.publicId, status: "posted", auditPublicId: expect.any(String), correlationId: expect.any(String) });
         const listed = await jsonRequest(app, `/loans/${loan.publicId}/disbursements`, token);
         expect(listed.body).toMatchObject({ loanPublicId: loan.publicId, summary: { approvedPrincipal: "100.00", netDisbursed: "100.00", variance: "0.00", status: "matched" } });
         const reversed = await jsonRequest(app, `/loans/${loan.publicId}/disbursements/${created.body.publicId}/reverse`, token, {
@@ -73,5 +74,30 @@ describe("loan disbursement REST adapter", () => {
             method: "POST", body: JSON.stringify({ grossAmount: "100", loanAttributedAmount: "100.00", channel: "wire", disbursedAt: "invalid" }),
         });
         expect(result.response.status).toBe(422);
+    });
+
+    integrationTest("returns not found when an event-scoped route is rooted under another accessible loan", async () => {
+        const actor = await db.insert(users).values({ tenantId: "tenant-disbursement-parent", email: "parent@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId: actor.tenantId, ownerUserId: actor.id, name: "Parent check borrower" }).returning().then((rows) => rows[0]!);
+        const [actualLoan, wrongLoan] = await db.insert(loans).values([
+            { tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "100.00", interestRate: "0.00", repaymentType: "floating", outstandingPrincipal: "100.00", status: "active" },
+            { tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "100.00", interestRate: "0.00", repaymentType: "floating", outstandingPrincipal: "100.00", status: "active" },
+        ]).returning();
+        const token = await authToken(actor);
+        const app = new Elysia().use(loansRoute);
+        const created = await jsonRequest(app, `/loans/${actualLoan!.publicId}/disbursements`, token, {
+            method: "POST", body: JSON.stringify({ grossAmount: "100.00", loanAttributedAmount: "100.00", channel: "cash", disbursedAt: "2026-08-10T00:00:00.000Z" }),
+        });
+        for (const request of [
+            { path: `/loans/${wrongLoan!.publicId}/disbursements/${created.body.publicId}`, init: { method: "PUT", body: JSON.stringify({ payeeHint: "wrong parent" }) } },
+            { path: `/loans/${wrongLoan!.publicId}/disbursements/${created.body.publicId}/evidence/upload-intents`, init: { method: "POST", body: JSON.stringify({ mimeType: "image/png", size: 4, sha256: "c".repeat(64) }) } },
+            { path: `/loans/${wrongLoan!.publicId}/disbursements/${created.body.publicId}/evidence/0198c481-3e2b-7000-8000-000000000099/finalize`, init: { method: "POST", body: JSON.stringify({}) } },
+            { path: `/loans/${wrongLoan!.publicId}/disbursements/${created.body.publicId}/post`, init: { method: "POST", headers: { "idempotency-key": "wrong-parent-post" }, body: JSON.stringify({}) } },
+            { path: `/loans/${wrongLoan!.publicId}/disbursements/${created.body.publicId}/reverse`, init: { method: "POST", headers: { "idempotency-key": "wrong-parent-reverse" }, body: JSON.stringify({ reason: "wrong parent" }) } },
+        ]) {
+            const result = await jsonRequest(app, request.path, token, request.init);
+            expect(result.response.status).toBe(404);
+            expect(result.body).toMatchObject({ code: "DISBURSEMENT_NOT_FOUND" });
+        }
     });
 });

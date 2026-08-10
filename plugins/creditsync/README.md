@@ -1,10 +1,10 @@
-# CreditSync Plugin 1.0.0
+# CreditSync Plugin 2.0.0
 
 This private Codex plugin orchestrates the CreditSync MCP app for borrower identity, optional payment evidence, matching and posting, loan preview/draft/activation, daily-loan renewal, and append-only reversal.
 
 ## Package contract
 
-- Plugin version: `1.0.0`
+- Plugin version: `2.0.0`
 - MCP schema version: `1.0`
 - Skills: `creditsync`, `manage-borrowers`, `reconcile-payments`, `manage-loans`, `renew-daily-loan`
 - App manifest: `.app.json`
@@ -47,7 +47,7 @@ Start a new Codex task after installation so plugin skills and the private app a
 - Loan activation and every renewal show the backend result before explicit confirmation.
 - Reversals require a reason and create compensating history rather than deletion. Renewal reversal uses same-task execute IDs plus the borrower ID retained before execution; `renewal.reverse`, not the limited portfolio view, performs the authoritative atomic downstream-activity check and may return only the backend message plus aggregate `downstreamEntryCount`.
 
-See `references/` for matching, accounting invariants, error recovery, and the frozen full 20-tool metadata snapshot. The snapshot is generated through an authenticated local MCP SDK Client `tools/list` call. `evals/evals.json` and `evals/harness.ts` execute exact ordered/repeated tool calls, supported arguments, injected workflow states, external upload effects, and forbidden-write boundaries while remaining honest that no live private app was used.
+See `references/` for matching, accounting invariants, error recovery, and the frozen full 26-tool metadata snapshot. The snapshot is generated through an authenticated local MCP SDK Client `tools/list` call. `evals/evals.json` and `evals/harness.ts` execute exact ordered/repeated tool calls, supported arguments, injected workflow states, external upload effects, and forbidden-write boundaries while remaining honest that no live private app was used.
 
 Deployment, credential rotation, MinIO evidence, and recovery procedures are maintained in the root repository documentation:
 

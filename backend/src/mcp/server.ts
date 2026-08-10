@@ -220,6 +220,7 @@ const disbursementEventOutput = z.object({
     loanAttributedAmount: money,
     channel: z.enum(["bank_transfer", "cash", "adjustment"]),
     status: z.enum(["draft", "posted", "reversed"]),
+    sourceBankProfilePublicId: uuid.nullable(),
     payeeHint: z.string().nullable(),
     note: z.string().nullable(),
     disbursedAt: nullableIsoDateTime,

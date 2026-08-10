@@ -14,11 +14,11 @@ async function json(path: string) {
     return JSON.parse(await readFile(resolve(pluginRoot, path), "utf8")) as Record<string, unknown>;
 }
 
-describe("CreditSync plugin 1.0.0 contract", () => {
+describe("CreditSync plugin 2.0.0 contract", () => {
     test("manifest exposes only the private app and orchestration skills", async () => {
         const manifest = await json(".codex-plugin/plugin.json");
         expect(manifest.name).toBe("creditsync");
-        expect(manifest.version).toBe("1.0.0");
+        expect(manifest.version).toBe("2.0.0");
         expect(manifest.skills).toBe("./skills/");
         expect(manifest.apps).toBe("./.app.json");
         expect(manifest).not.toHaveProperty("mcpServers");
@@ -77,7 +77,7 @@ describe("CreditSync plugin 1.0.0 contract", () => {
         const contract = await json("references/mcp-tool-contract.json") as unknown as FrozenMcpContract;
         expect(contract.schemaVersion).toBe("1.0");
         expect(contract.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
-        expect(contract.tools).toHaveLength(20);
+        expect(contract.tools).toHaveLength(26);
         expect(contract.tools.every((tool) => tool.inputSchema && tool.outputSchema && tool.annotations)).toBe(true);
         const advertised = await captureAdvertisedMcpContract();
         expect(canonicalContractJson(contract)).toBe(canonicalContractJson(advertised));
@@ -129,7 +129,7 @@ describe("CreditSync plugin 1.0.0 contract", () => {
         expect(existsSync(resolve(pluginRoot, "scripts/validate.ts"))).toBe(true);
         expect(existsSync(resolve(pluginRoot, "assets/README.md"))).toBe(true);
         for (const forbidden of [".mcp.json", "hooks.json", "hooks", "ui", "oauth.json"]) {
-            expect(existsSync(resolve(pluginRoot, forbidden)), `${forbidden} must stay out of 1.0.0`).toBe(false);
+            expect(existsSync(resolve(pluginRoot, forbidden)), `${forbidden} must stay out of 2.0.0`).toBe(false);
         }
     });
 });

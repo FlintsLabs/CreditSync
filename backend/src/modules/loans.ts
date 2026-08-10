@@ -30,6 +30,7 @@ import type { CommandContext } from "../services/command-context";
 import { DomainError, presentDomainError } from "../services/domain-error";
 import {
     createDisbursementDraft,
+    assertDisbursementParentLoan,
     finalizeDisbursementEvidence,
     listLoanDisbursements,
     postDisbursement,
@@ -355,7 +356,9 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
     .put("/:id/disbursements/:disbursementId", async ({ params, body, user, request, set }) => {
         if (!user) return unauthorized(set);
         try {
-            const updated = await updateDisbursementDraft(commandContext(user, request), params.disbursementId, body);
+            const ctx = commandContext(user, request);
+            await assertDisbursementParentLoan(ctx, params.id, params.disbursementId);
+            const updated = await updateDisbursementDraft(ctx, params.disbursementId, body);
             await invalidateTenantCache(user.tenantId);
             return updated;
         } catch (error) {
@@ -365,7 +368,9 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
     .post("/:id/disbursements/:disbursementId/evidence/upload-intents", async ({ params, body, user, request, set }) => {
         if (!user) return unauthorized(set);
         try {
-            return await prepareDisbursementEvidence(commandContext(user, request), params.disbursementId, body);
+            const ctx = commandContext(user, request);
+            await assertDisbursementParentLoan(ctx, params.id, params.disbursementId);
+            return await prepareDisbursementEvidence(ctx, params.disbursementId, body);
         } catch (error) {
             return domainFailure(error, set);
         }
@@ -373,7 +378,9 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
     .post("/:id/disbursements/:disbursementId/evidence/:evidenceId/finalize", async ({ params, user, request, set }) => {
         if (!user) return unauthorized(set);
         try {
-            return await finalizeDisbursementEvidence(commandContext(user, request), params.disbursementId, params.evidenceId);
+            const ctx = commandContext(user, request);
+            await assertDisbursementParentLoan(ctx, params.id, params.disbursementId);
+            return await finalizeDisbursementEvidence(ctx, params.disbursementId, params.evidenceId);
         } catch (error) {
             return domainFailure(error, set);
         }
@@ -381,7 +388,9 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
     .post("/:id/disbursements/:disbursementId/post", async ({ params, user, request, set }) => {
         if (!user) return unauthorized(set);
         try {
-            const posted = await postDisbursement(commandContext(user, request), params.disbursementId);
+            const ctx = commandContext(user, request);
+            await assertDisbursementParentLoan(ctx, params.id, params.disbursementId);
+            const posted = await postDisbursement(ctx, params.disbursementId);
             await invalidateTenantCache(user.tenantId);
             return posted;
         } catch (error) {
@@ -391,7 +400,9 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
     .post("/:id/disbursements/:disbursementId/reverse", async ({ params, body, user, request, set }) => {
         if (!user) return unauthorized(set);
         try {
-            const reversed = await reverseDisbursement(commandContext(user, request), params.disbursementId, body.reason);
+            const ctx = commandContext(user, request);
+            await assertDisbursementParentLoan(ctx, params.id, params.disbursementId);
+            const reversed = await reverseDisbursement(ctx, params.disbursementId, body.reason);
             await invalidateTenantCache(user.tenantId);
             return reversed;
         } catch (error) {

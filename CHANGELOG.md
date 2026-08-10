@@ -17,9 +17,11 @@
 - Added durable idempotency and checksum-verified evidence-intent persistence for loan-disbursement posts and reversals.
 - Added reproducible disposable-PostgreSQL coverage for concurrent loan-disbursement posting and evidence-prepare retries.
 - Added authenticated REST and Remote MCP adapters for loan-disbursement drafts, evidence, posting, reversal, and variance reads with UUID-only identifiers and exact money strings.
+- Released CreditSync Plugin `2.0.0` with the regenerated frozen 26-tool MCP contract, preserving MCP payload schema version `1.0`.
 
 ### Fixed
 - Enforced tenant-safe event/file evidence links and blocked update or deletion of posted loan-disbursement ledger records at the database layer.
+- Returned source-bank-profile public UUIDs on disbursement events and rejected nested REST event commands whose parent loan UUID does not match.
 - Removed the duplicate custom calendar icon from the loan start-date field; the browser-native date control remains fully clickable.
 
 ### Changed

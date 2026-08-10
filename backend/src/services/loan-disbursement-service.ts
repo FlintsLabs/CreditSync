@@ -107,6 +107,16 @@ async function accessibleEvent(ctx: CommandContext, publicId: string, executor: 
     return { event, loan };
 }
 
+export async function assertDisbursementParentLoan(ctx: CommandContext, loanPublicId: string, disbursementPublicId: string) {
+    const [loan, resolved] = await Promise.all([
+        accessibleLoan(ctx, loanPublicId),
+        accessibleEvent(ctx, disbursementPublicId),
+    ]);
+    if (resolved.event.loanId !== loan.id) {
+        throw new DomainError("DISBURSEMENT_NOT_FOUND", "Disbursement not found", 404);
+    }
+}
+
 async function sourceProfileFor(ctx: CommandContext, publicId: string | null | undefined, executor: Executor = db) {
     if (!publicId) return null;
     requirePublicId(publicId, "sourceBankProfilePublicId");
@@ -128,10 +138,13 @@ function validateDraft(input: CreateDisbursementDraftInput) {
     return { grossAmount: serializeMoney(grossAmount), loanAttributedAmount: serializeMoney(loanAttributedAmount), channel: input.channel, note, disbursedAt: dateTime(input.disbursedAt) };
 }
 
-function presentEvent(event: EventRow, evidenceFilePublicIds: string[] = []) {
+async function presentEvent(event: EventRow, evidenceFilePublicIds: string[] = [], executor: Executor = db) {
+    const sourceProfile = event.sourceBankProfileId === null ? null : await executor.query.bankProfiles.findFirst({
+        where: and(eq(bankProfiles.id, event.sourceBankProfileId), eq(bankProfiles.tenantId, event.tenantId)),
+    });
     return {
         id: event.publicId, publicId: event.publicId, grossAmount: serializeMoney(event.grossAmount), loanAttributedAmount: serializeMoney(event.loanAttributedAmount),
-        channel: event.channel, status: event.status, payeeHint: event.payeeHint, note: event.note, disbursedAt: event.disbursedAt,
+        channel: event.channel, status: event.status, sourceBankProfilePublicId: sourceProfile?.publicId ?? null, payeeHint: event.payeeHint, note: event.note, disbursedAt: event.disbursedAt,
         postedAt: event.postedAt, reversedAt: event.reversedAt, evidenceFilePublicIds,
     };
 }
@@ -165,7 +178,7 @@ export async function createDisbursementDraft(ctx: CommandContext, loanPublicId:
             payeeHint: normalizedText(input.payeeHint), createdByUserId: ctx.actorUserId,
         }).returning().then((rows) => rows[0]!);
         await writeAudit(tx, ctx, created, "draft_created", { loanPublicId, grossAmount: draft.grossAmount, loanAttributedAmount: draft.loanAttributedAmount });
-        return presentEvent(created);
+        return presentEvent(created, [], tx);
     });
 }
 
@@ -186,7 +199,7 @@ export async function updateDisbursementDraft(ctx: CommandContext, disbursementP
             .where(and(eq(loanDisbursementEvents.id, current.id), eq(loanDisbursementEvents.status, "draft"))).returning().then((rows) => rows[0]);
         if (!updated) throw new DomainError("DISBURSEMENT_LOCKED", "Posted or reversed disbursements cannot be edited", 409);
         await writeAudit(tx, ctx, updated, "draft_updated", { before: editableSnapshot(current), after: editableSnapshot(updated) });
-        return presentEvent(updated, await evidenceIds(ctx, updated.id, tx));
+        return presentEvent(updated, await evidenceIds(ctx, updated.id, tx), tx);
     });
 }
 
@@ -203,7 +216,7 @@ export async function listLoanDisbursements(ctx: CommandContext, loanPublicId: s
     return {
         loanPublicId: loan.publicId,
         summary: { approvedPrincipal: serializeMoney(approvedPrincipal), netDisbursed: serializeMoney(netDisbursed), variance: variance.toFixed(2), status: variance.isZero() ? "matched" : variance.isNegative() ? "under_disbursed" : "over_disbursed" },
-        events: rows.map((row) => presentEvent(row, evidenceByEvent.get(row.id) ?? [])),
+        events: await Promise.all(rows.map((row) => presentEvent(row, evidenceByEvent.get(row.id) ?? []))),
     };
 }
 
@@ -222,7 +235,7 @@ export async function postDisbursement(ctx: CommandContext, disbursementPublicId
         const current = await lockEventAndLoan(tx, ctx, event.id);
         if (current.status === "posted") {
             if (current.postIdempotencyKey === idempotencyKey) {
-                return { ...presentEvent(current, await evidenceIds(ctx, current.id, tx)), duplicate: true, auditPublicId: null, correlationId: ctx.correlationId };
+                return { ...await presentEvent(current, await evidenceIds(ctx, current.id, tx), tx), duplicate: true, auditPublicId: null, correlationId: ctx.correlationId };
             }
             throw new DomainError("DISBURSEMENT_ALREADY_POSTED", "Disbursement was already posted with another idempotency key", 409);
         }
@@ -243,7 +256,7 @@ export async function postDisbursement(ctx: CommandContext, disbursementPublicId
             .where(and(eq(loanDisbursementEvents.id, current.id), eq(loanDisbursementEvents.status, "draft"))).returning().then((rows) => rows[0]);
         if (!updated) throw new DomainError("DISBURSEMENT_LOCKED", "Disbursement can no longer be posted", 409);
         const audit = await writeAudit(tx, ctx, updated, "posted", { idempotencyKey, grossAmount: serializeMoney(updated.grossAmount), loanAttributedAmount: serializeMoney(updated.loanAttributedAmount) });
-        return { ...presentEvent(updated, await evidenceIds(ctx, updated.id, tx)), duplicate: false, auditPublicId: audit.publicId, correlationId: ctx.correlationId };
+        return { ...await presentEvent(updated, await evidenceIds(ctx, updated.id, tx), tx), duplicate: false, auditPublicId: audit.publicId, correlationId: ctx.correlationId };
     });
 }
 
@@ -267,7 +280,7 @@ export async function reverseDisbursement(ctx: CommandContext, disbursementPubli
         const existing = await tx.query.loanDisbursementEvents.findFirst({ where: and(eq(loanDisbursementEvents.tenantId, ctx.tenantId), eq(loanDisbursementEvents.reversedEventId, original.id)) });
         if (existing) {
             if (existing.reversalIdempotencyKey === idempotencyKey && existing.reversalRequestHash === reversalRequestHash) {
-                return { ...presentEvent(existing, await evidenceIds(ctx, existing.id, tx)), reversedEventPublicId: original.publicId, duplicate: true, auditPublicId: null, correlationId: ctx.correlationId };
+                return { ...await presentEvent(existing, await evidenceIds(ctx, existing.id, tx), tx), reversedEventPublicId: original.publicId, duplicate: true, auditPublicId: null, correlationId: ctx.correlationId };
             }
             throw new DomainError("REVERSAL_IDEMPOTENCY_CONFLICT", "Disbursement was already reversed with another idempotency key or reason", 409);
         }
@@ -278,7 +291,7 @@ export async function reverseDisbursement(ctx: CommandContext, disbursementPubli
             reversalIdempotencyKey: idempotencyKey, reversalRequestHash,
         }).returning().then((rows) => rows[0]!);
         const audit = await writeAudit(tx, ctx, reversal, "reversed", { reversedEventPublicId: original.publicId, reason: note, idempotencyKey });
-        return { ...presentEvent(reversal), reversedEventPublicId: original.publicId, duplicate: false, auditPublicId: audit.publicId, correlationId: ctx.correlationId };
+        return { ...await presentEvent(reversal, [], tx), reversedEventPublicId: original.publicId, duplicate: false, auditPublicId: audit.publicId, correlationId: ctx.correlationId };
     });
 }
 
