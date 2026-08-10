@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.8 - 2026-08-11
+
+### Added
+- Added a shared account navigation and safe local sign-out contract, plus the approved implementation plan for the unified Account and Preferences page.
+
 ## v0.3.7 - 2026-08-11
 
 ### Added
