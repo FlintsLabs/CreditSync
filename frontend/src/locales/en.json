@@ -48,6 +48,7 @@
         "close": "Close"
     },
     "appbar": {
+        "account": "Open account menu",
         "profile": "Profile",
         "settings": "Settings",
         "logout": "Log out"
