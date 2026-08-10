@@ -224,28 +224,6 @@ export default function LoanWizard() {
                                     ))}
                                 </select>
                             </div>
-                            {formData.repaymentType === "floating" && (
-                                <>
-                                    <div className="grid gap-2">
-                                        <label>{t("loanWizard.dailyInterestMode", "Daily interest method")}</label>
-                                        <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={formData.dailyInterestMode} onChange={(e) => setFormData({ ...formData, dailyInterestMode: e.target.value })}>
-                                            <option value="per_thousand">{t("loanWizard.dailyInterestPerThousand", "Baht per ฿1,000 per day")}</option>
-                                            <option value="percent">{t("loanWizard.dailyInterestPercent", "% per day")}</option>
-                                        </select>
-                                    </div>
-                                    <div className="grid gap-2">
-                                        <label>{formData.dailyInterestMode === "per_thousand" ? t("loanWizard.dailyInterestRatePerThousand", "Rate per ฿1,000 / day") : t("loanWizard.dailyInterestRatePercent", "Rate % / day")}</label>
-                                        <Input type="number" min="0.0001" step="0.0001" value={formData.dailyInterestRate} onChange={(e) => setFormData({ ...formData, dailyInterestRate: e.target.value })} />
-                                    </div>
-                                    <div className="grid gap-2 md:col-span-2">
-                                        <label>{t("loanWizard.firstDayTreatment", "First-day interest")}</label>
-                                        <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={formData.firstDayTreatment} onChange={(e) => setFormData({ ...formData, firstDayTreatment: e.target.value })}>
-                                            <option value="start_next_day">{t("loanWizard.startNextDay", "Start charging on the next day")}</option>
-                                            <option value="deduct">{t("loanWizard.deductFirstDay", "Deduct the first day's interest from payout")}</option>
-                                        </select>
-                                    </div>
-                                </>
-                            )}
                             <div className="grid gap-2">
                                 <label>{t("loanWizard.fundingSource", "Funding Source (Optional)")}</label>
                                 <select
@@ -317,22 +295,21 @@ export default function LoanWizard() {
                                     <Input type="number" value={formData.interestRate} onChange={(e) => setFormData({ ...formData, interestRate: e.target.value })} />
                                 </div>
                             )}
-                            <div className="grid gap-2">
-                                <label>{t("loanWizard.termMonths", "Term (Months)")}</label>
-                                <Input type="number" value={formData.termMonths} onChange={(e) => setFormData({ ...formData, termMonths: e.target.value })} />
-                            </div>
-                            <div className="grid gap-2">
+                            {formData.repaymentType !== "floating" && (
+                                <div className="grid gap-2">
+                                    <label>{t("loanWizard.termMonths", "Term (Months)")}</label>
+                                    <Input type="number" value={formData.termMonths} onChange={(e) => setFormData({ ...formData, termMonths: e.target.value })} />
+                                </div>
+                            )}
+                            <div className="grid gap-2 md:col-span-2">
                                 <label>{t("loanWizard.repaymentType", "Repayment Type")}</label>
-                                <select
-                                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                    value={formData.repaymentType}
-                                    onChange={(e) => setFormData({ ...formData, repaymentType: e.target.value })}
-                                >
-                                    <option value="monthly">{t("loanWizard.repaymentOptions.monthly", "Monthly Installment")}</option>
-                                    <option value="daily">{t("loanWizard.repaymentOptions.daily", "Daily Installment")}</option>
-                                    <option value="weekly">{t("loanWizard.repaymentOptions.weekly", "Weekly Installment")}</option>
-                                    <option value="floating">{t("loanWizard.repaymentOptions.floating", "Floating (No fixed schedule)")}</option>
-                                </select>
+                                <div className="flex flex-wrap gap-2" role="radiogroup">
+                                    {(["monthly", "daily", "weekly", "floating"] as const).map((type) => (
+                                        <button key={type} type="button" role="radio" aria-checked={formData.repaymentType === type} onClick={() => setFormData({ ...formData, repaymentType: type })} className={`rounded-full border px-3 py-2 text-sm transition-colors ${formData.repaymentType === type ? "border-primary bg-primary text-primary-foreground" : "border-input bg-background hover:bg-muted"}`}>
+                                            {t(`loanWizard.repaymentOptions.${type}`)}
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
                             <div className="grid gap-2">
                                 <label>{t("loanWizard.startDate", "Start Date")}</label>
@@ -356,6 +333,24 @@ export default function LoanWizard() {
                                     <div className="grid gap-2">
                                         <label>{t("loanWizard.installmentAmount")}</label>
                                         <Input type="number" value={formData.installmentAmount} placeholder={t("loanWizard.automatic")} onChange={(e) => setFormData({ ...formData, installmentAmount: e.target.value })} />
+                                    </div>
+                                </>
+                            )}
+                            {formData.repaymentType === "floating" && (
+                                <>
+                                    <div className="grid gap-2">
+                                        <label>{t("loanWizard.dailyInterestMode", "Daily interest method")}</label>
+                                        <div className="flex gap-2">
+                                            {(["per_thousand", "percent"] as const).map((mode) => <button key={mode} type="button" onClick={() => setFormData({ ...formData, dailyInterestMode: mode })} className={`rounded-full border px-3 py-2 text-sm ${formData.dailyInterestMode === mode ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}>{mode === "per_thousand" ? t("loanWizard.dailyInterestPerThousand") : t("loanWizard.dailyInterestPercent")}</button>)}
+                                        </div>
+                                    </div>
+                                    <div className="grid gap-2">
+                                        <label>{formData.dailyInterestMode === "per_thousand" ? t("loanWizard.dailyInterestRatePerThousand") : t("loanWizard.dailyInterestRatePercent")}</label>
+                                        <Input type="number" min="0.0001" step="0.0001" value={formData.dailyInterestRate} onChange={(e) => setFormData({ ...formData, dailyInterestRate: e.target.value })} />
+                                    </div>
+                                    <div className="grid gap-2 md:col-span-2">
+                                        <label>{t("loanWizard.firstDayTreatment", "First-day interest")}</label>
+                                        <div className="flex flex-wrap gap-2"><button type="button" onClick={() => setFormData({ ...formData, firstDayTreatment: "start_next_day" })} className={`rounded-full border px-3 py-2 text-sm ${formData.firstDayTreatment === "start_next_day" ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}>{t("loanWizard.startNextDay")}</button><button type="button" onClick={() => setFormData({ ...formData, firstDayTreatment: "deduct" })} className={`rounded-full border px-3 py-2 text-sm ${formData.firstDayTreatment === "deduct" ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}>{t("loanWizard.deductFirstDay")}</button></div>
                                     </div>
                                 </>
                             )}

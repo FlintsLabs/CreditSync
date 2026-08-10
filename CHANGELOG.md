@@ -17,6 +17,7 @@
 - Preserved floating-loan balances during payment posting instead of deriving them from an empty fixed-installment schedule.
 - Hid the irrelevant annual-interest input when the wizard uses floating daily interest.
 - Made the loan start-date control open its native picker from the full input area and aligned its calendar affordance to the right.
+- Removed fixed term length from floating loans and changed repayment/daily-interest choices to direct chip controls.
 - Added an approved borrower-card identity design specification covering responsive one/two-column layout, sensitive Thai-ID masking, full-value copy behavior, avatar hierarchy, localization, accessibility, and verification requirements.
 - Added a task-by-task implementation plan for the approved borrower-card identity design.
 - Added Thai national-ID formatting and masking utilities for privacy-aware borrower-list presentation.

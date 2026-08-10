@@ -198,7 +198,7 @@ export async function createLoanDraft(ctx: CommandContext, input: LoanDraftInput
             principalAmount: terms.principal,
             interestRate: terms.interestRate,
             repaymentType: terms.repaymentType,
-            termMonths: terms.termMonths,
+            termMonths: terms.repaymentType === "floating" ? null : terms.termMonths,
             totalInstallments: terms.totalInstallments,
             installmentAmount: terms.installmentAmount,
             startDate: input.startDate,
@@ -261,7 +261,7 @@ export async function updateLoanDraft(ctx: CommandContext, publicId: string, inp
             principalAmount: merged.principal,
             interestRate: merged.interestRate,
             repaymentType: merged.repaymentType,
-            termMonths: merged.termMonths,
+            termMonths: merged.repaymentType === "floating" ? null : merged.termMonths,
             totalInstallments: merged.totalInstallments,
             installmentAmount: merged.installmentAmount,
             startDate: input.startDate ?? existing.startDate,
@@ -294,7 +294,7 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
         if (current.status !== "draft") {
             throw new DomainError("LOAN_NOT_ACTIVATABLE", "Only draft loans can be activated", 409);
         }
-        if (current.termMonths === null) {
+        if (current.termMonths === null && current.repaymentType !== "floating") {
             throw new DomainError("INVALID_LOAN_TERMS", "Draft term months are required", 400);
         }
 
@@ -355,7 +355,7 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
             generated = current.repaymentType === "floating" ? [] : generateLoanSchedule({
                 principal: current.principalAmount,
                 interestRate: current.interestRate,
-                termMonths: current.termMonths,
+                termMonths: current.termMonths!,
                 repaymentType: current.repaymentType as RepaymentType,
                 startDate: current.startDate ?? undefined,
                 totalInstallments: current.totalInstallments ?? undefined,
