@@ -3,6 +3,7 @@
 ## v0.3.7 - 2026-08-11
 
 ### Added
+- Added the tenant-scoped intermediary, borrower-collection, grouped-remittance, explicit-allocation, and versioned-proposal ledger schema with exact-money checks, active reservation uniqueness, and immutable settled/post records.
 - Added a task-by-task implementation plan for the approved intermediary collection/remittance ledger, manual workspace, evidence viewer, MCP orchestration, controlled intake migration, and full verification.
 - Added an approved manual-first, AI-assisted design for two-leg intermediary collections and grouped remittances, including explicit balance allocation, exceptional manual approval, evidence viewing, immutable posting, and MCP safety boundaries.
 - Added an approved design for shared date/date-time inputs with right-aligned picker icons and expandable quick-repayment notes.
