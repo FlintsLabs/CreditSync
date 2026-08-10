@@ -12,6 +12,7 @@
 - Added a task-by-task implementation plan for direct own-capital selection, capacity enforcement, and non-cash economic profitability.
 - Added the additive own-capital opportunity-cost policy migration with a non-negative annual rate defaulting to 2.00%.
 - Added Decimal-based annual opportunity-cost calculation for capital-pool reporting without creating a cash expense.
+- Added an additive direct-capital funding-profile reference on loan drafts and active loans, mutually exclusive with a bank drawdown.
 
 ### Fixed
 - Corrected the direct-own-capital plan's five-day 2% annual opportunity-cost example to ฿1.37 for a ฿5,000 allocation.

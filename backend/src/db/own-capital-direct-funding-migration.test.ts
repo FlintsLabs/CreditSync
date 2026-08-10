@@ -16,4 +16,18 @@ describe("own-capital direct funding migration", () => {
         expect(sql).not.toContain('UPDATE "bank_profiles" SET "accounting_mode"');
         expect(sql).not.toMatch(/\bDROP\b/i);
     });
+
+    test("registers a nullable direct-capital source for loan drafts", async () => {
+        const journal = await Bun.file(`${backendRoot}drizzle/meta/_journal.json`).json();
+        expect(journal.entries.find((entry: { tag: string }) => entry.tag === "0014_loan_direct_capital_source"))
+            .toMatchObject({ idx: 14, tag: "0014_loan_direct_capital_source" });
+
+        const migration = Bun.file(`${backendRoot}drizzle/0014_loan_direct_capital_source.sql`);
+        expect(await migration.exists()).toBe(true);
+        const sql = await migration.text();
+        expect(sql).toContain('ADD COLUMN "funding_bank_profile_id" integer');
+        expect(sql).toContain('loans_funding_bank_profile_fk');
+        expect(sql).toContain('loans_one_funding_source_check');
+        expect(sql).not.toMatch(/\bDROP\b/i);
+    });
 });

@@ -26,6 +26,7 @@
 **Files:**
 - Modify: `backend/src/db/schema.ts`
 - Create: `backend/drizzle/0013_own_capital_direct_funding.sql`
+- Create: `backend/drizzle/0014_loan_direct_capital_source.sql`
 - Create: `backend/src/db/own-capital-direct-funding-migration.test.ts`
 - Modify: `CHANGELOG.md`
 

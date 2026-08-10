@@ -168,6 +168,7 @@ export const loans = pgTable("loans", {
     ownerUserId: integer("owner_user_id").references(() => users.id),
     borrowerId: integer("borrower_id").references(() => borrowers.id).notNull(),
     bankLoanId: integer("bank_loan_id").references(() => bankLoans.id), // Traceability to source
+    fundingBankProfileId: integer("funding_bank_profile_id").references(() => bankProfiles.id), // Direct own-capital source
     principalAmount: numeric("principal_amount").notNull(),
     interestRate: numeric("interest_rate").notNull(), // Calculated rate for borrower
     repaymentType: text("repayment_type").notNull(), // "daily", "monthly", "floating"
@@ -189,6 +190,7 @@ export const loans = pgTable("loans", {
 }, (table) => [
     uniqueIndex("loans_tenant_id_id_unique").on(table.tenantId, table.id),
     check("loans_term_months_check", sql`${table.termMonths} IS NULL OR ${table.termMonths} > 0`),
+    check("loans_one_funding_source_check", sql`${table.bankLoanId} IS NULL OR ${table.fundingBankProfileId} IS NULL`),
 ]);
 
 export const loanSchedules = pgTable("loan_schedules", {
