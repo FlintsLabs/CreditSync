@@ -100,7 +100,9 @@
         "payments": "Payment Inbox",
         "reconciliation": "Reconciliation",
         "settings": "Settings",
-        "language": "Language"
+        "language": "Language",
+        "openNavigation": "Open navigation",
+        "closeNavigation": "Close navigation"
     },
     "login": {
         "title": "Sign in to manage your lending portfolio",

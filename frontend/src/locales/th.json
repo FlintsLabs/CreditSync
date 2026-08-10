@@ -100,7 +100,9 @@
         "payments": "กล่องรับชำระ",
         "reconciliation": "กระทบยอด",
         "settings": "ตั้งค่า",
-        "language": "ภาษา"
+        "language": "ภาษา",
+        "openNavigation": "เปิดเมนูนำทาง",
+        "closeNavigation": "ปิดเมนูนำทาง"
     },
     "login": {
         "title": "เข้าสู่ระบบเพื่อจัดการพอร์ตสินเชื่อของคุณ",

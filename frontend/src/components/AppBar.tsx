@@ -1,10 +1,12 @@
 
 import { Settings, LogOut, User } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 import { ModeToggle } from "./theme-toggle";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { Button } from "./ui/Button";
 import { getStoredUser } from "../lib/session";
+import { PREFERENCES_SETTINGS_PATH, PROFILE_SETTINGS_PATH, signOut } from "../lib/account";
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -17,17 +19,15 @@ import {
 
 export function UserAccountMenu() {
     const { t } = useTranslation();
+    const navigate = useNavigate();
     const user = getStoredUser();
-
-    const handleLogout = () => {
-        localStorage.removeItem("token");
-        localStorage.removeItem("user");
-        window.location.href = "/login";
-    };
+    const accountLabel = user?.name
+        ? t("appbar.accountFor", { name: user.name })
+        : t("appbar.account", "Open account menu");
 
     return <DropdownMenu>
         <DropdownMenuTrigger asChild>
-            <Button aria-label={t("appbar.account", "Open account menu")} variant="ghost" className="relative h-9 w-9 rounded-full">
+            <Button aria-label={accountLabel} variant="ghost" className="relative h-9 w-9 rounded-full">
                 <Avatar className="h-8 w-8">
                     <AvatarImage src={user?.picture} alt={user?.name} />
                     <AvatarFallback>{user?.name?.charAt(0) || "U"}</AvatarFallback>
@@ -43,17 +43,17 @@ export function UserAccountMenu() {
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-                <DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => navigate(PROFILE_SETTINGS_PATH)}>
                     <User className="mr-2 h-4 w-4" />
                     <span>{t("appbar.profile", "Profile")}</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => navigate(PREFERENCES_SETTINGS_PATH)}>
                     <Settings className="mr-2 h-4 w-4" />
                     <span>{t("appbar.settings", "Settings")}</span>
                 </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
+            <DropdownMenuItem onSelect={() => signOut(navigate)} className="text-destructive focus:text-destructive">
                 <LogOut className="mr-2 h-4 w-4" />
                 <span>{t("appbar.logout", "Log out")}</span>
             </DropdownMenuItem>

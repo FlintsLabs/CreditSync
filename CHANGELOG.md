@@ -6,6 +6,9 @@
 - Added a shared account navigation and safe local sign-out contract, plus the approved implementation plan for the unified Account and Preferences page.
 - Added the localized, read-only Account and Preferences page with explicit language and appearance choices, accessible feedback, session controls, and safe identity fallbacks.
 
+### Changed
+- Connected Profile, Settings, desktop/mobile navigation, and the legacy `/dashboard/settings` path to the canonical protected Account and Preferences destination.
+
 ### Fixed
 - Kept appearance changes active in memory when browser theme persistence is unavailable.
 
