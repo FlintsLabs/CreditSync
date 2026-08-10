@@ -3,6 +3,7 @@
 ## v0.3.7 - 2026-08-11
 
 ### Added
+- Added a task-by-task implementation plan for the approved intermediary collection/remittance ledger, manual workspace, evidence viewer, MCP orchestration, controlled intake migration, and full verification.
 - Added an approved manual-first, AI-assisted design for two-leg intermediary collections and grouped remittances, including explicit balance allocation, exceptional manual approval, evidence viewing, immutable posting, and MCP safety boundaries.
 - Added an approved design for shared date/date-time inputs with right-aligned picker icons and expandable quick-repayment notes.
 - Added loan-list cards that show outstanding principal with a muted original-principal reference.
