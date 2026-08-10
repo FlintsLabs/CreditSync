@@ -570,7 +570,7 @@ export default function FundDetail() {
                 </Card>
             ) : (
                 <>
-                    <div className="grid gap-4 md:grid-cols-3">
+                    <div data-testid="funding-summary-grid" className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
                         <Card>
                             <CardHeader className="pb-2">
                                 <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -580,11 +580,11 @@ export default function FundDetail() {
                                 </CardTitle>
                             </CardHeader>
                             <CardContent>
-                                <div className="flex items-center gap-3">
+                                <div className="flex min-w-0 items-center gap-3">
                                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
                                         {fund.type === "bank" ? <Building2 className="h-5 w-5" /> : <Wallet className="h-5 w-5" />}
                                     </div>
-                                    <div className="text-3xl font-bold">{formatMoneyExact(availableAmount, i18n.language)}</div>
+                                    <div data-testid="funding-available-amount" className="min-w-0 text-2xl font-bold tabular-nums sm:text-3xl">{formatMoneyExact(availableAmount, i18n.language)}</div>
                                 </div>
                                 <div className="mt-3 text-xs text-muted-foreground">
                                     {t("funds.limit")}: {formatMoneyExact(fundLimit, i18n.language)}
@@ -695,36 +695,61 @@ export default function FundDetail() {
                             ) : fundingUsage.allocations.length === 0 ? (
                                 <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">{t("fundDetail.noFundingUsage", "No borrower loans are currently allocated from this funding source.")}</div>
                             ) : (
-                                <div className="overflow-x-auto">
-                                    <table className="w-full min-w-[760px] text-sm">
-                                        <thead><tr className="border-b text-left">
-                                            <th className="py-2 pr-3">{t("fundDetail.contract", "Contract")}</th>
-                                            <th className="py-2 pr-3">{t("fundDetail.borrower", "Borrower")}</th>
-                                            <th className="py-2 pr-3">{t("fundDetail.fundingRoute", "Funding route")}</th>
-                                            <th className="py-2 pr-3 text-right">{t("fundDetail.netAllocated", "Net allocated")}</th>
-                                            <th className="py-2 pr-3">{t("fundDetail.latestAllocation", "Latest allocation")}</th>
-                                            <th className="py-2 pr-3 text-right">{t("loanWizard.outstandingPrincipal", "Outstanding principal")}</th>
-                                            <th className="py-2">{t("common.status", "Status")}</th>
-                                        </tr></thead>
-                                        <tbody>{fundingUsage.allocations.map((allocation) => {
+                                <>
+                                    <div data-testid="funding-usage-cards" className="space-y-3 2xl:hidden">
+                                        {fundingUsage.allocations.map((allocation) => {
                                             const routes = allocation.fundingRoutes;
                                             const routeLabel = routes.length !== 1
                                                 ? t("fundDetail.multipleFundingRoutes", "Multiple funding routes")
                                                 : routes[0]?.type === "direct"
                                                     ? t("fundDetail.directAllocation", "Direct own-capital allocation")
                                                     : t("fundDetail.drawdownAllocation", { defaultValue: "Drawdown {{id}}", id: routes[0]?.bankLoanPublicId ?? "-" });
-                                            return <tr key={allocation.loanPublicId} className="border-b last:border-0">
-                                                <td className="py-3 pr-3"><Link className="text-primary hover:underline" to={`/loans/${allocation.loanPublicId}`}>{allocation.loanPublicId}</Link></td>
-                                                <td className="py-3 pr-3">{allocation.borrowerName ?? "-"}</td>
-                                                <td className="py-3 pr-3">{routeLabel}</td>
-                                                <td className="py-3 pr-3 text-right">{formatMoneyExact(allocation.netAllocatedAmount, i18n.language)}</td>
-                                                <td className="py-3 pr-3">{allocation.latestAllocationDate}</td>
-                                                <td className="py-3 pr-3 text-right">{formatMoneyExact(allocation.outstandingPrincipal, i18n.language)}</td>
-                                                <td className="py-3 capitalize">{allocation.loanStatus}</td>
-                                            </tr>;
-                                        })}</tbody>
-                                    </table>
-                                </div>
+                                            return <article key={allocation.loanPublicId} className="rounded-lg border p-4">
+                                                <div className="flex items-start justify-between gap-3">
+                                                    <Link className="break-all font-medium text-primary hover:underline" to={`/loans/${allocation.loanPublicId}`}>{allocation.loanPublicId}</Link>
+                                                    <span className="shrink-0 capitalize text-sm text-muted-foreground">{allocation.loanStatus}</span>
+                                                </div>
+                                                <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                                                    <div><dt className="text-muted-foreground">{t("fundDetail.borrower", "Borrower")}</dt><dd className="mt-1 font-medium">{allocation.borrowerName ?? "-"}</dd></div>
+                                                    <div><dt className="text-muted-foreground">{t("fundDetail.fundingRoute", "Funding route")}</dt><dd className="mt-1 break-words font-medium">{routeLabel}</dd></div>
+                                                    <div><dt className="text-muted-foreground">{t("fundDetail.netAllocated", "Net allocated")}</dt><dd className="mt-1 font-medium tabular-nums">{formatMoneyExact(allocation.netAllocatedAmount, i18n.language)}</dd></div>
+                                                    <div><dt className="text-muted-foreground">{t("loanWizard.outstandingPrincipal", "Outstanding principal")}</dt><dd className="mt-1 font-medium tabular-nums">{formatMoneyExact(allocation.outstandingPrincipal, i18n.language)}</dd></div>
+                                                    <div><dt className="text-muted-foreground">{t("fundDetail.latestAllocation", "Latest allocation")}</dt><dd className="mt-1 font-medium">{allocation.latestAllocationDate}</dd></div>
+                                                </dl>
+                                            </article>;
+                                        })}
+                                    </div>
+                                    <div className="hidden overflow-x-auto 2xl:block">
+                                        <table className="w-full min-w-[760px] text-sm">
+                                            <thead><tr className="border-b text-left">
+                                                <th className="py-2 pr-3">{t("fundDetail.contract", "Contract")}</th>
+                                                <th className="py-2 pr-3">{t("fundDetail.borrower", "Borrower")}</th>
+                                                <th className="py-2 pr-3">{t("fundDetail.fundingRoute", "Funding route")}</th>
+                                                <th className="py-2 pr-3 text-right">{t("fundDetail.netAllocated", "Net allocated")}</th>
+                                                <th className="py-2 pr-3">{t("fundDetail.latestAllocation", "Latest allocation")}</th>
+                                                <th className="py-2 pr-3 text-right">{t("loanWizard.outstandingPrincipal", "Outstanding principal")}</th>
+                                                <th className="py-2">{t("common.status", "Status")}</th>
+                                            </tr></thead>
+                                            <tbody>{fundingUsage.allocations.map((allocation) => {
+                                                const routes = allocation.fundingRoutes;
+                                                const routeLabel = routes.length !== 1
+                                                    ? t("fundDetail.multipleFundingRoutes", "Multiple funding routes")
+                                                    : routes[0]?.type === "direct"
+                                                        ? t("fundDetail.directAllocation", "Direct own-capital allocation")
+                                                        : t("fundDetail.drawdownAllocation", { defaultValue: "Drawdown {{id}}", id: routes[0]?.bankLoanPublicId ?? "-" });
+                                                return <tr key={allocation.loanPublicId} className="border-b last:border-0">
+                                                    <td className="py-3 pr-3"><Link className="text-primary hover:underline" to={`/loans/${allocation.loanPublicId}`}>{allocation.loanPublicId}</Link></td>
+                                                    <td className="py-3 pr-3">{allocation.borrowerName ?? "-"}</td>
+                                                    <td className="py-3 pr-3">{routeLabel}</td>
+                                                    <td className="py-3 pr-3 text-right">{formatMoneyExact(allocation.netAllocatedAmount, i18n.language)}</td>
+                                                    <td className="py-3 pr-3">{allocation.latestAllocationDate}</td>
+                                                    <td className="py-3 pr-3 text-right">{formatMoneyExact(allocation.outstandingPrincipal, i18n.language)}</td>
+                                                    <td className="py-3 capitalize">{allocation.loanStatus}</td>
+                                                </tr>;
+                                            })}</tbody>
+                                        </table>
+                                    </div>
+                                </>
                             )}
                         </CardContent>
                     </Card>

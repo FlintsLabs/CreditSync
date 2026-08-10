@@ -12,6 +12,7 @@
 - Documented the approved responsive layout for funding-source details at tablet and compact-desktop widths.
 
 ### Fixed
+- Made funding-source summaries and loan allocations readable in tablet and compact-desktop layouts without content collisions.
 - Made own-capital availability and utilization subtract net direct loan allocations instead of only bank drawdowns, while keeping external-source credit availability based on issued drawdowns.
 - Clarified that own-capital allocations are direct and do not create a bank drawdown record.
 - Isolated funding-usage integration tests from tenant-cache state between disposable database resets.
