@@ -425,6 +425,21 @@
             "paid": "Paid",
             "defaulted": "Defaulted"
         },
+        "paymentHealth": {
+            "overdueInstallments_one": "Overdue {{count}} installment",
+            "overdueInstallments_other": "Overdue {{count}} installments",
+            "overdueDays_one": "Overdue {{count}} day",
+            "overdueDays_other": "Overdue {{count}} days",
+            "overdueSummary": "{{amount}} · up to {{days}} days overdue",
+            "dueNow": "Due now {{amount}}",
+            "overdueAria": "This loan has an overdue balance",
+            "scheduleStatus": {
+                "pending": "Pending",
+                "partial": "Partially paid",
+                "overdue": "Overdue",
+                "paid": "Paid"
+            }
+        },
         "funding": {
             "unfunded": "Unfunded",
             "partiallyFunded": "Partially funded",

@@ -6,6 +6,7 @@ import { api } from "../../../lib/api";
 import { getStoredUser, isTenantAdminUser } from "../../../lib/session";
 import { Button } from "../../../components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/Card";
+import { Badge } from "../../../components/ui/badge";
 import appI18n from "../../../lib/i18n";
 import { LoanRenewalPanel } from "./LoanRenewalPanel";
 import { LoanDisbursements } from "./LoanDisbursements";
@@ -431,7 +432,9 @@ export default function LoanDetail() {
                                                     </div>
                                                     <div className="text-right">
                                                         <div className="font-medium">{formatCurrency(Number(row.remainingDue ?? 0))}</div>
-                                                        <div className="text-xs text-muted-foreground capitalize">{row.status}</div>
+                                                        <Badge variant={row.status === "overdue" ? "destructive" : row.status === "paid" ? "secondary" : "outline"}>
+                                                            {t(`loans.paymentHealth.scheduleStatus.${row.status}`, { defaultValue: row.status })}
+                                                        </Badge>
                                                     </div>
                                                 </div>
                                             </div>

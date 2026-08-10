@@ -476,7 +476,7 @@ Run:
 
 ```bash
 cd frontend
-bun test tests/loan-list.vitest.tsx
+bun run test -- tests/loan-list.vitest.tsx
 ```
 
 Expected: FAIL because the DTO and visual component are not rendered.
@@ -568,7 +568,7 @@ Run:
 
 ```bash
 cd frontend
-bun test tests/loan-list.vitest.tsx
+bun run test -- tests/loan-list.vitest.tsx
 ```
 
 Expected: PASS for red overdue, amber due-now, exact large money, English/Thai copy, lifecycle separation, navigation, and one `/loans` request.
@@ -589,7 +589,7 @@ Run:
 
 ```bash
 cd frontend
-bun test tests/loan-list.vitest.tsx
+bun run test -- tests/loan-list.vitest.tsx
 bun run lint
 bun run build
 ```
@@ -642,7 +642,7 @@ Run:
 
 ```bash
 cd frontend
-bun test
+bun run test
 bun run lint
 bun run build
 ```

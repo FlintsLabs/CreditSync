@@ -9,6 +9,15 @@ import { cn } from "../../../lib/utils";
 import { LoanClosingModal } from "./LoanClosingModal";
 import { useTranslation } from "react-i18next";
 import { formatMoneyExact } from "../../../lib/workflow-model";
+import { LoanPaymentHealthBadge, type LoanPaymentHealth } from "./LoanPaymentHealthBadge";
+
+const currentPaymentHealth: LoanPaymentHealth = {
+    status: "current",
+    dueTodayAmount: "0.00",
+    overdueAmount: "0.00",
+    overdueItemCount: 0,
+    maxOverdueDays: 0,
+};
 
 interface LoanRow {
     id: string;
@@ -22,6 +31,7 @@ interface LoanRow {
     installmentAmount: string | null;
     totalInstallments: number | null;
     startDate: string | null;
+    paymentHealth?: LoanPaymentHealth;
 }
 
 export default function LoanList() {
@@ -168,6 +178,11 @@ export default function LoanList() {
                                         loan.status === "active" ? "text-green-600" : "text-gray-500"
                                     )}>{loan.status}</p>
                                 </div>
+
+                                <LoanPaymentHealthBadge
+                                    health={loan.paymentHealth ?? currentPaymentHealth}
+                                    repaymentType={loan.repaymentType}
+                                />
 
                                 <div className="space-y-2 text-xs">
                                     <div><div className="text-muted-foreground">{t("loans.repaymentType", "Repayment type")}</div><div className="font-medium">{t(`loanWizard.repaymentOptions.${loan.repaymentType}`)}</div></div>

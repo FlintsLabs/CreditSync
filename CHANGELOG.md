@@ -3,6 +3,7 @@
 ## v0.3.7 - 2026-08-11
 
 ### Added
+- Added accessible Thai/English due-now and overdue indicators on loan cards, with exact amounts, installment/day counts, overdue age, and localized detail-schedule badges.
 - Added tenant-safe loan-list payment-health summaries for fixed schedules and materialized floating daily-interest accruals without per-card API requests.
 - Added an exact Decimal payment-health kernel for scheduled arrears, grace periods, late fees, and next-day floating-interest overdue classification.
 - Added a task-by-task implementation plan for exact scheduled and floating loan payment-health summaries, localized card indicators, detail badges, and full verification.

@@ -425,6 +425,21 @@
             "paid": "ชำระครบ",
             "defaulted": "ผิดนัด"
         },
+        "paymentHealth": {
+            "overdueInstallments_one": "ค้างชำระ {{count}} งวด",
+            "overdueInstallments_other": "ค้างชำระ {{count}} งวด",
+            "overdueDays_one": "ค้างชำระ {{count}} วัน",
+            "overdueDays_other": "ค้างชำระ {{count}} วัน",
+            "overdueSummary": "{{amount}} · ค้างสูงสุด {{days}} วัน",
+            "dueNow": "ถึงกำหนดชำระ {{amount}}",
+            "overdueAria": "สัญญานี้มียอดค้างชำระ",
+            "scheduleStatus": {
+                "pending": "รอชำระ",
+                "partial": "ชำระบางส่วน",
+                "overdue": "ค้างชำระ",
+                "paid": "ชำระแล้ว"
+            }
+        },
         "funding": {
             "unfunded": "ยังไม่จัดสรร",
             "partiallyFunded": "จัดสรรบางส่วน",
