@@ -78,7 +78,7 @@ export default function BorrowerCard({ borrower, onEdit }: BorrowerCardProps) {
 
   return (
     <Card className="w-full rounded-xl border-l-4 border-l-primary/50 transition-all hover:shadow-md">
-      <CardHeader className="flex min-w-0 flex-row items-start gap-3 pb-2">
+      <CardHeader className="flex min-w-0 flex-row items-start gap-3 pt-3 pb-2">
         <Avatar className="h-12 w-12 shrink-0 border-2 border-white shadow-sm">
           <AvatarImage src={borrower.photoUrl ?? undefined} />
           <AvatarFallback className="bg-primary/10 font-bold text-primary">
@@ -148,7 +148,7 @@ export default function BorrowerCard({ borrower, onEdit }: BorrowerCardProps) {
           )}
         </div>
       </CardContent>
-      <CardFooter className="flex flex-wrap justify-end gap-2 rounded-b-xl border-t bg-muted/20 pt-2">
+      <CardFooter className="flex flex-wrap justify-end gap-2 rounded-b-xl border-t bg-muted/20 pt-3 pb-3">
         <Button className="h-8 rounded-full" onClick={() => onEdit(borrower)} size="sm" variant="ghost">
           <Edit2 className="mr-1 h-3 w-3" /> {t("common.edit", "Edit")}
         </Button>

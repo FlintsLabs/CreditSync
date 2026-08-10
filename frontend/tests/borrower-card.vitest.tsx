@@ -34,6 +34,18 @@ beforeEach(() => {
 });
 
 describe("BorrowerCard", () => {
+  test("uses compact vertical padding for the borrower header and actions", () => {
+    const { container } = render(
+      <MemoryRouter>
+        <BorrowerCard borrower={borrower} onEdit={vi.fn()} />
+      </MemoryRouter>,
+    );
+
+    const card = container.querySelector(".w-full.rounded-xl");
+    expect(card?.children[0]).toHaveClass("pt-3", "pb-2");
+    expect(card?.children[2]).toHaveClass("pt-3", "pb-3");
+  });
+
   test("masks a visible ID while copying the complete stored value", async () => {
     const user = userEvent.setup();
     const writeText = vi.fn().mockResolvedValue(undefined);

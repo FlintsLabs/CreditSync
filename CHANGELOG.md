@@ -26,6 +26,7 @@
 - Released CreditSync Plugin `2.1.0` with the additive disbursement orchestration skill and executable lifecycle safety evals for evidence ordering, variance, confirmation, idempotency, schedule immutability, and reasoned reversal.
 
 ### Fixed
+- Reduced borrower-card header and action-row vertical padding for a denser mobile list without changing the shared card component.
 - Clarified loan-list cards with localized repayment terms, start dates, Bangkok creation timestamps, and no per-card funding/profitability lookups.
 - Made v0.3.6 loan-disbursement history visibly identify grouped posted and reversed transfers with localized exact gross and loan-attributed amounts.
 - Made concurrent loan-disbursement reversal verification order-independent while requiring exactly one durable creation, one idempotent replay, and one reversal audit record; serialized the shared disposable PostgreSQL suite to prevent cross-test database interference.
