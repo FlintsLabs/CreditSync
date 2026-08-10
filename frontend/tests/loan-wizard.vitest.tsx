@@ -41,10 +41,12 @@ describe("LoanWizard", () => {
 
         const numberInputs = screen.getAllByRole("spinbutton");
         await user.type(numberInputs[0]!, "1000");
-        await user.selectOptions(screen.getByRole("combobox"), "daily");
+        const dailyRepayment = screen.getByRole("radio", { name: "Daily Installment" });
+        expect(dailyRepayment).toHaveAttribute("aria-checked", "false");
+        await user.click(dailyRepayment);
+        expect(dailyRepayment).toHaveAttribute("aria-checked", "true");
         const dailyInputs = screen.getAllByRole("spinbutton");
-        await user.type(dailyInputs[3]!, "360");
-        await user.type(dailyInputs[4]!, "3.20");
+        await user.type(dailyInputs[2]!, "3.20");
         await user.click(screen.getByRole("button", { name: /next/i }));
         await screen.findByText(/installment schedule preview/i);
         await user.click(screen.getByRole("button", { name: /save draft/i }));
@@ -55,13 +57,17 @@ describe("LoanWizard", () => {
         expect(draft).toMatchObject({
             borrowerPublicId: "11111111-1111-4111-8111-111111111111",
             principal: "1000.00",
-            interestRate: "15.00",
+            interestRate: "0.00",
             termMonths: 12,
             repaymentType: "daily",
-            totalInstallments: 360,
-            installmentAmount: "3.20",
+            dailyEntry: {
+                durationUnit: "days",
+                durationValue: 15,
+                entryMode: "daily_payment",
+                dailyPayment: "3.20",
+            },
         });
-        for (const field of ["principal", "interestRate", "termMonths", "repaymentType", "startDate", "totalInstallments", "installmentAmount"]) {
+        for (const field of ["principal", "interestRate", "termMonths", "repaymentType", "startDate", "dailyEntry"]) {
             expect(draft[field]).toEqual(preview[field]);
         }
     });
