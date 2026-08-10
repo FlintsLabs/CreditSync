@@ -9,6 +9,7 @@
 - Added a responsive borrower identity card with masked ID display, an accessible full-value copy action, and localized copy feedback.
 - Added an approved design specification for auditable floating daily-interest loans with per-thousand and percent rate modes, first-day treatment, accrual ledger, explicit payment allocation, and MCP/Web parity.
 - Added an approved design specification for direct own-capital funding, configurable 2.00% annual opportunity cost, capacity enforcement, and cash-versus-economic profitability reporting.
+- Added a task-by-task implementation plan for direct own-capital selection, capacity enforcement, and non-cash economic profitability.
 
 ### Changed
 - Changed the Borrowers list to a one-column mobile and two-column desktop grid using the privacy-aware identity card.
