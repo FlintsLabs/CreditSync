@@ -8,6 +8,7 @@ import {
     files,
     fundLedgerEntries,
     loanFundingAllocations,
+    loanInterestAccruals,
     loanSchedules,
     loans,
     paymentEvidence,
@@ -33,6 +34,7 @@ import {
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import { normalizeBorrowerText } from "./borrower-service";
+import { floatingInterestDue } from "./floating-interest-service";
 
 type Executor = any;
 type IntakeRow = typeof paymentIntakes.$inferSelect;
@@ -607,8 +609,8 @@ interface ExpandedAllocation {
     borrowerPublicId: string;
     loanId: number;
     loanPublicId: string;
-    scheduleId: number;
-    schedulePublicId: string;
+    scheduleId: number | null;
+    schedulePublicId: string | null;
     amount: string;
     matchReason: string;
 }
@@ -738,6 +740,13 @@ async function expandExplicit(
         let schedules = await executor.select().from(loanSchedules).where(and(
             eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.loanId, loan.id),
         )).orderBy(loanSchedules.installmentNo);
+        if (loan.repaymentType === "floating" && !item.schedulePublicId) {
+            const dueInterest = await floatingInterestDue(executor, loan, intake.receivedAt, ctx.actorUserId);
+            const available = dueInterest.plus(loan.outstandingPrincipal ?? loan.principalAmount);
+            if (amount.gt(available)) warnings.push({ code: "ALLOCATION_EXCEEDS_OBLIGATION", loanPublicId: loan.publicId, unallocatedAmount: amount.minus(available).toFixed(2) });
+            expanded.push({ borrowerId: borrower.id, borrowerPublicId: borrower.publicId, loanId: loan.id, loanPublicId: loan.publicId, scheduleId: null, schedulePublicId: null, amount: Decimal.min(amount, available).toFixed(2), matchReason: "explicit_floating" });
+            continue;
+        }
         if (item.schedulePublicId) {
             const start = schedules.findIndex((row: typeof loanSchedules.$inferSelect) => row.publicId === item.schedulePublicId);
             if (start < 0) throw new DomainError("INVALID_PAYMENT_TARGET", "Schedule does not belong to the allocation loan", 400);
@@ -1063,9 +1072,33 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
         }
         const createdTransactions: Array<typeof transactions.$inferSelect> = [];
         for (const allocation of allocations) {
+            const loan = await tx.query.loans.findFirst({ where: and(eq(loans.id, allocation.loanId), eq(loans.tenantId, ctx.tenantId)) });
+            if (!loan) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Payment target no longer exists", 409);
+            if (!allocation.scheduleId && loan.repaymentType === "floating") {
+                const dueInterest = await floatingInterestDue(tx, loan, intake.receivedAt, ctx.actorUserId);
+                const interest = Decimal.min(new Decimal(allocation.amount), dueInterest);
+                const principal = new Decimal(allocation.amount).minus(interest);
+                if (principal.gt(loan.outstandingPrincipal ?? loan.principalAmount)) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Allocation exceeds the latest floating balance", 409);
+                await tx.update(loans).set({ outstandingInterest: signed(dueInterest.minus(interest)), outstandingPrincipal: signed(new Decimal(loan.outstandingPrincipal ?? loan.principalAmount).minus(principal)), updatedAt: new Date() }).where(and(eq(loans.id, loan.id), eq(loans.tenantId, ctx.tenantId)));
+                if (interest.gt(0)) {
+                    let remainingInterest = interest;
+                    const accruals = await tx.select().from(loanInterestAccruals).where(and(eq(loanInterestAccruals.tenantId, ctx.tenantId), eq(loanInterestAccruals.loanId, loan.id), eq(loanInterestAccruals.status, "accrued"))).orderBy(loanInterestAccruals.accrualDate);
+                    for (const accrual of accruals) {
+                        if (remainingInterest.lte(0)) break;
+                        const due = new Decimal(accrual.interestAmount).minus(accrual.paidAmount);
+                        const applied = Decimal.min(remainingInterest, due);
+                        const paidAmount = new Decimal(accrual.paidAmount).plus(applied);
+                        await tx.update(loanInterestAccruals).set({ paidAmount: signed(paidAmount), status: paidAmount.eq(accrual.interestAmount) ? "paid" : "accrued" }).where(eq(loanInterestAccruals.id, accrual.id));
+                        remainingInterest = remainingInterest.minus(applied);
+                    }
+                }
+                const transaction = await tx.insert(transactions).values({ tenantId: ctx.tenantId, ownerUserId: loan.ownerUserId ?? ctx.actorUserId, loanId: loan.id, amount: signed(allocation.amount), principalComponent: signed(principal), interestComponent: signed(interest), feeComponent: "0.00", penaltyComponent: "0.00", type: "repayment", transactionDate: intake.receivedAt, recordedByUserId: ctx.actorUserId, paymentIntakeId: intake.id, entryType: "repayment", idempotencyKey: `payment:${intake.publicId}:${allocation.publicId}`, postedAt: new Date() }).returning().then((rows) => rows[0]!);
+                createdTransactions.push(transaction);
+                await writeFundEffects(tx, ctx, loan.id, transaction.id, intake.receivedAt, { fee: new Decimal(0), interest, principal, penalty: new Decimal(0) });
+                continue;
+            }
             if (!allocation.scheduleId) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Payment allocation has no schedule", 409);
             const schedule = await tx.query.loanSchedules.findFirst({ where: and(eq(loanSchedules.id, allocation.scheduleId), eq(loanSchedules.tenantId, ctx.tenantId)) });
-            const loan = await tx.query.loans.findFirst({ where: and(eq(loans.id, allocation.loanId), eq(loans.tenantId, ctx.tenantId)) });
             if (!schedule || !loan || schedule.loanId !== loan.id) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Payment target no longer exists", 409);
             const components = allocateScheduleComponents(schedule, loan, allocation.amount, intake.receivedAt);
             const nonPenalty = components.fee.plus(components.interest).plus(components.principal);

@@ -6,6 +6,7 @@
 - Added additive schema support for floating daily-interest loan policies and date-unique immutable interest accrual records.
 - Added Decimal-based daily-interest calculations for fixed-per-thousand and percent rate modes with explicit first-day rules.
 - Added floating daily-interest policy inputs to loan preview/draft REST and MCP contracts, plus localized wizard controls.
+- Added partial-payment tracking for floating-interest accruals and an immutable disbursement record for first-day deductions.
 - Added an approved borrower-card identity design specification covering responsive one/two-column layout, sensitive Thai-ID masking, full-value copy behavior, avatar hierarchy, localization, accessibility, and verification requirements.
 - Added a task-by-task implementation plan for the approved borrower-card identity design.
 - Added Thai national-ID formatting and masking utilities for privacy-aware borrower-list presentation.

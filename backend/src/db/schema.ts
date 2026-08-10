@@ -229,6 +229,7 @@ export const loanInterestAccruals = pgTable("loan_interest_accruals", {
     rateMode: text("rate_mode").notNull(),
     rate: numeric("rate").notNull(),
     interestAmount: numeric("interest_amount").notNull(),
+    paidAmount: numeric("paid_amount").default("0").notNull(),
     status: text("status").default("accrued").notNull(),
     sourceTransactionId: integer("source_transaction_id").references(() => transactions.id),
     reversedAccrualId: integer("reversed_accrual_id"),
@@ -237,6 +238,21 @@ export const loanInterestAccruals = pgTable("loan_interest_accruals", {
 }, (table) => [
     uniqueIndex("loan_interest_accruals_tenant_loan_date_unique").on(table.tenantId, table.loanId, table.accrualDate),
     uniqueIndex("loan_interest_accruals_tenant_id_unique").on(table.tenantId, table.id),
+]);
+
+export const loanDisbursements = pgTable("loan_disbursements", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    loanId: integer("loan_id").references(() => loans.id).notNull(),
+    grossPrincipal: numeric("gross_principal").notNull(),
+    firstDayInterestDeducted: numeric("first_day_interest_deducted").default("0").notNull(),
+    netDisbursement: numeric("net_disbursement").notNull(),
+    disbursedAt: timestamp("disbursed_at").defaultNow().notNull(),
+    createdByUserId: integer("created_by_user_id").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+    uniqueIndex("loan_disbursements_tenant_loan_unique").on(table.tenantId, table.loanId),
 ]);
 
 export const loanFundingAllocations = pgTable("loan_funding_allocations", {

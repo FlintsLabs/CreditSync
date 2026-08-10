@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import Decimal from "decimal.js";
 import { db } from "../db";
-import { bankLoans, bankProfiles, borrowers, loanFundingAllocations, loanSchedules, loans, users } from "../db/schema";
+import { bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanSchedules, loans, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
 import {
@@ -384,6 +384,14 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
                 remainingDue: row.remainingDue,
                 status: "pending",
             })));
+        }
+        if (current.repaymentType === "floating" && current.dailyInterestMode && current.dailyInterestRate && current.firstDayTreatment && current.interestStartDate) {
+            const policy: FloatingDailyInterest = { mode: current.dailyInterestMode as FloatingDailyInterest["mode"], rate: current.dailyInterestRate, firstDayTreatment: current.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"] };
+            const firstDayInterest = policy.firstDayTreatment === "deduct" ? calculateDailyInterest(current.principalAmount, policy) : "0.00";
+            await tx.insert(loanDisbursements).values({ tenantId: ctx.tenantId, loanId: current.id, grossPrincipal: serializeMoney(current.principalAmount), firstDayInterestDeducted: firstDayInterest, netDisbursement: serializeMoney(new Decimal(current.principalAmount).minus(firstDayInterest)), createdByUserId: ctx.actorUserId });
+            if (policy.firstDayTreatment === "deduct") {
+                await tx.insert(loanInterestAccruals).values({ tenantId: ctx.tenantId, loanId: current.id, accrualDate: current.interestStartDate, openingPrincipal: serializeMoney(current.principalAmount), rateMode: policy.mode, rate: policy.rate, interestAmount: firstDayInterest, paidAmount: firstDayInterest, status: "paid", createdByUserId: ctx.actorUserId }).onConflictDoNothing();
+            }
         }
         if (fundingSource || ownCapitalProfile) {
             await tx.insert(loanFundingAllocations).values({

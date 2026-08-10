@@ -113,6 +113,20 @@
       "when": 1786311000000,
       "tag": "0015_floating_daily_interest",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1786311500000,
+      "tag": "0016_floating_interest_partial_payments",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1786312000000,
+      "tag": "0017_floating_loan_disbursements",
+      "breakpoints": true
     }
   ]
 }
