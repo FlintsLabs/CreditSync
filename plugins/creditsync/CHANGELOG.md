@@ -1,11 +1,21 @@
 # CreditSync Plugin Changelog
 
+## 2.1.0 - 2026-08-10
+
+### Added
+
+- Added the `manage-disbursements` skill, root routing, and scripted positive/negative lifecycle evals for variance, evidence ordering, confirmation, idempotency, schedule immutability, and reasoned reversal.
+
+### Fixed
+
+- Re-listed and selected the exact posted disbursement before reversal, and stopped when the event is missing or no longer posted.
+- Branched evidence preparation between already-finalized `ready` state and a valid non-expired upload, with explicit stops for upload expiry, checksum conflict, and finalize mismatch.
+
 ## 2.0.0 - 2026-08-10
 
 ### Added
 
 - Added the six frozen loan-disbursement MCP tool contracts for list, draft, evidence prepare/finalize, post, and reversal.
-- Added the `manage-disbursements` skill, root routing, and scripted positive/negative lifecycle evals for variance, evidence ordering, confirmation, idempotency, schedule immutability, and reasoned reversal.
 
 ### Compatibility
 

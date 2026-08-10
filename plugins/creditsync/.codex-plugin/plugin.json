@@ -1,6 +1,6 @@
 {
   "name": "creditsync",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Private CreditSync borrower, payment reconciliation, loan disbursement, renewal, and reversal workflows for Codex.",
   "author": {
     "name": "CreditSync"

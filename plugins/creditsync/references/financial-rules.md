@@ -28,6 +28,6 @@ This example is a contract fixture, not permission to derive a live renewal from
 
 - A loan disbursement is an actual, append-only ledger event. It does not create, recalculate, or mutate the approved loan schedule.
 - Inspect `loan.disbursement.list` before a draft and display its backend-provided approved principal, net disbursed amount, signed variance, and status. Under- or over-disbursement is a warning requiring an explicit human decision; never silently make amounts fit.
-- The evidence lifecycle is draft first, then `loan.disbursement.evidence.prepare`, unchanged-byte PUT using only the returned headers, and `loan.disbursement.evidence.finalize`. Do not use draft `evidenceFilePublicIds` or expose signed URLs.
+- The evidence lifecycle is draft first, then `loan.disbursement.evidence.prepare`, unchanged-byte PUT using only a non-expired returned URL and its headers, and `loan.disbursement.evidence.finalize`. A `ready` prepare result is already finalized and must not be PUT/finalized again; upload absence/expiry, checksum conflict, or finalization mismatch stops without post. Do not use draft `evidenceFilePublicIds` or expose signed URLs.
 - `loan.disbursement.post` requires explicit confirmation and a stable idempotency key. Reuse that key only to retry the identical post; a key conflict or locked draft stops for review.
-- `loan.disbursement.reverse` requires explicit human confirmation, a non-blank reason, and its own stable idempotency key. It posts a compensating event rather than deleting the original.
+- `loan.disbursement.reverse` requires a re-list that selects the exact `posted` event, explicit human confirmation, a non-blank reason, and its own stable idempotency key. It posts a compensating event rather than deleting the original.
