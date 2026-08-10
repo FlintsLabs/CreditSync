@@ -45,6 +45,7 @@ export const loanContractRoutes = new Elysia().use(authPlugin)
                     borrowerPublicId: borrowers.publicId,
                     borrowerName: borrowers.name,
                     principal: loans.principalAmount,
+                    outstandingPrincipal: loans.outstandingPrincipal,
                     status: loans.status,
                     createdAt: loans.createdAt,
                     repaymentType: loans.repaymentType,
@@ -59,6 +60,7 @@ export const loanContractRoutes = new Elysia().use(authPlugin)
                 return rows.map((row) => ({
                     ...row,
                     principal: serializeMoney(row.principal),
+                    outstandingPrincipal: serializeMoney(row.outstandingPrincipal ?? "0"),
                     interestRate: serializeMoney(row.interestRate),
                     installmentAmount: row.installmentAmount === null ? null : serializeMoney(row.installmentAmount),
                 }));

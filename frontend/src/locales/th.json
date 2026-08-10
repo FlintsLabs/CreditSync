@@ -402,6 +402,7 @@
         "create": "สร้างสัญญา",
         "search": "ค้นหาลูกหนี้หรือเลขสัญญา",
         "loanLabel": "สัญญา #{{id}}",
+        "originalPrincipal": "เงินต้นตั้งต้น",
         "repaymentType": "รูปแบบการผ่อน",
         "installmentSummary": "งวดละ {{amount}} · ทั้งหมด {{count}} งวด",
         "noFixedSchedule": "สินเชื่อลอยตัวไม่มีตารางผ่อนตายตัว",

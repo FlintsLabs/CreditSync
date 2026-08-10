@@ -3,6 +3,7 @@
 ## v0.3.7 - 2026-08-11
 
 ### Added
+- Added loan-list cards that show outstanding principal with a muted original-principal reference.
 - Added an approved design for loan-list cards to show outstanding and original principal together.
 - Added source-level funding-usage reads and a localized funding-source table showing the borrower contracts funded by each source, their net allocation, route, allocation date, outstanding principal, and status.
 - Added loan-scoped repayment-intake history with quick capture, tenant-safe origin-loan links, and legacy allocation/transaction discovery without altering posted financial records.
@@ -13,6 +14,7 @@
 
 ### Fixed
 - Made funding-source summaries and loan allocations readable in tablet and compact-desktop layouts without content collisions.
+- Preserved the frozen MCP `intake.create` output contract after repayment-history responses gained an origin-loan reference.
 - Made own-capital availability and utilization subtract net direct loan allocations instead of only bank drawdowns, while keeping external-source credit availability based on issued drawdowns.
 - Clarified that own-capital allocations are direct and do not create a bank drawdown record.
 - Isolated funding-usage integration tests from tenant-cache state between disposable database resets.

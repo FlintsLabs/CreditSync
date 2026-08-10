@@ -96,7 +96,12 @@ export function createDefaultMcpToolHandlers(
     },
     "intake.get": (ctx, input) => getPaymentIntake(ctx, asString(input, "paymentIntakePublicId")),
     "intake.list": (ctx, input) => listPaymentIntakes(ctx, { status: input.status as string | undefined }),
-    "intake.create": (ctx, input) => createPaymentIntake(ctx, input as unknown as CreatePaymentIntakeInput),
+    "intake.create": async (ctx, input) => {
+        const result = await createPaymentIntake(ctx, input as unknown as CreatePaymentIntakeInput);
+        if (!("originLoanPublicId" in result)) return result;
+        const { originLoanPublicId: _originLoanPublicId, ...frozenResult } = result;
+        return frozenResult;
+    },
     "evidence.prepare": (ctx, input) => {
         const { paymentIntakePublicId, ...evidence } = input;
         return preparePaymentEvidence(
