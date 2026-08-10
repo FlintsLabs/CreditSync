@@ -8,6 +8,7 @@
 
 ### Changed
 - Connected Profile, Settings, desktop/mobile navigation, and the legacy `/dashboard/settings` path to the canonical protected Account and Preferences destination.
+- Documented that account identity is read-only and display preferences remain device-local rather than backend-synchronized.
 
 ### Fixed
 - Kept appearance changes active in memory when browser theme persistence is unavailable.
