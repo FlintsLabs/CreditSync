@@ -11,6 +11,7 @@
 - Added optional daily-loan entry contracts to REST and remote MCP loan preview and draft workflows.
 - Added the daily-loan wizard flow for day/month durations, borrower-proposed payments, flat-interest terms, and localized calculation summaries.
 - Added an approved design for an auditable multi-payout loan disbursement ledger with grouped-transfer attribution and optional evidence.
+- Added a task-by-task implementation plan for the loan disbursement ledger, evidence workflow, REST/MCP adapters, and loan-detail UI.
 
 ### Fixed
 - Removed the duplicate custom calendar icon from the loan start-date field; the browser-native date control remains fully clickable.
