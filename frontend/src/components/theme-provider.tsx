@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState } from "react"
 
-type Theme = "dark" | "light" | "system"
+export type Theme = "dark" | "light" | "system"
 
 type ThemeProviderProps = {
     children: React.ReactNode
@@ -10,12 +10,12 @@ type ThemeProviderProps = {
 
 type ThemeProviderState = {
     theme: Theme
-    setTheme: (theme: Theme) => void
+    setTheme: (theme: Theme) => boolean
 }
 
 const initialState: ThemeProviderState = {
     theme: "system",
-    setTheme: () => null,
+    setTheme: () => true,
 }
 
 const ThemeProviderContext = createContext<ThemeProviderState>(initialState)
@@ -49,9 +49,14 @@ export function ThemeProvider({
 
     const value = {
         theme,
-        setTheme: (theme: Theme) => {
-            localStorage.setItem(storageKey, theme)
-            setTheme(theme)
+        setTheme: (nextTheme: Theme) => {
+            setTheme(nextTheme)
+            try {
+                localStorage.setItem(storageKey, nextTheme)
+                return true
+            } catch {
+                return false
+            }
         },
     }
 
