@@ -40,6 +40,7 @@
 - Corrected the floating-loan precision activation regression to supply the required daily-interest policy before asserting exact Decimal persistence.
 
 ### Changed
+- Documented durable lending, actual-disbursement, MCP/plugin, evidence, and verification rules for future agents in `AGENTS.md`.
 - Simplified the loan-detail title and moved the full public loan ID into a compact copyable secondary line.
 
 ### Changed

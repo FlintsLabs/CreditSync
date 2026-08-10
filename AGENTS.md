@@ -52,3 +52,45 @@ This project is optimized for **Bun**. Agents should prefer using Bun for all de
 - Every changelog entry must include an explicit project version and a short summary of the change set.
 - If a commit adds or materially changes user-facing features, workflows, setup steps, or infrastructure expectations, update [`README.md`](./README.md) in the same commit.
 - Keep changelog entries concise and grouped by added, changed, fixed, or infra where useful.
+
+## Product and Financial Domain Rules
+
+- CreditSync is a private THB lending operation. Money crosses public interfaces as two-decimal decimal strings and must be calculated with `decimal.js`; never use JavaScript floating point or `Number` for financial values, comparisons, or formatting.
+- Use the `Asia/Bangkok` business timezone. Keep ISO 8601 for timestamps and `YYYY-MM-DD` for due dates.
+- Borrowers may be created and updated over time. Search canonical names and confirmed aliases before creating a borrower; aliases can be ambiguous and fuzzy matching is only a candidate-ranking aid, never an automatic financial decision.
+- Keep identity-card images and payment slips optional. Do not repeat or log raw identity-card values, raw QR payloads, signed URLs, bearer tokens, or evidence contents.
+- Active loan terms and posted financial records are immutable. Fix a financial record through an append-only compensating reversal/adjustment with a reason; do not edit or delete it.
+- Every financial write needs command context, a request/correlation ID, actor/source, idempotency key where the operation supports it, and append-only audit history with useful before/after state.
+
+## Lending Workflows
+
+- A new loan follows `preview -> draft -> activate`. Activation locks loan terms and creates any applicable immutable schedule.
+- For scheduled daily loans, support an agreed fixed daily installment or an explicit flat daily-interest term (amount, percent, or per-thousand), with day/month duration. The backend owns calculations and rounding; UI/agents must not recreate the accounting calculation.
+- A floating loan has no fixed schedule/term. Treat daily interest policy and first-day deduction as explicit policy data, not inferred behavior.
+- Regular scheduled installments are the agreed amount. Do not silently treat overpayment as normal allocation; use an explicit settlement/close-out workflow when needed.
+- Renewal/rollover must use `preview -> explicit human confirmation -> execute`. Paid principal determines any customer cash-out; outstanding charges must be settled or waived with a reason. Reversal is compensating and only permitted when downstream records allow it.
+
+## Actual Loan Disbursements
+
+- Approved principal/schedule/funding allocation and actual borrower payouts are separate concepts. The append-only `loan_disbursement_events` ledger is the source of truth for actual payout history.
+- A disbursement has `grossAmount` (cash/transfer actually sent) and `loanAttributedAmount` (the portion assigned to this loan). They may differ for grouped transfers, cash top-ups, or under/over disbursement. The difference is a warning only: never mutate principal, interest, schedules, or funding allocation to make it disappear.
+- Lifecycle: create editable `draft`; optionally prepare/upload/finalize evidence; `post` with idempotency key; reverse with an explicit reason and idempotency key. Posted and reversed records must be immutable at the database boundary.
+- Evidence is optional but, when used, must follow `prepare -> direct signed PUT to MinIO -> finalize` before posting. Finalization checks tenant ownership, MIME/size, SHA-256, expiry, and storage metadata. Never attach a raw file ID directly to a draft.
+- Show both gross transferred and attributed amount, and visibly mark grouped transfers, in the Web UI. Use exact decimal-string formatters even for values beyond JavaScript safe integers.
+- A source profile is independent from a bank drawdown: direct own capital can fund a loan without a drawdown. Actual payout may have multiple entries and can be below/above approved principal; retain source/payee/note/evidence and audit history.
+
+## MCP and Plugin Safety
+
+- Remote MCP lives in the same backend process and calls application services directly; MCP must never call the product REST API internally.
+- MCP accepts/returns public UUIDs and two-decimal money strings only. Keep tool schemas closed, return structured content plus readable summaries, and expose only safe public fields.
+- Mark reads with `readOnlyHint`; mark financial post, activation, renewal, and reversal as destructive. Every write returns audit public ID and correlation ID.
+- Agent orchestration must inspect before writing. It may post only a clearly valid `ready` payment/disbursement result; ambiguity, duplicate, stale state, mismatch, missing confirmation, or idempotency conflict must stop for human review.
+- Disbursement agent workflow is: create draft, optionally prepare evidence, PUT only when a current signed URL is present, finalize, inspect/list the draft, show variance, obtain explicit confirmation, then post. On evidence `ready` retry, do not upload/finalize again. Before reversal, re-list and select the exact posted event, ask for reason/confirmation, then reverse.
+- Keep the frozen MCP contract, plugin manifest/version, skills, eval scenarios, and validator synchronized whenever tools change. The current private CreditSync plugin is `2.1.0` and has six skills.
+
+## Verification and Deployment
+
+- Use `backend/scripts/test-disposable-postgres.sh` for database-backed backend suites. It intentionally serializes tests because they share a destructively reset disposable PostgreSQL database; do not make test files concurrently mutate that database.
+- Before completing a financial feature, run backend disposable tests and typecheck, frontend test/lint/build, and plugin tests/validator as applicable. Treat a skipped DB test as insufficient for a newly changed financial invariant.
+- Production backend is internal to Docker and may not publish port 3000 to the host. Check MCP health with `docker compose ... exec backend` against `http://127.0.0.1:3000/mcp/health`; check the public frontend at `http://127.0.0.1:8088/`.
+- After a production migration, verify the expected tables/columns through the production PostgreSQL container, inspect backend logs for successful migrations, and avoid creating test financial records in a live tenant unless an explicitly authorized controlled test tenant exists.
