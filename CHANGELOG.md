@@ -14,6 +14,7 @@
 - Added a task-by-task implementation plan for the loan disbursement ledger, evidence workflow, REST/MCP adapters, and loan-detail UI.
 
 ### Fixed
+- Updated the loan-wizard regression test to exercise the accessible daily repayment radio chip and current daily-entry payload.
 - Removed the duplicate custom calendar icon from the loan start-date field; the browser-native date control remains fully clickable.
 - Made the disposable PostgreSQL migration integration test self-isolate from an already-migrated suite database and restore the latest migration state afterwards.
 - Corrected the floating-loan precision activation regression to supply the required daily-interest policy before asserting exact Decimal persistence.
