@@ -47,6 +47,7 @@
 
 ### Changed
 - Moved repayment-type selection to the start of the loan-terms form so the remaining inputs follow the selected repayment workflow.
+- Refactored the public loan REST adapter into focused contract, funding, and disbursement route modules while preserving paths, schemas, authorization, cache behavior, and financial write workflows.
 
 ## v0.3.5 - 2026-08-10
 
