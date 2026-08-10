@@ -3,9 +3,13 @@
 ## v0.3.7 - 2026-08-11
 
 ### Added
+- Added an approved design for loan-list cards to show outstanding and original principal together.
 - Added source-level funding-usage reads and a localized funding-source table showing the borrower contracts funded by each source, their net allocation, route, allocation date, outstanding principal, and status.
 - Added loan-scoped repayment-intake history with quick capture, tenant-safe origin-loan links, and legacy allocation/transaction discovery without altering posted financial records.
 - Added a borrower-first repayment flow: desktop quick capture opens a dialog, mobile opens the prefilled full form, and both continue to Payment Inbox for review before posting.
+
+### Changed
+- Documented the approved responsive layout for funding-source details at tablet and compact-desktop widths.
 
 ### Fixed
 - Made own-capital availability and utilization subtract net direct loan allocations instead of only bank drawdowns, while keeping external-source credit availability based on issued drawdowns.
