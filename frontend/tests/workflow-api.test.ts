@@ -36,7 +36,7 @@ describe("workflow API contracts", () => {
         expect(result.status).toBe("draft");
         expect(calls).toEqual([{ url: "/payment-intakes", body: {
             amount: "450.00", receivedAt: "2026-08-10T09:30:00.000Z",
-            payerName: "Somchai", bankReference: null, notes: null,
+            payerName: "Somchai", bankReference: null, notes: null, originLoanPublicId: null,
         } }]);
         expect(calls.some((call) => call.url === "/transactions")).toBe(false);
     });

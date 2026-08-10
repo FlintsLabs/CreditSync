@@ -14,6 +14,7 @@ describe("loans route composition", () => {
             "GET /loans/:id/closing-summary",
             "GET /loans/:id/disbursements",
             "GET /loans/:id/funding-allocations",
+            "GET /loans/:id/payment-intakes",
             "GET /loans/:id/profitability",
             "GET /loans/:id/schedule",
             "POST /loans/",

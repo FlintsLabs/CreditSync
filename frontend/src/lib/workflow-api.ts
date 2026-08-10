@@ -20,6 +20,7 @@ export interface PaymentWorkflowInput {
     payerName?: string;
     bankReference?: string;
     notes?: string;
+    originLoanPublicId?: string;
 }
 
 export interface PaymentWorkflowResult {
@@ -52,6 +53,7 @@ export async function createPaymentWorkflow(client: HttpClient, input: PaymentWo
         payerName: input.payerName?.trim() || null,
         bankReference: input.bankReference?.trim() || null,
         notes: input.notes?.trim() || null,
+        originLoanPublicId: input.originLoanPublicId ?? null,
     }).then((response) => response.data);
 }
 

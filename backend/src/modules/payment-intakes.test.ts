@@ -70,10 +70,10 @@ describe("payment intake REST adapter", () => {
         const created = await jsonRequest(app, "/payment-intakes", token, {
             method: "POST",
             headers: { "idempotency-key": "rest-payment-1", "x-request-id": "req-rest-payment" },
-            body: JSON.stringify({ amount: "100.00", receivedAt: "2026-08-10T10:00:00.000Z", payerName: "Route Borrower" }),
+            body: JSON.stringify({ amount: "100.00", receivedAt: "2026-08-10T10:00:00.000Z", payerName: "Route Borrower", originLoanPublicId: loan.publicId }),
         });
         expect(created.response.status).toBe(200);
-        expect(created.body).toMatchObject({ id: created.body.publicId, amount: "100.00", duplicate: false });
+        expect(created.body).toMatchObject({ id: created.body.publicId, amount: "100.00", originLoanPublicId: loan.publicId, duplicate: false });
 
         const list = await jsonRequest(app, "/payment-intakes", token);
         const detail = await jsonRequest(app, `/payment-intakes/${created.body.publicId}`, token);

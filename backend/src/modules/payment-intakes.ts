@@ -79,6 +79,7 @@ export const paymentIntakesRoute = new Elysia({ prefix: "/payment-intakes" })
             bankReference: t.Optional(t.Nullable(t.String())),
             qrPayload: t.Optional(t.Nullable(t.String())),
             notes: t.Optional(t.Nullable(t.String())),
+            originLoanPublicId: t.Optional(t.Nullable(t.String({ format: "uuid" }))),
         }),
     })
     .get("/:id", async ({ params, user, request, set }) => {

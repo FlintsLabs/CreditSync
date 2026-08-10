@@ -155,6 +155,13 @@
       "when": 1786314000000,
       "tag": "0021_loan_disbursement_reversal_immutability",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1786383600000,
+      "tag": "0022_payment_intake_origin_loan",
+      "breakpoints": true
     }
   ]
 }

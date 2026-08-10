@@ -97,6 +97,19 @@ async function actorFor(ctx: CommandContext, executor: Executor = db) {
     return actor;
 }
 
+async function accessibleOriginLoan(ctx: CommandContext, publicId?: string | null) {
+    if (!publicId) return null;
+    requirePublicId(publicId, "originLoanPublicId");
+    const actor = await actorFor(ctx);
+    const conditions = [eq(loans.tenantId, ctx.tenantId), eq(loans.publicId, publicId)];
+    if (actor && !canAccessTenantWideData({ role: actor.role ?? "viewer" })) {
+        conditions.push(eq(loans.ownerUserId, actor.id));
+    }
+    const loan = await db.query.loans.findFirst({ where: and(...conditions) });
+    if (!loan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+    return loan;
+}
+
 async function accessibleIntake(ctx: CommandContext, publicId: string, executor: Executor = db): Promise<IntakeRow> {
     requirePublicId(publicId, "paymentIntakeId");
     const actor = await actorFor(ctx, executor);
@@ -159,6 +172,7 @@ export interface CreatePaymentIntakeInput {
     bankReference?: string | null;
     qrPayload?: string | null;
     notes?: string | null;
+    originLoanPublicId?: string | null;
 }
 
 export async function createPaymentIntake(ctx: CommandContext, input: CreatePaymentIntakeInput) {
@@ -171,6 +185,7 @@ export async function createPaymentIntake(ctx: CommandContext, input: CreatePaym
     const receivedAt = new Date(input.receivedAt);
     if (Number.isNaN(receivedAt.getTime())) throw new DomainError("INVALID_RECEIVED_AT", "receivedAt must be an ISO date-time", 400);
     await actorFor(ctx);
+    const originLoan = await accessibleOriginLoan(ctx, input.originLoanPublicId);
     const normalizedReference = input.bankReference ? normalizeBankReference(input.bankReference) : "";
     const bankReferenceHash = normalizedReference ? hash(normalizedReference) : null;
     const qrPayloadHash = input.qrPayload ? hash(input.qrPayload) : null;
@@ -206,6 +221,7 @@ export async function createPaymentIntake(ctx: CommandContext, input: CreatePaym
                 bankReference: input.bankReference?.trim() || null,
                 bankReferenceHash,
                 qrPayloadHash,
+                originLoanId: originLoan?.id ?? null,
                 warnings,
                 idempotencyKey: idempotencyKey ?? null,
                 notes: input.notes ?? null,
@@ -215,11 +231,22 @@ export async function createPaymentIntake(ctx: CommandContext, input: CreatePaym
             await createAuditLog(tx, {
                 ...auditContext(ctx), entityType: "payment_intake", entityId: created.publicId,
                 action: "created",
-                payload: { amount: serializeMoney(amount), receivedAt: receivedAt.toISOString(), warningCodes: warnings.map((item) => item.code) },
+                payload: {
+                    amount: serializeMoney(amount),
+                    receivedAt: receivedAt.toISOString(),
+                    originLoanPublicId: originLoan?.publicId ?? null,
+                    warningCodes: warnings.map((item) => item.code),
+                },
             });
             return created;
         });
-        return { ...presentIntake(row), duplicate: false as const, duplicateReason: null, warnings };
+        return {
+            ...presentIntake(row),
+            originLoanPublicId: originLoan?.publicId ?? null,
+            duplicate: false as const,
+            duplicateReason: null,
+            warnings,
+        };
     } catch (error) {
         if ((error as { code?: string }).code === "23505") {
             const raced = await findHardDuplicate(ctx, {
@@ -240,6 +267,79 @@ export async function listPaymentIntakes(ctx: CommandContext, input: { status?: 
     if (actor && !canAccessTenantWideData({ role: actor.role ?? "viewer" })) conditions.push(eq(paymentIntakes.ownerUserId, actor.id));
     const rows = await db.select().from(paymentIntakes).where(and(...conditions)).orderBy(desc(paymentIntakes.receivedAt));
     return rows.map(presentIntake);
+}
+
+export async function listLoanPaymentIntakes(ctx: CommandContext, loanPublicId: string) {
+    const loan = await accessibleOriginLoan(ctx, loanPublicId);
+    if (!loan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+    const actor = await actorFor(ctx);
+    const intakeConditions = [eq(paymentIntakes.tenantId, ctx.tenantId)];
+    if (actor && !canAccessTenantWideData({ role: actor.role ?? "viewer" })) {
+        intakeConditions.push(eq(paymentIntakes.ownerUserId, actor.id));
+    }
+    const intakeRows = await db.select().from(paymentIntakes).where(and(...intakeConditions));
+    if (!intakeRows.length) return [];
+
+    const intakeIds = intakeRows.map((row) => row.id);
+    const [transactionRows, proposalRows] = await Promise.all([
+        db.select().from(transactions).where(and(
+            eq(transactions.tenantId, ctx.tenantId),
+            eq(transactions.loanId, loan.id),
+            inArray(transactions.paymentIntakeId, intakeIds),
+        )),
+        db.select().from(paymentMatchProposals).where(and(
+            eq(paymentMatchProposals.tenantId, ctx.tenantId),
+            inArray(paymentMatchProposals.paymentIntakeId, intakeIds),
+        )),
+    ]);
+    const latestProposalByIntake = new Map<number, ProposalRow>();
+    for (const proposal of proposalRows) {
+        const current = latestProposalByIntake.get(proposal.paymentIntakeId);
+        if (!current || proposal.version > current.version) latestProposalByIntake.set(proposal.paymentIntakeId, proposal);
+    }
+    const latestProposalIds = Array.from(latestProposalByIntake.values(), (proposal) => proposal.id);
+    const allocationRows = latestProposalIds.length
+        ? await db.select().from(paymentMatchAllocations).where(and(
+            eq(paymentMatchAllocations.tenantId, ctx.tenantId),
+            inArray(paymentMatchAllocations.proposalId, latestProposalIds),
+        ))
+        : [];
+    const allocationByProposal = new Map<number, AllocationRow[]>();
+    for (const allocation of allocationRows) {
+        if (allocation.loanId !== loan.id) continue;
+        allocationByProposal.set(allocation.proposalId, [...(allocationByProposal.get(allocation.proposalId) ?? []), allocation]);
+    }
+    const transactionsByIntake = new Map<number, Array<typeof transactions.$inferSelect>>();
+    for (const transaction of transactionRows) {
+        if (transaction.paymentIntakeId === null) continue;
+        transactionsByIntake.set(transaction.paymentIntakeId, [...(transactionsByIntake.get(transaction.paymentIntakeId) ?? []), transaction]);
+    }
+
+    return intakeRows
+        .filter((intake) => intake.originLoanId === loan.id
+            || transactionsByIntake.has(intake.id)
+            || allocationByProposal.has(latestProposalByIntake.get(intake.id)?.id ?? -1))
+        .sort((left, right) => right.receivedAt.getTime() - left.receivedAt.getTime())
+        .map((intake) => {
+            const allocation = allocationByProposal.get(latestProposalByIntake.get(intake.id)?.id ?? -1) ?? [];
+            const postedTransactions = transactionsByIntake.get(intake.id) ?? [];
+            const sumComponent = (field: "principalComponent" | "interestComponent" | "feeComponent" | "penaltyComponent") =>
+                postedTransactions.reduce((total, transaction) => total.plus(transaction[field] ?? "0"), new Decimal(0));
+            return {
+                ...presentIntake(intake),
+                originLoanPublicId: intake.originLoanId === loan.id ? loan.publicId : null,
+                latestAllocation: allocation.length ? {
+                    amount: allocation.reduce((total, row) => total.plus(row.amount), new Decimal(0)).toFixed(2),
+                    proposalPublicId: latestProposalByIntake.get(intake.id)?.publicId ?? null,
+                } : null,
+                postedComponents: intake.status === "posted" ? {
+                    principal: serializeMoney(sumComponent("principalComponent")),
+                    interest: serializeMoney(sumComponent("interestComponent")),
+                    fee: serializeMoney(sumComponent("feeComponent")),
+                    penalty: serializeMoney(sumComponent("penaltyComponent")),
+                } : null,
+            };
+        });
 }
 
 export async function listPaymentReviewQueue(ctx: CommandContext) {

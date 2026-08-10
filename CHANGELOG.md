@@ -3,6 +3,8 @@
 ## v0.3.6 - 2026-08-10
 
 ### Added
+- Added loan-scoped repayment-intake history, including quick-capture source links and legacy allocation/transaction discovery without altering posted financial records.
+- Added a borrower-first repayment capture flow, responsive desktop dialog/mobile full form handoff, and localized separation between borrower payouts and borrower repayments.
 - Added the approved loan-list contract-summary design: localized repayment terms, clearly labelled start/creation dates, and removal of internal funding/profitability metrics from list cards.
 - Added the localized loan-detail disbursement ledger UI with draft, optional signed-upload evidence, posting, and compensating reversal controls.
 - Added fixed daily-repayment term summaries and clear own-capital versus bank-drawdown funding labels on loan details.

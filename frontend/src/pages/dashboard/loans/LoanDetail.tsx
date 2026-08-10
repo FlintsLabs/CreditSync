@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui
 import appI18n from "../../../lib/i18n";
 import { LoanRenewalPanel } from "./LoanRenewalPanel";
 import { LoanDisbursements } from "./LoanDisbursements";
+import { LoanRepaymentHistory } from "./LoanRepaymentHistory";
 
 interface LoanDetailData {
     id: string;
@@ -309,6 +310,13 @@ export default function LoanDetail() {
                     </div>
 
                     <LoanDisbursements loanPublicId={loan.publicId ?? loan.id} />
+
+                    <LoanRepaymentHistory
+                        key={loan.publicId ?? loan.id}
+                        loanPublicId={loan.publicId ?? loan.id}
+                        borrowerName={borrower?.name ?? t("loanDetail.unknownBorrower", "Unknown borrower")}
+                        borrowerPublicId={loan.borrowerPublicId}
+                    />
 
                     <Card>
                         <CardHeader>

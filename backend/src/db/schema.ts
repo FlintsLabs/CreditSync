@@ -594,6 +594,7 @@ export const paymentIntakes = pgTable("payment_intakes", {
     bankReferenceHash: text("bank_reference_hash"),
     qrPayloadHash: text("qr_payload_hash"),
     idempotencyKey: text("idempotency_key"),
+    originLoanId: integer("origin_loan_id"),
     duplicateOfIntakeId: integer("duplicate_of_intake_id"),
     warnings: jsonb("warnings").$type<Array<Record<string, unknown>>>(),
     notes: text("notes"),
@@ -614,6 +615,8 @@ export const paymentIntakes = pgTable("payment_intakes", {
     uniqueIndex("payment_intakes_tenant_qr_payload_hash_unique")
         .on(table.tenantId, table.qrPayloadHash)
         .where(sql`${table.qrPayloadHash} IS NOT NULL`),
+    index("payment_intakes_tenant_origin_loan_received_at_idx")
+        .on(table.tenantId, table.originLoanId, table.receivedAt),
     check(
         "payment_intakes_status_check",
         sql`${table.status} IN ('draft', 'needs_review', 'ready', 'posted', 'reversed', 'duplicate')`,
@@ -622,6 +625,11 @@ export const paymentIntakes = pgTable("payment_intakes", {
         name: "payment_intakes_tenant_owner_fk",
         columns: [table.tenantId, table.ownerUserId],
         foreignColumns: [users.tenantId, users.id],
+    }),
+    foreignKey({
+        name: "payment_intakes_tenant_origin_loan_fk",
+        columns: [table.tenantId, table.originLoanId],
+        foreignColumns: [loans.tenantId, loans.id],
     }),
     foreignKey({
         name: "payment_intakes_tenant_duplicate_fk",
