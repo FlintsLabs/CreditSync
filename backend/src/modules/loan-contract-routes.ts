@@ -11,6 +11,7 @@ import { serializeMoney } from "../lib/money";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
 import { findAccessibleBorrowerByPublicId, findAccessibleLoanByPublicId } from "../lib/public-id";
 import { activateLoan, createLoanDraft, getLoanApplication, presentLoan, previewLoan, updateLoanDraft } from "../services/loan-application-service";
+import { getLoanPaymentHealth } from "../services/loan-payment-health-service";
 import { DomainError } from "../services/domain-error";
 import { loanCommandContext, loanDomainFailure, loanUnauthorized } from "./loan-http-support";
 import { dailyEntry, floatingDailyInterest, repaymentType } from "./loan-route-schemas";
@@ -39,31 +40,31 @@ export const loanContractRoutes = new Elysia().use(authPlugin)
             ttlSeconds: 30,
             loader: async () => {
                 const rows = await db.select({
-                    id: loans.publicId,
-                    publicId: loans.publicId,
-                    borrowerId: borrowers.publicId,
+                    loan: loans,
                     borrowerPublicId: borrowers.publicId,
                     borrowerName: borrowers.name,
-                    principal: loans.principalAmount,
-                    outstandingPrincipal: loans.outstandingPrincipal,
-                    status: loans.status,
-                    createdAt: loans.createdAt,
-                    repaymentType: loans.repaymentType,
-                    interestRate: loans.interestRate,
-                    installmentAmount: loans.installmentAmount,
-                    totalInstallments: loans.totalInstallments,
-                    startDate: loans.startDate,
                 }).from(loans)
                     .leftJoin(borrowers, eq(loans.borrowerId, borrowers.id))
                     .where(and(...conditions))
                     .orderBy(desc(loans.createdAt));
-                return rows.map((row) => ({
-                    ...row,
-                    principal: serializeMoney(row.principal),
-                    outstandingPrincipal: serializeMoney(row.outstandingPrincipal ?? "0"),
-                    interestRate: serializeMoney(row.interestRate),
-                    installmentAmount: row.installmentAmount === null ? null : serializeMoney(row.installmentAmount),
-                }));
+                const asOf = new Date();
+                return Promise.all(rows.map(async ({ loan, borrowerPublicId, borrowerName }) => ({
+                    id: loan.publicId,
+                    publicId: loan.publicId,
+                    borrowerId: borrowerPublicId,
+                    borrowerPublicId,
+                    borrowerName,
+                    principal: serializeMoney(loan.principalAmount),
+                    outstandingPrincipal: serializeMoney(loan.outstandingPrincipal ?? "0"),
+                    status: loan.status,
+                    createdAt: loan.createdAt,
+                    repaymentType: loan.repaymentType,
+                    interestRate: serializeMoney(loan.interestRate),
+                    installmentAmount: loan.installmentAmount === null ? null : serializeMoney(loan.installmentAmount),
+                    totalInstallments: loan.totalInstallments,
+                    startDate: loan.startDate,
+                    paymentHealth: await getLoanPaymentHealth(db, loan, { asOf, actorUserId: user.id }),
+                })));
             },
         });
     }, { query: t.Object({ borrowerId: t.Optional(t.String()) }) })

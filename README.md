@@ -73,6 +73,7 @@ Account identity and tenant role are read-only values supplied by the authorized
 - support `daily`, `weekly`, `monthly`, and `floating` repayment types
 - create editable loan drafts, then activate them to lock terms and generate schedules exactly once
 - use separate preview, draft-save, and activation confirmations in the web wizard
+- distinguish due-now and overdue scheduled or floating daily-interest obligations directly on the loan-agreement list before opening details
 - preview installment breakdown
 - calculate closing balance based on elapsed time and payments already received
 - record actual borrower cash, bank-transfer, or adjustment disbursements independently of approved loan terms
