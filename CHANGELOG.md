@@ -12,6 +12,7 @@
 - Added the implementation plan for shared authenticated mobile page edges and responsive flat Dashboard cash metrics.
 
 ### Fixed
+- Colored negative transaction totals red and zero totals neutrally while retaining green for positive totals and preserving the visible amount sign.
 - Prevented floating repayments from reducing principal when an active legacy accrual has an impossible zero-principal basis, requiring correction before allocation instead.
 - Restored floating principal and paid daily-interest state when reversing the latest posted repayment.
 - Excluded append-only reversed floating-interest accruals from Dashboard payable totals so corrected source rows are not counted alongside their active replacements.
