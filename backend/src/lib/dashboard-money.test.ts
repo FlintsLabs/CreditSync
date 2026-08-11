@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { aggregateDashboardMoney, positiveDashboardDifference, serializeDashboardProfitability, subtractDashboardMoney, sumDashboardMoney } from "./dashboard-money";
+import { aggregateDashboardMoney, positiveDashboardDifference, serializeDashboardProfitability, subtractDashboardMoney, sumDashboardMoney, sumDashboardPayableHealth } from "./dashboard-money";
 
 describe("dashboard money", () => {
     it("sums and subtracts values beyond the JavaScript safe integer range", () => {
@@ -37,5 +37,12 @@ describe("dashboard money", () => {
             realizedRoiPercent: "8.00",
             carryForwardAvailable: "0.00",
         });
+    });
+
+    it("sums due-today and overdue health beyond the JavaScript safe integer range", () => {
+        expect(sumDashboardPayableHealth([
+            { dueTodayAmount: "9007199254740993.01", overdueAmount: "0.99" },
+            { dueTodayAmount: "1.00", overdueAmount: "2.00" },
+        ])).toBe("9007199254740997.00");
     });
 });

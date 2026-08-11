@@ -7,7 +7,8 @@ import { isTenantAdminUser } from "../lib/access";
 import { getTenantProfitabilitySummary } from "../lib/fund-settlement";
 import { computeOverdueSnapshot } from "../lib/overdue";
 import { withTenantCache } from "../lib/cache";
-import { aggregateDashboardMoney, compareDashboardMoneyDescending, isPositiveDashboardMoney, positiveDashboardDifference, serializeDashboardProfitability, subtractDashboardMoney, sumDashboardMoney } from "../lib/dashboard-money";
+import { aggregateDashboardMoney, compareDashboardMoneyDescending, isPositiveDashboardMoney, positiveDashboardDifference, serializeDashboardProfitability, subtractDashboardMoney, sumDashboardMoney, sumDashboardPayableHealth } from "../lib/dashboard-money";
+import { getDashboardBorrowerHealth } from "../services/dashboard-borrower-health-service";
 
 function todayString() {
     return new Date().toISOString().slice(0, 10);
@@ -29,31 +30,15 @@ export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
             loader: async () => {
                 const today = todayString();
 
-                const [borrowerScheduleRows, fundScheduleRows, allLoans, allDrawdowns, allocations] = await Promise.all([
-            db.select().from(loanSchedules).where(eq(loanSchedules.tenantId, user.tenantId)),
+                const [borrowerHealth, fundScheduleRows, allLoans, allDrawdowns, allocations] = await Promise.all([
+            getDashboardBorrowerHealth(db, { tenantId: user.tenantId, actorUserId: user.id, asOf: new Date() }),
             db.select().from(bankLoanSchedules).where(eq(bankLoanSchedules.tenantId, user.tenantId)),
             db.select().from(loans).where(eq(loans.tenantId, user.tenantId)),
             db.select().from(bankLoans).where(eq(bankLoans.tenantId, user.tenantId)),
             db.select().from(loanFundingAllocations).where(eq(loanFundingAllocations.tenantId, user.tenantId)),
         ]);
 
-        const loanMap = new Map(allLoans.map((loan) => [loan.id, loan]));
         const drawdownMap = new Map(allDrawdowns.map((drawdown) => [drawdown.id, drawdown]));
-
-        const borrowerDueSnapshots = borrowerScheduleRows.map((row) => {
-            const loan = loanMap.get(row.loanId);
-            const overdue = computeOverdueSnapshot({
-                dueDate: row.dueDate,
-                remainingDue: row.remainingDue,
-                paidPenalty: row.paidPenalty,
-                gracePeriodDays: loan?.gracePeriodDays,
-                lateFeeMode: loan?.lateFeeMode,
-                lateFeeAmount: loan?.lateFeeAmount,
-                baseStatus: row.status,
-                asOf: today,
-            });
-            return { ...row, ...overdue };
-        });
         const fundDueSnapshots = fundScheduleRows.map((row) => {
             const drawdown = drawdownMap.get(row.bankLoanId);
             const overdue = computeOverdueSnapshot({
@@ -69,13 +54,11 @@ export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
             return { ...row, ...overdue };
         });
 
-        const dueFromBorrowersToday = sumDashboardMoney(borrowerDueSnapshots
-            .filter((row) => row.dueDate <= today && isPositiveDashboardMoney(row.totalDueNow))
-            .map((row) => row.totalDueNow));
+        const dueFromBorrowersToday = sumDashboardPayableHealth(borrowerHealth);
         const dueToFundsToday = sumDashboardMoney(fundDueSnapshots
             .filter((row) => row.dueDate <= today && isPositiveDashboardMoney(row.totalDueNow))
             .map((row) => row.totalDueNow));
-        const overdueBorrowerCount = borrowerDueSnapshots.filter((row) => row.effectiveStatus === "overdue").length;
+        const overdueBorrowerCount = borrowerHealth.filter((row) => row.status === "overdue").length;
         const overdueFundCount = fundDueSnapshots.filter((row) => row.effectiveStatus === "overdue").length;
 
         const fundedByLoan = aggregateDashboardMoney(allocations.map((allocation) => ({ key: allocation.loanId, amount: allocation.allocatedAmount })));
@@ -113,14 +96,16 @@ export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
             key: "borrower-due-queue",
             ttlSeconds: 20,
             loader: async () => {
-                const rows = await db.select({
+                const [rows, borrowerHealth] = await Promise.all([db.select({
             scheduleId: loanSchedules.id,
+            schedulePublicId: loanSchedules.publicId,
             dueDate: loanSchedules.dueDate,
             remainingDue: loanSchedules.remainingDue,
             paidPenalty: loanSchedules.paidPenalty,
             status: loanSchedules.status,
             installmentNo: loanSchedules.installmentNo,
             loanId: loans.id,
+            loanPublicId: loans.publicId,
             borrowerName: borrowers.name,
             repaymentType: loans.repaymentType,
             gracePeriodDays: loans.gracePeriodDays,
@@ -130,9 +115,11 @@ export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
             .from(loanSchedules)
             .leftJoin(loans, eq(loanSchedules.loanId, loans.id))
             .leftJoin(borrowers, eq(loans.borrowerId, borrowers.id))
-            .where(and(eq(loanSchedules.tenantId, user.tenantId), eq(loans.tenantId, user.tenantId)));
+            .where(and(eq(loanSchedules.tenantId, user.tenantId), eq(loans.tenantId, user.tenantId))),
+            getDashboardBorrowerHealth(db, { tenantId: user.tenantId, actorUserId: user.id, asOf: new Date() }),
+        ]);
 
-                return rows
+                const scheduledRows = rows
             .map((row) => {
                 const overdue = computeOverdueSnapshot({
                     dueDate: row.dueDate,
@@ -147,12 +134,37 @@ export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
                     ...row,
                     penaltyDue: overdue.penaltyDue.toFixed(2),
                     totalDueNow: overdue.totalDueNow.toFixed(2),
+                    overdueItemCount: overdue.effectiveStatus === "overdue" ? 1 : 0,
                     overdueDays: overdue.overdueDays,
                     status: overdue.effectiveStatus,
                 };
             })
-            .filter((row) => isPositiveDashboardMoney(row.totalDueNow))
-            .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+            .filter((row) => isPositiveDashboardMoney(row.totalDueNow));
+                const floatingRows = borrowerHealth
+                    .filter((row) => row.repaymentType === "floating")
+                    .map((row) => ({
+                        scheduleId: null,
+                        dueDate: null,
+                        remainingDue: sumDashboardMoney([row.dueTodayAmount, row.overdueAmount]),
+                        paidPenalty: "0.00",
+                        status: row.status === "due_today" ? "due" : row.status,
+                        installmentNo: null,
+                        loanId: row.loanId,
+                        loanPublicId: row.loanPublicId,
+                        borrowerName: row.borrowerName,
+                        repaymentType: row.repaymentType,
+                        penaltyDue: "0.00",
+                        totalDueNow: sumDashboardMoney([row.dueTodayAmount, row.overdueAmount]),
+                        overdueItemCount: row.overdueItemCount,
+                        overdueDays: row.maxOverdueDays,
+                    }))
+                    .filter((row) => isPositiveDashboardMoney(row.totalDueNow));
+
+                return [...scheduledRows, ...floatingRows].sort((a, b) => {
+                    const overdueDifference = (b.overdueDays ?? 0) - (a.overdueDays ?? 0);
+                    if (overdueDifference !== 0) return overdueDifference;
+                    return (a.dueDate ?? "9999-12-31").localeCompare(b.dueDate ?? "9999-12-31");
+                });
             },
         });
     })
