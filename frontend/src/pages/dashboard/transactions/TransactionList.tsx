@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/Button";
-import { Plus, ArrowUpRight, FileText } from "lucide-react";
+import { Plus, ArrowUpRight } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import Decimal from "decimal.js";
+import { EvidencePreviewButton } from "../../../components/evidence/EvidencePreviewButton";
 
 function transactionAmountTone(amount: string): "text-green-600" | "text-red-600" | "" {
     const value = new Decimal(amount);
@@ -89,11 +90,7 @@ export default function TransactionList() {
                                     <td className="p-4">฿{Number(tx.feeComponent ?? 0).toLocaleString(i18n.language)}</td>
                                     <td className="p-4">฿{Number(tx.penaltyComponent ?? 0).toLocaleString(i18n.language)}</td>
                                     <td className="p-4">
-                                        {tx.slipUrl ? (
-                                            <a href={tx.slipUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline flex items-center">
-                                                <FileText className="h-4 w-4 mr-1" /> {t("common.view", "View")}
-                                            </a>
-                                        ) : (
+                                        {tx.slipUrl ? <EvidencePreviewButton available label={t("evidence.previewSlip")} mimeType={String(tx.slipUrl).toLowerCase().includes(".pdf") ? "application/pdf" : "image/*"} resolve={async () => ({ url: tx.slipUrl, mimeType: String(tx.slipUrl).toLowerCase().includes(".pdf") ? "application/pdf" : "image/*" })} /> : (
                                             <span className="text-muted-foreground">-</span>
                                         )}
                                     </td>
