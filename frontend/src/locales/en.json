@@ -47,6 +47,17 @@
         "add": "Add",
         "close": "Close"
     },
+    "evidence": {
+        "description": "Preview the selected evidence without leaving this page.",
+        "loading": "Loading evidence...",
+        "failed": "Unable to load this evidence.",
+        "retry": "Retry",
+        "openNewTab": "Open in new tab",
+        "unsupported": "This file cannot be embedded. Open it in a new tab to view it.",
+        "preview": "Preview evidence",
+        "previewSlip": "Preview slip",
+        "previewIdCard": "Preview ID card"
+    },
     "appbar": {
         "account": "Open account menu",
         "accountFor": "Open account menu for {{name}}",
