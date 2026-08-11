@@ -3,6 +3,8 @@
 ## v0.3.10 - 2026-08-12
 
 ### Added
+- Added the v0.3.10 test-first implementation plan for semantic Payment Inbox status colors.
+- Added the approved Payment Inbox semantic status-color design for accessible green, gray, amber, blue, red, and orange state distinctions.
 - Added tenant- and owner-scoped Payment Inbox pagination with validated payer search, status filtering, and inclusive Asia/Bangkok business-date filters while preserving the existing MCP list contract.
 - Added the v0.3.10 test-first implementation plan for paginated Payment Inbox queries and a responsive flat inbox list.
 - Added the approved scalable Payment Inbox design for flat list rows, server-side search and filters, newest-first pagination, localization, and responsive review navigation.
@@ -19,6 +21,7 @@
 - Excluded append-only reversed floating-interest accruals from Dashboard payable totals so corrected source rows are not counted alongside their active replacements.
 
 ### Changed
+- Applied distinct accessible semantic colors to Payment Inbox status badges: green ready, gray draft, amber review, blue posted, red reversed, and orange duplicate.
 - Replaced nested Payment Inbox item cards with responsive divider-separated rows, localized payer/status/date filters, result counts, and retained-filter pagination at 25 records per page.
 - Standardized authenticated page-edge padding at 16px on mobile while retaining the existing desktop spacing, removed the Dashboard's redundant inner inset, and flattened its cash metrics into responsive divided cells within one summary card.
 

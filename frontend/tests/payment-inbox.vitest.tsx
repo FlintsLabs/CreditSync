@@ -70,6 +70,38 @@ describe("PaymentInbox", () => {
         } }));
     });
 
+    test("gives every payment status a distinct semantic tone while retaining its label", async () => {
+        const statuses = ["draft", "needs_review", "ready", "posted", "reversed", "duplicate"];
+        vi.mocked(api.get).mockImplementation(async (url) => {
+            if (url === "/payment-intakes") return { data: {
+                items: statuses.map((status, index) => ({
+                    publicId: `${INTAKE_A.slice(0, -1)}${index + 1}`,
+                    status,
+                    amount: "10.00",
+                    receivedAt: `2026-08-10T0${index}:00:00.000Z`,
+                    payerName: `Payer ${index + 1}`,
+                })),
+                page: 1, pageSize: 25, total: 6, totalPages: 1,
+            } };
+            if (url === "/loans") return { data: loans };
+            throw new Error(`Unexpected GET ${url}`);
+        });
+        render(<MemoryRouter><PaymentInbox /></MemoryRouter>);
+
+        const expected = {
+            Draft: "neutral",
+            "Needs review": "warning",
+            Ready: "success",
+            Posted: "info",
+            Reversed: "danger",
+            Duplicate: "duplicate",
+        };
+        const inbox = await screen.findByRole("list", { name: /inbox/i });
+        for (const [label, tone] of Object.entries(expected)) {
+            expect((await within(inbox).findByText(label)).closest("[data-status-tone]")).toHaveAttribute("data-status-tone", tone);
+        }
+    });
+
     test("adds and removes explicit allocation rows and previews the complete split", async () => {
         const user = userEvent.setup();
         render(<MemoryRouter><PaymentInbox /></MemoryRouter>);
