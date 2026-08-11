@@ -77,7 +77,10 @@ describe("payment intake REST adapter", () => {
 
         const list = await jsonRequest(app, "/payment-intakes", token);
         const detail = await jsonRequest(app, `/payment-intakes/${created.body.publicId}`, token);
-        expect(list.body).toEqual([expect.objectContaining({ publicId: created.body.publicId, amount: "100.00" })]);
+        expect(list.body).toMatchObject({
+            items: [expect.objectContaining({ publicId: created.body.publicId, amount: "100.00" })],
+            page: 1, pageSize: 25, total: 1, totalPages: 1,
+        });
         expect(detail.body).toMatchObject({ publicId: created.body.publicId, evidence: [] });
 
         const reviewed = await jsonRequest(app, `/payment-intakes/${created.body.publicId}/review`, token, {
@@ -151,7 +154,7 @@ describe("payment intake REST adapter", () => {
         const token = await authToken(actor!);
         const app = new Elysia().use(paymentIntakesRoute);
         const list = await jsonRequest(app, "/payment-intakes", token);
-        expect(list.body).toEqual([expect.objectContaining({ publicId: own!.publicId })]);
+        expect(list.body).toMatchObject({ items: [expect.objectContaining({ publicId: own!.publicId })], total: 1 });
         const detail = await jsonRequest(app, `/payment-intakes/${hidden!.publicId}`, token);
         expect(detail.response.status).toBe(404);
         expect(detail.body).toMatchObject({ code: "PAYMENT_INTAKE_NOT_FOUND" });
@@ -161,6 +164,41 @@ describe("payment intake REST adapter", () => {
         expect(mutation.response.status).toBe(404);
         expect(await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.id, hidden!.id) }))
             .toMatchObject({ status: "draft" });
+    });
+
+    // Break caught: filtering widens owner/tenant scope, uses UTC date boundaries, or paginates before newest-first ordering.
+    integrationTest("filters and paginates payment intakes with Bangkok business-day boundaries", async () => {
+        const [actor, peer, otherTenant] = await db.insert(users).values([
+            { tenantId: "tenant-a", email: "payment-list@example.test", role: "collector" },
+            { tenantId: "tenant-a", email: "payment-list-peer@example.test", role: "collector" },
+            { tenantId: "tenant-b", email: "payment-list-other@example.test", role: "owner" },
+        ]).returning();
+        const rows = await db.insert(paymentIntakes).values([
+            { tenantId: "tenant-a", ownerUserId: actor!.id, status: "ready", amount: "10.00", payerName: "Alice Older", receivedAt: new Date("2026-08-10T17:00:00.000Z") },
+            { tenantId: "tenant-a", ownerUserId: actor!.id, status: "ready", amount: "20.00", payerName: "Alice Newer", receivedAt: new Date("2026-08-11T16:59:59.999Z") },
+            { tenantId: "tenant-a", ownerUserId: actor!.id, status: "draft", amount: "30.00", payerName: "Alice Draft", receivedAt: new Date("2026-08-11T12:00:00.000Z") },
+            { tenantId: "tenant-a", ownerUserId: peer!.id, status: "ready", amount: "40.00", payerName: "Alice Peer", receivedAt: new Date("2026-08-11T12:00:00.000Z") },
+            { tenantId: "tenant-b", ownerUserId: otherTenant!.id, status: "ready", amount: "50.00", payerName: "Alice Other", receivedAt: new Date("2026-08-11T12:00:00.000Z") },
+            { tenantId: "tenant-a", ownerUserId: actor!.id, status: "ready", amount: "60.00", payerName: "Alice Tomorrow", receivedAt: new Date("2026-08-11T17:00:00.000Z") },
+        ]).returning();
+        const token = await authToken(actor!);
+        const app = new Elysia().use(paymentIntakesRoute);
+
+        const page = await jsonRequest(app, "/payment-intakes?search=alice&status=ready&from=2026-08-11&to=2026-08-11&page=2&pageSize=1", token);
+        expect(page.response.status).toBe(200);
+        expect(page.body).toEqual({
+            items: [expect.objectContaining({ publicId: rows[0]!.publicId, payerName: "Alice Older", amount: "10.00" })],
+            page: 2,
+            pageSize: 1,
+            total: 2,
+            totalPages: 2,
+        });
+
+        for (const query of ["status=unknown", "from=2026-02-30", "page=0", "pageSize=101"]) {
+            const invalid = await jsonRequest(app, `/payment-intakes?${query}`, token);
+            expect(invalid.response.status).toBe(400);
+            expect(invalid.body).toMatchObject({ code: "INVALID_PAYMENT_LIST_QUERY" });
+        }
     });
 
     // Break caught: the legacy writer uses principal-first Number allocation and can overwrite an intake post from a stale snapshot.

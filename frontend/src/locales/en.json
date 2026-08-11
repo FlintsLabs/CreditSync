@@ -709,6 +709,12 @@
         "new": "Record payment",
         "inbox": "Inbox",
         "empty": "No payment intakes yet.",
+        "filteredEmpty": "No payments match these filters.",
+        "filters": {
+            "search": "Search payer", "searchPlaceholder": "Search payer name", "status": "Status", "allStatuses": "All statuses",
+            "from": "From date", "to": "To date", "clear": "Clear filters"
+        },
+        "pagination": { "range": "{{first}}–{{last}} of {{total}}", "previous": "Previous page", "next": "Next page" },
         "select": "Select an intake to review.",
         "loadingDetail": "Loading payment detail...",
         "review": "Payment review",
