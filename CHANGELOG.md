@@ -3,6 +3,7 @@
 ## v0.3.10 - 2026-08-12
 
 ### Added
+- Added the v0.3.10 test-first implementation plan for semantic Payment Inbox status colors.
 - Added the approved Payment Inbox semantic status-color design for accessible green, gray, amber, blue, red, and orange state distinctions.
 - Added tenant- and owner-scoped Payment Inbox pagination with validated payer search, status filtering, and inclusive Asia/Bangkok business-date filters while preserving the existing MCP list contract.
 - Added the v0.3.10 test-first implementation plan for paginated Payment Inbox queries and a responsive flat inbox list.
