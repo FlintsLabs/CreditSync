@@ -12,7 +12,7 @@ Make every authenticated app page use narrow mobile screens more efficiently and
 
 ## Responsive Layout
 
-The shared authenticated `DashboardLayout` page-content container will use 8px padding on narrow screens. Its existing 32px padding from the `md` breakpoint remains unchanged. This central rule gives every routed app page consistent mobile edges without duplicating padding classes across individual pages.
+The shared authenticated `DashboardLayout` page-content container will use 16px padding on narrow screens. Its existing 32px padding from the `md` breakpoint remains unchanged. This central rule gives every routed app page consistent mobile edges without duplicating padding classes across individual pages.
 
 The Dashboard currently adds a second page-level padding layer inside the shared layout. That redundant padding will be removed while retaining 40px bottom breathing room. Other pages already rely on the shared layout and need no page-level spacing changes.
 

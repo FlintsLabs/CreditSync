@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Apply 8px mobile page padding to every authenticated route and flatten the Dashboard cash metrics into divided cells within their single outer card.
+**Goal:** Apply 16px mobile page padding to every authenticated route and flatten the Dashboard cash metrics into divided cells within their single outer card.
 
 **Architecture:** Keep authenticated page-edge spacing owned by `DashboardLayout`, removing Dashboard's redundant inner padding. Keep the cash-summary surface owned by the Dashboard section and make `MoneyMetric` a flat responsive cell with horizontal mobile separators and vertical separators from `sm` upward.
 
@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Public landing/login layouts, dialogs, shared card primitives, and component-internal spacing must not change.
-- Authenticated mobile page padding is 8px; the existing 32px padding starts at `md`.
+- Authenticated mobile page padding is 16px; the existing 32px padding starts at `md`.
 - Cash metrics stack below `sm` and use three columns from `sm` upward.
 - Exact-money formatting, localization, semantic colors, loading, and accessibility behavior remain unchanged.
 
@@ -34,13 +34,13 @@
 Create `frontend/tests/dashboard-responsive-layout.test.ts` using `readFileSync` and `resolve` to read the two production components. Assert these literal contracts independently:
 
 ```ts
-expect(layoutSource).toContain('className="flex-1 overflow-x-hidden p-2 md:p-8"');
+expect(layoutSource).toContain('className="flex-1 overflow-x-hidden p-4 md:p-8"');
 expect(dashboardSource).toContain('className="flex-1 space-y-6 pb-10"');
 expect(dashboardSource).toContain('border-b border-border/70 p-4 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0');
 expect(dashboardSource).toContain('className="grid sm:grid-cols-3"');
 ```
 
-These assertions catch restoration of 16px mobile page padding, reintroduction of Dashboard double padding, or reintroduction of isolated nested metric cards.
+These assertions catch unintended changes to the 16px mobile page padding, reintroduction of Dashboard double padding, or reintroduction of isolated nested metric cards.
 
 - [x] **Step 2: Run the focused test and confirm RED**
 
@@ -50,7 +50,7 @@ Expected: FAIL because the layout still uses `p-4`, Dashboard still owns `p-4 ..
 
 - [x] **Step 3: Implement the minimal responsive styling**
 
-In `DashboardLayout.tsx`, change the page-content main classes to `flex-1 overflow-x-hidden p-2 md:p-8`.
+In `DashboardLayout.tsx`, set the page-content main classes to `flex-1 overflow-x-hidden p-4 md:p-8`.
 
 In `Dashboard.tsx`, change the root main classes to `flex-1 space-y-6 pb-10`; change the cash grid to `grid sm:grid-cols-3`; and change `MoneyMetric` to a flat cell using `min-w-0 border-b border-border/70 p-4 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0` while retaining its existing children and value styles.
 

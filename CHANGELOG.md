@@ -13,7 +13,7 @@
 - Excluded append-only reversed floating-interest accruals from Dashboard payable totals so corrected source rows are not counted alongside their active replacements.
 
 ### Changed
-- Reduced authenticated page-edge padding to 8px on mobile while retaining the existing desktop spacing, and flattened the Dashboard cash metrics into responsive divided cells within one summary card.
+- Standardized authenticated page-edge padding at 16px on mobile while retaining the existing desktop spacing, removed the Dashboard's redundant inner inset, and flattened its cash metrics into responsive divided cells within one summary card.
 
 ### Infra
 - Added a guarded operational correction command for reversing and reapplying a specifically identified misallocated floating repayment after repairing its accrual history.
