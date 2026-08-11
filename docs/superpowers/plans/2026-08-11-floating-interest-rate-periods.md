@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the single floating-loan daily rate with an effective-dated, loan-scoped timeline that supports previewed future changes, exact per-date accruals, and localized management on Loan Detail.
+**Goal:** Replace the single floating-loan daily rate with an effective-dated, loan-scoped timeline that supports previewed future changes, exact per-date accruals, localized Loan Detail management, and safe MCP orchestration.
 
-**Architecture:** A pure Decimal/date kernel normalizes and replaces non-overlapping inclusive periods. PostgreSQL owns tenant isolation, non-overlap, persisted previews, idempotency, and immutable accrual snapshots; an application service provides list/preview/execute commands, while the existing accrual service resolves one period per business date. Loan Detail consumes server-calculated current-rate summaries and manages the timeline through explicit preview and confirmation.
+**Architecture:** A pure Decimal/date kernel normalizes and replaces non-overlapping inclusive periods. PostgreSQL owns tenant isolation, non-overlap, persisted previews, idempotency, and immutable accrual snapshots; one application service provides list/preview/execute commands to both REST and MCP, while the existing accrual service resolves one period per business date. Loan Detail and the private plugin consume server-calculated results and require explicit confirmation of the latest preview before execution.
 
 **Tech Stack:** Bun, TypeScript, Elysia, Drizzle ORM, PostgreSQL 18 (`btree_gist`), Decimal.js, React 19, Vitest, Testing Library, i18next.
 
@@ -19,7 +19,8 @@
 - The backend owns interest calculations; the frontend displays exact server results and does not recreate accounting logic.
 - Use Bun commands and serialize disposable PostgreSQL suites with `backend/scripts/test-disposable-postgres.sh`.
 - Before every commit, update `CHANGELOG.md`, stage it with the related change, and confirm the entry matches the staged set.
-- Do not expose new MCP write tools in this release; existing MCP loan creation remains compatible through the initial period created by the application service.
+- Expose exactly three new MCP tools in this release: `loan.interest-rate.list`, `loan.interest-rate.preview`, and `loan.interest-rate.execute`; MCP calls application services directly and never calls REST internally.
+- Update the private plugin to `2.2.0`, 7 skills, and 29 tools, with `manage-floating-interest-rates` and synchronized contract, validator, documentation, tests, and evals.
 
 ---
 
@@ -33,10 +34,12 @@
 - `backend/src/services/loan-interest-rate-service.test.ts` — disposable-PostgreSQL service and concurrency coverage.
 - `backend/src/modules/loan-interest-rate-routes.ts` — closed HTTP schemas and loan-scoped endpoints.
 - `backend/src/modules/loan-interest-rate-routes.test.ts` — authenticated route contracts and tenant isolation.
+- `backend/src/mcp/loan-interest-rate-tools.test.ts` — strict MCP schemas, annotations, handler delegation, confirmation, and safe output coverage.
 - `backend/src/db/floating-interest-rate-periods-migration.test.ts` — additive migration contract checks.
 - `backend/drizzle/0024_floating_interest_rate_periods.sql` — period/preview tables, legacy backfill, constraints, and accrual foreign key.
 - `frontend/src/pages/dashboard/loans/FloatingInterestRateCard.tsx` — current summary, timeline, editor, preview, and confirmation UI.
 - `frontend/tests/floating-interest-rate-card.vitest.tsx` — localized component behavior and exact display tests.
+- `plugins/creditsync/skills/manage-floating-interest-rates/SKILL.md` — safe list/preview/confirm/execute orchestration.
 
 **Modify**
 
@@ -48,8 +51,16 @@
 - `backend/src/services/loan-payment-health-service.test.ts` — retain payment-health behavior with period-backed accruals.
 - `backend/src/modules/loan-contract-routes.ts` — mount the rate router or delegate its endpoints without enlarging generic update semantics.
 - `backend/src/index.ts` — register the new router if modules are registered centrally.
+- `backend/src/mcp/server.ts` — three closed tool schemas, descriptions, outputs, and annotations.
+- `backend/src/mcp/default.ts` and `backend/src/mcp/default.test.ts` — direct service handlers, idempotency context, and audit verification.
+- `backend/src/mcp/server.test.ts` — frozen tool count, schema rejection, and annotation tests.
 - `frontend/src/pages/dashboard/loans/LoanDetail.tsx` — declare the exact floating-interest projection and render the new card.
 - `frontend/src/locales/en.json` and `frontend/src/locales/th.json` — matching timeline labels, explanations, warnings, and actions.
+- `plugins/creditsync/.codex-plugin/plugin.json`, `plugins/creditsync/.app.json`, `plugins/creditsync/README.md`, and `plugins/creditsync/CHANGELOG.md` — plugin 2.2.0 metadata and capability documentation.
+- `plugins/creditsync/skills/creditsync/SKILL.md` — root routing to the seventh skill.
+- `plugins/creditsync/references/mcp-tool-contract.json`, `plugins/creditsync/references/error-recovery.md`, and `plugins/creditsync/references/financial-rules.md` — synchronized frozen contract and safety guidance.
+- `plugins/creditsync/evals/evals.json`, `plugins/creditsync/evals/harness.ts`, and `plugins/creditsync/evals/skill-tests.md` — deterministic positive/negative orchestration evidence.
+- `plugins/creditsync/scripts/validate.ts`, `plugins/creditsync/tests/plugin-contract.test.ts`, `plugins/creditsync/tests/eval-harness.test.ts`, and `plugins/creditsync/tests/operations-docs.test.ts` — 2.2.0/7-skill/29-tool validation.
 - `README.md` — document effective-dated floating interest and immutable accrued dates.
 - `CHANGELOG.md` — maintain one consolidated v0.3.9 feature bullet as tasks land.
 
@@ -264,7 +275,7 @@ git commit -m "feat: persist floating interest rate periods"
 export type RateChangeInput = { effectiveDate: string; expiryDate: string | null; rateType: RateType; rate: string };
 export async function listLoanInterestRates(ctx: CommandContext, loanPublicId: string, asOf?: Date): Promise<LoanRateTimeline>;
 export async function previewLoanInterestRateChange(ctx: CommandContext, loanPublicId: string, input: RateChangeInput): Promise<RateChangePreview>;
-export async function executeLoanInterestRateChange(ctx: CommandContext, loanPublicId: string, previewPublicId: string): Promise<RateChangeExecution>;
+export async function executeLoanInterestRateChange(ctx: CommandContext, loanPublicId: string, input: { previewPublicId: string; previewHash: string; reason: string }): Promise<RateChangeExecution>;
 ```
 
 `LoanRateTimeline` includes exact presented periods, `currentPeriod`, `dailyInterestAtCurrentPrincipal`, `nextChange`, `earliestEditableDate`, and `timelineVersion`. `RateChangeExecution` includes the resulting timeline, `auditPublicId`, and `correlationId`.
@@ -295,7 +306,7 @@ Expected: list/preview tests PASS.
 
 - [ ] **Step 5: Write failing execute, stale, audit, and concurrency tests**
 
-Cover: missing idempotency key; expired preview; actor/tenant mismatch; changed timeline version; exact replacement result; idempotent replay with the same key; conflict when a key is reused for a different preview; one audit row containing before/after/request data and context; and two concurrent executes producing a single non-overlapping result.
+Cover: missing idempotency key or blank reason; expired preview; actor/tenant mismatch; changed timeline version; mismatched preview hash; exact replacement result; idempotent replay with the same key; conflict when a key is reused for a different preview; one audit row containing before/after/request/reason data and context; and two concurrent executes producing a single non-overlapping result.
 
 - [ ] **Step 6: Run execute tests and confirm RED**
 
@@ -414,7 +425,7 @@ git commit -m "feat: accrue floating interest by rate period"
 - Produces:
   - `GET /loans/:id/interest-rates`
   - `POST /loans/:id/interest-rates/preview`
-  - `POST /loans/:id/interest-rates/execute` with `{ previewPublicId: string }`
+  - `POST /loans/:id/interest-rates/execute` with `{ previewPublicId: string; previewHash: string; reason: string }`
 - Execute requires `Idempotency-Key`; all routes use public loan/preview UUIDs.
 
 - [ ] **Step 1: Write failing authenticated route tests**
@@ -439,11 +450,11 @@ Run: `backend/scripts/test-disposable-postgres.sh src/modules/loan-interest-rate
 
 Expected: PASS.
 
-- [ ] **Step 5: Run MCP compatibility tests unchanged**
+- [ ] **Step 5: Run the pre-expansion MCP regression baseline**
 
 Run: `cd backend && bun test src/mcp/server.test.ts src/mcp/default.test.ts`
 
-Expected: PASS without adding rate-management MCP tools or changing its frozen outputs.
+Expected: PASS before Task 6 expands the frozen contract; existing 26 tool outputs remain compatible.
 
 - [ ] **Step 6: Update changelog and commit**
 
@@ -457,7 +468,161 @@ git commit -m "feat: expose loan interest rate timeline APIs"
 
 ---
 
-### Task 6: Localized Loan Detail Timeline Management
+### Task 6: MCP Tools and Plugin 2.2.0 Orchestration
+
+**Files:**
+- Create: `backend/src/mcp/loan-interest-rate-tools.test.ts`
+- Create: `plugins/creditsync/skills/manage-floating-interest-rates/SKILL.md`
+- Modify: `backend/src/mcp/server.ts`
+- Modify: `backend/src/mcp/server.test.ts`
+- Modify: `backend/src/mcp/default.ts`
+- Modify: `backend/src/mcp/default.test.ts`
+- Modify: `plugins/creditsync/.codex-plugin/plugin.json`
+- Modify: `plugins/creditsync/.app.json`
+- Modify: `plugins/creditsync/README.md`
+- Modify: `plugins/creditsync/CHANGELOG.md`
+- Modify: `plugins/creditsync/skills/creditsync/SKILL.md`
+- Modify: `plugins/creditsync/references/mcp-tool-contract.json`
+- Modify: `plugins/creditsync/references/error-recovery.md`
+- Modify: `plugins/creditsync/references/financial-rules.md`
+- Modify: `plugins/creditsync/evals/evals.json`
+- Modify: `plugins/creditsync/evals/harness.ts`
+- Modify: `plugins/creditsync/evals/skill-tests.md`
+- Modify: `plugins/creditsync/scripts/validate.ts`
+- Modify: `plugins/creditsync/tests/plugin-contract.test.ts`
+- Modify: `plugins/creditsync/tests/eval-harness.test.ts`
+- Modify: `plugins/creditsync/tests/operations-docs.test.ts`
+- Modify: `CHANGELOG.md`
+
+**Interfaces:**
+- Consumes Task 3 application service directly; handlers never call REST.
+- Produces these exact MCP tools:
+
+```ts
+"loan.interest-rate.list": { loanPublicId: UUID };
+"loan.interest-rate.preview": {
+    loanPublicId: UUID; effectiveDate: YYYYMMDD; expiryDate?: YYYYMMDD | null;
+    rateType: "percent" | "per_thousand"; rate: PositiveFourDecimalString;
+};
+"loan.interest-rate.execute": {
+    previewPublicId: UUID; previewHash: Sha256Hex; confirmed: true;
+    reason: NonEmptyString; idempotencyKey: NonEmptyString;
+};
+```
+
+- `list` annotations: `{ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }`.
+- `preview` annotations: `{ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }` because it persists expiring workflow state.
+- `execute` annotations: `{ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false }`.
+
+- [ ] **Step 1: Write failing MCP schema, annotation, and handler tests**
+
+Extend `server.test.ts` to expect 29 tools and the exact annotations above. In `loan-interest-rate-tools.test.ts`, assert closed schemas reject extra keys, invalid UUIDs/dates/rates, `confirmed: false`, empty reasons, and malformed hashes. Assert handler calls use an MCP `CommandContext` and direct service functions and return structured content plus readable summaries containing only public IDs and safe exact strings.
+
+```ts
+expect(listed.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+    "loan.interest-rate.list",
+    "loan.interest-rate.preview",
+    "loan.interest-rate.execute",
+]));
+expect(tool("loan.interest-rate.execute").annotations).toEqual({
+    readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false,
+});
+```
+
+- [ ] **Step 2: Run MCP tests and confirm RED**
+
+Run: `cd backend && bun test src/mcp/loan-interest-rate-tools.test.ts src/mcp/server.test.ts src/mcp/default.test.ts`
+
+Expected: FAIL because the three tools and handlers are absent and the count remains 26.
+
+- [ ] **Step 3: Add strict tool input/output schemas and descriptions**
+
+In `server.ts`, add the three names to `McpToolName`, strict Zod schemas, output validators based on Task 3 public result types, concise descriptions, and annotation sets. Reuse the existing UUID/date/money schemas and add:
+
+```ts
+const exactRate = z.string().regex(/^\d+(?:\.\d{1,4})?$/).refine((value) => new Decimal(value).gt(0));
+const previewHash = z.string().regex(/^[0-9a-f]{64}$/);
+```
+
+Do not expose internal database IDs, tenant IDs, actor IDs, raw audit payloads, or numeric money values.
+
+- [ ] **Step 4: Add direct service handlers and confirmation defenses**
+
+Import `listLoanInterestRates`, `previewLoanInterestRateChange`, and `executeLoanInterestRateChange` in `default.ts`. Delegate list/preview directly. For execute, reject unless `confirmed === true`, pass `idempotencyKey` into a copied `CommandContext`, and pass the exact preview ID/hash/reason to the service. Add the execute audit target `{ entityType: "loan_interest_rate_timeline", action: "executed" }`.
+
+- [ ] **Step 5: Run MCP tests and confirm GREEN**
+
+Run: `cd backend && bun test src/mcp/loan-interest-rate-tools.test.ts src/mcp/server.test.ts src/mcp/default.test.ts`
+
+Expected: PASS with 29 tools, exact annotations, strict schemas, and direct service delegation.
+
+- [ ] **Step 6: Write failing plugin contract and orchestration eval tests**
+
+Update plugin tests first to require version `2.2.0`, seven skills including `manage-floating-interest-rates`, 29 tool fixtures, and root-skill routing. Add deterministic eval cases:
+
+- positive read: list only
+- positive future change: list, preview, explain, explicit confirmation, execute
+- positive automatic split: report the server preview without agent arithmetic
+- negative ambiguous/missing loan UUID: no preview or execute
+- negative missing confirmation: list and preview only
+- negative stale/expired/hash-mismatch preview: no execute retry without a new preview and new confirmation
+- negative accrued-date conflict: stop and report earliest editable date
+- negative idempotency conflict: stop without inventing success
+
+Assert exact expected/forbidden calls and human-boundary text in `eval-harness.test.ts`.
+
+- [ ] **Step 7: Run plugin tests and confirm RED**
+
+Run: `cd plugins/creditsync && bun test`
+
+Expected: FAIL because metadata, seventh skill, tool fixture, and eval harness still describe 2.1.0/6/26.
+
+- [ ] **Step 8: Implement the seventh skill and synchronize plugin artifacts**
+
+Write `manage-floating-interest-rates/SKILL.md` with this mandatory sequence:
+
+```text
+loan.interest-rate.list
+→ loan.interest-rate.preview
+→ explain exact server before/after timeline, daily amount, splits, warnings, and expiry
+→ obtain explicit confirmation of that latest preview
+→ loan.interest-rate.execute with matching previewPublicId, previewHash, confirmed=true, reason, idempotencyKey
+```
+
+Document all stop conditions from the spec and prohibit agent-side rate/daily-interest arithmetic. Route matching requests from the root skill. Update metadata/readmes/changelogs to 2.2.0 and 7 skills. Generate `mcp-tool-contract.json` using the checked-in `scripts/mcp-contract.ts` workflow; do not hand-edit generated schemas. Update validator constants/messages to 29 tools and remove any rule that forbids the new capability.
+
+- [ ] **Step 9: Implement deterministic eval fixtures and recovery guidance**
+
+Add harness results using exact public UUIDs, decimal strings, preview hashes, expiry timestamps, warnings, audit UUID, and correlation UUID. Extend error recovery with stale-preview re-list/re-preview behavior and accrued-date stopping. Extend financial rules to state that materialized accruals never change and only server output determines effective splits and daily interest.
+
+- [ ] **Step 10: Run MCP and plugin validation**
+
+Run:
+
+```bash
+cd backend
+bun test src/mcp/loan-interest-rate-tools.test.ts src/mcp/server.test.ts src/mcp/default.test.ts
+bun run typecheck
+cd ../plugins/creditsync
+bun test
+bun run validate
+```
+
+Expected: PASS with validator summary `2.2.0, 7 skills, 29 tools`; no bundled MCP server or secrets.
+
+- [ ] **Step 11: Update changelogs and commit**
+
+Update root v0.3.9 and plugin 2.2.0 changelogs with one concise MCP capability/safety entry, then commit every synchronized artifact:
+
+```bash
+git add CHANGELOG.md backend/src/mcp plugins/creditsync
+git diff --cached --check
+git commit -m "feat: manage floating rates through MCP"
+```
+
+---
+
+### Task 7: Localized Loan Detail Timeline Management
 
 **Files:**
 - Create: `frontend/src/pages/dashboard/loans/FloatingInterestRateCard.tsx`
@@ -494,7 +659,7 @@ Expected: PASS.
 
 - [ ] **Step 5: Write failing management-flow tests**
 
-Using `userEvent`, test: opening management from active and closed loans; entering effective date, optional expiry, type, and rate; preview rendering automatic left/new/right splits from the server; confirmation sending `previewPublicId` with a generated `Idempotency-Key`; accrued-date conflict showing earliest editable date while retaining fields; stale preview refreshing the timeline; and cancel never executing.
+Using `userEvent`, test: opening management from active and closed loans; entering effective date, optional expiry, type, and rate; preview rendering automatic left/new/right splits from the server; confirmation sending the exact `previewPublicId` and `previewHash` with a generated `Idempotency-Key`; accrued-date conflict showing earliest editable date while retaining fields; stale preview refreshing the timeline; and cancel never executing.
 
 - [ ] **Step 6: Run management tests and confirm RED**
 
@@ -533,7 +698,7 @@ git commit -m "feat: manage floating rates from loan detail"
 
 ---
 
-### Task 7: Documentation and Full Verification
+### Task 8: Documentation and Full Verification
 
 **Files:**
 - Modify: `README.md`
@@ -612,4 +777,3 @@ git commit -m "docs: document floating rate timelines"
 Run: `git log --oneline --decorate -8 && git status --short`
 
 Expected: the task commits are present and the worktree is clean.
-

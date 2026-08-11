@@ -86,7 +86,21 @@ Loan detail reads include:
 - the next scheduled rate change
 - the full chronological timeline
 
-The MCP contract and plugin artifacts are updated only if rate-period write tools are intentionally exposed. Existing generic loan update must not become an unconfirmed path around preview and execute.
+Existing generic loan update must not become an unconfirmed path around preview and execute.
+
+## MCP and Plugin Contract
+
+Expose the same application service directly through three MCP tools; MCP must not call the REST API internally:
+
+- `loan.interest-rate.list` is read-only. It accepts a public loan UUID and returns the current period, exact daily interest at current outstanding principal, earliest editable date, next change, and full timeline.
+- `loan.interest-rate.preview` accepts a public loan UUID, effective date, optional expiry date, rate type, and exact rate string. It returns the before/after timeline, splits/merges, warnings, `previewPublicId`, `previewHash`, and expiry time. Preview may persist workflow state but does not alter live rate periods.
+- `loan.interest-rate.execute` is destructive and idempotent. It accepts `previewPublicId`, `previewHash`, `confirmed: true`, a non-empty reason, and an idempotency key and returns the resulting timeline, audit public ID, and correlation ID.
+
+Agent orchestration is always `list -> preview -> explain exact latest preview -> explicit human confirmation -> execute`. The agent must stop before execute on ambiguity, a missing or mismatched loan UUID, accrued-date conflict, missing coverage, stale/expired preview, changed preview hash, idempotency conflict, or absent explicit confirmation. The agent never calculates daily interest or projected splits itself.
+
+All three tools use closed input/output schemas and expose only safe public UUIDs, `YYYY-MM-DD` dates, exact decimal rate strings, and exact two-decimal money strings. Tool annotations mark list read-only, preview non-read-only/non-destructive because it persists preview workflow state, and execute destructive/idempotent.
+
+Update the private CreditSync plugin from `2.1.0` to `2.2.0`, from 6 to 7 skills, and from 26 to 29 tools. Add `manage-floating-interest-rates`, route the root `creditsync` skill to it, and synchronize the generated MCP contract fixture, plugin manifest/version, README, changelog, validator expectations, error-recovery guidance, financial rules, positive/negative eval scenarios, deterministic eval harness, and plugin tests.
 
 ## User Interface
 
@@ -121,8 +135,11 @@ Backend unit and disposable-PostgreSQL tests cover:
 - accrual across rate boundaries with exact Decimal calculations
 - immutable snapshot behavior after later timeline changes
 - idempotent execution and audit/correlation output
+- strict MCP schemas, handler-to-service delegation, annotations, preview-hash confirmation, safe public outputs, and audit correlation
 
-Frontend tests cover localized current-rate presentation, exact daily-interest strings, future-change display, previewed splits, confirmation, accrued-date blocking, and stale refresh. Verification includes backend typecheck and disposable database tests, frontend test/lint/build, and plugin tests/validator if its contract changes.
+Frontend tests cover localized current-rate presentation, exact daily-interest strings, future-change display, previewed splits, confirmation, accrued-date blocking, and stale refresh. Verification includes backend typecheck and disposable database tests, frontend test/lint/build, and the synchronized plugin tests/validator.
+
+Plugin validation covers the `2.2.0 / 7 skills / 29 tools` frozen contract, routing documentation, positive list/preview/execute orchestration, and negative missing-confirmation, stale-preview, accrued-date, ambiguity, and idempotency-conflict cases.
 
 ## Out of Scope
 
