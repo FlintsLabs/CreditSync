@@ -16,12 +16,14 @@
 - Added browser-QA evidence confirming one floating loan row, aggregate arrears metadata, and schedule-free repayment navigation.
 
 ### Fixed
+- Prevented dark-mode cards and popovers from visually collapsing into the application canvas, with a focused surface-hierarchy regression test.
 - Allowed floating-loan previews to return their daily-interest policy, first-day deduction, exact net disbursement, and next interest date through the strict public MCP contract.
 - Preserved exact decimal-string money across dashboard totals, funding gaps, available drawdowns, comparisons, and sorting beyond the JavaScript safe-integer range.
 - Prevented the Dashboard from crashing after profitability data loads by serializing its public money contract as two-decimal strings.
 - Included floating daily-interest arrears in Dashboard borrower totals and queues as one exact aggregate row per overdue loan.
 
 ### Changed
+- Raised dark-mode cards, navigation, overlays, controls, and nested panels onto distinct semantic surface levels across the application.
 - Rebuilt the responsive operations dashboard as a Daily Command Center with a consolidated cash position, urgency-ranked actions, five-item repayment queues, localized statuses, independent loading and retry states, and collapsible mobile financial details.
 - Displayed floating daily-interest arrears as one localized borrower-queue row per loan with overdue-item count, maximum age, and schedule-free repayment navigation.
 
