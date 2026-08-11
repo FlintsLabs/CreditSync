@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
-import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, gte, inArray, lt, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
     borrowerAliases,
@@ -267,6 +267,79 @@ export async function listPaymentIntakes(ctx: CommandContext, input: { status?: 
     if (actor && !canAccessTenantWideData({ role: actor.role ?? "viewer" })) conditions.push(eq(paymentIntakes.ownerUserId, actor.id));
     const rows = await db.select().from(paymentIntakes).where(and(...conditions)).orderBy(desc(paymentIntakes.receivedAt));
     return rows.map(presentIntake);
+}
+
+const paymentIntakeStatuses = new Set(["draft", "needs_review", "ready", "posted", "reversed", "duplicate"]);
+const businessDatePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+export interface PaymentIntakeListInput {
+    search?: string;
+    status?: string;
+    from?: string;
+    to?: string;
+    page?: string;
+    pageSize?: string;
+}
+
+function invalidPaymentListQuery(field: string) {
+    throw new DomainError("INVALID_PAYMENT_LIST_QUERY", "Invalid payment list query", 400, { field });
+}
+
+function parsePositiveInteger(value: string | undefined, fallback: number, field: string, maximum?: number) {
+    if (value === undefined) return fallback;
+    if (!/^[1-9]\d*$/.test(value)) invalidPaymentListQuery(field);
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || (maximum !== undefined && parsed > maximum)) invalidPaymentListQuery(field);
+    return parsed;
+}
+
+function parseBusinessDate(value: string | undefined, field: string) {
+    if (value === undefined) return undefined;
+    if (!businessDatePattern.test(value)) invalidPaymentListQuery(field);
+    const [year, month, day] = value.split("-").map(Number);
+    const calendarDate = new Date(Date.UTC(year!, month! - 1, day!));
+    if (calendarDate.getUTCFullYear() !== year || calendarDate.getUTCMonth() !== month! - 1 || calendarDate.getUTCDate() !== day) {
+        invalidPaymentListQuery(field);
+    }
+    return new Date(`${value}T00:00:00+07:00`);
+}
+
+export async function listPaymentIntakePage(ctx: CommandContext, input: PaymentIntakeListInput = {}) {
+    const actor = await actorFor(ctx);
+    const page = parsePositiveInteger(input.page, 1, "page");
+    const pageSize = parsePositiveInteger(input.pageSize, 25, "pageSize", 100);
+    const search = input.search?.trim() ?? "";
+    if (search.length > 200) invalidPaymentListQuery("search");
+    if (input.status && !paymentIntakeStatuses.has(input.status)) invalidPaymentListQuery("status");
+    const from = parseBusinessDate(input.from, "from");
+    const to = parseBusinessDate(input.to, "to");
+    if (from && to && from > to) invalidPaymentListQuery("dateRange");
+
+    const conditions = [eq(paymentIntakes.tenantId, ctx.tenantId)];
+    if (actor && !canAccessTenantWideData({ role: actor.role ?? "viewer" })) conditions.push(eq(paymentIntakes.ownerUserId, actor.id));
+    if (input.status) conditions.push(eq(paymentIntakes.status, input.status));
+    if (search) {
+        const escaped = search.replace(/[\\%_]/g, "\\$&");
+        conditions.push(sql`${paymentIntakes.payerName} ILIKE ${`%${escaped}%`} ESCAPE '\\'`);
+    }
+    if (from) conditions.push(gte(paymentIntakes.receivedAt, from));
+    if (to) conditions.push(lt(paymentIntakes.receivedAt, new Date(to.getTime() + 24 * 60 * 60 * 1000)));
+
+    const where = and(...conditions);
+    const [totalRow, rows] = await Promise.all([
+        db.select({ value: count() }).from(paymentIntakes).where(where).then((result) => result[0]!),
+        db.select().from(paymentIntakes).where(where)
+            .orderBy(desc(paymentIntakes.receivedAt), desc(paymentIntakes.id))
+            .limit(pageSize).offset((page - 1) * pageSize),
+    ]);
+    const total = totalRow.value;
+    return {
+        items: rows.map(presentIntake),
+        page,
+        pageSize,
+        total,
+        totalPages: total === 0 ? 0 : Math.ceil(total / pageSize),
+    };
 }
 
 export async function listLoanPaymentIntakes(ctx: CommandContext, loanPublicId: string) {

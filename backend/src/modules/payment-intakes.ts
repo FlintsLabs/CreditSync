@@ -6,7 +6,7 @@ import {
     createPaymentIntake,
     finalizePaymentEvidence,
     getPaymentIntake,
-    listPaymentIntakes,
+    listPaymentIntakePage,
     listPaymentReviewQueue,
     postPayment,
     preparePaymentEvidence,
@@ -59,11 +59,18 @@ export const paymentIntakesRoute = new Elysia({ prefix: "/payment-intakes" })
     .get("/", async ({ query, user, request, set }) => {
         if (!user) return unauthorized(set);
         try {
-            return await listPaymentIntakes(commandContext(user, request), { status: query.status });
+            return await listPaymentIntakePage(commandContext(user, request), query);
         } catch (error) {
             return domainFailure(error, set);
         }
-    }, { query: t.Object({ status: t.Optional(t.String()) }) })
+    }, { query: t.Object({
+        search: t.Optional(t.String()),
+        status: t.Optional(t.String()),
+        from: t.Optional(t.String()),
+        to: t.Optional(t.String()),
+        page: t.Optional(t.String()),
+        pageSize: t.Optional(t.String()),
+    }) })
     .post("/", async ({ body, user, request, set }) => {
         if (!user) return unauthorized(set);
         try {

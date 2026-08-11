@@ -3,6 +3,7 @@
 ## v0.3.10 - 2026-08-12
 
 ### Added
+- Added tenant- and owner-scoped Payment Inbox pagination with validated payer search, status filtering, and inclusive Asia/Bangkok business-date filters while preserving the existing MCP list contract.
 - Added the v0.3.10 test-first implementation plan for paginated Payment Inbox queries and a responsive flat inbox list.
 - Added the approved scalable Payment Inbox design for flat list rows, server-side search and filters, newest-first pagination, localization, and responsive review navigation.
 - Added the v0.3.10 test-first implementation plan for semantic positive, negative, and zero transaction-total colors.
