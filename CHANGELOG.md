@@ -5,6 +5,7 @@
 ### Added
 - Added an idempotent, append-only floating-interest accrual correction operation that retains reversed source rows, recalculates exact daily amounts from effective rate periods, and records adjustment and audit context.
 - Added the approved app-wide authenticated mobile-spacing and Dashboard flat cash-metric design to reduce edge padding consistently and remove nested-card styling from the cash summary.
+- Added the implementation plan for shared authenticated mobile page edges and responsive flat Dashboard cash metrics.
 
 ### Fixed
 - Prevented floating repayments from reducing principal when an active legacy accrual has an impossible zero-principal basis, requiring correction before allocation instead.
