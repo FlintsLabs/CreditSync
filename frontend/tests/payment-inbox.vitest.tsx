@@ -2,10 +2,10 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "../src/lib/api";
+import { api, resolveFileAccess } from "../src/lib/api";
 import PaymentInbox from "../src/pages/dashboard/payments/PaymentInbox";
 
-vi.mock("../src/lib/api", () => ({ api: { get: vi.fn(), post: vi.fn() } }));
+vi.mock("../src/lib/api", () => ({ api: { get: vi.fn(), post: vi.fn() }, resolveFileAccess: vi.fn() }));
 
 const INTAKE_A = "019c3a5a-94ce-7f2c-8b08-f56852dca7a1";
 const INTAKE_B = "019c3a5a-94ce-7f2c-8b08-f56852dca7a2";
@@ -270,5 +270,29 @@ describe("PaymentInbox", () => {
             evidenceType: "slip",
         }));
         expect(api.post).toHaveBeenCalledWith(`/payment-intakes/${INTAKE_B}/evidence/${evidenceId}/finalize`);
+    });
+
+    test("previews ready payment evidence only after the user asks", async () => {
+        const user = userEvent.setup();
+        const filePublicId = "019c3a5a-94ce-7f2c-8b08-f56852dca7b1";
+        vi.mocked(api.get).mockImplementation(async (url) => {
+            if (url === "/payment-intakes") return { data: listPage };
+            if (url === "/loans") return { data: loans };
+            if (url === `/payment-intakes/${INTAKE_B}`) return { data: { ...detail(INTAKE_B), evidence: [
+                { publicId: "evidence-ready", status: "ready", mimeType: "image/jpeg", filePublicId },
+                { publicId: "evidence-pending", status: "pending", mimeType: "image/png", filePublicId: null },
+            ] } };
+            if (url === "/audit-logs") return { data: [] };
+            throw new Error(`Unexpected GET ${url}`);
+        });
+        vi.mocked(resolveFileAccess).mockResolvedValue({ url: "https://signed.example/payment.jpg", mimeType: "image/jpeg" });
+        render(<MemoryRouter><PaymentInbox /></MemoryRouter>);
+
+        await user.click(await screen.findByRole("button", { name: /^B/ }));
+        expect(resolveFileAccess).not.toHaveBeenCalled();
+        expect(screen.getAllByText(/pending/i).length).toBeGreaterThan(0);
+        await user.click(await screen.findByRole("button", { name: /preview slip/i }));
+        expect(await screen.findByRole("img", { name: /preview slip/i })).toHaveAttribute("src", "https://signed.example/payment.jpg");
+        expect(resolveFileAccess).toHaveBeenCalledWith(filePublicId);
     });
 });

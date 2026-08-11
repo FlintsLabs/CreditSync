@@ -8,7 +8,7 @@ import { api } from "../src/lib/api";
 vi.mock("../src/lib/api", () => ({ api: { get: vi.fn(), post: vi.fn() } }));
 
 const portfolio = {
-    borrower: { publicId: "11111111-1111-4111-8111-111111111111", name: "Exact Borrower" },
+    borrower: { publicId: "11111111-1111-4111-8111-111111111111", name: "Exact Borrower", idCardImageUrl: "https://signed.example/id-card.jpg" },
     aliases: [{
         publicId: "22222222-2222-4222-8222-222222222222",
         alias: "Account Name",
@@ -67,5 +67,12 @@ describe("BorrowerDetail", () => {
 
         const avatar = await screen.findByTestId("borrower-detail-avatar");
         expect(avatar).toHaveClass("h-[72px]", "w-[72px]", "md:h-20", "md:w-20");
+    });
+
+    it("previews an available ID-card image from borrower detail", async () => {
+        const user = userEvent.setup();
+        renderDetail();
+        await user.click(await screen.findByRole("button", { name: /preview id card/i }));
+        expect(await screen.findByRole("img", { name: /preview id card/i })).toHaveAttribute("src", "https://signed.example/id-card.jpg");
     });
 });

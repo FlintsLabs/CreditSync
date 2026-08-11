@@ -4,6 +4,7 @@ import { Button } from "../../../components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/Card";
 import { Input } from "../../../components/ui/Input";
 import { useTranslation } from "react-i18next";
+import { EvidencePreviewButton } from "../../../components/evidence/EvidencePreviewButton";
 
 interface UploadItem {
     id: number;
@@ -129,7 +130,7 @@ export default function ReconciliationPage() {
                                         <div className="font-medium">{t("reconciliation.uploadLabel", { defaultValue: "Upload #{{id}}", id: item.id })}</div>
                                         <div className="text-xs text-muted-foreground">{item.source} • {item.senderId || t("reconciliation.unknownSender", "unknown sender")}</div>
                                     </div>
-                                    {item.fileUrl && <a href={item.fileUrl} target="_blank" rel="noreferrer" className="text-primary text-xs hover:underline">{t("reconciliation.openFile", "Open file")}</a>}
+                                    {item.fileUrl && <EvidencePreviewButton available label={t("evidence.preview")} mimeType={item.fileUrl.toLowerCase().includes(".pdf") ? "application/pdf" : "image/*"} resolve={async () => ({ url: item.fileUrl!, mimeType: item.fileUrl!.toLowerCase().includes(".pdf") ? "application/pdf" : "image/*" })} />}
                                 </div>
                                 <Input
                                     placeholder={t("reconciliation.ignoreNote", "Ignore note")}
@@ -158,6 +159,7 @@ export default function ReconciliationPage() {
                                     </div>
                                     <div className="font-medium">฿{Number(item.amount).toLocaleString(i18n.language)}</div>
                                 </div>
+                                {item.slipUrl && <EvidencePreviewButton available label={t("evidence.previewSlip")} mimeType={item.slipUrl.toLowerCase().includes(".pdf") ? "application/pdf" : "image/*"} resolve={async () => ({ url: item.slipUrl!, mimeType: item.slipUrl!.toLowerCase().includes(".pdf") ? "application/pdf" : "image/*" })} />}
                                 <select
                                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                                     value={borrowerUploadSelection[item.id] ?? ""}

@@ -10,6 +10,7 @@ import { Badge } from "../../../components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "../../../components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import { formatMoneyExact } from "../../../lib/workflow-model";
+import { EvidencePreviewButton } from "../../../components/evidence/EvidencePreviewButton";
 
 interface Borrower {
     publicId: string;
@@ -21,6 +22,7 @@ interface Borrower {
     photoUrl?: string | null;
     creditScore?: number | null;
     tags?: string[] | null;
+    idCardImageUrl?: string | null;
 }
 
 interface Alias {
@@ -110,7 +112,7 @@ export default function BorrowerDetail() {
             </div>
             {error && <div role="alert" className="rounded border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
             <div className="grid gap-5 md:grid-cols-3">
-                <Card className="md:col-span-2"><CardHeader><CardTitle>{t("borrowerDetail.contact")}</CardTitle></CardHeader><CardContent className="grid gap-4 sm:grid-cols-2"><div className="flex gap-3"><Phone className="h-5 w-5 text-muted-foreground" /><div><div className="text-sm font-medium">{t("borrowers.phone")}</div><div className="text-muted-foreground">{borrower.phone || "—"}</div></div></div><div><div className="text-sm font-medium">{t("borrowerDetail.idCard")}</div><div className="text-muted-foreground">{borrower.idCardNumber || "—"}</div></div><div className="flex gap-3 sm:col-span-2"><MapPin className="h-5 w-5 text-muted-foreground" /><div><div className="text-sm font-medium">{t("borrowerDetail.address")}</div><div className="text-muted-foreground">{borrower.address || "—"}</div>{borrower.googleMapsUrl && <a href={borrower.googleMapsUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center text-xs text-primary">{t("borrowerDetail.openMaps")}<ArrowUpRight className="ml-1 h-3 w-3" /></a>}</div></div></CardContent></Card>
+                <Card className="md:col-span-2"><CardHeader><CardTitle>{t("borrowerDetail.contact")}</CardTitle></CardHeader><CardContent className="grid gap-4 sm:grid-cols-2"><div className="flex gap-3"><Phone className="h-5 w-5 text-muted-foreground" /><div><div className="text-sm font-medium">{t("borrowers.phone")}</div><div className="text-muted-foreground">{borrower.phone || "—"}</div></div></div><div><div className="text-sm font-medium">{t("borrowerDetail.idCard")}</div><div className="text-muted-foreground">{borrower.idCardNumber || "—"}</div>{borrower.idCardImageUrl && <div className="mt-2"><EvidencePreviewButton available label={t("evidence.previewIdCard")} mimeType="image/*" resolve={async () => ({ url: borrower.idCardImageUrl!, mimeType: "image/*" })} /></div>}</div><div className="flex gap-3 sm:col-span-2"><MapPin className="h-5 w-5 text-muted-foreground" /><div><div className="text-sm font-medium">{t("borrowerDetail.address")}</div><div className="text-muted-foreground">{borrower.address || "—"}</div>{borrower.googleMapsUrl && <a href={borrower.googleMapsUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center text-xs text-primary">{t("borrowerDetail.openMaps")}<ArrowUpRight className="ml-1 h-3 w-3" /></a>}</div></div></CardContent></Card>
                 <Card><CardHeader><CardTitle>{t("borrowerDetail.creditProfile")}</CardTitle></CardHeader><CardContent className="space-y-3"><div className="rounded bg-muted/30 p-4 text-center"><div className="text-3xl font-bold text-primary">{borrower.creditScore ?? "—"}</div><div className="text-sm text-muted-foreground">{t("borrowers.creditScore")}</div></div><div className="flex justify-between text-sm"><span>{t("borrowerDetail.activeLoans")}</span><strong>{loans.filter((loan) => loan.status === "active").length}</strong></div><div className="flex justify-between text-sm"><span>{t("borrowerDetail.totalLoans")}</span><strong>{loans.length}</strong></div></CardContent></Card>
             </div>
             <Tabs defaultValue="loans">

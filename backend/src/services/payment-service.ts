@@ -425,6 +425,11 @@ export async function getPaymentIntake(ctx: CommandContext, publicId: string) {
         db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.paymentIntakeId, row.id))),
         db.select().from(paymentMatchProposals).where(and(eq(paymentMatchProposals.tenantId, ctx.tenantId), eq(paymentMatchProposals.paymentIntakeId, row.id))).orderBy(desc(paymentMatchProposals.version)),
     ]);
+    const evidenceFileIds = evidenceRows.flatMap((item) => item.fileId ? [item.fileId] : []);
+    const evidenceFiles = evidenceFileIds.length ? await db.select().from(files).where(and(
+        eq(files.tenantId, ctx.tenantId), inArray(files.id, evidenceFileIds),
+    )) : [];
+    const evidenceFileById = new Map(evidenceFiles.map((file) => [file.id, file]));
     const latest = proposals[0];
     let latestAllocations: Array<AllocationRow & { borrowerPublicId: string; loanPublicId: string; schedulePublicId: string | null }> = [];
     if (latest) {
@@ -448,7 +453,15 @@ export async function getPaymentIntake(ctx: CommandContext, publicId: string) {
     }
     return {
         ...presentIntake(row),
-        evidence: evidenceRows.map((item) => ({ id: item.publicId, publicId: item.publicId, status: item.status, mimeType: item.mimeType, size: item.declaredSize, sha256: item.evidenceHash })),
+        evidence: evidenceRows.map((item) => ({
+            id: item.publicId,
+            publicId: item.publicId,
+            status: item.status,
+            mimeType: item.mimeType,
+            size: item.declaredSize,
+            sha256: item.evidenceHash,
+            filePublicId: item.fileId ? evidenceFileById.get(item.fileId)?.publicId ?? null : null,
+        })),
         latestProposal: latest ? presentProposal(latest, latestAllocations) : null,
     };
 }

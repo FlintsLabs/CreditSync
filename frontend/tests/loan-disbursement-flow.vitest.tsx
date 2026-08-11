@@ -4,9 +4,9 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LoanDetail from "../src/pages/dashboard/loans/LoanDetail";
 import { LoanDisbursements } from "../src/pages/dashboard/loans/LoanDisbursements";
-import { api, resolveFileAccessUrl } from "../src/lib/api";
+import { api, resolveFileAccess } from "../src/lib/api";
 
-vi.mock("../src/lib/api", () => ({ api: { get: vi.fn(), post: vi.fn(), put: vi.fn() }, resolveFileAccessUrl: vi.fn() }));
+vi.mock("../src/lib/api", () => ({ api: { get: vi.fn(), post: vi.fn(), put: vi.fn() }, resolveFileAccess: vi.fn() }));
 
 const LOAN_ID = "11111111-1111-4111-8111-111111111111";
 const EVENT_ID = "33333333-3333-4333-8333-333333333333";
@@ -31,11 +31,7 @@ describe("loan disbursement view", () => {
         });
     });
 
-    it("resolves a public evidence UUID through the authenticated client before opening it", async () => {
-        let resolveUrl!: (url: string) => void;
-        const pendingUrl = new Promise<string>((resolve) => { resolveUrl = resolve; });
-        const popup = { location: { href: "" }, close: vi.fn() } as unknown as Window;
-        const open = vi.spyOn(window, "open").mockReturnValue(popup);
+    it("resolves a public evidence UUID only after opening the in-page preview", async () => {
         vi.mocked(api.get).mockImplementation(async (url) => {
             if (url === `/loans/${LOAN_ID}`) return { data: loan };
             if (url === `/loans/${LOAN_ID}/schedule` || url === `/loans/${LOAN_ID}/funding-allocations`) return { data: [] };
@@ -43,17 +39,15 @@ describe("loan disbursement view", () => {
             if (url === `/loans/${LOAN_ID}/disbursements`) return { data: ledger() };
             throw new Error(`Unexpected GET ${url}`);
         });
-        vi.mocked(resolveFileAccessUrl).mockReturnValue(pendingUrl);
+        vi.mocked(resolveFileAccess).mockResolvedValue({ url: "https://signed.example/evidence", mimeType: "image/png" });
         renderDetail();
         expect((await screen.findAllByText(/THB\s*600\.00/)).length).toBeGreaterThan(0);
         expect(screen.getByText("Borrower wallet")).toBeInTheDocument();
         expect(screen.getByText(/66666666-6666-4666-8666-666666666666/)).toBeInTheDocument();
-        await userEvent.setup().click(screen.getByRole("button", { name: /evidence/i }));
-        expect(open).toHaveBeenCalledWith("", "_blank", "noopener,noreferrer");
-        await waitFor(() => expect(resolveFileAccessUrl).toHaveBeenCalledWith(FILE_ID));
-        resolveUrl("https://signed.example/evidence");
-        await waitFor(() => expect(popup.location.href).toBe("https://signed.example/evidence"));
-        open.mockRestore();
+        expect(resolveFileAccess).not.toHaveBeenCalled();
+        await userEvent.setup().click(screen.getByRole("button", { name: /preview evidence/i }));
+        await waitFor(() => expect(resolveFileAccess).toHaveBeenCalledWith(FILE_ID));
+        expect(await screen.findByRole("img", { name: /preview evidence/i })).toHaveAttribute("src", "https://signed.example/evidence");
     });
 
     it("posts a draft with an Idempotency-Key and refreshes the posted summary", async () => {

@@ -5,6 +5,9 @@
 ### Added
 - Added the v0.3.10 test-first implementation plan for semantic Payment Inbox status colors.
 - Added the approved Payment Inbox semantic status-color design for accessible green, gray, amber, blue, red, and orange state distinctions.
+- Added compact, localized, on-demand evidence preview dialogs across Payment Inbox, transaction and reconciliation slips, loan disbursement evidence, and borrower ID-card images, with tenant-safe file access descriptors and graceful image, PDF, fallback, retry, and open-original states.
+- Added the v0.3.10 test-first implementation plan for shared lazy evidence previews across financial and borrower identity-document surfaces.
+- Added the approved shared evidence-preview design for compact, lazy-loaded modal previews of payment slips, disbursement evidence, reconciliation uploads, and borrower ID-card images.
 - Added tenant- and owner-scoped Payment Inbox pagination with validated payer search, status filtering, and inclusive Asia/Bangkok business-date filters while preserving the existing MCP list contract.
 - Added the v0.3.10 test-first implementation plan for paginated Payment Inbox queries and a responsive flat inbox list.
 - Added the approved scalable Payment Inbox design for flat list rows, server-side search and filters, newest-first pagination, localization, and responsive review navigation.
