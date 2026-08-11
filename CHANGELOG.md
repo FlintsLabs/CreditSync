@@ -3,6 +3,7 @@
 ## v0.3.9 - 2026-08-11
 
 ### Added
+- Added a TDD implementation plan for activating persisted loan drafts from Loan Detail and verifying the production workflow.
 - Added an approved design for safely activating existing loan drafts from Loan Detail with a localized confirmation summary and no automatic disbursement posting.
 - Added the approved Dashboard Daily Command Center design and selected visual reference, covering action-first hierarchy, exact dashboard money contracts, resilient section loading, responsive behavior, localization, accessibility, and design QA.
 - Added a task-by-task implementation plan for exact dashboard contracts, action-first responsive UI, scoped loading failures, and visual design QA.
