@@ -26,6 +26,7 @@
 - Included floating daily-interest arrears in Dashboard borrower totals and queues as one exact aggregate row per overdue loan.
 
 ### Changed
+- Synchronized the root HTML language with initial and runtime Thai/English i18next selections so language-dependent typography and accessibility metadata update together.
 - Raised dark-mode cards, navigation, overlays, controls, and nested panels onto distinct semantic surface levels across the application.
 - Rebuilt the responsive operations dashboard as a Daily Command Center with a consolidated cash position, urgency-ranked actions, five-item repayment queues, localized statuses, independent loading and retry states, and collapsible mobile financial details.
 - Displayed floating daily-interest arrears as one localized borrower-queue row per loan with overdue-item count, maximum age, and schedule-free repayment navigation.

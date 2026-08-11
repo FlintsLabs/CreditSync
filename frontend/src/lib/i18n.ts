@@ -4,6 +4,20 @@ import LanguageDetector from 'i18next-browser-languagedetector';
 import en from '../locales/en.json';
 import th from '../locales/th.json';
 
+type SupportedLanguage = 'en' | 'th';
+
+function normalizeLanguage(language?: string): SupportedLanguage {
+    return language?.toLowerCase().startsWith('th') ? 'th' : 'en';
+}
+
+function syncDocumentLanguage(language?: string) {
+    if (typeof document !== 'undefined') {
+        document.documentElement.lang = normalizeLanguage(language);
+    }
+}
+
+i18n.on('languageChanged', syncDocumentLanguage);
+
 i18n
     // detect user language
     .use(LanguageDetector)
@@ -19,12 +33,15 @@ i18n
                 translation: th
             }
         },
+        supportedLngs: ['en', 'th'],
+        nonExplicitSupportedLngs: true,
         fallbackLng: 'en',
         debug: true,
 
         interpolation: {
             escapeValue: false, // not needed for react as it escapes by default
         }
-    });
+    })
+    .then(() => syncDocumentLanguage(i18n.resolvedLanguage));
 
 export default i18n;
