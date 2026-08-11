@@ -1,6 +1,38 @@
 @import "tailwindcss";
 @config "../tailwind.config.js";
 
+@font-face {
+  font-family: "Sarabun";
+  src: url("./assets/fonts/Sarabun-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Sarabun";
+  src: url("./assets/fonts/Sarabun-Medium.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Sarabun";
+  src: url("./assets/fonts/Sarabun-SemiBold.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Sarabun";
+  src: url("./assets/fonts/Sarabun-Bold.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;
@@ -65,6 +97,18 @@
 
   body {
     @apply bg-background text-foreground;
+  }
+
+  html:lang(th) body {
+    font-family: "Sarabun", ui-sans-serif, system-ui, sans-serif;
+  }
+
+  button,
+  input,
+  optgroup,
+  select,
+  textarea {
+    font-family: inherit;
   }
 }
 

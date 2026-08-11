@@ -3,6 +3,7 @@
 ## v0.3.9 - 2026-08-11
 
 ### Added
+- Self-hosted Sarabun in WOFF2 weights 400, 500, 600, and 700 with its SIL Open Font License for the Thai interface.
 - Added the v0.3.9 TDD implementation plan for self-hosted Sarabun typography and Thai/English root-language synchronization.
 - Added the approved v0.3.9 design for self-hosting Sarabun at weights 400, 500, 600, and 700 and applying it globally whenever the active interface language is Thai.
 - Added the v0.3.9 TDD implementation plan for the approved global dark-mode surface hierarchy and responsive visual verification.
@@ -26,6 +27,7 @@
 - Included floating daily-interest arrears in Dashboard borrower totals and queues as one exact aggregate row per overdue loan.
 
 ### Changed
+- Applied Sarabun across Thai-language screens while preserving the existing system font stack for English and monospace data presentation.
 - Synchronized the root HTML language with initial and runtime Thai/English i18next selections so language-dependent typography and accessibility metadata update together.
 - Raised dark-mode cards, navigation, overlays, controls, and nested panels onto distinct semantic surface levels across the application.
 - Rebuilt the responsive operations dashboard as a Daily Command Center with a consolidated cash position, urgency-ranked actions, five-item repayment queues, localized statuses, independent loading and retry states, and collapsible mobile financial details.
