@@ -6,6 +6,10 @@ export function sumDashboardMoney(values: Decimal.Value[]) {
     return money(values.reduce<Decimal>((total, value) => total.plus(value), new Decimal(0)));
 }
 
+export function sumDashboardPayableHealth(rows: Array<{ dueTodayAmount: Decimal.Value; overdueAmount: Decimal.Value }>) {
+    return sumDashboardMoney(rows.flatMap((row) => [row.dueTodayAmount, row.overdueAmount]));
+}
+
 export function subtractDashboardMoney(left: Decimal.Value, right: Decimal.Value) {
     return money(new Decimal(left).minus(right));
 }

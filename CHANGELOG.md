@@ -6,13 +6,19 @@
 - Added the approved Dashboard Daily Command Center design and selected visual reference, covering action-first hierarchy, exact dashboard money contracts, resilient section loading, responsive behavior, localization, accessibility, and design QA.
 - Added a task-by-task implementation plan for exact dashboard contracts, action-first responsive UI, scoped loading failures, and visual design QA.
 - Added production-preview desktop and mobile design-QA evidence with responsive interaction and console checks.
+- Added an approved design for surfacing floating daily-interest arrears as one Dashboard row per loan with exact totals, overdue-item counts, and maximum overdue age.
+- Added a TDD implementation plan for a shared borrower-health projection, exact Dashboard floating-arrears contracts, aggregate queue presentation, and production verification.
+- Added a tenant-scoped Dashboard borrower-health projection that reuses the scheduled and floating payment-health application service.
+- Added browser-QA evidence confirming one floating loan row, aggregate arrears metadata, and schedule-free repayment navigation.
 
 ### Fixed
 - Preserved exact decimal-string money across dashboard totals, funding gaps, available drawdowns, comparisons, and sorting beyond the JavaScript safe-integer range.
 - Prevented the Dashboard from crashing after profitability data loads by serializing its public money contract as two-decimal strings.
+- Included floating daily-interest arrears in Dashboard borrower totals and queues as one exact aggregate row per overdue loan.
 
 ### Changed
 - Rebuilt the responsive operations dashboard as a Daily Command Center with a consolidated cash position, urgency-ranked actions, five-item repayment queues, localized statuses, independent loading and retry states, and collapsible mobile financial details.
+- Displayed floating daily-interest arrears as one localized borrower-queue row per loan with overdue-item count, maximum age, and schedule-free repayment navigation.
 
 ## v0.3.8 - 2026-08-11
 

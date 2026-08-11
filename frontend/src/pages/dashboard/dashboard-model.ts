@@ -9,19 +9,27 @@ export interface DashboardSummary {
 }
 
 export interface BorrowerDueItem {
-    scheduleId: number;
+    scheduleId: number | null;
     schedulePublicId?: string;
-    dueDate: string;
+    dueDate: string | null;
     remainingDue: string;
     penaltyDue?: string;
     totalDueNow?: string;
     overdueDays?: number;
+    overdueItemCount?: number;
     status: string;
-    installmentNo: number;
+    installmentNo: number | null;
     loanId: number;
     loanPublicId?: string;
     borrowerName: string;
     repaymentType: string;
+}
+
+export function buildBorrowerRepaymentHref(item: BorrowerDueItem) {
+    const parameters = new URLSearchParams({ loanId: String(item.loanPublicId ?? item.loanId) });
+    const scheduleId = item.schedulePublicId ?? item.scheduleId;
+    if (scheduleId !== null && scheduleId !== undefined) parameters.set("scheduleId", String(scheduleId));
+    return `/transactions/new?${parameters.toString()}`;
 }
 
 export interface FundDueItem {
