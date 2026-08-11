@@ -5,6 +5,7 @@
 ### Added
 - Added the v0.3.9 TDD implementation plan for the approved global dark-mode surface hierarchy and responsive visual verification.
 - Added the approved v0.3.9 global dark-mode surface-hierarchy design for distinct canvas, card, overlay, control, and nested-panel levels while preserving light mode and financial semantics.
+- Added a localized Loan Detail confirmation action for activating persisted drafts without automatically posting disbursements.
 - Added a TDD implementation plan for activating persisted loan drafts from Loan Detail and verifying the production workflow.
 - Added an approved design for safely activating existing loan drafts from Loan Detail with a localized confirmation summary and no automatic disbursement posting.
 - Added the approved Dashboard Daily Command Center design and selected visual reference, covering action-first hierarchy, exact dashboard money contracts, resilient section loading, responsive behavior, localization, accessibility, and design QA.

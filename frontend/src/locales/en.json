@@ -808,6 +808,18 @@
     },
     "loanDetail": {
         "title": "Loan agreement",
+        "activation": {
+            "action": "Activate loan",
+            "title": "Activate this loan?",
+            "warning": "Activation locks the financial terms and creates any applicable immutable repayment schedule. Disbursements are posted separately.",
+            "borrower": "Borrower",
+            "principal": "Principal",
+            "repaymentType": "Repayment type",
+            "startDate": "Start date",
+            "confirm": "Confirm activation",
+            "activating": "Activating...",
+            "error": "Failed to activate the loan. The draft was not changed."
+        },
         "dailyTerms": {
             "title": "Daily repayment terms", "duration": "Duration", "agreedInstallment": "Agreed instalment", "installments": "Total instalments", "totalInterest": "Total interest", "dailyInterest": "Daily interest", "flatRate": "Flat daily rate",
             "notice": "The agreed instalment is fixed. A smaller payment leaves the scheduled remainder due; early settlement requires its own preview.",
