@@ -18,6 +18,7 @@ const list = [
     { publicId: INTAKE_A, status: "needs_review", amount: "30.30", receivedAt: "2026-08-10T09:30:00.000Z", payerName: "A" },
     { publicId: INTAKE_B, status: "draft", amount: "40.00", receivedAt: "2026-08-10T10:30:00.000Z", payerName: "B" },
 ];
+const listPage = { items: list, page: 1, pageSize: 25, total: 27, totalPages: 2 };
 const loans = [
     { publicId: LOAN_A, borrowerPublicId: BORROWER_A, borrowerName: "Borrower A", status: "active" },
     { publicId: LOAN_B, borrowerPublicId: BORROWER_B, borrowerName: "Borrower B", status: "active" },
@@ -35,7 +36,7 @@ describe("PaymentInbox", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.mocked(api.get).mockImplementation(async (url) => {
-            if (url === "/payment-intakes") return { data: list };
+            if (url === "/payment-intakes") return { data: listPage };
             if (url === "/loans") return { data: loans };
             if (url.startsWith("/payment-intakes/")) return { data: detail(url.split("/").at(-1)!) };
             if (url === "/audit-logs") return { data: [] };
@@ -45,6 +46,28 @@ describe("PaymentInbox", () => {
             publicId: "019c3a5a-94ce-7f2c-8b08-f56852dca7af", status: "ready", version: 1,
             totalAllocated: "30.30", allocations: [], warnings: [], expiresAt: "2026-08-10T12:00:00.000Z",
         } });
+    });
+
+    test("renders flat rows and keeps filters when moving to the next server page", async () => {
+        const user = userEvent.setup();
+        render(<MemoryRouter><PaymentInbox /></MemoryRouter>);
+
+        const inbox = await screen.findByRole("list", { name: /inbox/i });
+        const rows = within(inbox).getAllByRole("listitem");
+        expect(rows).toHaveLength(2);
+        expect(within(rows[0]!).getByRole("button", { name: /^A/ })).not.toHaveClass("border");
+        expect(screen.getByText("1–25 of 27")).toBeInTheDocument();
+
+        await user.type(screen.getByRole("searchbox", { name: /search payer/i }), "Borrower");
+        await user.selectOptions(screen.getByRole("combobox", { name: /status/i }), "ready");
+        await waitFor(() => expect(api.get).toHaveBeenCalledWith("/payment-intakes", { params: {
+            search: "Borrower", status: "ready", page: "1", pageSize: "25",
+        } }));
+
+        await user.click(screen.getByRole("button", { name: /next page/i }));
+        await waitFor(() => expect(api.get).toHaveBeenCalledWith("/payment-intakes", { params: {
+            search: "Borrower", status: "ready", page: "2", pageSize: "25",
+        } }));
     });
 
     test("adds and removes explicit allocation rows and previews the complete split", async () => {
@@ -155,7 +178,7 @@ describe("PaymentInbox", () => {
         let resolveA!: (value: { data: ReturnType<typeof detail> }) => void;
         const pendingA = new Promise<{ data: ReturnType<typeof detail> }>((resolve) => { resolveA = resolve; });
         vi.mocked(api.get).mockImplementation(async (url) => {
-            if (url === "/payment-intakes") return { data: list };
+            if (url === "/payment-intakes") return { data: listPage };
             if (url === "/loans") return { data: loans };
             if (url === `/payment-intakes/${INTAKE_A}`) return pendingA;
             if (url === `/payment-intakes/${INTAKE_B}`) return { data: detail(INTAKE_B) };
@@ -176,7 +199,7 @@ describe("PaymentInbox", () => {
     test("requires a second-step reason before reversing a posted payment", async () => {
         const user = userEvent.setup();
         vi.mocked(api.get).mockImplementation(async (url) => {
-            if (url === "/payment-intakes") return { data: list };
+            if (url === "/payment-intakes") return { data: listPage };
             if (url === "/loans") return { data: loans };
             if (url === `/payment-intakes/${INTAKE_B}`) return { data: { ...detail(INTAKE_B), status: "posted" } };
             if (url === "/audit-logs") return { data: [] };

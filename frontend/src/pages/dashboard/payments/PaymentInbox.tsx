@@ -7,6 +7,14 @@ import { Button } from "../../../components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/Card";
 import { Input } from "../../../components/ui/Input";
 import { Badge } from "../../../components/ui/badge";
+import { PaymentInboxList } from "./PaymentInboxList";
+import {
+    initialPaymentInboxQuery,
+    toPaymentInboxParams,
+    type PaymentInboxQuery,
+    type PaymentIntakePage,
+    type PaymentIntakeSummary,
+} from "./payment-inbox-list-model";
 import {
     formatMoneyExact,
     moneyDifference,
@@ -21,7 +29,7 @@ interface PaymentProposal {
     warnings: WorkflowWarning[]; expiresAt: string;
     allocations: Array<{ borrowerPublicId: string; loanPublicId: string; schedulePublicId?: string | null; amount: string }>;
 }
-interface PaymentIntake {
+interface PaymentIntake extends PaymentIntakeSummary {
     publicId: string; status: string; amount: string; receivedAt: string;
     payerName?: string | null; bankReference?: string | null; notes?: string | null;
     warnings?: WorkflowWarning[];
@@ -44,7 +52,8 @@ function hex(bytes: ArrayBuffer) {
 export default function PaymentInbox() {
     const { t, i18n } = useTranslation();
     const [searchParams] = useSearchParams();
-    const [items, setItems] = useState<PaymentIntake[]>([]);
+    const [listPage, setListPage] = useState<PaymentIntakePage>({ items: [], page: 1, pageSize: 25, total: 0, totalPages: 0 });
+    const [listQuery, setListQuery] = useState<PaymentInboxQuery>(initialPaymentInboxQuery);
     const [loans, setLoans] = useState<LoanOption[]>([]);
     const [selectedId, setSelectedId] = useState("");
     const [detail, setDetail] = useState<PaymentIntake | null>(null);
@@ -62,6 +71,7 @@ export default function PaymentInbox() {
     const [editorRevision, setEditorRevision] = useState(0);
     const [proposalRevision, setProposalRevision] = useState<number | null>(null);
     const selectionToken = useRef(0);
+    const listToken = useRef(0);
     const loansRef = useRef<LoanOption[]>([]);
     const editorRevisionRef = useRef(0);
 
@@ -77,15 +87,24 @@ export default function PaymentInbox() {
     }, [t]);
 
     const loadList = useCallback(async () => {
+        const token = ++listToken.current;
         setListLoading(true);
         try {
-            const [intakes, loanRows] = await Promise.all([api.get("/payment-intakes"), api.get("/loans")]);
-            setItems(intakes.data ?? []);
+            const [intakes, loanRows] = await Promise.all([
+                api.get("/payment-intakes", { params: toPaymentInboxParams(listQuery) }),
+                api.get("/loans"),
+            ]);
+            if (listToken.current !== token) return;
+            const nextPage = intakes.data as PaymentIntakePage;
+            setListPage(nextPage);
+            if (nextPage.items.length === 0 && listQuery.page > 1 && nextPage.totalPages < listQuery.page) {
+                setListQuery((current) => ({ ...current, page: Math.max(nextPage.totalPages, 1) }));
+            }
             const activeLoans = (loanRows.data ?? []).filter((loan: LoanOption) => loan.status === "active");
             loansRef.current = activeLoans;
             setLoans(activeLoans);
-        } finally { setListLoading(false); }
-    }, []);
+        } finally { if (listToken.current === token) setListLoading(false); }
+    }, [listQuery]);
 
     const selectIntake = useCallback(async (publicId: string) => {
         const token = ++selectionToken.current;
@@ -211,9 +230,17 @@ export default function PaymentInbox() {
         </div>
         {message && <div role="alert" className="rounded border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{message}</div>}
         <div className="grid gap-5 xl:grid-cols-[0.85fr_1.4fr]">
-            <Card><CardHeader><CardTitle>{t("payments.inbox")}</CardTitle></CardHeader><CardContent className="space-y-2">
-                {listLoading ? <div role="status" className="p-6 text-center text-muted-foreground">{t("common.loading")}</div> : items.map((item) => <button key={item.publicId} onClick={() => void selectIntake(item.publicId)} className={`w-full rounded border p-3 text-left ${selectedId === item.publicId ? "border-primary bg-primary/5" : "hover:bg-muted/30"}`}><div className="flex justify-between gap-3"><span className="font-medium">{item.payerName || t("payments.unknownPayer")}</span><Badge variant={item.status === "needs_review" ? "destructive" : "secondary"}>{t(`payments.status.${item.status}`)}</Badge></div><div className="mt-1 flex justify-between text-sm text-muted-foreground"><span>{dateTime(item.receivedAt)}</span><span>{money(item.amount)}</span></div></button>)}
-                {!listLoading && !items.length && <div className="rounded border border-dashed p-6 text-center text-muted-foreground">{t("payments.empty")}</div>}
+            <Card className="overflow-hidden"><CardHeader><CardTitle>{t("payments.inbox")}</CardTitle></CardHeader><CardContent className="p-0">
+                <PaymentInboxList
+                    data={listPage}
+                    query={listQuery}
+                    selectedId={selectedId}
+                    loading={listLoading}
+                    formatDateTime={dateTime}
+                    formatMoney={money}
+                    onQueryChange={setListQuery}
+                    onSelect={(publicId) => void selectIntake(publicId)}
+                />
             </CardContent></Card>
             {detailLoading ? <Card><CardContent role="status" className="py-16 text-center text-muted-foreground">{t("payments.loadingDetail")}</CardContent></Card> : !detail ? <Card><CardContent className="py-16 text-center text-muted-foreground">{t("payments.select")}</CardContent></Card> : <div className="space-y-5">
                 <Card><CardHeader><CardTitle className="flex justify-between"><span>{t("payments.review")}</span><Badge>{t(`payments.status.${detail.status}`)}</Badge></CardTitle></CardHeader><CardContent className="space-y-4">
