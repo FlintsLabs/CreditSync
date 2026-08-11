@@ -30,7 +30,8 @@ import {
   CardTitle,
 } from "../../components/ui/Card";
 import {
-  buildDashboardPriorities,
+    buildDashboardPriorities,
+    buildBorrowerRepaymentHref,
   compareMoney,
   type BorrowerDueItem,
   type DashboardPriority,
@@ -196,6 +197,21 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+export function BorrowerQueueMeta({ item }: { item: BorrowerDueItem }) {
+  const { t, i18n } = useTranslation();
+  if (item.repaymentType === "floating") {
+    return (
+      <span className="flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
+        <span>{t("dashboardPage.floatingOverdueItems", { count: item.overdueItemCount ?? 0 })}</span>
+        <span>{t("dashboardPage.floatingMaxOverdueDays", { count: item.overdueDays ?? 0 })}</span>
+      </span>
+    );
+  }
+  if (!item.dueDate) return null;
+  const dueDate = new Intl.DateTimeFormat(i18n.language, { day: "numeric", month: "short", year: "numeric" }).format(new Date(`${item.dueDate}T00:00:00`));
+  return <span className="block text-xs text-muted-foreground">{t("dashboardPage.installment", { number: item.installmentNo })} · {dueDate}</span>;
+}
+
 export default function Dashboard() {
   const { t, i18n } = useTranslation();
   const navigate = useNavigate();
@@ -272,9 +288,7 @@ export default function Dashboard() {
       year: "numeric",
     }).format(new Date(`${value}T00:00:00`));
   const openBorrower = (item: BorrowerDueItem) =>
-    navigate(
-      `/transactions/new?loanId=${item.loanPublicId ?? item.loanId}&scheduleId=${item.schedulePublicId ?? item.scheduleId}`,
-    );
+    navigate(buildBorrowerRepaymentHref(item));
   const openFund = (item: FundDueItem) =>
     item.bankProfilePublicId || item.bankProfileId
       ? navigate(
@@ -447,7 +461,7 @@ export default function Dashboard() {
                     .slice(0, showAllBorrowers ? undefined : 5)
                     .map((item) => (
                       <button
-                        key={item.scheduleId}
+                        key={`${item.repaymentType}-${item.schedulePublicId ?? item.scheduleId ?? item.loanPublicId ?? item.loanId}`}
                         type="button"
                         onClick={() => openBorrower(item)}
                         className="group flex w-full flex-col items-stretch gap-3 rounded-xl border p-3 text-left hover:border-primary/40 hover:bg-muted/40 sm:flex-row sm:items-center sm:justify-between"
@@ -456,12 +470,7 @@ export default function Dashboard() {
                           <span className="block truncate font-medium">
                             {item.borrowerName}
                           </span>
-                          <span className="block text-xs text-muted-foreground">
-                            {t("dashboardPage.installment", {
-                              number: item.installmentNo,
-                            })}{" "}
-                            · {formatDate(item.dueDate)}
-                          </span>
+                          <BorrowerQueueMeta item={item} />
                         </span>
                         <span className="space-y-1 sm:block sm:shrink-0 sm:text-right">
                           <span className="block font-semibold tabular-nums">
