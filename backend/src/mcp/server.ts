@@ -355,14 +355,29 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "payment.preview": proposalOutput,
     "payment.post": intakeOutput.extend({ transactions: z.array(transactionOutput) }),
     "payment.reverse": intakeOutput.extend({ transactions: z.array(transactionOutput) }),
-    "loan.preview": z.object({
-        terms: z.object({ ...loanTerms }).strict(),
-        schedule: z.array(scheduleOutput),
-        dailyLoanCalculation: z.object({
-            totalInstallments: z.number().int().positive(), installmentAmount: money, totalRepayment: money, totalInterest: money, dailyInterest: money,
-            flatDailyRatePercent: z.string(), flatMonthlyRatePercent: z.string(), flatAnnualRatePercent: z.string(),
-        }).nullable(),
-    }).strict(),
+    "loan.preview": z.union([
+        z.object({
+            terms: z.object({ ...loanTerms }).strict(),
+            schedule: z.array(scheduleOutput),
+            dailyLoanCalculation: z.object({
+                totalInstallments: z.number().int().positive(), installmentAmount: money, totalRepayment: money, totalInterest: money, dailyInterest: money,
+                flatDailyRatePercent: z.string(), flatMonthlyRatePercent: z.string(), flatAnnualRatePercent: z.string(),
+            }).nullable(),
+        }).strict(),
+        z.object({
+            terms: z.object({ ...loanTerms }).strict(),
+            schedule: z.array(scheduleOutput),
+            floatingDailyInterest: z.object({
+                mode: z.enum(["per_thousand", "percent"]),
+                rate: z.string().regex(/^\d+(?:\.\d{1,4})?$/),
+                firstDayTreatment: z.enum(["deduct", "start_next_day"]),
+            }).strict(),
+            firstDayInterest: money,
+            dailyInterestAtCurrentPrincipal: money,
+            netDisbursement: money,
+            nextInterestDate: date,
+        }).strict(),
+    ]),
     "loan.draft": loanOutput,
     "loan.activate": loanOutput,
     "loan.disbursement.list": z.object({

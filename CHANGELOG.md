@@ -3,6 +3,7 @@
 ## v0.3.9 - 2026-08-11
 
 ### Added
+- Added an approved design for safely activating existing loan drafts from Loan Detail with a localized confirmation summary and no automatic disbursement posting.
 - Added the approved Dashboard Daily Command Center design and selected visual reference, covering action-first hierarchy, exact dashboard money contracts, resilient section loading, responsive behavior, localization, accessibility, and design QA.
 - Added a task-by-task implementation plan for exact dashboard contracts, action-first responsive UI, scoped loading failures, and visual design QA.
 - Added production-preview desktop and mobile design-QA evidence with responsive interaction and console checks.
@@ -12,6 +13,7 @@
 - Added browser-QA evidence confirming one floating loan row, aggregate arrears metadata, and schedule-free repayment navigation.
 
 ### Fixed
+- Allowed floating-loan previews to return their daily-interest policy, first-day deduction, exact net disbursement, and next interest date through the strict public MCP contract.
 - Preserved exact decimal-string money across dashboard totals, funding gaps, available drawdowns, comparisons, and sorting beyond the JavaScript safe-integer range.
 - Prevented the Dashboard from crashing after profitability data loads by serializing its public money contract as two-decimal strings.
 - Included floating daily-interest arrears in Dashboard borrower totals and queues as one exact aggregate row per overdue loan.

@@ -5,6 +5,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { Elysia } from "elysia";
 import { DomainError } from "../services/domain-error";
 import type { CommandContext } from "../services/command-context";
+import { previewLoan } from "../services/loan-application-service";
 import { createMcpHttpPlugin, MCP_TOOL_NAMES, type McpToolHandler } from "./server";
 import type { McpRuntimeConfig } from "./security";
 
@@ -84,6 +85,47 @@ function clientFor(baseUrl: string, token = TOKEN) {
 }
 
 describe("CreditSync stateless MCP contract", () => {
+    // Break caught: floating previews return policy and net-disbursement fields that the strict MCP output contract rejects.
+    test("returns a floating-loan preview through the public MCP contract", async () => {
+        const baseUrl = await startServer({
+            toolHandlers: {
+                "loan.preview": async (_ctx, input) => previewLoan(input as unknown as Parameters<typeof previewLoan>[0]),
+            },
+        });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+
+        const result = await client.callTool({
+            name: "loan.preview",
+            arguments: {
+                principal: "4000.00",
+                interestRate: "0.00",
+                termMonths: 1,
+                repaymentType: "floating",
+                startDate: "2026-08-06",
+                floatingDailyInterest: {
+                    mode: "per_thousand",
+                    rate: "15.00",
+                    firstDayTreatment: "deduct",
+                },
+            },
+        });
+
+        expect(result.isError).not.toBe(true);
+        expect(result.structuredContent).toMatchObject({
+            schemaVersion: "1.0",
+            data: {
+                floatingDailyInterest: { mode: "per_thousand", rate: "15.0000", firstDayTreatment: "deduct" },
+                firstDayInterest: "60.00",
+                dailyInterestAtCurrentPrincipal: "60.00",
+                netDisbursement: "3940.00",
+                nextInterestDate: "2026-08-06",
+                schedule: [],
+            },
+        });
+        await client.close();
+    });
+
     test("advertises closed loan-disbursement tools with financial audit metadata", async () => {
         let observed: Record<string, unknown> | undefined;
         const baseUrl = await startServer({
