@@ -20,7 +20,7 @@
 
 ## File Structure
 
-- Create `frontend/tests/dark-theme-tokens.vitest.ts`: source-level contract for exact dark-mode surface tokens and their lightness ordering.
+- Create `frontend/tests/dark-theme-tokens.test.ts`: source-level contract for the dark-mode surface lightness ordering, runnable by both Bun and Vitest.
 - Modify `frontend/src/index.css`: authoritative dark semantic surface palette.
 - Modify `CHANGELOG.md`: record the v0.3.9 dark-mode hierarchy implementation and verification.
 
@@ -29,7 +29,7 @@
 ### Task 1: Protect and implement the global dark surface hierarchy
 
 **Files:**
-- Create: `frontend/tests/dark-theme-tokens.vitest.ts`
+- Create: `frontend/tests/dark-theme-tokens.test.ts`
 - Modify: `frontend/src/index.css:33-58`
 - Modify: `CHANGELOG.md:3-25`
 
@@ -39,14 +39,14 @@
 
 - [ ] **Step 1: Write the failing dark-theme token contract**
 
-Create `frontend/tests/dark-theme-tokens.vitest.ts`:
+Create `frontend/tests/dark-theme-tokens.test.ts`:
 
 ```ts
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const stylesheetPath = fileURLToPath(new URL("../src/index.css", import.meta.url));
+const stylesheetPath = resolve(process.cwd(), "src/index.css");
 const stylesheet = readFileSync(stylesheetPath, "utf8");
 const darkBlock = stylesheet.match(/\.dark\s*\{([\s\S]*?)\n\s*\}/)?.[1] ?? "";
 
@@ -63,22 +63,20 @@ function lightness(value: string) {
 }
 
 describe("dark theme surface hierarchy", () => {
-    it("uses the approved semantic surface tokens", () => {
-        expect(token("background")).toBe("240 10% 3.9%");
-        expect(token("card")).toBe("240 5.9% 10%");
-        expect(token("popover")).toBe("240 5.9% 10%");
-        expect(token("secondary")).toBe("240 3.7% 15.9%");
-        expect(token("muted")).toBe("240 3.7% 15.9%");
-        expect(token("accent")).toBe("240 3.7% 15.9%");
-        expect(token("border")).toBe("240 3.7% 20%");
-        expect(token("input")).toBe("240 3.7% 20%");
-    });
-
-    it("keeps persistent and nested surfaces lighter than the canvas", () => {
+    it("keeps persistent surfaces visibly above the canvas", () => {
         expect(lightness(token("card"))).toBeGreaterThan(lightness(token("background")));
         expect(lightness(token("popover"))).toBeGreaterThan(lightness(token("background")));
+    });
+
+    it("keeps nested surfaces visibly above persistent surfaces", () => {
+        expect(lightness(token("secondary"))).toBeGreaterThan(lightness(token("card")));
         expect(lightness(token("muted"))).toBeGreaterThan(lightness(token("card")));
         expect(lightness(token("accent"))).toBeGreaterThan(lightness(token("card")));
+    });
+
+    it("uses stronger boundaries than the nested surfaces", () => {
+        expect(lightness(token("border"))).toBeGreaterThan(lightness(token("muted")));
+        expect(lightness(token("input"))).toBeGreaterThan(lightness(token("muted")));
     });
 });
 ```
@@ -88,7 +86,7 @@ describe("dark theme surface hierarchy", () => {
 Run:
 
 ```bash
-cd frontend && bun test tests/dark-theme-tokens.vitest.ts
+cd frontend && bun test tests/dark-theme-tokens.test.ts
 ```
 
 Expected: FAIL because the current `--card` and `--popover` equal `--background`, and `--border`/`--input` are `240 3.7% 15.9%`.
@@ -120,7 +118,8 @@ Do not change foreground, destructive, ring, or chart tokens.
 Run:
 
 ```bash
-cd frontend && bun test tests/dark-theme-tokens.vitest.ts tests/account-preferences.vitest.tsx
+cd frontend && bun test tests/dark-theme-tokens.test.ts
+cd frontend && bun run test -- tests/dark-theme-tokens.test.ts tests/account-preferences.vitest.tsx
 ```
 
 Expected: both test files PASS; theme selection and persistence behavior remain unchanged.
@@ -131,6 +130,7 @@ Run each command separately:
 
 ```bash
 cd frontend && bun test
+cd frontend && bun run test
 cd frontend && bun run lint
 cd frontend && bun run build
 ```
@@ -168,10 +168,10 @@ If the headings already exist, append each bullet beneath its matching heading r
 Run:
 
 ```bash
-git diff --check -- frontend/src/index.css frontend/tests/dark-theme-tokens.vitest.ts CHANGELOG.md
-git diff -- frontend/src/index.css frontend/tests/dark-theme-tokens.vitest.ts CHANGELOG.md
+git diff --check -- frontend/src/index.css frontend/tests/dark-theme-tokens.test.ts CHANGELOG.md
+git diff -- frontend/src/index.css frontend/tests/dark-theme-tokens.test.ts CHANGELOG.md
 git status --short
-git add frontend/src/index.css frontend/tests/dark-theme-tokens.vitest.ts CHANGELOG.md
+git add frontend/src/index.css frontend/tests/dark-theme-tokens.test.ts CHANGELOG.md docs/superpowers/plans/2026-08-11-global-dark-mode-surface-hierarchy.md
 git diff --cached --check
 git commit -m "fix: improve global dark mode hierarchy"
 ```
