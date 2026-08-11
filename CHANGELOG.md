@@ -3,6 +3,7 @@
 ## v0.3.9 - 2026-08-11
 
 ### Added
+- Added a localized floating-interest Loan Detail card showing the exact current daily interest and full timeline, with future effective/expiry dates and preview-before-confirm management available across loan statuses.
 - Added three closed-schema MCP tools and CreditSync plugin 2.2.0 orchestration for listing, previewing, and explicitly confirming audited floating-interest timeline changes.
 - Added closed-schema REST endpoints for listing, previewing, and idempotently executing floating-interest timeline changes with audit correlation and tenant-cache invalidation.
 - Created an initial open-ended rate period for every new floating draft, linked first-day deductions to their source period, and resolved each catch-up accrual date against its own immutable rate snapshot.
