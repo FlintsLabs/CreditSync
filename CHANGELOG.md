@@ -9,6 +9,7 @@
 
 ### Fixed
 - Preserved exact decimal-string money across dashboard totals, funding gaps, available drawdowns, comparisons, and sorting beyond the JavaScript safe-integer range.
+- Prevented the Dashboard from crashing after profitability data loads by serializing its public money contract as two-decimal strings.
 
 ### Changed
 - Rebuilt the responsive operations dashboard as a Daily Command Center with a consolidated cash position, urgency-ranked actions, five-item repayment queues, localized statuses, independent loading and retry states, and collapsible mobile financial details.

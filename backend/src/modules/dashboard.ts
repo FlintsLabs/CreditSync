@@ -7,7 +7,7 @@ import { isTenantAdminUser } from "../lib/access";
 import { getTenantProfitabilitySummary } from "../lib/fund-settlement";
 import { computeOverdueSnapshot } from "../lib/overdue";
 import { withTenantCache } from "../lib/cache";
-import { aggregateDashboardMoney, compareDashboardMoneyDescending, isPositiveDashboardMoney, positiveDashboardDifference, subtractDashboardMoney, sumDashboardMoney } from "../lib/dashboard-money";
+import { aggregateDashboardMoney, compareDashboardMoneyDescending, isPositiveDashboardMoney, positiveDashboardDifference, serializeDashboardProfitability, subtractDashboardMoney, sumDashboardMoney } from "../lib/dashboard-money";
 
 function todayString() {
     return new Date().toISOString().slice(0, 10);
@@ -346,6 +346,6 @@ export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
             namespace: "dashboard",
             key: "profitability-summary",
             ttlSeconds: 30,
-            loader: async () => await getTenantProfitabilitySummary(user.tenantId),
+            loader: async () => serializeDashboardProfitability(await getTenantProfitabilitySummary(user.tenantId)),
         });
     });

@@ -27,3 +27,27 @@ export function isPositiveDashboardMoney(value: Decimal.Value) {
 export function compareDashboardMoneyDescending(left: Decimal.Value, right: Decimal.Value) {
     return new Decimal(right).comparedTo(left);
 }
+
+interface DashboardProfitabilityValues {
+    borrowerRevenueCollected: Decimal.Value;
+    fundCostPaid: Decimal.Value;
+    realizedSpread: Decimal.Value;
+    unrealizedSpread: Decimal.Value;
+    deployedPrincipal: Decimal.Value;
+    netCashPosition: Decimal.Value;
+    realizedRoiPercent: Decimal.Value;
+    carryForwardAvailable: Decimal.Value;
+}
+
+export function serializeDashboardProfitability(values: DashboardProfitabilityValues) {
+    return {
+        borrowerRevenueCollected: money(values.borrowerRevenueCollected),
+        fundCostPaid: money(values.fundCostPaid),
+        realizedSpread: money(values.realizedSpread),
+        unrealizedSpread: money(values.unrealizedSpread),
+        deployedPrincipal: money(values.deployedPrincipal),
+        netCashPosition: money(values.netCashPosition),
+        realizedRoiPercent: money(values.realizedRoiPercent),
+        carryForwardAvailable: money(values.carryForwardAvailable),
+    };
+}
