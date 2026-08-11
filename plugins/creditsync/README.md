@@ -1,12 +1,12 @@
-# CreditSync Plugin 2.1.0
+# CreditSync Plugin 2.2.0
 
-This private Codex plugin orchestrates the CreditSync MCP app for borrower identity, optional payment and loan-disbursement evidence, matching and posting, loan preview/draft/activation, daily-loan renewal, and append-only reversal.
+This private Codex plugin orchestrates the CreditSync MCP app for borrower identity, payments, effective-dated floating-interest changes, loan disbursements, renewals, and append-only reversal.
 
 ## Package contract
 
-- Plugin version: `2.1.0`
+- Plugin version: `2.2.0`
 - MCP schema version: `1.0`
-- Skills: `creditsync`, `manage-borrowers`, `reconcile-payments`, `manage-loans`, `manage-disbursements`, `renew-daily-loan`
+- Skills: `creditsync`, `manage-borrowers`, `reconcile-payments`, `manage-loans`, `manage-floating-interest-rates`, `manage-disbursements`, `renew-daily-loan`
 - App manifest: `.app.json`
 - Remote endpoint: registered private app pointing to `https://<creditsync-host>/mcp`
 
@@ -47,10 +47,11 @@ Start a new Codex task after installation so plugin skills and the private app a
 - `needs_review`, fuzzy identity, allocation mismatch, stale preview, and unresolved renewal charges stop for human input.
 - Hard duplicates return the original intake and never create a second payment.
 - Loan activation and every renewal show the backend result before explicit confirmation.
+- Floating-interest changes follow list → preview → exact confirmation → idempotent execute; accrued dates and stale previews always stop the workflow.
 - Disbursement posting shows the exact draft, evidence status, current variance, and idempotency boundary before explicit confirmation; a disbursement reversal additionally requires a reason.
 - Reversals require a reason and create compensating history rather than deletion. Renewal reversal uses same-task execute IDs plus the borrower ID retained before execution; `renewal.reverse`, not the limited portfolio view, performs the authoritative atomic downstream-activity check and may return only the backend message plus aggregate `downstreamEntryCount`.
 
-See `references/` for matching, accounting invariants, error recovery, and the frozen full 26-tool metadata snapshot. The snapshot is generated through an authenticated local MCP SDK Client `tools/list` call. `evals/evals.json` and `evals/harness.ts` execute exact ordered/repeated tool calls, supported arguments, injected workflow states, external upload effects, and forbidden-write boundaries while remaining honest that no live private app was used.
+See `references/` for matching, accounting invariants, error recovery, and the frozen full 29-tool metadata snapshot. The snapshot is generated through an authenticated local MCP SDK Client `tools/list` call. `evals/evals.json` and `evals/harness.ts` execute exact ordered/repeated tool calls, supported arguments, injected workflow states, external upload effects, and forbidden-write boundaries while remaining honest that no live private app was used.
 
 Deployment, credential rotation, MinIO evidence, and recovery procedures are maintained in the root repository documentation:
 

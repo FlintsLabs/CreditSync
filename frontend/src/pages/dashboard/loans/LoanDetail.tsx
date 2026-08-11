@@ -20,6 +20,7 @@ import { formatMoneyExact } from "../../../lib/workflow-model";
 import { LoanRenewalPanel } from "./LoanRenewalPanel";
 import { LoanDisbursements } from "./LoanDisbursements";
 import { LoanRepaymentHistory } from "./LoanRepaymentHistory";
+import { FloatingInterestRateCard } from "./FloatingInterestRateCard";
 
 interface LoanDetailData {
     id: string;
@@ -267,6 +268,7 @@ export default function LoanDetail() {
                             <CardContent className="pt-0 text-xs text-muted-foreground">{t("loanDetail.dailyTerms.notice", "The agreed instalment is fixed. A smaller payment leaves the scheduled remainder due; early settlement requires its own preview.")}</CardContent>
                         </Card>
                     )}
+                    {loan.repaymentType === "floating" && <FloatingInterestRateCard loanPublicId={loan.publicId ?? loan.id} />}
                     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                         <Card>
                             <CardHeader className="pb-2">

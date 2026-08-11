@@ -1,5 +1,11 @@
 # CreditSync Plugin Changelog
 
+## 2.2.0 - 2026-08-11
+
+### Added
+
+- Added three closed-schema floating-interest MCP tools and the `manage-floating-interest-rates` list/preview/confirmed-execute workflow with scripted confirmation safety coverage.
+
 ## 2.1.0 - 2026-08-10
 
 ### Added

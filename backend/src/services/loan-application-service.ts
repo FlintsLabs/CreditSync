@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import Decimal from "decimal.js";
 import { db } from "../db";
-import { bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanSchedules, loans, users } from "../db/schema";
+import { bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanSchedules, loans, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
 import {
@@ -265,6 +265,17 @@ export async function createLoanDraft(ctx: CommandContext, input: LoanDraftInput
             outstandingFees: "0.00",
             status: "draft",
         }).returning().then((rows) => rows[0]!);
+        if (policy) {
+            await tx.insert(loanInterestRatePeriods).values({
+                tenantId: ctx.tenantId,
+                loanId: row.id,
+                effectiveDate: input.startDate,
+                expiryDate: null,
+                rateType: policy.mode,
+                rate: policy.rate,
+                createdByUserId: ctx.actorUserId,
+            });
+        }
         const after = await presentLoan(row);
         await createAuditLog(tx, {
             ...auditContext(ctx), entityType: "loan", entityId: row.publicId,
@@ -454,10 +465,16 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
         }
         if (current.repaymentType === "floating" && current.dailyInterestMode && current.dailyInterestRate && current.firstDayTreatment && current.interestStartDate) {
             const policy: FloatingDailyInterest = { mode: current.dailyInterestMode as FloatingDailyInterest["mode"], rate: current.dailyInterestRate, firstDayTreatment: current.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"] };
+            const initialPeriod = await tx.query.loanInterestRatePeriods.findFirst({ where: and(
+                eq(loanInterestRatePeriods.tenantId, ctx.tenantId),
+                eq(loanInterestRatePeriods.loanId, current.id),
+                eq(loanInterestRatePeriods.effectiveDate, current.interestStartDate),
+            ) });
+            if (!initialPeriod) throw new DomainError("RATE_PERIOD_MISSING_COVERAGE", "Floating loan has no interest rate for its start date", 409);
             const firstDayInterest = policy.firstDayTreatment === "deduct" ? calculateDailyInterest(current.principalAmount, policy) : "0.00";
             await tx.insert(loanDisbursements).values({ tenantId: ctx.tenantId, loanId: current.id, grossPrincipal: serializeMoney(current.principalAmount), firstDayInterestDeducted: firstDayInterest, netDisbursement: serializeMoney(new Decimal(current.principalAmount).minus(firstDayInterest)), createdByUserId: ctx.actorUserId });
             if (policy.firstDayTreatment === "deduct") {
-                await tx.insert(loanInterestAccruals).values({ tenantId: ctx.tenantId, loanId: current.id, accrualDate: current.interestStartDate, openingPrincipal: serializeMoney(current.principalAmount), rateMode: policy.mode, rate: policy.rate, interestAmount: firstDayInterest, paidAmount: firstDayInterest, status: "paid", createdByUserId: ctx.actorUserId }).onConflictDoNothing();
+                await tx.insert(loanInterestAccruals).values({ tenantId: ctx.tenantId, loanId: current.id, interestRatePeriodId: initialPeriod.id, accrualDate: current.interestStartDate, openingPrincipal: serializeMoney(current.principalAmount), rateMode: policy.mode, rate: policy.rate, interestAmount: firstDayInterest, paidAmount: firstDayInterest, status: "paid", createdByUserId: ctx.actorUserId }).onConflictDoNothing();
             }
         }
         if (fundingSource || ownCapitalProfile) {

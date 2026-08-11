@@ -3,6 +3,13 @@
 ## v0.3.9 - 2026-08-11
 
 ### Added
+- Added a localized floating-interest Loan Detail card showing the exact current daily interest and full timeline, with future effective/expiry dates and preview-before-confirm management available across loan statuses.
+- Added three closed-schema MCP tools and CreditSync plugin 2.2.0 orchestration for listing, previewing, and explicitly confirming audited floating-interest timeline changes.
+- Added closed-schema REST endpoints for listing, previewing, and idempotently executing floating-interest timeline changes with audit correlation and tenant-cache invalidation.
+- Created an initial open-ended rate period for every new floating draft, linked first-day deductions to their source period, and resolved each catch-up accrual date against its own immutable rate snapshot.
+- Added tenant-scoped floating-rate list, expiring preview, and idempotent execute services with exact current-interest summaries, automatic timeline splitting, accrued-date protection, concurrency locking, and append-only audit context.
+- Added tenant-safe effective-dated floating-interest period and preview storage, legacy-rate backfill, database overlap/precision constraints, and immutable accrual-to-period linkage.
+- Added a tested exact-decimal kernel for validating, resolving, splitting, merging, and versioning inclusive floating-interest rate periods.
 - Extended the approved floating-interest design and TDD plan with safe MCP list/preview/confirmed-execute tools and a synchronized CreditSync plugin 2.2.0 contract with 7 skills and 29 tools.
 - Added the v0.3.9 TDD implementation plan for effective-dated floating-interest periods, previewed range replacement, immutable per-date accruals, REST contracts, and localized Loan Detail management.
 - Added the approved effective-dated floating-interest timeline design with scheduled rate changes, previewed automatic range splitting, immutable accrual snapshots, and loan-detail management.
@@ -31,6 +38,7 @@
 - Included floating daily-interest arrears in Dashboard borrower totals and queues as one exact aggregate row per overdue loan.
 
 ### Changed
+- Extended the frozen loan-route composition test to include the floating-interest list, preview, and execute endpoints.
 - Clarified commit discipline so every commit stages its changelog entry with the related changes under an explicit version, date, and Added/Changed/Fixed/Infra group.
 - Applied Sarabun across Thai-language screens while preserving the existing system font stack for English and monospace data presentation.
 - Synchronized the root HTML language with initial and runtime Thai/English i18next selections so language-dependent typography and accessibility metadata update together.
@@ -40,6 +48,7 @@
 
 ### Infra
 - Reconciled the divergent remote main history while retaining the current audited financial architecture and rejecting obsolete Number-based analytics and legacy AI-tool routes.
+- Made disposable PostgreSQL verification wait through the PostgreSQL 18 initialization restart before running migrations and tests.
 
 ## v0.3.8 - 2026-08-11
 

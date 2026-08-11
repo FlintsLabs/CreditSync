@@ -17,9 +17,15 @@ docker run --detach --rm --name "$container_name" \
   --env "POSTGRES_PASSWORD=$database_password" \
   --publish-all postgres:18 >/dev/null
 
+ready_checks=0
 for _ in {1..30}; do
   if docker exec "$container_name" pg_isready --username "$database_user" --dbname "$database_name" >/dev/null 2>&1; then
-    break
+    ready_checks=$((ready_checks + 1))
+    if [ "$ready_checks" -ge 2 ]; then
+      break
+    fi
+  else
+    ready_checks=0
   fi
   sleep 1
 done

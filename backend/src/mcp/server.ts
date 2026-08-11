@@ -23,6 +23,9 @@ export const MCP_TOOL_NAMES = [
     "loan.preview",
     "loan.draft",
     "loan.activate",
+    "loan.interest-rate.list",
+    "loan.interest-rate.preview",
+    "loan.interest-rate.execute",
     "loan.disbursement.list",
     "loan.disbursement.draft",
     "loan.disbursement.evidence.prepare",
@@ -312,6 +315,24 @@ const fundingProfileOutput = z.object({
     reinvestProfitMode: z.string(),
     drawdowns: z.array(fundingDrawdownOutput),
 }).strict();
+const interestRateValue = z.string().regex(/^\d+(?:\.\d{1,4})?$/).max(32);
+const interestRatePeriodOutput = z.object({
+    publicId: uuid,
+    effectiveDate: date,
+    expiryDate: date.nullable(),
+    rateType: z.enum(["percent", "per_thousand"]),
+    rate: interestRateValue,
+}).strict();
+const interestRateTimelineOutput = z.object({
+    loanPublicId: uuid,
+    asOfDate: date,
+    currentPeriod: interestRatePeriodOutput.nullable(),
+    dailyInterestAtCurrentPrincipal: money.nullable(),
+    nextChange: interestRatePeriodOutput.nullable(),
+    earliestEditableDate: date,
+    timeline: z.array(interestRatePeriodOutput),
+    timelineVersion: z.string().regex(/^[0-9a-f]{64}$/i),
+}).strict();
 
 const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
     "borrower.search": z.object({
@@ -380,6 +401,29 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     ]),
     "loan.draft": loanOutput,
     "loan.activate": loanOutput,
+    "loan.interest-rate.list": interestRateTimelineOutput,
+    "loan.interest-rate.preview": z.object({
+        id: uuid,
+        publicId: uuid,
+        loanPublicId: uuid,
+        request: z.object({
+            effectiveDate: date,
+            expiryDate: date.nullable(),
+            rateType: z.enum(["percent", "per_thousand"]),
+            rate: interestRateValue,
+        }).strict(),
+        beforeTimeline: z.array(interestRatePeriodOutput),
+        afterTimeline: z.array(interestRatePeriodOutput),
+        supersededPeriodPublicIds: z.array(uuid),
+        warnings: z.array(warningSchema),
+        timelineVersion: z.string().regex(/^[0-9a-f]{64}$/i),
+        previewHash: z.string().regex(/^v1:[0-9a-f]{64}$/i),
+        expiresAt: isoDateTime,
+    }).strict(),
+    "loan.interest-rate.execute": interestRateTimelineOutput.extend({
+        auditPublicId: uuid,
+        correlationId: uuid,
+    }).strict(),
     "loan.disbursement.list": z.object({
         loanPublicId: uuid,
         summary: disbursementSummaryOutput,
@@ -460,6 +504,22 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
         ...loanTerms,
     }).strict(),
     "loan.activate": z.object({ loanPublicId: uuid }).strict(),
+    "loan.interest-rate.list": z.object({ loanPublicId: uuid }).strict(),
+    "loan.interest-rate.preview": z.object({
+        loanPublicId: uuid,
+        effectiveDate: date,
+        expiryDate: date.nullable(),
+        rateType: z.enum(["percent", "per_thousand"]),
+        rate: interestRateValue,
+    }).strict(),
+    "loan.interest-rate.execute": z.object({
+        loanPublicId: uuid,
+        previewPublicId: uuid,
+        previewHash: z.string().regex(/^v1:[0-9a-f]{64}$/i),
+        confirmed: z.literal(true),
+        reason: shortText,
+        idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict(),
     "loan.disbursement.list": z.object({ loanPublicId: uuid }).strict(),
     "loan.disbursement.draft": z.object({
         loanPublicId: uuid,
@@ -541,6 +601,7 @@ const readOnlyTools = new Set<McpToolName>([
     "intake.get",
     "intake.list",
     "loan.preview",
+    "loan.interest-rate.list",
     "loan.disbursement.list",
     "funding-source.list",
 ]);
@@ -553,6 +614,7 @@ const destructiveTools = new Set<McpToolName>([
     "payment.post",
     "payment.reverse",
     "loan.activate",
+    "loan.interest-rate.execute",
     "loan.disbursement.post",
     "loan.disbursement.reverse",
     "renewal.preview",
@@ -563,6 +625,7 @@ const financialTools = new Set<McpToolName>([
     "payment.post",
     "payment.reverse",
     "loan.activate",
+    "loan.interest-rate.execute",
     "loan.disbursement.post",
     "loan.disbursement.reverse",
     "renewal.execute",
@@ -574,6 +637,7 @@ const idempotentTools = new Set<McpToolName>([
     "payment.post",
     "payment.reverse",
     "loan.activate",
+    "loan.interest-rate.execute",
     "loan.disbursement.post",
     "loan.disbursement.reverse",
     "renewal.execute",
@@ -597,6 +661,9 @@ const toolDescriptions: Record<McpToolName, string> = {
     "loan.preview": "Preview an exact loan schedule without persistence.",
     "loan.draft": "Create an editable loan draft.",
     "loan.activate": "Activate a loan draft idempotently and create its schedule.",
+    "loan.interest-rate.list": "List the effective-dated floating-interest timeline and current exact daily interest.",
+    "loan.interest-rate.preview": "Preview an effective-dated floating-interest change and automatic timeline split.",
+    "loan.interest-rate.execute": "Execute an explicitly confirmed floating-interest preview idempotently.",
     "loan.disbursement.list": "List actual loan disbursement events and variance read-only.",
     "loan.disbursement.draft": "Create an editable actual loan disbursement draft.",
     "loan.disbursement.evidence.prepare": "Prepare a signed upload for loan disbursement evidence.",

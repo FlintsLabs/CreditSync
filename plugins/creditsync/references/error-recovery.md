@@ -9,6 +9,7 @@ Tool errors have `{ code, message, retryable, reviewRequired, details }`. Treat 
 | duplicate | Retrieve the public ID in the response and report the original. Do not create another intake. |
 | ambiguous / mismatch / `reviewRequired` | Show safe candidate context, obligations, warnings, and difference. Wait for a human selection. |
 | stale / expired / not latest | Re-read the intake, loan, or renewal, then request a new preview. Previous approval does not carry over. |
+| rate accrued-date / overlap conflict | Re-list the floating timeline and honor `earliestEditableDate`; never rewrite an accrued day or force overlapping periods. |
 | already posted/executed/reversed | Retrieve current state. If it matches the intended idempotent operation, report that result rather than issuing a new intent. |
 | reversal blocked | Identify and reverse later downstream activity in reverse chronological dependency order, then inspect again. |
 | invalid schema/output | Stop and report a plugin/app contract incompatibility. Do not retry with guessed fields. |

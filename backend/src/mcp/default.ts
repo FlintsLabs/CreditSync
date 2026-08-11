@@ -26,6 +26,11 @@ import {
     reverseLoanRenewal,
 } from "../services/loan-renewal-service";
 import {
+    executeLoanInterestRateChange,
+    listLoanInterestRates,
+    previewLoanInterestRateChange,
+} from "../services/loan-interest-rate-service";
+import {
     createPaymentIntake,
     finalizePaymentEvidence,
     getPaymentIntake,
@@ -139,6 +144,18 @@ export function createDefaultMcpToolHandlers(
     },
     "loan.draft": (ctx, input) => createLoanDraft(ctx, input as unknown as LoanDraftInput),
     "loan.activate": (ctx, input) => activateLoan(ctx, asString(input, "loanPublicId")),
+    "loan.interest-rate.list": (ctx, input) => listLoanInterestRates(ctx, asString(input, "loanPublicId")),
+    "loan.interest-rate.preview": (ctx, input) => previewLoanInterestRateChange(ctx, asString(input, "loanPublicId"), {
+        effectiveDate: asString(input, "effectiveDate"),
+        expiryDate: input.expiryDate as string | null,
+        rateType: input.rateType as "percent" | "per_thousand",
+        rate: asString(input, "rate"),
+    }),
+    "loan.interest-rate.execute": (ctx, input) => executeLoanInterestRateChange(ctx, asString(input, "loanPublicId"), {
+        previewPublicId: asString(input, "previewPublicId"),
+        previewHash: asString(input, "previewHash"),
+        reason: asString(input, "reason"),
+    }),
     "loan.disbursement.list": (ctx, input) => listLoanDisbursements(ctx, asString(input, "loanPublicId")),
     "loan.disbursement.draft": (ctx, input) => {
         const { loanPublicId, ...draft } = input;
@@ -175,6 +192,7 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "payment.post": { entityType: "payment_intake", action: "posted" },
     "payment.reverse": { entityType: "payment_intake", action: "reversed" },
     "loan.activate": { entityType: "loan", action: "activated" },
+    "loan.interest-rate.execute": { entityType: "loan_interest_rate_timeline", action: "interest_rate_timeline_changed" },
     "loan.disbursement.post": { entityType: "loan_disbursement", action: "posted" },
     "loan.disbursement.reverse": { entityType: "loan_disbursement", action: "reversed" },
     "renewal.execute": { entityType: "loan_renewal", action: "executed" },
@@ -184,7 +202,7 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
 function resultPublicId(result: unknown) {
     if (!result || typeof result !== "object") return null;
     const record = result as Record<string, unknown>;
-    const value = record.publicId ?? record.id;
+    const value = record.publicId ?? record.id ?? record.loanPublicId;
     return typeof value === "string" ? value : null;
 }
 

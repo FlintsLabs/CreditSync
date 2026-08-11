@@ -13,6 +13,7 @@ Each skill was authored and tested sequentially with a fresh agent reading only 
 | Skill | Applied scenario | Result |
 | --- | --- | --- |
 | `creditsync` | expired payment, ambiguous nickname, unresolved renewal | Re-inspected/re-previewed, stopped at identity and charge boundaries, made no financial write. |
+| `manage-floating-interest-rates` | scheduled future rate and missing confirmation | Listed and previewed the automatic split; executed only the exact confirmed hash and stopped without execute when confirmation was absent. |
 | `manage-borrowers` | two borrowers share confirmed nickname; phone suffix selects one | Inspected selected portfolio, created no duplicate, recognized alias was already confirmed. |
 | `reconcile-payments` | intermediary split differs by `10.00`; duplicate reference | Uploaded optional evidence in the right order, stopped on `needs_review`, and returned original duplicate. |
 | `manage-loans` | installment changed after preview; active-term edit requested | Re-previewed changed terms, required separate activation approval, refused active edit. |

@@ -169,6 +169,13 @@
       "when": 1786396099000,
       "tag": "0023_intermediary_collection_remittance",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1786451052158,
+      "tag": "0024_floating_interest_rate_periods",
+      "breakpoints": true
     }
   ]
 }

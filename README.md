@@ -71,6 +71,7 @@ Account identity and tenant role are read-only values supplied by the authorized
 
 - calculate repayment schedules before saving
 - support `daily`, `weekly`, `monthly`, and `floating` repayment types
+- manage effective-dated floating-interest periods from Loan Detail, including exact current daily interest, future scheduled changes, previewed automatic range splitting, and audited confirmation
 - create editable loan drafts, then activate them to lock terms and generate schedules exactly once
 - use separate preview, draft-save, and activation confirmations in the web wizard
 - distinguish due-now and overdue scheduled or floating daily-interest obligations directly on the loan-agreement list before opening details
@@ -323,14 +324,16 @@ borrower.update       borrower.alias        intake.get
 intake.list           intake.create         evidence.prepare
 evidence.finalize     payment.preview       payment.post
 payment.reverse       loan.preview          loan.draft
-loan.activate         renewal.preview       renewal.execute
+loan.activate         loan.interest-rate.list
+loan.interest-rate.preview  loan.interest-rate.execute
+renewal.preview       renewal.execute
 renewal.reverse       funding-source.list
 loan.disbursement.list       loan.disbursement.draft
 loan.disbursement.evidence.prepare  loan.disbursement.evidence.finalize
 loan.disbursement.post       loan.disbursement.reverse
 ```
 
-Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Payment posting/reversal, loan activation, renewal execution/reversal, and disbursement post/reverse also return public correlation and audit IDs. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces. The bundled Plugin `2.0.0` freezes the matching 26-tool backend contract.
+Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Payment posting/reversal, loan activation, floating-interest execution, renewal execution/reversal, and disbursement post/reverse also return public correlation and audit IDs. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces. The bundled Plugin `2.2.0` freezes the matching 29-tool backend contract.
 
 ### Configure and rotate the bearer token
 
@@ -352,7 +355,7 @@ For rotation, put the old and new hashes in `MCP_API_TOKEN_HASHES` separated by 
 
 ## Private CreditSync Plugin
 
-The repository includes CreditSync Plugin `2.0.0` under [`plugins/creditsync`](./plugins/creditsync). It combines five orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
+The repository includes CreditSync Plugin `2.2.0` under [`plugins/creditsync`](./plugins/creditsync). It combines seven orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
 
 Before installation, register the deployed MCP endpoint as a private Codex app and replace the conspicuous `plugin_asdk_app_REPLACE_AFTER_PRIVATE_REGISTRATION` value in `plugins/creditsync/.app.json` with the returned `plugin_asdk_app...` technical ID. Then validate and install from the repository marketplace:
 

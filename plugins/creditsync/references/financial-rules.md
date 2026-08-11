@@ -7,6 +7,7 @@ The CreditSync backend and PostgreSQL ledger are authoritative. Skills orchestra
 - THB amounts cross MCP as non-negative two-decimal strings unless an output explicitly represents a signed compensating entry.
 - Business dates use `Asia/Bangkok`; wire timestamps use ISO 8601 and due dates use `YYYY-MM-DD`.
 - Posted transactions and active loan terms are immutable. Corrections are append-only adjustments or reversals.
+- Floating-interest periods are effective-dated policy records. Inspect and preview before execute; never change an accrued date or calculate its interest outside the backend.
 - Oldest obligations allocate in the backend's order: penalty, fee, interest, then principal.
 - A payment may be partial or in advance but cannot allocate beyond current outstanding obligations.
 

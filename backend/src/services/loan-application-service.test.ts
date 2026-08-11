@@ -3,7 +3,7 @@ import Decimal from "decimal.js";
 import { and, eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { auditLogs, bankLoans, bankProfiles, borrowers, loanFundingAllocations, loanSchedules, loans, users } from "../db/schema";
+import { auditLogs, bankLoans, bankProfiles, borrowers, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanSchedules, loans, users } from "../db/schema";
 import { loansRoute } from "../modules/loans";
 import type { CommandContext } from "./command-context";
 import { createBorrower } from "./borrower-service";
@@ -18,6 +18,7 @@ const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
 
 async function resetApplicationTables() {
+    await db.execute(sql`SET client_min_messages TO WARNING`);
     await db.execute(sql`TRUNCATE TABLE audit_logs, borrower_aliases, loan_schedules, loans, borrowers, users, bank_loans, bank_profiles RESTART IDENTITY CASCADE`);
 }
 
@@ -199,6 +200,30 @@ describe("loan application service", () => {
 
         const activated = await activateLoan(ctx, draft.publicId);
         expect(activated.outstandingPrincipal).toBe("9007199254740993.00");
+        const stored = await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) });
+        expect(await db.select().from(loanInterestRatePeriods).where(eq(loanInterestRatePeriods.loanId, stored!.id))).toMatchObject([{
+            effectiveDate: "2026-08-10", expiryDate: null, rateType: "per_thousand", rate: "1.0000",
+        }]);
+    });
+
+    // Break caught: a first-day paid accrual cannot prove which effective-dated rate produced it.
+    integrationTest("links a deducted first-day accrual to the initial rate period", async () => {
+        const actor = await seedUser("tenant-a", "floating-first-day@example.test", "collector");
+        const ctx = context("tenant-a", actor.id);
+        const borrower = await createBorrower(ctx, { name: "Floating First Day Borrower" });
+        const draft = await createLoanDraft(ctx, {
+            borrowerPublicId: borrower.publicId,
+            principal: "1000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1,
+            startDate: "2026-08-10",
+            floatingDailyInterest: { mode: "per_thousand", rate: "15", firstDayTreatment: "deduct" },
+        });
+        const stored = await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) });
+
+        await activateLoan(ctx, draft.publicId);
+
+        const [period] = await db.select().from(loanInterestRatePeriods).where(eq(loanInterestRatePeriods.loanId, stored!.id));
+        const [accrual] = await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, stored!.id));
+        expect(accrual).toMatchObject({ interestRatePeriodId: period!.id, accrualDate: "2026-08-10", interestAmount: "15.00", paidAmount: "15.00" });
     });
 
     // Break caught: scheduled activation loses huge Decimal principal/interest before persisting rows and rollups.

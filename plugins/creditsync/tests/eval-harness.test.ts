@@ -23,6 +23,16 @@ async function fixtures() {
 }
 
 describe("CreditSync executable orchestration evals", () => {
+    test("floating interest execution requires the exact preview and explicit confirmation", async () => {
+        const confirmed = await runEvalScenario("floating-rate-scheduled-change");
+        expect(confirmed.calls.map((call) => call.name)).toEqual([
+            "loan.interest-rate.list", "loan.interest-rate.preview", "loan.interest-rate.execute",
+        ]);
+        const unconfirmed = await runEvalScenario("floating-rate-missing-confirmation");
+        expect(unconfirmed.outcome).toBe("stopped");
+        expect(unconfirmed.calls.some((call) => call.name === "loan.interest-rate.execute")).toBe(false);
+    });
+
     test("every catalog case executes with exact ordered/repeated MCP calls", async () => {
         const { catalog } = await fixtures();
         expect(new Set(EVAL_SCENARIO_IDS)).toEqual(new Set(catalog.cases.map((entry) => entry.id)));

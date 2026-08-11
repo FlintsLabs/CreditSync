@@ -11,6 +11,7 @@ import {
     auditLogs,
     borrowers,
     loanFundingAllocations,
+    loanInterestRatePeriods,
     loanSchedules,
     loans,
     paymentIntakes,
@@ -93,6 +94,44 @@ function resultData(result: Awaited<ReturnType<Client["callTool"]>>) {
 }
 
 describe("default MCP adapter integration", () => {
+    integrationTest("lists, previews, and executes a confirmed floating interest-rate change", async () => {
+        const actor = await db.insert(users).values({ tenantId: TENANT_ID, email: ACTOR_EMAIL, role: "owner" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId: TENANT_ID, ownerUserId: actor.id, name: "MCP rate borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({
+            tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id,
+            principalAmount: "1000.00", outstandingPrincipal: "1000.00", interestRate: "0.00",
+            repaymentType: "floating", firstDayTreatment: "start_next_day", interestStartDate: "2026-08-01", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanInterestRatePeriods).values({
+            tenantId: TENANT_ID, loanId: loan.id, effectiveDate: "2026-08-01", expiryDate: null,
+            rateType: "per_thousand", rate: "15.0000", createdByUserId: actor.id,
+        });
+        const { client } = await startDefaultServer();
+
+        const listed = resultData(await client.callTool({
+            name: "loan.interest-rate.list",
+            arguments: { loanPublicId: loan.publicId },
+        }));
+        expect(listed.data).toMatchObject({ loanPublicId: loan.publicId, currentPeriod: { rate: "15.0000" }, dailyInterestAtCurrentPrincipal: "15.00" });
+
+        const previewed = resultData(await client.callTool({
+            name: "loan.interest-rate.preview",
+            arguments: { loanPublicId: loan.publicId, effectiveDate: "2026-09-01", expiryDate: null, rateType: "percent", rate: "1" },
+        }));
+        const preview = previewed.data as { publicId: string; previewHash: string };
+        const executed = resultData(await client.callTool({
+            name: "loan.interest-rate.execute",
+            arguments: {
+                loanPublicId: loan.publicId, previewPublicId: preview.publicId, previewHash: preview.previewHash,
+                confirmed: true, reason: "Owner approved future rate", idempotencyKey: "mcp-rate-change-1",
+            },
+        }));
+        expect(executed.data).toMatchObject({ loanPublicId: loan.publicId, nextChange: { effectiveDate: "2026-09-01", rate: "1.0000" } });
+        expect(executed.auditPublicIds).toHaveLength(1);
+        expect(executed.correlationId).toMatch(UUID_PATTERN);
+        await client.close();
+    });
+
     integrationTest("rejects evidence IDs on disbursement draft so callers use prepare then finalize", async () => {
         const actor = await db.insert(users).values({ tenantId: TENANT_ID, email: ACTOR_EMAIL, role: "owner" }).returning().then((rows) => rows[0]!);
         const borrower = await db.insert(borrowers).values({ tenantId: TENANT_ID, ownerUserId: actor.id, name: "MCP evidence boundary borrower" }).returning().then((rows) => rows[0]!);
@@ -291,11 +330,11 @@ describe("default MCP adapter integration", () => {
 
     // Break caught: a frozen tool delegates to the wrong shared service or its real presenter violates the advertised schema.
     integrationTest("successfully calls every frozen tool through the real default service adapter", async () => {
-        await db.insert(users).values({
+        const actor = await db.insert(users).values({
             tenantId: TENANT_ID,
             email: ACTOR_EMAIL,
             role: "owner",
-        });
+        }).returning().then((rows) => rows[0]!);
         const profile = await db.insert(bankProfiles).values({
             tenantId: TENANT_ID,
             name: "MCP contract source",
@@ -362,6 +401,26 @@ describe("default MCP adapter integration", () => {
             source: "manual",
         });
         await call("borrower.portfolio", { borrowerPublicId });
+        const borrower = await db.query.borrowers.findFirst({ where: eq(borrowers.publicId, borrowerPublicId) });
+        const floatingLoan = await db.insert(loans).values({
+            tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower!.id,
+            principalAmount: "1000.00", outstandingPrincipal: "1000.00", interestRate: "0.00",
+            repaymentType: "floating", firstDayTreatment: "start_next_day", interestStartDate: "2026-08-01", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanInterestRatePeriods).values({
+            tenantId: TENANT_ID, loanId: floatingLoan.id, effectiveDate: "2026-08-01", expiryDate: null,
+            rateType: "per_thousand", rate: "15.0000", createdByUserId: actor.id,
+        });
+        await call("loan.interest-rate.list", { loanPublicId: floatingLoan.publicId });
+        const ratePreview = (await call("loan.interest-rate.preview", {
+            loanPublicId: floatingLoan.publicId, effectiveDate: "2026-09-01", expiryDate: null,
+            rateType: "percent", rate: "1",
+        })).data;
+        await call("loan.interest-rate.execute", {
+            loanPublicId: floatingLoan.publicId, previewPublicId: ratePreview.publicId,
+            previewHash: ratePreview.previewHash, confirmed: true, reason: "MCP all-tools rate change",
+            idempotencyKey: "mcp-all-tools-rate-execute",
+        });
 
         const loanTerms = {
             principal: "100.00",
