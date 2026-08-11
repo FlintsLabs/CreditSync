@@ -29,7 +29,7 @@
 - Consumes: `DashboardLayout` as the shared authenticated route shell and `MoneyMetric` as the Dashboard-only cash value cell.
 - Produces: shared `p-2 md:p-8` authenticated page edges and responsive cash-metric dividers without changing component APIs.
 
-- [ ] **Step 1: Add the failing responsive-layout regression test**
+- [x] **Step 1: Add the failing responsive-layout regression test**
 
 Create `frontend/tests/dashboard-responsive-layout.test.ts` using `readFileSync` and `resolve` to read the two production components. Assert these literal contracts independently:
 
@@ -42,25 +42,25 @@ expect(dashboardSource).toContain('className="grid sm:grid-cols-3"');
 
 These assertions catch restoration of 16px mobile page padding, reintroduction of Dashboard double padding, or reintroduction of isolated nested metric cards.
 
-- [ ] **Step 2: Run the focused test and confirm RED**
+- [x] **Step 2: Run the focused test and confirm RED**
 
 Run: `bun test tests/dashboard-responsive-layout.test.ts`
 
 Expected: FAIL because the layout still uses `p-4`, Dashboard still owns `p-4 ... pt-6 lg:p-8`, and `MoneyMetric` is still a rounded bordered card.
 
-- [ ] **Step 3: Implement the minimal responsive styling**
+- [x] **Step 3: Implement the minimal responsive styling**
 
 In `DashboardLayout.tsx`, change the page-content main classes to `flex-1 overflow-x-hidden p-2 md:p-8`.
 
 In `Dashboard.tsx`, change the root main classes to `flex-1 space-y-6 pb-10`; change the cash grid to `grid sm:grid-cols-3`; and change `MoneyMetric` to a flat cell using `min-w-0 border-b border-border/70 p-4 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0` while retaining its existing children and value styles.
 
-- [ ] **Step 4: Run the focused test and confirm GREEN**
+- [x] **Step 4: Run the focused test and confirm GREEN**
 
 Run: `bun test tests/dashboard-responsive-layout.test.ts`
 
 Expected: PASS.
 
-- [ ] **Step 5: Run frontend verification**
+- [x] **Step 5: Run frontend verification**
 
 Run from `frontend/`:
 
@@ -72,7 +72,7 @@ bun run build
 
 Expected: all tests pass, lint exits 0, and the production build completes.
 
-- [ ] **Step 6: Record and commit the implementation**
+- [x] **Step 6: Record and commit the implementation**
 
 Add one concise `### Changed` entry under `v0.3.10 - 2026-08-12` describing the app-wide authenticated mobile page padding and flat Dashboard cash metrics. Verify `git diff --check`, stage the implementation, test, plan, and changelog files, then commit with:
 

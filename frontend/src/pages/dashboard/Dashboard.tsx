@@ -135,7 +135,7 @@ function MoneyMetric({
         ? "text-destructive"
         : "text-foreground";
   return (
-    <div className="min-w-0 rounded-xl border border-border/70 bg-background/45 p-4">
+    <div className="min-w-0 border-b border-border/70 p-4 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
       <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
         {icon}
         {label}
@@ -299,7 +299,7 @@ export default function Dashboard() {
   if (!isTenantAdmin) return null;
   return (
     <main
-      className="flex-1 space-y-6 p-4 pb-10 pt-6 lg:p-8"
+      className="flex-1 space-y-6 pb-10"
       aria-labelledby="dashboard-title"
     >
       <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
@@ -351,7 +351,7 @@ export default function Dashboard() {
           <Badge variant="secondary">{t("dashboardPage.live")}</Badge>
         </div>
         <div
-          className="grid gap-3 p-4 sm:grid-cols-3 sm:p-5"
+          className="grid sm:grid-cols-3"
           aria-busy={summary.loading}
         >
           {summary.error ? (

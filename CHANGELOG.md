@@ -11,6 +11,9 @@
 - Prevented floating repayments from reducing principal when an active legacy accrual has an impossible zero-principal basis, requiring correction before allocation instead.
 - Restored floating principal and paid daily-interest state when reversing the latest posted repayment.
 
+### Changed
+- Reduced authenticated page-edge padding to 8px on mobile while retaining the existing desktop spacing, and flattened the Dashboard cash metrics into responsive divided cells within one summary card.
+
 ### Infra
 - Added a guarded operational correction command for reversing and reapplying a specifically identified misallocated floating repayment after repairing its accrual history.
 

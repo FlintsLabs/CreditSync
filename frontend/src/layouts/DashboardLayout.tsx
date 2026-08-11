@@ -131,7 +131,7 @@ export default function DashboardLayout() {
                 )}
 
                 {/* Page Content */}
-                <main className="flex-1 p-4 md:p-8 overflow-x-hidden">
+                <main className="flex-1 overflow-x-hidden p-2 md:p-8">
                     <Outlet />
                 </main>
             </div>
