@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bu
 import { and, eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { borrowers, loanInterestAccruals, loanSchedules, loans, users } from "../db/schema";
+import { borrowers, loanInterestAccruals, loanInterestRatePeriods, loanSchedules, loans, users } from "../db/schema";
 import { loansRoute } from "../modules/loans";
 import { getLoanPaymentHealth } from "./loan-payment-health-service";
 
@@ -10,6 +10,7 @@ const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
 
 async function resetTables() {
+    await db.execute(sql`SET client_min_messages TO WARNING`);
     await db.execute(sql`TRUNCATE TABLE loan_interest_accruals, loan_schedules, loans, borrowers, users RESTART IDENTITY CASCADE`);
 }
 
@@ -72,8 +73,12 @@ describe("loan payment-health service", () => {
             firstDayTreatment: "start_next_day", interestStartDate: "2026-08-09",
             outstandingPrincipal: "1000.00", status: "active",
         }).returning().then((rows) => rows[0]!);
+        const period = await db.insert(loanInterestRatePeriods).values({
+            tenantId: "tenant-a", loanId: loan.id, effectiveDate: "2026-08-09", expiryDate: null,
+            rateType: "per_thousand", rate: "15.0000", createdByUserId: actor.id,
+        }).returning().then((rows) => rows[0]!);
         await db.insert(loanInterestAccruals).values({
-            tenantId: "tenant-a", loanId: loan.id, accrualDate: "2026-08-10",
+            tenantId: "tenant-a", loanId: loan.id, interestRatePeriodId: period.id, accrualDate: "2026-08-10",
             openingPrincipal: "1000.00", rateMode: "per_thousand", rate: "15.0000",
             interestAmount: "15.00", paidAmount: "7.50", status: "accrued", createdByUserId: actor.id,
         });
@@ -90,6 +95,35 @@ describe("loan payment-health service", () => {
         expect(await db.select().from(loanInterestAccruals).where(and(
             eq(loanInterestAccruals.tenantId, "tenant-a"), eq(loanInterestAccruals.loanId, loan.id),
         ))).toHaveLength(2);
+    });
+
+    // Break caught: a catch-up accrual applies today's rate to every missing historical date.
+    integrationTest("resolves each missing floating accrual date against its own rate period", async () => {
+        const { actor, borrower } = await seedActorAndBorrower("tenant-a");
+        const loan = await db.insert(loans).values({
+            tenantId: "tenant-a", ownerUserId: actor.id, borrowerId: borrower.id,
+            principalAmount: "1000.00", interestRate: "0.00", repaymentType: "floating",
+            dailyInterestMode: "per_thousand", dailyInterestRate: "15.0000",
+            firstDayTreatment: "start_next_day", interestStartDate: "2026-08-30",
+            outstandingPrincipal: "1000.00", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        const periods = await db.insert(loanInterestRatePeriods).values([
+            { tenantId: "tenant-a", loanId: loan.id, effectiveDate: "2026-08-30", expiryDate: "2026-08-31", rateType: "per_thousand", rate: "15.0000", createdByUserId: actor.id },
+            { tenantId: "tenant-a", loanId: loan.id, effectiveDate: "2026-09-01", expiryDate: null, rateType: "per_thousand", rate: "18.0000", createdByUserId: actor.id },
+        ]).returning();
+
+        await getLoanPaymentHealth(db, loan, { asOf: new Date("2026-09-02T12:00:00+07:00"), actorUserId: actor.id });
+
+        expect(await db.select({
+            accrualDate: loanInterestAccruals.accrualDate,
+            interestRatePeriodId: loanInterestAccruals.interestRatePeriodId,
+            rate: loanInterestAccruals.rate,
+            interestAmount: loanInterestAccruals.interestAmount,
+        }).from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id)).orderBy(loanInterestAccruals.accrualDate)).toEqual([
+            { accrualDate: "2026-08-31", interestRatePeriodId: periods[0]!.id, rate: "15.0000", interestAmount: "15.00" },
+            { accrualDate: "2026-09-01", interestRatePeriodId: periods[1]!.id, rate: "18.0000", interestAmount: "18.00" },
+            { accrualDate: "2026-09-02", interestRatePeriodId: periods[1]!.id, rate: "18.0000", interestAmount: "18.00" },
+        ]);
     });
 
     // Break caught: legacy floating principal creates synthetic payable interest without a policy.

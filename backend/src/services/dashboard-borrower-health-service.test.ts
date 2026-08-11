@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { borrowers, loanSchedules, loans, users } from "../db/schema";
+import { borrowers, loanInterestRatePeriods, loanSchedules, loans, users } from "../db/schema";
 import { dashboardRoute } from "../modules/dashboard";
 import { getDashboardBorrowerHealth } from "./dashboard-borrower-health-service";
 
@@ -10,6 +10,7 @@ const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
 
 async function resetTables() {
+    await db.execute(sql`SET client_min_messages TO WARNING`);
     await db.execute(sql`TRUNCATE TABLE loan_interest_accruals, loan_schedules, loans, borrowers, users RESTART IDENTITY CASCADE`);
 }
 
@@ -43,6 +44,10 @@ describe("dashboard borrower health projection", () => {
             principalAmount: "1000.00", outstandingPrincipal: "1000.00", interestRate: "0.00",
             repaymentType: "daily", gracePeriodDays: 0, lateFeeMode: "none", lateFeeAmount: "0.00", status: "active",
         }).returning().then((rows) => rows[0]!);
+        await db.insert(loanInterestRatePeriods).values({
+            tenantId, loanId: floatingLoan.id, effectiveDate: "2026-08-06", expiryDate: null,
+            rateType: "per_thousand", rate: "15.0000", createdByUserId: actor.id,
+        });
         await db.insert(loanSchedules).values({
             tenantId, loanId: scheduledLoan.id, installmentNo: 1, dueDate: "2026-08-10",
             scheduledTotal: "125.00", remainingDue: "125.00", status: "pending",
@@ -76,6 +81,10 @@ describe("dashboard borrower health projection", () => {
             repaymentType: "floating", dailyInterestMode: "per_thousand", dailyInterestRate: "15.0000",
             firstDayTreatment: "start_next_day", interestStartDate: "2026-08-06", status: "active",
         }).returning().then((rows) => rows[0]!);
+        await db.insert(loanInterestRatePeriods).values({
+            tenantId, loanId: loan.id, effectiveDate: "2026-08-06", expiryDate: null,
+            rateType: "per_thousand", rate: "15.0000", createdByUserId: actor.id,
+        });
         const token = await authToken(actor);
         const app = new Elysia().use(dashboardRoute);
 
