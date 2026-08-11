@@ -3,6 +3,7 @@
 ## v0.3.9 - 2026-08-11
 
 ### Added
+- Added the v0.3.9 TDD implementation plan for the approved global dark-mode surface hierarchy and responsive visual verification.
 - Added the approved v0.3.9 global dark-mode surface-hierarchy design for distinct canvas, card, overlay, control, and nested-panel levels while preserving light mode and financial semantics.
 - Added a TDD implementation plan for activating persisted loan drafts from Loan Detail and verifying the production workflow.
 - Added an approved design for safely activating existing loan drafts from Loan Detail with a localized confirmation summary and no automatic disbursement posting.
