@@ -17,6 +17,39 @@ interface Props {
 
 const statuses = ["draft", "needs_review", "ready", "posted", "reversed", "duplicate"];
 
+const neutralStatusTone = {
+    name: "neutral",
+    className: "border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200",
+};
+
+const paymentStatusTones: Record<string, { name: string; className: string }> = {
+    draft: neutralStatusTone,
+    needs_review: {
+        name: "warning",
+        className: "border-amber-200 bg-amber-100 text-amber-800 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-300",
+    },
+    ready: {
+        name: "success",
+        className: "border-emerald-200 bg-emerald-100 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300",
+    },
+    posted: {
+        name: "info",
+        className: "border-sky-200 bg-sky-100 text-sky-800 dark:border-sky-800 dark:bg-sky-950/60 dark:text-sky-300",
+    },
+    reversed: {
+        name: "danger",
+        className: "border-red-200 bg-red-100 text-red-800 dark:border-red-800 dark:bg-red-950/60 dark:text-red-300",
+    },
+    duplicate: {
+        name: "duplicate",
+        className: "border-orange-200 bg-orange-100 text-orange-800 dark:border-orange-800 dark:bg-orange-950/60 dark:text-orange-300",
+    },
+};
+
+function paymentStatusTone(status: string) {
+    return paymentStatusTones[status] ?? neutralStatusTone;
+}
+
 export function PaymentInboxList({
     data, query, selectedId, loading, formatDateTime, formatMoney, onQueryChange, onSelect,
 }: Props) {
@@ -71,7 +104,9 @@ export function PaymentInboxList({
 
         {loading ? <div role="status" className="p-6 text-center text-muted-foreground">{t("common.loading")}</div> : data.items.length ? (
             <ul role="list" aria-label={t("payments.inbox")} className="divide-y">
-                {data.items.map((item) => <li role="listitem" key={item.publicId}>
+                {data.items.map((item) => {
+                    const statusTone = paymentStatusTone(item.status);
+                    return <li role="listitem" key={item.publicId}>
                     <button
                         type="button"
                         aria-current={selectedId === item.publicId ? "true" : undefined}
@@ -82,10 +117,11 @@ export function PaymentInboxList({
                             <span className="block truncate font-medium">{item.payerName || t("payments.unknownPayer")}</span>
                             <span className="block text-sm text-muted-foreground sm:mt-0.5">{formatDateTime(item.receivedAt)}</span>
                         </span>
-                        <Badge className="w-fit" variant={item.status === "needs_review" ? "destructive" : "secondary"}>{t(`payments.status.${item.status}`)}</Badge>
+                        <Badge data-status-tone={statusTone.name} className={`w-fit ${statusTone.className}`} variant="outline">{t(`payments.status.${item.status}`)}</Badge>
                         <span className="font-medium tabular-nums sm:min-w-24 sm:text-right">{formatMoney(item.amount)}</span>
                     </button>
-                </li>)}
+                </li>;
+                })}
             </ul>
         ) : <div className="p-8 text-center text-muted-foreground">{hasFilters ? t("payments.filteredEmpty") : t("payments.empty")}</div>}
 

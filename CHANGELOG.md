@@ -21,6 +21,7 @@
 - Excluded append-only reversed floating-interest accruals from Dashboard payable totals so corrected source rows are not counted alongside their active replacements.
 
 ### Changed
+- Applied distinct accessible semantic colors to Payment Inbox status badges: green ready, gray draft, amber review, blue posted, red reversed, and orange duplicate.
 - Replaced nested Payment Inbox item cards with responsive divider-separated rows, localized payer/status/date filters, result counts, and retained-filter pagination at 25 records per page.
 - Standardized authenticated page-edge padding at 16px on mobile while retaining the existing desktop spacing, removed the Dashboard's redundant inner inset, and flattened its cash metrics into responsive divided cells within one summary card.
 
