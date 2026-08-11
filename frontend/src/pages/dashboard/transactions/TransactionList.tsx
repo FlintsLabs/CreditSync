@@ -4,6 +4,14 @@ import { Button } from "../../../components/ui/Button";
 import { Plus, ArrowUpRight, FileText } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import Decimal from "decimal.js";
+
+function transactionAmountTone(amount: string): "text-green-600" | "text-red-600" | "" {
+    const value = new Decimal(amount);
+    if (value.isNegative() && !value.isZero()) return "text-red-600";
+    if (value.isPositive() && !value.isZero()) return "text-green-600";
+    return "";
+}
 
 export default function TransactionList() {
     const { t, i18n } = useTranslation();
@@ -70,7 +78,12 @@ export default function TransactionList() {
                                 <tr key={tx.id} className="border-b last:border-0 hover:bg-muted/50">
                                     <td className="p-4">{new Date(tx.date).toLocaleDateString(i18n.language)}</td>
                                     <td className="p-4">{tx.borrowerName || t("common.unknown", "Unknown")}</td>
-                                    <td className="p-4 font-semibold text-green-600">฿{Number(tx.amount).toLocaleString(i18n.language)}</td>
+                                    <td
+                                        data-testid={`transaction-total-${tx.id}`}
+                                        className={`p-4 font-semibold ${transactionAmountTone(String(tx.amount))}`.trim()}
+                                    >
+                                        ฿{Number(tx.amount).toLocaleString(i18n.language)}
+                                    </td>
                                     <td className="p-4">฿{Number(tx.principalComponent ?? 0).toLocaleString(i18n.language)}</td>
                                     <td className="p-4">฿{Number(tx.interestComponent ?? 0).toLocaleString(i18n.language)}</td>
                                     <td className="p-4">฿{Number(tx.feeComponent ?? 0).toLocaleString(i18n.language)}</td>
