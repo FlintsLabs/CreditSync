@@ -3,6 +3,7 @@
 ## v0.3.9 - 2026-08-11
 
 ### Added
+- Added tenant-scoped floating-rate list, expiring preview, and idempotent execute services with exact current-interest summaries, automatic timeline splitting, accrued-date protection, concurrency locking, and append-only audit context.
 - Added tenant-safe effective-dated floating-interest period and preview storage, legacy-rate backfill, database overlap/precision constraints, and immutable accrual-to-period linkage.
 - Added a tested exact-decimal kernel for validating, resolving, splitting, merging, and versioning inclusive floating-interest rate periods.
 - Extended the approved floating-interest design and TDD plan with safe MCP list/preview/confirmed-execute tools and a synchronized CreditSync plugin 2.2.0 contract with 7 skills and 29 tools.
