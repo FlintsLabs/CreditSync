@@ -7,6 +7,7 @@
 - Added a task-by-task implementation plan for exact dashboard contracts, action-first responsive UI, scoped loading failures, and visual design QA.
 - Added production-preview desktop and mobile design-QA evidence with responsive interaction and console checks.
 - Added an approved design for surfacing floating daily-interest arrears as one Dashboard row per loan with exact totals, overdue-item counts, and maximum overdue age.
+- Added a TDD implementation plan for a shared borrower-health projection, exact Dashboard floating-arrears contracts, aggregate queue presentation, and production verification.
 
 ### Fixed
 - Preserved exact decimal-string money across dashboard totals, funding gaps, available drawdowns, comparisons, and sorting beyond the JavaScript safe-integer range.
