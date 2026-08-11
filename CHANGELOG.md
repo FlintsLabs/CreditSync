@@ -3,6 +3,7 @@
 ## v0.3.9 - 2026-08-11
 
 ### Added
+- Added a tested exact-decimal kernel for validating, resolving, splitting, merging, and versioning inclusive floating-interest rate periods.
 - Extended the approved floating-interest design and TDD plan with safe MCP list/preview/confirmed-execute tools and a synchronized CreditSync plugin 2.2.0 contract with 7 skills and 29 tools.
 - Added the v0.3.9 TDD implementation plan for effective-dated floating-interest periods, previewed range replacement, immutable per-date accruals, REST contracts, and localized Loan Detail management.
 - Added the approved effective-dated floating-interest timeline design with scheduled rate changes, previewed automatic range splitting, immutable accrual snapshots, and loan-detail management.
