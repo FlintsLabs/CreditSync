@@ -3,6 +3,7 @@
 ## v0.3.10 - 2026-08-12
 
 ### Added
+- Added the v0.3.10 test-first implementation plan for semantic positive, negative, and zero transaction-total colors.
 - Added the approved semantic transaction-total color design for green positive, red negative, and neutral zero amounts using exact decimal sign classification.
 - Added an idempotent, append-only floating-interest accrual correction operation that retains reversed source rows, recalculates exact daily amounts from effective rate periods, and records adjustment and audit context.
 - Added the approved app-wide authenticated mobile-spacing and Dashboard flat cash-metric design to reduce edge padding consistently and remove nested-card styling from the cash summary.
