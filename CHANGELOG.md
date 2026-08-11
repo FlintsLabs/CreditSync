@@ -3,6 +3,7 @@
 ## v0.3.9 - 2026-08-11
 
 ### Added
+- Added the v0.3.9 TDD implementation plan for self-hosted Sarabun typography and Thai/English root-language synchronization.
 - Added the approved v0.3.9 design for self-hosting Sarabun at weights 400, 500, 600, and 700 and applying it globally whenever the active interface language is Thai.
 - Added the v0.3.9 TDD implementation plan for the approved global dark-mode surface hierarchy and responsive visual verification.
 - Added the approved v0.3.9 global dark-mode surface-hierarchy design for distinct canvas, card, overlay, control, and nested-panel levels while preserving light mode and financial semantics.
