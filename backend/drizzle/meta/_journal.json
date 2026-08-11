@@ -176,6 +176,13 @@
       "when": 1786451052158,
       "tag": "0024_floating_interest_rate_periods",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1786479944796,
+      "tag": "0025_floating_accrual_corrections",
+      "breakpoints": true
     }
   ]
 }

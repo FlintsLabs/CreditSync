@@ -1316,6 +1316,35 @@ export async function reversePayment(ctx: CommandContext, intakePublicId: string
                 const restoredRemaining = new Decimal(schedule.remainingDue).plus(nonPenalty);
                 const lifecycle = scheduleLifecycle(loan, schedule, { paidTotal: restoredPaid, paidPenalty: restoredPenalty, remainingDue: restoredRemaining }, intake.receivedAt);
                 await tx.update(loanSchedules).set({ paidTotal: signed(restoredPaid), paidPenalty: signed(restoredPenalty), remainingDue: signed(restoredRemaining), overdueDays: lifecycle.overdueDays, status: lifecycle.status, updatedAt: new Date() }).where(and(eq(loanSchedules.id, schedule.id), eq(loanSchedules.tenantId, ctx.tenantId)));
+            } else {
+                const loan = await tx.query.loans.findFirst({ where: and(eq(loans.id, original.loanId), eq(loans.tenantId, ctx.tenantId)) });
+                if (!loan) throw new DomainError("REVERSAL_TARGET_MISSING", "Original loan no longer exists", 409);
+                if (loan.repaymentType === "floating") {
+                    let interestToRestore = new Decimal(original.interestComponent);
+                    const accruals = await tx.select().from(loanInterestAccruals).where(and(
+                        eq(loanInterestAccruals.tenantId, ctx.tenantId), eq(loanInterestAccruals.loanId, loan.id), sql`${loanInterestAccruals.status} <> 'reversed'`,
+                    )).orderBy(desc(loanInterestAccruals.accrualDate), desc(loanInterestAccruals.id));
+                    for (const accrual of accruals) {
+                        if (interestToRestore.lte(0)) break;
+                        const restored = Decimal.min(interestToRestore, new Decimal(accrual.paidAmount));
+                        if (restored.eq(0)) continue;
+                        const paidAmount = new Decimal(accrual.paidAmount).minus(restored);
+                        await tx.update(loanInterestAccruals).set({ paidAmount: signed(paidAmount), status: paidAmount.eq(accrual.interestAmount) ? "paid" : "accrued" })
+                            .where(and(eq(loanInterestAccruals.id, accrual.id), eq(loanInterestAccruals.tenantId, ctx.tenantId)));
+                        interestToRestore = interestToRestore.minus(restored);
+                    }
+                    if (interestToRestore.gt(0)) throw new DomainError("REVERSAL_INTEREST_MISMATCH", "Paid floating interest history cannot support this reversal", 409);
+                    const refreshedAccruals = await tx.select().from(loanInterestAccruals).where(and(
+                        eq(loanInterestAccruals.tenantId, ctx.tenantId), eq(loanInterestAccruals.loanId, loan.id), sql`${loanInterestAccruals.status} <> 'reversed'`,
+                    ));
+                    const outstandingInterest = refreshedAccruals.reduce((sum: Decimal, accrual: typeof loanInterestAccruals.$inferSelect) =>
+                        sum.plus(new Decimal(accrual.interestAmount).minus(accrual.paidAmount)), new Decimal(0));
+                    await tx.update(loans).set({
+                        outstandingPrincipal: signed(new Decimal(loan.outstandingPrincipal ?? loan.principalAmount).plus(original.principalComponent)),
+                        outstandingInterest: signed(outstandingInterest),
+                        updatedAt: new Date(),
+                    }).where(and(eq(loans.id, loan.id), eq(loans.tenantId, ctx.tenantId)));
+                }
             }
             const reversal = await tx.insert(transactions).values({
                 tenantId: ctx.tenantId,

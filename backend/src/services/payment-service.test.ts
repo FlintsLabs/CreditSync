@@ -9,6 +9,9 @@ import {
     files,
     fundLedgerEntries,
     loanFundingAllocations,
+    loanAdjustments,
+    loanInterestAccruals,
+    loanInterestRatePeriods,
     loanSchedules,
     loans,
     paymentEvidence,
@@ -33,6 +36,7 @@ import {
     reviewPaymentIntake,
     type EvidenceStorageGateway,
 } from "./payment-service";
+import { correctFloatingInterestAccruals } from "./floating-interest-service";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
@@ -124,6 +128,20 @@ async function seedLoan(input: {
     return { borrower, loan, schedules };
 }
 
+async function seedFloatingLoan(actor: { id: number; tenantId: string }) {
+    const borrower = await db.insert(borrowers).values({ tenantId: actor.tenantId, ownerUserId: actor.id, name: "Floating borrower" }).returning().then((rows) => rows[0]!);
+    const loan = await db.insert(loans).values({
+        tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id,
+        principalAmount: "4000.00", interestRate: "0.00", repaymentType: "floating",
+        dailyInterestMode: "per_thousand", dailyInterestRate: "15.0000", firstDayTreatment: "deduct",
+        interestStartDate: "2026-08-06", outstandingPrincipal: "4000.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active",
+    }).returning().then((rows) => rows[0]!);
+    const period = await db.insert(loanInterestRatePeriods).values({
+        tenantId: actor.tenantId, loanId: loan.id, effectiveDate: "2026-08-06", rateType: "per_thousand", rate: "15.0000", createdByUserId: actor.id,
+    }).returning().then((rows) => rows[0]!);
+    return { borrower, loan, period };
+}
+
 describe("payment application service", () => {
     // Break caught: visually equivalent references hash differently and bypass hard-duplicate detection.
     test("normalizes bank references deterministically without retaining punctuation differences", () => {
@@ -131,6 +149,69 @@ describe("payment application service", () => {
     });
 
     if (integrationEnabled) beforeEach(resetApplicationTables);
+
+    // Break caught: a zero-valued legacy accrual silently makes a floating payment reduce principal despite a positive daily rate.
+    integrationTest("blocks floating allocation when an active accrual has an impossible zero principal", async () => {
+        const actor = await seedUser("tenant-floating-corrupt");
+        const seeded = await seedFloatingLoan(actor);
+        await db.insert(loanInterestAccruals).values({
+            tenantId: actor.tenantId, loanId: seeded.loan.id, interestRatePeriodId: seeded.period.id,
+            accrualDate: "2026-08-07", openingPrincipal: "0.00", rateMode: "per_thousand", rate: "15.0000", interestAmount: "0.00", createdByUserId: actor.id,
+        });
+        const intake = await createPaymentIntake(context(actor), { amount: "60.00", receivedAt: "2026-08-07T06:46:00.000Z" });
+
+        await expect(previewPaymentMatch(context(actor), intake.publicId, {
+            allocations: [{ borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "60.00" }],
+        })).rejects.toMatchObject({ code: "FLOATING_INTEREST_ACCRUAL_CORRUPT", status: 409 });
+    });
+
+    // Break caught: repairing legacy daily interest overwrites history, duplicates an active date, or loses first-day deduction state.
+    integrationTest("replaces corrupt floating accruals append-only with an audited idempotent correction", async () => {
+        const actor = await seedUser("tenant-floating-correction");
+        const seeded = await seedFloatingLoan(actor);
+        await db.insert(loanInterestAccruals).values(["2026-08-06", "2026-08-07"].map((accrualDate) => ({
+            tenantId: actor.tenantId, loanId: seeded.loan.id, interestRatePeriodId: seeded.period.id,
+            accrualDate, openingPrincipal: "0.00", rateMode: "per_thousand", rate: "15.0000", interestAmount: "0.00", createdByUserId: actor.id,
+        })));
+        const command = context(actor, "repair-floating-legacy-1");
+        const corrected = await correctFloatingInterestAccruals(command, seeded.loan.publicId, ["2026-08-06", "2026-08-07"], "Repair activation accrual basis");
+        expect(await correctFloatingInterestAccruals(command, seeded.loan.publicId, ["2026-08-06", "2026-08-07"], "Repair activation accrual basis")).toEqual(corrected);
+
+        const rows = await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, seeded.loan.id)).orderBy(loanInterestAccruals.accrualDate, loanInterestAccruals.id);
+        expect(rows).toHaveLength(4);
+        expect(rows.filter((row) => row.status === "reversed")).toHaveLength(2);
+        expect(rows.filter((row) => row.status !== "reversed")).toEqual([
+            expect.objectContaining({ accrualDate: "2026-08-06", openingPrincipal: "4000.00", interestAmount: "60.00", paidAmount: "60.00", status: "paid" }),
+            expect.objectContaining({ accrualDate: "2026-08-07", openingPrincipal: "4000.00", interestAmount: "60.00", paidAmount: "0.00", status: "accrued" }),
+        ]);
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({ outstandingInterest: "60.00" });
+        expect(await db.select().from(loanAdjustments)).toEqual([expect.objectContaining({ adjustmentType: "floating_interest_accrual_correction", amount: "120.00", reason: "Repair activation accrual basis" })]);
+        expect(await db.select().from(auditLogs).where(eq(auditLogs.action, "floating_interest_accruals_corrected"))).toHaveLength(1);
+    });
+
+    // Break caught: reversing an unscheduled floating repayment leaves its principal and paid daily interest reduced.
+    integrationTest("restores floating principal and daily interest when the latest payment is reversed", async () => {
+        const actor = await seedUser("tenant-floating-reversal");
+        const seeded = await seedFloatingLoan(actor);
+        await db.insert(loanInterestAccruals).values([{
+            tenantId: actor.tenantId, loanId: seeded.loan.id, interestRatePeriodId: seeded.period.id,
+            accrualDate: "2026-08-06", openingPrincipal: "4000.00", rateMode: "per_thousand", rate: "15.0000", interestAmount: "60.00", paidAmount: "60.00", status: "paid", createdByUserId: actor.id,
+        }, {
+            tenantId: actor.tenantId, loanId: seeded.loan.id, interestRatePeriodId: seeded.period.id,
+            accrualDate: "2026-08-07", openingPrincipal: "4000.00", rateMode: "per_thousand", rate: "15.0000", interestAmount: "60.00", createdByUserId: actor.id,
+        }]);
+        const intake = await createPaymentIntake(context(actor), { amount: "100.00", receivedAt: "2026-08-07T06:46:00.000Z" });
+        const preview = await previewPaymentMatch(context(actor), intake.publicId, {
+            allocations: [{ borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "100.00" }],
+        });
+        const posted = await postPayment(context(actor), intake.publicId, { proposalPublicId: preview.publicId });
+        expect(posted.transactions).toEqual([expect.objectContaining({ interestComponent: "60.00", principalComponent: "40.00" })]);
+
+        await reversePayment(context(actor), intake.publicId, { reason: "Correct misapplied floating allocation" });
+
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({ outstandingPrincipal: "4000.00", outstandingInterest: "60.00" });
+        expect(await db.query.loanInterestAccruals.findFirst({ where: and(eq(loanInterestAccruals.loanId, seeded.loan.id), eq(loanInterestAccruals.accrualDate, "2026-08-07")) })).toMatchObject({ paidAmount: "0.00", status: "accrued" });
+    });
 
     // Break caught: data-only intake is rejected, money is coerced through Number, or a retry creates a second row.
     integrationTest("creates a data-only intake and returns the existing UUID for every hard duplicate", async () => {
