@@ -7,6 +7,7 @@ import { isTenantAdminUser } from "../lib/access";
 import { getTenantProfitabilitySummary } from "../lib/fund-settlement";
 import { computeOverdueSnapshot } from "../lib/overdue";
 import { withTenantCache } from "../lib/cache";
+import { aggregateDashboardMoney, compareDashboardMoneyDescending, isPositiveDashboardMoney, positiveDashboardDifference, subtractDashboardMoney, sumDashboardMoney } from "../lib/dashboard-money";
 
 function todayString() {
     return new Date().toISOString().slice(0, 10);
@@ -68,39 +69,30 @@ export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
             return { ...row, ...overdue };
         });
 
-        const dueFromBorrowersToday = borrowerDueSnapshots
-            .filter((row) => row.dueDate <= today && row.totalDueNow > 0)
-            .reduce((sum, row) => sum + row.totalDueNow, 0);
-        const dueToFundsToday = fundDueSnapshots
-            .filter((row) => row.dueDate <= today && row.totalDueNow > 0)
-            .reduce((sum, row) => sum + row.totalDueNow, 0);
+        const dueFromBorrowersToday = sumDashboardMoney(borrowerDueSnapshots
+            .filter((row) => row.dueDate <= today && isPositiveDashboardMoney(row.totalDueNow))
+            .map((row) => row.totalDueNow));
+        const dueToFundsToday = sumDashboardMoney(fundDueSnapshots
+            .filter((row) => row.dueDate <= today && isPositiveDashboardMoney(row.totalDueNow))
+            .map((row) => row.totalDueNow));
         const overdueBorrowerCount = borrowerDueSnapshots.filter((row) => row.effectiveStatus === "overdue").length;
         const overdueFundCount = fundDueSnapshots.filter((row) => row.effectiveStatus === "overdue").length;
 
-        const fundedByLoan = new Map<number, number>();
-        const allocatedByDrawdown = new Map<number, number>();
-        for (const allocation of allocations) {
-            fundedByLoan.set(allocation.loanId, (fundedByLoan.get(allocation.loanId) ?? 0) + Number(allocation.allocatedAmount));
-            if (allocation.bankLoanId) {
-                allocatedByDrawdown.set(allocation.bankLoanId, (allocatedByDrawdown.get(allocation.bankLoanId) ?? 0) + Number(allocation.allocatedAmount));
-            }
-        }
+        const fundedByLoan = aggregateDashboardMoney(allocations.map((allocation) => ({ key: allocation.loanId, amount: allocation.allocatedAmount })));
+        const allocatedByDrawdown = aggregateDashboardMoney(allocations.filter((allocation) => allocation.bankLoanId).map((allocation) => ({ key: allocation.bankLoanId!, amount: allocation.allocatedAmount })));
 
         const underfundedLoanCount = allLoans.filter((loan) => {
-            const principal = Number(loan.principalAmount);
-            const funded = fundedByLoan.get(loan.id) ?? 0;
-            return funded + 0.0001 < principal;
+            return isPositiveDashboardMoney(positiveDashboardDifference(loan.principalAmount, fundedByLoan.get(loan.id) ?? "0.00"));
         }).length;
 
         const unallocatedDrawdownCount = allDrawdowns.filter((drawdown) => {
-            const allocated = allocatedByDrawdown.get(drawdown.id) ?? 0;
-            return allocated + 0.0001 < Number(drawdown.amount);
+            return isPositiveDashboardMoney(positiveDashboardDifference(drawdown.amount, allocatedByDrawdown.get(drawdown.id) ?? "0.00"));
         }).length;
 
                 return {
-            dueFromBorrowersToday: Number(dueFromBorrowersToday.toFixed(2)),
-            dueToFundsToday: Number(dueToFundsToday.toFixed(2)),
-            netPositionToday: Number((dueFromBorrowersToday - dueToFundsToday).toFixed(2)),
+            dueFromBorrowersToday,
+            dueToFundsToday,
+            netPositionToday: subtractDashboardMoney(dueFromBorrowersToday, dueToFundsToday),
             overdueBorrowerCount,
             overdueFundCount,
             underfundedLoanCount,
@@ -159,7 +151,7 @@ export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
                     status: overdue.effectiveStatus,
                 };
             })
-            .filter((row) => Number(row.totalDueNow) > 0)
+            .filter((row) => isPositiveDashboardMoney(row.totalDueNow))
             .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
             },
         });
@@ -213,7 +205,7 @@ export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
                     status: overdue.effectiveStatus,
                 };
             })
-            .filter((row) => Number(row.totalDueNow) > 0)
+            .filter((row) => isPositiveDashboardMoney(row.totalDueNow))
             .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
             },
         });
@@ -240,45 +232,39 @@ export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
             db.select().from(loanFundingAllocations).where(eq(loanFundingAllocations.tenantId, user.tenantId)),
         ]);
 
-        const fundedByLoan = new Map<number, number>();
-        const allocatedByDrawdown = new Map<number, number>();
-        for (const allocation of allocations) {
-            fundedByLoan.set(allocation.loanId, (fundedByLoan.get(allocation.loanId) ?? 0) + Number(allocation.allocatedAmount));
-            if (allocation.bankLoanId) {
-                allocatedByDrawdown.set(allocation.bankLoanId, (allocatedByDrawdown.get(allocation.bankLoanId) ?? 0) + Number(allocation.allocatedAmount));
-            }
-        }
+        const fundedByLoan = aggregateDashboardMoney(allocations.map((allocation) => ({ key: allocation.loanId, amount: allocation.allocatedAmount })));
+        const allocatedByDrawdown = aggregateDashboardMoney(allocations.filter((allocation) => allocation.bankLoanId).map((allocation) => ({ key: allocation.bankLoanId!, amount: allocation.allocatedAmount })));
 
         const underfundedLoans = allLoans
             .map((loan) => {
-                const fundedAmount = fundedByLoan.get(loan.id) ?? 0;
-                const principal = Number(loan.principalAmount);
+                const fundedAmount = fundedByLoan.get(loan.id) ?? "0.00";
+                const gap = positiveDashboardDifference(loan.principalAmount, fundedAmount);
                 return {
                     id: loan.id,
                     borrowerName: loan.borrowerName,
-                    principalAmount: principal,
-                    fundedAmount: Number(fundedAmount.toFixed(2)),
-                    gap: Number(Math.max(0, principal - fundedAmount).toFixed(2)),
+                    principalAmount: sumDashboardMoney([loan.principalAmount]),
+                    fundedAmount,
+                    gap,
                 };
             })
-            .filter((loan) => loan.gap > 0)
-            .sort((a, b) => b.gap - a.gap);
+            .filter((loan) => isPositiveDashboardMoney(loan.gap))
+            .sort((a, b) => compareDashboardMoneyDescending(a.gap, b.gap));
 
         const unallocatedDrawdowns = allDrawdowns
             .map((drawdown) => {
-                const allocated = allocatedByDrawdown.get(drawdown.id) ?? 0;
-                const total = Number(drawdown.amount);
+                const allocated = allocatedByDrawdown.get(drawdown.id) ?? "0.00";
+                const availableAmount = positiveDashboardDifference(drawdown.amount, allocated);
                 return {
                     id: drawdown.id,
                     bankProfileId: drawdown.bankProfileId,
-                    totalAmount: total,
-                    allocatedAmount: Number(allocated.toFixed(2)),
-                    availableAmount: Number(Math.max(0, total - allocated).toFixed(2)),
+                    totalAmount: sumDashboardMoney([drawdown.amount]),
+                    allocatedAmount: allocated,
+                    availableAmount,
                     nextDueDate: drawdown.nextDueDate,
                 };
             })
-            .filter((drawdown) => drawdown.availableAmount > 0)
-            .sort((a, b) => b.availableAmount - a.availableAmount);
+            .filter((drawdown) => isPositiveDashboardMoney(drawdown.availableAmount))
+            .sort((a, b) => compareDashboardMoneyDescending(a.availableAmount, b.availableAmount));
 
                 return {
             underfundedLoans,
