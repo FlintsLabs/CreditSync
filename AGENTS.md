@@ -48,10 +48,11 @@ This project is optimized for **Bun**. Agents should prefer using Bun for all de
 
 ## Commit Discipline
 
-- Every commit must update [`CHANGELOG.md`](./CHANGELOG.md).
-- Every changelog entry must include an explicit project version and a short summary of the change set.
+- Before creating any commit, update [`CHANGELOG.md`](./CHANGELOG.md) first, then stage and commit the changelog together with the code, documentation, configuration, or assets it describes. Do not create a follow-up changelog-only commit for changes that should have been recorded in the original commit.
+- Every changelog entry must live under an explicit project version and date heading formatted as `## vX.Y.Z - YYYY-MM-DD`, with the newest release/date first.
+- Within each version/date, group entries by change type using `### Added`, `### Changed`, `### Fixed`, or `### Infra`. Omit empty groups, place each entry in the best matching group, and consolidate closely related changes into one concise bullet instead of scattering duplicates across groups.
+- Before committing, verify that the changelog version, date, change type, and summary accurately match the staged change set.
 - If a commit adds or materially changes user-facing features, workflows, setup steps, or infrastructure expectations, update [`README.md`](./README.md) in the same commit.
-- Keep changelog entries concise and grouped by added, changed, fixed, or infra where useful.
 
 ## Product and Financial Domain Rules
 

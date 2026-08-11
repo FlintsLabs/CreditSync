@@ -28,6 +28,7 @@
 - Included floating daily-interest arrears in Dashboard borrower totals and queues as one exact aggregate row per overdue loan.
 
 ### Changed
+- Clarified commit discipline so every commit stages its changelog entry with the related changes under an explicit version, date, and Added/Changed/Fixed/Infra group.
 - Applied Sarabun across Thai-language screens while preserving the existing system font stack for English and monospace data presentation.
 - Synchronized the root HTML language with initial and runtime Thai/English i18next selections so language-dependent typography and accessibility metadata update together.
 - Raised dark-mode cards, navigation, overlays, controls, and nested panels onto distinct semantic surface levels across the application.
