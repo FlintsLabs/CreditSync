@@ -318,7 +318,7 @@ export const loanInterestAccruals = pgTable("loan_interest_accruals", {
     createdByUserId: integer("created_by_user_id").references(() => users.id),
     createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
-    uniqueIndex("loan_interest_accruals_tenant_loan_date_unique").on(table.tenantId, table.loanId, table.accrualDate),
+    uniqueIndex("loan_interest_accruals_tenant_loan_date_unique").on(table.tenantId, table.loanId, table.accrualDate).where(sql`${table.status} <> 'reversed'`),
     uniqueIndex("loan_interest_accruals_tenant_id_unique").on(table.tenantId, table.id),
     foreignKey({
         name: "loan_interest_accruals_tenant_rate_period_fk",

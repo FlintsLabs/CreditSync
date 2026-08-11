@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import { sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
@@ -26,6 +26,7 @@ async function authToken(user: { id: number; email: string; role: string | null;
 
 describe("dashboard borrower health projection", () => {
     if (integrationEnabled) beforeEach(resetTables);
+    afterEach(() => setSystemTime());
 
     integrationTest("returns one floating loan with four overdue daily accruals alongside one overdue scheduled loan", async () => {
         const tenantId = "dashboard-health";
@@ -72,6 +73,7 @@ describe("dashboard borrower health projection", () => {
     });
 
     integrationTest("returns one aggregate floating Dashboard row and counts the overdue loan once", async () => {
+        setSystemTime(new Date("2026-08-11T12:00:00+07:00"));
         const tenantId = "dashboard-route-floating";
         const actor = await db.insert(users).values({ tenantId, email: "owner@dashboard-route.test", role: "owner" }).returning().then((rows) => rows[0]!);
         const borrower = await db.insert(borrowers).values({ tenantId, ownerUserId: actor.id, name: "Floating Borrower" }).returning().then((rows) => rows[0]!);

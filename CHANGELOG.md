@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.3.10 - 2026-08-12
+
+### Added
+- Added an idempotent, append-only floating-interest accrual correction operation that retains reversed source rows, recalculates exact daily amounts from effective rate periods, and records adjustment and audit context.
+
+### Fixed
+- Prevented floating repayments from reducing principal when an active legacy accrual has an impossible zero-principal basis, requiring correction before allocation instead.
+- Restored floating principal and paid daily-interest state when reversing the latest posted repayment.
+
+### Infra
+- Added a guarded operational correction command for reversing and reapplying a specifically identified misallocated floating repayment after repairing its accrual history.
+
 ## v0.3.9 - 2026-08-11
 
 ### Added
