@@ -732,6 +732,14 @@ describe("payment application service", () => {
         expect(finalized).toMatchObject({ status: "ready", sha256: "a".repeat(64) });
         const file = await db.query.files.findFirst({ where: eq(files.publicId, finalized.filePublicId as string) });
         expect(file).toMatchObject({ tenantId: "tenant-a", mimeType: "image/png", size: 12 });
+        expect(await getPaymentIntake(context(actor), intake.publicId)).toMatchObject({
+            evidence: [expect.objectContaining({
+                publicId: intent.publicId,
+                filePublicId: finalized.filePublicId,
+                mimeType: "image/png",
+                status: "ready",
+            })],
+        });
 
         const concurrentIntake = await createPaymentIntake(context(actor), {
             amount: "60.00", receivedAt: "2026-08-10T10:30:00.000Z",

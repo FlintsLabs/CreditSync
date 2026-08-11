@@ -7,6 +7,7 @@ import { Upload, Loader2, CheckCircle, MapPin } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { TagInput } from "../../../components/ui/tag-input";
 import { useTranslation } from "react-i18next";
+import { EvidencePreviewButton } from "../../../components/evidence/EvidencePreviewButton";
 
 interface BorrowerFormProps {
     initialData?: any;
@@ -167,6 +168,7 @@ export default function BorrowerForm({ initialData, onSuccess }: BorrowerFormPro
                             </p>
                             {uploading && <div className="flex items-center text-blue-500"><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {t("borrowerForm.analyzing", "Analyzing ID Card...")}</div>}
                             {!uploading && formData.idCardImageUrl && <div className="flex items-center text-green-500"><CheckCircle className="mr-2 h-4 w-4" /> {t("borrowerForm.uploadedScanned", "Uploaded & Scanned")}</div>}
+                            {idCardPreview && <EvidencePreviewButton available label={t("evidence.previewIdCard")} mimeType="image/*" resolve={async () => ({ url: idCardPreview, mimeType: "image/*" })} />}
                         </div>
                     </div>
                 </CardContent>

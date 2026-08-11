@@ -3,6 +3,7 @@
 ## v0.3.10 - 2026-08-12
 
 ### Added
+- Added compact, localized, on-demand evidence preview dialogs across Payment Inbox, transaction and reconciliation slips, loan disbursement evidence, and borrower ID-card images, with tenant-safe file access descriptors and graceful image, PDF, fallback, retry, and open-original states.
 - Added the v0.3.10 test-first implementation plan for shared lazy evidence previews across financial and borrower identity-document surfaces.
 - Added the approved shared evidence-preview design for compact, lazy-loaded modal previews of payment slips, disbursement evidence, reconciliation uploads, and borrower ID-card images.
 - Added tenant- and owner-scoped Payment Inbox pagination with validated payer search, status filtering, and inclusive Asia/Bangkok business-date filters while preserving the existing MCP list contract.
