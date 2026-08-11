@@ -26,12 +26,12 @@ describe("file access URLs", () => {
     integrationTest("resolves an authorized file public UUID and rejects another tenant", async () => {
         const owner = await db.insert(users).values({ tenantId: "tenant-file-owner", email: "file-owner@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
         const outsider = await db.insert(users).values({ tenantId: "tenant-file-outsider", email: "file-outsider@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
-        const file = await db.insert(files).values({ tenantId: owner.tenantId, ownerUserId: owner.id, bucket: "test", key: "evidence.png", url: "https://signed.example/evidence" }).returning().then((rows) => rows[0]!);
+        const file = await db.insert(files).values({ tenantId: owner.tenantId, ownerUserId: owner.id, bucket: "test", key: "evidence.png", url: "https://signed.example/evidence", mimeType: "image/png" }).returning().then((rows) => rows[0]!);
         const app = new Elysia().use(filesRoute);
 
         const allowed = await access(app, file.publicId, await tokenFor(owner));
         expect(allowed.response.status).toBe(200);
-        expect(allowed.body).toMatchObject({ id: file.id, url: "https://signed.example/evidence" });
+        expect(allowed.body).toMatchObject({ id: file.id, url: "https://signed.example/evidence", mimeType: "image/png" });
 
         const denied = await access(app, file.publicId, await tokenFor(outsider));
         expect(denied.response.status).toBe(404);

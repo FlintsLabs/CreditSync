@@ -7,8 +7,12 @@ export const api = axios.create({
 });
 
 export async function resolveFileAccessUrl(filePublicId: string): Promise<string> {
+    return (await resolveFileAccess(filePublicId)).url;
+}
+
+export async function resolveFileAccess(filePublicId: string): Promise<{ url: string; mimeType: string | null }> {
     const response = await api.get(`/files/${filePublicId}/access-url`);
-    return response.data.url;
+    return { url: response.data.url, mimeType: response.data.mimeType ?? null };
 }
 
 api.interceptors.request.use((config) => {

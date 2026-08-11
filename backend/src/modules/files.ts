@@ -129,5 +129,6 @@ export const filesRoute = new Elysia({ prefix: "/files" })
             id: fileRecord.id,
             fileRef,
             url: await resolveStoredFileUrl(fileRef),
+            mimeType: fileRecord.mimeType ?? null,
         };
     });
