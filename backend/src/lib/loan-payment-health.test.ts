@@ -121,6 +121,26 @@ describe("computeLoanPaymentHealth", () => {
         });
     });
 
+    // Break caught: an append-only reversed accrual is counted alongside its active replacement on Dashboard.
+    test("excludes reversed floating accruals from payable health", () => {
+        expect(computeLoanPaymentHealth({
+            ...base,
+            repaymentType: "floating",
+            businessDate: "2026-08-12",
+            schedules: [],
+            accruals: [
+                { accrualDate: "2026-08-12", interestAmount: "59.10", paidAmount: "0.00", status: "reversed" },
+                { accrualDate: "2026-08-12", interestAmount: "60.00", paidAmount: "0.00", status: "accrued" },
+            ],
+        })).toEqual({
+            status: "due_today",
+            dueTodayAmount: "60.00",
+            overdueAmount: "0.00",
+            overdueItemCount: 0,
+            maxOverdueDays: 0,
+        });
+    });
+
     // Break caught: outstanding floating principal is treated as overdue without a dated payable accrual.
     test("does not invent floating arrears from principal alone", () => {
         expect(computeLoanPaymentHealth({ ...base, repaymentType: "floating" })).toMatchObject({
