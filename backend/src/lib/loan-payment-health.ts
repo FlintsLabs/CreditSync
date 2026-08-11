@@ -66,6 +66,7 @@ export function computeLoanPaymentHealth(input: LoanPaymentHealthInput): LoanPay
 
     if (input.repaymentType === "floating") {
         for (const accrual of input.accruals) {
+            if (accrual.status === "reversed") continue;
             const unpaid = Decimal.max(new Decimal(accrual.interestAmount).minus(accrual.paidAmount), 0);
             if (unpaid.isZero() || accrual.accrualDate > input.businessDate) continue;
 
