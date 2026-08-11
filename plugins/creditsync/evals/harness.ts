@@ -16,6 +16,7 @@ const DISBURSEMENT = "0198c481-3e2b-7000-8000-000000000051";
 const DISBURSEMENT_EVIDENCE = "0198c481-3e2b-7000-8000-000000000052";
 const RENEWAL = "0198c481-3e2b-7000-8000-000000000041";
 const PREVIEW_HASH = `v1:${"a".repeat(64)}`;
+const RATE_PREVIEW = "0198c481-3e2b-7000-8000-000000000061";
 const FILE_HASH = "b".repeat(64);
 const DISBURSEMENT_FILE_HASH = "c".repeat(64);
 
@@ -459,6 +460,30 @@ const SCENARIOS: Record<string, Scenario> = {
             { name: "loan.activate", arguments: { loanPublicId: DRAFT } },
         ],
         run: loanActivation,
+    },
+    "floating-rate-scheduled-change": {
+        script: [
+            { name: "loan.interest-rate.list", arguments: { loanPublicId: LOAN_A }, result: { earliestEditableDate: "2026-08-12" } },
+            { name: "loan.interest-rate.preview", arguments: { loanPublicId: LOAN_A, effectiveDate: "2026-09-01", expiryDate: null, rateType: "percent", rate: "1" }, result: { publicId: RATE_PREVIEW, previewHash: PREVIEW_HASH, expiresAt: "2026-08-11T10:15:00+07:00" } },
+            { name: "loan.interest-rate.execute", arguments: { loanPublicId: LOAN_A, previewPublicId: RATE_PREVIEW, previewHash: PREVIEW_HASH, confirmed: true, reason: "Owner confirmed scheduled September rate", idempotencyKey: "rate-change-20260901-1" } },
+        ],
+        run: async (mcp) => {
+            await mcp.call("loan.interest-rate.list", { loanPublicId: LOAN_A });
+            const preview = await mcp.call("loan.interest-rate.preview", { loanPublicId: LOAN_A, effectiveDate: "2026-09-01", expiryDate: null, rateType: "percent", rate: "1" });
+            await mcp.call("loan.interest-rate.execute", { loanPublicId: LOAN_A, previewPublicId: preview.publicId, previewHash: preview.previewHash, confirmed: true, reason: "Owner confirmed scheduled September rate", idempotencyKey: "rate-change-20260901-1" });
+            return { outcome: "completed" } as const;
+        },
+    },
+    "floating-rate-missing-confirmation": {
+        script: [
+            { name: "loan.interest-rate.list", arguments: { loanPublicId: LOAN_A }, result: { earliestEditableDate: "2026-08-12" } },
+            { name: "loan.interest-rate.preview", arguments: { loanPublicId: LOAN_A, effectiveDate: "2026-09-01", expiryDate: null, rateType: "percent", rate: "1" }, result: { publicId: RATE_PREVIEW, previewHash: PREVIEW_HASH } },
+        ],
+        run: async (mcp) => {
+            await mcp.call("loan.interest-rate.list", { loanPublicId: LOAN_A });
+            await mcp.call("loan.interest-rate.preview", { loanPublicId: LOAN_A, effectiveDate: "2026-09-01", expiryDate: null, rateType: "percent", rate: "1" });
+            return { outcome: "stopped", stopReason: "rate-change-confirmation-required" } as const;
+        },
     },
     "disbursement-full-lifecycle": {
         script: [

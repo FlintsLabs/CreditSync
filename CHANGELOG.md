@@ -3,6 +3,7 @@
 ## v0.3.9 - 2026-08-11
 
 ### Added
+- Added three closed-schema MCP tools and CreditSync plugin 2.2.0 orchestration for listing, previewing, and explicitly confirming audited floating-interest timeline changes.
 - Added closed-schema REST endpoints for listing, previewing, and idempotently executing floating-interest timeline changes with audit correlation and tenant-cache invalidation.
 - Created an initial open-ended rate period for every new floating draft, linked first-day deductions to their source period, and resolved each catch-up accrual date against its own immutable rate snapshot.
 - Added tenant-scoped floating-rate list, expiring preview, and idempotent execute services with exact current-interest summaries, automatic timeline splitting, accrued-date protection, concurrency locking, and append-only audit context.

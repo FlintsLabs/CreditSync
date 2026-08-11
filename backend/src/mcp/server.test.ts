@@ -224,6 +224,7 @@ describe("CreditSync stateless MCP contract", () => {
             "payment.post",
             "payment.reverse",
             "loan.activate",
+            "loan.interest-rate.execute",
             "loan.disbursement.post",
             "loan.disbursement.reverse",
             "renewal.preview",
