@@ -3,6 +3,7 @@
 ## v0.3.10 - 2026-08-12
 
 ### Added
+- Added the v0.3.10 test-first implementation plan for shared lazy evidence previews across financial and borrower identity-document surfaces.
 - Added the approved shared evidence-preview design for compact, lazy-loaded modal previews of payment slips, disbursement evidence, reconciliation uploads, and borrower ID-card images.
 - Added tenant- and owner-scoped Payment Inbox pagination with validated payer search, status filtering, and inclusive Asia/Bangkok business-date filters while preserving the existing MCP list contract.
 - Added the v0.3.10 test-first implementation plan for paginated Payment Inbox queries and a responsive flat inbox list.
