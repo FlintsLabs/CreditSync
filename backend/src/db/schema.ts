@@ -226,11 +226,86 @@ export const loanSchedules = pgTable("loan_schedules", {
     uniqueIndex("loan_schedules_tenant_id_id_unique").on(table.tenantId, table.id),
 ]);
 
+type StoredRatePeriod = {
+    publicId: string;
+    effectiveDate: string;
+    expiryDate: string | null;
+    rateType: "percent" | "per_thousand";
+    rate: string;
+};
+
+type StoredRateChangeRequest = {
+    effectiveDate: string;
+    expiryDate: string | null;
+    rateType: "percent" | "per_thousand";
+    rate: string;
+};
+
+export const loanInterestRatePeriods = pgTable("loan_interest_rate_periods", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    loanId: integer("loan_id").notNull(),
+    effectiveDate: date("effective_date").notNull(),
+    expiryDate: date("expiry_date"),
+    rateType: text("rate_type").notNull(),
+    rate: numeric("rate").notNull(),
+    createdByUserId: integer("created_by_user_id").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("loan_interest_rate_periods_tenant_id_id_unique").on(table.tenantId, table.id),
+    index("loan_interest_rate_periods_tenant_loan_effective_idx").on(table.tenantId, table.loanId, table.effectiveDate),
+    foreignKey({
+        name: "loan_interest_rate_periods_tenant_loan_fk",
+        columns: [table.tenantId, table.loanId],
+        foreignColumns: [loans.tenantId, loans.id],
+    }),
+    check("loan_interest_rate_periods_rate_positive_check", sql`${table.rate} > 0`),
+    check("loan_interest_rate_periods_rate_scale_check", sql`scale(${table.rate}) <= 4`),
+    check("loan_interest_rate_periods_rate_type_check", sql`${table.rateType} IN ('percent', 'per_thousand')`),
+    check("loan_interest_rate_periods_date_order_check", sql`${table.expiryDate} IS NULL OR ${table.expiryDate} >= ${table.effectiveDate}`),
+]);
+
+export const loanInterestRatePreviews = pgTable("loan_interest_rate_previews", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    loanId: integer("loan_id").notNull(),
+    createdByUserId: integer("created_by_user_id").references(() => users.id),
+    request: jsonb("request").$type<StoredRateChangeRequest>().notNull(),
+    requestHash: text("request_hash").notNull(),
+    previewHash: text("preview_hash").notNull(),
+    beforeTimeline: jsonb("before_timeline").$type<StoredRatePeriod[]>().notNull(),
+    afterTimeline: jsonb("after_timeline").$type<StoredRatePeriod[]>().notNull(),
+    timelineVersion: text("timeline_version").notNull(),
+    status: text("status").default("ready").notNull(),
+    executeIdempotencyKey: text("execute_idempotency_key"),
+    executedAuditPublicId: uuid("executed_audit_public_id"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    executedAt: timestamp("executed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("loan_interest_rate_previews_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("loan_interest_rate_previews_tenant_execute_idempotency_unique")
+        .on(table.tenantId, table.executeIdempotencyKey)
+        .where(sql`${table.executeIdempotencyKey} IS NOT NULL`),
+    index("loan_interest_rate_previews_tenant_loan_created_idx").on(table.tenantId, table.loanId, table.createdAt),
+    foreignKey({
+        name: "loan_interest_rate_previews_tenant_loan_fk",
+        columns: [table.tenantId, table.loanId],
+        foreignColumns: [loans.tenantId, loans.id],
+    }),
+    check("loan_interest_rate_previews_status_check", sql`${table.status} IN ('ready', 'executed', 'expired')`),
+]);
+
 export const loanInterestAccruals = pgTable("loan_interest_accruals", {
     id: serial("id").primaryKey(),
     publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: tenantId,
     loanId: integer("loan_id").references(() => loans.id).notNull(),
+    interestRatePeriodId: integer("interest_rate_period_id"),
     accrualDate: date("accrual_date").notNull(),
     openingPrincipal: numeric("opening_principal").notNull(),
     rateMode: text("rate_mode").notNull(),
@@ -245,6 +320,11 @@ export const loanInterestAccruals = pgTable("loan_interest_accruals", {
 }, (table) => [
     uniqueIndex("loan_interest_accruals_tenant_loan_date_unique").on(table.tenantId, table.loanId, table.accrualDate),
     uniqueIndex("loan_interest_accruals_tenant_id_unique").on(table.tenantId, table.id),
+    foreignKey({
+        name: "loan_interest_accruals_tenant_rate_period_fk",
+        columns: [table.tenantId, table.interestRatePeriodId],
+        foreignColumns: [loanInterestRatePeriods.tenantId, loanInterestRatePeriods.id],
+    }),
 ]);
 
 export const loanDisbursements = pgTable("loan_disbursements", {

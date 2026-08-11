@@ -3,6 +3,7 @@
 ## v0.3.9 - 2026-08-11
 
 ### Added
+- Added tenant-safe effective-dated floating-interest period and preview storage, legacy-rate backfill, database overlap/precision constraints, and immutable accrual-to-period linkage.
 - Added a tested exact-decimal kernel for validating, resolving, splitting, merging, and versioning inclusive floating-interest rate periods.
 - Extended the approved floating-interest design and TDD plan with safe MCP list/preview/confirmed-execute tools and a synchronized CreditSync plugin 2.2.0 contract with 7 skills and 29 tools.
 - Added the v0.3.9 TDD implementation plan for effective-dated floating-interest periods, previewed range replacement, immutable per-date accruals, REST contracts, and localized Loan Detail management.
@@ -38,6 +39,9 @@
 - Raised dark-mode cards, navigation, overlays, controls, and nested panels onto distinct semantic surface levels across the application.
 - Rebuilt the responsive operations dashboard as a Daily Command Center with a consolidated cash position, urgency-ranked actions, five-item repayment queues, localized statuses, independent loading and retry states, and collapsible mobile financial details.
 - Displayed floating daily-interest arrears as one localized borrower-queue row per loan with overdue-item count, maximum age, and schedule-free repayment navigation.
+
+### Infra
+- Made disposable PostgreSQL verification wait through the PostgreSQL 18 initialization restart before running migrations and tests.
 
 ## v0.3.8 - 2026-08-11
 
