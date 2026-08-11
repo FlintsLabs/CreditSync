@@ -1,13 +1,22 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, CalendarDays, Copy, User2 } from "lucide-react";
+import { ArrowLeft, CalendarDays, CheckCircle, Copy, User2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../../lib/api";
 import { getStoredUser, isTenantAdminUser } from "../../../lib/session";
 import { Button } from "../../../components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/Card";
 import { Badge } from "../../../components/ui/badge";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "../../../components/ui/dialog";
 import appI18n from "../../../lib/i18n";
+import { formatMoneyExact } from "../../../lib/workflow-model";
 import { LoanRenewalPanel } from "./LoanRenewalPanel";
 import { LoanDisbursements } from "./LoanDisbursements";
 import { LoanRepaymentHistory } from "./LoanRepaymentHistory";
@@ -107,7 +116,7 @@ function formatCurrency(value: number) {
 }
 
 export default function LoanDetail() {
-    const { t } = useTranslation();
+    const { t, i18n } = useTranslation();
     const navigate = useNavigate();
     const { id } = useParams();
     const currentUser = getStoredUser();
@@ -121,6 +130,8 @@ export default function LoanDetail() {
     const [allocations, setAllocations] = useState<AllocationRow[]>([]);
     const [profitability, setProfitability] = useState<LoanProfitability | null>(null);
     const [allocationState, setAllocationState] = useState<LoanAllocationState | null>(null);
+    const [activationOpen, setActivationOpen] = useState(false);
+    const [activating, setActivating] = useState(false);
 
     useEffect(() => {
         const run = async () => {
@@ -170,18 +181,61 @@ export default function LoanDetail() {
 
     const nextDueRow = schedule.find((row) => Number(row.remainingDue) > 0) ?? null;
 
+    const activateDraft = async () => {
+        if (!loan || loan.status !== "draft" || activating) return;
+        try {
+            setActivating(true);
+            const response = await api.post(`/loans/${loan.publicId}/activate`);
+            setLoan(response.data);
+            setActivationOpen(false);
+            setErrorMessage("");
+        } catch (error) {
+            console.error("Failed to activate loan draft", error);
+            setErrorMessage(t("loanDetail.activation.error"));
+        } finally {
+            setActivating(false);
+        }
+    };
+
     return (
         <div className="space-y-6">
-            <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center gap-4">
                 <Button variant="ghost" size="icon" onClick={() => navigate("/loans")}>
                     <ArrowLeft className="h-4 w-4" />
                 </Button>
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                     <h2 className="text-2xl font-bold tracking-tight">{loading ? t("common.loading", "Loading...") : t("loanDetail.title", "Loan agreement")}</h2>
                     {!loading && loan?.publicId && <div className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground"><span className="shrink-0">{t("loanDetail.loanId", "ID")}:</span><code className="truncate font-mono">{loan.publicId}</code><button type="button" className="shrink-0 rounded p-1 hover:bg-muted" aria-label={t("loanDetail.copyLoanId", "Copy loan ID")} title={t("loanDetail.copyLoanId", "Copy loan ID")} onClick={() => { void navigator.clipboard.writeText(loan.publicId); setCopiedLoanId(true); window.setTimeout(() => setCopiedLoanId(false), 2000); }}><Copy className="h-3.5 w-3.5" /></button>{copiedLoanId && <span className="shrink-0 text-emerald-600">{t("loanDetail.copied", "Copied")}</span>}</div>}
                     <p className="text-muted-foreground">{t("loanDetail.description", "Profitability, funding composition, and installment status in one view.")}</p>
                 </div>
+                {!loading && loan?.status === "draft" && (
+                    <Button className="w-full shrink-0 sm:w-auto" onClick={() => setActivationOpen(true)}>
+                        <CheckCircle className="mr-2 h-4 w-4" />
+                        {t("loanDetail.activation.action")}
+                    </Button>
+                )}
             </div>
+
+            <Dialog open={activationOpen} onOpenChange={(open) => !activating && setActivationOpen(open)}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>{t("loanDetail.activation.title")}</DialogTitle>
+                        <DialogDescription>{t("loanDetail.activation.warning")}</DialogDescription>
+                    </DialogHeader>
+                    <dl className="grid gap-3 text-sm sm:grid-cols-2">
+                        <div><dt className="text-muted-foreground">{t("loanDetail.activation.borrower")}</dt><dd className="font-medium">{borrower?.name ?? t("loanDetail.unknownBorrower")}</dd></div>
+                        <div><dt className="text-muted-foreground">{t("loanDetail.activation.principal")}</dt><dd className="font-medium tabular-nums">{formatMoneyExact(loan?.principalAmount ?? "0.00", i18n.language)}</dd></div>
+                        <div><dt className="text-muted-foreground">{t("loanDetail.activation.repaymentType")}</dt><dd className="font-medium">{t(`loanWizard.repaymentOptions.${loan?.repaymentType ?? "floating"}`)}</dd></div>
+                        <div><dt className="text-muted-foreground">{t("loanDetail.activation.startDate")}</dt><dd className="font-medium">{loan?.startDate ?? "-"}</dd></div>
+                    </dl>
+                    <DialogFooter>
+                        <Button variant="outline" disabled={activating} onClick={() => setActivationOpen(false)}>{t("common.cancel")}</Button>
+                        <Button disabled={activating} onClick={() => void activateDraft()}>
+                            {activating ? t("loanDetail.activation.activating") : t("loanDetail.activation.confirm")}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             {errorMessage && (
                 <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
