@@ -44,6 +44,11 @@ import {
 
 type Resource<T> = { data: T | null; loading: boolean; error: boolean };
 
+const QUEUE_SECTION_CLASS = "rounded-none border-0 bg-transparent shadow-none md:rounded-lg md:border md:bg-card md:text-card-foreground md:shadow-sm";
+const QUEUE_HEADER_CLASS = "px-0 pb-3 pt-0 md:p-6";
+const QUEUE_CONTENT_CLASS = "divide-y divide-border/70 p-0 md:px-6 md:pb-6";
+const QUEUE_ROW_CLASS = "group flex min-h-16 w-full items-center justify-between gap-3 py-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 md:px-3";
+
 function useDashboardResource<T>(path: string, fallback: T) {
   const fallbackRef = useRef(fallback);
   const [state, setState] = useState<Resource<T>>({
@@ -432,8 +437,8 @@ export default function Dashboard() {
         </Card>
 
         <div className="grid gap-6 lg:grid-cols-2">
-          <Card>
-            <CardHeader className="flex flex-row items-start justify-between gap-3">
+          <Card className={QUEUE_SECTION_CLASS}>
+            <CardHeader className={`flex flex-row items-start justify-between gap-3 ${QUEUE_HEADER_CLASS}`}>
               <div>
                 <CardTitle>
                   {t("dashboardPage.sections.borrowerDueQueue")}
@@ -445,7 +450,7 @@ export default function Dashboard() {
               <Badge>{borrowerQueue.data?.length ?? 0}</Badge>
             </CardHeader>
             <CardContent
-              className="space-y-2"
+              className={QUEUE_CONTENT_CLASS}
               aria-busy={borrowerQueue.loading}
             >
               {borrowerQueue.error ? (
@@ -464,15 +469,15 @@ export default function Dashboard() {
                         key={`${item.repaymentType}-${item.schedulePublicId ?? item.scheduleId ?? item.loanPublicId ?? item.loanId}`}
                         type="button"
                         onClick={() => openBorrower(item)}
-                        className="group flex w-full flex-col items-stretch gap-3 rounded-xl border p-3 text-left hover:border-primary/40 hover:bg-muted/40 sm:flex-row sm:items-center sm:justify-between"
+                        className={QUEUE_ROW_CLASS}
                       >
-                        <span className="min-w-0">
+                        <span className="min-w-0 flex-1 pr-2">
                           <span className="block truncate font-medium">
                             {item.borrowerName}
                           </span>
                           <BorrowerQueueMeta item={item} />
                         </span>
-                        <span className="space-y-1 sm:block sm:shrink-0 sm:text-right">
+                        <span className="shrink-0 space-y-1 text-right">
                           <span className="block font-semibold tabular-nums">
                             {formatMoneyExact(
                               item.totalDueNow ?? item.remainingDue,
@@ -505,8 +510,8 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="flex flex-row items-start justify-between gap-3">
+          <Card className={QUEUE_SECTION_CLASS}>
+            <CardHeader className={`flex flex-row items-start justify-between gap-3 ${QUEUE_HEADER_CLASS}`}>
               <div>
                 <CardTitle>
                   {t("dashboardPage.sections.fundDueQueue")}
@@ -517,7 +522,7 @@ export default function Dashboard() {
               </div>
               <Badge>{fundQueue.data?.length ?? 0}</Badge>
             </CardHeader>
-            <CardContent className="space-y-2" aria-busy={fundQueue.loading}>
+            <CardContent className={QUEUE_CONTENT_CLASS} aria-busy={fundQueue.loading}>
               {fundQueue.error ? (
                 <SectionError retry={fundQueue.retry} />
               ) : fundQueue.loading ? (
@@ -534,9 +539,9 @@ export default function Dashboard() {
                         key={item.scheduleId}
                         type="button"
                         onClick={() => openFund(item)}
-                        className="group flex w-full flex-col items-stretch gap-3 rounded-xl border p-3 text-left hover:border-primary/40 hover:bg-muted/40 sm:flex-row sm:items-center sm:justify-between"
+                        className={QUEUE_ROW_CLASS}
                       >
-                        <span className="min-w-0">
+                        <span className="min-w-0 flex-1 pr-2">
                           <span className="block truncate font-medium">
                             {t("dashboardPage.drawdownLabel", {
                               id: item.bankLoanId,
@@ -549,7 +554,7 @@ export default function Dashboard() {
                             · {formatDate(item.dueDate)}
                           </span>
                         </span>
-                        <span className="space-y-1 sm:block sm:shrink-0 sm:text-right">
+                        <span className="shrink-0 space-y-1 text-right">
                           <span className="block font-semibold tabular-nums">
                             {formatMoneyExact(
                               item.totalDueNow ?? item.remainingDue,

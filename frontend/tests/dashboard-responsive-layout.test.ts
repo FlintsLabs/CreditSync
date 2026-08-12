@@ -30,4 +30,24 @@ describe("authenticated responsive page layout", () => {
       'className="grid sm:grid-cols-3"',
     );
   });
+
+  it("uses flat divider-separated repayment queues on mobile with desktop containment", () => {
+    expect(dashboardSource).toContain(
+      'const QUEUE_SECTION_CLASS = "rounded-none border-0 bg-transparent shadow-none md:rounded-lg md:border md:bg-card md:text-card-foreground md:shadow-sm";',
+    );
+    expect(dashboardSource).toContain(
+      'const QUEUE_HEADER_CLASS = "px-0 pb-3 pt-0 md:p-6";',
+    );
+    expect(dashboardSource).toContain(
+      'const QUEUE_CONTENT_CLASS = "divide-y divide-border/70 p-0 md:px-6 md:pb-6";',
+    );
+    expect(dashboardSource).toContain(
+      'const QUEUE_ROW_CLASS = "group flex min-h-16 w-full items-center justify-between gap-3 py-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 md:px-3";',
+    );
+    expect(dashboardSource.match(/className=\{QUEUE_SECTION_CLASS\}/g)).toHaveLength(2);
+    expect(dashboardSource.match(/className=\{QUEUE_ROW_CLASS\}/g)).toHaveLength(2);
+    expect(dashboardSource).not.toContain(
+      'className="group flex w-full flex-col items-stretch gap-3 rounded-xl border p-3 text-left',
+    );
+  });
 });
