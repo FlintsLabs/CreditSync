@@ -6,6 +6,10 @@
 
 - Added the intermediary collection/remittance MCP workflow, exact allocation preview, remittance-slip evidence lifecycle, historical payment linking without double posting, and the `reconcile-intermediary-remittances` orchestration skill.
 
+### Changed
+
+- Published the package through the Git-backed `creditsync-marketplace` catalog with exact repository-path validation and documented refresh, reinstall, and new-task pickup behavior.
+
 ## 2.1.0 - 2026-08-10
 
 ### Added

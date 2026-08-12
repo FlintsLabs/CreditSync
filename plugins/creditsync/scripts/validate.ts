@@ -21,6 +21,42 @@ export function classifyPrivateAppId(value: unknown): "placeholder" | "registere
     return "invalid";
 }
 
+export function validateMarketplaceContract(
+    marketplace: Record<string, unknown>,
+    sourceDirectoryExists: boolean,
+    sourceManifestName: unknown,
+): string[] {
+    const errors: string[] = [];
+    if (marketplace.name !== "creditsync-marketplace") {
+        errors.push("repo marketplace name must be creditsync-marketplace");
+    }
+    const marketplaceInterface = marketplace.interface as { displayName?: unknown } | undefined;
+    if (marketplaceInterface?.displayName !== "CreditSync") {
+        errors.push("repo marketplace display name must be CreditSync");
+    }
+    const plugins = Array.isArray(marketplace.plugins) ? marketplace.plugins : [];
+    if (plugins.length !== 1 || (plugins[0] as { name?: unknown } | undefined)?.name !== "creditsync") {
+        errors.push("repo marketplace must contain exactly one creditsync plugin entry");
+    }
+    const entry = plugins.find((candidate) => (candidate as { name?: unknown })?.name === "creditsync") as {
+        source?: { source?: unknown; path?: unknown };
+        policy?: { installation?: unknown; authentication?: unknown };
+        category?: unknown;
+    } | undefined;
+    if (entry?.source?.source !== "local" || entry.source.path !== "./plugins/creditsync") {
+        errors.push("repo marketplace plugin source must be local at ./plugins/creditsync");
+    }
+    if (entry?.policy?.installation !== "AVAILABLE" || entry.policy.authentication !== "ON_INSTALL") {
+        errors.push("repo marketplace plugin policy must be AVAILABLE with ON_INSTALL authentication");
+    }
+    if (entry?.category !== "Productivity") {
+        errors.push("repo marketplace plugin category must be Productivity");
+    }
+    if (!sourceDirectoryExists) errors.push("repo marketplace plugin source directory is missing");
+    if (sourceManifestName !== "creditsync") errors.push("repo marketplace source manifest name must be creditsync");
+    return errors;
+}
+
 async function parseJson(path: string) {
     return JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
 }
@@ -125,13 +161,12 @@ export async function validatePlugin() {
         }
     }
 
-    const marketplace = await parseJson(resolve(repositoryRoot, ".agents/plugins/marketplace.json")) as {
-        plugins?: Array<{ name?: string; source?: { source?: string; path?: string } }>;
-    };
-    const marketEntry = marketplace.plugins?.find((entry) => entry.name === "creditsync");
-    if (marketEntry?.source?.source !== "local" || marketEntry.source.path !== "./plugins/creditsync") {
-        errors.push("repo marketplace does not resolve ./plugins/creditsync");
-    }
+    const marketplace = await parseJson(resolve(repositoryRoot, ".agents/plugins/marketplace.json"));
+    const sourceDirectory = resolve(repositoryRoot, "plugins/creditsync");
+    const sourceManifest = existsSync(resolve(sourceDirectory, ".codex-plugin/plugin.json"))
+        ? await parseJson(resolve(sourceDirectory, ".codex-plugin/plugin.json"))
+        : {};
+    errors.push(...validateMarketplaceContract(marketplace, existsSync(sourceDirectory), sourceManifest.name));
 
     const secretPatterns = [
         /sk-[A-Za-z0-9_-]{20,}/u,

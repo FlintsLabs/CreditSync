@@ -158,7 +158,7 @@ The web app exposes `/payments` as the human review inbox. It persists and shows
 │   ├── src/lib/          # api client, auth helpers, i18n
 │   └── src/pages/        # landing, login, dashboard screens
 ├── docs/                 # ADRs and planning docs
-├── plugins/creditsync/   # Private Codex plugin 2.0.0, skills, evals, and validation
+├── plugins/creditsync/   # Private Codex plugin 2.3.0, skills, evals, and validation
 ├── k8s/                  # Kubernetes manifests
 ├── docker-compose.yml    # local development infra
 ├── docker-compose.infra.yml  # production-style infra including dragonfly cache
@@ -362,17 +362,24 @@ For rotation, put the old and new hashes in `MCP_API_TOKEN_HASHES` separated by 
 
 The repository includes CreditSync Plugin `2.3.0` under [`plugins/creditsync`](./plugins/creditsync). It combines eight orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
 
-Before installation, register the deployed MCP endpoint as a private Codex app and replace the conspicuous `plugin_asdk_app_REPLACE_AFTER_PRIVATE_REGISTRATION` value in `plugins/creditsync/.app.json` with the returned `plugin_asdk_app...` technical ID. Then validate and install from the repository marketplace:
+Before installation, register the deployed MCP endpoint as a private Codex app and replace the conspicuous `plugin_asdk_app_REPLACE_AFTER_PRIVATE_REGISTRATION` value in `plugins/creditsync/.app.json` with the returned `plugin_asdk_app...` technical ID. Then validate the package, add this Git repository as the marketplace that tracks `main`, and install the plugin:
 
 ```bash
 bun test plugins/creditsync/tests/plugin-contract.test.ts
 bun run plugins/creditsync/scripts/validate.ts
 python3 /home/flintstone/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py plugins/creditsync
-codex plugin marketplace add /absolute/path/to/CreditSync
-codex plugin add creditsync@personal
+codex plugin marketplace add FlintsLabs/CreditSync --ref main
+codex plugin add creditsync@creditsync-marketplace
 ```
 
-Start a new Codex task after installation. The committed app ID is intentionally a non-runnable registration placeholder, so static validation is not evidence of a live private-app connection.
+The Git marketplace snapshot reads [`.agents/plugins/marketplace.json`](./.agents/plugins/marketplace.json), which resolves the plugin at `./plugins/creditsync` inside the same snapshot. After pushing a validated plugin change to `main`, refresh the snapshot and reinstall:
+
+```bash
+codex plugin marketplace upgrade creditsync-marketplace
+codex plugin add creditsync@creditsync-marketplace
+```
+
+A push does not hot-reload the installed copy. Start a new Codex task after installation or reinstall so the updated skills and app are discovered. The committed app ID is intentionally a non-runnable registration placeholder, so static validation is not evidence of a live private-app connection.
 
 See [`docs/operations/agent-mcp-plugin.md`](./docs/operations/agent-mcp-plugin.md) for Cloudflare, token rotation, MinIO evidence, private registration, and rollback, and [`docs/operations/backup-recovery.md`](./docs/operations/backup-recovery.md) for database/object backup and isolated restore verification.
 

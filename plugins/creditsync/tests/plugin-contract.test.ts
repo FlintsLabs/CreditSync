@@ -5,7 +5,11 @@ import { resolve } from "node:path";
 import { MCP_TOOL_NAMES } from "../../../backend/src/mcp/server";
 import type { FrozenMcpContract } from "../../../backend/src/mcp/contract-snapshot";
 import { canonicalContractJson, captureAdvertisedMcpContract } from "../scripts/mcp-contract";
-import { classifyPrivateAppId, PRIVATE_APP_ID_PLACEHOLDER } from "../scripts/validate";
+import {
+    classifyPrivateAppId,
+    PRIVATE_APP_ID_PLACEHOLDER,
+    validateMarketplaceContract,
+} from "../scripts/validate";
 
 const pluginRoot = resolve(import.meta.dir, "..");
 const repositoryRoot = resolve(pluginRoot, "../..");
@@ -146,13 +150,48 @@ describe("CreditSync plugin 2.3.0 contract", () => {
     test("repo marketplace resolves the plugin from its declared local path", async () => {
         const marketplace = JSON.parse(
             await readFile(resolve(repositoryRoot, ".agents/plugins/marketplace.json"), "utf8"),
-        ) as { plugins?: Array<Record<string, unknown>> };
-        expect(marketplace.plugins).toContainEqual({
-            name: "creditsync",
-            source: { source: "local", path: "./plugins/creditsync" },
-            policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
-            category: "Productivity",
+        ) as Record<string, unknown>;
+        expect(marketplace).toEqual({
+            name: "creditsync-marketplace",
+            interface: { displayName: "CreditSync" },
+            plugins: [{
+                name: "creditsync",
+                source: { source: "local", path: "./plugins/creditsync" },
+                policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
+                category: "Productivity",
+            }],
         });
+        expect(existsSync(resolve(repositoryRoot, "plugins/creditsync"))).toBe(true);
+        const referencedManifest = JSON.parse(
+            await readFile(resolve(repositoryRoot, "plugins/creditsync/.codex-plugin/plugin.json"), "utf8"),
+        ) as { name?: string };
+        expect(referencedManifest.name).toBe("creditsync");
+        expect(validateMarketplaceContract(marketplace, true, referencedManifest.name)).toEqual([]);
+    });
+
+    test("marketplace validation rejects identity, duplication, path, and referenced package drift", () => {
+        const valid = {
+            name: "creditsync-marketplace",
+            interface: { displayName: "CreditSync" },
+            plugins: [{
+                name: "creditsync",
+                source: { source: "local", path: "./plugins/creditsync" },
+                policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
+                category: "Productivity",
+            }],
+        };
+        expect(validateMarketplaceContract({ ...valid, name: "personal" }, true, "creditsync"))
+            .toContain("repo marketplace name must be creditsync-marketplace");
+        expect(validateMarketplaceContract({ ...valid, plugins: [...valid.plugins, valid.plugins[0]] }, true, "creditsync"))
+            .toContain("repo marketplace must contain exactly one creditsync plugin entry");
+        expect(validateMarketplaceContract({
+            ...valid,
+            plugins: [{ ...valid.plugins[0], source: { source: "local", path: "./plugins/other" } }],
+        }, true, "creditsync")).toContain("repo marketplace plugin source must be local at ./plugins/creditsync");
+        expect(validateMarketplaceContract(valid, false, "creditsync"))
+            .toContain("repo marketplace plugin source directory is missing");
+        expect(validateMarketplaceContract(valid, true, "other"))
+            .toContain("repo marketplace source manifest name must be creditsync");
     });
 
     test("package includes an executable validator and excludes deferred capabilities", async () => {

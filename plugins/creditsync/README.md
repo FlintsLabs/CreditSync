@@ -29,16 +29,23 @@ python3 /home/flintstone/.codex/skills/.system/plugin-creator/scripts/validate_p
 
 The committed placeholder is deliberately non-runnable. Validation accepts either that documented placeholder or a syntactically valid registered `plugin_asdk_app_...` technical ID, while clearly reporting placeholder state as non-live. Local contract/eval validation does not claim that private registration or live authentication has succeeded.
 
-## Repository marketplace
+## Git repository marketplace
 
-From a checkout of this repository, add the non-default local marketplace and install its plugin:
+Add the public Git repository as a non-default marketplace that tracks `main`, then install its plugin:
 
 ```bash
-codex plugin marketplace add /absolute/path/to/CreditSync
-codex plugin add creditsync@personal
+codex plugin marketplace add FlintsLabs/CreditSync --ref main
+codex plugin add creditsync@creditsync-marketplace
 ```
 
-Start a new Codex task after installation so plugin skills and the private app are discovered together. For an updated local build, use the plugin-creator cachebuster/reinstall workflow; do not hand-edit an installed marketplace snapshot.
+Codex checks out a Git marketplace snapshot, reads `.agents/plugins/marketplace.json`, and resolves `./plugins/creditsync` inside that snapshot. After a validated plugin update is pushed to `main`, refresh and reinstall it:
+
+```bash
+codex plugin marketplace upgrade creditsync-marketplace
+codex plugin add creditsync@creditsync-marketplace
+```
+
+Publishing to Git does not hot-reload an installed copy. Start a new Codex task after reinstalling so the updated skills and private app are discovered together. Do not hand-edit the installed marketplace snapshot.
 
 ## Operational behavior
 

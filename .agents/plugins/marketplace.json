@@ -1,7 +1,7 @@
 {
-  "name": "personal",
+  "name": "creditsync-marketplace",
   "interface": {
-    "displayName": "Personal"
+    "displayName": "CreditSync"
   },
   "plugins": [
     {

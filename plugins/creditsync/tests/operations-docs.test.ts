@@ -6,6 +6,20 @@ import { resolve } from "node:path";
 const repositoryRoot = resolve(import.meta.dir, "../../..");
 
 describe("CreditSync MCP operational safety documentation", () => {
+    test("Git marketplace installation and updates are documented consistently", async () => {
+        const rootReadme = await readFile(resolve(repositoryRoot, "README.md"), "utf8");
+        const pluginReadme = await readFile(resolve(repositoryRoot, "plugins/creditsync/README.md"), "utf8");
+        for (const readme of [rootReadme, pluginReadme]) {
+            expect(readme).toContain("codex plugin marketplace add FlintsLabs/CreditSync --ref main");
+            expect(readme).toContain("codex plugin add creditsync@creditsync-marketplace");
+            expect(readme).toContain("codex plugin marketplace upgrade creditsync-marketplace");
+        }
+        expect(pluginReadme).toContain("does not hot-reload");
+        expect(pluginReadme).toContain("Start a new Codex task after reinstalling");
+        expect(pluginReadme).not.toContain("creditsync@personal");
+        expect(pluginReadme).not.toContain("/absolute/path/to/CreditSync");
+    });
+
     test("documented token generation hashes exact bytes without a trailing newline", async () => {
         const operations = await readFile(resolve(repositoryRoot, "docs/operations/agent-mcp-plugin.md"), "utf8");
         expect(operations).toContain("openssl rand -hex 32 | tr -d '\\n'");
