@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.11 - 2026-08-13
+
+### Added
+- Added the approved design for a Git-backed CreditSync Codex marketplace that tracks `main`, resolves the in-repository plugin path, and documents explicit snapshot refresh and reinstall behavior.
+
 ## v0.3.10 - 2026-08-12
 
 ### Added
