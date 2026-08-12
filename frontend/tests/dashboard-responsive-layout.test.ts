@@ -33,7 +33,7 @@ describe("authenticated responsive page layout", () => {
 
   it("uses flat divider-separated repayment queues on mobile with desktop containment", () => {
     expect(dashboardSource).toContain(
-      'const QUEUE_SECTION_CLASS = "rounded-none border-0 bg-transparent shadow-none md:rounded-lg md:border md:bg-card md:text-card-foreground md:shadow-sm";',
+      'const QUEUE_SECTION_CLASS = "min-w-0 rounded-none border-0 bg-transparent shadow-none md:rounded-lg md:border md:bg-card md:text-card-foreground md:shadow-sm";',
     );
     expect(dashboardSource).toContain(
       'const QUEUE_HEADER_CLASS = "px-0 pb-3 pt-0 md:p-6";',
@@ -48,6 +48,18 @@ describe("authenticated responsive page layout", () => {
     expect(dashboardSource.match(/className=\{QUEUE_ROW_CLASS\}/g)).toHaveLength(2);
     expect(dashboardSource).not.toContain(
       'className="group flex w-full flex-col items-stretch gap-3 rounded-xl border p-3 text-left',
+    );
+  });
+
+  it("uses zero-minimum mobile grid tracks so dashboard content cannot exceed the viewport", () => {
+    expect(dashboardSource).toContain(
+      'className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(0,0.88fr)_minmax(0,1.4fr)]"',
+    );
+    expect(dashboardSource).toContain(
+      'className="grid min-w-0 grid-cols-1 gap-6 lg:grid-cols-2"',
+    );
+    expect(dashboardSource).toContain(
+      'const QUEUE_SECTION_CLASS = "min-w-0 rounded-none',
     );
   });
 });

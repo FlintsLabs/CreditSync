@@ -44,7 +44,7 @@ import {
 
 type Resource<T> = { data: T | null; loading: boolean; error: boolean };
 
-const QUEUE_SECTION_CLASS = "rounded-none border-0 bg-transparent shadow-none md:rounded-lg md:border md:bg-card md:text-card-foreground md:shadow-sm";
+const QUEUE_SECTION_CLASS = "min-w-0 rounded-none border-0 bg-transparent shadow-none md:rounded-lg md:border md:bg-card md:text-card-foreground md:shadow-sm";
 const QUEUE_HEADER_CLASS = "px-0 pb-3 pt-0 md:p-6";
 const QUEUE_CONTENT_CLASS = "divide-y divide-border/70 p-0 md:px-6 md:pb-6";
 const QUEUE_ROW_CLASS = "group flex min-h-16 w-full items-center justify-between gap-3 py-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 md:px-3";
@@ -394,7 +394,7 @@ export default function Dashboard() {
         </div>
       </section>
 
-      <div className="grid gap-6 xl:grid-cols-[0.88fr_1.4fr]">
+      <div className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(0,0.88fr)_minmax(0,1.4fr)]">
         <Card className="h-fit border-primary/20">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -436,7 +436,7 @@ export default function Dashboard() {
           </CardContent>
         </Card>
 
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid min-w-0 grid-cols-1 gap-6 lg:grid-cols-2">
           <Card className={QUEUE_SECTION_CLASS}>
             <CardHeader className={`flex flex-row items-start justify-between gap-3 ${QUEUE_HEADER_CLASS}`}>
               <div>
