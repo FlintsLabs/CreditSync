@@ -4,6 +4,7 @@
 
 ### Added
 - Added the approved design for a Git-backed CreditSync Codex marketplace that tracks `main`, resolves the in-repository plugin path, and documents explicit snapshot refresh and reinstall behavior.
+- Added the v0.3.11 implementation plan for marketplace identity validation, Git installation and update documentation, and full plugin-package verification.
 
 ## v0.3.10 - 2026-08-12
 
