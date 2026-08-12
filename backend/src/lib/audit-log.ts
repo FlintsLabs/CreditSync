@@ -14,7 +14,7 @@ export interface CreateAuditLogInput {
 }
 
 export async function createAuditLog(executor: any, input: CreateAuditLogInput) {
-    await executor.insert(auditLogs).values({
+    return await executor.insert(auditLogs).values({
         tenantId: input.tenantId,
         actorUserId: input.actorUserId ?? null,
         actorSource: input.actorSource ?? "system",
@@ -24,7 +24,7 @@ export async function createAuditLog(executor: any, input: CreateAuditLogInput) 
         entityId: String(input.entityId),
         action: input.action,
         payload: input.payload ?? null,
-    });
+    }).returning().then((rows: Array<typeof auditLogs.$inferSelect>) => rows[0]!);
 }
 
 export async function writeAuditLog(input: CreateAuditLogInput) {

@@ -110,6 +110,7 @@
         "transactions": "Transactions",
         "payments": "Payment Inbox",
         "reconciliation": "Reconciliation",
+        "intermediaries": "Intermediaries",
         "settings": "Settings",
         "language": "Language",
         "openNavigation": "Open navigation",
@@ -822,6 +823,18 @@
         "INVALID_ALIAS": "Enter a valid alias.", "ALIAS_ALREADY_EXISTS": "That alias already exists.",
         "STALE_RENEWAL_PREVIEW": "This renewal preview is stale. Create a new preview.", "WAIVER_REASON_REQUIRED": "Enter a reason for the waiver.",
         "WAIVER_EXCEEDS_DUE_CHARGES": "The waiver cannot exceed the charges due."
+    },
+    "intermediary": {
+        "title": "Intermediary remittances",
+        "subtitle": "Track money collected from borrowers separately from money remitted to the lender.",
+        "all": "All intermediaries",
+        "held": "Borrower payments held",
+        "noHeld": "No held payments",
+        "linked": "linked to existing payment",
+        "unposted": "awaiting remittance posting",
+        "remitted": "Remittances received",
+        "noRemittances": "No remittances",
+        "balance": "Remaining balance"
     },
     "loanDetail": {
         "title": "Loan agreement",

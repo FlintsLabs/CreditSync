@@ -1,10 +1,10 @@
 # CreditSync Plugin Changelog
 
-## 2.2.0 - 2026-08-11
+## 2.3.0 - 2026-08-12
 
 ### Added
 
-- Added three closed-schema floating-interest MCP tools and the `manage-floating-interest-rates` list/preview/confirmed-execute workflow with scripted confirmation safety coverage.
+- Added the intermediary collection/remittance MCP workflow, exact allocation preview, remittance-slip evidence lifecycle, historical payment linking without double posting, and the `reconcile-intermediary-remittances` orchestration skill.
 
 ## 2.1.0 - 2026-08-10
 

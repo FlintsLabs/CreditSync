@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Outlet, Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, Users, Wallet, FileText, Settings, Activity, Menu, X, ArrowRightLeft, ScanSearch, Inbox } from "lucide-react";
+import { LayoutDashboard, Users, Wallet, FileText, Settings, Activity, Menu, X, ArrowRightLeft, ScanSearch, Inbox, HandCoins } from "lucide-react";
 import { cn } from "../lib/utils";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import AppBar, { UserAccountMenu } from "../components/AppBar";
@@ -25,6 +25,7 @@ export default function DashboardLayout() {
         ...(isTenantAdmin ? [
             { name: t("nav.matching", "Matching"), href: "/matching", icon: ArrowRightLeft },
             { name: t("nav.reconciliation", "Reconciliation"), href: "/reconciliation", icon: ScanSearch },
+            { name: t("nav.intermediaries", "Intermediaries"), href: "/intermediaries", icon: HandCoins },
             { name: t("dashboard.funds", "Funds"), href: "/funds", icon: Wallet },
         ] : []),
         { name: t("nav.settings", "Settings"), href: SETTINGS_PATH, icon: Settings },

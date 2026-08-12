@@ -3,6 +3,7 @@
 ## v0.3.10 - 2026-08-12
 
 ### Added
+- Added an intermediary collection and remittance workflow with exact explicit allocation, historical posted-payment linking without duplicate financial entries, signed remittance-slip evidence, 11 closed-schema MCP tools, an operator dashboard, and the CreditSync Plugin 2.3.0 orchestration skill.
 - Added the v0.3.10 test-first implementation plan for semantic Payment Inbox status colors.
 - Added the approved Payment Inbox semantic status-color design for accessible green, gray, amber, blue, red, and orange state distinctions.
 - Added compact, localized, on-demand evidence preview dialogs across Payment Inbox, transaction and reconciliation slips, loan disbursement evidence, and borrower ID-card images, with tenant-safe file access descriptors and graceful image, PDF, fallback, retry, and open-original states.

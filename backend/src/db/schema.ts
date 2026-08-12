@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+    boolean,
     check,
     date,
     foreignKey,
@@ -1041,6 +1042,7 @@ export const intermediaryCollections = pgTable("intermediary_collections", {
     note: text("note"),
     manualApprovalReason: text("manual_approval_reason"),
     postedPaymentIntakeId: integer("posted_payment_intake_id"),
+    paymentIntakePreexisting: boolean("payment_intake_preexisting").default(false).notNull(),
     createdByUserId: integer("created_by_user_id"),
     updatedByUserId: integer("updated_by_user_id"),
     approvedByUserId: integer("approved_by_user_id"),
@@ -1146,4 +1148,41 @@ export const intermediaryRemittanceProposals = pgTable("intermediary_remittance_
     check("intermediary_remittance_proposals_status_check", sql`${table.status} IN ('needs_review', 'ready', 'stale', 'expired')`),
     foreignKey({ name: "intermediary_proposals_tenant_remittance_fk", columns: [table.tenantId, table.remittanceId], foreignColumns: [intermediaryRemittances.tenantId, intermediaryRemittances.id] }),
     foreignKey({ name: "intermediary_proposals_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
+
+export const intermediaryRemittanceEvidence = pgTable("intermediary_remittance_evidence", {
+    id: serial("id").primaryKey(),
+    tenantId: tenantId,
+    remittanceId: integer("remittance_id").notNull(),
+    fileId: integer("file_id").notNull(),
+    createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+    uniqueIndex("intermediary_remittance_evidence_remittance_file_unique").on(table.remittanceId, table.fileId),
+    foreignKey({ name: "intermediary_remittance_evidence_tenant_remittance_fk", columns: [table.tenantId, table.remittanceId], foreignColumns: [intermediaryRemittances.tenantId, intermediaryRemittances.id] }),
+    foreignKey({ name: "intermediary_remittance_evidence_tenant_file_fk", columns: [table.tenantId, table.fileId], foreignColumns: [files.tenantId, files.id] }),
+]);
+
+export const intermediaryRemittanceEvidenceIntents = pgTable("intermediary_remittance_evidence_intents", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    remittanceId: integer("remittance_id").notNull(),
+    fileId: integer("file_id").notNull(),
+    status: text("status").default("pending").notNull(),
+    evidenceHash: text("evidence_hash").notNull(),
+    mimeType: text("mime_type").notNull(),
+    declaredSize: integer("declared_size").notNull(),
+    uploadExpiresAt: timestamp("upload_expires_at"),
+    finalizedAt: timestamp("finalized_at"),
+    createdByUserId: integer("created_by_user_id"),
+    updatedByUserId: integer("updated_by_user_id"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+    uniqueIndex("intermediary_remittance_evidence_intents_tenant_hash_unique").on(table.tenantId, table.evidenceHash),
+    check("intermediary_remittance_evidence_intents_status_check", sql`${table.status} IN ('pending', 'ready')`),
+    foreignKey({ name: "intermediary_remittance_evidence_intents_tenant_remittance_fk", columns: [table.tenantId, table.remittanceId], foreignColumns: [intermediaryRemittances.tenantId, intermediaryRemittances.id] }),
+    foreignKey({ name: "intermediary_remittance_evidence_intents_tenant_file_fk", columns: [table.tenantId, table.fileId], foreignColumns: [files.tenantId, files.id] }),
+    foreignKey({ name: "intermediary_remittance_evidence_intents_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+    foreignKey({ name: "intermediary_remittance_evidence_intents_tenant_updated_by_fk", columns: [table.tenantId, table.updatedByUserId], foreignColumns: [users.tenantId, users.id] }),
 ]);

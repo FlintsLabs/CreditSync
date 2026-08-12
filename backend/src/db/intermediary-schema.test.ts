@@ -4,6 +4,8 @@ import {
     intermediaries,
     intermediaryCollections,
     intermediaryRemittanceAllocations,
+    intermediaryRemittanceEvidence,
+    intermediaryRemittanceEvidenceIntents,
     intermediaryRemittanceProposals,
     intermediaryRemittances,
 } from "./schema";
@@ -17,13 +19,15 @@ describe("intermediary settlement ledger schema", () => {
         const remittance = getTableConfig(intermediaryRemittances);
         const allocation = getTableConfig(intermediaryRemittanceAllocations);
         const proposal = getTableConfig(intermediaryRemittanceProposals);
+        const evidence = getTableConfig(intermediaryRemittanceEvidence);
+        const evidenceIntent = getTableConfig(intermediaryRemittanceEvidenceIntents);
 
         expect(intermediary.columns.map((column) => column.name)).toEqual(expect.arrayContaining([
             "public_id", "tenant_id", "name", "normalized_name", "status", "created_at", "updated_at",
         ]));
         expect(collection.columns.map((column) => column.name)).toEqual(expect.arrayContaining([
             "public_id", "tenant_id", "intermediary_id", "borrower_id", "loan_id", "amount",
-            "borrower_paid_at", "status", "idempotency_key", "bank_reference_hash", "posted_payment_intake_id",
+            "borrower_paid_at", "status", "idempotency_key", "bank_reference_hash", "posted_payment_intake_id", "payment_intake_preexisting",
         ]));
         expect(remittance.columns.map((column) => column.name)).toEqual(expect.arrayContaining([
             "public_id", "tenant_id", "intermediary_id", "gross_amount", "received_at", "status",
@@ -36,10 +40,22 @@ describe("intermediary settlement ledger schema", () => {
             "public_id", "tenant_id", "remittance_id", "version", "status", "selected_total",
             "remaining_balance", "state_hash", "expires_at",
         ]));
+        expect(evidence.columns.map((column) => column.name)).toEqual(expect.arrayContaining(["tenant_id", "remittance_id", "file_id"]));
+        expect(evidenceIntent.columns.map((column) => column.name)).toEqual(expect.arrayContaining(["public_id", "tenant_id", "remittance_id", "file_id", "status", "evidence_hash", "upload_expires_at"]));
 
         expect(collection.checks.map((check) => check.name)).toContain("intermediary_collections_status_check");
         expect(remittance.checks.map((check) => check.name)).toContain("intermediary_remittances_status_check");
         expect(allocation.indexes.some((index) => index.config.name === "intermediary_allocations_active_collection_unique" && index.config.unique)).toBe(true);
+    });
+
+    test("registers remittance evidence migration", async () => {
+        const [journal, sql] = await Promise.all([
+            Bun.file(`${backendRoot}drizzle/meta/_journal.json`).json(),
+            Bun.file(`${backendRoot}drizzle/0026_intermediary_remittance_evidence.sql`).text(),
+        ]);
+        expect(sql).toContain('CREATE TABLE "intermediary_remittance_evidence_intents"');
+        expect(sql).toContain('CREATE TABLE "intermediary_remittance_evidence"');
+        expect(journal.entries.some((entry: { tag: string }) => entry.tag === "0026_intermediary_remittance_evidence")).toBe(true);
     });
 
     test("registers an additive migration with immutable posted records", async () => {

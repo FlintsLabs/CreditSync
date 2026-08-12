@@ -2,13 +2,23 @@ import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, intermediaries, intermediaryCollections, intermediaryRemittanceAllocations, intermediaryRemittanceProposals, intermediaryRemittances, loans, paymentIntakes, users } from "../db/schema";
+import { auditLogs, borrowers, files, intermediaries, intermediaryCollections, intermediaryRemittanceAllocations, intermediaryRemittanceEvidence, intermediaryRemittanceEvidenceIntents, intermediaryRemittanceProposals, intermediaryRemittances, loans, paymentIntakes, transactions, users } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import { canAccessTenantWideData } from "../lib/access";
 import { parseMoney, serializeMoney } from "../lib/money";
+import { BUCKET_NAME, createSignedPutUrl, headStoredObject, toStorageReference, type SignedPutRequest, type StoredObjectHead } from "../lib/storage";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import { postPayment, previewPaymentMatch, reversePayment } from "./payment-service";
+
+export interface IntermediaryRemittanceEvidenceGateway {
+    preparePut(request: SignedPutRequest): Promise<{ uploadUrl: string; expiresAt: Date; requiredHeaders?: Record<string, string> }>;
+    head(key: string, bucket?: string): Promise<StoredObjectHead>;
+}
+
+const remittanceEvidenceGateway: IntermediaryRemittanceEvidenceGateway = { preparePut: createSignedPutUrl, head: headStoredObject };
+const evidenceTypes = new Set(["image/jpeg", "image/png", "application/pdf"]);
+const evidenceHashPattern = /^[0-9a-f]{64}$/i;
 
 export function normalizeIntermediaryText(value: string) {
     return value.normalize("NFKC").toLocaleLowerCase("und")
@@ -36,7 +46,7 @@ function presentIntermediary(row: typeof intermediaries.$inferSelect) {
 }
 
 function presentCollection(row: typeof intermediaryCollections.$inferSelect) {
-    return { publicId: row.publicId, intermediaryId: row.intermediaryId, borrowerId: row.borrowerId, loanId: row.loanId, amount: serializeMoney(row.amount), borrowerPaidAt: row.borrowerPaidAt.toISOString(), status: row.status, bankReference: row.bankReference, note: row.note, manualApprovalReason: row.manualApprovalReason, createdAt: row.createdAt, updatedAt: row.updatedAt };
+    return { publicId: row.publicId, intermediaryId: row.intermediaryId, borrowerId: row.borrowerId, loanId: row.loanId, amount: serializeMoney(row.amount), borrowerPaidAt: row.borrowerPaidAt.toISOString(), status: row.status, bankReference: row.bankReference, note: row.note, manualApprovalReason: row.manualApprovalReason, linkedPaymentIntake: Boolean(row.postedPaymentIntakeId), createdAt: row.createdAt, updatedAt: row.updatedAt };
 }
 
 export async function createIntermediary(ctx: CommandContext, input: { name: string; aliases?: string[]; notes?: string | null }) {
@@ -89,6 +99,7 @@ export interface CreateIntermediaryCollectionInput {
     borrowerPaidAt: string;
     bankReference?: string | null;
     note?: string | null;
+    paymentIntakePublicId?: string | null;
 }
 
 export async function createIntermediaryCollection(ctx: CommandContext, input: CreateIntermediaryCollectionInput) {
@@ -101,16 +112,25 @@ export async function createIntermediaryCollection(ctx: CommandContext, input: C
     const actor = await actorFor(ctx);
     const replay = await db.query.intermediaryCollections.findFirst({ where: and(eq(intermediaryCollections.tenantId, ctx.tenantId), eq(intermediaryCollections.idempotencyKey, idempotencyKey)) });
     if (replay) return presentCollection(replay);
-    const [intermediary, borrower, loan] = await Promise.all([
+    const [intermediary, borrower, loan, linkedIntake] = await Promise.all([
         db.query.intermediaries.findFirst({ where: and(eq(intermediaries.tenantId, ctx.tenantId), eq(intermediaries.publicId, input.intermediaryPublicId)) }),
         db.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, ctx.tenantId), eq(borrowers.publicId, input.borrowerPublicId)) }),
         db.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.publicId, input.loanPublicId)) }),
+        input.paymentIntakePublicId ? db.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.publicId, input.paymentIntakePublicId)) }) : null,
     ]);
     if (!intermediary) throw new DomainError("INTERMEDIARY_NOT_FOUND", "Intermediary not found", 404);
     if (!borrower || (actor && !canAccessTenantWideData({ role: actor.role ?? "viewer" }) && borrower.ownerUserId !== actor.id)) throw new DomainError("BORROWER_NOT_FOUND", "Borrower not found", 404);
     if (!loan || loan.borrowerId !== borrower.id || (actor && !canAccessTenantWideData({ role: actor.role ?? "viewer" }) && loan.ownerUserId !== actor.id)) throw new DomainError("LOAN_NOT_FOUND", "Loan not found for borrower", 404);
+    if (input.paymentIntakePublicId) {
+        if (!linkedIntake || !["ready", "posted"].includes(linkedIntake.status) || linkedIntake.receivedAt.getTime() !== borrowerPaidAt.getTime()) throw new DomainError("INVALID_LINKED_PAYMENT", "Linked payment must be ready or posted with the same borrower-paid timestamp", 409);
+        if (linkedIntake.status === "posted") {
+            const linkedTransactions = await db.select().from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.paymentIntakeId, linkedIntake.id), eq(transactions.loanId, loan.id), eq(transactions.entryType, "repayment")));
+            const linkedTotal = linkedTransactions.reduce((sum, row) => sum.plus(row.amount), new Decimal(0));
+            if (!linkedTotal.eq(amount)) throw new DomainError("INVALID_LINKED_PAYMENT", "Linked posted payment amount and loan allocation must exactly match the collection", 409);
+        } else if (!new Decimal(linkedIntake.amount).eq(amount)) throw new DomainError("INVALID_LINKED_PAYMENT", "Linked ready payment amount must exactly match the collection", 409);
+    }
     return db.transaction(async (tx) => {
-        const row = await tx.insert(intermediaryCollections).values({ tenantId: ctx.tenantId, ownerUserId: ctx.actorUserId, intermediaryId: intermediary.id, borrowerId: borrower.id, loanId: loan.id, amount: serializeMoney(amount), borrowerPaidAt, status: "pending_remittance", idempotencyKey, bankReference: input.bankReference?.trim() || null, bankReferenceHash: referenceHash(input.bankReference), note: input.note?.trim() || null, createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((rows) => rows[0]!);
+        const row = await tx.insert(intermediaryCollections).values({ tenantId: ctx.tenantId, ownerUserId: ctx.actorUserId, intermediaryId: intermediary.id, borrowerId: borrower.id, loanId: loan.id, amount: serializeMoney(amount), borrowerPaidAt, status: "pending_remittance", idempotencyKey, bankReference: input.bankReference?.trim() || null, bankReferenceHash: referenceHash(input.bankReference), note: input.note?.trim() || null, postedPaymentIntakeId: linkedIntake?.id ?? null, paymentIntakePreexisting: linkedIntake?.status === "posted", createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((rows) => rows[0]!);
         const after = presentCollection(row);
         await createAuditLog(tx, { ...auditContext(ctx), entityType: "intermediary_collection", entityId: row.publicId, action: "created", payload: { before: null, after } });
         return after;
@@ -184,6 +204,62 @@ export async function listIntermediaryRemittances(ctx: CommandContext, filters: 
     }));
 }
 
+export async function prepareIntermediaryRemittanceEvidence(ctx: CommandContext, publicId: string, input: { mimeType: string; size: number; sha256: string; originalName?: string | null }, gateway: IntermediaryRemittanceEvidenceGateway = remittanceEvidenceGateway) {
+    const maxBytes = Math.max(1, Number(process.env.EVIDENCE_MAX_BYTES ?? 20 * 1024 * 1024));
+    if (!evidenceTypes.has(input.mimeType) || !Number.isSafeInteger(input.size) || input.size <= 0 || input.size > maxBytes || !evidenceHashPattern.test(input.sha256)) throw new DomainError("INVALID_EVIDENCE", "Evidence must have an allowed MIME type, positive size, and SHA-256 checksum", 400);
+    await actorFor(ctx);
+    const remittance = await db.query.intermediaryRemittances.findFirst({ where: and(eq(intermediaryRemittances.tenantId, ctx.tenantId), eq(intermediaryRemittances.publicId, publicId)) });
+    if (!remittance) throw new DomainError("INTERMEDIARY_REMITTANCE_NOT_FOUND", "Remittance not found", 404);
+    if (!["draft", "needs_review", "ready"].includes(remittance.status)) throw new DomainError("INTERMEDIARY_REMITTANCE_IMMUTABLE", "Evidence can only be prepared before posting", 409);
+    const sha256 = input.sha256.toLowerCase();
+    const existing = await db.query.intermediaryRemittanceEvidenceIntents.findFirst({ where: and(eq(intermediaryRemittanceEvidenceIntents.tenantId, ctx.tenantId), eq(intermediaryRemittanceEvidenceIntents.evidenceHash, sha256)) });
+    if (existing) {
+        if (existing.remittanceId !== remittance.id) throw new DomainError("EVIDENCE_HASH_CONFLICT", "Evidence checksum belongs to another remittance", 409);
+        const file = await db.query.files.findFirst({ where: and(eq(files.tenantId, ctx.tenantId), eq(files.id, existing.fileId)) });
+        if (!file) throw new DomainError("EVIDENCE_FILE_NOT_FOUND", "Evidence file not found", 404);
+        if (existing.status === "ready") return { publicId: existing.publicId, filePublicId: file.publicId, status: "ready" as const };
+        if (existing.mimeType !== input.mimeType || existing.declaredSize !== input.size) throw new DomainError("EVIDENCE_HASH_CONFLICT", "Existing evidence intent has different metadata", 409);
+        const signed = await gateway.preparePut({ bucket: file.bucket, key: file.key, contentType: input.mimeType, contentLength: input.size, checksumSha256: sha256, metadata: { tenant: ctx.tenantId, remittance: remittance.publicId } });
+        await db.update(intermediaryRemittanceEvidenceIntents).set({ uploadExpiresAt: signed.expiresAt, updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(eq(intermediaryRemittanceEvidenceIntents.id, existing.id));
+        return { publicId: existing.publicId, filePublicId: file.publicId, status: "pending" as const, objectKey: file.key, uploadUrl: signed.uploadUrl, expiresAt: signed.expiresAt, requiredHeaders: signed.requiredHeaders ?? {} };
+    }
+    const key = `intermediary-remittance-evidence/${ctx.tenantId}/${remittance.publicId}/${crypto.randomUUID()}`;
+    const created = await db.transaction(async (tx) => {
+        const file = await tx.insert(files).values({ tenantId: ctx.tenantId, ownerUserId: ctx.actorUserId, bucket: BUCKET_NAME, key, originalName: input.originalName?.trim() || null, mimeType: input.mimeType, size: input.size, url: toStorageReference({ provider: "s3", bucket: BUCKET_NAME, key }) }).returning().then((rows) => rows[0]!);
+        const intent = await tx.insert(intermediaryRemittanceEvidenceIntents).values({ tenantId: ctx.tenantId, remittanceId: remittance.id, fileId: file.id, status: "pending", evidenceHash: sha256, mimeType: input.mimeType, declaredSize: input.size, createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((rows) => rows[0]!);
+        return { file, intent };
+    });
+    try {
+        const signed = await gateway.preparePut({ bucket: BUCKET_NAME, key, contentType: input.mimeType, contentLength: input.size, checksumSha256: sha256, metadata: { tenant: ctx.tenantId, remittance: remittance.publicId } });
+        await db.update(intermediaryRemittanceEvidenceIntents).set({ uploadExpiresAt: signed.expiresAt, updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(eq(intermediaryRemittanceEvidenceIntents.id, created.intent.id));
+        return { publicId: created.intent.publicId, filePublicId: created.file.publicId, status: "pending" as const, objectKey: key, uploadUrl: signed.uploadUrl, expiresAt: signed.expiresAt, requiredHeaders: signed.requiredHeaders ?? {} };
+    } catch (error) {
+        await db.transaction(async (tx) => { await tx.delete(intermediaryRemittanceEvidenceIntents).where(eq(intermediaryRemittanceEvidenceIntents.id, created.intent.id)); await tx.delete(files).where(eq(files.id, created.file.id)); });
+        throw error;
+    }
+}
+
+export async function finalizeIntermediaryRemittanceEvidence(ctx: CommandContext, publicId: string, evidencePublicId: string, gateway: IntermediaryRemittanceEvidenceGateway = remittanceEvidenceGateway) {
+    await actorFor(ctx);
+    const remittance = await db.query.intermediaryRemittances.findFirst({ where: and(eq(intermediaryRemittances.tenantId, ctx.tenantId), eq(intermediaryRemittances.publicId, publicId)) });
+    if (!remittance) throw new DomainError("INTERMEDIARY_REMITTANCE_NOT_FOUND", "Remittance not found", 404);
+    const intent = await db.query.intermediaryRemittanceEvidenceIntents.findFirst({ where: and(eq(intermediaryRemittanceEvidenceIntents.tenantId, ctx.tenantId), eq(intermediaryRemittanceEvidenceIntents.publicId, evidencePublicId), eq(intermediaryRemittanceEvidenceIntents.remittanceId, remittance.id)) });
+    if (!intent) throw new DomainError("EVIDENCE_NOT_FOUND", "Remittance evidence not found", 404);
+    const file = await db.query.files.findFirst({ where: and(eq(files.tenantId, ctx.tenantId), eq(files.id, intent.fileId)) });
+    if (!file) throw new DomainError("EVIDENCE_FILE_NOT_FOUND", "Evidence file not found", 404);
+    if (intent.status === "ready") return { publicId: intent.publicId, filePublicId: file.publicId, status: "ready" as const, sha256: intent.evidenceHash };
+    if (intent.uploadExpiresAt && intent.uploadExpiresAt.getTime() < Date.now()) throw new DomainError("EVIDENCE_UPLOAD_EXPIRED", "Evidence upload intent has expired", 409);
+    const head = await gateway.head(file.key, file.bucket);
+    if (!head.exists || head.contentType !== intent.mimeType || head.contentLength !== intent.declaredSize || head.checksumSha256?.toLowerCase() !== intent.evidenceHash || head.metadata.tenant !== ctx.tenantId || head.metadata.remittance !== remittance.publicId) throw new DomainError("EVIDENCE_METADATA_MISMATCH", "Stored evidence metadata, size, type, or ownership does not match", 409);
+    return db.transaction(async (tx) => {
+        const updated = await tx.update(intermediaryRemittanceEvidenceIntents).set({ status: "ready", finalizedAt: new Date(), updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(eq(intermediaryRemittanceEvidenceIntents.id, intent.id), eq(intermediaryRemittanceEvidenceIntents.status, "pending"))).returning().then((rows) => rows[0]);
+        if (!updated) throw new DomainError("EVIDENCE_FINALIZE_CONFLICT", "Evidence can no longer be finalized", 409);
+        await tx.insert(intermediaryRemittanceEvidence).values({ tenantId: ctx.tenantId, remittanceId: remittance.id, fileId: file.id }).onConflictDoNothing();
+        await createAuditLog(tx, { ...auditContext(ctx), entityType: "intermediary_remittance", entityId: remittance.publicId, action: "evidence_finalized", payload: { evidencePublicId: updated.publicId, filePublicId: file.publicId, sha256: updated.evidenceHash } });
+        return { publicId: updated.publicId, filePublicId: file.publicId, status: "ready" as const, sha256: updated.evidenceHash };
+    });
+}
+
 async function remittanceSelection(executor: any, tenantId: string, remittanceId: number) {
     const allocations = await executor.select().from(intermediaryRemittanceAllocations).where(and(eq(intermediaryRemittanceAllocations.tenantId, tenantId), eq(intermediaryRemittanceAllocations.remittanceId, remittanceId), sql`${intermediaryRemittanceAllocations.releasedAt} IS NULL`)).orderBy(intermediaryRemittanceAllocations.allocationOrder);
     const collections = allocations.length ? await executor.select().from(intermediaryCollections).where(and(eq(intermediaryCollections.tenantId, tenantId), inArray(intermediaryCollections.id, allocations.map((row: typeof intermediaryRemittanceAllocations.$inferSelect) => row.collectionId)))) : [];
@@ -248,7 +324,9 @@ export async function postIntermediaryRemittance(ctx: CommandContext, publicId: 
         await tx.execute(sql`SELECT id FROM intermediary_remittances WHERE id = ${remittance.id} FOR UPDATE`);
         if (remittance.status === "posted") {
             if (remittance.postIdempotencyKey !== postKey) throw new DomainError("REMITTANCE_POST_IDEMPOTENCY_CONFLICT", "Remittance was posted with a different idempotency key", 409);
-            return presentRemittance(remittance, new Decimal(remittance.grossAmount));
+            const audit = await tx.query.auditLogs.findFirst({ where: and(eq(auditLogs.tenantId, ctx.tenantId), eq(auditLogs.entityType, "intermediary_remittance"), eq(auditLogs.entityId, remittance.publicId), eq(auditLogs.action, "posted")), orderBy: [desc(auditLogs.id)] });
+            if (!audit) throw new DomainError("FINANCIAL_AUDIT_NOT_FOUND", "Posted remittance audit record is missing", 409);
+            return { ...presentRemittance(remittance, new Decimal(remittance.grossAmount)), auditPublicId: audit.publicId, correlationId: audit.correlationId ?? ctx.correlationId };
         }
         const proposal = await tx.query.intermediaryRemittanceProposals.findFirst({ where: and(eq(intermediaryRemittanceProposals.tenantId, ctx.tenantId), eq(intermediaryRemittanceProposals.publicId, input.proposalPublicId), eq(intermediaryRemittanceProposals.remittanceId, remittance.id)) });
         if (!proposal || proposal.status !== "ready" || proposal.expiresAt.getTime() < Date.now()) throw new DomainError("STALE_REMITTANCE_PROPOSAL", "Remittance proposal is not ready or has expired", 409);
@@ -266,17 +344,29 @@ export async function postIntermediaryRemittance(ctx: CommandContext, publicId: 
                 tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, collection.loanId)) }),
             ]);
             if (!borrower || !loan) throw new DomainError("STALE_REMITTANCE_PROPOSAL", "Collection target no longer exists", 409);
-            const intake = await tx.insert(paymentIntakes).values({ tenantId: ctx.tenantId, ownerUserId: collection.ownerUserId, source: ctx.actorSource === "mcp" ? "mcp" : "web", status: "draft", amount: serializeMoney(collection.amount), receivedAt: collection.borrowerPaidAt, payerName: borrower.name, bankReference: collection.bankReference, bankReferenceHash: collection.bankReferenceHash, idempotencyKey: `intermediary:${collection.publicId}`, notes: `Settled by intermediary remittance ${remittance.publicId}`, originLoanId: loan.id, warnings: [], createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((rows) => rows[0]!);
-            await createAuditLog(tx, { ...auditContext(ctx), entityType: "payment_intake", entityId: intake.publicId, action: "created", payload: { amount: serializeMoney(collection.amount), receivedAt: collection.borrowerPaidAt.toISOString(), originLoanPublicId: loan.publicId, intermediaryCollectionPublicId: collection.publicId, remittancePublicId: remittance.publicId } });
-            const paymentProposal = await previewPaymentMatch(ctx, intake.publicId, { allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: loan.publicId, amount: serializeMoney(collection.amount) }] }, tx);
-            if (paymentProposal.status !== "ready") throw new DomainError("REMITTANCE_PAYMENT_NOT_READY", "A collection payment requires review", 409, { collectionPublicId: collection.publicId, warnings: paymentProposal.warnings });
-            await postPayment(ctx, intake.publicId, { proposalPublicId: paymentProposal.publicId }, tx);
-            await tx.update(intermediaryCollections).set({ status: "settled", postedPaymentIntakeId: intake.id, settledAt: new Date(), updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(eq(intermediaryCollections.id, collection.id));
+            let postedPaymentIntakeId = collection.postedPaymentIntakeId;
+            if (postedPaymentIntakeId) {
+                const linkedIntake = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, postedPaymentIntakeId)) });
+                if (!linkedIntake || !["ready", "posted"].includes(linkedIntake.status)) throw new DomainError("STALE_REMITTANCE_PROPOSAL", "Linked payment is no longer ready or posted", 409);
+                if (linkedIntake.status === "ready") {
+                    const paymentProposal = await previewPaymentMatch(ctx, linkedIntake.publicId, { allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: loan.publicId, amount: serializeMoney(collection.amount) }] }, tx);
+                    if (paymentProposal.status !== "ready") throw new DomainError("REMITTANCE_PAYMENT_NOT_READY", "A linked collection payment requires review", 409, { collectionPublicId: collection.publicId, warnings: paymentProposal.warnings });
+                    await postPayment(ctx, linkedIntake.publicId, { proposalPublicId: paymentProposal.publicId }, tx);
+                }
+            } else {
+                const intake = await tx.insert(paymentIntakes).values({ tenantId: ctx.tenantId, ownerUserId: collection.ownerUserId, source: ctx.actorSource === "mcp" ? "mcp" : "web", status: "draft", amount: serializeMoney(collection.amount), receivedAt: collection.borrowerPaidAt, payerName: borrower.name, bankReference: collection.bankReference, bankReferenceHash: collection.bankReferenceHash, idempotencyKey: `intermediary:${collection.publicId}`, notes: `Settled by intermediary remittance ${remittance.publicId}`, originLoanId: loan.id, warnings: [], createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((rows) => rows[0]!);
+                await createAuditLog(tx, { ...auditContext(ctx), entityType: "payment_intake", entityId: intake.publicId, action: "created", payload: { amount: serializeMoney(collection.amount), receivedAt: collection.borrowerPaidAt.toISOString(), originLoanPublicId: loan.publicId, intermediaryCollectionPublicId: collection.publicId, remittancePublicId: remittance.publicId } });
+                const paymentProposal = await previewPaymentMatch(ctx, intake.publicId, { allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: loan.publicId, amount: serializeMoney(collection.amount) }] }, tx);
+                if (paymentProposal.status !== "ready") throw new DomainError("REMITTANCE_PAYMENT_NOT_READY", "A collection payment requires review", 409, { collectionPublicId: collection.publicId, warnings: paymentProposal.warnings });
+                await postPayment(ctx, intake.publicId, { proposalPublicId: paymentProposal.publicId }, tx);
+                postedPaymentIntakeId = intake.id;
+            }
+            await tx.update(intermediaryCollections).set({ status: "settled", postedPaymentIntakeId, settledAt: new Date(), updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(eq(intermediaryCollections.id, collection.id));
         }
         await tx.update(intermediaryRemittanceProposals).set({ status: "stale" }).where(and(eq(intermediaryRemittanceProposals.remittanceId, remittance.id), sql`${intermediaryRemittanceProposals.id} <> ${proposal.id}`));
         const posted = await tx.update(intermediaryRemittances).set({ status: "posted", postIdempotencyKey: postKey, postedByUserId: ctx.actorUserId, postedAt: new Date(), updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(eq(intermediaryRemittances.id, remittance.id)).returning().then((rows) => rows[0]!);
-        await createAuditLog(tx, { ...auditContext(ctx), entityType: "intermediary_remittance", entityId: posted.publicId, action: "posted", payload: { proposalPublicId: proposal.publicId, collectionPublicIds: selection.collections.map((row: typeof intermediaryCollections.$inferSelect) => row.publicId), amount: serializeMoney(posted.grossAmount) } });
-        return presentRemittance(posted, selection.selected);
+        const audit = await createAuditLog(tx, { ...auditContext(ctx), entityType: "intermediary_remittance", entityId: posted.publicId, action: "posted", payload: { proposalPublicId: proposal.publicId, collectionPublicIds: selection.collections.map((row: typeof intermediaryCollections.$inferSelect) => row.publicId), amount: serializeMoney(posted.grossAmount) } });
+        return { ...presentRemittance(posted, selection.selected), auditPublicId: audit.publicId, correlationId: ctx.correlationId };
     });
     return result;
 }
@@ -334,8 +424,13 @@ export async function reverseIntermediaryRemittance(ctx: CommandContext, publicI
             if (collection.status !== "settled" || !collection.postedPaymentIntakeId) throw new DomainError("REMITTANCE_REVERSAL_BLOCKED", "Every remittance collection must still be settled", 409);
             const intake = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, collection.postedPaymentIntakeId)) });
             if (!intake) throw new DomainError("REMITTANCE_REVERSAL_BLOCKED", "A posted collection payment is missing", 409);
-            await reversePayment(ctx, intake.publicId, { reason }, tx);
-            await tx.update(intermediaryCollections).set({ status: "reversed", reversedAt: new Date(), updatedByUserId: actor.id, updatedAt: new Date() }).where(eq(intermediaryCollections.id, collection.id));
+            if (collection.paymentIntakePreexisting) {
+                await tx.update(intermediaryRemittanceAllocations).set({ releasedAt: new Date() }).where(and(eq(intermediaryRemittanceAllocations.tenantId, ctx.tenantId), eq(intermediaryRemittanceAllocations.remittanceId, remittance.id), eq(intermediaryRemittanceAllocations.collectionId, collection.id), sql`${intermediaryRemittanceAllocations.releasedAt} IS NULL`));
+                await tx.update(intermediaryCollections).set({ status: "pending_remittance", settledAt: null, reversedAt: null, updatedByUserId: actor.id, updatedAt: new Date() }).where(eq(intermediaryCollections.id, collection.id));
+            } else {
+                await reversePayment(ctx, intake.publicId, { reason }, tx);
+                await tx.update(intermediaryCollections).set({ status: "reversed", reversedAt: new Date(), updatedByUserId: actor.id, updatedAt: new Date() }).where(eq(intermediaryCollections.id, collection.id));
+            }
         }
         const reversed = await tx.update(intermediaryRemittances).set({ status: "reversed", reversalIdempotencyKey: reversalKey, reversalReason: reason, reversedByUserId: actor.id, reversedAt: new Date(), updatedByUserId: actor.id, updatedAt: new Date() }).where(eq(intermediaryRemittances.id, remittance.id)).returning().then((rows) => rows[0]!);
         await createAuditLog(tx, { ...auditContext(ctx), entityType: "intermediary_remittance", entityId: reversed.publicId, action: "reversed", payload: { reason, collectionPublicIds: ordered.map((row) => row.publicId), amount: serializeMoney(reversed.grossAmount) } });

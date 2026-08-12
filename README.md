@@ -108,6 +108,8 @@ Payment Inbox presents incoming payments as a responsive flat list and loads 25 
 
 The authenticated loan-disbursement API is rooted at `/loans/:loanPublicId/disbursements`. It provides list, draft create/update, `/:disbursementId/evidence/upload-intents`, `/:disbursementId/evidence/:evidenceId/finalize`, `/:disbursementId/post`, and `/:disbursementId/reverse` operations. Gross transfer and loan-attributed amounts are exact two-decimal strings; grouped transfers require a note. Draft commands deliberately reject `evidenceFilePublicIds`: create the draft first, then prepare a signed evidence upload and finalize that evidence against the draft. Post and reverse require an `Idempotency-Key`, and reversal also requires a non-blank reason. These ledger events do not change approved principal, schedules, or funding allocations.
 
+Intermediary money is tracked as two linked ledgers. `/intermediary-collections` records the amount and time a borrower paid a collector without prematurely posting lender cash, while `/intermediary-remittances` records the gross transfer received from that collector. Operators explicitly select collections, preview an exact zero-balance proposal, optionally attach the remittance slip through `evidence/prepare` followed by direct signed PUT and `evidence/:evidenceId/finalize`, then post with confirmation and an idempotency key. Historical collections may reference an already-posted payment intake; CreditSync validates loan, timestamp, and exact amount and does not create a second repayment. The `/intermediaries` dashboard shows held borrower money, remittances received, and unmatched balances.
+
 The web app exposes `/payments` as the human review inbox. It persists and shows semantic-duplicate warnings, requires an explicit warning acknowledgment, accepts optional signed evidence, edits any number of exact allocations across borrowers/loans/schedules, retains the previous proposal for a meaningful difference view, and requires a ready preview of the exact current editor revision before posting. Allocation edits are locked while previewing; every edit/add/remove/selection change invalidates the ready proposal, and stale responses are discarded. Reversal uses a separate reason-confirmation step. The manual repayment shortcut creates the intake and opens it in this review screen with the selected loan/schedule suggested; it never auto-posts or calls the disabled legacy write endpoint.
 
 ### 5. Funding and Traceability
@@ -336,7 +338,7 @@ loan.disbursement.evidence.prepare  loan.disbursement.evidence.finalize
 loan.disbursement.post       loan.disbursement.reverse
 ```
 
-Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Payment posting/reversal, loan activation, floating-interest execution, renewal execution/reversal, and disbursement post/reverse also return public correlation and audit IDs. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces. The bundled Plugin `2.2.0` freezes the matching 29-tool backend contract.
+Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Payment posting/reversal, loan activation, floating-interest execution, renewal execution/reversal, disbursement post/reverse, and intermediary remittance posting follow explicit confirmation and audit boundaries. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces. The bundled Plugin `2.3.0` freezes the matching 40-tool backend contract.
 
 ### Configure and rotate the bearer token
 
@@ -358,7 +360,7 @@ For rotation, put the old and new hashes in `MCP_API_TOKEN_HASHES` separated by 
 
 ## Private CreditSync Plugin
 
-The repository includes CreditSync Plugin `2.2.0` under [`plugins/creditsync`](./plugins/creditsync). It combines seven orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
+The repository includes CreditSync Plugin `2.3.0` under [`plugins/creditsync`](./plugins/creditsync). It combines eight orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
 
 Before installation, register the deployed MCP endpoint as a private Codex app and replace the conspicuous `plugin_asdk_app_REPLACE_AFTER_PRIVATE_REGISTRATION` value in `plugins/creditsync/.app.json` with the returned `plugin_asdk_app...` technical ID. Then validate and install from the repository marketplace:
 

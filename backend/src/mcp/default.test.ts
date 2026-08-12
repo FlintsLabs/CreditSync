@@ -20,6 +20,7 @@ import {
 } from "../db/schema";
 import type { EvidenceStorageGateway } from "../services/payment-service";
 import type { DisbursementEvidenceStorageGateway } from "../services/loan-disbursement-service";
+import type { IntermediaryRemittanceEvidenceGateway } from "../services/intermediary-service";
 import { createDefaultMcpHttpPlugin } from "./default";
 import { MCP_TOOL_NAMES, type McpToolName } from "./server";
 
@@ -70,7 +71,7 @@ function runtimeEnv() {
     };
 }
 
-async function startDefaultServer(options?: { evidenceGateway?: EvidenceStorageGateway; disbursementEvidenceGateway?: DisbursementEvidenceStorageGateway }) {
+async function startDefaultServer(options?: { evidenceGateway?: EvidenceStorageGateway; disbursementEvidenceGateway?: DisbursementEvidenceStorageGateway; intermediaryRemittanceEvidenceGateway?: IntermediaryRemittanceEvidenceGateway }) {
     const app = new Elysia().use(createDefaultMcpHttpPlugin(runtimeEnv(), options)).listen({ hostname: "127.0.0.1", port: 0 });
     runningApps.push(app);
     const client = new Client({ name: "creditsync-default-adapter-test", version: "1.0.0" });
@@ -378,7 +379,7 @@ describe("default MCP adapter integration", () => {
                 metadata: {},
             },
         };
-        const { client, transport } = await startDefaultServer({ evidenceGateway, disbursementEvidenceGateway: evidenceGateway });
+        const { client, transport } = await startDefaultServer({ evidenceGateway, disbursementEvidenceGateway: evidenceGateway, intermediaryRemittanceEvidenceGateway: evidenceGateway });
         const listed = await client.listTools();
         expect(listed.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
         const called: McpToolName[] = [];
@@ -501,6 +502,27 @@ describe("default MCP adapter integration", () => {
             paymentIntakePublicId: intakePublicId,
             reason: "Correct duplicate transfer",
         });
+
+        await call("intermediary.search", { query: "MCP all-tools collector" });
+        const intermediary = (await call("intermediary.create", { name: "MCP all-tools collector" })).data;
+        const collection = (await call("intermediary.collection.create", {
+            intermediaryPublicId: intermediary.publicId, borrowerPublicId, loanPublicId, amount: "40.00",
+            borrowerPaidAt: "2026-08-10T01:00:00.000Z", bankReference: "MCP-COLLECTION-1",
+            idempotencyKey: "mcp-all-tools-collection",
+        })).data;
+        await call("intermediary.collection.list", { intermediaryPublicId: intermediary.publicId, status: "pending_remittance" });
+        const remittance = (await call("intermediary.remittance.create", {
+            intermediaryPublicId: intermediary.publicId, grossAmount: "40.00", receivedAt: "2026-08-10T02:00:00.000Z",
+            bankReference: "MCP-REMITTANCE-1", idempotencyKey: "mcp-all-tools-remittance",
+        })).data;
+        await call("intermediary.remittance.get", { remittancePublicId: remittance.publicId });
+        const remittanceEvidence = (await call("intermediary.remittance.evidence.prepare", {
+            remittancePublicId: remittance.publicId, mimeType: "image/png", size: 4, sha256: "d".repeat(64),
+        })).data;
+        await call("intermediary.remittance.evidence.finalize", { remittancePublicId: remittance.publicId, evidencePublicId: remittanceEvidence.publicId });
+        await call("intermediary.remittance.allocations.save", { remittancePublicId: remittance.publicId, collectionPublicIds: [collection.publicId] });
+        const remittancePreview = (await call("intermediary.remittance.preview", { remittancePublicId: remittance.publicId })).data;
+        await call("intermediary.remittance.post", { remittancePublicId: remittance.publicId, proposalPublicId: remittancePreview.publicId, confirmed: true, idempotencyKey: "mcp-all-tools-remittance-post" });
 
         const renewal = (await call("renewal.preview", {
             oldLoanPublicId: loanPublicId,

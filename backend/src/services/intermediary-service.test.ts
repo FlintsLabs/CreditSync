@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, intermediaries, intermediaryCollections, loans, transactions, users } from "../db/schema";
+import { borrowers, intermediaries, intermediaryCollections, intermediaryRemittanceEvidence, loans, paymentIntakes, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
-import { createIntermediary, createIntermediaryCollection, createIntermediaryRemittance, manualApproveIntermediaryCollection, normalizeIntermediaryText, postIntermediaryRemittance, previewIntermediaryRemittance, reverseIntermediaryRemittance, saveRemittanceAllocations } from "./intermediary-service";
+import { createIntermediary, createIntermediaryCollection, createIntermediaryRemittance, finalizeIntermediaryRemittanceEvidence, manualApproveIntermediaryCollection, normalizeIntermediaryText, postIntermediaryRemittance, prepareIntermediaryRemittanceEvidence, previewIntermediaryRemittance, reverseIntermediaryRemittance, saveRemittanceAllocations } from "./intermediary-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
 
@@ -30,6 +30,49 @@ describe("intermediary collection service", () => {
         expect(await db.select().from(intermediaryCollections)).toHaveLength(1);
         expect(await db.select().from(transactions).where(eq(transactions.loanId, loan.id))).toHaveLength(0);
         expect(await db.select().from(intermediaries)).toHaveLength(1);
+    });
+
+    integrationTest("prepares and verifies remittance-slip evidence before linking it", async () => {
+        await db.execute(sql`TRUNCATE TABLE audit_logs, intermediary_remittance_evidence_intents, intermediary_remittance_evidence, intermediary_remittances, intermediaries, files, users RESTART IDENTITY CASCADE`);
+        const actor = await db.insert(users).values({ tenantId: "tenant-a", email: "evidence@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const ctx: CommandContext = { tenantId: actor.tenantId, actorUserId: actor.id, actorSource: "web", requestId: "req-evidence", correlationId: "corr-evidence" };
+        const intermediary = await createIntermediary(ctx, { name: "Collector Evidence" });
+        const remittance = await createIntermediaryRemittance({ ...ctx, idempotencyKey: "remit-evidence" }, { intermediaryPublicId: intermediary.publicId, grossAmount: "180.00", receivedAt: "2026-08-07T14:54:00+07:00" });
+        const sha256 = "a".repeat(64);
+        const gateway = { preparePut: async () => ({ uploadUrl: "https://upload.invalid/object", expiresAt: new Date(Date.now() + 60_000) }), head: async () => ({ exists: true, contentType: "image/png", contentLength: 12, checksumSha256: sha256, metadata: { tenant: actor.tenantId, remittance: remittance.publicId } }) };
+        const prepared = await prepareIntermediaryRemittanceEvidence(ctx, remittance.publicId, { mimeType: "image/png", size: 12, sha256 }, gateway);
+        expect(prepared).toMatchObject({ status: "pending", uploadUrl: "https://upload.invalid/object" });
+        const finalized = await finalizeIntermediaryRemittanceEvidence(ctx, remittance.publicId, prepared.publicId, gateway);
+        expect(finalized).toMatchObject({ status: "ready", sha256 });
+        expect(await db.select().from(intermediaryRemittanceEvidence)).toHaveLength(1);
+    });
+
+    integrationTest("settles a historical collection linked to a posted intake without posting the loan twice", async () => {
+        await db.execute(sql`TRUNCATE TABLE audit_logs, intermediary_remittance_proposals,
+            intermediary_remittance_allocations, intermediary_remittances, intermediary_collections,
+            intermediaries, transactions, payment_intakes, loans, borrowers, users RESTART IDENTITY CASCADE`);
+        const actor = await db.insert(users).values({ tenantId: "tenant-a", email: "history@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId: actor.tenantId, ownerUserId: actor.id, name: "Borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({ tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "5000.00", interestRate: "0.00", repaymentType: "floating", outstandingPrincipal: "5000.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" }).returning().then((rows) => rows[0]!);
+        const receivedAt = new Date("2026-08-07T07:54:00.000Z");
+        const intake = await db.insert(paymentIntakes).values({ tenantId: actor.tenantId, ownerUserId: actor.id, status: "posted", amount: "180.00", receivedAt, bankReference: "borrower-ref", postedAt: new Date() }).returning().then((rows) => rows[0]!);
+        await db.insert(transactions).values({ tenantId: actor.tenantId, ownerUserId: actor.id, loanId: loan.id, paymentIntakeId: intake.id, amount: "180.00", interestComponent: "180.00", entryType: "repayment", idempotencyKey: "historical-payment" });
+        const base: CommandContext = { tenantId: actor.tenantId, actorUserId: actor.id, actorSource: "web", requestId: "req-history", correlationId: "corr-history" };
+        const intermediary = await createIntermediary(base, { name: "Collector" });
+        const collection = await createIntermediaryCollection({ ...base, idempotencyKey: "history-collection" }, {
+            intermediaryPublicId: intermediary.publicId, borrowerPublicId: borrower.publicId, loanPublicId: loan.publicId,
+            amount: "180.00", borrowerPaidAt: receivedAt.toISOString(), bankReference: "borrower-ref", paymentIntakePublicId: intake.publicId,
+        });
+        const remittance = await createIntermediaryRemittance({ ...base, idempotencyKey: "history-remittance" }, { intermediaryPublicId: intermediary.publicId, grossAmount: "180.00", receivedAt: "2026-08-07T14:54:00+07:00", bankReference: "remit-ref" });
+        await saveRemittanceAllocations(base, remittance.publicId, { collectionPublicIds: [collection.publicId] });
+        const preview = await previewIntermediaryRemittance(base, remittance.publicId);
+        await postIntermediaryRemittance({ ...base, idempotencyKey: "history-post" }, remittance.publicId, { proposalPublicId: preview.publicId, confirmed: true });
+
+        expect(await db.select().from(transactions).where(eq(transactions.loanId, loan.id))).toHaveLength(1);
+        expect((await db.select().from(intermediaryCollections))[0]).toMatchObject({ status: "settled", postedPaymentIntakeId: intake.id });
+        await reverseIntermediaryRemittance({ ...base, idempotencyKey: "history-reverse" }, remittance.publicId, { reason: "Collector transfer was recalled" });
+        expect(await db.select().from(transactions).where(eq(transactions.loanId, loan.id))).toHaveLength(1);
+        expect((await db.select().from(intermediaryCollections))[0]).toMatchObject({ status: "pending_remittance", postedPaymentIntakeId: intake.id, paymentIntakePreexisting: true });
     });
 
     integrationTest("persists explicit selections and previews exact remittance balance without auto-selection", async () => {

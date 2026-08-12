@@ -59,12 +59,19 @@ import {
     type CreateDisbursementDraftInput,
     type PrepareDisbursementEvidenceInput,
 } from "../services/loan-disbursement-service";
+import {
+    createIntermediary, createIntermediaryCollection, createIntermediaryRemittance,
+    finalizeIntermediaryRemittanceEvidence, getIntermediaryRemittance, listIntermediaryCollections,
+    postIntermediaryRemittance, prepareIntermediaryRemittanceEvidence, previewIntermediaryRemittance,
+    saveRemittanceAllocations, searchIntermediaries, type IntermediaryRemittanceEvidenceGateway,
+} from "../services/intermediary-service";
 
 type ToolInput = Record<string, unknown>;
 
 export interface DefaultMcpDependencies {
     evidenceGateway?: EvidenceStorageGateway;
     disbursementEvidenceGateway?: DisbursementEvidenceStorageGateway;
+    intermediaryRemittanceEvidenceGateway?: IntermediaryRemittanceEvidenceGateway;
 }
 
 function asString(input: ToolInput, field: string) {
@@ -169,6 +176,17 @@ export function createDefaultMcpToolHandlers(
     "loan.disbursement.evidence.finalize": (ctx, input) => finalizeDisbursementEvidence(ctx, asString(input, "disbursementPublicId"), asString(input, "evidencePublicId"), dependencies.disbursementEvidenceGateway),
     "loan.disbursement.post": (ctx, input) => postDisbursement(ctx, asString(input, "disbursementPublicId")),
     "loan.disbursement.reverse": (ctx, input) => reverseDisbursement(ctx, asString(input, "disbursementPublicId"), asString(input, "reason")),
+    "intermediary.search": async (ctx, input) => ({ items: await searchIntermediaries(ctx, asString(input, "query")) }),
+    "intermediary.create": (ctx, input) => createIntermediary(ctx, input as { name: string; aliases?: string[]; notes?: string | null }),
+    "intermediary.collection.list": async (ctx, input) => ({ items: await listIntermediaryCollections(ctx, { intermediaryPublicId: input.intermediaryPublicId as string | undefined, status: input.status as string | undefined }) }),
+    "intermediary.collection.create": (ctx, input) => createIntermediaryCollection(ctx, input as any),
+    "intermediary.remittance.get": (ctx, input) => getIntermediaryRemittance(ctx, asString(input, "remittancePublicId")),
+    "intermediary.remittance.create": (ctx, input) => createIntermediaryRemittance(ctx, input as any),
+    "intermediary.remittance.allocations.save": (ctx, input) => saveRemittanceAllocations(ctx, asString(input, "remittancePublicId"), { collectionPublicIds: input.collectionPublicIds as string[] }),
+    "intermediary.remittance.preview": (ctx, input) => previewIntermediaryRemittance(ctx, asString(input, "remittancePublicId")),
+    "intermediary.remittance.evidence.prepare": (ctx, input) => { const { remittancePublicId, ...evidence } = input; return prepareIntermediaryRemittanceEvidence(ctx, String(remittancePublicId), evidence as any, dependencies.intermediaryRemittanceEvidenceGateway); },
+    "intermediary.remittance.evidence.finalize": (ctx, input) => finalizeIntermediaryRemittanceEvidence(ctx, asString(input, "remittancePublicId"), asString(input, "evidencePublicId"), dependencies.intermediaryRemittanceEvidenceGateway),
+    "intermediary.remittance.post": (ctx, input) => postIntermediaryRemittance(ctx, asString(input, "remittancePublicId"), { proposalPublicId: asString(input, "proposalPublicId"), confirmed: input.confirmed as boolean }),
     "renewal.preview": (ctx, input) => previewLoanRenewal(ctx, asString(input, "oldLoanPublicId"), {
         requestedPrincipal: asString(input, "requestedPrincipal"),
         waivedCharges: input.waivedCharges as string | undefined,
@@ -195,6 +213,7 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "loan.interest-rate.execute": { entityType: "loan_interest_rate_timeline", action: "interest_rate_timeline_changed" },
     "loan.disbursement.post": { entityType: "loan_disbursement", action: "posted" },
     "loan.disbursement.reverse": { entityType: "loan_disbursement", action: "reversed" },
+    "intermediary.remittance.post": { entityType: "intermediary_remittance", action: "posted" },
     "renewal.execute": { entityType: "loan_renewal", action: "executed" },
     "renewal.reverse": { entityType: "loan_renewal", action: "reversed" },
 };

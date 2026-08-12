@@ -17,6 +17,7 @@ import TransactionList from "./pages/dashboard/transactions/TransactionList";
 import TransactionForm from "./pages/dashboard/transactions/TransactionForm";
 import ReconciliationPage from "./pages/dashboard/reconciliation/ReconciliationPage";
 import PaymentInbox from "./pages/dashboard/payments/PaymentInbox";
+import IntermediaryRemittances from "./pages/dashboard/intermediaries/IntermediaryRemittances";
 import AccountPreferencesPage from "./pages/dashboard/settings/AccountPreferencesPage";
 import LandingPage from "./pages/LandingPage";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -60,6 +61,7 @@ function App() {
               <Route path="transactions" element={<TransactionList />} />
               <Route path="transactions/new" element={<TransactionForm />} />
               <Route path="payments" element={<PaymentInbox />} />
+              <Route path="intermediaries" element={<IntermediaryRemittances />} />
               <Route path="reconciliation" element={<ReconciliationPage />} />
               <Route path="settings" element={<AccountPreferencesPage />} />
               <Route path="dashboard/settings" element={<Navigate to={SETTINGS_PATH} replace />} />

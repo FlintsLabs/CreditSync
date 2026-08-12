@@ -1,12 +1,12 @@
-# CreditSync Plugin 2.2.0
+# CreditSync Plugin 2.3.0
 
-This private Codex plugin orchestrates the CreditSync MCP app for borrower identity, payments, effective-dated floating-interest changes, loan disbursements, renewals, and append-only reversal.
+This private Codex plugin orchestrates the CreditSync MCP app for borrower identity, payments, intermediary remittances, effective-dated floating-interest changes, loan disbursements, renewals, and append-only reversal.
 
 ## Package contract
 
-- Plugin version: `2.2.0`
+- Plugin version: `2.3.0`
 - MCP schema version: `1.0`
-- Skills: `creditsync`, `manage-borrowers`, `reconcile-payments`, `manage-loans`, `manage-floating-interest-rates`, `manage-disbursements`, `renew-daily-loan`
+- Skills: `creditsync`, `manage-borrowers`, `reconcile-payments`, `reconcile-intermediary-remittances`, `manage-loans`, `manage-floating-interest-rates`, `manage-disbursements`, `renew-daily-loan`
 - App manifest: `.app.json`
 - Remote endpoint: registered private app pointing to `https://<creditsync-host>/mcp`
 

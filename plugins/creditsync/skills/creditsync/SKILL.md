@@ -1,6 +1,6 @@
 ---
 name: creditsync
-description: Use when managing CreditSync borrowers, payment reconciliation, loans, floating-interest timelines, disbursements, renewals, or financial reversals through the private CreditSync app.
+description: Use when managing CreditSync borrowers, payment reconciliation, intermediary remittances, loans, floating-interest timelines, disbursements, renewals, or financial reversals through the private CreditSync app.
 ---
 
 # CreditSync
@@ -36,6 +36,7 @@ Every activation, post, reversal, and renewal uses explicit public IDs. Supply c
 - Loan preview, draft, and activation: use `manage-loans`.
 - Floating-loan interest timeline inspection and scheduled changes: use `manage-floating-interest-rates`.
 - Actual loan disbursement, optional payout evidence, variance review, posting, or reversal: use `manage-disbursements`.
+- Borrower payments held by a collector, remittance slips, exact allocation, and posting: use `reconcile-intermediary-remittances`.
 - Daily-loan reset/renewal and reversal: use `renew-daily-loan`.
 
 Use the plugin references for the frozen tool contract, matching policy, financial rules, and error recovery. Do not use generic HTTP, SQL, or web requests as a substitute for a missing CreditSync tool.
