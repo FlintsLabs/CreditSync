@@ -35,6 +35,7 @@
 - Added the Git-backed `creditsync-marketplace` catalog with exact source-path and package validation plus consistent install, refresh, reinstall, and new-task instructions.
 
 ### Fixed
+- Serialized floating-interest materialization with settlement and payment writes through the tenant-scoped loan row lock, reloading lifecycle state before accrual changes so paid loans cannot gain concurrent future accruals.
 - Prevented backdated floating-loan settlements from closing across later active accruals, and recorded exact funded principal-return, interest-income, fee-income, and penalty-income effects atomically through the shared payment ledger allocation path.
 - Fixed weekly floating-interest backdating and corrections to use append-only replacement snapshots with transaction-date provenance, through-date payable filtering, atomic contextual accrual audits, exact period metadata, legacy daily health dates, paid-allocation conflict stops, and cumulative-consistent sparse correction suffixes.
 - Rejected unknown top-level and nested floating-origination fields before Elysia normalization, and persisted tenant-scoped activation command keys/results so only exact same-key retries replay while conflicting keys stop without financial side effects.

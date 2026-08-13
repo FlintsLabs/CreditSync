@@ -258,15 +258,36 @@ async function accrueFloatingInterestThroughInTransaction(tx: Executor, loan: ty
 }
 
 export async function accrueFloatingInterestThrough(executor: Executor, loan: typeof loans.$inferSelect, through: Date, ctx: CommandContext) {
+    if (loan.repaymentType !== "floating") return [];
+    if (loan.tenantId !== ctx.tenantId) {
+        throw new DomainError("FLOATING_LOAN_NOT_FOUND", "Floating loan not found", 404);
+    }
     const run = async (tx: Executor) => {
+        await tx.execute(sql`SELECT id FROM loans
+            WHERE tenant_id = ${ctx.tenantId} AND id = ${loan.id} FOR UPDATE`);
+        const lockedLoan = await tx.query.loans.findFirst({ where: and(
+            eq(loans.tenantId, ctx.tenantId),
+            eq(loans.id, loan.id),
+        ) });
+        if (!lockedLoan || lockedLoan.repaymentType !== "floating") {
+            throw new DomainError("FLOATING_LOAN_NOT_FOUND", "Floating loan not found", 404);
+        }
+        if (lockedLoan.status !== "active") {
+            throw new DomainError(
+                "FLOATING_LOAN_NOT_ACTIVE",
+                "Floating interest can be materialized only for an active loan",
+                409,
+                { loanPublicId: lockedLoan.publicId, status: lockedLoan.status },
+            );
+        }
         const before = await tx.select().from(loanInterestAccruals).where(and(
-            eq(loanInterestAccruals.tenantId, loan.tenantId),
-            eq(loanInterestAccruals.loanId, loan.id),
+            eq(loanInterestAccruals.tenantId, lockedLoan.tenantId),
+            eq(loanInterestAccruals.loanId, lockedLoan.id),
         ));
         const beforeById = new Map<number, typeof loanInterestAccruals.$inferSelect>(before.map(
             (row: typeof loanInterestAccruals.$inferSelect) => [row.id, row],
         ));
-        const rows = await accrueFloatingInterestThroughInTransaction(tx, loan, through, ctx);
+        const rows = await accrueFloatingInterestThroughInTransaction(tx, lockedLoan, through, ctx);
         const inserted = rows.filter((row: typeof loanInterestAccruals.$inferSelect) => !beforeById.has(row.id));
         const promoted = rows.filter((row: typeof loanInterestAccruals.$inferSelect) => {
             const old = beforeById.get(row.id);
@@ -280,7 +301,7 @@ export async function accrueFloatingInterestThrough(executor: Executor, loan: ty
                 requestId: ctx.requestId,
                 correlationId: ctx.correlationId,
                 entityType: "loan",
-                entityId: loan.publicId,
+                entityId: lockedLoan.publicId,
                 action: "floating_interest_accruals_materialized",
                 payload: {
                     throughDate: bangkokDate(through),

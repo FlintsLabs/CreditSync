@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
     auditLogs,
@@ -60,6 +60,18 @@ function context(actor: { id: number; tenantId: string }, idempotencyKey: string
         correlationId: `corr-${idempotencyKey}`,
         idempotencyKey,
     };
+}
+
+async function waitForBlockedAdvisoryLock() {
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline) {
+        const rows = await db.execute(sql`SELECT EXISTS (
+            SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND granted = false
+        ) AS waiting`);
+        if (rows[0]?.waiting === true) return;
+        await Bun.sleep(10);
+    }
+    throw new Error("Settlement did not reach the test advisory-lock barrier");
 }
 
 const paidAdvanceIncrements = ["85.71", "85.72", "85.71", "85.72", "85.71", "85.72", "85.71"];
@@ -243,6 +255,82 @@ describe("loan settlement service", () => {
         expect(await db.select().from(fundLedgerEntries).where(eq(fundLedgerEntries.loanId, seeded.loan.id))).toHaveLength(0);
         expect(await db.select().from(loanInterestAccruals)
             .where(eq(loanInterestAccruals.loanId, seeded.loan.id)).orderBy(loanInterestAccruals.id)).toEqual(accrualsBefore);
+    });
+
+    // Break caught: standalone materialization inserts future active accruals after a concurrent settlement has committed paid.
+    integrationTest("serializes settlement with a concurrent future accrual materializer", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-accrual-race" });
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-15");
+        const advisoryKey = 81_305_201;
+        await db.execute(sql`CREATE OR REPLACE FUNCTION block_close_account_for_accrual_race()
+            RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.type = 'close_account' THEN
+                    PERFORM pg_advisory_xact_lock(81305201);
+                END IF;
+                RETURN NEW;
+            END $$`);
+        await db.execute(sql`CREATE TRIGGER block_close_account_for_accrual_race
+            BEFORE INSERT ON transactions
+            FOR EACH ROW EXECUTE FUNCTION block_close_account_for_accrual_race()`);
+
+        let markBarrierHeld!: () => void;
+        let releaseBarrier!: () => void;
+        const barrierHeld = new Promise<void>((resolve) => { markBarrierHeld = resolve; });
+        const barrierRelease = new Promise<void>((resolve) => { releaseBarrier = resolve; });
+        const blocker = db.transaction(async (tx) => {
+            await tx.execute(sql`SELECT pg_advisory_xact_lock(${advisoryKey})`);
+            markBarrierHeld();
+            await barrierRelease;
+        });
+        let settling: ReturnType<typeof executeLoanSettlement> | undefined;
+        let materializing: ReturnType<typeof accrueFloatingInterestThrough> | undefined;
+        try {
+            await barrierHeld;
+            settling = executeLoanSettlement(context(seeded.actor, "settlement-accrual-race"), {
+                settlementPublicId: preview.publicId,
+                previewHash: preview.previewHash,
+                confirmed: true,
+                reason: "Close while a future health read races",
+            });
+            settling.catch(() => undefined);
+            await waitForBlockedAdvisoryLock();
+
+            materializing = accrueFloatingInterestThrough(
+                db,
+                seeded.loan,
+                new Date("2026-08-20T12:00:00+07:00"),
+                context(seeded.actor, "materialize-after-settlement-check"),
+            );
+            materializing.catch(() => undefined);
+            releaseBarrier();
+            const [settlementResult, materializationResult] = await Promise.allSettled([settling, materializing]);
+
+            expect(settlementResult).toMatchObject({
+                status: "fulfilled",
+                value: { status: "executed", settlementTotal: "5257.14" },
+            });
+            expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({
+                status: "paid",
+                outstandingPrincipal: "0.00",
+            });
+            expect(await db.select().from(loanInterestAccruals).where(and(
+                eq(loanInterestAccruals.loanId, seeded.loan.id),
+                inArray(loanInterestAccruals.status, ["accrued", "accruing", "due", "partially_paid"]),
+                sql`${loanInterestAccruals.accrualDate} > '2026-08-15'`,
+            ))).toHaveLength(0);
+            expect(materializationResult).toMatchObject({
+                status: "rejected",
+                reason: { code: "FLOATING_LOAN_NOT_ACTIVE", status: 409 },
+            });
+        } finally {
+            releaseBarrier();
+            await Promise.allSettled([blocker, settling, materializing].filter(
+                (item): item is Promise<unknown> => item !== undefined,
+            ));
+            await db.execute(sql`DROP TRIGGER IF EXISTS block_close_account_for_accrual_race ON transactions`);
+            await db.execute(sql`DROP FUNCTION IF EXISTS block_close_account_for_accrual_race()`);
+        }
     });
 
     // Break caught: close-out refunds an unused part of the already-paid advance period or charges it twice.
