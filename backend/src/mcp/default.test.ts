@@ -11,6 +11,7 @@ import {
     auditLogs,
     borrowers,
     loanFundingAllocations,
+    loanDisbursementEvents,
     loanInterestRatePeriods,
     loanSchedules,
     loans,
@@ -448,7 +449,6 @@ describe("default MCP adapter integration", () => {
             disbursedAt: "2026-08-10T00:00:00.000Z",
         })).data;
         const disbursementPublicId = String(disbursement.publicId);
-        await call("loan.disbursement.list", { loanPublicId });
         const disbursementEvidence = (await call("loan.disbursement.evidence.prepare", {
             disbursementPublicId,
             mimeType: "image/png",
@@ -459,10 +459,38 @@ describe("default MCP adapter integration", () => {
             disbursementPublicId,
             evidencePublicId: disbursementEvidence.publicId,
         });
+        const updatedDisbursement = (await call("loan.disbursement.update", {
+            disbursementPublicId,
+            changes: { loanAttributedAmount: "95.00", note: "Corrected attributed amount" },
+        })).data;
+        expect(updatedDisbursement).toMatchObject({
+            publicId: disbursementPublicId,
+            grossAmount: "100.00",
+            loanAttributedAmount: "95.00",
+            channel: "cash",
+            note: "Corrected attributed amount",
+            evidenceFilePublicIds: [disbursementEvidence.filePublicId],
+        });
+        const updateAudit = (await db.select().from(auditLogs)).find((entry) =>
+            entry.entityId === disbursementPublicId && entry.action === "draft_updated");
+        expect(updateAudit?.payload).toMatchObject({
+            before: { grossAmount: "100.00", loanAttributedAmount: "100.00", channel: "cash" },
+            after: { grossAmount: "100.00", loanAttributedAmount: "95.00", channel: "cash", note: "Corrected attributed amount" },
+        });
+        const refreshedDisbursements = (await call("loan.disbursement.list", { loanPublicId })).data;
+        expect(refreshedDisbursements.events).toEqual(expect.arrayContaining([
+            expect.objectContaining({ publicId: disbursementPublicId, loanAttributedAmount: "95.00", evidenceFilePublicIds: [disbursementEvidence.filePublicId] }),
+        ]));
         await call("loan.disbursement.post", {
             disbursementPublicId,
             idempotencyKey: "mcp-all-tools-disbursement-post",
         });
+        await expect(client.callTool({
+            name: "loan.disbursement.update",
+            arguments: { disbursementPublicId, changes: { note: "Must remain immutable" } },
+        })).rejects.toThrow();
+        expect(await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, disbursementPublicId) }))
+            .toMatchObject({ status: "posted", note: "Corrected attributed amount" });
         await call("loan.disbursement.reverse", {
             disbursementPublicId,
             reason: "MCP all-tools disbursement reversal",

@@ -15,7 +15,7 @@ Use CreditSync as an orchestration surface over its private MCP app. The backend
 2. Inspect before every write. Search and retrieve the current borrower, intake, loan, proposal, or renewal by public UUID; never invent IDs or select a tenant/actor.
 3. Use `payment.preview`, `loan.preview`, `loan.interest-rate.preview`, `renewal.preview`, or `loan.disbursement.list` for accounting outcomes. Never replace backend results with agent arithmetic.
 4. Present exact money strings, targets, warnings, expiry, cash direction, and proposal/preview identity before a financial write.
-5. Re-read or re-preview after state changes. Post only the latest non-stale backend result.
+5. Re-read or re-preview after state changes. After a disbursement draft update, re-list it and obtain fresh confirmation because any earlier confirmation is invalid. Post only the latest inspected backend result.
 
 ## State decisions
 
@@ -35,7 +35,7 @@ Every activation, post, reversal, and renewal uses explicit public IDs. Supply c
 - Intake, optional evidence, matching, posting, or payment reversal: use `reconcile-payments`.
 - Loan preview, draft, and activation: use `manage-loans`.
 - Floating-loan interest timeline inspection and scheduled changes: use `manage-floating-interest-rates`.
-- Actual loan disbursement, optional payout evidence, variance review, posting, or reversal: use `manage-disbursements`.
+- Actual loan disbursement draft creation/editing, optional payout evidence, variance review, posting, or reversal: use `manage-disbursements`.
 - Borrower payments held by a collector, remittance slips, exact allocation, and posting: use `reconcile-intermediary-remittances`.
 - Daily-loan reset/renewal and reversal: use `renew-daily-loan`.
 

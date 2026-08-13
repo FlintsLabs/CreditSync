@@ -18,11 +18,11 @@ async function json(path: string) {
     return JSON.parse(await readFile(resolve(pluginRoot, path), "utf8")) as Record<string, unknown>;
 }
 
-describe("CreditSync plugin 2.3.0 contract", () => {
+describe("CreditSync plugin 2.4.0 contract", () => {
     test("manifest exposes only the private app and orchestration skills", async () => {
         const manifest = await json(".codex-plugin/plugin.json");
         expect(manifest.name).toBe("creditsync");
-        expect(manifest.version).toBe("2.3.0");
+        expect(manifest.version).toBe("2.4.0");
         expect(manifest.skills).toBe("./skills/");
         expect(manifest.apps).toBe("./.app.json");
         expect(manifest).not.toHaveProperty("mcpServers");
@@ -84,7 +84,7 @@ describe("CreditSync plugin 2.3.0 contract", () => {
         const contract = await json("references/mcp-tool-contract.json") as unknown as FrozenMcpContract;
         expect(contract.schemaVersion).toBe("1.0");
         expect(contract.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
-        expect(contract.tools).toHaveLength(40);
+        expect(contract.tools).toHaveLength(41);
         expect(contract.tools.every((tool) => tool.inputSchema && tool.outputSchema && tool.annotations)).toBe(true);
         const advertised = await captureAdvertisedMcpContract();
         expect(canonicalContractJson(contract)).toBe(canonicalContractJson(advertised));
@@ -107,6 +107,7 @@ describe("CreditSync plugin 2.3.0 contract", () => {
             "floating-rate-scheduled-change",
             "floating-rate-missing-confirmation",
             "disbursement-full-lifecycle",
+            "disbursement-draft-update",
             "disbursement-evidence-ready-retry",
             "renewal-execute",
             "payment-reversal",
@@ -123,6 +124,8 @@ describe("CreditSync plugin 2.3.0 contract", () => {
             "disbursement-reversal-event-not-posted",
             "disbursement-idempotency-conflict",
             "disbursement-schedule-mutation",
+            "disbursement-update-locked",
+            "disbursement-update-unsupported-fields",
             "renewal-unsettled-charges",
             "renewal-missing-confirmation",
             "renewal-reversal-without-result",
@@ -130,12 +133,15 @@ describe("CreditSync plugin 2.3.0 contract", () => {
             "renewal-reversal-blocked",
             "unauthorized-access",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
-        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(20);
+        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(22);
     });
 
     test("disbursement skill preserves ledger, variance, evidence, confirmation, and reversal boundaries", async () => {
         const skill = await readFile(resolve(pluginRoot, "skills/manage-disbursements/SKILL.md"), "utf8");
         expect(skill).toContain("`loan.disbursement.draft`");
+        expect(skill).toContain("`loan.disbursement.update`");
+        expect(skill).toContain("PATCH semantics without a stale-state guard");
+        expect(skill).toContain("Any confirmation obtained before an update is invalid");
         expect(skill).toContain("`loan.disbursement.evidence.prepare`");
         expect(skill).toContain("`loan.disbursement.evidence.finalize`");
         expect(skill).toContain("unchanged bytes");
@@ -198,7 +204,7 @@ describe("CreditSync plugin 2.3.0 contract", () => {
         expect(existsSync(resolve(pluginRoot, "scripts/validate.ts"))).toBe(true);
         expect(existsSync(resolve(pluginRoot, "assets/README.md"))).toBe(true);
         for (const forbidden of [".mcp.json", "hooks.json", "hooks", "ui", "oauth.json"]) {
-            expect(existsSync(resolve(pluginRoot, forbidden)), `${forbidden} must stay out of 2.3.0`).toBe(false);
+            expect(existsSync(resolve(pluginRoot, forbidden)), `${forbidden} must stay out of 2.4.0`).toBe(false);
         }
     });
 });

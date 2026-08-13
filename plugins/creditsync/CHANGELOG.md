@@ -1,5 +1,15 @@
 # CreditSync Plugin Changelog
 
+## 2.4.0 - 2026-08-13
+
+### Added
+
+- Added the strict `loan.disbursement.update` PATCH tool for non-empty partial edits to draft-only payout metadata, with retained finalized evidence and audited before/after state.
+
+### Changed
+
+- Required re-listing the current draft and obtaining fresh post confirmation after every update, with explicit stop gates for locked events and unsupported fields.
+
 ## 2.3.0 - 2026-08-12
 
 ### Added

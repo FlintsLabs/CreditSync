@@ -121,6 +121,21 @@ describe("CreditSync executable orchestration evals", () => {
         });
     });
 
+    test("disbursement draft update re-lists current state before posting", async () => {
+        const result = await runEvalScenario("disbursement-draft-update");
+        expect(result.outcome).toBe("completed");
+        expect(result.calls.map((call) => call.name)).toEqual([
+            "loan.disbursement.list",
+            "loan.disbursement.update",
+            "loan.disbursement.list",
+            "loan.disbursement.post",
+        ]);
+        expect(result.calls[1]?.arguments).toEqual({
+            disbursementPublicId: "0198c481-3e2b-7000-8000-000000000051",
+            changes: { loanAttributedAmount: "4000.00", note: "Corrected attribution after owner review" },
+        });
+    });
+
     test("disbursement variance and schedule-change requests stop before a financial write", async () => {
         const variance = await runEvalScenario("disbursement-variance-without-confirmation");
         expect(variance).toMatchObject({ outcome: "stopped", stopReason: "variance-review-required" });
@@ -139,6 +154,14 @@ describe("CreditSync executable orchestration evals", () => {
         const conflict = await runEvalScenario("disbursement-idempotency-conflict");
         expect(conflict).toMatchObject({ outcome: "stopped", stopReason: "disbursement-idempotency-conflict" });
         expect(conflict.calls.map((call) => call.name)).toEqual(["loan.disbursement.draft", "loan.disbursement.post"]);
+    });
+
+    test("disbursement update stops before writes for locked events and unsupported fields", async () => {
+        for (const id of ["disbursement-update-locked", "disbursement-update-unsupported-fields"]) {
+            const result = await runEvalScenario(id);
+            expect(result.outcome, id).toBe("stopped");
+            expect(result.calls.map((call) => call.name), id).toEqual(["loan.disbursement.list"]);
+        }
     });
 
     test("disbursement evidence retries and failures do not create an unsafe upload or post", async () => {

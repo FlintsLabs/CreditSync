@@ -1,6 +1,6 @@
 ---
 name: manage-disbursements
-description: Use when listing, drafting, evidencing, posting, reviewing variance for, or reversing an actual CreditSync loan disbursement.
+description: Use when listing, drafting, editing, evidencing, posting, reviewing variance for, or reversing an actual CreditSync loan disbursement.
 ---
 
 # Manage CreditSync Loan Disbursements
@@ -20,6 +20,14 @@ An actual disbursement is an append-only funding-ledger event, separate from loa
 7. Show the exact draft public UUID, amounts, channel, timestamp, finalized-evidence state, variance, and the stable post idempotency key. Obtain explicit confirmation to post that exact event.
 8. Call `loan.disbursement.post` with only `{ disbursementPublicId, idempotencyKey }`. Retain that key for retrying the same intent only. Report returned status, audit IDs, and correlation ID.
 
+## Edit an existing draft
+
+1. Call `loan.disbursement.list` for the parent loan and select the exact event with `status: draft`. Never infer a draft UUID from a borrower name or reuse a posted/reversed event.
+2. Call `loan.disbursement.update` with `{ disbursementPublicId, changes }`. `changes` must be non-empty and may contain only `grossAmount`, `loanAttributedAmount`, `channel`, `sourceBankProfilePublicId`, `payeeHint`, `note`, or `disbursedAt`. Use `null` only to clear a nullable source profile, payee hint, or note. Do not send status, loan identity, or evidence fields.
+3. The update is PATCH semantics without a stale-state guard: omitted fields stay unchanged and a later accepted edit to the same field wins. Do not claim conflict detection or silently retry an edit after another actor may have changed the draft.
+4. Re-list the parent loan after every update. Show the exact current draft, both amounts, channel, timestamp, evidence state, and backend variance. Finalized evidence remains attached; do not upload or finalize it again merely because editable metadata changed.
+5. Any confirmation obtained before an update is invalid. Obtain fresh explicit confirmation only after the post-update re-list, then post the exact current draft if requested.
+
 ## Reversal
 
 1. Re-list the parent loan after posting and identify the exact event with `status: posted`. Do not reuse the local draft UUID without that re-inspection, guess an event, or reverse a draft/reversed/missing event.
@@ -32,11 +40,13 @@ An actual disbursement is an append-only funding-ledger event, separate from loa
 | --- | --- |
 | `under_disbursed` or `over_disbursed` | Show exact signed variance and wait for an explicit decision; never change the loan schedule. |
 | Missing post confirmation | Leave the event as draft; do not call post. |
+| Draft was updated after confirmation | Re-list and obtain fresh confirmation for the current state before post. |
+| Unsupported update field or empty `changes` | Stop and request a supported non-empty patch; do not translate it into another write. |
 | Evidence failure or expired upload | Stop and re-prepare as required; do not claim evidence was attached. |
 | `evidence.prepare` returns `ready` | Do not PUT/finalize again; re-list and continue only from finalized evidence state. |
 | Evidence checksum conflict or finalize mismatch | Stop; do not PUT (for conflict), post, or claim evidence is attached. |
 | Idempotency-key conflict | Stop and inspect the existing operation; never generate a new key to bypass it. |
 | Missing/ambiguous posted event, reversal reason, or confirmation | Do not call reverse. |
-| Locked, posted, or reversed draft | Do not edit or repost; use the supported reversal workflow if appropriate. |
+| Locked, posted, or reversed event | Do not call update or repost; use the supported reversal workflow if appropriate. |
 
 Follow the root `creditsync` skill and `financial-rules.md` for inspect-before-write, authorization, and append-only accounting boundaries.

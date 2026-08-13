@@ -140,6 +140,16 @@ describe("CreditSync stateless MCP contract", () => {
                         evidenceFilePublicIds: [],
                     };
                 },
+                "loan.disbursement.update": async (_ctx, input) => {
+                    observed = input;
+                    return {
+                        id: DISBURSEMENT_ID, publicId: DISBURSEMENT_ID,
+                        grossAmount: "100.00", loanAttributedAmount: "95.00",
+                        channel: "cash", status: "draft", sourceBankProfilePublicId: BORROWER_ID, payeeHint: null, note: "Corrected attribution",
+                        disbursedAt: "2026-08-10T00:00:00.000Z", postedAt: null, reversedAt: null,
+                        evidenceFilePublicIds: [],
+                    };
+                },
                 "loan.disbursement.post": async () => ({
                     id: DISBURSEMENT_ID, publicId: DISBURSEMENT_ID,
                     grossAmount: "100.00", loanAttributedAmount: "100.00",
@@ -154,8 +164,10 @@ describe("CreditSync stateless MCP contract", () => {
         await client.connect(transport);
         const listed = await client.listTools();
         const draftTool = listed.tools.find((tool) => tool.name === "loan.disbursement.draft");
+        const updateTool = listed.tools.find((tool) => tool.name === "loan.disbursement.update");
         const postTool = listed.tools.find((tool) => tool.name === "loan.disbursement.post");
         expect(draftTool?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
+        expect(updateTool?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false });
         expect(postTool?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false });
         const draft = await client.callTool({
             name: "loan.disbursement.draft",
@@ -175,6 +187,25 @@ describe("CreditSync stateless MCP contract", () => {
             },
         });
         expect(malformed.isError).toBe(true);
+        const updated = await client.callTool({
+            name: "loan.disbursement.update",
+            arguments: { disbursementPublicId: DISBURSEMENT_ID, changes: { loanAttributedAmount: "95.00", note: "Corrected attribution" } },
+        });
+        expect(updated.isError).not.toBe(true);
+        expect(updated.structuredContent).toMatchObject({ schemaVersion: "1.0", data: { publicId: DISBURSEMENT_ID, status: "draft", loanAttributedAmount: "95.00" } });
+        expect(observed).toEqual({ disbursementPublicId: DISBURSEMENT_ID, changes: { loanAttributedAmount: "95.00", note: "Corrected attribution" } });
+        for (const changes of [
+            {},
+            { evidenceFilePublicIds: [BORROWER_ID] },
+            { status: "posted" },
+            { unknown: "value" },
+        ]) {
+            const rejected = await client.callTool({
+                name: "loan.disbursement.update",
+                arguments: { disbursementPublicId: DISBURSEMENT_ID, changes },
+            });
+            expect(rejected.isError).toBe(true);
+        }
         const posted = await client.callTool({
             name: "loan.disbursement.post",
             arguments: { disbursementPublicId: DISBURSEMENT_ID, idempotencyKey: "post-disbursement-1" },
@@ -225,6 +256,7 @@ describe("CreditSync stateless MCP contract", () => {
             "payment.reverse",
             "loan.activate",
             "loan.interest-rate.execute",
+            "loan.disbursement.update",
             "loan.disbursement.post",
             "loan.disbursement.reverse",
             "intermediary.remittance.post",

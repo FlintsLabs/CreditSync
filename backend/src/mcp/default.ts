@@ -55,9 +55,11 @@ import {
     prepareDisbursementEvidence,
     rejectDisbursementDraftEvidenceIds,
     reverseDisbursement,
+    updateDisbursementDraft,
     type DisbursementEvidenceStorageGateway,
     type CreateDisbursementDraftInput,
     type PrepareDisbursementEvidenceInput,
+    type UpdateDisbursementDraftInput,
 } from "../services/loan-disbursement-service";
 import {
     createIntermediary, createIntermediaryCollection, createIntermediaryRemittance,
@@ -169,6 +171,11 @@ export function createDefaultMcpToolHandlers(
         rejectDisbursementDraftEvidenceIds(draft);
         return createDisbursementDraft(ctx, String(loanPublicId), draft as unknown as CreateDisbursementDraftInput);
     },
+    "loan.disbursement.update": (ctx, input) => updateDisbursementDraft(
+        ctx,
+        asString(input, "disbursementPublicId"),
+        input.changes as UpdateDisbursementDraftInput,
+    ),
     "loan.disbursement.evidence.prepare": (ctx, input) => {
         const { disbursementPublicId, ...evidence } = input;
         return prepareDisbursementEvidence(ctx, String(disbursementPublicId), evidence as unknown as PrepareDisbursementEvidenceInput, dependencies.disbursementEvidenceGateway);
