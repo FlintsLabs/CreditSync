@@ -6,6 +6,9 @@ import { Elysia } from "elysia";
 import { DomainError } from "../services/domain-error";
 import type { CommandContext } from "../services/command-context";
 import { previewLoan } from "../services/loan-application-service";
+import { parseMoney, serializeMoney } from "../lib/money";
+import { loansRoute } from "../modules/loans";
+import { normalizeMoney as normalizeFrontendMoney } from "../../../frontend/src/lib/workflow-api";
 import { createMcpHttpPlugin, MCP_TOOL_NAMES, type McpToolHandler } from "./server";
 import type { McpRuntimeConfig } from "./security";
 
@@ -89,6 +92,45 @@ function clientFor(baseUrl: string, token = TOKEN) {
 }
 
 describe("CreditSync stateless MCP contract", () => {
+    // Break caught: frontend, backend parsing, REST, and MCP enforce different public-money lengths or round the shared maximum.
+    test("keeps every public boundary on the 32-character unsigned money contract", async () => {
+        const maximum = "99999999999999999999999999999.99";
+        const overflow = "100000000000000000000000000000.00";
+        expect(normalizeFrontendMoney(maximum)).toBe(maximum);
+        expect(() => normalizeFrontendMoney(overflow)).toThrow();
+        expect(serializeMoney(parseMoney(maximum))).toBe(maximum);
+        expect(() => parseMoney(overflow)).toThrow();
+
+        const restApp = new Elysia().use(loansRoute);
+        const requestBody = { principal: maximum, interestRate: "0.00", termMonths: 1, repaymentType: "monthly", startDate: "2026-08-10" };
+        const restMaximum = await restApp.handle(new Request("http://localhost/loans/preview", {
+            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(requestBody),
+        }));
+        expect(restMaximum.status).toBe(200);
+        expect(await restMaximum.json()).toMatchObject({ terms: { principal: maximum }, schedule: [{ amount: maximum }] });
+        const restOverflow = await restApp.handle(new Request("http://localhost/loans/preview", {
+            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...requestBody, principal: overflow }),
+        }));
+        expect(restOverflow.status).toBe(422);
+
+        const baseUrl = await startServer({ toolHandlers: { "loan.preview": async (_ctx, input) => previewLoan(input as unknown as Parameters<typeof previewLoan>[0]) } });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const listed = await client.listTools();
+        const previewTool = listed.tools.find((tool) => tool.name === "loan.preview");
+        expect((previewTool?.inputSchema.properties?.principal as { maxLength?: number })?.maxLength).toBe(32);
+        const disbursementListTool = listed.tools.find((tool) => tool.name === "loan.disbursement.list");
+        const disbursementOutput = disbursementListTool?.outputSchema as {
+            properties?: { data?: { properties?: { summary?: { properties?: { variance?: { maxLength?: number } } } } } };
+        } | undefined;
+        expect(disbursementOutput?.properties?.data?.properties?.summary?.properties?.variance?.maxLength).toBe(33);
+        const mcpMaximum = await client.callTool({ name: "loan.preview", arguments: requestBody });
+        expect(mcpMaximum.isError).not.toBe(true);
+        expect(mcpMaximum.structuredContent).toMatchObject({ data: { terms: { principal: maximum }, schedule: [{ amount: maximum }] } });
+        expect((await client.callTool({ name: "loan.preview", arguments: { ...requestBody, principal: overflow } })).isError).toBe(true);
+        await client.close();
+    });
+
     // Break caught: generalized weekly-policy input or output is rejected by the stale daily-only MCP contract.
     test("returns a generalized weekly floating-loan preview through the public MCP contract", async () => {
         const baseUrl = await startServer({

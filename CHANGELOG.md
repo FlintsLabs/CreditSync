@@ -7,7 +7,7 @@
 
 ### Fixed
 - Preserved exact loan-detail and settlement money strings beyond JavaScript's safe-integer range, labeled rate timelines by their locked daily/weekly contract, and attached stable idempotency keys to Web loan activation commands.
-- Removed native-number conversions from bank-loan allocation state, loan closing, funding matching, and the Fund detail allocation summary; bounded public money to 80 integer digits and moved touched calculations into isolated 100-digit Decimal contexts so cents stay exact beyond JavaScript's safe-integer and default Decimal precision ranges, while malformed allocation input now stops with localized validation instead of crashing the page.
+- Removed native-number conversions from bank-loan allocation state, loan closing, funding matching, loan origination calculators, and the Fund detail allocation summary; aligned REST, MCP, backend, and frontend public money to the existing 32-character unsigned contract (29 integer digits plus two decimals), retained isolated 100-digit Decimal contexts for intermediate calculations, rejected result carry beyond the public bound, and made malformed allocation input stop with localized validation instead of crashing the page.
 - Refreshed authoritative loan and profitability state after Web settlement, hid stale accounting when that refresh fails, kept the post-write refresh warning accessible inside the open confirmation dialog, surfaced initial preview errors beside the action, localized loan statuses, scoped non-refundable warnings to advance deductions, and preserved command keys across safe retries while requiring a new key after stale re-preview.
 
 ### Infra

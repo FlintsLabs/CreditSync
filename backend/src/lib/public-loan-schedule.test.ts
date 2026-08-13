@@ -54,4 +54,31 @@ describe("public loan schedule contract", () => {
         expect(schedule[0]).toMatchObject({ amount: "200.00", principalComponent: "166.67", interestComponent: "33.33" });
         expect(schedule[14]).toMatchObject({ amount: "200.00", principalComponent: "166.62", interestComponent: "33.38", remainingPrincipal: "0.00" });
     });
+
+    // Break caught: default Decimal precision rounds a valid maximum principal up to an invalid 30-digit schedule amount.
+    it("preserves a zero-rate schedule at the 29-digit maximum and rejects a real interest overflow", () => {
+        const maximum = "99999999999999999999999999999.99";
+        expect(calculatePublicLoanSchedule({
+            principal: maximum,
+            interestRate: "0.00",
+            termMonths: 1,
+            repaymentType: "monthly",
+            startDate: "2026-01-01",
+        })).toEqual([{
+            installmentNo: 1,
+            dueDate: "2026-02-01",
+            amount: maximum,
+            principalComponent: maximum,
+            interestComponent: "0.00",
+            remainingPrincipal: "0.00",
+        }]);
+
+        expect(() => calculatePublicLoanSchedule({
+            principal: maximum,
+            interestRate: "12.00",
+            termMonths: 1,
+            repaymentType: "monthly",
+            startDate: "2026-01-01",
+        })).toThrow("Money must be a non-negative string with exactly two decimals");
+    });
 });

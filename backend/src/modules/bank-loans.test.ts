@@ -76,14 +76,14 @@ describe("bank-loan allocation state", () => {
     });
 
     // Break caught: decimal.js default precision rounds the cents off a maximum supported public amount during subtraction.
-    integrationTest("subtracts allocation from the 80-digit public money bound exactly", async () => {
+    integrationTest("subtracts allocation from the 29-digit public money bound exactly", async () => {
         const tenantId = "tenant-bank-loan-allocation";
         const owner = await db.insert(users).values({ tenantId, email: "max-bank-loan-allocation@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
         const profile = await db.insert(bankProfiles).values({ tenantId, name: "Maximum source", type: "bank" }).returning().then((rows) => rows[0]!);
         const drawdown = await db.insert(bankLoans).values({
             tenantId,
             bankProfileId: profile.id,
-            amount: "99999999999999999999999999999999999999999999999999999999999999999999999999999999.99",
+            amount: "99999999999999999999999999999.99",
         }).returning().then((rows) => rows[0]!);
         const borrower = await db.insert(borrowers).values({ tenantId, ownerUserId: owner.id, name: "Maximum borrower" }).returning().then((rows) => rows[0]!);
         const loan = await db.insert(loans).values({
@@ -112,9 +112,9 @@ describe("bank-loan allocation state", () => {
 
         expect(response.status).toBe(200);
         expect(await response.json()).toMatchObject({
-            drawdownAmount: "99999999999999999999999999999999999999999999999999999999999999999999999999999999.99",
+            drawdownAmount: "99999999999999999999999999999.99",
             netAllocatedPrincipal: "0.01",
-            remainingCapacity: "99999999999999999999999999999999999999999999999999999999999999999999999999999999.98",
+            remainingCapacity: "99999999999999999999999999999.98",
             overallocatedAmount: "0.00",
             state: "partially_allocated",
         });

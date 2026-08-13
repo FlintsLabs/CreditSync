@@ -1,4 +1,5 @@
-import Decimal from "decimal.js";
+import type Decimal from "decimal.js";
+import { FinancialDecimal } from "./financial-decimal";
 import { parseMoney, serializeMoney } from "./money";
 
 export type DailyTermUnit = "days" | "months";
@@ -37,7 +38,7 @@ const decimalPattern = /^\d+(?:\.\d{1,4})?$/;
 
 function parseRate(value: string, field: string): Decimal {
     if (!decimalPattern.test(value)) throw new Error(`${field} must be a non-negative decimal with up to four places`);
-    const decimal = new Decimal(value);
+    const decimal = new FinancialDecimal(value);
     if (!decimal.isFinite()) throw new Error(`${field} must be finite`);
     return decimal;
 }
@@ -52,7 +53,7 @@ function money(value: Decimal.Value) {
 }
 
 function rate(value: Decimal.Value) {
-    return new Decimal(value).toDecimalPlaces(4, Decimal.ROUND_HALF_UP).toFixed(4);
+    return new FinancialDecimal(value).toDecimalPlaces(4, FinancialDecimal.ROUND_HALF_UP).toFixed(4);
 }
 
 export function normalizeDailyLoanEntry(input: DailyLoanEntryInput & { principal: string }): NormalizedDailyLoanEntry {
@@ -76,16 +77,16 @@ export function normalizeDailyLoanEntry(input: DailyLoanEntryInput & { principal
         const totalRepayment = installmentAmount.times(totalInstallments);
         if (totalRepayment.lessThan(principal)) throw new Error("Installment total cannot be less than principal");
         totalInterest = totalRepayment.minus(principal);
-        dailyInterest = totalInterest.div(totalInstallments).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+        dailyInterest = totalInterest.div(totalInstallments).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
         dailyPayment = money(installmentAmount);
     } else {
         if (!input.interestInput) throw new Error("Daily interest input is required");
         const value = parseRate(input.interestInput.value, "Daily interest value");
         const mode = input.interestInput.mode;
         if (mode === "percent") {
-            dailyInterest = principal.times(value).div(100).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+            dailyInterest = principal.times(value).div(100).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
         } else if (mode === "per_thousand") {
-            dailyInterest = principal.div(1000).times(value).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+            dailyInterest = principal.div(1000).times(value).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
         } else if (mode === "fixed_amount") {
             dailyInterest = parseMoney(input.interestInput.value);
         } else {
@@ -93,7 +94,7 @@ export function normalizeDailyLoanEntry(input: DailyLoanEntryInput & { principal
         }
         totalInterest = dailyInterest.times(totalInstallments);
         const totalRepayment = principal.plus(totalInterest);
-        installmentAmount = totalRepayment.div(totalInstallments).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+        installmentAmount = totalRepayment.div(totalInstallments).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
         interestInput = { mode, value: mode === "fixed_amount" ? money(dailyInterest) : rate(value) };
     }
 

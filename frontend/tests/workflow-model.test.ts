@@ -71,10 +71,12 @@ describe("workflow view models", () => {
     });
 
     // Break caught: decimal.js default precision silently removes cents once a valid amount has 20 significant digits.
-    test("keeps cents exact for long public money sums and subtractions", () => {
-        expect(sumMoney(["99999999999999999999.99", "0.01"])).toBe("100000000000000000000.00");
-        expect(moneyDifference("99999999999999999999.99", "0.01")).toBe("99999999999999999999.98");
-        expect(remainingMoney("99999999999999999999.99", ["1.01"])).toBe("99999999999999999998.98");
+    test("keeps cents exact at the 29-digit public money maximum", () => {
+        expect(sumMoney(["99999999999999999999999999999.98", "0.01"])).toBe("99999999999999999999999999999.99");
+        expect(moneyDifference("99999999999999999999999999999.99", "0.01")).toBe("99999999999999999999999999999.98");
+        expect(remainingMoney("99999999999999999999999999999.99", ["1.01"])).toBe("99999999999999999999999999998.98");
+        expect(() => sumMoney(["99999999999999999999999999999.99", "0.01"]))
+            .toThrow("Money exceeds the public 29-digit integer bound");
     });
 
     test("derives funding balances and signs exactly beyond Number safe integer range", () => {

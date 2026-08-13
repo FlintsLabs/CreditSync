@@ -205,8 +205,8 @@ describe("FundDetail funding usage", () => {
             if (url === "/bank-loans/9/profitability") return { data: { borrowerRevenueCollected: 0, fundCostPaid: 0, realizedSpread: 0, unrealizedSpread: 0, deployedPrincipal: 0, netCashPosition: 0, realizedRoiPercent: 0, carryForwardAvailable: 0, outstandingCost: 0, surplusBalance: 0, deficitBalance: 0 } };
             if (url === "/bank-loans/9/allocation-state") return { data: {
                 bankLoanId: 9,
-                drawdownAmount: "99999999999999999999.99",
-                netAllocatedPrincipal: "99999999999999999999.98",
+                drawdownAmount: "99999999999999999999999999999.99",
+                netAllocatedPrincipal: "99999999999999999999999999999.98",
                 remainingCapacity: "0.01",
                 overallocatedAmount: "0.00",
                 state: "partially_allocated",
@@ -218,7 +218,7 @@ describe("FundDetail funding usage", () => {
         await user.click(await screen.findByRole("button", { name: /Withdrawal #9/ }));
 
         const allocated = await screen.findByText("Allocated principal");
-        expect(allocated.parentElement).toHaveTextContent(/99,999,999,999,999,999,999\.98/);
+        expect(allocated.parentElement).toHaveTextContent(/99,999,999,999,999,999,999,999,999,999\.98/);
         expect(screen.getByText("Remaining capacity").parentElement).toHaveTextContent(/0\.01/);
     });
 });

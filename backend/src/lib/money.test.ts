@@ -19,10 +19,10 @@ describe("money public values", () => {
     });
 
     // Break caught: public input exceeds the precision configured for exact financial calculations.
-    it("accepts the 80-digit public money bound and rejects 81 integer digits", () => {
-        const maximum = "99999999999999999999999999999999999999999999999999999999999999999999999999999999.99";
+    it("accepts the 29-digit public money bound and rejects 30 integer digits", () => {
+        const maximum = "99999999999999999999999999999.99";
         expect(serializeMoney(parseMoney(maximum))).toBe(maximum);
-        expect(() => parseMoney("100000000000000000000000000000000000000000000000000000000000000000000000000000000.00"))
+        expect(() => parseMoney("100000000000000000000000000000.00"))
             .toThrow("Money must be a non-negative string with exactly two decimals");
     });
 

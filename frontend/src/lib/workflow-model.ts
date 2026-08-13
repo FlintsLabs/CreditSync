@@ -1,5 +1,5 @@
 import type Decimal from "decimal.js";
-import { FinancialDecimal, signedMoneyInputPattern } from "./financial-decimal";
+import { FinancialDecimal, signedMoneyInputPattern, signedPublicMoneyPattern } from "./financial-decimal";
 import { normalizeMoney, type PaymentAllocationInput } from "./workflow-api";
 
 export interface LoanTermsForm {
@@ -86,7 +86,11 @@ function moneyValue(value: string) {
 }
 
 function moneyToString(value: Decimal) {
-    return value.isZero() ? "0.00" : value.toFixed(2);
+    const serialized = value.isZero() ? "0.00" : value.toFixed(2);
+    if (!signedPublicMoneyPattern.test(serialized)) {
+        throw new Error("Money exceeds the public 29-digit integer bound");
+    }
+    return serialized;
 }
 
 function groupWholeNumber(value: string, locale: string) {

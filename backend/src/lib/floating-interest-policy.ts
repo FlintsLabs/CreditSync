@@ -1,4 +1,6 @@
-import Decimal from "decimal.js";
+import type Decimal from "decimal.js";
+import { FinancialDecimal } from "./financial-decimal";
+import { parseMoney, serializeMoney } from "./money";
 
 export type FloatingInterestPolicy = {
     periodUnit: "day" | "week";
@@ -19,7 +21,7 @@ type InterestPeriod = {
 function normalizeRate(rate: string) {
     let value: Decimal;
     try {
-        value = new Decimal(rate);
+        value = new FinancialDecimal(rate);
     } catch {
         throw new Error("Floating interest rate is invalid");
     }
@@ -54,7 +56,7 @@ function periodDaysFor(policy: FloatingInterestPolicy) {
 function decimalPrincipal(principal: string) {
     let value: Decimal;
     try {
-        value = new Decimal(principal);
+        value = parseMoney(principal);
     } catch {
         throw new Error("Principal is invalid");
     }
@@ -63,7 +65,7 @@ function decimalPrincipal(principal: string) {
 }
 
 function roundMoney(value: Decimal) {
-    return value.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
+    return serializeMoney(value);
 }
 
 function periodInterestAmount(principal: string, policy: FloatingInterestPolicy) {
@@ -132,9 +134,9 @@ export function calculateAccruedInterest(principal: string, policy: FloatingInte
     const periodInterest = periodInterestAmount(principal, normalized);
     const cumulative = periodInterest.times(elapsedDays).div(periodDays);
     const previousCumulative = elapsedDays === 0
-        ? new Decimal(0)
+        ? new FinancialDecimal("0")
         : periodInterest.times(elapsedDays - 1).div(periodDays);
-    const cumulativeAmount = new Decimal(roundMoney(cumulative));
+    const cumulativeAmount = new FinancialDecimal(roundMoney(cumulative));
     const incrementAmount = cumulativeAmount.minus(roundMoney(previousCumulative));
 
     return {

@@ -1,4 +1,4 @@
-import Decimal from "decimal.js";
+import type Decimal from "decimal.js";
 import { calculateLoanSchedule, type RepaymentType } from "./calculator";
 
 interface GenerateLoanScheduleInput {

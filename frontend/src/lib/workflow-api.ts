@@ -41,7 +41,8 @@ export function normalizeMoney(value: string): string {
         throw new Error("Money must be non-negative with at most two decimal places");
     }
     const [whole, fraction = ""] = normalized.split(".");
-    return `${whole}.${fraction.padEnd(2, "0")}`;
+    const canonicalWhole = whole.replace(/^0+(?=\d)/, "");
+    return `${canonicalWhole}.${fraction.padEnd(2, "0")}`;
 }
 
 function requireUuid(value: string, field: string) {

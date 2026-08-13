@@ -94,6 +94,15 @@ describe("loan application service", () => {
         expect(preview.schedule[0]).toMatchObject({ amount: "412.00", principalComponent: "400.00" });
     });
 
+    // Break caught: the service normalizes a maximum principal correctly but its calculator silently rounds the resulting schedule.
+    test("previews the 29-digit maximum exactly at zero rate and rejects nonzero overflow", () => {
+        const maximum = "99999999999999999999999999999.99";
+        expect(previewLoan({ principal: maximum, interestRate: "0.00", repaymentType: "monthly", termMonths: 1, startDate: "2026-08-10" }))
+            .toMatchObject({ terms: { principal: maximum }, schedule: [{ amount: maximum, principalComponent: maximum, interestComponent: "0.00", remainingPrincipal: "0.00" }] });
+        expect(() => previewLoan({ principal: maximum, interestRate: "12.00", repaymentType: "monthly", termMonths: 1, startDate: "2026-08-10" }))
+            .toThrow("Money must be a non-negative string with exactly two decimals");
+    });
+
     test("previews a daily-entry loan with derived terms and calculation", () => {
         const preview = previewLoan({
             principal: "2500.00",

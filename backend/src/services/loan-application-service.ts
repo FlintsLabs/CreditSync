@@ -1,5 +1,4 @@
 import { and, eq, sql } from "drizzle-orm";
-import Decimal from "decimal.js";
 import { db } from "../db";
 import { bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanSchedules, loans, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
@@ -13,6 +12,7 @@ import {
 import { generateLoanSchedule } from "../lib/loan-schedule";
 import { computeLoanRollup } from "../lib/loan-rollup";
 import { serializeMoney } from "../lib/money";
+import { FinancialDecimal } from "../lib/financial-decimal";
 import {
     calculateAccruedInterest,
     calculatePeriodInterest,
@@ -174,9 +174,9 @@ export async function presentLoan(row: LoanRow) {
             entryMode: row.dailyEntryMode as DailyLoanEntryMetadata["entryMode"],
             dailyPayment: row.dailyEntryMode === "daily_payment" && row.installmentAmount !== null ? serializeMoney(row.installmentAmount) : null,
             interestInput: row.dailyEntryMode === "daily_interest" && row.dailyInterestInputMode && row.dailyInterestInputValue
-                ? { mode: row.dailyInterestInputMode as NonNullable<DailyLoanEntryMetadata["interestInput"]>["mode"], value: row.dailyInterestInputMode === "fixed_amount" ? serializeMoney(row.dailyInterestInputValue) : new Decimal(row.dailyInterestInputValue).toFixed(4) }
+                ? { mode: row.dailyInterestInputMode as NonNullable<DailyLoanEntryMetadata["interestInput"]>["mode"], value: row.dailyInterestInputMode === "fixed_amount" ? serializeMoney(row.dailyInterestInputValue) : new FinancialDecimal(row.dailyInterestInputValue).toFixed(4) }
                 : null,
-            flatDailyRatePercent: new Decimal(row.dailyFlatRatePercent).toFixed(4),
+            flatDailyRatePercent: new FinancialDecimal(row.dailyFlatRatePercent).toFixed(4),
         }
         : null;
     const dailyLoanCalculation = dailyEntry === null
@@ -245,7 +245,7 @@ function existingDailyEntry(row: LoanRow): DailyLoanEntryInput | undefined {
     if (row.dailyEntryMode === "daily_interest" && row.dailyInterestInputMode && row.dailyInterestInputValue) {
         return {
             durationUnit: row.dailyTermUnit as DailyLoanEntryInput["durationUnit"], durationValue: row.dailyTermValue, entryMode: "daily_interest",
-            interestInput: { mode: row.dailyInterestInputMode as NonNullable<DailyLoanEntryInput["interestInput"]>["mode"], value: row.dailyInterestInputMode === "fixed_amount" ? serializeMoney(row.dailyInterestInputValue) : new Decimal(row.dailyInterestInputValue).toFixed(4) },
+            interestInput: { mode: row.dailyInterestInputMode as NonNullable<DailyLoanEntryInput["interestInput"]>["mode"], value: row.dailyInterestInputMode === "fixed_amount" ? serializeMoney(row.dailyInterestInputValue) : new FinancialDecimal(row.dailyInterestInputValue).toFixed(4) },
         };
     }
     return undefined;
@@ -285,7 +285,7 @@ export function previewLoan(input: PublicLoanCalculationParams) {
             floatingInterestPolicy: policy,
             fullPeriodInterest,
             advanceInterest,
-            netBorrowerPayout: serializeMoney(new Decimal(terms.principal).minus(advanceInterest)),
+            netBorrowerPayout: serializeMoney(new FinancialDecimal(terms.principal).minus(advanceInterest)),
             firstPeriodStartDate: firstPeriod.periodStart,
             firstPeriodDueDate: firstPeriod.nextPeriodStart,
             periodDays: firstPeriod.periodDays,
@@ -523,11 +523,11 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
             }).from(loanFundingAllocations).where(and(
                 eq(loanFundingAllocations.bankLoanId, fundingSource.id),
                 eq(loanFundingAllocations.tenantId, ctx.tenantId),
-            )).then((rows) => new Decimal(rows[0]?.totalAllocated ?? 0));
-            const sourceRemaining = new Decimal(fundingSource.amount).minus(sourceAllocation);
-            if (new Decimal(current.principalAmount).gt(sourceRemaining)) {
+            )).then((rows) => new FinancialDecimal(rows[0]?.totalAllocated ?? "0"));
+            const sourceRemaining = new FinancialDecimal(fundingSource.amount).minus(sourceAllocation);
+            if (new FinancialDecimal(current.principalAmount).gt(sourceRemaining)) {
                 throw new DomainError("ALLOCATION_EXCEEDS_DRAWDOWN", "Allocation exceeds remaining drawdown balance", 400, {
-                    sourceRemaining: serializeMoney(Decimal.max(0, sourceRemaining)),
+                    sourceRemaining: serializeMoney(FinancialDecimal.max(new FinancialDecimal("0"), sourceRemaining)),
                 });
             }
         }
@@ -547,11 +547,11 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
             }).from(loanFundingAllocations).where(and(
                 eq(loanFundingAllocations.bankProfileId, ownCapitalProfile.id),
                 eq(loanFundingAllocations.tenantId, ctx.tenantId),
-            )).then((rows) => new Decimal(rows[0]?.totalAllocated ?? 0));
-            const sourceRemaining = new Decimal(ownCapitalProfile.creditLimit ?? 0).minus(sourceAllocation);
-            if (new Decimal(current.principalAmount).gt(sourceRemaining)) {
+            )).then((rows) => new FinancialDecimal(rows[0]?.totalAllocated ?? "0"));
+            const sourceRemaining = new FinancialDecimal(ownCapitalProfile.creditLimit ?? "0").minus(sourceAllocation);
+            if (new FinancialDecimal(current.principalAmount).gt(sourceRemaining)) {
                 throw new DomainError("ALLOCATION_EXCEEDS_CAPITAL", "Allocation exceeds remaining own-capital balance", 400, {
-                    sourceRemaining: serializeMoney(Decimal.max(0, sourceRemaining)),
+                    sourceRemaining: serializeMoney(FinancialDecimal.max(new FinancialDecimal("0"), sourceRemaining)),
                 });
             }
         }
@@ -571,9 +571,9 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
             throw new DomainError("INVALID_LOAN_TERMS", error instanceof Error ? error.message : "Invalid loan terms", 400);
         }
         const rollup = generated.length ? computeLoanRollup(generated.map((row) => ({ ...row, status: "pending" }))) : {
-            outstandingPrincipal: new Decimal(current.principalAmount),
-            outstandingInterest: new Decimal(0),
-            outstandingFees: new Decimal(0),
+            outstandingPrincipal: new FinancialDecimal(current.principalAmount),
+            outstandingInterest: new FinancialDecimal("0"),
+            outstandingFees: new FinancialDecimal("0"),
             nextDueDate: null,
         };
         if (generated.length) {
@@ -608,7 +608,7 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
             const firstPeriod = interestPeriodFor(current.interestPeriodAnchorDate, current.interestPeriodAnchorDate, policy);
             const fullPeriodInterest = calculatePeriodInterest(current.principalAmount, policy);
             advanceInterest = policy.advanceInterestPeriods === 1 ? fullPeriodInterest : "0.00";
-            netBorrowerPayout = serializeMoney(new Decimal(current.principalAmount).minus(advanceInterest));
+            netBorrowerPayout = serializeMoney(new FinancialDecimal(current.principalAmount).minus(advanceInterest));
             await tx.insert(loanDisbursements).values({ tenantId: ctx.tenantId, loanId: current.id, grossPrincipal: serializeMoney(current.principalAmount), firstDayInterestDeducted: advanceInterest, netDisbursement: netBorrowerPayout, createdByUserId: ctx.actorUserId });
             if (policy.advanceInterestPeriods === 1) {
                 const snapshots = Array.from({ length: firstPeriod.periodDays }, (_, index) => {

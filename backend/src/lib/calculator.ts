@@ -1,5 +1,6 @@
 import dayjs from "dayjs";
-import Decimal from "decimal.js";
+import type Decimal from "decimal.js";
+import { FinancialDecimal } from "./financial-decimal";
 import { parseMoney, serializeMoney } from "./money";
 import { normalizeDailyLoanEntry, type DailyLoanEntryInput } from "./daily-loan-entry";
 import type { FloatingInterestPolicy } from "./floating-interest-policy";
@@ -89,13 +90,13 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
     // Total Interest = Principal * Rate * (Years)
     // Total Amount = Principal + Total Interest
 
-    const principalMoney = new Decimal(principal);
-    const interestRatePercent = new Decimal(interestRate);
+    const principalMoney = new FinancialDecimal(principal);
+    const interestRatePercent = new FinancialDecimal(interestRate);
     if (!principalMoney.isFinite() || !interestRatePercent.isFinite() || principalMoney.isNegative() || interestRatePercent.isNegative()) {
         throw new Error("Loan principal and interest rate must be non-negative finite values");
     }
     const totalInterest = principalMoney.times(interestRatePercent).div(100).times(termMonths).div(12)
-        .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+        .toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
     const totalAmount = principalMoney.plus(totalInterest);
 
     let installments = 0;
@@ -112,7 +113,7 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
         installments = params.totalInstallments ?? termMonths * 30; // Approx
         dailyInstallmentMoney = params.installmentAmount === undefined
             ? undefined
-            : new Decimal(params.installmentAmount).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+            : new FinancialDecimal(params.installmentAmount).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
     } else if (repaymentType === "weekly") {
         installments = termMonths * 4;
     } else if (repaymentType === "monthly") {
@@ -132,10 +133,10 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
         throw new Error("Installment total cannot be less than principal");
     }
     const scheduledInterest = fixedDailyInstallment ? fixedTotal.minus(principalMoney) : totalInterest;
-    const principalPerInstallment = principalMoney.div(installments).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-    const interestPerInstallment = scheduledInterest.div(installments).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-    let allocatedPrincipal = new Decimal(0);
-    let allocatedInterest = new Decimal(0);
+    const principalPerInstallment = principalMoney.div(installments).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
+    const interestPerInstallment = scheduledInterest.div(installments).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
+    let allocatedPrincipal = new FinancialDecimal("0");
+    let allocatedInterest = new FinancialDecimal("0");
     let remainingPrincipal = principalMoney;
     let currentDate = dayjs(startDate);
 
@@ -149,9 +150,9 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
             : interestPerInstallment;
         allocatedPrincipal = allocatedPrincipal.plus(principalComponent);
         allocatedInterest = allocatedInterest.plus(interestComponent);
-        remainingPrincipal = Decimal.max(0, remainingPrincipal.minus(principalComponent));
+        remainingPrincipal = FinancialDecimal.max(new FinancialDecimal("0"), remainingPrincipal.minus(principalComponent));
         const rowTotal = principalComponent.plus(interestComponent)
-            .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+            .toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
 
         // Validating dates
         if (repaymentType === "daily") currentDate = currentDate.add(1, 'day');
@@ -161,10 +162,10 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
         schedule.push({
             installmentNo: i,
             dueDate: currentDate.format("YYYY-MM-DD"),
-            amount: rowTotal.toFixed(2),
-            principalComponent: principalComponent.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2),
-            interestComponent: interestComponent.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2),
-            remainingPrincipal: remainingPrincipal.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2)
+            amount: serializeMoney(rowTotal),
+            principalComponent: serializeMoney(principalComponent),
+            interestComponent: serializeMoney(interestComponent),
+            remainingPrincipal: serializeMoney(remainingPrincipal),
         });
     }
 

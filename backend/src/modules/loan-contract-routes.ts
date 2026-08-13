@@ -14,13 +14,7 @@ import { activateLoan, createLoanDraft, getLoanApplication, presentLoan, preview
 import { getLoanPaymentHealth } from "../services/loan-payment-health-service";
 import { DomainError } from "../services/domain-error";
 import { loanCommandContext, loanDomainFailure, loanUnauthorized } from "./loan-http-support";
-import { dailyEntry, floatingInterestPolicy, repaymentType } from "./loan-route-schemas";
-
-const loanTermsBody = t.Object({
-    principal: t.String(), interestRate: t.String(), termMonths: t.Number(), repaymentType,
-    startDate: t.String(), totalInstallments: t.Optional(t.Number()), installmentAmount: t.Optional(t.String()),
-    floatingInterestPolicy: t.Optional(floatingInterestPolicy), dailyEntry: t.Optional(dailyEntry),
-}, { additionalProperties: t.Never() });
+import { dailyEntry, floatingInterestPolicy, loanTermsBody, publicMoney, repaymentType } from "./loan-route-schemas";
 
 export const loanContractRoutes = new Elysia().use(authPlugin)
     .get("/", async ({ user, query, request, set }) => {
@@ -203,8 +197,8 @@ export const loanContractRoutes = new Elysia().use(authPlugin)
             borrowerPublicId: t.String(),
             bankLoanPublicId: t.Optional(t.Nullable(t.String())),
             bankProfilePublicId: t.Optional(t.Nullable(t.String())),
-            principal: t.String(), interestRate: t.String(), repaymentType, termMonths: t.Number(),
-            totalInstallments: t.Optional(t.Number()), installmentAmount: t.Optional(t.String()),
+            principal: publicMoney, interestRate: publicMoney, repaymentType, termMonths: t.Number(),
+            totalInstallments: t.Optional(t.Number()), installmentAmount: t.Optional(publicMoney),
             floatingInterestPolicy: t.Optional(floatingInterestPolicy), dailyEntry: t.Optional(dailyEntry), startDate: t.String(),
         }, { additionalProperties: t.Never() }),
     })
@@ -223,9 +217,9 @@ export const loanContractRoutes = new Elysia().use(authPlugin)
             borrowerPublicId: t.Optional(t.String()),
             bankLoanPublicId: t.Optional(t.Nullable(t.String())),
             bankProfilePublicId: t.Optional(t.Nullable(t.String())),
-            principal: t.Optional(t.String()), interestRate: t.Optional(t.String()),
+            principal: t.Optional(publicMoney), interestRate: t.Optional(publicMoney),
             repaymentType: t.Optional(repaymentType), termMonths: t.Optional(t.Number()),
-            totalInstallments: t.Optional(t.Number()), installmentAmount: t.Optional(t.String()),
+            totalInstallments: t.Optional(t.Number()), installmentAmount: t.Optional(publicMoney),
             floatingInterestPolicy: t.Optional(floatingInterestPolicy), dailyEntry: t.Optional(dailyEntry), startDate: t.Optional(t.String()),
         }, { additionalProperties: t.Never() }),
     })
