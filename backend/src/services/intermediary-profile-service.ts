@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
     auditLogs,
     borrowers,
     intermediaries,
     intermediaryBankAccounts,
+    intermediatedDisbursementGroups,
+    intermediatedTransferEvents,
     loanIntermediaryAssignments,
     loans,
     users,
@@ -512,11 +514,80 @@ export async function endIntermediaryAssignment(ctx: CommandContext, assignmentP
         if (!loan || !intermediary || !ownerAccessible(actor, loan.ownerUserId) || !ownerAccessible(actor, intermediary.ownerUserId)) {
             throw new DomainError("INTERMEDIARY_ASSIGNMENT_NOT_FOUND", "Intermediary assignment not found", 404);
         }
-        if (existing.status !== "active") {
+
+        // Transfer creation locks its group and then its loan before validating the effective
+        // assignment. Take the same shared locks before changing the half-open interval so an
+        // accepted event and an assignment end cannot race past one another.
+        await tx.execute(sql`
+            SELECT id FROM intermediated_disbursement_groups
+            WHERE tenant_id = ${ctx.tenantId}
+                AND loan_id = ${existing.loanId}
+                AND intermediary_id = ${existing.intermediaryId}
+            ORDER BY id
+            FOR UPDATE
+        `);
+        await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${existing.loanId} FOR UPDATE`);
+        await tx.execute(sql`
+            SELECT id FROM loan_intermediary_assignments
+            WHERE tenant_id = ${ctx.tenantId} AND id = ${existing.id}
+            FOR UPDATE
+        `);
+        await tx.execute(sql`
+            SELECT event.id
+            FROM intermediated_transfer_events AS event
+            INNER JOIN intermediated_disbursement_groups AS disbursement_group
+                ON disbursement_group.tenant_id = event.tenant_id
+                AND disbursement_group.id = event.group_id
+            WHERE event.tenant_id = ${ctx.tenantId}
+                AND disbursement_group.loan_id = ${existing.loanId}
+                AND disbursement_group.intermediary_id = ${existing.intermediaryId}
+            ORDER BY event.id
+            FOR UPDATE OF event
+        `);
+
+        const locked = await tx.query.loanIntermediaryAssignments.findFirst({
+            where: and(
+                eq(loanIntermediaryAssignments.tenantId, ctx.tenantId),
+                eq(loanIntermediaryAssignments.id, existing.id),
+            ),
+        });
+        if (!locked) throw new DomainError("INTERMEDIARY_ASSIGNMENT_NOT_FOUND", "Intermediary assignment not found", 404);
+        if (locked.status !== "active") {
             throw new DomainError("INTERMEDIARY_ASSIGNMENT_ENDED", "Intermediary assignment has already ended", 409);
         }
-        if (effectiveTo.getTime() <= existing.effectiveFrom.getTime()) {
+        if (effectiveTo.getTime() <= locked.effectiveFrom.getTime()) {
             throw new DomainError("INVALID_ASSIGNMENT_DATE", "effectiveTo must be after effectiveFrom", 400);
+        }
+        if (locked.role === "disbursement" || locked.role === "both") {
+            const conflictingEvent = await tx.select({
+                publicId: intermediatedTransferEvents.publicId,
+                transferredAt: intermediatedTransferEvents.transferredAt,
+            }).from(intermediatedTransferEvents)
+                .innerJoin(intermediatedDisbursementGroups, and(
+                    eq(intermediatedDisbursementGroups.tenantId, intermediatedTransferEvents.tenantId),
+                    eq(intermediatedDisbursementGroups.id, intermediatedTransferEvents.groupId),
+                ))
+                .where(and(
+                    eq(intermediatedTransferEvents.tenantId, ctx.tenantId),
+                    eq(intermediatedDisbursementGroups.loanId, locked.loanId),
+                    eq(intermediatedDisbursementGroups.intermediaryId, locked.intermediaryId),
+                    gte(intermediatedTransferEvents.transferredAt, locked.effectiveFrom),
+                    gte(intermediatedTransferEvents.transferredAt, effectiveTo),
+                ))
+                .orderBy(intermediatedTransferEvents.transferredAt, intermediatedTransferEvents.id)
+                .limit(1)
+                .then((rows) => rows[0]);
+            if (conflictingEvent) {
+                throw new DomainError(
+                    "INTERMEDIARY_ASSIGNMENT_HAS_TRANSFER_EVENTS",
+                    "Assignment cannot end at or before an existing transfer timestamp",
+                    409,
+                    {
+                        eventPublicId: conflictingEvent.publicId,
+                        transferredAt: conflictingEvent.transferredAt.toISOString(),
+                    },
+                );
+            }
         }
         const row = await tx.update(loanIntermediaryAssignments).set({
             effectiveTo,
@@ -525,11 +596,11 @@ export async function endIntermediaryAssignment(ctx: CommandContext, assignmentP
             updatedAt: new Date(),
         }).where(and(
             eq(loanIntermediaryAssignments.tenantId, ctx.tenantId),
-            eq(loanIntermediaryAssignments.id, existing.id),
+            eq(loanIntermediaryAssignments.id, locked.id),
             eq(loanIntermediaryAssignments.status, "active"),
         )).returning().then((rows) => rows[0]);
         if (!row) throw new DomainError("INTERMEDIARY_ASSIGNMENT_ENDED", "Intermediary assignment has already ended", 409);
-        const before = presentAssignment(existing, { loanPublicId: loan.publicId, intermediaryPublicId: intermediary.publicId });
+        const before = presentAssignment(locked, { loanPublicId: loan.publicId, intermediaryPublicId: intermediary.publicId });
         const after = presentAssignment(row, { loanPublicId: loan.publicId, intermediaryPublicId: intermediary.publicId });
         await createAuditLog(tx, {
             ...auditContext(ctx),

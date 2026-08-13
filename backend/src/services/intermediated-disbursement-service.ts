@@ -15,7 +15,11 @@ import {
 } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
-import { FinancialDecimal } from "../lib/financial-decimal";
+import {
+    FinancialDecimal,
+    signedPublicMoneyPattern,
+    unsignedPublicMoneyPattern,
+} from "../lib/financial-decimal";
 import { parseMoney, serializeMoney, type Money } from "../lib/money";
 import {
     calculatePeriodInterest,
@@ -139,6 +143,52 @@ function signedMoney(value: Money) {
     if (!value.isFinite()) throw new DomainError("INVALID_INTERMEDIATED_DISBURSEMENT_STATE", "Calculated money is not finite", 500);
     const output = value.toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP).toFixed(2);
     return output === "-0.00" ? "0.00" : output;
+}
+
+function transferAggregates(
+    events: Array<Pick<EventRow, "role" | "amount" | "status">>,
+    retainedBalance: Money,
+) {
+    const includedEvents = events.filter((event) => event.status === "ready" || event.status === "posted");
+    const totalFor = (role: TransferRole) => includedEvents
+        .filter((event) => event.role === role)
+        .reduce((total, event) => total.plus(event.amount), new FinancialDecimal("0"));
+    const actualFunding = totalFor("funding_to_intermediary");
+    const actualBorrowerPayout = totalFor("borrower_net_payout");
+    const actualAdvanceInterestReturn = totalFor("advance_interest_return");
+    return {
+        actualFunding,
+        actualBorrowerPayout,
+        actualAdvanceInterestReturn,
+        variance: actualFunding.minus(actualBorrowerPayout).minus(actualAdvanceInterestReturn).minus(retainedBalance),
+    };
+}
+
+function assertPublicTransferAggregates(aggregates: ReturnType<typeof transferAggregates>) {
+    for (const [field, value] of [
+        ["actualFunding", aggregates.actualFunding],
+        ["actualBorrowerPayout", aggregates.actualBorrowerPayout],
+        ["actualAdvanceInterestReturn", aggregates.actualAdvanceInterestReturn],
+    ] as const) {
+        const output = value.toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP).toFixed(2);
+        if (!unsignedPublicMoneyPattern.test(output)) {
+            throw new DomainError(
+                "INTERMEDIATED_DISBURSEMENT_AGGREGATE_OUT_OF_RANGE",
+                "Transfer would exceed the supported public money range for this group",
+                409,
+                { field },
+            );
+        }
+    }
+    const variance = aggregates.variance.toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP).toFixed(2);
+    if (!signedPublicMoneyPattern.test(variance)) {
+        throw new DomainError(
+            "INTERMEDIATED_DISBURSEMENT_AGGREGATE_OUT_OF_RANGE",
+            "Transfer would exceed the supported public money range for this group",
+            409,
+            { field: "variance" },
+        );
+    }
 }
 
 function presentGroup(row: GroupRow, related: GroupRelations) {
@@ -545,6 +595,18 @@ export async function createTransferEvent(
         ) })) {
             throw new DomainError("DUPLICATE_BANK_REFERENCE", "Bank reference is already attached to another transfer event", 409);
         }
+        const existingEvents = await tx.select({
+            role: intermediatedTransferEvents.role,
+            amount: intermediatedTransferEvents.amount,
+            status: intermediatedTransferEvents.status,
+        }).from(intermediatedTransferEvents).where(and(
+            eq(intermediatedTransferEvents.tenantId, ctx.tenantId),
+            eq(intermediatedTransferEvents.groupId, group.id),
+        ));
+        assertPublicTransferAggregates(transferAggregates([
+            ...existingEvents,
+            { role: input.role, amount: serializeMoney(parsedAmount), status: "ready" },
+        ], new FinancialDecimal(group.retainedBalanceAmount)));
         const row = await tx.insert(intermediatedTransferEvents).values({
             tenantId: ctx.tenantId,
             groupId: group.id,
@@ -621,18 +683,13 @@ export async function previewIntermediatedDisbursement(ctx: CommandContext, grou
             eq(intermediatedTransferEvents.tenantId, ctx.tenantId),
             eq(intermediatedTransferEvents.groupId, group.id),
         )).orderBy(asc(intermediatedTransferEvents.id));
-        const includedEvents = events.filter((event) => event.status === "ready" || event.status === "posted");
-        const totalFor = (role: TransferRole) => includedEvents
-            .filter((event) => event.role === role)
-            .reduce((total, event) => total.plus(event.amount), new FinancialDecimal("0"));
-        const actualFunding = totalFor("funding_to_intermediary");
-        const actualBorrowerPayout = totalFor("borrower_net_payout");
-        const actualAdvanceInterestReturn = totalFor("advance_interest_return");
+        const aggregates = transferAggregates(events, new FinancialDecimal(group.retainedBalanceAmount));
+        const { actualFunding, actualBorrowerPayout, actualAdvanceInterestReturn, variance } = aggregates;
+        assertPublicTransferAggregates(aggregates);
         const expectedFunding = new FinancialDecimal(group.expectedFundingAmount);
         const expectedBorrowerPayout = new FinancialDecimal(group.expectedBorrowerPayoutAmount);
         const expectedAdvanceInterestReturn = new FinancialDecimal(group.expectedAdvanceInterestReturnAmount);
         const retainedBalance = new FinancialDecimal(group.retainedBalanceAmount);
-        const variance = actualFunding.minus(actualBorrowerPayout).minus(actualAdvanceInterestReturn).minus(retainedBalance);
 
         const warnings: Array<{ code: string; amount?: string }> = [];
         addRoleWarning(warnings, actualFunding, expectedFunding, "FUNDING");

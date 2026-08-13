@@ -4,9 +4,11 @@ import { db } from "../db";
 import {
     auditLogs,
     borrowers,
+    files,
     intermediaries,
     intermediatedDisbursementGroupPreviews,
     intermediatedDisbursementGroups,
+    intermediatedTransferEvidenceIntents,
     intermediatedTransferEvents,
     loanIntermediaryAssignments,
     loans,
@@ -211,6 +213,49 @@ describe("intermediated disbursement groups and exact preview", () => {
         expect(JSON.stringify(detail)).not.toContain(`\"intermediaryId\"`);
     });
 
+    integrationTest("keeps an exact group in review while any transfer evidence intent is pending", async () => {
+        const owner = await seed("tenant-pending-evidence", "pending-evidence");
+        const group = await createGroup(owner, "pending-evidence");
+        await addExactEvents(owner, group.publicId, "pending-evidence");
+        const storedGroup = await db.query.intermediatedDisbursementGroups.findFirst({
+            where: eq(intermediatedDisbursementGroups.publicId, group.publicId),
+        });
+        const event = await db.query.intermediatedTransferEvents.findFirst({
+            where: and(
+                eq(intermediatedTransferEvents.groupId, storedGroup!.id),
+                eq(intermediatedTransferEvents.role, "funding_to_intermediary"),
+            ),
+        });
+        const file = await db.insert(files).values({
+            tenantId: owner.actor.tenantId,
+            ownerUserId: owner.actor.id,
+            bucket: "test-evidence",
+            key: "pending-evidence/funding-slip.png",
+            originalName: "funding-slip.png",
+            mimeType: "image/png",
+            size: 128,
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(intermediatedTransferEvidenceIntents).values({
+            tenantId: owner.actor.tenantId,
+            eventId: event!.id,
+            fileId: file.id,
+            status: "pending",
+            evidenceHash: "pending-evidence-hash",
+            mimeType: "image/png",
+            declaredSize: 128,
+            uploadExpiresAt: new Date("2026-08-13T10:00:00.000Z"),
+            createdByUserId: owner.actor.id,
+            updatedByUserId: owner.actor.id,
+        });
+
+        expect(await previewIntermediatedDisbursement(context(owner.actor), group.publicId)).toMatchObject({
+            variance: "0.00",
+            evidenceReady: false,
+            status: "needs_review",
+            warnings: [{ code: "TRANSFER_EVIDENCE_NOT_READY" }],
+        });
+    });
+
     // Break caught: a balanced-looking total hides role-level under/over funding, or retained
     // cash is accepted as unexplained variance instead of an explicit group target.
     integrationTest("reports under and over funding while allowing only explicit retained balance", async () => {
@@ -250,6 +295,72 @@ describe("intermediated disbursement groups and exact preview", () => {
             intermediaryPublicId: owner.intermediary.publicId,
             retainedBalance: "4400.01",
         })).rejects.toMatchObject({ code: "INVALID_RETAINED_BALANCE", status: 400 });
+    });
+
+    // Break caught: individually valid transfer amounts can accumulate beyond the public-money
+    // contract, leaving preview unable to serialize the group and the draft unrecoverable.
+    integrationTest("rejects transfer events whose role total or signed variance exceeds the public-money bound", async () => {
+        const owner = await seed("tenant-aggregate-bound", "aggregate-bound");
+        const maximum = "99999999999999999999999999999.99";
+
+        const roleTotalGroup = await createGroup(owner, "role-total-bound");
+        await addEvent(owner, roleTotalGroup.publicId, "role-total-maximum", "funding_to_intermediary", maximum);
+        const roleTotalBefore = await db.query.intermediatedDisbursementGroups.findFirst({
+            where: eq(intermediatedDisbursementGroups.publicId, roleTotalGroup.publicId),
+        });
+        const roleTotalAuditsBefore = await db.select().from(auditLogs).where(and(
+            eq(auditLogs.entityType, "intermediated_transfer_event"),
+            eq(auditLogs.action, "created"),
+        ));
+
+        await expect(addEvent(
+            owner,
+            roleTotalGroup.publicId,
+            "role-total-overflow",
+            "funding_to_intermediary",
+            "0.01",
+        )).rejects.toMatchObject({
+            code: "INTERMEDIATED_DISBURSEMENT_AGGREGATE_OUT_OF_RANGE",
+            status: 409,
+            details: { field: "actualFunding" },
+        });
+        expect(await db.query.intermediatedDisbursementGroups.findFirst({
+            where: eq(intermediatedDisbursementGroups.publicId, roleTotalGroup.publicId),
+        })).toEqual(roleTotalBefore);
+        expect(await db.select().from(intermediatedTransferEvents).where(
+            eq(intermediatedTransferEvents.groupId, roleTotalBefore!.id),
+        )).toHaveLength(1);
+        expect(await db.select().from(auditLogs).where(and(
+            eq(auditLogs.entityType, "intermediated_transfer_event"),
+            eq(auditLogs.action, "created"),
+        ))).toEqual(roleTotalAuditsBefore);
+        expect(await previewIntermediatedDisbursement(context(owner.actor), roleTotalGroup.publicId)).toMatchObject({
+            actualFunding: maximum,
+            status: "needs_review",
+        });
+
+        const varianceGroup = await createGroup(owner, "variance-bound");
+        await addEvent(owner, varianceGroup.publicId, "variance-borrower-maximum", "borrower_net_payout", maximum);
+        const varianceBefore = await db.query.intermediatedDisbursementGroups.findFirst({
+            where: eq(intermediatedDisbursementGroups.publicId, varianceGroup.publicId),
+        });
+        await expect(addEvent(
+            owner,
+            varianceGroup.publicId,
+            "variance-advance-overflow",
+            "advance_interest_return",
+            maximum,
+        )).rejects.toMatchObject({
+            code: "INTERMEDIATED_DISBURSEMENT_AGGREGATE_OUT_OF_RANGE",
+            status: 409,
+            details: { field: "variance" },
+        });
+        expect(await db.query.intermediatedDisbursementGroups.findFirst({
+            where: eq(intermediatedDisbursementGroups.publicId, varianceGroup.publicId),
+        })).toEqual(varianceBefore);
+        expect(await db.select().from(intermediatedTransferEvents).where(
+            eq(intermediatedTransferEvents.groupId, varianceBefore!.id),
+        )).toHaveLength(1);
     });
 
     // Break caught: group/event creation accepts an inactive/wrong intermediary or checks the
@@ -374,6 +485,7 @@ describe("intermediated disbursement groups and exact preview", () => {
     // and public presenters expose numeric identifiers or stored reference hashes.
     integrationTest("keeps list and detail reads owner-scoped and exposes public identifiers only", async () => {
         const owner = await seed("tenant-read-scope", "read-owner");
+        const otherTenant = await seed("tenant-read-scope-other", "read-other-tenant");
         const otherActor = await db.insert(users).values({
             tenantId: owner.actor.tenantId,
             email: "other@intermediated-disbursement.test",
@@ -395,5 +507,12 @@ describe("intermediated disbursement groups and exact preview", () => {
         await expect(getIntermediatedDisbursementGroup(context(otherActor), group.publicId))
             .rejects.toMatchObject({ code: "INTERMEDIATED_DISBURSEMENT_NOT_FOUND", status: 404 });
         expect(await listIntermediatedDisbursementGroups(context(otherActor))).toEqual([]);
+        await expect(getIntermediatedDisbursementGroup(context(otherTenant.actor), group.publicId))
+            .rejects.toMatchObject({ code: "INTERMEDIATED_DISBURSEMENT_NOT_FOUND", status: 404 });
+        await expect(addEvent(otherTenant, group.publicId, "cross-tenant", "funding_to_intermediary", "1.00"))
+            .rejects.toMatchObject({ code: "INTERMEDIATED_DISBURSEMENT_NOT_FOUND", status: 404 });
+        await expect(previewIntermediatedDisbursement(context(otherTenant.actor), group.publicId))
+            .rejects.toMatchObject({ code: "INTERMEDIATED_DISBURSEMENT_NOT_FOUND", status: 404 });
+        expect(await listIntermediatedDisbursementGroups(context(otherTenant.actor))).toEqual([]);
     });
 });

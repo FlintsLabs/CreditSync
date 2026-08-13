@@ -229,6 +229,12 @@ describe("intermediated disbursement REST contract", () => {
             expect(event.body).not.toHaveProperty("bankReferenceHash");
         }
 
+        const unknownPreviewField = await jsonRequest(app, `/intermediated-disbursements/${created.body.publicId}/preview`, token, {
+            method: "POST",
+            body: JSON.stringify({ expectedFunding: "1.00" }),
+        });
+        expect(unknownPreviewField.response.status).toBe(422);
+
         const preview = await jsonRequest(app, `/intermediated-disbursements/${created.body.publicId}/preview`, token, { method: "POST", body: "{}" });
         expect(preview.response.status).toBe(200);
         expect(preview.body).toMatchObject({

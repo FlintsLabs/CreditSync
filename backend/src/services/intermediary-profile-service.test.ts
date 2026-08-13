@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
     auditLogs,
     borrowers,
     intermediaries,
     intermediaryBankAccounts,
+    intermediatedDisbursementGroups,
+    intermediatedTransferEvents,
     loanIntermediaryAssignments,
     loans,
     users,
@@ -487,6 +489,93 @@ describe("intermediary profile, account, and assignment service", () => {
         expect(assignmentAudits[1]).toMatchObject({
             requestId: "req-assignment-end-1",
             correlationId: "corr-assignment-end-1",
+        });
+    });
+
+    // Break caught: backdating an assignment end can make a previously accepted transfer event
+    // fall outside its load-bearing half-open assignment interval.
+    integrationTest("does not end a disbursement assignment at or before an existing transfer timestamp", async () => {
+        const actor = await seedActor("tenant-assignment-event-integrity", "assignment-event-integrity");
+        const intermediary = await createIntermediary(context(actor), { name: "Integrity Route" });
+        const managedLoan = await seedLoan(actor, "assignment-event-integrity");
+        const assignment = await assignIntermediaryToLoan(
+            context(actor, "assignment-event-integrity-create"),
+            managedLoan.loan.publicId,
+            {
+                intermediaryPublicId: intermediary.publicId,
+                role: "disbursement",
+                effectiveFrom: "2026-01-01T00:00:00.000Z",
+            },
+        );
+        const intermediaryRow = await db.query.intermediaries.findFirst({
+            where: eq(intermediaries.publicId, intermediary.publicId),
+        });
+        const group = await db.insert(intermediatedDisbursementGroups).values({
+            tenantId: actor.tenantId,
+            loanId: managedLoan.loan.id,
+            intermediaryId: intermediaryRow!.id,
+            expectedFundingAmount: "5000.00",
+            expectedBorrowerPayoutAmount: "5000.00",
+            expectedAdvanceInterestReturnAmount: "0.00",
+            retainedBalanceAmount: "0.00",
+            idempotencyKey: "assignment-event-integrity-group",
+            createdByUserId: actor.id,
+            updatedByUserId: actor.id,
+        }).returning().then((rows) => rows[0]!);
+        const transferredAt = new Date("2026-08-13T09:00:00.000Z");
+        const event = await db.insert(intermediatedTransferEvents).values({
+            tenantId: actor.tenantId,
+            groupId: group.id,
+            role: "funding_to_intermediary",
+            channel: "bank_transfer",
+            amount: "5000.00",
+            transferredAt,
+            status: "ready",
+            idempotencyKey: "assignment-event-integrity-transfer",
+            createdByUserId: actor.id,
+            updatedByUserId: actor.id,
+        }).returning().then((rows) => rows[0]!);
+
+        await expect(endIntermediaryAssignment(
+            context(actor, "assignment-event-integrity-end-at-boundary"),
+            assignment.publicId,
+            { effectiveTo: transferredAt.toISOString(), reason: "Backdated handoff" },
+        )).rejects.toMatchObject({
+            code: "INTERMEDIARY_ASSIGNMENT_HAS_TRANSFER_EVENTS",
+            status: 409,
+            details: { eventPublicId: event.publicId, transferredAt: transferredAt.toISOString() },
+        });
+        expect(await db.query.loanIntermediaryAssignments.findFirst({
+            where: eq(loanIntermediaryAssignments.publicId, assignment.publicId),
+        })).toMatchObject({ status: "active", effectiveTo: null });
+        expect(await db.select().from(auditLogs).where(and(
+            eq(auditLogs.entityType, "loan_intermediary_assignment"),
+            eq(auditLogs.action, "ended"),
+        ))).toHaveLength(0);
+
+        let markLocked!: () => void;
+        let releaseBlocker!: () => void;
+        const lockHeld = new Promise<void>((resolve) => { markLocked = resolve; });
+        const mayCommit = new Promise<void>((resolve) => { releaseBlocker = resolve; });
+        const blocker = db.transaction(async (tx) => {
+            await tx.execute(sql`SELECT id FROM intermediated_disbursement_groups WHERE id = ${group.id} FOR UPDATE`);
+            markLocked();
+            await mayCommit;
+        });
+        await lockHeld;
+        let completed = false;
+        const ending = endIntermediaryAssignment(
+            context(actor, "assignment-event-integrity-end-after"),
+            assignment.publicId,
+            { effectiveTo: "2026-08-13T09:00:01.000Z", reason: "Handoff after transfer" },
+        ).finally(() => { completed = true; });
+        await Bun.sleep(50);
+        expect(completed).toBe(false);
+        releaseBlocker();
+        await blocker;
+        expect(await ending).toMatchObject({
+            status: "ended",
+            effectiveTo: "2026-08-13T09:00:01.000Z",
         });
     });
 

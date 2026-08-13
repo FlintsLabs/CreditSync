@@ -112,5 +112,8 @@ export const intermediatedDisbursementsRoute = new Elysia({ normalize: false })
     .post(
         "/intermediated-disbursements/:id/preview",
         ({ params, user, request, set }) => invoke(user, request, set, (ctx) => previewIntermediatedDisbursement(ctx, params.id)),
-        groupId,
+        {
+            ...groupId,
+            body: t.Object({}, { additionalProperties: t.Never() }),
+        },
     );
