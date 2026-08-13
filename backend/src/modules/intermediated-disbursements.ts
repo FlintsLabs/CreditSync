@@ -62,6 +62,7 @@ const evidenceIds = t.Object({
     eventId: t.String({ format: "uuid" }),
     evidenceId: t.String({ format: "uuid" }),
 }, { additionalProperties: t.Never() });
+const emptyQuery = t.Object({}, { additionalProperties: t.Never() });
 
 export function createIntermediatedDisbursementsRoute(evidenceGateway?: TransferEvidenceStorageGateway) {
     return new Elysia({ normalize: false })
@@ -129,7 +130,7 @@ export function createIntermediatedDisbursementsRoute(evidenceGateway?: Transfer
     .get(
         "/intermediated-disbursements/:id/events/:eventId/evidence",
         ({ params, user, request, set }) => invoke(user, request, set, (ctx) => listTransferEvidence(ctx, params.id, params.eventId)),
-        { params: eventEvidenceIds },
+        { params: eventEvidenceIds, query: emptyQuery },
     )
     .post(
         "/intermediated-disbursements/:id/events/:eventId/evidence/upload-intents",
@@ -142,6 +143,7 @@ export function createIntermediatedDisbursementsRoute(evidenceGateway?: Transfer
         )),
         {
             params: eventEvidenceIds,
+            query: emptyQuery,
             body: t.Object({
                 mimeType: t.Union([
                     t.Literal("image/jpeg"),
@@ -165,6 +167,7 @@ export function createIntermediatedDisbursementsRoute(evidenceGateway?: Transfer
         )),
         {
             params: evidenceIds,
+            query: emptyQuery,
             body: t.Optional(t.Object({}, { additionalProperties: t.Never() })),
         },
     )
@@ -177,7 +180,7 @@ export function createIntermediatedDisbursementsRoute(evidenceGateway?: Transfer
             params.evidenceId,
             evidenceGateway,
         )),
-        { params: evidenceIds },
+        { params: evidenceIds, query: emptyQuery },
     )
     .post(
         "/intermediated-disbursements/:id/preview",

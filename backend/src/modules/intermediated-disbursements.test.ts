@@ -315,6 +315,19 @@ describe("intermediated disbursement REST contract", () => {
         expect(readyRetry.body).toMatchObject({ publicId: evidencePublicId, status: "ready" });
         expect(putRequests).toHaveLength(1);
 
+        for (const [path, init] of [
+            [`${evidenceBase}?unexpected=true`, {}],
+            [`${evidenceBase}/upload-intents?unexpected=true`, {
+                method: "POST",
+                body: JSON.stringify({ mimeType: "image/png", size: 128, sha256: "a".repeat(64) }),
+            }],
+            [`${evidenceBase}/${evidencePublicId}/finalize?unexpected=true`, { method: "POST" }],
+            [`${evidenceBase}/${evidencePublicId}/access?unexpected=true`, {}],
+        ] as const) {
+            const unknownEvidenceQuery = await jsonRequest(app, path, token, init);
+            expect(unknownEvidenceQuery.response.status).toBe(422);
+        }
+
         const evidence = await jsonRequest(app, evidenceBase, token);
         expect(evidence.response.status).toBe(200);
         expect(evidence.body).toEqual([expect.objectContaining({ publicId: evidencePublicId, status: "ready", mimeType: "image/png" })]);

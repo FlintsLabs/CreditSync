@@ -215,6 +215,7 @@ describe("intermediated transfer evidence lifecycle", () => {
         const firstSplit = await createEvent(owner, group.publicId, "split-a");
         const secondSplit = await createEvent(owner, group.publicId, "split-b", "borrower_net_payout", "2400.00");
         const gateway = new EvidenceGateway();
+        const accessClock = () => new Date("2026-08-13T09:00:00.000Z");
 
         const prepared = [];
         for (const [eventPublicId, input] of [
@@ -261,6 +262,7 @@ describe("intermediated transfer evidence lifecycle", () => {
             firstSplit.publicId,
             prepared[0]!.publicId,
             gateway,
+            accessClock,
         );
         expect(access).toEqual({
             publicId: prepared[0]!.publicId,
@@ -288,7 +290,9 @@ describe("intermediated transfer evidence lifecycle", () => {
         await db.update(intermediatedDisbursementGroups).set({ status: "posted", postIdempotencyKey: "post-multi", postedAt: new Date() }).where(eq(intermediatedDisbursementGroups.id, storedGroup!.id));
 
         expect(await listTransferEvidence(context(owner.actor), group.publicId, firstSplit.publicId)).toHaveLength(2);
-        expect(await getTransferEvidenceAccess(context(owner.actor), group.publicId, firstSplit.publicId, prepared[0]!.publicId, gateway)).toMatchObject({ status: "ready" });
+        expect(await getTransferEvidenceAccess(
+            context(owner.actor), group.publicId, firstSplit.publicId, prepared[0]!.publicId, gateway, accessClock,
+        )).toMatchObject({ status: "ready" });
         await expect(prepareTransferEvidence(context(owner.actor), group.publicId, firstSplit.publicId, evidenceInput("d"), gateway)).rejects.toMatchObject({ code: "INTERMEDIATED_DISBURSEMENT_LOCKED" });
 
         const link = await db.query.intermediatedTransferEvidence.findFirst({
@@ -367,6 +371,52 @@ describe("intermediated transfer evidence lifecycle", () => {
 
         gateway.heads.set(key, valid);
         await expect(finalizeTransferEvidence(context(owner.actor), group.publicId, event.publicId, pending.publicId, gateway)).resolves.toMatchObject({ status: "ready", sha256: "e".repeat(64) });
+    });
+
+    // Break caught: a ready finalize retry consults mutable storage again instead of
+    // returning the exact immutable evidence result already committed to PostgreSQL.
+    integrationTest("replays a ready finalize result without a second storage HEAD", async () => {
+        const owner = await seed("tenant-transfer-finalize-retry", "finalize-retry");
+        const group = await createGroup(owner, "finalize-retry");
+        const event = await createEvent(owner, group.publicId, "finalize-retry");
+        const gateway = new EvidenceGateway();
+        const pending = await prepareTransferEvidence(context(owner.actor), group.publicId, event.publicId, evidenceInput("6"), gateway);
+        gateway.acceptLastPut();
+
+        const finalized = await finalizeTransferEvidence(context(owner.actor), group.publicId, event.publicId, pending.publicId, gateway);
+        expect(gateway.headCalls).toBe(1);
+        expect(await finalizeTransferEvidence(context(owner.actor), group.publicId, event.publicId, pending.publicId, gateway)).toEqual(finalized);
+        expect(gateway.headCalls).toBe(1);
+    });
+
+    // Break caught: the service forwards an already-expired or excessively long-lived
+    // storage descriptor, allowing callers to bypass the evidence-access lifetime policy.
+    integrationTest("accepts the exact access-expiry boundary and rejects expired or longer descriptors", async () => {
+        const owner = await seed("tenant-transfer-access-expiry", "access-expiry");
+        const group = await createGroup(owner, "access-expiry");
+        const event = await createEvent(owner, group.publicId, "access-expiry");
+        const gateway = new EvidenceGateway();
+        const pending = await prepareTransferEvidence(context(owner.actor), group.publicId, event.publicId, evidenceInput("7"), gateway);
+        gateway.acceptLastPut();
+        const finalized = await finalizeTransferEvidence(context(owner.actor), group.publicId, event.publicId, pending.publicId, gateway);
+        const now = new Date("2026-08-13T09:00:00.000Z");
+        const clock = () => new Date(now);
+
+        gateway.accessExpiresAt = new Date(now.getTime() + 15 * 60_000);
+        await expect(getTransferEvidenceAccess(
+            context(owner.actor), group.publicId, event.publicId, finalized.publicId, gateway, clock,
+        )).resolves.toMatchObject({ expiresAt: "2026-08-13T09:15:00.000Z" });
+
+        for (const invalidExpiry of [
+            new Date(now.getTime() + 15 * 60_000 + 1),
+            new Date(now),
+            new Date(now.getTime() - 1),
+        ]) {
+            gateway.accessExpiresAt = invalidExpiry;
+            await expect(getTransferEvidenceAccess(
+                context(owner.actor), group.publicId, event.publicId, finalized.publicId, gateway, clock,
+            )).rejects.toMatchObject({ code: "EVIDENCE_ACCESS_DESCRIPTOR_INVALID", status: 502 });
+        }
     });
 
     // Break caught: one tenant can reuse a finalized checksum on another economic transfer,

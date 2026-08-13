@@ -56,6 +56,7 @@ const defaultGateway: TransferEvidenceStorageGateway = {
 const allowedMimeTypes = new Set(["image/jpeg", "image/png", "application/pdf"]);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const sha256Pattern = /^[0-9a-f]{64}$/i;
+const maxAccessTtlMs = 15 * 60_000;
 
 function requirePublicId(value: string, field: string) {
     if (!uuidPattern.test(value)) {
@@ -432,6 +433,7 @@ export async function getTransferEvidenceAccess(
     eventPublicId: string,
     evidencePublicId: string,
     gateway: TransferEvidenceStorageGateway = defaultGateway,
+    clock: () => Date = () => new Date(),
 ) {
     requirePublicId(evidencePublicId, "evidencePublicId");
     const parent = await accessibleParent(ctx, groupPublicId, eventPublicId);
@@ -456,6 +458,15 @@ export async function getTransferEvidenceAccess(
         )).then((rows) => rows[0]);
     if (!row) throw new DomainError("EVIDENCE_NOT_FOUND", "Finalized transfer evidence not found", 404);
     const descriptor = await gateway.createAccess({ provider: "s3", bucket: row.file.bucket, key: row.file.key });
+    const now = clock().getTime();
+    const expiresAt = descriptor.expiresAt.getTime();
+    if (!Number.isFinite(expiresAt) || expiresAt <= now || expiresAt > now + maxAccessTtlMs) {
+        throw new DomainError(
+            "EVIDENCE_ACCESS_DESCRIPTOR_INVALID",
+            "Evidence storage returned an invalid access expiry",
+            502,
+        );
+    }
     return {
         publicId: row.intent.publicId,
         filePublicId: row.file.publicId,

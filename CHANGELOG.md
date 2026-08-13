@@ -16,6 +16,7 @@
 - Refreshed authoritative loan and profitability state after Web settlement, hid stale accounting when that refresh fails, kept the post-write refresh warning accessible inside the open confirmation dialog, surfaced initial preview errors beside the action, localized loan statuses, scoped non-refundable warnings to advance deductions, and preserved command keys across safe retries while requiring a new key after stale re-preview.
 - Hardened intermediary assignment and disbursement persistence against whitespace-only command, provenance, and identity values including tabs and newlines, nullable reversal evidence, and PostgreSQL special numeric money values while retaining exact two-decimal and non-negative invariants where applicable.
 - Rejected intermediated transfer events before write when cumulative role totals or signed variance exceed the public-money contract, closed the reconciliation-preview request body, and serialized assignment ends against existing transfer history so backdating cannot invalidate an accepted event.
+- Closed every intermediary transfer-evidence query contract, rejected expired or over-15-minute storage access descriptors at the service boundary, and verified finalized-evidence retries never inspect storage again.
 
 ### Infra
 - Kept the frontend TypeScript 6 build gate operational while the configured `baseUrl` compatibility alias remains in use.
