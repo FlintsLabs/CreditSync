@@ -476,7 +476,6 @@ describe("default MCP adapter integration", () => {
             idempotencyKey: "mcp-all-tools-intake",
         })).data;
         const intakePublicId = String(intake.publicId);
-        await call("intake.get", { paymentIntakePublicId: intakePublicId });
         await call("intake.list", { status: "draft" });
         const evidence = (await call("evidence.prepare", {
             paymentIntakePublicId: intakePublicId,
@@ -485,10 +484,18 @@ describe("default MCP adapter integration", () => {
             sha256: "a".repeat(64),
             evidenceType: "slip",
         })).data;
-        await call("evidence.finalize", {
+        const finalized = (await call("evidence.finalize", {
             paymentIntakePublicId: intakePublicId,
             evidencePublicId: evidence.publicId,
-        });
+        })).data;
+        const inspected = (await call("intake.get", { paymentIntakePublicId: intakePublicId })).data;
+        expect(inspected.evidence).toEqual([
+            expect.objectContaining({
+                publicId: evidence.publicId,
+                status: "ready",
+                filePublicId: finalized.filePublicId,
+            }),
+        ]);
 
         const proposal = (await call("payment.preview", {
             paymentIntakePublicId: intakePublicId,

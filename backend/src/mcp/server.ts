@@ -374,6 +374,7 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
             mimeType: z.string(),
             size: z.number().int(),
             sha256: z.string().regex(/^[0-9a-f]{64}$/i).nullable(),
+            filePublicId: uuid.nullable(),
         }).strict()),
         latestProposal: proposalOutput.nullable(),
     }),
