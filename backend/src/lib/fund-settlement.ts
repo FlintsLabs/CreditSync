@@ -10,6 +10,7 @@ import {
     loans,
     transactions,
 } from "../db/schema";
+import { buildPositiveFundingShares } from "./fund-attribution";
 
 export function calculateOpportunityCost(input: {
     principal: string;
@@ -34,6 +35,45 @@ export function calculateOpportunityCost(input: {
 interface AllocationLike {
     loanId: number;
     allocatedAmount: string;
+    totalPositiveAllocatedAmount?: string;
+}
+
+interface FundRevenueLedgerEntryLike {
+    entryType: string;
+    amount: string;
+}
+
+export type FundRevenueReconciliation = {
+    contractAttributedRevenue: string;
+    ledgerRecordedRevenue: string;
+    difference: string;
+    status: "matched" | "needs_reconciliation";
+};
+
+const FUND_REVENUE_ENTRY_TYPES = new Set([
+    "interest_income_in",
+    "fee_income_in",
+    "penalty_income_in",
+]);
+
+export function reconcileFundRevenue(input: {
+    contractAttributedRevenue: string;
+    ledgerEntries: FundRevenueLedgerEntryLike[];
+}): FundRevenueReconciliation {
+    const contractAttributedRevenue = new Decimal(input.contractAttributedRevenue);
+    const ledgerRecordedRevenue = input.ledgerEntries.reduce(
+        (total, entry) => FUND_REVENUE_ENTRY_TYPES.has(entry.entryType)
+            ? total.plus(entry.amount)
+            : total,
+        new Decimal(0),
+    );
+    const difference = contractAttributedRevenue.minus(ledgerRecordedRevenue);
+    return {
+        contractAttributedRevenue: contractAttributedRevenue.toFixed(2),
+        ledgerRecordedRevenue: ledgerRecordedRevenue.toFixed(2),
+        difference: difference.toFixed(2),
+        status: difference.isZero() ? "matched" : "needs_reconciliation",
+    };
 }
 
 interface LoanLike {
@@ -66,44 +106,45 @@ interface RolloverLike {
 }
 
 interface SettlementSummaryLike {
-    borrowerInterestCollected: number;
-    borrowerFeesCollected: number;
-    borrowerPenaltiesCollected: number;
-    bankInterestPaid: number;
-    bankFeesPaid: number;
-    bankVatPaid: number;
-    bankPenaltiesPaid: number;
-    realizedSpread: number;
-    unrealizedSpread: number;
-    surplusBalance: number;
-    deficitBalance: number;
-    carryForwardAvailable: number;
+    borrowerInterestCollected: string;
+    borrowerFeesCollected: string;
+    borrowerPenaltiesCollected: string;
+    bankInterestPaid: string;
+    bankFeesPaid: string;
+    bankVatPaid: string;
+    bankPenaltiesPaid: string;
+    realizedSpread: string;
+    unrealizedSpread: string;
+    surplusBalance: string;
+    deficitBalance: string;
+    carryForwardAvailable: string;
 }
 
-export function deriveProfitabilityMetrics(summary: SettlementSummaryLike, deployedPrincipal: number) {
+export function deriveProfitabilityMetrics(summary: SettlementSummaryLike, deployedPrincipalValue: Decimal.Value) {
+    const deployedPrincipal = Decimal.max(0, new Decimal(deployedPrincipalValue));
     const borrowerRevenueCollected =
-        summary.borrowerInterestCollected +
-        summary.borrowerFeesCollected +
-        summary.borrowerPenaltiesCollected;
+        new Decimal(summary.borrowerInterestCollected)
+            .plus(summary.borrowerFeesCollected)
+            .plus(summary.borrowerPenaltiesCollected);
     const fundCostPaid =
-        summary.bankInterestPaid +
-        summary.bankFeesPaid +
-        summary.bankVatPaid +
-        summary.bankPenaltiesPaid;
-    const netCashPosition = summary.surplusBalance - summary.deficitBalance;
-    const realizedRoiPercent = deployedPrincipal > 0
-        ? (summary.realizedSpread / deployedPrincipal) * 100
-        : 0;
+        new Decimal(summary.bankInterestPaid)
+            .plus(summary.bankFeesPaid)
+            .plus(summary.bankVatPaid)
+            .plus(summary.bankPenaltiesPaid);
+    const netCashPosition = new Decimal(summary.surplusBalance).minus(summary.deficitBalance);
+    const realizedRoiPercent = deployedPrincipal.gt(0)
+        ? new Decimal(summary.realizedSpread).div(deployedPrincipal).times(100)
+        : new Decimal(0);
 
     return {
-        borrowerRevenueCollected: Number(borrowerRevenueCollected.toFixed(2)),
-        fundCostPaid: Number(fundCostPaid.toFixed(2)),
-        realizedSpread: Number(summary.realizedSpread.toFixed(2)),
-        unrealizedSpread: Number(summary.unrealizedSpread.toFixed(2)),
-        deployedPrincipal: Number(deployedPrincipal.toFixed(2)),
-        netCashPosition: Number(netCashPosition.toFixed(2)),
-        realizedRoiPercent: Number(realizedRoiPercent.toFixed(2)),
-        carryForwardAvailable: Number(summary.carryForwardAvailable.toFixed(2)),
+        borrowerRevenueCollected: borrowerRevenueCollected.toFixed(2),
+        fundCostPaid: fundCostPaid.toFixed(2),
+        realizedSpread: new Decimal(summary.realizedSpread).toFixed(2),
+        unrealizedSpread: new Decimal(summary.unrealizedSpread).toFixed(2),
+        deployedPrincipal: deployedPrincipal.toFixed(2),
+        netCashPosition: netCashPosition.toFixed(2),
+        realizedRoiPercent: realizedRoiPercent.toFixed(2),
+        carryForwardAvailable: new Decimal(summary.carryForwardAvailable).toFixed(2),
     };
 }
 
@@ -118,113 +159,123 @@ export function computeFundSettlementSummary(input: {
     outstandingPenalties?: string | null;
 }) {
     const loanMap = new Map(input.loans.map((loan) => [loan.id, loan]));
-    const allocationShareByLoan = new Map<number, number[]>();
-
+    const allocationAmountByLoan = new Map<number, Decimal>();
+    const allocationDenominatorByLoan = new Map<number, Decimal>();
     for (const allocation of input.allocations) {
-        const loan = loanMap.get(allocation.loanId);
+        allocationAmountByLoan.set(
+            allocation.loanId,
+            (allocationAmountByLoan.get(allocation.loanId) ?? new Decimal(0)).plus(allocation.allocatedAmount),
+        );
+        if (allocation.totalPositiveAllocatedAmount !== undefined) {
+            allocationDenominatorByLoan.set(
+                allocation.loanId,
+                new Decimal(allocation.totalPositiveAllocatedAmount),
+            );
+        }
+    }
+    const allocationShareByLoan = new Map<number, Decimal>();
+    for (const [loanId, allocatedAmount] of allocationAmountByLoan) {
+        if (allocatedAmount.lte(0)) continue;
+        const loan = loanMap.get(loanId);
         if (!loan) continue;
-        const principal = Number(loan.principalAmount || 0);
-        if (principal <= 0) continue;
-        const share = Number(allocation.allocatedAmount || 0) / principal;
-        allocationShareByLoan.set(allocation.loanId, [...(allocationShareByLoan.get(allocation.loanId) ?? []), share]);
+        const denominator = allocationDenominatorByLoan.get(loanId) ?? new Decimal(loan.principalAmount);
+        if (denominator.lte(0)) continue;
+        allocationShareByLoan.set(loanId, Decimal.min(1, allocatedAmount.div(denominator)));
     }
 
-    let borrowerPrincipalCollected = 0;
-    let borrowerInterestCollected = 0;
-    let borrowerFeesCollected = 0;
-    let borrowerPenaltiesCollected = 0;
+    let borrowerPrincipalCollected = new Decimal(0);
+    let borrowerInterestCollected = new Decimal(0);
+    let borrowerFeesCollected = new Decimal(0);
+    let borrowerPenaltiesCollected = new Decimal(0);
 
     for (const tx of input.borrowerTransactions) {
-        const shares = allocationShareByLoan.get(tx.loanId) ?? [];
-        const totalShare = Math.min(1, shares.reduce((sum, share) => sum + share, 0));
-        borrowerPrincipalCollected += Number(tx.principalComponent || 0) * totalShare;
-        borrowerInterestCollected += Number(tx.interestComponent || 0) * totalShare;
-        borrowerFeesCollected += Number(tx.feeComponent || 0) * totalShare;
-        borrowerPenaltiesCollected += Number(tx.penaltyComponent || 0) * totalShare;
+        const share = allocationShareByLoan.get(tx.loanId) ?? new Decimal(0);
+        borrowerPrincipalCollected = borrowerPrincipalCollected.plus(new Decimal(tx.principalComponent).times(share));
+        borrowerInterestCollected = borrowerInterestCollected.plus(new Decimal(tx.interestComponent).times(share));
+        borrowerFeesCollected = borrowerFeesCollected.plus(new Decimal(tx.feeComponent).times(share));
+        borrowerPenaltiesCollected = borrowerPenaltiesCollected.plus(new Decimal(tx.penaltyComponent).times(share));
     }
 
-    const bankPrincipalPaid = input.bankRepayments.reduce((sum, row) => sum + Number(row.principalComponent || 0), 0);
-    const bankInterestPaid = input.bankRepayments.reduce((sum, row) => sum + Number(row.interestComponent || 0), 0);
-    const bankFeesPaid = input.bankRepayments.reduce((sum, row) => sum + Number(row.feeComponent || 0), 0);
-    const bankVatPaid = input.bankRepayments.reduce((sum, row) => sum + Number(row.vatComponent || 0), 0);
-    const bankPenaltiesPaid = input.bankRepayments.reduce((sum, row) => sum + Number(row.penaltyComponent || 0), 0);
+    const sumBankComponent = (key: keyof BankRepaymentLike) => input.bankRepayments.reduce(
+        (sum, row) => sum.plus(row[key]),
+        new Decimal(0),
+    );
+    const bankPrincipalPaid = sumBankComponent("principalComponent");
+    const bankInterestPaid = sumBankComponent("interestComponent");
+    const bankFeesPaid = sumBankComponent("feeComponent");
+    const bankVatPaid = sumBankComponent("vatComponent");
+    const bankPenaltiesPaid = sumBankComponent("penaltyComponent");
 
     const rolloverIn = (input.rollovers ?? [])
         .filter((row) => row.direction === "in")
-        .reduce((sum, row) => sum + Number(row.amount || 0), 0);
+        .reduce((sum, row) => sum.plus(row.amount), new Decimal(0));
     const rolloverOut = (input.rollovers ?? [])
         .filter((row) => row.direction === "out")
-        .reduce((sum, row) => sum + Number(row.amount || 0), 0);
+        .reduce((sum, row) => sum.plus(row.amount), new Decimal(0));
 
     const realizedSpread =
-        borrowerInterestCollected +
-        borrowerFeesCollected +
-        borrowerPenaltiesCollected -
-        bankInterestPaid -
-        bankFeesPaid -
-        bankVatPaid -
-        bankPenaltiesPaid;
+        borrowerInterestCollected
+            .plus(borrowerFeesCollected)
+            .plus(borrowerPenaltiesCollected)
+            .minus(bankInterestPaid)
+            .minus(bankFeesPaid)
+            .minus(bankVatPaid)
+            .minus(bankPenaltiesPaid);
 
     const currentNetCash =
-        borrowerPrincipalCollected +
-        borrowerInterestCollected +
-        borrowerFeesCollected +
-        borrowerPenaltiesCollected -
-        bankPrincipalPaid -
-        bankInterestPaid -
-        bankFeesPaid -
-        bankVatPaid -
-        bankPenaltiesPaid +
-        rolloverIn -
-        rolloverOut;
+        borrowerPrincipalCollected
+            .plus(borrowerInterestCollected)
+            .plus(borrowerFeesCollected)
+            .plus(borrowerPenaltiesCollected)
+            .minus(bankPrincipalPaid)
+            .minus(bankInterestPaid)
+            .minus(bankFeesPaid)
+            .minus(bankVatPaid)
+            .minus(bankPenaltiesPaid)
+            .plus(rolloverIn)
+            .minus(rolloverOut);
 
-    const remainingBorrowerInterest = input.allocations.reduce((sum, allocation) => {
-        const loan = loanMap.get(allocation.loanId);
+    const remainingBorrowerInterest = [...allocationAmountByLoan.keys()].reduce((sum, loanId) => {
+        const loan = loanMap.get(loanId);
         if (!loan) return sum;
-        const principal = Number(loan.principalAmount || 0);
-        if (principal <= 0) return sum;
-        const share = Number(allocation.allocatedAmount || 0) / principal;
-        return sum + (Number(loan.outstandingInterest || 0) + Number(loan.outstandingFees || 0)) * share;
-    }, 0);
+        const share = allocationShareByLoan.get(loanId) ?? new Decimal(0);
+        return sum.plus(new Decimal(loan.outstandingInterest ?? 0).plus(loan.outstandingFees ?? 0).times(share));
+    }, new Decimal(0));
 
     const remainingBankCost =
-        Number(input.outstandingInterest || 0) +
-        Number(input.outstandingFees || 0) +
-        Number(input.outstandingPenalties || 0);
+        new Decimal(input.outstandingInterest ?? 0)
+            .plus(input.outstandingFees ?? 0)
+            .plus(input.outstandingPenalties ?? 0);
 
-    const unrealizedSpread = remainingBorrowerInterest - remainingBankCost;
-    const surplusBalance = Math.max(0, currentNetCash);
-    const deficitBalance = Math.max(0, currentNetCash * -1);
+    const unrealizedSpread = remainingBorrowerInterest.minus(remainingBankCost);
+    const surplusBalance = Decimal.max(0, currentNetCash);
+    const deficitBalance = Decimal.max(0, currentNetCash.negated());
 
     const borrowerRevenueCollected =
-        borrowerInterestCollected +
-        borrowerFeesCollected +
-        borrowerPenaltiesCollected;
+        borrowerInterestCollected.plus(borrowerFeesCollected).plus(borrowerPenaltiesCollected);
     const fundCostPaid =
-        bankInterestPaid +
-        bankFeesPaid +
-        bankVatPaid +
-        bankPenaltiesPaid;
+        bankInterestPaid.plus(bankFeesPaid).plus(bankVatPaid).plus(bankPenaltiesPaid);
 
     return {
-        borrowerPrincipalCollected: Number(borrowerPrincipalCollected.toFixed(2)),
-        borrowerInterestCollected: Number(borrowerInterestCollected.toFixed(2)),
-        borrowerFeesCollected: Number(borrowerFeesCollected.toFixed(2)),
-        borrowerPenaltiesCollected: Number(borrowerPenaltiesCollected.toFixed(2)),
-        borrowerRevenueCollected: Number(borrowerRevenueCollected.toFixed(2)),
-        bankPrincipalPaid: Number(bankPrincipalPaid.toFixed(2)),
-        bankInterestPaid: Number(bankInterestPaid.toFixed(2)),
-        bankFeesPaid: Number(bankFeesPaid.toFixed(2)),
-        bankVatPaid: Number(bankVatPaid.toFixed(2)),
-        bankPenaltiesPaid: Number(bankPenaltiesPaid.toFixed(2)),
-        fundCostPaid: Number(fundCostPaid.toFixed(2)),
-        realizedSpread: Number(realizedSpread.toFixed(2)),
-        unrealizedSpread: Number(unrealizedSpread.toFixed(2)),
-        rolloverIn: Number(rolloverIn.toFixed(2)),
-        rolloverOut: Number(rolloverOut.toFixed(2)),
-        surplusBalance: Number(surplusBalance.toFixed(2)),
-        deficitBalance: Number(deficitBalance.toFixed(2)),
-        carryForwardAvailable: Number(Math.max(0, surplusBalance).toFixed(2)),
+        borrowerPrincipalCollected: borrowerPrincipalCollected.toFixed(2),
+        borrowerInterestCollected: borrowerInterestCollected.toFixed(2),
+        borrowerFeesCollected: borrowerFeesCollected.toFixed(2),
+        borrowerPenaltiesCollected: borrowerPenaltiesCollected.toFixed(2),
+        borrowerCashCollected: borrowerPrincipalCollected.plus(borrowerRevenueCollected).toFixed(2),
+        borrowerRevenueCollected: borrowerRevenueCollected.toFixed(2),
+        bankPrincipalPaid: bankPrincipalPaid.toFixed(2),
+        bankInterestPaid: bankInterestPaid.toFixed(2),
+        bankFeesPaid: bankFeesPaid.toFixed(2),
+        bankVatPaid: bankVatPaid.toFixed(2),
+        bankPenaltiesPaid: bankPenaltiesPaid.toFixed(2),
+        fundCostPaid: fundCostPaid.toFixed(2),
+        realizedSpread: realizedSpread.toFixed(2),
+        unrealizedSpread: unrealizedSpread.toFixed(2),
+        rolloverIn: rolloverIn.toFixed(2),
+        rolloverOut: rolloverOut.toFixed(2),
+        surplusBalance: surplusBalance.toFixed(2),
+        deficitBalance: deficitBalance.toFixed(2),
+        carryForwardAvailable: surplusBalance.toFixed(2),
     };
 }
 
@@ -298,14 +349,12 @@ export async function getBankProfileSettlementSummary(tenantId: string, bankProf
     );
 
     const drawdownIds = drawdowns.map((row) => row.id);
-    const sourceAllocations = drawdownIds.length === 0
-        ? []
-        : await db.select().from(loanFundingAllocations).where(
-            and(
-                eq(loanFundingAllocations.tenantId, tenantId),
-                inArray(loanFundingAllocations.bankLoanId, drawdownIds),
-            )
-        );
+    const sourceAllocations = await db.select().from(loanFundingAllocations).where(
+        and(
+            eq(loanFundingAllocations.tenantId, tenantId),
+            eq(loanFundingAllocations.bankProfileId, bankProfileId),
+        )
+    );
     const loanIds = Array.from(new Set(sourceAllocations.map((row) => row.loanId)));
     const allAllocations = loanIds.length === 0
         ? []
@@ -370,19 +419,34 @@ export async function getBankProfileSettlementSummary(tenantId: string, bankProf
         )
     );
 
-    const normalizedAllocations = sourceAllocations.map((allocation) => {
-        const totalAllocatedForLoan = allAllocations
-            .filter((row) => row.loanId === allocation.loanId)
-            .reduce((sum, row) => sum + Number(row.allocatedAmount), 0);
-        const loan = allocatedLoans.find((row) => row.id === allocation.loanId);
-        const principalBase = totalAllocatedForLoan > 0 ? totalAllocatedForLoan : Number(loan?.principalAmount ?? 0);
-        const normalizedAmount = principalBase > 0 ? Number(allocation.allocatedAmount) : 0;
-
-        return {
+    const sharesByLoan = buildPositiveFundingShares(allAllocations.flatMap((allocation) => allocation.bankProfileId === null
+        ? []
+        : [{
             loanId: allocation.loanId,
-            allocatedAmount: normalizedAmount.toFixed(2),
-        };
-    });
+            bankProfileId: allocation.bankProfileId,
+            allocatedAmount: allocation.allocatedAmount,
+        }]
+    ));
+    const sourceNetByLoan = sourceAllocations.reduce((totals, allocation) => {
+        totals.set(
+            allocation.loanId,
+            (totals.get(allocation.loanId) ?? new Decimal(0)).plus(allocation.allocatedAmount),
+        );
+        return totals;
+    }, new Map<number, Decimal>());
+    const normalizedAllocations = [...sourceNetByLoan.entries()]
+        .filter(([, amount]) => amount.gt(0))
+        .map(([loanId, allocatedAmount]) => {
+            const sourceShare = sharesByLoan.get(loanId)?.get(bankProfileId) ?? new Decimal(0);
+            const totalPositiveAllocatedAmount = sourceShare.gt(0)
+                ? allocatedAmount.div(sourceShare)
+                : new Decimal(0);
+            return {
+                loanId,
+                allocatedAmount: allocatedAmount.toFixed(2),
+                totalPositiveAllocatedAmount: totalPositiveAllocatedAmount.toFixed(2),
+            };
+        });
 
     const summary = computeFundSettlementSummary({
         allocations: normalizedAllocations,
@@ -393,25 +457,30 @@ export async function getBankProfileSettlementSummary(tenantId: string, bankProf
             ...incomingRollovers.map((row) => ({ amount: row.amount, direction: "in" as const, entryType: row.entryType })),
             ...outgoingRollovers.map((row) => ({ amount: row.amount, direction: "out" as const, entryType: row.entryType })),
         ],
-        outstandingInterest: drawdowns.reduce((sum, row) => sum + Number(row.outstandingInterest ?? 0), 0).toFixed(2),
-        outstandingFees: drawdowns.reduce((sum, row) => sum + Number(row.outstandingFees ?? 0), 0).toFixed(2),
-        outstandingPenalties: drawdowns.reduce((sum, row) => sum + Number(row.outstandingPenalties ?? 0), 0).toFixed(2),
+        outstandingInterest: drawdowns.reduce((sum, row) => sum.plus(row.outstandingInterest ?? 0), new Decimal(0)).toFixed(2),
+        outstandingFees: drawdowns.reduce((sum, row) => sum.plus(row.outstandingFees ?? 0), new Decimal(0)).toFixed(2),
+        outstandingPenalties: drawdowns.reduce((sum, row) => sum.plus(row.outstandingPenalties ?? 0), new Decimal(0)).toFixed(2),
     });
 
     const poolCurrentBalance = ledgerEntries.reduce((sum, row) => {
-        const amount = Number(row.amount);
-        return row.entryType.endsWith("_out") ? sum - amount : sum + amount;
-    }, 0);
+        const amount = new Decimal(row.amount);
+        return row.entryType.endsWith("_out") ? sum.minus(amount) : sum.plus(amount);
+    }, new Decimal(0));
+    const reconciliation = reconcileFundRevenue({
+        contractAttributedRevenue: summary.borrowerRevenueCollected,
+        ledgerEntries,
+    });
 
     return {
         bankProfileId,
         drawdownCount: drawdowns.length,
         ...summary,
-        poolCurrentBalance: Number(poolCurrentBalance.toFixed(2)),
-        ownerSupportTotal: Number(incomingRollovers
+        reconciliation,
+        poolCurrentBalance: poolCurrentBalance.toFixed(2),
+        ownerSupportTotal: incomingRollovers
             .filter((row) => row.entryType === "deficit_support")
-            .reduce((sum, row) => sum + Number(row.amount), 0)
-            .toFixed(2)),
+            .reduce((sum, row) => sum.plus(row.amount), new Decimal(0))
+            .toFixed(2),
     };
 }
 

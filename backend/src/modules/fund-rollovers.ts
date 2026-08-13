@@ -6,6 +6,7 @@ import { authPlugin } from "../middleware/auth";
 import { isTenantAdminUser } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
 import { getBankProfileSettlementSummary } from "../lib/fund-settlement";
+import Decimal from "decimal.js";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
 
 const outgoingEntryTypes = new Set(["surplus_transfer", "refinance_out", "capitalization"]);
@@ -56,7 +57,7 @@ export const fundRolloversRoute = new Elysia({ prefix: "/fund-rollovers" })
 
         if (body.fromBankProfileId) {
             const summary = await getBankProfileSettlementSummary(user.tenantId, body.fromBankProfileId);
-            if (outgoingEntryTypes.has(body.entryType) && body.amount > summary.carryForwardAvailable + 0.0001) {
+            if (outgoingEntryTypes.has(body.entryType) && new Decimal(body.amount).gt(summary.carryForwardAvailable)) {
                 set.status = 400;
                 return {
                     error: "Rollover amount exceeds carry-forward available balance",

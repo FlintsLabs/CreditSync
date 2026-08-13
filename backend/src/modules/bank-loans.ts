@@ -1,5 +1,6 @@
 import { Elysia, t } from "elysia";
 import { and, desc, eq, sql } from "drizzle-orm";
+import Decimal from "decimal.js";
 import { db } from "../db";
 import {
     bankLoanRepayments,
@@ -223,16 +224,15 @@ export const bankLoansRoute = new Elysia({ prefix: "/bank-loans" })
                         eq(loanFundingAllocations.tenantId, user.tenantId),
                         eq(loanFundingAllocations.bankLoanId, bankLoanId),
                     )
-                ).then((rows) => Number(rows[0]?.totalAllocated ?? 0));
+                ).then((rows) => rows[0]?.totalAllocated ?? "0");
 
                 return {
                     ...summary,
-                    ...deriveProfitabilityMetrics(summary!, Math.max(0, deployedPrincipal)),
-                    outstandingCost: Number((
-                        Number(bankLoan.outstandingInterest ?? 0) +
-                        Number(bankLoan.outstandingFees ?? 0) +
-                        Number(bankLoan.outstandingPenalties ?? 0)
-                    ).toFixed(2)),
+                    ...deriveProfitabilityMetrics(summary!, deployedPrincipal),
+                    outstandingCost: new Decimal(bankLoan.outstandingInterest ?? 0)
+                        .plus(bankLoan.outstandingFees ?? 0)
+                        .plus(bankLoan.outstandingPenalties ?? 0)
+                        .toFixed(2),
                 };
             },
         });

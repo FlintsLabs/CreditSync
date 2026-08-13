@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { Elysia } from "elysia";
 import { sql } from "drizzle-orm";
 import { db } from "../db";
-import { bankLoans, bankProfiles, borrowers, loanFundingAllocations, loans, transactions, users } from "../db/schema";
+import { bankLoans, bankProfiles, borrowers, fundLedgerEntries, loanFundingAllocations, loans, transactions, users } from "../db/schema";
 import { invalidateTenantCache } from "../lib/cache";
 import { bankProfilesRoute } from "./bank-profiles";
 
@@ -90,6 +90,41 @@ describe("bank profile funding usage", () => {
         const history = await request(`/bank-profiles/${profile.publicId}/funding-usage?includeSettled=true`, token);
         expect(history.response.status).toBe(200);
         expect(history.body.allocations).toHaveLength(1);
+    });
+
+    integrationTest("recognizes historical direct-capital payments and reports the ledger difference", async () => {
+        const owner = await db.insert(users).values({ tenantId: "tenant-a", email: "profit-owner@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const profile = await db.insert(bankProfiles).values({ tenantId: "tenant-a", name: "Owner capital", type: "personal", accountingMode: "capital_pool", creditLimit: "60000.00" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId: "tenant-a", name: "Historical borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await seedLoan({ tenantId: "tenant-a", borrowerId: borrower.id, outstandingPrincipal: "2666.67" });
+        await db.insert(loanFundingAllocations).values({
+            tenantId: "tenant-a", bankProfileId: profile.id, loanId: loan.id, allocatedAmount: "5000.00", allocationDate: "2026-08-01", allocationType: "initial",
+        });
+        const payment = await db.insert(transactions).values({
+            tenantId: "tenant-a", ownerUserId: owner.id, loanId: loan.id, amount: "3800.00",
+            principalComponent: "2333.33", interestComponent: "1466.67", feeComponent: "0.00", penaltyComponent: "0.00",
+            entryType: "repayment", idempotencyKey: "historical-direct-payment",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(fundLedgerEntries).values({
+            tenantId: "tenant-a", bankProfileId: profile.id, loanId: loan.id, transactionId: payment.id,
+            entryType: "interest_income_in", amount: "510.00",
+        });
+
+        const result = await request(`/bank-profiles/${profile.publicId}/profitability`, await authToken(owner));
+
+        expect(result.response.status).toBe(200);
+        expect(result.body).toMatchObject({
+            borrowerCashCollected: "3800.00",
+            borrowerRevenueCollected: "1466.67",
+            deployedPrincipal: "5000.00",
+            realizedSpread: "1466.67",
+            reconciliation: {
+                contractAttributedRevenue: "1466.67",
+                ledgerRecordedRevenue: "510.00",
+                difference: "956.67",
+                status: "needs_reconciliation",
+            },
+        });
     });
 
     // Break caught: each source reports the loan's full interest, or reversals fail to reduce source-attributed returns.
