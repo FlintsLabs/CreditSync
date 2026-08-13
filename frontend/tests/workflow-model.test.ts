@@ -70,6 +70,13 @@ describe("workflow view models", () => {
         expect(formatMoneyExact("9007199254741000.00", "en", "THB")).toContain("9,007,199,254,741,000.00");
     });
 
+    // Break caught: decimal.js default precision silently removes cents once a valid amount has 20 significant digits.
+    test("keeps cents exact for long public money sums and subtractions", () => {
+        expect(sumMoney(["99999999999999999999.99", "0.01"])).toBe("100000000000000000000.00");
+        expect(moneyDifference("99999999999999999999.99", "0.01")).toBe("99999999999999999999.98");
+        expect(remainingMoney("99999999999999999999.99", ["1.01"])).toBe("99999999999999999998.98");
+    });
+
     test("derives funding balances and signs exactly beyond Number safe integer range", () => {
         expect(remainingMoney("9007199254741000.00", ["9007199254740993.10", "0.20"])).toBe("6.70");
         expect(remainingMoney("5.00", ["6.00"])).toBe("0.00");

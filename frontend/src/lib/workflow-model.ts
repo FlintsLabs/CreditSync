@@ -1,4 +1,5 @@
-import Decimal from "decimal.js";
+import type Decimal from "decimal.js";
+import { FinancialDecimal, signedMoneyInputPattern } from "./financial-decimal";
 import { normalizeMoney, type PaymentAllocationInput } from "./workflow-api";
 
 export interface LoanTermsForm {
@@ -76,10 +77,10 @@ export function buildLoanTermsInput(form: LoanTermsForm) {
 
 function moneyValue(value: string) {
     const normalized = value.trim();
-    if (!/^-?\d+(?:\.\d{1,2})?$/.test(normalized)) {
+    if (!signedMoneyInputPattern.test(normalized)) {
         throw new Error("Money must have at most two decimal places");
     }
-    const money = new Decimal(normalized);
+    const money = new FinancialDecimal(normalized);
     if (!money.isFinite()) throw new Error("Money must be finite");
     return money;
 }
@@ -95,7 +96,7 @@ function groupWholeNumber(value: string, locale: string) {
 }
 
 export function sumMoney(values: string[]) {
-    return moneyToString(values.reduce((total, value) => total.plus(moneyValue(value)), new Decimal("0")));
+    return moneyToString(values.reduce((total, value) => total.plus(moneyValue(value)), new FinancialDecimal("0")));
 }
 
 export function moneyDifference(next: string, previous: string) {
@@ -104,7 +105,7 @@ export function moneyDifference(next: string, previous: string) {
 
 export function remainingMoney(balance: string, deductions: string[]) {
     const remaining = deductions.reduce((total, value) => total.minus(moneyValue(value)), moneyValue(balance));
-    return moneyToString(Decimal.max(new Decimal("0"), remaining));
+    return moneyToString(FinancialDecimal.max(new FinancialDecimal("0"), remaining));
 }
 
 export function absoluteMoney(value: string) {

@@ -1,6 +1,5 @@
 import { Elysia, t } from "elysia";
 import { and, desc, eq, sql } from "drizzle-orm";
-import Decimal from "decimal.js";
 import { db } from "../db";
 import {
     bankLoanRepayments,
@@ -22,6 +21,7 @@ import { computeOverdueSnapshot } from "../lib/overdue";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
 import { findBankLoanByPublicId, findBankLoanScheduleByPublicId, findBankProfileByPublicId } from "../lib/public-id";
 import { serializeMoney } from "../lib/money";
+import { FinancialDecimal } from "../lib/financial-decimal";
 
 export const bankLoansRoute = new Elysia({ prefix: "/bank-loans" })
     .use(authPlugin)
@@ -230,7 +230,7 @@ export const bankLoansRoute = new Elysia({ prefix: "/bank-loans" })
                 return {
                     ...summary,
                     ...deriveProfitabilityMetrics(summary!, deployedPrincipal),
-                    outstandingCost: new Decimal(bankLoan.outstandingInterest ?? 0)
+                    outstandingCost: new FinancialDecimal(bankLoan.outstandingInterest ?? 0)
                         .plus(bankLoan.outstandingFees ?? 0)
                         .plus(bankLoan.outstandingPenalties ?? 0)
                         .toFixed(2),
@@ -265,12 +265,12 @@ export const bankLoansRoute = new Elysia({ prefix: "/bank-loans" })
                         eq(loanFundingAllocations.tenantId, user.tenantId),
                         eq(loanFundingAllocations.bankLoanId, bankLoanId),
                     )
-                ).then((rows) => new Decimal(rows[0]?.totalAllocated ?? "0"));
+                ).then((rows) => new FinancialDecimal(rows[0]?.totalAllocated ?? "0"));
 
-                const drawdownAmount = new Decimal(bankLoan.amount ?? "0");
-                const zero = new Decimal("0");
-                const remainingCapacity = Decimal.max(zero, drawdownAmount.minus(netAllocated));
-                const overallocatedAmount = Decimal.max(zero, netAllocated.minus(drawdownAmount));
+                const drawdownAmount = new FinancialDecimal(bankLoan.amount ?? "0");
+                const zero = new FinancialDecimal("0");
+                const remainingCapacity = FinancialDecimal.max(zero, drawdownAmount.minus(netAllocated));
+                const overallocatedAmount = FinancialDecimal.max(zero, netAllocated.minus(drawdownAmount));
                 const state =
                     netAllocated.lte(0) ? "unallocated" :
                     overallocatedAmount.gt(0) ? "overallocated" :

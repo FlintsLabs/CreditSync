@@ -134,10 +134,10 @@ interface DrawdownProfitability {
 
 interface DrawdownAllocationState {
     bankLoanId: number;
-    drawdownAmount: number;
-    netAllocatedPrincipal: number;
-    remainingCapacity: number;
-    overallocatedAmount: number;
+    drawdownAmount: string;
+    netAllocatedPrincipal: string;
+    remainingCapacity: string;
+    overallocatedAmount: string;
     state: string;
 }
 
@@ -978,11 +978,11 @@ export default function FundDetail() {
                                     </div>
                                     <div>
                                         <div className="text-xs text-muted-foreground">{t("loanDetail.allocatedPrincipal", "Allocated principal")}</div>
-                                        <div className="font-medium">฿{Number(selectedDrawdownAllocationState?.netAllocatedPrincipal ?? 0).toLocaleString(i18n.language)}</div>
+                                        <div className="font-medium">{formatMoneyExact(selectedDrawdownAllocationState?.netAllocatedPrincipal ?? "0.00", i18n.language)}</div>
                                     </div>
                                     <div>
                                         <div className="text-xs text-muted-foreground">{t("fundDetail.remainingCapacity", "Remaining capacity")}</div>
-                                        <div className="font-medium">฿{Number(selectedDrawdownAllocationState?.remainingCapacity ?? 0).toLocaleString(i18n.language)}</div>
+                                        <div className="font-medium">{formatMoneyExact(selectedDrawdownAllocationState?.remainingCapacity ?? "0.00", i18n.language)}</div>
                                     </div>
                                     <div>
                                         <div className="text-xs text-muted-foreground">{t("dashboardPage.cards.borrowerRevenue", "Revenue collected")}</div>

@@ -74,4 +74,49 @@ describe("bank-loan allocation state", () => {
             expect(body[field], field).toMatch(/^\d+\.\d{2}$/);
         }
     });
+
+    // Break caught: decimal.js default precision rounds the cents off a maximum supported public amount during subtraction.
+    integrationTest("subtracts allocation from the 80-digit public money bound exactly", async () => {
+        const tenantId = "tenant-bank-loan-allocation";
+        const owner = await db.insert(users).values({ tenantId, email: "max-bank-loan-allocation@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const profile = await db.insert(bankProfiles).values({ tenantId, name: "Maximum source", type: "bank" }).returning().then((rows) => rows[0]!);
+        const drawdown = await db.insert(bankLoans).values({
+            tenantId,
+            bankProfileId: profile.id,
+            amount: "99999999999999999999999999999999999999999999999999999999999999999999999999999999.99",
+        }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId, ownerUserId: owner.id, name: "Maximum borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({
+            tenantId,
+            ownerUserId: owner.id,
+            borrowerId: borrower.id,
+            principalAmount: "0.01",
+            interestRate: "0.00",
+            repaymentType: "monthly",
+            outstandingPrincipal: "0.01",
+            status: "active",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanFundingAllocations).values({
+            tenantId,
+            bankProfileId: profile.id,
+            bankLoanId: drawdown.id,
+            loanId: loan.id,
+            allocatedAmount: "0.01",
+            allocationDate: "2026-08-14",
+            allocationType: "initial",
+        });
+
+        const response = await app.handle(new Request(`http://localhost/bank-loans/${drawdown.publicId}/allocation-state`, {
+            headers: { Authorization: `Bearer ${await authToken(owner)}` },
+        }));
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({
+            drawdownAmount: "99999999999999999999999999999999999999999999999999999999999999999999999999999999.99",
+            netAllocatedPrincipal: "0.01",
+            remainingCapacity: "99999999999999999999999999999999999999999999999999999999999999999999999999999999.98",
+            overallocatedAmount: "0.00",
+            state: "partially_allocated",
+        });
+    });
 });

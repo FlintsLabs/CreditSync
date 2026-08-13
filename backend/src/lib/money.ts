@@ -1,28 +1,32 @@
-import Decimal from "decimal.js";
+import type Decimal from "decimal.js";
+import { FinancialDecimal, unsignedPublicMoneyPattern } from "./financial-decimal";
 
 export type Money = Decimal;
 export type MoneyInput = Decimal.Value;
 
-const publicMoneyPattern = /^\d+\.\d{2}$/;
 const invalidMoneyMessage = "Money must be a non-negative string with exactly two decimals";
 
 export function quantizeMoney(value: MoneyInput): Money {
-    const money = new Decimal(value);
+    const money = new FinancialDecimal(value);
     if (!money.isFinite() || money.isNegative()) {
         throw new Error(invalidMoneyMessage);
     }
-    return money.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const quantized = money.toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
+    if (!unsignedPublicMoneyPattern.test(quantized.toFixed(2))) {
+        throw new Error(invalidMoneyMessage);
+    }
+    return quantized;
 }
 
 export function parseMoney(value: string): Money {
-    if (!publicMoneyPattern.test(value)) {
+    if (!unsignedPublicMoneyPattern.test(value)) {
         throw new Error(invalidMoneyMessage);
     }
     return quantizeMoney(value);
 }
 
 export function sumMoney(values: readonly MoneyInput[]): Money {
-    return quantizeMoney(values.reduce<Decimal>((total, value) => total.plus(value), new Decimal(0)));
+    return quantizeMoney(values.reduce<Money>((total, value) => total.plus(value), new FinancialDecimal("0")));
 }
 
 export function serializeMoney(value: MoneyInput): string {
@@ -54,7 +58,7 @@ export interface PaymentAllocationResult {
 }
 
 function takeAvailable(remaining: Money, due: Money): [Money, Money] {
-    const allocated = Decimal.min(remaining, due);
+    const allocated = FinancialDecimal.min(remaining, due);
     return [allocated, remaining.minus(allocated)];
 }
 

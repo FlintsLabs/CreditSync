@@ -1,5 +1,4 @@
 import { Elysia, t } from "elysia";
-import Decimal from "decimal.js";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { bankProfiles, bankLoans, loanFundingAllocations, loans } from "../db/schema";
@@ -13,6 +12,7 @@ import { authPlugin } from "../middleware/auth";
 import { DomainError } from "../services/domain-error";
 import { loanDomainFailure, loanForbidden, loanMoneyInput, loanUnauthorized } from "./loan-http-support";
 import { isMutableFundingLoan, presentFundingAllocation, presentLoanProfitability } from "./loan-funding-presenters";
+import { FinancialDecimal } from "../lib/financial-decimal";
 
 function assertMutableFundingLoan(loan: typeof loans.$inferSelect) {
     if (!isMutableFundingLoan(loan.status)) {
@@ -79,10 +79,11 @@ export const loanFundingRoutes = new Elysia().use(authPlugin)
                 }).from(loanFundingAllocations).where(and(
                     eq(loanFundingAllocations.tenantId, user.tenantId),
                     eq(loanFundingAllocations.loanId, loan.id),
-                )).then((rows) => new Decimal(rows[0]?.totalAllocated ?? 0));
-                const principalAmount = new Decimal(loan.principalAmount ?? 0);
-                const remainingGap = Decimal.max(0, principalAmount.minus(netAllocated));
-                const overfundedAmount = Decimal.max(0, netAllocated.minus(principalAmount));
+                )).then((rows) => new FinancialDecimal(rows[0]?.totalAllocated ?? "0"));
+                const principalAmount = new FinancialDecimal(loan.principalAmount ?? "0");
+                const zero = new FinancialDecimal("0");
+                const remainingGap = FinancialDecimal.max(zero, principalAmount.minus(netAllocated));
+                const overfundedAmount = FinancialDecimal.max(zero, netAllocated.minus(principalAmount));
                 const state = netAllocated.lte(0) ? "unfunded" : overfundedAmount.gt(0) ? "overfunded" : remainingGap.isZero() ? "fully_funded" : "partially_funded";
                 return {
                     loanId: loan.publicId,
@@ -119,16 +120,16 @@ export const loanFundingRoutes = new Elysia().use(authPlugin)
                     if (!sourceDrawdown) throw new DomainError("BANK_LOAN_NOT_FOUND", "Bank loan not found", 404);
                     const sourceAllocation = await tx.select({ totalAllocated: sql<string>`coalesce(sum(${loanFundingAllocations.allocatedAmount}), 0)` })
                         .from(loanFundingAllocations).where(and(eq(loanFundingAllocations.bankLoanId, requestedDrawdown.id), eq(loanFundingAllocations.tenantId, user.tenantId)))
-                        .then((rows) => new Decimal(rows[0]?.totalAllocated ?? 0));
-                    const sourceRemaining = new Decimal(sourceDrawdown.amount).minus(sourceAllocation);
-                    if (amount.gt(sourceRemaining)) throw new DomainError("ALLOCATION_EXCEEDS_DRAWDOWN", "Allocation exceeds remaining drawdown balance", 400, { sourceRemaining: serializeMoney(Decimal.max(0, sourceRemaining)) });
+                        .then((rows) => new FinancialDecimal(rows[0]?.totalAllocated ?? "0"));
+                    const sourceRemaining = new FinancialDecimal(sourceDrawdown.amount).minus(sourceAllocation);
+                    if (amount.gt(sourceRemaining)) throw new DomainError("ALLOCATION_EXCEEDS_DRAWDOWN", "Allocation exceeds remaining drawdown balance", 400, { sourceRemaining: serializeMoney(FinancialDecimal.max(new FinancialDecimal("0"), sourceRemaining)) });
                     sourceBankProfileId = requestedDrawdown.bankProfileId;
                 }
                 if (!sourceBankProfileId && !requestedDrawdown) throw new DomainError("FUNDING_SOURCE_REQUIRED", "Either bankProfilePublicId or bankLoanPublicId is required", 400);
                 const currentAllocation = await tx.select({ totalAllocated: sql<string>`coalesce(sum(${loanFundingAllocations.allocatedAmount}), 0)` })
                     .from(loanFundingAllocations).where(and(eq(loanFundingAllocations.loanId, loan.id), eq(loanFundingAllocations.tenantId, user.tenantId)))
-                    .then((rows) => new Decimal(rows[0]?.totalAllocated ?? 0));
-                const remainingLoanCapacity = new Decimal(loan.principalAmount).minus(currentAllocation);
+                    .then((rows) => new FinancialDecimal(rows[0]?.totalAllocated ?? "0"));
+                const remainingLoanCapacity = new FinancialDecimal(loan.principalAmount).minus(currentAllocation);
                 if (amount.gt(remainingLoanCapacity)) throw new DomainError("ALLOCATION_EXCEEDS_PRINCIPAL", "Allocation exceeds remaining unfunded principal", 400, { remainingCapacity: serializeMoney(remainingLoanCapacity) });
                 const created = await tx.insert(loanFundingAllocations).values({
                     tenantId: user.tenantId,
@@ -178,12 +179,12 @@ export const loanFundingRoutes = new Elysia().use(authPlugin)
                 await tx.execute(sql`SELECT id FROM bank_loans WHERE tenant_id = ${user.tenantId} AND id IN (${sql.join(bankLoanIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
                 const currentSourceAllocation = await tx.select({ totalAllocated: sql<string>`coalesce(sum(${loanFundingAllocations.allocatedAmount}), 0)` })
                     .from(loanFundingAllocations).where(and(eq(loanFundingAllocations.loanId, loan.id), eq(loanFundingAllocations.bankLoanId, sourceDrawdown.id), eq(loanFundingAllocations.tenantId, user.tenantId)))
-                    .then((rows) => new Decimal(rows[0]?.totalAllocated ?? 0));
+                    .then((rows) => new FinancialDecimal(rows[0]?.totalAllocated ?? "0"));
                 if (amount.gt(currentSourceAllocation)) throw new DomainError("REALLOCATION_EXCEEDS_SOURCE", "Reallocation exceeds current allocation on the source drawdown", 400, { sourceAllocated: serializeMoney(currentSourceAllocation) });
                 const targetAllocation = await tx.select({ totalAllocated: sql<string>`coalesce(sum(${loanFundingAllocations.allocatedAmount}), 0)` })
                     .from(loanFundingAllocations).where(and(eq(loanFundingAllocations.bankLoanId, targetDrawdown.id), eq(loanFundingAllocations.tenantId, user.tenantId)))
-                    .then((rows) => new Decimal(rows[0]?.totalAllocated ?? 0));
-                const targetRemaining = new Decimal(targetDrawdown.amount).minus(targetAllocation);
+                    .then((rows) => new FinancialDecimal(rows[0]?.totalAllocated ?? "0"));
+                const targetRemaining = new FinancialDecimal(targetDrawdown.amount).minus(targetAllocation);
                 if (amount.gt(targetRemaining)) throw new DomainError("REALLOCATION_EXCEEDS_TARGET", "Reallocation exceeds remaining target drawdown balance", 400, { targetRemaining: serializeMoney(targetRemaining) });
                 const allocationGroupId = crypto.randomUUID();
                 const rows = await tx.insert(loanFundingAllocations).values([

@@ -172,4 +172,53 @@ describe("FundDetail funding usage", () => {
             Object.keys(en.fundDetail.metricInfo).sort(),
         );
     });
+
+    // Break caught: FundDetail still types allocation-state money as numbers and rounds the backend's string contract for display.
+    it("renders selected drawdown allocation-state strings without native-number rounding", async () => {
+        const user = userEvent.setup();
+        const debtFund = { ...fund, type: "bank", accountingMode: "debt_facility" };
+        const drawdown = {
+            id: 9,
+            amount: "1000.00",
+            interestRate: "12.00",
+            startDate: "2026-08-01",
+            termMonths: 12,
+            repaymentCycle: "monthly",
+            repaymentMode: "fixed_installment",
+            installmentAmount: "100.00",
+            totalInstallments: 12,
+            nextDueDate: "2026-09-01",
+            outstandingPrincipal: "1000.00",
+            outstandingInterest: "0.00",
+            outstandingFees: "0.00",
+            status: "active",
+        };
+        vi.mocked(api.get).mockImplementation(async (url) => {
+            if (url === `/bank-profiles/${FUND_ID}`) return { data: debtFund };
+            if (url === "/bank-loans") return { data: [drawdown] };
+            if (url === "/bank-profiles") return { data: [debtFund] };
+            if (url === `/bank-profiles/${FUND_ID}/settlement-summary`) return { data: { realizedSpread: "0.00", unrealizedSpread: "0.00", surplusBalance: "0.00", deficitBalance: "0.00", carryForwardAvailable: "0.00" } };
+            if (url === `/bank-profiles/${FUND_ID}/profitability`) return { data: { borrowerCashCollected: "0.00", borrowerRevenueCollected: "0.00", fundCostPaid: "0.00", realizedSpread: "0.00", unrealizedSpread: "0.00", deployedPrincipal: "0.00", netCashPosition: "0.00", realizedRoiPercent: "0.00", carryForwardAvailable: "0.00", reconciliation: { contractAttributedRevenue: "0.00", ledgerRecordedRevenue: "0.00", difference: "0.00", status: "matched" } } };
+            if (url === "/fund-rollovers") return { data: [] };
+            if (url === `/bank-profiles/${FUND_ID}/funding-usage`) return { data: fundingUsage };
+            if (url === "/bank-loans/9/schedule" || url === "/bank-loans/9/repayments" || url === "/bank-loans/9/allocations") return { data: [] };
+            if (url === "/bank-loans/9/profitability") return { data: { borrowerRevenueCollected: 0, fundCostPaid: 0, realizedSpread: 0, unrealizedSpread: 0, deployedPrincipal: 0, netCashPosition: 0, realizedRoiPercent: 0, carryForwardAvailable: 0, outstandingCost: 0, surplusBalance: 0, deficitBalance: 0 } };
+            if (url === "/bank-loans/9/allocation-state") return { data: {
+                bankLoanId: 9,
+                drawdownAmount: "99999999999999999999.99",
+                netAllocatedPrincipal: "99999999999999999999.98",
+                remainingCapacity: "0.01",
+                overallocatedAmount: "0.00",
+                state: "partially_allocated",
+            } };
+            throw new Error(`Unexpected GET ${url}`);
+        });
+
+        renderDetail();
+        await user.click(await screen.findByRole("button", { name: /Withdrawal #9/ }));
+
+        const allocated = await screen.findByText("Allocated principal");
+        expect(allocated.parentElement).toHaveTextContent(/99,999,999,999,999,999,999\.98/);
+        expect(screen.getByText("Remaining capacity").parentElement).toHaveTextContent(/0\.01/);
+    });
 });

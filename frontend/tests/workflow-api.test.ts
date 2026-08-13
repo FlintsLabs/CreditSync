@@ -17,6 +17,14 @@ describe("workflow API contracts", () => {
         expect(() => normalizeMoney("12.345")).toThrow();
     });
 
+    // Break caught: an unbounded public amount can exceed the configured financial arithmetic precision.
+    test("accepts the 80-digit public money bound and rejects 81 integer digits", () => {
+        expect(normalizeMoney("99999999999999999999999999999999999999999999999999999999999999999999999999999999.99"))
+            .toBe("99999999999999999999999999999999999999999999999999999999999999999999999999999999.99");
+        expect(() => normalizeMoney("100000000000000000000000000000000000000000000000000000000000000000000000000000000.00"))
+            .toThrow("Money must be non-negative with at most two decimal places");
+    });
+
     test("creates a review-first payment without previewing or posting", async () => {
         const calls: Array<{ url: string; body: unknown }> = [];
         const client: HttpClient = {
