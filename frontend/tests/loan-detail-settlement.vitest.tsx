@@ -261,7 +261,7 @@ describe("floating-loan detail and exact settlement", () => {
         await user.click(within(dialog).getByRole("checkbox", { name: "I confirm this exact settlement preview" }));
         await user.click(within(dialog).getByRole("button", { name: "Execute settlement" }));
 
-        expect(await screen.findByText(/settlement was executed, but the latest loan detail could not be loaded/i)).toBeInTheDocument();
+        expect(await within(dialog).findByRole("alert")).toHaveTextContent(/settlement was executed, but the latest loan detail could not be loaded/i);
         expect(summary).not.toBeInTheDocument();
         expect(await screen.findByRole("status")).toHaveTextContent("Settlement executed");
         consoleError.mockRestore();

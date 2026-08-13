@@ -412,9 +412,16 @@ export default function LoanDetail() {
                     </DialogHeader>
                     {settlementError && <div role="alert" className="rounded border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200">{settlementError}</div>}
                     {settlementExecuted ? (
-                        <div role="status" aria-live="polite" className="flex items-center gap-2 rounded border border-emerald-500/30 bg-emerald-500/10 p-4 font-medium text-emerald-700 dark:text-emerald-300">
-                            <CheckCircle className="h-5 w-5" />{t("loanDetail.settlement.executed")}
-                        </div>
+                        <>
+                            <div role="status" aria-live="polite" className="flex items-center gap-2 rounded border border-emerald-500/30 bg-emerald-500/10 p-4 font-medium text-emerald-700 dark:text-emerald-300">
+                                <CheckCircle className="h-5 w-5" />{t("loanDetail.settlement.executed")}
+                            </div>
+                            {postSettlementRefreshStatus === "failed" && (
+                                <div role="alert" className="rounded border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200">
+                                    {t("loanDetail.settlement.errors.refreshAfterExecution")}
+                                </div>
+                            )}
+                        </>
                     ) : settlementPreview ? (
                         <>
                             <dl className="grid gap-3 text-sm sm:grid-cols-2">
