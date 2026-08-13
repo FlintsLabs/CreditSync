@@ -3,6 +3,7 @@
 ## v0.3.11 - 2026-08-13
 
 ### Added
+- Added strict generalized floating-interest origination with exact weekly previews, editable draft policy snapshots, idempotent activation, and atomic non-refundable advance-interest coverage across seven immutable paid daily snapshots.
 - Added additive floating period-policy persistence with legacy daily-policy backfill, immutable period/accrual snapshots, and tenant-safe expiring settlement previews.
 - Added a Decimal-only floating-interest period-policy kernel with normalized day/weekly contracts, Bangkok half-open boundaries, and cumulative-difference daily accrual rounding.
 - Added ordered TDD implementation plans for generalized floating weekly interest and exact settlement, followed by intermediary profiles, loan assignments, multi-leg disbursement reconciliation, and independently viewable transfer evidence.

@@ -3,7 +3,7 @@ import Decimal from "decimal.js";
 import { and, eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { auditLogs, bankLoans, bankProfiles, borrowers, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanSchedules, loans, users } from "../db/schema";
+import { auditLogs, bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanSchedules, loans, users } from "../db/schema";
 import { loansRoute } from "../modules/loans";
 import type { CommandContext } from "./command-context";
 import { createBorrower } from "./borrower-service";
@@ -44,6 +44,22 @@ const terms = {
     termMonths: 3,
     totalInstallments: 3,
     startDate: "2026-08-10",
+};
+
+const weeklyAdvanceTerms = {
+    principal: "5000.00",
+    interestRate: "0.00",
+    repaymentType: "floating" as const,
+    termMonths: 1,
+    startDate: "2026-08-13",
+    floatingInterestPolicy: {
+        periodUnit: "week" as const,
+        periodLength: 1 as const,
+        rateMode: "percent" as const,
+        rate: "12",
+        advanceInterestPeriods: 1 as const,
+        advanceInterestRefundPolicy: "non_refundable" as const,
+    },
 };
 
 async function authToken(user: { id: number; email: string; role: string | null; tenantId: string }) {
@@ -92,7 +108,177 @@ describe("loan application service", () => {
         expect(preview.schedule).toHaveLength(15);
     });
 
+    // Break caught: a weekly contractual rate is treated as a daily rate or only one day is deducted in advance.
+    test("previews an exact weekly floating policy with one advance period", () => {
+        expect(previewLoan(weeklyAdvanceTerms)).toMatchObject({
+            floatingInterestPolicy: {
+                periodUnit: "week",
+                periodLength: 1,
+                rateMode: "percent",
+                rate: "12.0000",
+                advanceInterestPeriods: 1,
+                advanceInterestRefundPolicy: "non_refundable",
+            },
+            fullPeriodInterest: "600.00",
+            advanceInterest: "600.00",
+            netBorrowerPayout: "4400.00",
+            firstPeriodStartDate: "2026-08-13",
+            firstPeriodDueDate: "2026-08-20",
+            periodDays: 7,
+            schedule: [],
+        });
+    });
+
+    // Break caught: accepting the removed daily-only request shape creates ambiguous contractual period semantics.
+    test("rejects the legacy daily-only floating policy request", () => {
+        expect(() => previewLoan({
+            principal: "5000.00",
+            interestRate: "0.00",
+            repaymentType: "floating",
+            termMonths: 1,
+            startDate: "2026-08-13",
+            floatingDailyInterest: { mode: "percent", rate: "12", firstDayTreatment: "deduct" },
+        } as unknown as Parameters<typeof previewLoan>[0])).toThrow("floating interest policy");
+    });
+
     if (integrationEnabled) beforeEach(resetApplicationTables);
+
+    // Break caught: activation posts only one day of advance interest, omits immutable period snapshots, or duplicates them on retry.
+    integrationTest("posts one weekly advance charge and seven paid first-period snapshots exactly once", async () => {
+        const actor = await seedUser("tenant-a", "weekly-advance@example.test", "collector");
+        const ctx = context("tenant-a", actor.id, "weekly-advance-activation");
+        const borrower = await createBorrower(ctx, { name: "Weekly Advance Borrower" });
+        const draft = await createLoanDraft(ctx, { borrowerPublicId: borrower.publicId, ...weeklyAdvanceTerms });
+        expect(draft).toMatchObject({
+            status: "draft",
+            floatingInterestPolicy: { ...weeklyAdvanceTerms.floatingInterestPolicy, rate: "12.0000" },
+            floatingDailyInterest: null,
+        });
+
+        const stored = await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) });
+        expect(stored).toMatchObject({
+            interestPeriodUnit: "week",
+            interestPeriodLength: 1,
+            advanceInterestPeriods: 1,
+            advanceInterestRefundPolicy: "non_refundable",
+            interestPeriodAnchorDate: "2026-08-13",
+        });
+
+        await activateLoan(ctx, draft.publicId);
+
+        const firstSnapshots = await db.select().from(loanInterestAccruals)
+            .where(eq(loanInterestAccruals.loanId, stored!.id))
+            .orderBy(loanInterestAccruals.accrualDate);
+        expect(firstSnapshots).toHaveLength(7);
+        expect(firstSnapshots.map((row) => ({
+            accrualDate: row.accrualDate,
+            interestAmount: row.interestAmount,
+            cumulativeInterestAmount: row.cumulativeInterestAmount,
+            periodDayIndex: row.periodDayIndex,
+            status: row.status,
+        }))).toEqual([
+            { accrualDate: "2026-08-13", interestAmount: "85.71", cumulativeInterestAmount: "85.71", periodDayIndex: 1, status: "paid" },
+            { accrualDate: "2026-08-14", interestAmount: "85.72", cumulativeInterestAmount: "171.43", periodDayIndex: 2, status: "paid" },
+            { accrualDate: "2026-08-15", interestAmount: "85.71", cumulativeInterestAmount: "257.14", periodDayIndex: 3, status: "paid" },
+            { accrualDate: "2026-08-16", interestAmount: "85.72", cumulativeInterestAmount: "342.86", periodDayIndex: 4, status: "paid" },
+            { accrualDate: "2026-08-17", interestAmount: "85.71", cumulativeInterestAmount: "428.57", periodDayIndex: 5, status: "paid" },
+            { accrualDate: "2026-08-18", interestAmount: "85.72", cumulativeInterestAmount: "514.29", periodDayIndex: 6, status: "paid" },
+            { accrualDate: "2026-08-19", interestAmount: "85.71", cumulativeInterestAmount: "600.00", periodDayIndex: 7, status: "paid" },
+        ]);
+        expect(firstSnapshots.reduce((sum, row) => sum.plus(row.interestAmount), new Decimal(0)).toFixed(2)).toBe("600.00");
+        expect(firstSnapshots.every((row) => row.paidAmount === row.interestAmount
+            && row.contractualInterestAmount === "600.00"
+            && row.periodStartDate === "2026-08-13"
+            && row.periodEndDate === "2026-08-20"
+            && row.periodUnit === "week"
+            && row.periodLength === 1
+            && row.dailyIncrementAmount === row.interestAmount)).toBe(true);
+
+        expect(await db.select().from(loanDisbursements).where(eq(loanDisbursements.loanId, stored!.id))).toMatchObject([{
+            grossPrincipal: "5000.00",
+            firstDayInterestDeducted: "600.00",
+            netDisbursement: "4400.00",
+            createdByUserId: actor.id,
+        }]);
+        const [activationAudit] = await db.select().from(auditLogs).where(and(
+            eq(auditLogs.entityId, draft.publicId),
+            eq(auditLogs.action, "activated"),
+        ));
+        expect(activationAudit).toMatchObject({
+            actorUserId: actor.id,
+            actorSource: "web",
+            requestId: "req-loan-task-3",
+            correlationId: "corr-loan-task-3",
+            payload: {
+                advanceInterest: "600.00",
+                advanceInterestSnapshotCount: 7,
+                idempotencyKey: "weekly-advance-activation",
+            },
+        });
+
+        const activated = await activateLoan(context("tenant-a", actor.id, "weekly-advance-retry"), draft.publicId);
+        expect(activated.status).toBe("active");
+        expect(await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, stored!.id))).toHaveLength(7);
+        expect(await db.select().from(loanDisbursements).where(eq(loanDisbursements.loanId, stored!.id))).toHaveLength(1);
+        expect(await db.select().from(auditLogs).where(and(eq(auditLogs.entityId, draft.publicId), eq(auditLogs.action, "activated")))).toHaveLength(1);
+    });
+
+    // Break caught: a financial activation can be posted without an idempotency identity.
+    integrationTest("requires an idempotency key before activating a loan", async () => {
+        const actor = await seedUser("tenant-a", "activation-idempotency@example.test", "collector");
+        const ctx = context("tenant-a", actor.id);
+        const borrower = await createBorrower(ctx, { name: "Activation Idempotency Borrower" });
+        const draft = await createLoanDraft(ctx, { borrowerPublicId: borrower.publicId, ...terms });
+
+        await expect(activateLoan({ ...ctx, idempotencyKey: undefined }, draft.publicId))
+            .rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_REQUIRED", status: 400 });
+        expect(await db.select().from(loanSchedules)).toHaveLength(0);
+    });
+
+    // Break caught: PUT accepts a generalized floating policy but leaves the draft and initial rate-period snapshot unchanged.
+    integrationTest("updates a weekly floating draft policy and its initial rate period together", async () => {
+        const actor = await seedUser("tenant-a", "weekly-draft-edit@example.test", "collector");
+        const ctx = context("tenant-a", actor.id);
+        const borrower = await createBorrower(ctx, { name: "Weekly Draft Edit Borrower" });
+        const draft = await createLoanDraft(ctx, { borrowerPublicId: borrower.publicId, ...weeklyAdvanceTerms });
+
+        const updated = await updateLoanDraft(ctx, draft.publicId, {
+            startDate: "2026-08-14",
+            floatingInterestPolicy: {
+                periodUnit: "week",
+                periodLength: 1,
+                rateMode: "per_thousand",
+                rate: "25",
+                advanceInterestPeriods: 0,
+                advanceInterestRefundPolicy: "non_refundable",
+            },
+        });
+        expect(updated).toMatchObject({
+            startDate: "2026-08-14",
+            floatingInterestPolicy: {
+                periodUnit: "week",
+                rateMode: "per_thousand",
+                rate: "25.0000",
+                advanceInterestPeriods: 0,
+            },
+        });
+
+        const stored = await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) });
+        expect(stored).toMatchObject({
+            dailyInterestMode: "per_thousand",
+            dailyInterestRate: "25.0000",
+            interestPeriodAnchorDate: "2026-08-14",
+            advanceInterestPeriods: 0,
+        });
+        expect(await db.select().from(loanInterestRatePeriods).where(eq(loanInterestRatePeriods.loanId, stored!.id))).toMatchObject([{
+            effectiveDate: "2026-08-14",
+            expiryDate: null,
+            rateType: "per_thousand",
+            rate: "25.0000",
+            periodUnit: "week",
+            periodLength: 1,
+        }]);
+    });
 
     // Break caught: POST-style creation activates immediately or retrying activation duplicates schedules.
     integrationTest("creates an editable draft and activates it exactly once", async () => {
@@ -191,10 +377,13 @@ describe("loan application service", () => {
             repaymentType: "floating",
             termMonths: 1,
             startDate: "2026-08-10",
-            floatingDailyInterest: {
-                mode: "per_thousand",
+            floatingInterestPolicy: {
+                periodUnit: "day",
+                periodLength: 1,
+                rateMode: "per_thousand",
                 rate: "1.0000",
-                firstDayTreatment: "start_next_day",
+                advanceInterestPeriods: 0,
+                advanceInterestRefundPolicy: "non_refundable",
             },
         });
 
@@ -215,7 +404,10 @@ describe("loan application service", () => {
             borrowerPublicId: borrower.publicId,
             principal: "1000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1,
             startDate: "2026-08-10",
-            floatingDailyInterest: { mode: "per_thousand", rate: "15", firstDayTreatment: "deduct" },
+            floatingInterestPolicy: {
+                periodUnit: "day", periodLength: 1, rateMode: "per_thousand", rate: "15",
+                advanceInterestPeriods: 1, advanceInterestRefundPolicy: "non_refundable",
+            },
         });
         const stored = await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) });
 
@@ -572,7 +764,9 @@ describe("loan application service", () => {
         expect(updated.response.status, updated.text).toBe(200);
         expect(updated.body).toMatchObject({ status: "draft", principal: "100.00" });
 
-        const activated = await jsonRequest(app, `/loans/${created.body.publicId}/activate`, { method: "POST", headers });
+        const activated = await jsonRequest(app, `/loans/${created.body.publicId}/activate`, {
+            method: "POST", headers: { ...headers, "idempotency-key": "rest-loan-activation" },
+        });
         expect(activated.response.status, activated.text).toBe(200);
         expect(activated.body).toMatchObject({ status: "active", outstandingPrincipal: "100.00" });
         const activeList = await jsonRequest(app, "/loans", { headers });
@@ -580,7 +774,9 @@ describe("loan application service", () => {
             principal: "100.00",
             outstandingPrincipal: "100.00",
         });
-        const retried = await jsonRequest(app, `/loans/${created.body.publicId}/activate`, { method: "POST", headers });
+        const retried = await jsonRequest(app, `/loans/${created.body.publicId}/activate`, {
+            method: "POST", headers: { ...headers, "idempotency-key": "rest-loan-activation-retry" },
+        });
         expect(retried.body).toEqual(activated.body);
 
         const locked = await jsonRequest(app, `/loans/${created.body.publicId}`, {

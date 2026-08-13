@@ -2,6 +2,7 @@ import dayjs from "dayjs";
 import Decimal from "decimal.js";
 import { parseMoney, serializeMoney } from "./money";
 import { normalizeDailyLoanEntry, type DailyLoanEntryInput } from "./daily-loan-entry";
+import type { FloatingInterestPolicy } from "./floating-interest-policy";
 
 export type RepaymentType = "daily" | "weekly" | "monthly" | "floating";
 
@@ -33,11 +34,7 @@ export interface PublicLoanCalculationParams {
     totalInstallments?: number;
     installmentAmount?: string;
     dailyEntry?: DailyLoanEntryInput;
-    floatingDailyInterest?: {
-        mode: "per_thousand" | "percent";
-        rate: string;
-        firstDayTreatment: "deduct" | "start_next_day";
-    };
+    floatingInterestPolicy?: FloatingInterestPolicy;
 }
 
 export interface PublicInstallmentSchedule {

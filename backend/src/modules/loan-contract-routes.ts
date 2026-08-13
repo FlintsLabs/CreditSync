@@ -14,12 +14,12 @@ import { activateLoan, createLoanDraft, getLoanApplication, presentLoan, preview
 import { getLoanPaymentHealth } from "../services/loan-payment-health-service";
 import { DomainError } from "../services/domain-error";
 import { loanCommandContext, loanDomainFailure, loanUnauthorized } from "./loan-http-support";
-import { dailyEntry, floatingDailyInterest, repaymentType } from "./loan-route-schemas";
+import { dailyEntry, floatingInterestPolicy, repaymentType } from "./loan-route-schemas";
 
 const loanTermsBody = t.Object({
     principal: t.String(), interestRate: t.String(), termMonths: t.Number(), repaymentType,
     startDate: t.String(), totalInstallments: t.Optional(t.Number()), installmentAmount: t.Optional(t.String()),
-    floatingDailyInterest: t.Optional(floatingDailyInterest), dailyEntry: t.Optional(dailyEntry),
+    floatingInterestPolicy: t.Optional(floatingInterestPolicy), dailyEntry: t.Optional(dailyEntry),
 });
 
 export const loanContractRoutes = new Elysia().use(authPlugin)
@@ -204,7 +204,7 @@ export const loanContractRoutes = new Elysia().use(authPlugin)
             bankProfilePublicId: t.Optional(t.Nullable(t.String())),
             principal: t.String(), interestRate: t.String(), repaymentType, termMonths: t.Number(),
             totalInstallments: t.Optional(t.Number()), installmentAmount: t.Optional(t.String()),
-            floatingDailyInterest: t.Optional(floatingDailyInterest), dailyEntry: t.Optional(dailyEntry), startDate: t.String(),
+            floatingInterestPolicy: t.Optional(floatingInterestPolicy), dailyEntry: t.Optional(dailyEntry), startDate: t.String(),
         }),
     })
     .put("/:id", async ({ params, body, user, request, set }) => {
@@ -225,7 +225,7 @@ export const loanContractRoutes = new Elysia().use(authPlugin)
             principal: t.Optional(t.String()), interestRate: t.Optional(t.String()),
             repaymentType: t.Optional(repaymentType), termMonths: t.Optional(t.Number()),
             totalInstallments: t.Optional(t.Number()), installmentAmount: t.Optional(t.String()),
-            floatingDailyInterest: t.Optional(floatingDailyInterest), dailyEntry: t.Optional(dailyEntry), startDate: t.Optional(t.String()),
+            floatingInterestPolicy: t.Optional(floatingInterestPolicy), dailyEntry: t.Optional(dailyEntry), startDate: t.Optional(t.String()),
         }),
     })
     .post("/:id/activate", async ({ params, user, request, set }) => {
