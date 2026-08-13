@@ -34,6 +34,7 @@ const fundingUsage = {
         principalAmount: "7000.00",
         outstandingPrincipal: "5000.00",
         netAllocatedAmount: "7000.00",
+        collectedInterest: "23.33",
         latestAllocationDate: "2026-08-07",
         fundingRoutes: [{ type: "direct", bankLoanPublicId: null, netAllocatedAmount: "7000.00" }],
     }],
@@ -71,27 +72,30 @@ describe("FundDetail funding usage", () => {
         expect(await screen.findByText(/53,000\.00/)).toBeInTheDocument();
         expect(screen.getByText(/12%.*used/i)).toBeInTheDocument();
         expect(screen.getByText("Loans using this funding source")).toBeInTheDocument();
-        expect(screen.getAllByText("Current borrower")).toHaveLength(2);
+        expect(screen.getAllByText("Current borrower")).toHaveLength(1);
         expect(screen.getAllByText(/7,000\.00/).length).toBeGreaterThan(0);
-        expect(screen.getAllByText("Direct own-capital allocation")).toHaveLength(3);
+        expect(screen.getAllByText("Direct own-capital allocation")).toHaveLength(2);
         expect(screen.queryByRole("button", { name: /add drawdown/i })).not.toBeInTheDocument();
     });
 
-    // Break caught: summary cards and the seven-column allocation table become unreadable beside the tablet sidebar.
-    it("uses a compact two-column summary and exposes each allocation as a contract card", async () => {
+    // Break caught: nested allocation cards obscure hierarchy, raw statuses lack semantics, or source interest is omitted.
+    it("uses a flat responsive list with source interest and a semantic status badge", async () => {
         renderDetail();
 
         const summary = await screen.findByTestId("funding-summary-grid");
         expect(summary).toHaveClass("md:grid-cols-2", "2xl:grid-cols-3");
         expect(screen.getByTestId("funding-available-amount")).toHaveClass("min-w-0", "tabular-nums", "text-2xl");
 
-        const cards = screen.getByTestId("funding-usage-cards");
-        expect(cards).toHaveTextContent("Current borrower");
-        expect(cards).toHaveTextContent("Direct own-capital allocation");
-        expect(cards).toHaveTextContent(/7,000\.00/);
-        expect(cards).toHaveTextContent(/5,000\.00/);
-        expect(screen.getAllByRole("link", { name: LOAN_ID })).toHaveLength(2);
-        expect(screen.getAllByRole("link", { name: LOAN_ID })[0]).toHaveAttribute("href", `/loans/${LOAN_ID}`);
+        const list = screen.getByTestId("funding-usage-list");
+        expect(screen.queryByTestId("funding-usage-cards")).not.toBeInTheDocument();
+        expect(list).toHaveClass("divide-y");
+        expect(list).toHaveTextContent("Current borrower");
+        expect(list).toHaveTextContent("Direct own-capital allocation");
+        expect(list).toHaveTextContent("Interest collected for this funding source");
+        expect(list).toHaveTextContent(/23\.33/);
+        const status = screen.getByText("Active");
+        expect(status).toHaveClass("bg-emerald-100", "text-emerald-800");
+        expect(screen.getByRole("link", { name: /Current borrower/ })).toHaveAttribute("href", `/loans/${LOAN_ID}`);
     });
 
     // Break caught: operators cannot reveal settled allocations from a capital-source page.

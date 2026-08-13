@@ -45,6 +45,7 @@
 - Excluded append-only reversed floating-interest accruals from Dashboard payable totals so corrected source rows are not counted alongside their active replacements.
 
 ### Changed
+- Replaced nested funding-usage cards and the duplicate desktop table with one responsive divider list featuring borrower-first hierarchy, exact source interest, and localized semantic loan-status badges.
 - Replaced nested mobile repayment-history cards and full-width review buttons with compact divider-separated transaction rows, non-zero exact allocation summaries, and full-row review navigation while retaining the desktop table.
 - Flattened both Dashboard repayment queues on mobile into full-width divider-separated rows, retained clear keyboard focus and exact amount/status alignment, and restored section containment at desktop widths without nested item cards.
 - Applied distinct accessible semantic colors to Payment Inbox status badges: green ready, gray draft, amber review, blue posted, red reversed, and orange duplicate.

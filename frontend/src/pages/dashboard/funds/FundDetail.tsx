@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui
 import { useTranslation } from "react-i18next";
 import { api } from "../../../lib/api";
 import { Input } from "../../../components/ui/Input";
+import { Badge } from "../../../components/ui/badge";
 import { formatMoneyExact } from "../../../lib/workflow-model";
 
 interface BankProfile {
@@ -148,6 +149,7 @@ interface FundingUsageAllocation {
     principalAmount: string;
     outstandingPrincipal: string;
     netAllocatedAmount: string;
+    collectedInterest: string;
     latestAllocationDate: string;
     fundingRoutes: Array<{
         type: "direct" | "drawdown";
@@ -182,6 +184,25 @@ export default function FundDetail() {
     const [sourceProfitability, setSourceProfitability] = useState<SourceProfitability | null>(null);
     const [fundingUsage, setFundingUsage] = useState<FundingUsage | null>(null);
     const [includeSettledFunding, setIncludeSettledFunding] = useState(false);
+
+    const loanStatusPresentation = (status: string) => {
+        if (status === "active") return {
+            label: t("fundDetail.loanStatuses.active", "Active"),
+            className: "border-emerald-200 bg-emerald-100 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300",
+        };
+        if (status === "paid" || status === "closed") return {
+            label: t(`fundDetail.loanStatuses.${status}`, status),
+            className: "border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200",
+        };
+        if (status === "draft" || status === "pending") return {
+            label: t(`fundDetail.loanStatuses.${status}`, status),
+            className: "border-amber-200 bg-amber-100 text-amber-800 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-300",
+        };
+        return {
+            label: t("fundDetail.loanStatuses.problem", "Needs review"),
+            className: "border-red-200 bg-red-100 text-red-800 dark:border-red-800 dark:bg-red-950/60 dark:text-red-300",
+        };
+    };
     const [rollovers, setRollovers] = useState<FundRolloverEntry[]>([]);
     const [selectedDrawdownProfitability, setSelectedDrawdownProfitability] = useState<DrawdownProfitability | null>(null);
     const [selectedDrawdownAllocationState, setSelectedDrawdownAllocationState] = useState<DrawdownAllocationState | null>(null);
@@ -695,61 +716,40 @@ export default function FundDetail() {
                             ) : fundingUsage.allocations.length === 0 ? (
                                 <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">{t("fundDetail.noFundingUsage", "No borrower loans are currently allocated from this funding source.")}</div>
                             ) : (
-                                <>
-                                    <div data-testid="funding-usage-cards" className="space-y-3 2xl:hidden">
-                                        {fundingUsage.allocations.map((allocation) => {
-                                            const routes = allocation.fundingRoutes;
-                                            const routeLabel = routes.length !== 1
-                                                ? t("fundDetail.multipleFundingRoutes", "Multiple funding routes")
-                                                : routes[0]?.type === "direct"
-                                                    ? t("fundDetail.directAllocation", "Direct own-capital allocation")
-                                                    : t("fundDetail.drawdownAllocation", { defaultValue: "Drawdown {{id}}", id: routes[0]?.bankLoanPublicId ?? "-" });
-                                            return <article key={allocation.loanPublicId} className="rounded-lg border p-4">
-                                                <div className="flex items-start justify-between gap-3">
-                                                    <Link className="break-all font-medium text-primary hover:underline" to={`/loans/${allocation.loanPublicId}`}>{allocation.loanPublicId}</Link>
-                                                    <span className="shrink-0 capitalize text-sm text-muted-foreground">{allocation.loanStatus}</span>
+                                <div data-testid="funding-usage-list" className="divide-y">
+                                    {fundingUsage.allocations.map((allocation) => {
+                                        const routes = allocation.fundingRoutes;
+                                        const routeLabel = routes.length !== 1
+                                            ? t("fundDetail.multipleFundingRoutes", "Multiple funding routes")
+                                            : routes[0]?.type === "direct"
+                                                ? t("fundDetail.directAllocation", "Direct own-capital allocation")
+                                                : t("fundDetail.drawdownAllocation", { defaultValue: "Drawdown {{id}}", id: routes[0]?.bankLoanPublicId ?? "-" });
+                                        const status = loanStatusPresentation(allocation.loanStatus);
+                                        return <Link
+                                            key={allocation.loanPublicId}
+                                            to={`/loans/${allocation.loanPublicId}`}
+                                            className="block px-1 py-5 transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:px-3"
+                                        >
+                                            <div className="flex min-w-0 items-start justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <div className="truncate font-semibold">{allocation.borrowerName ?? "-"}</div>
+                                                    <div className="mt-1 truncate font-mono text-xs text-muted-foreground" title={allocation.loanPublicId}>{allocation.loanPublicId}</div>
                                                 </div>
-                                                <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-                                                    <div><dt className="text-muted-foreground">{t("fundDetail.borrower", "Borrower")}</dt><dd className="mt-1 font-medium">{allocation.borrowerName ?? "-"}</dd></div>
-                                                    <div><dt className="text-muted-foreground">{t("fundDetail.fundingRoute", "Funding route")}</dt><dd className="mt-1 break-words font-medium">{routeLabel}</dd></div>
-                                                    <div><dt className="text-muted-foreground">{t("fundDetail.netAllocated", "Net allocated")}</dt><dd className="mt-1 font-medium tabular-nums">{formatMoneyExact(allocation.netAllocatedAmount, i18n.language)}</dd></div>
-                                                    <div><dt className="text-muted-foreground">{t("loanWizard.outstandingPrincipal", "Outstanding principal")}</dt><dd className="mt-1 font-medium tabular-nums">{formatMoneyExact(allocation.outstandingPrincipal, i18n.language)}</dd></div>
-                                                    <div><dt className="text-muted-foreground">{t("fundDetail.latestAllocation", "Latest allocation")}</dt><dd className="mt-1 font-medium">{allocation.latestAllocationDate}</dd></div>
-                                                </dl>
-                                            </article>;
-                                        })}
-                                    </div>
-                                    <div className="hidden overflow-x-auto 2xl:block">
-                                        <table className="w-full min-w-[760px] text-sm">
-                                            <thead><tr className="border-b text-left">
-                                                <th className="py-2 pr-3">{t("fundDetail.contract", "Contract")}</th>
-                                                <th className="py-2 pr-3">{t("fundDetail.borrower", "Borrower")}</th>
-                                                <th className="py-2 pr-3">{t("fundDetail.fundingRoute", "Funding route")}</th>
-                                                <th className="py-2 pr-3 text-right">{t("fundDetail.netAllocated", "Net allocated")}</th>
-                                                <th className="py-2 pr-3">{t("fundDetail.latestAllocation", "Latest allocation")}</th>
-                                                <th className="py-2 pr-3 text-right">{t("loanWizard.outstandingPrincipal", "Outstanding principal")}</th>
-                                                <th className="py-2">{t("common.status", "Status")}</th>
-                                            </tr></thead>
-                                            <tbody>{fundingUsage.allocations.map((allocation) => {
-                                                const routes = allocation.fundingRoutes;
-                                                const routeLabel = routes.length !== 1
-                                                    ? t("fundDetail.multipleFundingRoutes", "Multiple funding routes")
-                                                    : routes[0]?.type === "direct"
-                                                        ? t("fundDetail.directAllocation", "Direct own-capital allocation")
-                                                        : t("fundDetail.drawdownAllocation", { defaultValue: "Drawdown {{id}}", id: routes[0]?.bankLoanPublicId ?? "-" });
-                                                return <tr key={allocation.loanPublicId} className="border-b last:border-0">
-                                                    <td className="py-3 pr-3"><Link className="text-primary hover:underline" to={`/loans/${allocation.loanPublicId}`}>{allocation.loanPublicId}</Link></td>
-                                                    <td className="py-3 pr-3">{allocation.borrowerName ?? "-"}</td>
-                                                    <td className="py-3 pr-3">{routeLabel}</td>
-                                                    <td className="py-3 pr-3 text-right">{formatMoneyExact(allocation.netAllocatedAmount, i18n.language)}</td>
-                                                    <td className="py-3 pr-3">{allocation.latestAllocationDate}</td>
-                                                    <td className="py-3 pr-3 text-right">{formatMoneyExact(allocation.outstandingPrincipal, i18n.language)}</td>
-                                                    <td className="py-3 capitalize">{allocation.loanStatus}</td>
-                                                </tr>;
-                                            })}</tbody>
-                                        </table>
-                                    </div>
-                                </>
+                                                <Badge variant="outline" className={`shrink-0 ${status.className}`}>{status.label}</Badge>
+                                            </div>
+                                            <div className="mt-3 text-sm">
+                                                <span className="text-muted-foreground">{t("fundDetail.fundingRoute", "Funding route")}: </span>
+                                                <span className="font-medium">{routeLabel}</span>
+                                            </div>
+                                            <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm lg:grid-cols-4">
+                                                <div><dt className="text-muted-foreground">{t("fundDetail.netAllocated", "Net allocated")}</dt><dd className="mt-1 font-semibold tabular-nums">{formatMoneyExact(allocation.netAllocatedAmount, i18n.language)}</dd></div>
+                                                <div><dt className="text-muted-foreground">{t("loanWizard.outstandingPrincipal", "Outstanding principal")}</dt><dd className="mt-1 font-semibold tabular-nums">{formatMoneyExact(allocation.outstandingPrincipal, i18n.language)}</dd></div>
+                                                <div><dt className="text-muted-foreground">{t("fundDetail.collectedInterestForSource", "Interest collected for this funding source")}</dt><dd className="mt-1 font-semibold tabular-nums text-emerald-700 dark:text-emerald-300">{formatMoneyExact(allocation.collectedInterest, i18n.language)}</dd></div>
+                                                <div><dt className="text-muted-foreground">{t("fundDetail.latestAllocation", "Latest allocation")}</dt><dd className="mt-1 font-medium">{allocation.latestAllocationDate}</dd></div>
+                                            </dl>
+                                        </Link>;
+                                    })}
+                                </div>
                             )}
                         </CardContent>
                     </Card>
