@@ -3,6 +3,7 @@
 ## v0.3.11 - 2026-08-13
 
 ### Added
+- Added a Decimal-only funding-attribution kernel that reduces signed allocation history into exact positive per-source shares before attributing borrower payment components.
 - Added the v0.3.11 TDD implementation plan for exact direct-capital fund profitability, historical payment attribution, contract-to-ledger reconciliation, localized presentation, and read-only production verification.
 - Added the v0.3.11 TDD implementation plan for post-activation append-only multi-source loan funding across database invariants, shared services, REST, MCP/plugin, localized Web controls, and guarded historical allocation.
 - Added the approved design for exact direct-capital and drawdown fund-source profitability, full historical payment attribution, and read-only contract-to-ledger revenue reconciliation without mutating financial history.
