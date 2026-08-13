@@ -1,7 +1,7 @@
 {
   "name": "creditsync",
-  "version": "2.4.0",
-  "description": "Private CreditSync borrower, payment, intermediary-remittance, floating-interest, disbursement, renewal, and reversal workflows for Codex.",
+  "version": "2.5.0",
+  "description": "Private CreditSync borrower, payment, intermediary-remittance, floating-interest settlement, disbursement, renewal, and reversal workflows for Codex.",
   "author": {
     "name": "CreditSync"
   },
@@ -13,6 +13,7 @@
     "reconciliation",
     "disbursements",
     "floating-interest",
+    "settlement",
     "intermediaries"
   ],
   "skills": "./skills/",
@@ -20,7 +21,7 @@
   "interface": {
     "displayName": "CreditSync",
     "shortDescription": "Review and manage private CreditSync workflows.",
-    "longDescription": "Use the private CreditSync app to resolve borrowers, reconcile intermediary remittances, manage effective-dated floating interest, capture evidence, post allocations and disbursements, renew daily loans, and create audited reversals.",
+    "longDescription": "Use the private CreditSync app to resolve borrowers, reconcile intermediary remittances, manage and settle effective-dated floating interest, capture evidence, post allocations and disbursements, renew daily loans, and create audited reversals.",
     "developerName": "CreditSync",
     "category": "Productivity",
     "capabilities": [
@@ -32,7 +33,8 @@
       "Find a borrower and show outstanding loans.",
       "Preview a daily-loan renewal.",
       "Record a loan disbursement with evidence.",
-      "Schedule a future floating-loan interest rate."
+      "Schedule a future floating-loan interest rate.",
+      "Preview an exact floating-loan settlement."
     ],
     "brandColor": "#075985"
   }

@@ -158,7 +158,7 @@ The web app exposes `/payments` as the human review inbox. It persists and shows
 │   ├── src/lib/          # api client, auth helpers, i18n
 │   └── src/pages/        # landing, login, dashboard screens
 ├── docs/                 # ADRs and planning docs
-├── plugins/creditsync/   # Private Codex plugin 2.4.0, skills, evals, and validation
+├── plugins/creditsync/   # Private Codex plugin 2.5.0, skills, evals, and validation
 ├── k8s/                  # Kubernetes manifests
 ├── docker-compose.yml    # local development infra
 ├── docker-compose.infra.yml  # production-style infra including dragonfly cache
@@ -299,11 +299,13 @@ The tenant-admin dashboard is a Daily Command Center: it leads with exact cash d
 
 Floating daily-interest arrears appear in the Dashboard as one borrower row per loan. The row aggregates exact interest payable, reports the number of overdue daily accruals and their maximum age, and opens repayment capture without inventing a fixed schedule.
 
-Loan agreement creation is draft-first. `POST /api/loans` accepts a borrower and either an optional drawdown UUID (`bankLoanPublicId`) or an active own-capital profile UUID (`bankProfilePublicId`), never both, and returns a draft without schedules. Draft terms can be changed with `PUT /api/loans/:id`; `POST /api/loans/:id/activate` locks the terms, checks the selected source's signed remaining capacity, then creates schedules and exactly one initial funding allocation. Repeating activation is safe and returns the already-active agreement. The web wizard groups own capital, bank drawdowns, and unallocated loans; an existing personal source can be explicitly converted to an own-capital pool at its detail page, with a default non-cash 2.00% annual opportunity-cost rate.
+Loan agreement creation is draft-first. `POST /api/loans` accepts a borrower and either an optional drawdown UUID (`bankLoanPublicId`) or an active own-capital profile UUID (`bankProfilePublicId`), never both, and returns a draft without schedules. Draft terms can be changed with `PUT /api/loans/:id`; `POST /api/loans/:id/activate` locks the terms, checks the selected source's signed remaining capacity, then creates schedules and exactly one initial funding allocation. Activation requires a stable idempotency key; an identical same-key retry returns the original result while a conflicting reuse stops. The web wizard groups own capital, bank drawdowns, and unallocated loans; an existing personal source can be explicitly converted to an own-capital pool at its detail page, with a default non-cash 2.00% annual opportunity-cost rate.
 
 Funding-source detail pages expose `GET /api/bank-profiles/:id/funding-usage`. The page shows current net borrower-loan allocations for the source and can include settled loans for historical review. Own-capital pools use their credit limit less net allocations as available capital; they allocate directly to borrower loans and intentionally do not create bank-drawdown records. External-liability sources retain drawdown-based available credit while showing the borrower loans funded through their drawdowns.
 
-Floating loans can instead use a daily-interest policy: a fixed baht rate per ฿1,000 per day or a daily percentage. The wizard makes the rate mode and first-day treatment explicit. Daily accruals use Bangkok calendar dates and Decimal rounding; payments apply accrued interest before principal, and a first-day deduction is recorded as a separate immutable disbursement amount.
+Floating loans use an explicit one-day or one-week interest policy with a percentage or per-thousand rate and zero or one advance-interest period. The non-refundable advance treatment is explicit policy data. Daily accrual snapshots use Bangkok calendar dates and cumulative Decimal rounding, including daily projections within a weekly period; payments apply due accrued interest before principal, and an advance deduction is retained as immutable paid history.
+
+Floating-loan close-out is previewed for an exact Bangkok as-of date. The preview separately shows outstanding principal, due interest, accrued-not-due interest, fees, penalties, already-paid non-refundable advance interest, and the new settlement total. Execution requires the exact current preview hash, explicit confirmation, reason, and stable idempotency key. A changed balance or later accrual makes the preview stale and requires a fresh preview and confirmation; settlement never refunds the already-paid advance amount or edits prior financial records.
 
 For a scheduled daily loan, the wizard can start from either the borrower’s proposed daily payment or a flat daily-interest term (% per day, baht per day, or baht per ฿1,000). Choose a duration in days or 30-day months; CreditSync derives the other value, displays flat daily/monthly/annual reference rates, and creates an exact schedule whose final row absorbs rounding differences.
 
@@ -331,15 +333,24 @@ evidence.finalize     payment.preview       payment.post
 payment.reverse       loan.preview          loan.draft
 loan.activate         loan.interest-rate.list
 loan.interest-rate.preview  loan.interest-rate.execute
-renewal.preview       renewal.execute
-renewal.reverse       funding-source.list
+loan.settlement.preview     loan.settlement.execute
 loan.disbursement.list       loan.disbursement.draft
 loan.disbursement.update
 loan.disbursement.evidence.prepare  loan.disbursement.evidence.finalize
 loan.disbursement.post       loan.disbursement.reverse
+intermediary.search          intermediary.create
+intermediary.collection.list  intermediary.collection.create
+intermediary.remittance.get   intermediary.remittance.create
+intermediary.remittance.allocations.save
+intermediary.remittance.preview
+intermediary.remittance.evidence.prepare
+intermediary.remittance.evidence.finalize
+intermediary.remittance.post
+renewal.preview       renewal.execute
+renewal.reverse       funding-source.list
 ```
 
-Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Disbursement drafts support strict non-empty PATCH updates to editable metadata; each update retains finalized evidence and requires a re-list plus fresh confirmation before posting. Payment posting/reversal, loan activation, floating-interest execution, renewal execution/reversal, disbursement post/reverse, and intermediary remittance posting follow explicit confirmation and audit boundaries. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces. The bundled Plugin `2.4.0` freezes the matching 41-tool backend contract.
+Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Disbursement drafts support strict non-empty PATCH updates to editable metadata; each update retains finalized evidence and requires a re-list plus fresh confirmation before posting. Payment posting/reversal, idempotent loan activation, floating-interest execution and settlement, renewal execution/reversal, disbursement post/reverse, and intermediary remittance posting follow explicit confirmation and audit boundaries. Settlement preview is inspectable but persists a short-lived, balance-versioned command artifact; execute accepts only the exact current preview and returns safe audit/correlation identifiers. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces. The bundled Plugin `2.5.0` freezes the matching 43-tool backend contract.
 
 ### Configure and rotate the bearer token
 
@@ -361,7 +372,7 @@ For rotation, put the old and new hashes in `MCP_API_TOKEN_HASHES` separated by 
 
 ## Private CreditSync Plugin
 
-The repository includes CreditSync Plugin `2.4.0` under [`plugins/creditsync`](./plugins/creditsync). It combines eight orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
+The repository includes CreditSync Plugin `2.5.0` under [`plugins/creditsync`](./plugins/creditsync). It combines nine orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
 
 Before installation, register the deployed MCP endpoint as a private Codex app and replace the conspicuous `plugin_asdk_app_REPLACE_AFTER_PRIVATE_REGISTRATION` value in `plugins/creditsync/.app.json` with the returned `plugin_asdk_app...` technical ID. Then validate the package, add this Git repository as the marketplace that tracks `main`, and install the plugin:
 

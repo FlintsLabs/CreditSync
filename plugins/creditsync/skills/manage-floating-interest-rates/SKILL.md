@@ -5,7 +5,7 @@ description: Use when inspecting, scheduling, previewing, or confirming an effec
 
 # Manage floating interest rates
 
-Use only the three `loan.interest-rate.*` tools. The backend owns date coverage, exact decimal normalization, daily-interest calculation, automatic splitting, and accrued-date protection.
+Use only the three `loan.interest-rate.*` tools. The backend owns date coverage, exact decimal normalization, daily-interest calculation, automatic splitting, and accrued-date protection. A rate timeline change preserves the loan's contractual day/week period policy; it does not convert or replace that origination policy.
 
 ## Required workflow
 
@@ -18,4 +18,4 @@ Use only the three `loan.interest-rate.*` tools. The backend owns date coverage,
 
 Rate periods may be maintained regardless of loan lifecycle status when the backend permits access, but accrued dates are immutable. Never bypass `RATE_PERIOD_ACCRUED_DATE_CONFLICT`, overlap, stale/expired preview, changed timeline, or idempotency conflict. Re-list and re-preview; prior approval does not carry over.
 
-Do not edit the legacy loan rate field, call REST/SQL, alter accrual records, or calculate financial results locally.
+Do not edit the legacy loan rate field, call REST/SQL, alter accrual records, convert weekly rates to daily rates, or calculate financial results locally. Use `settle-floating-loans` for a close-out rather than treating a zero/final rate as settlement.

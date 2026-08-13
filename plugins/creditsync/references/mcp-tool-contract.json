@@ -1,5 +1,5 @@
 {
-  "compatibility": "Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 2.2.0; breaking changes require plugin 3.0.0.",
+  "compatibility": "Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 2.5.0; breaking changes require plugin 3.0.0.",
   "schemaVersion": "1.0",
   "sourceOfTruth": "Authenticated local MCP SDK Client tools/list response from backend/src/mcp/server.ts",
   "tools": [
@@ -3054,31 +3054,56 @@
             ],
             "type": "object"
           },
-          "floatingDailyInterest": {
+          "floatingInterestPolicy": {
+            "additionalProperties": false,
             "properties": {
-              "firstDayTreatment": {
-                "enum": [
-                  "deduct",
-                  "start_next_day"
-                ],
+              "advanceInterestPeriods": {
+                "anyOf": [
+                  {
+                    "const": 0,
+                    "type": "number"
+                  },
+                  {
+                    "const": 1,
+                    "type": "number"
+                  }
+                ]
+              },
+              "advanceInterestRefundPolicy": {
+                "const": "non_refundable",
                 "type": "string"
               },
-              "mode": {
+              "periodLength": {
+                "const": 1,
+                "type": "number"
+              },
+              "periodUnit": {
                 "enum": [
-                  "per_thousand",
-                  "percent"
+                  "day",
+                  "week"
                 ],
                 "type": "string"
               },
               "rate": {
+                "maxLength": 32,
                 "pattern": "^\\d+(?:\\.\\d{1,4})?$",
+                "type": "string"
+              },
+              "rateMode": {
+                "enum": [
+                  "percent",
+                  "per_thousand"
+                ],
                 "type": "string"
               }
             },
             "required": [
-              "mode",
+              "periodUnit",
+              "periodLength",
+              "rateMode",
               "rate",
-              "firstDayTreatment"
+              "advanceInterestPeriods",
+              "advanceInterestRefundPolicy"
             ],
             "type": "object"
           },
@@ -3305,32 +3330,56 @@
                         ],
                         "type": "object"
                       },
-                      "floatingDailyInterest": {
+                      "floatingInterestPolicy": {
                         "additionalProperties": false,
                         "properties": {
-                          "firstDayTreatment": {
-                            "enum": [
-                              "deduct",
-                              "start_next_day"
-                            ],
+                          "advanceInterestPeriods": {
+                            "anyOf": [
+                              {
+                                "const": 0,
+                                "type": "number"
+                              },
+                              {
+                                "const": 1,
+                                "type": "number"
+                              }
+                            ]
+                          },
+                          "advanceInterestRefundPolicy": {
+                            "const": "non_refundable",
                             "type": "string"
                           },
-                          "mode": {
+                          "periodLength": {
+                            "const": 1,
+                            "type": "number"
+                          },
+                          "periodUnit": {
                             "enum": [
-                              "per_thousand",
-                              "percent"
+                              "day",
+                              "week"
                             ],
                             "type": "string"
                           },
                           "rate": {
+                            "maxLength": 32,
                             "pattern": "^\\d+(?:\\.\\d{1,4})?$",
+                            "type": "string"
+                          },
+                          "rateMode": {
+                            "enum": [
+                              "percent",
+                              "per_thousand"
+                            ],
                             "type": "string"
                           }
                         },
                         "required": [
-                          "mode",
+                          "periodUnit",
+                          "periodLength",
+                          "rateMode",
                           "rate",
-                          "firstDayTreatment"
+                          "advanceInterestPeriods",
+                          "advanceInterestRefundPolicy"
                         ],
                         "type": "object"
                       },
@@ -3394,54 +3443,95 @@
               {
                 "additionalProperties": false,
                 "properties": {
-                  "dailyInterestAtCurrentPrincipal": {
+                  "advanceInterest": {
                     "maxLength": 32,
                     "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
                     "type": "string"
                   },
-                  "firstDayInterest": {
-                    "maxLength": 32,
-                    "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                  "firstPeriodDueDate": {
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
                     "type": "string"
                   },
-                  "floatingDailyInterest": {
+                  "firstPeriodStartDate": {
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
+                    "type": "string"
+                  },
+                  "floatingInterestPolicy": {
                     "additionalProperties": false,
                     "properties": {
-                      "firstDayTreatment": {
-                        "enum": [
-                          "deduct",
-                          "start_next_day"
-                        ],
+                      "advanceInterestPeriods": {
+                        "anyOf": [
+                          {
+                            "const": 0,
+                            "type": "number"
+                          },
+                          {
+                            "const": 1,
+                            "type": "number"
+                          }
+                        ]
+                      },
+                      "advanceInterestRefundPolicy": {
+                        "const": "non_refundable",
                         "type": "string"
                       },
-                      "mode": {
+                      "periodLength": {
+                        "const": 1,
+                        "type": "number"
+                      },
+                      "periodUnit": {
                         "enum": [
-                          "per_thousand",
-                          "percent"
+                          "day",
+                          "week"
                         ],
                         "type": "string"
                       },
                       "rate": {
+                        "maxLength": 32,
                         "pattern": "^\\d+(?:\\.\\d{1,4})?$",
+                        "type": "string"
+                      },
+                      "rateMode": {
+                        "enum": [
+                          "percent",
+                          "per_thousand"
+                        ],
                         "type": "string"
                       }
                     },
                     "required": [
-                      "mode",
+                      "periodUnit",
+                      "periodLength",
+                      "rateMode",
                       "rate",
-                      "firstDayTreatment"
+                      "advanceInterestPeriods",
+                      "advanceInterestRefundPolicy"
                     ],
                     "type": "object"
                   },
-                  "netDisbursement": {
+                  "fullPeriodInterest": {
                     "maxLength": 32,
                     "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
                     "type": "string"
                   },
-                  "nextInterestDate": {
-                    "format": "date",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
+                  "netBorrowerPayout": {
+                    "maxLength": 32,
+                    "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
                     "type": "string"
+                  },
+                  "periodDays": {
+                    "anyOf": [
+                      {
+                        "const": 1,
+                        "type": "number"
+                      },
+                      {
+                        "const": 7,
+                        "type": "number"
+                      }
+                    ]
                   },
                   "schedule": {
                     "items": {
@@ -3550,32 +3640,56 @@
                         ],
                         "type": "object"
                       },
-                      "floatingDailyInterest": {
+                      "floatingInterestPolicy": {
                         "additionalProperties": false,
                         "properties": {
-                          "firstDayTreatment": {
-                            "enum": [
-                              "deduct",
-                              "start_next_day"
-                            ],
+                          "advanceInterestPeriods": {
+                            "anyOf": [
+                              {
+                                "const": 0,
+                                "type": "number"
+                              },
+                              {
+                                "const": 1,
+                                "type": "number"
+                              }
+                            ]
+                          },
+                          "advanceInterestRefundPolicy": {
+                            "const": "non_refundable",
                             "type": "string"
                           },
-                          "mode": {
+                          "periodLength": {
+                            "const": 1,
+                            "type": "number"
+                          },
+                          "periodUnit": {
                             "enum": [
-                              "per_thousand",
-                              "percent"
+                              "day",
+                              "week"
                             ],
                             "type": "string"
                           },
                           "rate": {
+                            "maxLength": 32,
                             "pattern": "^\\d+(?:\\.\\d{1,4})?$",
+                            "type": "string"
+                          },
+                          "rateMode": {
+                            "enum": [
+                              "percent",
+                              "per_thousand"
+                            ],
                             "type": "string"
                           }
                         },
                         "required": [
-                          "mode",
+                          "periodUnit",
+                          "periodLength",
+                          "rateMode",
                           "rate",
-                          "firstDayTreatment"
+                          "advanceInterestPeriods",
+                          "advanceInterestRefundPolicy"
                         ],
                         "type": "object"
                       },
@@ -3632,11 +3746,13 @@
                 "required": [
                   "terms",
                   "schedule",
-                  "floatingDailyInterest",
-                  "firstDayInterest",
-                  "dailyInterestAtCurrentPrincipal",
-                  "netDisbursement",
-                  "nextInterestDate"
+                  "floatingInterestPolicy",
+                  "fullPeriodInterest",
+                  "advanceInterest",
+                  "netBorrowerPayout",
+                  "firstPeriodStartDate",
+                  "firstPeriodDueDate",
+                  "periodDays"
                 ],
                 "type": "object"
               }
@@ -3752,31 +3868,56 @@
             ],
             "type": "object"
           },
-          "floatingDailyInterest": {
+          "floatingInterestPolicy": {
+            "additionalProperties": false,
             "properties": {
-              "firstDayTreatment": {
-                "enum": [
-                  "deduct",
-                  "start_next_day"
-                ],
+              "advanceInterestPeriods": {
+                "anyOf": [
+                  {
+                    "const": 0,
+                    "type": "number"
+                  },
+                  {
+                    "const": 1,
+                    "type": "number"
+                  }
+                ]
+              },
+              "advanceInterestRefundPolicy": {
+                "const": "non_refundable",
                 "type": "string"
               },
-              "mode": {
+              "periodLength": {
+                "const": 1,
+                "type": "number"
+              },
+              "periodUnit": {
                 "enum": [
-                  "per_thousand",
-                  "percent"
+                  "day",
+                  "week"
                 ],
                 "type": "string"
               },
               "rate": {
+                "maxLength": 32,
                 "pattern": "^\\d+(?:\\.\\d{1,4})?$",
+                "type": "string"
+              },
+              "rateMode": {
+                "enum": [
+                  "percent",
+                  "per_thousand"
+                ],
                 "type": "string"
               }
             },
             "required": [
-              "mode",
+              "periodUnit",
+              "periodLength",
+              "rateMode",
               "rate",
-              "firstDayTreatment"
+              "advanceInterestPeriods",
+              "advanceInterestRefundPolicy"
             ],
             "type": "object"
           },
@@ -4061,6 +4202,66 @@
                   }
                 ]
               },
+              "floatingInterestPolicy": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "advanceInterestPeriods": {
+                        "anyOf": [
+                          {
+                            "const": 0,
+                            "type": "number"
+                          },
+                          {
+                            "const": 1,
+                            "type": "number"
+                          }
+                        ]
+                      },
+                      "advanceInterestRefundPolicy": {
+                        "const": "non_refundable",
+                        "type": "string"
+                      },
+                      "periodLength": {
+                        "const": 1,
+                        "type": "number"
+                      },
+                      "periodUnit": {
+                        "enum": [
+                          "day",
+                          "week"
+                        ],
+                        "type": "string"
+                      },
+                      "rate": {
+                        "maxLength": 32,
+                        "pattern": "^\\d+(?:\\.\\d{1,4})?$",
+                        "type": "string"
+                      },
+                      "rateMode": {
+                        "enum": [
+                          "percent",
+                          "per_thousand"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "periodUnit",
+                      "periodLength",
+                      "rateMode",
+                      "rate",
+                      "advanceInterestPeriods",
+                      "advanceInterestRefundPolicy"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "id": {
                 "format": "uuid",
                 "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
@@ -4237,6 +4438,11 @@
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
         "properties": {
+          "idempotencyKey": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
           "loanPublicId": {
             "format": "uuid",
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
@@ -4244,7 +4450,8 @@
           }
         },
         "required": [
-          "loanPublicId"
+          "loanPublicId",
+          "idempotencyKey"
         ],
         "type": "object"
       },
@@ -4485,6 +4692,66 @@
                       "mode",
                       "rate",
                       "firstDayTreatment"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "floatingInterestPolicy": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "advanceInterestPeriods": {
+                        "anyOf": [
+                          {
+                            "const": 0,
+                            "type": "number"
+                          },
+                          {
+                            "const": 1,
+                            "type": "number"
+                          }
+                        ]
+                      },
+                      "advanceInterestRefundPolicy": {
+                        "const": "non_refundable",
+                        "type": "string"
+                      },
+                      "periodLength": {
+                        "const": 1,
+                        "type": "number"
+                      },
+                      "periodUnit": {
+                        "enum": [
+                          "day",
+                          "week"
+                        ],
+                        "type": "string"
+                      },
+                      "rate": {
+                        "maxLength": 32,
+                        "pattern": "^\\d+(?:\\.\\d{1,4})?$",
+                        "type": "string"
+                      },
+                      "rateMode": {
+                        "enum": [
+                          "percent",
+                          "per_thousand"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "periodUnit",
+                      "periodLength",
+                      "rateMode",
+                      "rate",
+                      "advanceInterestPeriods",
+                      "advanceInterestRefundPolicy"
                     ],
                     "type": "object"
                   },
@@ -5488,6 +5755,479 @@
         "type": "object"
       },
       "title": "Loan Interest Rate Execute"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Loan Settlement Preview"
+      },
+      "description": "Preview and persist an exact floating-loan close-out composition.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "asOfDate": {
+            "format": "date",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
+            "type": "string"
+          },
+          "loanPublicId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loanPublicId",
+          "asOfDate"
+        ],
+        "type": "object"
+      },
+      "name": "loan.settlement.preview",
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "accruedNotDueInterest": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "asOfDate": {
+                "format": "date",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
+                "type": "string"
+              },
+              "balanceVersion": {
+                "pattern": "^v1:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "createdAt": {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "type": "string"
+              },
+              "dueInterest": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "executedAt": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expiresAt": {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "type": "string"
+              },
+              "hashVersion": {
+                "const": "v1",
+                "type": "string"
+              },
+              "id": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "loanPublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "nonRefundableAdvanceInterest": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "outstandingFees": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "outstandingPenalties": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "outstandingPrincipal": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "previewHash": {
+                "pattern": "^v1:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "publicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "settlementTotal": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "ready",
+                  "expired",
+                  "executed"
+                ],
+                "type": "string"
+              },
+              "updatedAt": {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "publicId",
+              "loanPublicId",
+              "status",
+              "asOfDate",
+              "outstandingPrincipal",
+              "dueInterest",
+              "accruedNotDueInterest",
+              "outstandingFees",
+              "outstandingPenalties",
+              "nonRefundableAdvanceInterest",
+              "settlementTotal",
+              "balanceVersion",
+              "previewHash",
+              "hashVersion",
+              "expiresAt",
+              "executedAt",
+              "createdAt",
+              "updatedAt"
+            ],
+            "type": "object"
+          },
+          "schemaVersion": {
+            "const": "1.0",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "data"
+        ],
+        "type": "object"
+      },
+      "title": "Loan Settlement Preview"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Loan Settlement Execute"
+      },
+      "description": "Execute an explicitly confirmed floating-loan close-out idempotently.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "confirmed": {
+            "const": true,
+            "type": "boolean"
+          },
+          "idempotencyKey": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "previewHash": {
+            "pattern": "^v1:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "settlementPublicId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "settlementPublicId",
+          "previewHash",
+          "confirmed",
+          "reason",
+          "idempotencyKey"
+        ],
+        "type": "object"
+      },
+      "name": "loan.settlement.execute",
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "auditPublicIds": {
+            "items": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "correlationId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "accruedNotDueInterest": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "asOfDate": {
+                "format": "date",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
+                "type": "string"
+              },
+              "auditPublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "balanceVersion": {
+                "pattern": "^v1:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "correlationId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "createdAt": {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "type": "string"
+              },
+              "dueInterest": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "executedAt": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "expiresAt": {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "type": "string"
+              },
+              "hashVersion": {
+                "const": "v1",
+                "type": "string"
+              },
+              "id": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "loanPublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "nonRefundableAdvanceInterest": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "outstandingFees": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "outstandingPenalties": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "outstandingPrincipal": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "previewHash": {
+                "pattern": "^v1:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "publicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "reason": {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              "settlementTotal": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "status": {
+                "const": "executed",
+                "type": "string"
+              },
+              "transaction": {
+                "additionalProperties": false,
+                "properties": {
+                  "amount": {
+                    "maxLength": 32,
+                    "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "entryType": {
+                    "const": "repayment",
+                    "type": "string"
+                  },
+                  "feeComponent": {
+                    "maxLength": 32,
+                    "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "id": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  },
+                  "interestComponent": {
+                    "maxLength": 32,
+                    "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "penaltyComponent": {
+                    "maxLength": 32,
+                    "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "postedAt": {
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                    "type": "string"
+                  },
+                  "principalComponent": {
+                    "maxLength": 32,
+                    "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "publicId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  },
+                  "transactionDate": {
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "close_account",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "publicId",
+                  "amount",
+                  "principalComponent",
+                  "interestComponent",
+                  "feeComponent",
+                  "penaltyComponent",
+                  "type",
+                  "entryType",
+                  "transactionDate",
+                  "postedAt"
+                ],
+                "type": "object"
+              },
+              "updatedAt": {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "publicId",
+              "loanPublicId",
+              "status",
+              "asOfDate",
+              "outstandingPrincipal",
+              "dueInterest",
+              "accruedNotDueInterest",
+              "outstandingFees",
+              "outstandingPenalties",
+              "nonRefundableAdvanceInterest",
+              "settlementTotal",
+              "balanceVersion",
+              "previewHash",
+              "hashVersion",
+              "expiresAt",
+              "executedAt",
+              "createdAt",
+              "updatedAt",
+              "transaction",
+              "reason",
+              "auditPublicId",
+              "correlationId"
+            ],
+            "type": "object"
+          },
+          "schemaVersion": {
+            "const": "1.0",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "data",
+          "correlationId",
+          "auditPublicIds"
+        ],
+        "type": "object"
+      },
+      "title": "Loan Settlement Execute"
     },
     {
       "annotations": {

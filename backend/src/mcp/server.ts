@@ -26,6 +26,8 @@ export const MCP_TOOL_NAMES = [
     "loan.interest-rate.list",
     "loan.interest-rate.preview",
     "loan.interest-rate.execute",
+    "loan.settlement.preview",
+    "loan.settlement.execute",
     "loan.disbursement.list",
     "loan.disbursement.draft",
     "loan.disbursement.update",
@@ -90,6 +92,16 @@ const borrowerFields = {
     googleMapsUrl: z.url().nullable().optional(),
 };
 
+const floatingInterestRate = z.string().regex(/^\d+(?:\.\d{1,4})?$/).max(32);
+const floatingInterestPolicy = z.object({
+    periodUnit: z.enum(["day", "week"]),
+    periodLength: z.literal(1),
+    rateMode: z.enum(["percent", "per_thousand"]),
+    rate: floatingInterestRate,
+    advanceInterestPeriods: z.union([z.literal(0), z.literal(1)]),
+    advanceInterestRefundPolicy: z.literal("non_refundable"),
+}).strict();
+
 const loanTerms = {
     principal: money,
     interestRate: money,
@@ -98,10 +110,7 @@ const loanTerms = {
     startDate: date,
     totalInstallments: z.number().int().positive().max(100_000).optional(),
     installmentAmount: money.optional(),
-    floatingDailyInterest: z.object({
-        mode: z.enum(["per_thousand", "percent"]), rate: z.string().regex(/^\d+(?:\.\d{1,4})?$/),
-        firstDayTreatment: z.enum(["deduct", "start_next_day"]),
-    }).optional(),
+    floatingInterestPolicy: floatingInterestPolicy.optional(),
     dailyEntry: z.object({
         durationUnit: z.enum(["days", "months"]),
         durationValue: z.number().int().positive().max(100_000),
@@ -199,6 +208,7 @@ const loanOutput = z.object({
     principal: money,
     principalAmount: money,
     interestRate: money,
+    floatingInterestPolicy: floatingInterestPolicy.nullable().optional(),
     floatingDailyInterest: z.object({ mode: z.enum(["per_thousand", "percent"]), rate: z.string(), firstDayTreatment: z.enum(["deduct", "start_next_day"]) }).nullable().optional(),
     dailyEntry: z.object({
         durationUnit: z.enum(["days", "months"]), durationValue: z.number().int().positive(), entryMode: z.enum(["daily_payment", "daily_interest"]),
@@ -327,7 +337,7 @@ const fundingProfileOutput = z.object({
     reinvestProfitMode: z.string(),
     drawdowns: z.array(fundingDrawdownOutput),
 }).strict();
-const interestRateValue = z.string().regex(/^\d+(?:\.\d{1,4})?$/).max(32);
+const interestRateValue = floatingInterestRate;
 const interestRatePeriodOutput = z.object({
     publicId: uuid,
     effectiveDate: date,
@@ -344,6 +354,40 @@ const interestRateTimelineOutput = z.object({
     earliestEditableDate: date,
     timeline: z.array(interestRatePeriodOutput),
     timelineVersion: z.string().regex(/^[0-9a-f]{64}$/i),
+}).strict();
+const settlementPreviewOutput = z.object({
+    id: uuid,
+    publicId: uuid,
+    loanPublicId: uuid,
+    status: z.enum(["ready", "expired", "executed"]),
+    asOfDate: date,
+    outstandingPrincipal: money,
+    dueInterest: money,
+    accruedNotDueInterest: money,
+    outstandingFees: money,
+    outstandingPenalties: money,
+    nonRefundableAdvanceInterest: money,
+    settlementTotal: money,
+    balanceVersion: z.string().regex(/^v1:[0-9a-f]{64}$/i),
+    previewHash: z.string().regex(/^v1:[0-9a-f]{64}$/i),
+    hashVersion: z.literal("v1"),
+    expiresAt: isoDateTime,
+    executedAt: nullableIsoDateTime,
+    createdAt: isoDateTime,
+    updatedAt: isoDateTime,
+}).strict();
+const settlementTransactionOutput = z.object({
+    id: uuid,
+    publicId: uuid,
+    amount: money,
+    principalComponent: money,
+    interestComponent: money,
+    feeComponent: money,
+    penaltyComponent: money,
+    type: z.literal("close_account"),
+    entryType: z.literal("repayment"),
+    transactionDate: isoDateTime,
+    postedAt: isoDateTime,
 }).strict();
 
 const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
@@ -401,15 +445,13 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
         z.object({
             terms: z.object({ ...loanTerms }).strict(),
             schedule: z.array(scheduleOutput),
-            floatingDailyInterest: z.object({
-                mode: z.enum(["per_thousand", "percent"]),
-                rate: z.string().regex(/^\d+(?:\.\d{1,4})?$/),
-                firstDayTreatment: z.enum(["deduct", "start_next_day"]),
-            }).strict(),
-            firstDayInterest: money,
-            dailyInterestAtCurrentPrincipal: money,
-            netDisbursement: money,
-            nextInterestDate: date,
+            floatingInterestPolicy,
+            fullPeriodInterest: money,
+            advanceInterest: money,
+            netBorrowerPayout: money,
+            firstPeriodStartDate: date,
+            firstPeriodDueDate: date,
+            periodDays: z.union([z.literal(1), z.literal(7)]),
         }).strict(),
     ]),
     "loan.draft": loanOutput,
@@ -434,6 +476,14 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
         expiresAt: isoDateTime,
     }).strict(),
     "loan.interest-rate.execute": interestRateTimelineOutput.extend({
+        auditPublicId: uuid,
+        correlationId: uuid,
+    }).strict(),
+    "loan.settlement.preview": settlementPreviewOutput,
+    "loan.settlement.execute": settlementPreviewOutput.extend({
+        status: z.literal("executed"),
+        transaction: settlementTransactionOutput,
+        reason: shortText,
         auditPublicId: uuid,
         correlationId: uuid,
     }).strict(),
@@ -528,7 +578,10 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
         bankProfilePublicId: uuid.nullable().optional(),
         ...loanTerms,
     }).strict(),
-    "loan.activate": z.object({ loanPublicId: uuid }).strict(),
+    "loan.activate": z.object({
+        loanPublicId: uuid,
+        idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict(),
     "loan.interest-rate.list": z.object({ loanPublicId: uuid }).strict(),
     "loan.interest-rate.preview": z.object({
         loanPublicId: uuid,
@@ -540,6 +593,17 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
     "loan.interest-rate.execute": z.object({
         loanPublicId: uuid,
         previewPublicId: uuid,
+        previewHash: z.string().regex(/^v1:[0-9a-f]{64}$/i),
+        confirmed: z.literal(true),
+        reason: shortText,
+        idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict(),
+    "loan.settlement.preview": z.object({
+        loanPublicId: uuid,
+        asOfDate: date,
+    }).strict(),
+    "loan.settlement.execute": z.object({
+        settlementPublicId: uuid,
         previewHash: z.string().regex(/^v1:[0-9a-f]{64}$/i),
         confirmed: z.literal(true),
         reason: shortText,
@@ -666,6 +730,7 @@ const destructiveTools = new Set<McpToolName>([
     "payment.reverse",
     "loan.activate",
     "loan.interest-rate.execute",
+    "loan.settlement.execute",
     "loan.disbursement.update",
     "loan.disbursement.post",
     "loan.disbursement.reverse",
@@ -679,6 +744,7 @@ const financialTools = new Set<McpToolName>([
     "payment.reverse",
     "loan.activate",
     "loan.interest-rate.execute",
+    "loan.settlement.execute",
     "loan.disbursement.post",
     "loan.disbursement.reverse",
     "intermediary.remittance.post",
@@ -692,6 +758,7 @@ const idempotentTools = new Set<McpToolName>([
     "payment.reverse",
     "loan.activate",
     "loan.interest-rate.execute",
+    "loan.settlement.execute",
     "loan.disbursement.post",
     "loan.disbursement.reverse",
     "intermediary.collection.create",
@@ -721,6 +788,8 @@ const toolDescriptions: Record<McpToolName, string> = {
     "loan.interest-rate.list": "List the effective-dated floating-interest timeline and current exact daily interest.",
     "loan.interest-rate.preview": "Preview an effective-dated floating-interest change and automatic timeline split.",
     "loan.interest-rate.execute": "Execute an explicitly confirmed floating-interest preview idempotently.",
+    "loan.settlement.preview": "Preview and persist an exact floating-loan close-out composition.",
+    "loan.settlement.execute": "Execute an explicitly confirmed floating-loan close-out idempotently.",
     "loan.disbursement.list": "List actual loan disbursement events and variance read-only.",
     "loan.disbursement.draft": "Create an editable actual loan disbursement draft.",
     "loan.disbursement.update": "Update supplied fields on an editable actual loan disbursement draft.",

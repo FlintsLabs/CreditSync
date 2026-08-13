@@ -33,6 +33,45 @@ describe("CreditSync executable orchestration evals", () => {
         expect(unconfirmed.calls.some((call) => call.name === "loan.interest-rate.execute")).toBe(false);
     });
 
+    test("floating settlement executes only the exact confirmed composition", async () => {
+        const result = await runEvalScenario("floating-settlement-execute");
+        expect(result).toMatchObject({ outcome: "completed" });
+        expect(result.calls.map((call) => call.name)).toEqual([
+            "borrower.portfolio",
+            "loan.settlement.preview",
+            "loan.settlement.execute",
+        ]);
+        expect(result.calls.at(-1)?.arguments).toEqual({
+            settlementPublicId: "0198c481-3e2b-7000-8000-000000000071",
+            previewHash: `v1:${"d".repeat(64)}`,
+            confirmed: true,
+            reason: "Borrower confirmed the exact displayed close-out",
+            idempotencyKey: "floating-settlement-20260815-1",
+        });
+    });
+
+    test("floating settlement stops for missing confirmation, stale state, and refund requests", async () => {
+        const unconfirmed = await runEvalScenario("floating-settlement-missing-confirmation");
+        expect(unconfirmed).toMatchObject({ outcome: "stopped", stopReason: "settlement-confirmation-required" });
+        expect(unconfirmed.calls.some((call) => call.name === "loan.settlement.execute")).toBe(false);
+
+        const stale = await runEvalScenario("floating-settlement-stale-preview");
+        expect(stale).toMatchObject({ outcome: "stopped", stopReason: "fresh-settlement-confirmation-required" });
+        expect(stale.calls.map((call) => call.name)).toEqual([
+            "borrower.portfolio",
+            "loan.settlement.preview",
+            "loan.settlement.execute",
+            "borrower.portfolio",
+            "loan.settlement.preview",
+        ]);
+        expect(stale.calls.filter((call) => call.name === "loan.settlement.execute")).toHaveLength(1);
+
+        const refund = await runEvalScenario("floating-settlement-non-refundable-refund");
+        expect(refund).toMatchObject({ outcome: "stopped", stopReason: "advance-interest-non-refundable" });
+        expect(refund.calls.map((call) => call.name)).toEqual(["borrower.portfolio", "loan.settlement.preview"]);
+        expect(refund.calls.some((call) => call.name === "loan.settlement.execute")).toBe(false);
+    });
+
     test("every catalog case executes with exact ordered/repeated MCP calls", async () => {
         const { catalog } = await fixtures();
         expect(new Set(EVAL_SCENARIO_IDS)).toEqual(new Set(catalog.cases.map((entry) => entry.id)));

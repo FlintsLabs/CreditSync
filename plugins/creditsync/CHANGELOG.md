@@ -1,5 +1,15 @@
 # CreditSync Plugin Changelog
 
+## 2.5.0 - 2026-08-13
+
+### Added
+
+- Added closed-schema `loan.settlement.preview` and explicitly confirmed, idempotent `loan.settlement.execute` tools plus the `settle-floating-loans` skill and positive/stopped-flow evals.
+
+### Changed
+
+- Generalized floating origination to preserve day-or-week policy data, required a stable activation idempotency key, and synchronized the manifest, local validation command, references, and frozen 43-tool contract.
+
 ## 2.4.0 - 2026-08-13
 
 ### Added

@@ -17,8 +17,10 @@ const DISBURSEMENT_EVIDENCE = "0198c481-3e2b-7000-8000-000000000052";
 const RENEWAL = "0198c481-3e2b-7000-8000-000000000041";
 const PREVIEW_HASH = `v1:${"a".repeat(64)}`;
 const RATE_PREVIEW = "0198c481-3e2b-7000-8000-000000000061";
+const SETTLEMENT = "0198c481-3e2b-7000-8000-000000000071";
 const FILE_HASH = "b".repeat(64);
 const DISBURSEMENT_FILE_HASH = "c".repeat(64);
+const SETTLEMENT_PREVIEW_HASH = `v1:${"d".repeat(64)}`;
 
 export type ToolCall = { name: McpToolName; arguments: Record<string, unknown> };
 type ScriptedError = { code: string; message: string; details?: Record<string, unknown> };
@@ -213,8 +215,46 @@ async function loanActivation(mcp: ScriptedMcp) {
     await mcp.call("borrower.portfolio", { borrowerPublicId });
     await mcp.call("loan.preview", loanTerms);
     const draft = await mcp.call("loan.draft", { borrowerPublicId, ...loanTerms });
-    await mcp.call("loan.activate", { loanPublicId: draft.publicId });
+    await mcp.call("loan.activate", {
+        loanPublicId: draft.publicId,
+        idempotencyKey: "loan-activation-20260811-1",
+    });
     return { outcome: "completed" } as const;
+}
+
+async function floatingSettlement(
+    mcp: ScriptedMcp,
+    options: { confirmed?: boolean; refundRequested?: boolean } = {},
+) {
+    await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A });
+    const preview = await mcp.call("loan.settlement.preview", {
+        loanPublicId: LOAN_A,
+        asOfDate: "2026-08-15",
+    });
+    if (options.refundRequested && preview.nonRefundableAdvanceInterest !== "0.00") {
+        return { outcome: "stopped", stopReason: "advance-interest-non-refundable" } as const;
+    }
+    if (options.confirmed === false) {
+        return { outcome: "stopped", stopReason: "settlement-confirmation-required" } as const;
+    }
+    try {
+        await mcp.call("loan.settlement.execute", {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "Borrower confirmed the exact displayed close-out",
+            idempotencyKey: "floating-settlement-20260815-1",
+        });
+        return { outcome: "completed" } as const;
+    } catch (error) {
+        if (!(error instanceof ScriptedMcpError) || error.code !== "STALE_SETTLEMENT_PREVIEW") throw error;
+        await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A });
+        await mcp.call("loan.settlement.preview", {
+            loanPublicId: LOAN_A,
+            asOfDate: "2026-08-15",
+        });
+        return { outcome: "stopped", stopReason: "fresh-settlement-confirmation-required" } as const;
+    }
 }
 
 const disbursementDraftArgs = {
@@ -457,7 +497,7 @@ const SCENARIOS: Record<string, Scenario> = {
             { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
             { name: "loan.preview", arguments: loanTerms },
             { name: "loan.draft", arguments: { borrowerPublicId: BORROWER_A, ...loanTerms }, result: { publicId: DRAFT } },
-            { name: "loan.activate", arguments: { loanPublicId: DRAFT } },
+            { name: "loan.activate", arguments: { loanPublicId: DRAFT, idempotencyKey: "loan-activation-20260811-1" } },
         ],
         run: loanActivation,
     },
@@ -484,6 +524,38 @@ const SCENARIOS: Record<string, Scenario> = {
             await mcp.call("loan.interest-rate.preview", { loanPublicId: LOAN_A, effectiveDate: "2026-09-01", expiryDate: null, rateType: "percent", rate: "1" });
             return { outcome: "stopped", stopReason: "rate-change-confirmation-required" } as const;
         },
+    },
+    "floating-settlement-execute": {
+        script: [
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active" }] } },
+            { name: "loan.settlement.preview", arguments: { loanPublicId: LOAN_A, asOfDate: "2026-08-15" }, result: { publicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, status: "ready", outstandingPrincipal: "5000.00", dueInterest: "0.00", accruedNotDueInterest: "0.00", outstandingFees: "0.00", outstandingPenalties: "0.00", nonRefundableAdvanceInterest: "600.00", settlementTotal: "5000.00" } },
+            { name: "loan.settlement.execute", arguments: { settlementPublicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, confirmed: true, reason: "Borrower confirmed the exact displayed close-out", idempotencyKey: "floating-settlement-20260815-1" }, result: { publicId: SETTLEMENT, status: "executed", settlementTotal: "5000.00" } },
+        ],
+        run: (mcp) => floatingSettlement(mcp),
+    },
+    "floating-settlement-missing-confirmation": {
+        script: [
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active" }] } },
+            { name: "loan.settlement.preview", arguments: { loanPublicId: LOAN_A, asOfDate: "2026-08-15" }, result: { publicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, status: "ready", nonRefundableAdvanceInterest: "600.00", settlementTotal: "5000.00" } },
+        ],
+        run: (mcp) => floatingSettlement(mcp, { confirmed: false }),
+    },
+    "floating-settlement-stale-preview": {
+        script: [
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active" }] } },
+            { name: "loan.settlement.preview", arguments: { loanPublicId: LOAN_A, asOfDate: "2026-08-15" }, result: { publicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, status: "ready", nonRefundableAdvanceInterest: "600.00", settlementTotal: "5000.00" } },
+            { name: "loan.settlement.execute", arguments: { settlementPublicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, confirmed: true, reason: "Borrower confirmed the exact displayed close-out", idempotencyKey: "floating-settlement-20260815-1" }, error: { code: "STALE_SETTLEMENT_PREVIEW", message: "Loan settlement preview is stale" } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active" }] } },
+            { name: "loan.settlement.preview", arguments: { loanPublicId: LOAN_A, asOfDate: "2026-08-15" }, result: { publicId: "0198c481-3e2b-7000-8000-000000000072", previewHash: `v1:${"e".repeat(64)}`, status: "ready", nonRefundableAdvanceInterest: "600.00", settlementTotal: "4900.00" } },
+        ],
+        run: (mcp) => floatingSettlement(mcp),
+    },
+    "floating-settlement-non-refundable-refund": {
+        script: [
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active" }] } },
+            { name: "loan.settlement.preview", arguments: { loanPublicId: LOAN_A, asOfDate: "2026-08-15" }, result: { publicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, status: "ready", nonRefundableAdvanceInterest: "600.00", settlementTotal: "5000.00" } },
+        ],
+        run: (mcp) => floatingSettlement(mcp, { refundRequested: true }),
     },
     "disbursement-full-lifecycle": {
         script: [

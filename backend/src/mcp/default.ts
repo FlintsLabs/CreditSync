@@ -31,6 +31,10 @@ import {
     previewLoanInterestRateChange,
 } from "../services/loan-interest-rate-service";
 import {
+    executeLoanSettlement,
+    previewLoanSettlement,
+} from "../services/loan-settlement-service";
+import {
     createPaymentIntake,
     finalizePaymentEvidence,
     getPaymentIntake,
@@ -165,6 +169,17 @@ export function createDefaultMcpToolHandlers(
         previewHash: asString(input, "previewHash"),
         reason: asString(input, "reason"),
     }),
+    "loan.settlement.preview": (ctx, input) => previewLoanSettlement(
+        ctx,
+        asString(input, "loanPublicId"),
+        asString(input, "asOfDate"),
+    ),
+    "loan.settlement.execute": (ctx, input) => executeLoanSettlement(ctx, {
+        settlementPublicId: asString(input, "settlementPublicId"),
+        previewHash: asString(input, "previewHash"),
+        confirmed: input.confirmed as boolean,
+        reason: asString(input, "reason"),
+    }),
     "loan.disbursement.list": (ctx, input) => listLoanDisbursements(ctx, asString(input, "loanPublicId")),
     "loan.disbursement.draft": (ctx, input) => {
         const { loanPublicId, ...draft } = input;
@@ -218,6 +233,7 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "payment.reverse": { entityType: "payment_intake", action: "reversed" },
     "loan.activate": { entityType: "loan", action: "activated" },
     "loan.interest-rate.execute": { entityType: "loan_interest_rate_timeline", action: "interest_rate_timeline_changed" },
+    "loan.settlement.execute": { entityType: "loan_settlement", action: "executed" },
     "loan.disbursement.post": { entityType: "loan_disbursement", action: "posted" },
     "loan.disbursement.reverse": { entityType: "loan_disbursement", action: "reversed" },
     "intermediary.remittance.post": { entityType: "intermediary_remittance", action: "posted" },

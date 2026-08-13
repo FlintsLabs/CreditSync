@@ -96,6 +96,99 @@ function resultData(result: Awaited<ReturnType<Client["callTool"]>>) {
 }
 
 describe("default MCP adapter integration", () => {
+    // Break caught: the default adapter cannot originate a generalized weekly policy or close it through the settlement service.
+    integrationTest("previews and executes an exact non-refundable weekly floating settlement idempotently", async () => {
+        const actor = await db.insert(users).values({
+            tenantId: TENANT_ID,
+            email: ACTOR_EMAIL,
+            role: "owner",
+        }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({
+            tenantId: TENANT_ID,
+            ownerUserId: actor.id,
+            name: "MCP weekly settlement borrower",
+        }).returning().then((rows) => rows[0]!);
+        const { client } = await startDefaultServer();
+        const terms = {
+            principal: "5000.00",
+            interestRate: "0.00",
+            termMonths: 1,
+            repaymentType: "floating",
+            startDate: "2026-08-13",
+            floatingInterestPolicy: {
+                periodUnit: "week",
+                periodLength: 1,
+                rateMode: "percent",
+                rate: "12",
+                advanceInterestPeriods: 1,
+                advanceInterestRefundPolicy: "non_refundable",
+            },
+        };
+
+        const previewedLoan = resultData(await client.callTool({ name: "loan.preview", arguments: terms }));
+        expect(previewedLoan.data).toMatchObject({
+            floatingInterestPolicy: { periodUnit: "week", rate: "12.0000", advanceInterestPeriods: 1 },
+            fullPeriodInterest: "600.00",
+            advanceInterest: "600.00",
+            netBorrowerPayout: "4400.00",
+            periodDays: 7,
+        });
+        const draft = resultData(await client.callTool({
+            name: "loan.draft",
+            arguments: { borrowerPublicId: borrower.publicId, ...terms },
+        })).data;
+        expect(draft.publicId).toMatch(UUID_PATTERN);
+        expect(draft).toMatchObject({
+            status: "draft",
+            floatingInterestPolicy: { periodUnit: "week", rate: "12.0000", advanceInterestRefundPolicy: "non_refundable" },
+        });
+        const loanPublicId = String(draft.publicId);
+        const activationArgs = { loanPublicId, idempotencyKey: "mcp-weekly-activation-1" };
+        const activated = resultData(await client.callTool({ name: "loan.activate", arguments: activationArgs }));
+        const activationRetry = resultData(await client.callTool({ name: "loan.activate", arguments: activationArgs }));
+        expect(activationRetry.data).toEqual(activated.data);
+
+        const settlement = resultData(await client.callTool({
+            name: "loan.settlement.preview",
+            arguments: { loanPublicId, asOfDate: "2026-08-15" },
+        })).data;
+        expect(settlement).toMatchObject({
+            status: "ready",
+            asOfDate: "2026-08-15",
+            outstandingPrincipal: "5000.00",
+            dueInterest: "0.00",
+            accruedNotDueInterest: "0.00",
+            nonRefundableAdvanceInterest: "600.00",
+            settlementTotal: "5000.00",
+        });
+        const executeArgs = {
+            settlementPublicId: settlement.publicId,
+            previewHash: settlement.previewHash,
+            confirmed: true,
+            reason: "Borrower confirmed exact weekly close-out",
+            idempotencyKey: "mcp-weekly-settlement-1",
+        };
+        const executed = resultData(await client.callTool({ name: "loan.settlement.execute", arguments: executeArgs }));
+        const executeRetry = resultData(await client.callTool({ name: "loan.settlement.execute", arguments: executeArgs }));
+        expect(executeRetry.data).toEqual(executed.data);
+        expect(executed).toMatchObject({
+            data: {
+                status: "executed",
+                settlementTotal: "5000.00",
+                nonRefundableAdvanceInterest: "600.00",
+                transaction: { amount: "5000.00", principalComponent: "5000.00", interestComponent: "0.00" },
+            },
+            auditPublicIds: [expect.stringMatching(UUID_PATTERN)],
+            correlationId: expect.stringMatching(UUID_PATTERN),
+        });
+        expect(await db.query.loans.findFirst({ where: eq(loans.publicId, loanPublicId) })).toMatchObject({
+            status: "paid",
+            outstandingPrincipal: "0.00",
+        });
+        expect((await db.select().from(transactions)).filter((row) => row.type === "close_account")).toHaveLength(1);
+        await client.close();
+    });
+
     integrationTest("lists, previews, and executes a confirmed floating interest-rate change", async () => {
         const actor = await db.insert(users).values({ tenantId: TENANT_ID, email: ACTOR_EMAIL, role: "owner" }).returning().then((rows) => rows[0]!);
         const borrower = await db.insert(borrowers).values({ tenantId: TENANT_ID, ownerUserId: actor.id, name: "MCP rate borrower" }).returning().then((rows) => rows[0]!);
@@ -201,7 +294,7 @@ describe("default MCP adapter integration", () => {
 
         const result = await client.callTool({
             name: "loan.activate",
-            arguments: { loanPublicId: draft!.publicId },
+            arguments: { loanPublicId: draft!.publicId, idempotencyKey: "mcp-overallocated-activation" },
         });
 
         expect(result.isError).toBe(true);
@@ -407,7 +500,10 @@ describe("default MCP adapter integration", () => {
         const floatingLoan = await db.insert(loans).values({
             tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower!.id,
             principalAmount: "1000.00", outstandingPrincipal: "1000.00", interestRate: "0.00",
-            repaymentType: "floating", firstDayTreatment: "start_next_day", interestStartDate: "2026-08-01", status: "active",
+            repaymentType: "floating", firstDayTreatment: "start_next_day", interestStartDate: "2026-08-01",
+            interestPeriodUnit: "day", interestPeriodLength: 1, advanceInterestPeriods: 0,
+            advanceInterestRefundPolicy: "non_refundable", interestPeriodAnchorDate: "2026-08-01",
+            dailyInterestMode: "per_thousand", dailyInterestRate: "15.0000", status: "active",
         }).returning().then((rows) => rows[0]!);
         await db.insert(loanInterestRatePeriods).values({
             tenantId: TENANT_ID, loanId: floatingLoan.id, effectiveDate: "2026-08-01", expiryDate: null,
@@ -422,6 +518,17 @@ describe("default MCP adapter integration", () => {
             loanPublicId: floatingLoan.publicId, previewPublicId: ratePreview.publicId,
             previewHash: ratePreview.previewHash, confirmed: true, reason: "MCP all-tools rate change",
             idempotencyKey: "mcp-all-tools-rate-execute",
+        });
+        const settlementPreview = (await call("loan.settlement.preview", {
+            loanPublicId: floatingLoan.publicId,
+            asOfDate: "2026-08-10",
+        })).data;
+        await call("loan.settlement.execute", {
+            settlementPublicId: settlementPreview.publicId,
+            previewHash: settlementPreview.previewHash,
+            confirmed: true,
+            reason: "MCP all-tools floating settlement",
+            idempotencyKey: "mcp-all-tools-settlement-execute",
         });
 
         const loanTerms = {
@@ -440,7 +547,7 @@ describe("default MCP adapter integration", () => {
             ...loanTerms,
         })).data;
         const loanPublicId = String(drafted.publicId);
-        await call("loan.activate", { loanPublicId });
+        await call("loan.activate", { loanPublicId, idempotencyKey: "mcp-all-tools-loan-activate" });
         const disbursement = (await call("loan.disbursement.draft", {
             loanPublicId,
             grossAmount: "100.00",

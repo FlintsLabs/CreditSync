@@ -14,6 +14,10 @@ const BORROWER_ID = "0198c481-3e2b-7000-8000-000000000001";
 const INTAKE_ID = "0198c481-3e2b-7000-8000-000000000002";
 const AUDIT_ID = "0198c481-3e2b-7000-8000-000000000003";
 const DISBURSEMENT_ID = "0198c481-3e2b-7000-8000-000000000004";
+const SETTLEMENT_ID = "0198c481-3e2b-7000-8000-000000000005";
+const TRANSACTION_ID = "0198c481-3e2b-7000-8000-000000000006";
+const PREVIEW_HASH = `v1:${"a".repeat(64)}`;
+const BALANCE_VERSION = `v1:${"b".repeat(64)}`;
 
 const runningApps: Array<{ stop(): Promise<unknown> | unknown }> = [];
 
@@ -85,8 +89,8 @@ function clientFor(baseUrl: string, token = TOKEN) {
 }
 
 describe("CreditSync stateless MCP contract", () => {
-    // Break caught: floating previews return policy and net-disbursement fields that the strict MCP output contract rejects.
-    test("returns a floating-loan preview through the public MCP contract", async () => {
+    // Break caught: generalized weekly-policy input or output is rejected by the stale daily-only MCP contract.
+    test("returns a generalized weekly floating-loan preview through the public MCP contract", async () => {
         const baseUrl = await startServer({
             toolHandlers: {
                 "loan.preview": async (_ctx, input) => previewLoan(input as unknown as Parameters<typeof previewLoan>[0]),
@@ -102,11 +106,14 @@ describe("CreditSync stateless MCP contract", () => {
                 interestRate: "0.00",
                 termMonths: 1,
                 repaymentType: "floating",
-                startDate: "2026-08-06",
-                floatingDailyInterest: {
-                    mode: "per_thousand",
-                    rate: "15.00",
-                    firstDayTreatment: "deduct",
+                startDate: "2026-08-13",
+                floatingInterestPolicy: {
+                    periodUnit: "week",
+                    periodLength: 1,
+                    rateMode: "percent",
+                    rate: "12",
+                    advanceInterestPeriods: 1,
+                    advanceInterestRefundPolicy: "non_refundable",
                 },
             },
         });
@@ -115,14 +122,175 @@ describe("CreditSync stateless MCP contract", () => {
         expect(result.structuredContent).toMatchObject({
             schemaVersion: "1.0",
             data: {
-                floatingDailyInterest: { mode: "per_thousand", rate: "15.0000", firstDayTreatment: "deduct" },
-                firstDayInterest: "60.00",
-                dailyInterestAtCurrentPrincipal: "60.00",
-                netDisbursement: "3940.00",
-                nextInterestDate: "2026-08-06",
+                floatingInterestPolicy: {
+                    periodUnit: "week",
+                    periodLength: 1,
+                    rateMode: "percent",
+                    rate: "12.0000",
+                    advanceInterestPeriods: 1,
+                    advanceInterestRefundPolicy: "non_refundable",
+                },
+                fullPeriodInterest: "480.00",
+                advanceInterest: "480.00",
+                netBorrowerPayout: "3520.00",
+                firstPeriodStartDate: "2026-08-13",
+                firstPeriodDueDate: "2026-08-20",
+                periodDays: 7,
                 schedule: [],
             },
         });
+        const legacy = await client.callTool({
+            name: "loan.preview",
+            arguments: {
+                principal: "4000.00",
+                interestRate: "0.00",
+                termMonths: 1,
+                repaymentType: "floating",
+                startDate: "2026-08-13",
+                floatingDailyInterest: { mode: "percent", rate: "12", firstDayTreatment: "deduct" },
+            },
+        });
+        expect(legacy.isError).toBe(true);
+        await client.close();
+    });
+
+    // Break caught: settlement tools are absent, accept refund overrides, or advertise execute as non-destructive/non-idempotent.
+    test("advertises closed settlement preview and explicitly confirmed idempotent execute contracts", async () => {
+        let observedContext: CommandContext | undefined;
+        let observedInput: Record<string, unknown> | undefined;
+        const preview = {
+            id: SETTLEMENT_ID,
+            publicId: SETTLEMENT_ID,
+            loanPublicId: BORROWER_ID,
+            status: "ready",
+            asOfDate: "2026-08-15",
+            outstandingPrincipal: "5000.00",
+            dueInterest: "0.00",
+            accruedNotDueInterest: "0.00",
+            outstandingFees: "0.00",
+            outstandingPenalties: "0.00",
+            nonRefundableAdvanceInterest: "600.00",
+            settlementTotal: "5000.00",
+            balanceVersion: BALANCE_VERSION,
+            previewHash: PREVIEW_HASH,
+            hashVersion: "v1",
+            expiresAt: "2026-08-15T06:15:00.000Z",
+            executedAt: null,
+            createdAt: "2026-08-15T06:00:00.000Z",
+            updatedAt: "2026-08-15T06:00:00.000Z",
+        };
+        const baseUrl = await startServer({
+            toolHandlers: {
+                "loan.settlement.preview": async (_ctx, input) => {
+                    observedInput = input;
+                    return preview;
+                },
+                "loan.settlement.execute": async (ctx, input) => {
+                    observedContext = ctx;
+                    observedInput = input;
+                    return {
+                        ...preview,
+                        status: "executed",
+                        executedAt: "2026-08-15T06:05:00.000Z",
+                        transaction: {
+                            id: TRANSACTION_ID,
+                            publicId: TRANSACTION_ID,
+                            amount: "5000.00",
+                            principalComponent: "5000.00",
+                            interestComponent: "0.00",
+                            feeComponent: "0.00",
+                            penaltyComponent: "0.00",
+                            type: "close_account",
+                            entryType: "repayment",
+                            transactionDate: "2026-08-15T05:00:00.000Z",
+                            postedAt: "2026-08-15T06:05:00.000Z",
+                        },
+                        reason: "Borrower confirmed exact close-out",
+                        auditPublicId: AUDIT_ID,
+                        correlationId: AUDIT_ID,
+                    };
+                },
+            },
+        });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const listed = await client.listTools();
+        expect(listed.tools.find((tool) => tool.name === "loan.settlement.preview")?.annotations).toMatchObject({
+            readOnlyHint: false,
+            destructiveHint: false,
+            idempotentHint: false,
+            openWorldHint: false,
+        });
+        expect(listed.tools.find((tool) => tool.name === "loan.settlement.execute")?.annotations).toMatchObject({
+            readOnlyHint: false,
+            destructiveHint: true,
+            idempotentHint: true,
+            openWorldHint: false,
+        });
+
+        const previewed = await client.callTool({
+            name: "loan.settlement.preview",
+            arguments: { loanPublicId: BORROWER_ID, asOfDate: "2026-08-15" },
+        });
+        expect(previewed.isError).not.toBe(true);
+        expect(previewed.structuredContent).toMatchObject({
+            schemaVersion: "1.0",
+            data: {
+                publicId: SETTLEMENT_ID,
+                outstandingPrincipal: "5000.00",
+                nonRefundableAdvanceInterest: "600.00",
+                settlementTotal: "5000.00",
+            },
+        });
+        expect(observedInput).toEqual({ loanPublicId: BORROWER_ID, asOfDate: "2026-08-15" });
+
+        const unconfirmed = await client.callTool({
+            name: "loan.settlement.execute",
+            arguments: {
+                settlementPublicId: SETTLEMENT_ID,
+                previewHash: PREVIEW_HASH,
+                confirmed: false,
+                reason: "Borrower confirmed exact close-out",
+                idempotencyKey: "settlement-execute-1",
+            },
+        });
+        expect(unconfirmed.isError).toBe(true);
+        const refundOverride = await client.callTool({
+            name: "loan.settlement.execute",
+            arguments: {
+                settlementPublicId: SETTLEMENT_ID,
+                previewHash: PREVIEW_HASH,
+                confirmed: true,
+                reason: "Borrower confirmed exact close-out",
+                idempotencyKey: "settlement-execute-1",
+                refundableAdvanceInterest: "600.00",
+            },
+        });
+        expect(refundOverride.isError).toBe(true);
+
+        const executed = await client.callTool({
+            name: "loan.settlement.execute",
+            arguments: {
+                settlementPublicId: SETTLEMENT_ID,
+                previewHash: PREVIEW_HASH,
+                confirmed: true,
+                reason: "Borrower confirmed exact close-out",
+                idempotencyKey: "settlement-execute-1",
+            },
+        });
+        expect(executed.isError).not.toBe(true);
+        expect(executed.structuredContent).toMatchObject({
+            schemaVersion: "1.0",
+            data: { status: "executed", transaction: { publicId: TRANSACTION_ID, amount: "5000.00" } },
+            auditPublicIds: [AUDIT_ID],
+        });
+        expect(observedInput).toEqual({
+            settlementPublicId: SETTLEMENT_ID,
+            previewHash: PREVIEW_HASH,
+            confirmed: true,
+            reason: "Borrower confirmed exact close-out",
+        });
+        expect(observedContext?.idempotencyKey).toBe("settlement-execute-1");
         await client.close();
     });
 
@@ -256,6 +424,7 @@ describe("CreditSync stateless MCP contract", () => {
             "payment.reverse",
             "loan.activate",
             "loan.interest-rate.execute",
+            "loan.settlement.execute",
             "loan.disbursement.update",
             "loan.disbursement.post",
             "loan.disbursement.reverse",

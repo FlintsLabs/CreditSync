@@ -11,6 +11,15 @@ The CreditSync backend and PostgreSQL ledger are authoritative. Skills orchestra
 - Oldest obligations allocate in the backend's order: penalty, fee, interest, then principal.
 - A payment may be partial or in advance but cannot allocate beyond current outstanding obligations.
 
+## Floating-loan settlement
+
+- Inspect the current borrower portfolio, then call `loan.settlement.preview` for the exact loan and Bangkok `asOfDate`. Never calculate a close-out amount in conversation.
+- Show `outstandingPrincipal`, `dueInterest`, `accruedNotDueInterest`, `outstandingFees`, `outstandingPenalties`, `nonRefundableAdvanceInterest`, and `settlementTotal` exactly as returned before asking for confirmation.
+- `nonRefundableAdvanceInterest` is already-paid history. It is disclosed separately and is not refunded, credited, or added to the new settlement total.
+- Execute only the latest exact `settlementPublicId` and `previewHash`, with explicit human confirmation, a non-blank reason, and a stable idempotency key. Reuse the key only for an identical retry.
+- A stale preview, changed balance, later accrual, non-refundable refund request, or mismatched hash stops execution. Re-inspect, create a new preview, display it, and obtain fresh confirmation.
+- Settlement appends the exact close-out transaction and marks the loan paid. It never edits prior accruals or reverses the original advance-interest payment.
+
 ## Canonical daily-loan example
 
 For principal `2500.00`, installment `190.00`, and 15 daily installments, the backend preview returns principal `166.67` and interest `23.33` for installments 1–14, then principal `166.62` and interest `23.38` in installment 15. After ten fully posted installments the renewal preview returns paid principal `1666.70` and old outstanding principal `833.30`; a replacement principal of `2500.00` with no due charges yields a `1666.70` payout.
