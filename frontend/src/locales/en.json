@@ -1012,12 +1012,15 @@
             "execute": "Execute settlement",
             "executing": "Executing...",
             "executed": "Settlement executed",
+            "refreshingAfterExecution": "Refreshing authoritative loan details...",
+            "latestDetailUnavailable": "Latest loan accounting is hidden until this page is refreshed.",
             "expires": "Preview expires {{value}}",
             "errors": {
                 "preview": "Unable to preview settlement.",
                 "execute": "Unable to execute settlement. No financial record was changed.",
                 "stale": "Balances changed. Review the refreshed settlement preview and confirm it again.",
-                "refresh": "The preview became stale and a fresh settlement preview could not be loaded."
+                "refresh": "The preview became stale and a fresh settlement preview could not be loaded.",
+                "refreshAfterExecution": "Settlement was executed, but the latest loan detail could not be loaded. Refresh this page before relying on displayed balances."
             }
         },
         "loanId": "ID",

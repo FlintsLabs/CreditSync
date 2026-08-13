@@ -102,7 +102,11 @@ describe("weekly floating-loan origination", () => {
         expect(screen.getByRole("radio", { name: "รายสัปดาห์" })).toBeInTheDocument();
         expect(screen.getByRole("radio", { name: "เปอร์เซ็นต์ต่อรอบ" })).toBeInTheDocument();
         expect(screen.getByRole("radio", { name: "หักล่วงหน้าหนึ่งรอบ" })).toBeInTheDocument();
+        expect(screen.queryByText(/ไม่คืนดอกเบี้ยที่หักล่วงหน้า/)).not.toBeInTheDocument();
+        await user.click(screen.getByRole("radio", { name: "หักล่วงหน้าหนึ่งรอบ" }));
         expect(screen.getByText(/ไม่คืนดอกเบี้ยที่หักล่วงหน้า/)).toBeInTheDocument();
+        await user.click(screen.getByRole("radio", { name: "ไม่หักล่วงหน้า" }));
+        expect(screen.queryByText(/ไม่คืนดอกเบี้ยที่หักล่วงหน้า/)).not.toBeInTheDocument();
     });
 });
 

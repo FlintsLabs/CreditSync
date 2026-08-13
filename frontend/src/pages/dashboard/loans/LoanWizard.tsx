@@ -398,7 +398,7 @@ export default function LoanWizard() {
                                         <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={t("loanWizard.floating.advanceInterest")}>
                                             {([0, 1] as const).map((periods) => <button key={periods} type="button" role="radio" aria-checked={formData.advanceInterestPeriods === periods} onClick={() => setFormData({ ...formData, advanceInterestPeriods: periods })} className={`rounded-full border px-3 py-2 text-sm ${formData.advanceInterestPeriods === periods ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}>{t(`loanWizard.floating.advanceOptions.${periods}`)}</button>)}
                                         </div>
-                                        <p className="text-xs text-amber-700 dark:text-amber-300">{t("loanWizard.floating.nonRefundableWarning")}</p>
+                                        {formData.advanceInterestPeriods === 1 && <p className="text-xs text-amber-700 dark:text-amber-300">{t("loanWizard.floating.nonRefundableWarning")}</p>}
                                     </div>
                                 </>
                             )}

@@ -7,6 +7,7 @@
 
 ### Fixed
 - Preserved exact loan-detail and settlement money strings beyond JavaScript's safe-integer range, labeled rate timelines by their locked daily/weekly contract, and attached stable idempotency keys to Web loan activation commands.
+- Refreshed authoritative loan and profitability state after Web settlement, hid stale accounting when that refresh fails, surfaced initial preview errors beside the action, localized loan statuses, scoped non-refundable warnings to advance deductions, and preserved command keys across safe retries while requiring a new key after stale re-preview.
 
 ### Infra
 - Kept the frontend TypeScript 6 build gate operational while the configured `baseUrl` compatibility alias remains in use.

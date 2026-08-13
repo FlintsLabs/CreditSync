@@ -69,19 +69,29 @@ describe("Loan Detail draft activation", () => {
             { headers: { "Idempotency-Key": expect.any(String) } },
         ));
         await waitFor(() => expect(screen.queryByRole("button", { name: "เปิดใช้งานสัญญา" })).not.toBeInTheDocument());
-        expect(screen.getByText(/^active$/i)).toBeInTheDocument();
+        expect(screen.getByText("ใช้งานอยู่")).toBeInTheDocument();
     });
 
     it("does not offer activation for an active loan", async () => {
         renderLoanDetail({ ...draftLoan, status: "active", outstandingPrincipal: "4000.00" });
 
-        expect(await screen.findByText(/^active$/i)).toBeInTheDocument();
+        expect(await screen.findByText("ใช้งานอยู่")).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "เปิดใช้งานสัญญา" })).not.toBeInTheDocument();
+    });
+
+    // Break caught: the Thai detail page leaks the raw English paid lifecycle value.
+    it("localizes a paid loan status in Thai", async () => {
+        renderLoanDetail({ ...draftLoan, status: "paid", outstandingPrincipal: "0.00" });
+
+        expect(await screen.findByText("ชำระครบ")).toBeInTheDocument();
+        expect(screen.queryByText(/^paid$/i)).not.toBeInTheDocument();
     });
 
     it("keeps the draft available when activation fails", async () => {
         const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-        vi.mocked(api.post).mockRejectedValueOnce(new Error("activation failed"));
+        vi.mocked(api.post)
+            .mockRejectedValueOnce(new Error("activation failed"))
+            .mockResolvedValueOnce({ data: { ...draftLoan, status: "active", outstandingPrincipal: "4000.00" } });
         const user = userEvent.setup();
         renderLoanDetail();
 
@@ -89,9 +99,15 @@ describe("Loan Detail draft activation", () => {
         await user.click(screen.getByRole("button", { name: "ยืนยันเปิดใช้งาน" }));
 
         expect(await screen.findByText("เปิดใช้งานสัญญาไม่สำเร็จ ร่างสัญญายังไม่ถูกเปลี่ยนแปลง")).toBeInTheDocument();
-        expect(screen.getByText(/^draft$/i)).toBeInTheDocument();
+        expect(screen.getByText("ร่าง")).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "ยืนยันเปิดใช้งาน" })).toBeEnabled();
         expect(consoleError).toHaveBeenCalledWith("Failed to activate loan draft", expect.any(Error));
+        const firstKey = (vi.mocked(api.post).mock.calls[0]?.[2] as { headers?: { "Idempotency-Key"?: string } })?.headers?.["Idempotency-Key"];
+        await user.click(screen.getByRole("button", { name: "ยืนยันเปิดใช้งาน" }));
+        await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
+        const retryKey = (vi.mocked(api.post).mock.calls[1]?.[2] as { headers?: { "Idempotency-Key"?: string } })?.headers?.["Idempotency-Key"];
+        expect(firstKey).toEqual(expect.any(String));
+        expect(retryKey).toBe(firstKey);
         consoleError.mockRestore();
     });
 });

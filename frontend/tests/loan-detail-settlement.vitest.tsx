@@ -7,7 +7,9 @@ import { api } from "../src/lib/api";
 import appI18n from "../src/lib/i18n";
 
 vi.mock("../src/lib/api", () => ({ api: { get: vi.fn(), post: vi.fn() } }));
-vi.mock("../src/lib/session", () => ({ getStoredUser: () => null, isTenantAdminUser: () => false }));
+const sessionMocks = vi.hoisted(() => ({ isTenantAdminUser: vi.fn(() => false) }));
+
+vi.mock("../src/lib/session", () => ({ getStoredUser: () => null, isTenantAdminUser: sessionMocks.isTenantAdminUser }));
 vi.mock("../src/pages/dashboard/loans/FloatingInterestRateCard", () => ({ FloatingInterestRateCard: () => null }));
 vi.mock("../src/pages/dashboard/loans/LoanRenewalPanel", () => ({ LoanRenewalPanel: () => null }));
 vi.mock("../src/pages/dashboard/loans/LoanDisbursements", () => ({ LoanDisbursements: () => null }));
@@ -46,6 +48,33 @@ const loan = {
     },
 };
 
+const paidLoan = {
+    ...loan,
+    status: "paid",
+    outstandingPrincipal: "0.00",
+    outstandingInterest: "0.00",
+    outstandingFees: "0.00",
+};
+
+const initialProfitability = {
+    borrowerRevenueCollected: "600.00",
+    fundCostPaid: "0.00",
+    realizedSpread: "600.00",
+    unrealizedSpread: "857.14",
+    fundedPrincipal: "0.00",
+    unallocatedPrincipalGap: loan.principalAmount,
+    estimatedOutstandingFundingCost: "0.00",
+    fundingShare: 0,
+    fundingComposition: [],
+};
+
+const paidProfitability = {
+    ...initialProfitability,
+    borrowerRevenueCollected: "857.14",
+    realizedSpread: "857.14",
+    unrealizedSpread: "0.00",
+};
+
 function settlementPreview(publicId: string, previewHash: string, total: string) {
     return {
         id: publicId,
@@ -77,6 +106,7 @@ function renderLoanDetail() {
 describe("floating-loan detail and exact settlement", () => {
     beforeEach(async () => {
         vi.clearAllMocks();
+        sessionMocks.isTenantAdminUser.mockReturnValue(false);
         await appI18n.changeLanguage("en");
         vi.mocked(api.get).mockImplementation(async (url) => {
             if (url === `/loans/${LOAN_ID}`) return { data: loan };
@@ -89,10 +119,27 @@ describe("floating-loan detail and exact settlement", () => {
 
     // Break caught: a stale settlement can execute under an old confirmation, omit a component, or lose cents beyond Number.MAX_SAFE_INTEGER.
     it("shows every exact component and requires reconfirmation after an automatic stale refresh", async () => {
+        sessionMocks.isTenantAdminUser.mockReturnValue(true);
         let previewCount = 0;
         let executeCount = 0;
+        let loanReadCount = 0;
+        let profitabilityReadCount = 0;
         const first = settlementPreview(PREVIEW_1, HASH_1, "9007199254741865.15");
         const refreshed = settlementPreview(PREVIEW_2, HASH_2, "9007199254741870.15");
+        vi.mocked(api.get).mockImplementation(async (url) => {
+            if (url === `/loans/${LOAN_ID}`) {
+                loanReadCount += 1;
+                return { data: loanReadCount === 1 ? loan : paidLoan };
+            }
+            if (url === `/loans/${LOAN_ID}/profitability`) {
+                profitabilityReadCount += 1;
+                return { data: profitabilityReadCount === 1 ? initialProfitability : paidProfitability };
+            }
+            if (url === `/borrowers/${BORROWER_ID}`) return { data: { id: BORROWER_ID, publicId: BORROWER_ID, name: "Exact Borrower" } };
+            if (url.endsWith("/schedule") || url.endsWith("/funding-allocations")) return { data: [] };
+            if (url.endsWith("/allocation-state")) return { data: { principalAmount: loan.principalAmount, netAllocatedPrincipal: "0.00", remainingGap: loan.principalAmount, overfundedAmount: "0.00", state: "unfunded" } };
+            throw new Error(`Unexpected GET ${url}`);
+        });
         vi.mocked(api.post).mockImplementation(async (url, body) => {
             if (url === "/loan-settlements/preview") {
                 previewCount += 1;
@@ -155,9 +202,103 @@ describe("floating-loan detail and exact settlement", () => {
         expect(executeCalls[1]?.[0]).toBe(`/loan-settlements/${PREVIEW_2}/execute`);
         expect(executeCalls[1]?.[1]).toEqual({ previewHash: HASH_2, confirmed: true, reason: "Borrower approved exact close-out" });
         expect(executeCalls[1]?.[2]).toEqual({ headers: { "Idempotency-Key": expect.any(String) } });
-        expect(await screen.findByText("Settlement executed")).toBeInTheDocument();
+        const firstKey = (executeCalls[0]?.[2] as { headers?: { "Idempotency-Key"?: string } })?.headers?.["Idempotency-Key"];
+        const refreshedKey = (executeCalls[1]?.[2] as { headers?: { "Idempotency-Key"?: string } })?.headers?.["Idempotency-Key"];
+        expect(refreshedKey).not.toBe(firstKey);
+        expect(await screen.findByRole("status")).toHaveTextContent("Settlement executed");
         expect(screen.getByText(/^paid$/i)).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: "Preview settlement" })).not.toBeInTheDocument();
+        await waitFor(() => expect(loanReadCount).toBe(2));
+        expect(profitabilityReadCount).toBe(2);
+        expect(screen.getByText("Borrower Revenue Collected").parentElement).toHaveTextContent(/857\.14/);
+        expect(within(summary).queryByText("Due interest")).not.toBeInTheDocument();
+        expect(within(summary).queryByText("Accruing interest")).not.toBeInTheDocument();
+    });
+
+    // Break caught: an initial preview failure is invisible because its message exists only in a dialog that never opened.
+    it("shows a localized preview failure beside the settlement trigger", async () => {
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        vi.mocked(api.post).mockRejectedValueOnce(new Error("preview unavailable"));
+        const user = userEvent.setup();
+        renderLoanDetail();
+
+        const summary = await screen.findByRole("region", { name: "Floating interest summary" });
+        await user.click(within(summary).getByRole("button", { name: "Preview settlement" }));
+
+        expect(await within(summary).findByRole("alert")).toHaveTextContent("Unable to preview settlement.");
+        expect(within(summary).getByRole("button", { name: "Preview settlement" })).toBeEnabled();
+        expect(screen.queryByRole("dialog", { name: "Confirm exact settlement" })).not.toBeInTheDocument();
+        consoleError.mockRestore();
+    });
+
+    // Break caught: a successful write followed by a failed authoritative refresh must not leave pre-settlement accounting visible.
+    it("hides stale loan accounting if the post-settlement refetch fails", async () => {
+        let loanReadCount = 0;
+        vi.mocked(api.get).mockImplementation(async (url) => {
+            if (url === `/loans/${LOAN_ID}`) {
+                loanReadCount += 1;
+                if (loanReadCount === 1) return { data: loan };
+                throw new Error("authoritative refetch unavailable");
+            }
+            if (url === `/borrowers/${BORROWER_ID}`) return { data: { id: BORROWER_ID, publicId: BORROWER_ID, name: "Exact Borrower" } };
+            if (url.endsWith("/schedule") || url.endsWith("/funding-allocations")) return { data: [] };
+            if (url.endsWith("/allocation-state")) return { data: { principalAmount: loan.principalAmount, netAllocatedPrincipal: "0.00", remainingGap: loan.principalAmount, overfundedAmount: "0.00", state: "unfunded" } };
+            throw new Error(`Unexpected GET ${url}`);
+        });
+        vi.mocked(api.post).mockImplementation(async (url) => {
+            if (url === "/loan-settlements/preview") return { data: settlementPreview(PREVIEW_1, HASH_1, "9007199254741865.15") };
+            if (url.endsWith("/execute")) return { data: { ...settlementPreview(PREVIEW_1, HASH_1, "9007199254741865.15"), status: "executed" } };
+            throw new Error(`Unexpected POST ${url}`);
+        });
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const user = userEvent.setup();
+        renderLoanDetail();
+
+        const summary = await screen.findByRole("region", { name: "Floating interest summary" });
+        await user.click(within(summary).getByRole("button", { name: "Preview settlement" }));
+        const dialog = await screen.findByRole("dialog", { name: "Confirm exact settlement" });
+        await user.type(within(dialog).getByLabelText("Settlement reason"), "Close with refresh guard");
+        await user.click(within(dialog).getByRole("checkbox", { name: "I confirm this exact settlement preview" }));
+        await user.click(within(dialog).getByRole("button", { name: "Execute settlement" }));
+
+        expect(await screen.findByText(/settlement was executed, but the latest loan detail could not be loaded/i)).toBeInTheDocument();
+        expect(summary).not.toBeInTheDocument();
+        expect(await screen.findByRole("status")).toHaveTextContent("Settlement executed");
+        consoleError.mockRestore();
+    });
+
+    // Break caught: a transient execute failure must reuse the same command key, while only a stale preview creates a new intent.
+    it("reuses the settlement idempotency key for a generic retry", async () => {
+        let executeCount = 0;
+        vi.mocked(api.post).mockImplementation(async (url) => {
+            if (url === "/loan-settlements/preview") return { data: settlementPreview(PREVIEW_1, HASH_1, "9007199254741865.15") };
+            if (url.endsWith("/execute")) {
+                executeCount += 1;
+                if (executeCount === 1) throw new Error("temporary execute failure");
+                return { data: { ...settlementPreview(PREVIEW_1, HASH_1, "9007199254741865.15"), status: "executed" } };
+            }
+            throw new Error(`Unexpected POST ${url}`);
+        });
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const user = userEvent.setup();
+        renderLoanDetail();
+
+        const summary = await screen.findByRole("region", { name: "Floating interest summary" });
+        await user.click(within(summary).getByRole("button", { name: "Preview settlement" }));
+        const dialog = await screen.findByRole("dialog", { name: "Confirm exact settlement" });
+        await user.type(within(dialog).getByLabelText("Settlement reason"), "Retry exact close-out");
+        await user.click(within(dialog).getByRole("checkbox", { name: "I confirm this exact settlement preview" }));
+        await user.click(within(dialog).getByRole("button", { name: "Execute settlement" }));
+        expect(await within(dialog).findByRole("alert")).toHaveTextContent(/unable to execute settlement/i);
+        await user.click(within(dialog).getByRole("button", { name: "Execute settlement" }));
+        await waitFor(() => expect(executeCount).toBe(2));
+
+        const executeCalls = vi.mocked(api.post).mock.calls.filter(([url]) => String(url).endsWith("/execute"));
+        const firstKey = (executeCalls[0]?.[2] as { headers?: { "Idempotency-Key"?: string } })?.headers?.["Idempotency-Key"];
+        const retryKey = (executeCalls[1]?.[2] as { headers?: { "Idempotency-Key"?: string } })?.headers?.["Idempotency-Key"];
+        expect(firstKey).toEqual(expect.any(String));
+        expect(retryKey).toBe(firstKey);
+        consoleError.mockRestore();
     });
 
     // Break caught: the destructive settlement action or its due/accruing labels fall back to English in the Thai application flow.
@@ -170,6 +311,7 @@ describe("floating-loan detail and exact settlement", () => {
         const summary = await screen.findByRole("region", { name: "สรุปดอกเบี้ยลอยตัว" });
         expect(within(summary).getByText("ดอกเบี้ยถึงกำหนด")).toBeInTheDocument();
         expect(within(summary).getByText("ดอกเบี้ยกำลังสะสม")).toBeInTheDocument();
+        expect(screen.getByText("ใช้งานอยู่")).toBeInTheDocument();
         await user.click(within(summary).getByRole("button", { name: "พรีวิวยอดปิดบัญชี" }));
 
         const dialog = await screen.findByRole("dialog", { name: "ยืนยันยอดปิดบัญชีที่แน่นอน" });

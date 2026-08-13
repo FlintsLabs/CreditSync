@@ -131,6 +131,26 @@ interface LoanSettlementPreview {
     expiresAt: string;
 }
 
+interface LoanSettlementExecution extends LoanSettlementPreview {
+    status: "executed";
+    reason: string;
+    auditPublicId: string;
+    correlationId: string;
+    transaction: {
+        id: string;
+        publicId: string;
+        amount: string;
+        principalComponent: string;
+        interestComponent: string;
+        feeComponent: string;
+        penaltyComponent: string;
+        type: "close_account";
+        entryType: "repayment";
+        transactionDate: string;
+        postedAt: string;
+    };
+}
+
 function bangkokBusinessDate() {
     return new Intl.DateTimeFormat("en-CA", {
         timeZone: "Asia/Bangkok",
@@ -171,6 +191,7 @@ export default function LoanDetail() {
     const [settlementBusy, setSettlementBusy] = useState(false);
     const [settlementError, setSettlementError] = useState("");
     const [settlementExecuted, setSettlementExecuted] = useState(false);
+    const [postSettlementRefreshStatus, setPostSettlementRefreshStatus] = useState<"idle" | "refreshing" | "failed">("idle");
     const money = (value: string | null | undefined) => formatMoneyExact(value ?? "0.00", i18n.language);
     const isPositiveMoney = (value: string | null | undefined) => new Decimal(value ?? "0").isPositive();
     const isNegativeMoney = (value: string | null | undefined) => new Decimal(value ?? "0").isNegative();
@@ -244,19 +265,32 @@ export default function LoanDetail() {
         }
     };
 
+    const refreshSettlementDependents = async () => {
+        if (!loan) throw new Error("Loan is unavailable");
+        const [loanResponse, profitabilityResponse] = await Promise.all([
+            api.get<LoanDetailData>(`/loans/${loan.publicId}`),
+            isTenantAdmin
+                ? api.get<LoanProfitability>(`/loans/${loan.publicId}/profitability`)
+                : Promise.resolve({ data: null }),
+        ]);
+        setLoan(loanResponse.data);
+        setProfitability(profitabilityResponse.data);
+    };
+
     const requestSettlementPreview = async () => {
         if (!loan) throw new Error("Loan is unavailable");
-        const response = await api.post("/loan-settlements/preview", {
+        const response = await api.post<LoanSettlementPreview>("/loan-settlements/preview", {
             loanPublicId: loan.publicId,
             asOfDate: settlementDate,
         });
-        return response.data as LoanSettlementPreview;
+        return response.data;
     };
 
     const previewSettlement = async () => {
         if (!loan || settlementBusy) return;
         try {
             setSettlementBusy(true);
+            setSettlementError("");
             const preview = await requestSettlementPreview();
             setSettlementPreview(preview);
             setSettlementConfirmed(false);
@@ -282,23 +316,25 @@ export default function LoanDetail() {
         }
         try {
             setSettlementBusy(true);
-            const response = await api.post(`/loan-settlements/${settlementPreview.publicId}/execute`, {
+            await api.post<LoanSettlementExecution>(`/loan-settlements/${settlementPreview.publicId}/execute`, {
                 previewHash: settlementPreview.previewHash,
                 confirmed: true,
                 reason,
             }, { headers: { "Idempotency-Key": settlementIntentRef.current.key } });
-            setSettlementPreview(response.data as LoanSettlementPreview);
+            setSettlementPreview(null);
             setSettlementConfirmed(false);
             setSettlementError("");
             setSettlementExecuted(true);
-            setLoan((current) => current ? {
-                ...current,
-                status: "paid",
-                outstandingPrincipal: "0.00",
-                outstandingInterest: "0.00",
-                outstandingFees: "0.00",
-                nextDueDate: null,
-            } : current);
+            setPostSettlementRefreshStatus("refreshing");
+            try {
+                await refreshSettlementDependents();
+                setPostSettlementRefreshStatus("idle");
+                setErrorMessage("");
+            } catch (refreshError) {
+                console.error("Settlement executed but authoritative loan detail could not be refreshed", refreshError);
+                setPostSettlementRefreshStatus("failed");
+                setErrorMessage(t("loanDetail.settlement.errors.refreshAfterExecution"));
+            }
         } catch (error) {
             if (domainErrorCode(error) === "STALE_SETTLEMENT_PREVIEW") {
                 setSettlementConfirmed(false);
@@ -376,7 +412,7 @@ export default function LoanDetail() {
                     </DialogHeader>
                     {settlementError && <div role="alert" className="rounded border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200">{settlementError}</div>}
                     {settlementExecuted ? (
-                        <div className="flex items-center gap-2 rounded border border-emerald-500/30 bg-emerald-500/10 p-4 font-medium text-emerald-700 dark:text-emerald-300">
+                        <div role="status" aria-live="polite" className="flex items-center gap-2 rounded border border-emerald-500/30 bg-emerald-500/10 p-4 font-medium text-emerald-700 dark:text-emerald-300">
                             <CheckCircle className="h-5 w-5" />{t("loanDetail.settlement.executed")}
                         </div>
                     ) : settlementPreview ? (
@@ -426,6 +462,12 @@ export default function LoanDetail() {
 
             {loading ? (
                 <div>{t("common.loading", "Loading...")}</div>
+            ) : postSettlementRefreshStatus !== "idle" ? (
+                <Card>
+                    <CardContent className="py-10 text-center text-muted-foreground">
+                        {t(`loanDetail.settlement.${postSettlementRefreshStatus === "refreshing" ? "refreshingAfterExecution" : "latestDetailUnavailable"}`)}
+                    </CardContent>
+                </Card>
             ) : !loan ? (
                 <Card>
                     <CardContent className="py-10 text-center text-muted-foreground">
@@ -451,8 +493,8 @@ export default function LoanDetail() {
                     {loan.repaymentType === "floating" && loan.floatingInterestPolicy && (
                         <FloatingInterestSummary
                             policy={loan.floatingInterestPolicy}
-                            dueInterest={settlementPreview?.dueInterest ?? loan.outstandingInterest}
-                            accruedNotDueInterest={settlementPreview?.accruedNotDueInterest}
+                            dueInterest={loan.status === "active" ? settlementPreview?.dueInterest ?? loan.outstandingInterest : undefined}
+                            accruedNotDueInterest={loan.status === "active" ? settlementPreview?.accruedNotDueInterest : undefined}
                         >
                             {loan.status === "active" && (
                                 <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-end">
@@ -461,6 +503,11 @@ export default function LoanDetail() {
                                         <Input id="settlement-date" type="date" value={settlementDate} onChange={(event) => { setSettlementDate(event.target.value); setSettlementPreview(null); setSettlementConfirmed(false); setSettlementError(""); settlementIntentRef.current = null; }} />
                                     </div>
                                     <Button disabled={settlementBusy || !settlementDate} onClick={() => void previewSettlement()}>{settlementBusy ? t("loanDetail.settlement.previewing") : t("loanDetail.settlement.preview")}</Button>
+                                </div>
+                            )}
+                            {settlementError && !settlementOpen && (
+                                <div role="alert" className="rounded border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                                    {settlementError}
                                 </div>
                             )}
                         </FloatingInterestSummary>
@@ -506,7 +553,7 @@ export default function LoanDetail() {
                                 </div>
                                 <div className="flex justify-between">
                                     <span>{t("common.status", "Status")}</span>
-                                    <span className="font-medium uppercase">{loan.status}</span>
+                                    <span className="font-medium">{t(`loans.status.${loan.status}`, { defaultValue: loan.status })}</span>
                                 </div>
                             </CardContent>
                         </Card>
