@@ -36,7 +36,7 @@ import {
     reviewPaymentIntake,
     type EvidenceStorageGateway,
 } from "./payment-service";
-import { correctFloatingInterestAccruals } from "./floating-interest-service";
+import { accrueFloatingInterestThrough, correctFloatingInterestAccruals } from "./floating-interest-service";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
@@ -142,6 +142,23 @@ async function seedFloatingLoan(actor: { id: number; tenantId: string }) {
     return { borrower, loan, period };
 }
 
+async function seedWeeklyFloatingLoan(actor: { id: number; tenantId: string }) {
+    const borrower = await db.insert(borrowers).values({ tenantId: actor.tenantId, ownerUserId: actor.id, name: "Weekly floating borrower" }).returning().then((rows) => rows[0]!);
+    const loan = await db.insert(loans).values({
+        tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id,
+        principalAmount: "5000.00", interestRate: "0.00", repaymentType: "floating",
+        dailyInterestMode: "percent", dailyInterestRate: "12.0000", firstDayTreatment: "start_next_day",
+        interestStartDate: "2026-08-13", interestPeriodUnit: "week", interestPeriodLength: 1,
+        advanceInterestPeriods: 0, advanceInterestRefundPolicy: "non_refundable", interestPeriodAnchorDate: "2026-08-13",
+        outstandingPrincipal: "5000.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active",
+    }).returning().then((rows) => rows[0]!);
+    const period = await db.insert(loanInterestRatePeriods).values({
+        tenantId: actor.tenantId, loanId: loan.id, effectiveDate: "2026-08-13", rateType: "percent", rate: "12.0000",
+        periodUnit: "week", periodLength: 1, createdByUserId: actor.id,
+    }).returning().then((rows) => rows[0]!);
+    return { borrower, loan, period };
+}
+
 describe("payment application service", () => {
     // Break caught: visually equivalent references hash differently and bypass hard-duplicate detection.
     test("normalizes bank references deterministically without retaining punctuation differences", () => {
@@ -211,6 +228,43 @@ describe("payment application service", () => {
 
         expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({ outstandingPrincipal: "4000.00", outstandingInterest: "60.00" });
         expect(await db.query.loanInterestAccruals.findFirst({ where: and(eq(loanInterestAccruals.loanId, seeded.loan.id), eq(loanInterestAccruals.accrualDate, "2026-08-07")) })).toMatchObject({ paidAmount: "0.00", status: "accrued" });
+    });
+
+    // Break caught: a normal mid-period payment silently consumes weekly interest that is visible but not yet payable, or rewrites earlier principal bases.
+    integrationTest("allocates a day-three weekly payment entirely to principal and changes interest only from day four", async () => {
+        const actor = await seedUser("tenant-floating-weekly-payment");
+        const seeded = await seedWeeklyFloatingLoan(actor);
+        const intake = await createPaymentIntake(context(actor), {
+            amount: "1000.00",
+            receivedAt: "2026-08-15T05:00:00.000Z",
+        });
+        const preview = await previewPaymentMatch(context(actor), intake.publicId, {
+            allocations: [{ borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "1000.00" }],
+        });
+
+        expect(preview).toMatchObject({ status: "ready", totalAllocated: "1000.00" });
+        expect((await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, seeded.loan.id))).every((row) => row.status === "accruing")).toBe(true);
+
+        const posted = await postPayment(context(actor), intake.publicId, { proposalPublicId: preview.publicId });
+        expect(posted.transactions).toEqual([
+            expect.objectContaining({ amount: "1000.00", interestComponent: "0.00", principalComponent: "1000.00" }),
+        ]);
+
+        const refreshedLoan = (await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) }))!;
+        await accrueFloatingInterestThrough(db, refreshedLoan, new Date("2026-08-16T05:00:00.000Z"), actor.id);
+        expect(await db.select({
+            accrualDate: loanInterestAccruals.accrualDate,
+            openingPrincipal: loanInterestAccruals.openingPrincipal,
+            interestAmount: loanInterestAccruals.interestAmount,
+            cumulativeInterestAmount: loanInterestAccruals.cumulativeInterestAmount,
+            status: loanInterestAccruals.status,
+        }).from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, seeded.loan.id)).orderBy(loanInterestAccruals.accrualDate)).toEqual([
+            { accrualDate: "2026-08-13", openingPrincipal: "5000.00", interestAmount: "85.71", cumulativeInterestAmount: "85.71", status: "accruing" },
+            { accrualDate: "2026-08-14", openingPrincipal: "5000.00", interestAmount: "85.72", cumulativeInterestAmount: "171.43", status: "accruing" },
+            { accrualDate: "2026-08-15", openingPrincipal: "5000.00", interestAmount: "85.71", cumulativeInterestAmount: "257.14", status: "accruing" },
+            { accrualDate: "2026-08-16", openingPrincipal: "4000.00", interestAmount: "68.57", cumulativeInterestAmount: "325.71", status: "accruing" },
+        ]);
+        expect(refreshedLoan).toMatchObject({ outstandingPrincipal: "4000.00", outstandingInterest: "0.00" });
     });
 
     // Break caught: data-only intake is rejected, money is coerced through Number, or a retry creates a second row.

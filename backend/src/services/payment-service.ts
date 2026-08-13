@@ -1276,13 +1276,22 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
                 await tx.update(loans).set({ outstandingInterest: signed(dueInterest.minus(interest)), outstandingPrincipal: signed(new Decimal(loan.outstandingPrincipal ?? loan.principalAmount).minus(principal)), updatedAt: new Date() }).where(and(eq(loans.id, loan.id), eq(loans.tenantId, ctx.tenantId)));
                 if (interest.gt(0)) {
                     let remainingInterest = interest;
-                    const accruals = await tx.select().from(loanInterestAccruals).where(and(eq(loanInterestAccruals.tenantId, ctx.tenantId), eq(loanInterestAccruals.loanId, loan.id), eq(loanInterestAccruals.status, "accrued"))).orderBy(loanInterestAccruals.accrualDate);
+                    const accruals = await tx.select().from(loanInterestAccruals).where(and(
+                        eq(loanInterestAccruals.tenantId, ctx.tenantId),
+                        eq(loanInterestAccruals.loanId, loan.id),
+                        inArray(loanInterestAccruals.status, ["accrued", "due", "partially_paid"]),
+                    )).orderBy(loanInterestAccruals.accrualDate);
                     for (const accrual of accruals) {
                         if (remainingInterest.lte(0)) break;
                         const due = new Decimal(accrual.interestAmount).minus(accrual.paidAmount);
                         const applied = Decimal.min(remainingInterest, due);
                         const paidAmount = new Decimal(accrual.paidAmount).plus(applied);
-                        await tx.update(loanInterestAccruals).set({ paidAmount: signed(paidAmount), status: paidAmount.eq(accrual.interestAmount) ? "paid" : "accrued" }).where(eq(loanInterestAccruals.id, accrual.id));
+                        const status = paidAmount.eq(accrual.interestAmount)
+                            ? "paid"
+                            : accrual.periodEndDate
+                                ? "partially_paid"
+                                : "accrued";
+                        await tx.update(loanInterestAccruals).set({ paidAmount: signed(paidAmount), status }).where(eq(loanInterestAccruals.id, accrual.id));
                         remainingInterest = remainingInterest.minus(applied);
                     }
                 }
@@ -1415,7 +1424,17 @@ export async function reversePayment(ctx: CommandContext, intakePublicId: string
                         const restored = Decimal.min(interestToRestore, new Decimal(accrual.paidAmount));
                         if (restored.eq(0)) continue;
                         const paidAmount = new Decimal(accrual.paidAmount).minus(restored);
-                        await tx.update(loanInterestAccruals).set({ paidAmount: signed(paidAmount), status: paidAmount.eq(accrual.interestAmount) ? "paid" : "accrued" })
+                        const currentBusinessDate = new Intl.DateTimeFormat("en-CA", {
+                            timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit",
+                        }).format(new Date());
+                        const status = paidAmount.eq(accrual.interestAmount)
+                            ? "paid"
+                            : accrual.periodEndDate
+                                ? accrual.periodEndDate <= currentBusinessDate
+                                    ? paidAmount.gt(0) ? "partially_paid" : "due"
+                                    : "accruing"
+                                : "accrued";
+                        await tx.update(loanInterestAccruals).set({ paidAmount: signed(paidAmount), status })
                             .where(and(eq(loanInterestAccruals.id, accrual.id), eq(loanInterestAccruals.tenantId, ctx.tenantId)));
                         interestToRestore = interestToRestore.minus(restored);
                     }
@@ -1423,8 +1442,10 @@ export async function reversePayment(ctx: CommandContext, intakePublicId: string
                     const refreshedAccruals = await tx.select().from(loanInterestAccruals).where(and(
                         eq(loanInterestAccruals.tenantId, ctx.tenantId), eq(loanInterestAccruals.loanId, loan.id), sql`${loanInterestAccruals.status} <> 'reversed'`,
                     ));
-                    const outstandingInterest = refreshedAccruals.reduce((sum: Decimal, accrual: typeof loanInterestAccruals.$inferSelect) =>
-                        sum.plus(new Decimal(accrual.interestAmount).minus(accrual.paidAmount)), new Decimal(0));
+                    const outstandingInterest = refreshedAccruals
+                        .filter((accrual: typeof loanInterestAccruals.$inferSelect) => ["accrued", "due", "partially_paid"].includes(accrual.status))
+                        .reduce((sum: Decimal, accrual: typeof loanInterestAccruals.$inferSelect) =>
+                            sum.plus(new Decimal(accrual.interestAmount).minus(accrual.paidAmount)), new Decimal(0));
                     await tx.update(loans).set({
                         outstandingPrincipal: signed(new Decimal(loan.outstandingPrincipal ?? loan.principalAmount).plus(original.principalComponent)),
                         outstandingInterest: signed(outstandingInterest),

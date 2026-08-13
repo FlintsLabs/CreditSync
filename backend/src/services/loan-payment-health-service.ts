@@ -34,8 +34,9 @@ export async function getLoanPaymentHealth(
             schedules: [],
             accruals: rows
                 .filter((row: { tenantId: string; loanId: number }) => row.tenantId === loan.tenantId && row.loanId === loan.id)
-                .map((row: { accrualDate: string; interestAmount: string; paidAmount: string; status: string }) => ({
+                .map((row: { accrualDate: string; periodEndDate: string | null; interestAmount: string; paidAmount: string; status: string }) => ({
                     accrualDate: row.accrualDate,
+                    periodEndDate: row.periodEndDate,
                     interestAmount: row.interestAmount,
                     paidAmount: row.paidAmount,
                     status: row.status,

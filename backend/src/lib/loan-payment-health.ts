@@ -25,6 +25,7 @@ export interface LoanPaymentHealthInput {
     }>;
     accruals: Array<{
         accrualDate: string;
+        periodEndDate?: string | null;
         interestAmount: string;
         paidAmount: string;
         status: string;
@@ -65,17 +66,20 @@ export function computeLoanPaymentHealth(input: LoanPaymentHealthInput): LoanPay
     let maxOverdueDays = 0;
 
     if (input.repaymentType === "floating") {
+        const payableByDueDate = new Map<string, Decimal>();
         for (const accrual of input.accruals) {
-            if (accrual.status === "reversed") continue;
+            if (["reversed", "paid", "accruing"].includes(accrual.status)) continue;
             const unpaid = Decimal.max(new Decimal(accrual.interestAmount).minus(accrual.paidAmount), 0);
-            if (unpaid.isZero() || accrual.accrualDate > input.businessDate) continue;
-
-            if (accrual.accrualDate === input.businessDate) {
+            const dueDate = accrual.periodEndDate ?? accrual.accrualDate;
+            if (unpaid.isZero() || dueDate > input.businessDate) continue;
+            payableByDueDate.set(dueDate, (payableByDueDate.get(dueDate) ?? zero()).plus(unpaid));
+        }
+        for (const [dueDate, unpaid] of payableByDueDate) {
+            if (dueDate === input.businessDate) {
                 dueNow = dueNow.plus(unpaid);
                 continue;
             }
-
-            const overdueDays = calendarDays(accrual.accrualDate, input.businessDate);
+            const overdueDays = calendarDays(dueDate, input.businessDate);
             overdue = overdue.plus(unpaid);
             overdueItemCount += 1;
             maxOverdueDays = Math.max(maxOverdueDays, overdueDays);

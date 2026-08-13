@@ -126,6 +126,42 @@ describe("loan payment-health service", () => {
         ]);
     });
 
+    // Break caught: weekly accruals are due during days one through seven, or one completed period is reported as seven overdue obligations.
+    integrationTest("reports weekly interest due at the Bangkok boundary and overdue on the following date", async () => {
+        const { actor, borrower } = await seedActorAndBorrower("tenant-weekly-health");
+        const loan = await db.insert(loans).values({
+            tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id,
+            principalAmount: "5000.00", interestRate: "0.00", repaymentType: "floating",
+            dailyInterestMode: "percent", dailyInterestRate: "12.0000", firstDayTreatment: "start_next_day", interestStartDate: "2026-08-13",
+            interestPeriodUnit: "week", interestPeriodLength: 1, advanceInterestPeriods: 0,
+            advanceInterestRefundPolicy: "non_refundable", interestPeriodAnchorDate: "2026-08-13",
+            outstandingPrincipal: "5000.00", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanInterestRatePeriods).values({
+            tenantId: actor.tenantId, loanId: loan.id, effectiveDate: "2026-08-13", expiryDate: null,
+            rateType: "percent", rate: "12.0000", periodUnit: "week", periodLength: 1, createdByUserId: actor.id,
+        });
+
+        expect(await getLoanPaymentHealth(db, loan, {
+            asOf: new Date("2026-08-18T12:00:00+07:00"), actorUserId: actor.id,
+        })).toEqual({
+            status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00",
+            overdueItemCount: 0, maxOverdueDays: 0,
+        });
+        expect(await getLoanPaymentHealth(db, loan, {
+            asOf: new Date("2026-08-20T12:00:00+07:00"), actorUserId: actor.id,
+        })).toEqual({
+            status: "due_today", dueTodayAmount: "600.00", overdueAmount: "0.00",
+            overdueItemCount: 0, maxOverdueDays: 0,
+        });
+        expect(await getLoanPaymentHealth(db, loan, {
+            asOf: new Date("2026-08-21T12:00:00+07:00"), actorUserId: actor.id,
+        })).toEqual({
+            status: "overdue", dueTodayAmount: "0.00", overdueAmount: "600.00",
+            overdueItemCount: 1, maxOverdueDays: 1,
+        });
+    });
+
     // Break caught: legacy floating principal creates synthetic payable interest without a policy.
     integrationTest("keeps a legacy floating loan without policy current", async () => {
         const { actor, borrower } = await seedActorAndBorrower("tenant-a");

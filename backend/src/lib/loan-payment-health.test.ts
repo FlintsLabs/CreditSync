@@ -102,6 +102,40 @@ describe("computeLoanPaymentHealth", () => {
         });
     });
 
+    // Break caught: seven daily snapshots for one weekly obligation are counted as seven overdue items or become due before the weekly boundary.
+    test("groups a completed weekly period at its due boundary and skips the current accruing period", () => {
+        const weekly = { ...base, repaymentType: "floating", schedules: [] };
+        const duePeriod = ["85.71", "85.72", "85.71", "85.72", "85.71", "85.72", "85.71"].map((interestAmount, index) => ({
+            accrualDate: `2026-08-${String(13 + index).padStart(2, "0")}`,
+            periodEndDate: "2026-08-20",
+            interestAmount,
+            paidAmount: "0.00",
+            status: "due",
+        }));
+        const currentPeriod = [{
+            accrualDate: "2026-08-20",
+            periodEndDate: "2026-08-27",
+            interestAmount: "85.71",
+            paidAmount: "0.00",
+            status: "accruing",
+        }];
+
+        expect(computeLoanPaymentHealth({ ...weekly, businessDate: "2026-08-20", accruals: [...duePeriod, ...currentPeriod] })).toEqual({
+            status: "due_today",
+            dueTodayAmount: "600.00",
+            overdueAmount: "0.00",
+            overdueItemCount: 0,
+            maxOverdueDays: 0,
+        });
+        expect(computeLoanPaymentHealth({ ...weekly, businessDate: "2026-08-21", accruals: [...duePeriod, ...currentPeriod] })).toEqual({
+            status: "overdue",
+            dueTodayAmount: "0.00",
+            overdueAmount: "600.00",
+            overdueItemCount: 1,
+            maxOverdueDays: 1,
+        });
+    });
+
     // Break caught: paid/partial accruals use gross interest rather than their exact unpaid remainder.
     test("counts only positive unpaid floating accrual remainders", () => {
         expect(computeLoanPaymentHealth({
