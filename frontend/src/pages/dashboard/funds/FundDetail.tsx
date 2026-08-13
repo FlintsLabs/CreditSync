@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { ArrowLeft, ArrowRightLeft, Building2, CalendarDays, Wallet } from "lucide-react";
+import { ArrowLeft, ArrowRightLeft, ArrowUpRight, BookOpenCheck, Building2, CalendarDays, CircleMinus, Clock3, FileCheck2, HandCoins, Landmark, Percent, ReceiptText, Scale, Timer, TrendingUp, TriangleAlert, Wallet, WalletCards } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Button } from "../../../components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/Card";
@@ -10,6 +10,8 @@ import { Input } from "../../../components/ui/Input";
 import { Badge } from "../../../components/ui/badge";
 import { formatMoneyExact } from "../../../lib/workflow-model";
 import Decimal from "decimal.js";
+import { TooltipProvider } from "../../../components/ui/tooltip";
+import { FundMetricLabel } from "./FundMetricLabel";
 
 interface BankProfile {
     id: number;
@@ -563,6 +565,7 @@ export default function FundDetail() {
     };
 
     return (
+        <TooltipProvider>
         <div className="space-y-6">
             <div className="flex items-center gap-4">
                 <Button variant="ghost" size="icon" onClick={() => navigate("/funds")}>
@@ -637,20 +640,20 @@ export default function FundDetail() {
                                 <CardTitle className="text-sm font-medium text-muted-foreground">{t("fundDetail.settlementPosition", "Settlement Position")}</CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-2 text-sm">
-                                <div className="flex justify-between">
-                                    <span>{t("funds.metrics.realizedSpread", "Realized spread")}</span>
+                                <div className="flex items-center justify-between gap-3">
+                                    <FundMetricLabel icon={TrendingUp} label={t("funds.metrics.realizedSpread", "Realized spread")} description={t("fundDetail.metricInfo.realizedSpread")} infoLabel={t("fundDetail.metricInfo.about", { label: t("funds.metrics.realizedSpread", "Realized spread") })} />
                                     <span className="font-medium">{formatMoneyExact(settlementSummary?.realizedSpread ?? "0.00", i18n.language)}</span>
                                 </div>
-                                <div className="flex justify-between">
-                                    <span>{t("loans.unrealizedSpread", "Unrealized spread")}</span>
+                                <div className="flex items-center justify-between gap-3">
+                                    <FundMetricLabel icon={Clock3} label={t("loans.unrealizedSpread", "Unrealized spread")} description={t("fundDetail.metricInfo.unrealizedSpread")} infoLabel={t("fundDetail.metricInfo.about", { label: t("loans.unrealizedSpread", "Unrealized spread") })} />
                                     <span className="font-medium">{formatMoneyExact(settlementSummary?.unrealizedSpread ?? "0.00", i18n.language)}</span>
                                 </div>
-                                <div className="flex justify-between">
-                                    <span>{t("fundDetail.surplusBalance", "Surplus balance")}</span>
+                                <div className="flex items-center justify-between gap-3">
+                                    <FundMetricLabel icon={WalletCards} label={t("fundDetail.surplusBalance", "Cumulative net cash received")} description={t("fundDetail.metricInfo.surplusBalance")} infoLabel={t("fundDetail.metricInfo.about", { label: t("fundDetail.surplusBalance", "Cumulative net cash received") })} />
                                     <span className="font-medium text-emerald-600">{formatMoneyExact(settlementSummary?.surplusBalance ?? "0.00", i18n.language)}</span>
                                 </div>
-                                <div className="flex justify-between">
-                                    <span>{t("fundDetail.deficitBalance", "Deficit balance")}</span>
+                                <div className="flex items-center justify-between gap-3">
+                                    <FundMetricLabel icon={CircleMinus} label={t("fundDetail.deficitBalance", "Cumulative net cash paid")} description={t("fundDetail.metricInfo.deficitBalance")} infoLabel={t("fundDetail.metricInfo.about", { label: t("fundDetail.deficitBalance", "Cumulative net cash paid") })} />
                                     <span className="font-medium text-destructive">{formatMoneyExact(settlementSummary?.deficitBalance ?? "0.00", i18n.language)}</span>
                                 </div>
                             </CardContent>
@@ -661,36 +664,36 @@ export default function FundDetail() {
                                 <CardTitle className="text-sm font-medium text-muted-foreground">{t("fundDetail.sourceProfitability", "Source Profitability")}</CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-2 text-sm">
-                                <div className="flex justify-between">
-                                    <span>{t("dashboardPage.cards.borrowerRevenue", "Revenue collected")}</span>
+                                <div className="flex items-center justify-between gap-3">
+                                    <FundMetricLabel icon={HandCoins} label={t("fundDetail.borrowerCashCollected", "Borrower cash collected")} description={t("fundDetail.metricInfo.borrowerCashCollected")} infoLabel={t("fundDetail.metricInfo.about", { label: t("fundDetail.borrowerCashCollected", "Borrower cash collected") })} />
                                     <span className="font-medium">{formatMoneyExact(sourceProfitability?.borrowerCashCollected ?? "0.00", i18n.language)}</span>
                                 </div>
-                                <div className="flex justify-between">
-                                    <span>{t("dashboardPage.cards.fundCostPaid", "Fund cost paid")}</span>
+                                <div className="flex items-center justify-between gap-3">
+                                    <FundMetricLabel icon={ReceiptText} label={t("dashboardPage.cards.fundCostPaid", "Fund cost paid")} description={t("fundDetail.metricInfo.fundCostPaid")} infoLabel={t("fundDetail.metricInfo.about", { label: t("dashboardPage.cards.fundCostPaid", "Fund cost paid") })} />
                                     <span className="font-medium">{formatMoneyExact(sourceProfitability?.fundCostPaid ?? "0.00", i18n.language)}</span>
                                 </div>
-                                <div className="flex justify-between">
-                                    <span>{t("funds.metrics.deployed", "Deployed principal")}</span>
+                                <div className="flex items-center justify-between gap-3">
+                                    <FundMetricLabel icon={ArrowUpRight} label={t("funds.metrics.deployed", "Deployed principal")} description={t("fundDetail.metricInfo.deployedPrincipal")} infoLabel={t("fundDetail.metricInfo.about", { label: t("funds.metrics.deployed", "Deployed principal") })} />
                                     <span className="font-medium">{formatMoneyExact(sourceProfitability?.deployedPrincipal ?? "0.00", i18n.language)}</span>
                                 </div>
-                                <div className="flex justify-between">
-                                    <span>{t("funds.metrics.netCash", "Net cash position")}</span>
+                                <div className="flex items-center justify-between gap-3">
+                                    <FundMetricLabel icon={Landmark} label={t("funds.metrics.netCash", "Net cash position")} description={t("fundDetail.metricInfo.netCashPosition")} infoLabel={t("fundDetail.metricInfo.about", { label: t("funds.metrics.netCash", "Net cash position") })} />
                                     <span className={`font-medium ${new Decimal(sourceProfitability?.netCashPosition ?? 0).gte(0) ? "text-emerald-600" : "text-destructive"}`}>
                                         {formatMoneyExact(sourceProfitability?.netCashPosition ?? "0.00", i18n.language)}
                                     </span>
                                 </div>
-                                <div className="flex justify-between">
-                                    <span>{t("fundDetail.realizedRoi", "Realized ROI")}</span>
+                                <div className="flex items-center justify-between gap-3">
+                                    <FundMetricLabel icon={Percent} label={t("fundDetail.realizedRoi", "Realized ROI")} description={t("fundDetail.metricInfo.realizedRoi")} infoLabel={t("fundDetail.metricInfo.about", { label: t("fundDetail.realizedRoi", "Realized ROI") })} />
                                     <span className="font-medium">{new Decimal(sourceProfitability?.realizedRoiPercent ?? 0).toFixed(2)}%</span>
                                 </div>
                                 {fund.accountingMode === "capital_pool" && (
                                     <>
-                                        <div className="flex justify-between">
-                                            <span>{t("fundDetail.opportunityCost", "Opportunity cost (non-cash)")}</span>
+                                        <div className="flex items-center justify-between gap-3">
+                                            <FundMetricLabel icon={Timer} label={t("fundDetail.opportunityCost", "Opportunity cost (non-cash)")} description={t("fundDetail.metricInfo.opportunityCost")} infoLabel={t("fundDetail.metricInfo.about", { label: t("fundDetail.opportunityCost", "Opportunity cost (non-cash)") })} />
                                             <span className="font-medium">{formatMoneyExact(sourceProfitability?.opportunityCostAccrued ?? "0.00", i18n.language)}</span>
                                         </div>
-                                        <div className="flex justify-between">
-                                            <span>{t("fundDetail.economicSpread", "Economic spread")}</span>
+                                        <div className="flex items-center justify-between gap-3">
+                                            <FundMetricLabel icon={Scale} label={t("fundDetail.economicSpread", "Economic spread")} description={t("fundDetail.metricInfo.economicSpread")} infoLabel={t("fundDetail.metricInfo.about", { label: t("fundDetail.economicSpread", "Economic spread") })} />
                                             <span className="font-medium">{formatMoneyExact(sourceProfitability?.economicSpread ?? "0.00", i18n.language)}</span>
                                         </div>
                                     </>
@@ -718,9 +721,9 @@ export default function FundDetail() {
                             </CardHeader>
                             <CardContent>
                                 <dl className="grid gap-4 text-sm sm:grid-cols-3">
-                                    <div><dt className="text-muted-foreground">{t("fundDetail.reconciliation.contractRevenue", "Contract-attributed revenue")}</dt><dd className="mt-1 font-semibold tabular-nums">{formatMoneyExact(sourceProfitability.reconciliation.contractAttributedRevenue, i18n.language)}</dd></div>
-                                    <div><dt className="text-muted-foreground">{t("fundDetail.reconciliation.ledgerRevenue", "Ledger-recorded revenue")}</dt><dd className="mt-1 font-semibold tabular-nums">{formatMoneyExact(sourceProfitability.reconciliation.ledgerRecordedRevenue, i18n.language)}</dd></div>
-                                    <div><dt className="text-muted-foreground">{t("fundDetail.reconciliation.difference", "Difference")}</dt><dd className={`mt-1 font-semibold tabular-nums ${new Decimal(sourceProfitability.reconciliation.difference).isZero() ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>{formatMoneyExact(sourceProfitability.reconciliation.difference, i18n.language)}</dd></div>
+                                    <div><dt className="text-muted-foreground"><FundMetricLabel icon={FileCheck2} label={t("fundDetail.reconciliation.contractRevenue", "Contract-attributed revenue")} description={t("fundDetail.metricInfo.contractRevenue")} infoLabel={t("fundDetail.metricInfo.about", { label: t("fundDetail.reconciliation.contractRevenue", "Contract-attributed revenue") })} /></dt><dd className="mt-1 font-semibold tabular-nums">{formatMoneyExact(sourceProfitability.reconciliation.contractAttributedRevenue, i18n.language)}</dd></div>
+                                    <div><dt className="text-muted-foreground"><FundMetricLabel icon={BookOpenCheck} label={t("fundDetail.reconciliation.ledgerRevenue", "Ledger-recorded revenue")} description={t("fundDetail.metricInfo.ledgerRevenue")} infoLabel={t("fundDetail.metricInfo.about", { label: t("fundDetail.reconciliation.ledgerRevenue", "Ledger-recorded revenue") })} /></dt><dd className="mt-1 font-semibold tabular-nums">{formatMoneyExact(sourceProfitability.reconciliation.ledgerRecordedRevenue, i18n.language)}</dd></div>
+                                    <div><dt className="text-muted-foreground"><FundMetricLabel icon={TriangleAlert} label={t("fundDetail.reconciliation.difference", "Difference")} description={t("fundDetail.metricInfo.reconciliationDifference")} infoLabel={t("fundDetail.metricInfo.about", { label: t("fundDetail.reconciliation.difference", "Difference") })} /></dt><dd className={`mt-1 font-semibold tabular-nums ${new Decimal(sourceProfitability.reconciliation.difference).isZero() ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>{formatMoneyExact(sourceProfitability.reconciliation.difference, i18n.language)}</dd></div>
                                 </dl>
                                 <p className="mt-4 text-xs text-muted-foreground">{t("fundDetail.reconciliation.readOnlyNote", "This status does not alter financial records.")}</p>
                             </CardContent>
@@ -1163,5 +1166,6 @@ export default function FundDetail() {
                 </>
             )}
         </div>
+        </TooltipProvider>
     );
 }

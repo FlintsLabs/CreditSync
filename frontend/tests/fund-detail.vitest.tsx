@@ -4,6 +4,8 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import FundDetail from "../src/pages/dashboard/funds/FundDetail";
 import { api } from "../src/lib/api";
+import en from "../src/locales/en.json";
+import th from "../src/locales/th.json";
 
 vi.mock("../src/lib/api", () => ({ api: { get: vi.fn(), post: vi.fn(), put: vi.fn() } }));
 
@@ -132,12 +134,42 @@ describe("FundDetail funding usage", () => {
         renderDetail();
 
         expect(await screen.findByText("Data reconciliation")).toBeInTheDocument();
-        expect(screen.getByText("Contract-attributed revenue").parentElement).toHaveTextContent(/1,466\.67/);
-        expect(screen.getByText("Ledger-recorded revenue").parentElement).toHaveTextContent(/510\.00/);
-        expect(screen.getByText("Difference").parentElement).toHaveTextContent(/956\.67/);
+        expect(screen.getByText("Contract-attributed revenue").closest("div")).toHaveTextContent(/1,466\.67/);
+        expect(screen.getByText("Ledger-recorded revenue").closest("div")).toHaveTextContent(/510\.00/);
+        expect(screen.getByText("Difference").closest("div")).toHaveTextContent(/956\.67/);
         const status = screen.getByText("Needs reconciliation");
         expect(status).toHaveClass("bg-amber-100", "text-amber-800");
         expect(screen.getByText("This status does not alter financial records.")).toBeInTheDocument();
         expect(screen.getByText(/9,007,199,254,740,993\.01/)).toBeInTheDocument();
+    });
+
+    it("opens an accessible metric definition from the information control", async () => {
+        const user = userEvent.setup();
+        renderDetail();
+
+        const info = await screen.findByRole("button", { name: "About Realized spread" });
+        await user.click(info);
+
+        expect(await screen.findByRole("tooltip")).toHaveTextContent(
+            "Revenue already recognized after cash source costs.",
+        );
+    });
+
+    it("gives every summary metric a decorative semantic icon and localized information control", async () => {
+        const { container } = renderDetail();
+
+        expect(await screen.findByText("Cumulative net cash received")).toBeInTheDocument();
+        expect(screen.getByText("Cumulative net cash paid")).toBeInTheDocument();
+        expect(screen.getAllByRole("button", { name: /^About / })).toHaveLength(14);
+
+        const icons = container.querySelectorAll("[data-fund-metric-icon]");
+        expect(icons).toHaveLength(14);
+        for (const icon of icons) expect(icon).toHaveAttribute("aria-hidden", "true");
+    });
+
+    it("keeps English and Thai fund metric definitions in parity", () => {
+        expect(Object.keys(th.fundDetail.metricInfo).sort()).toEqual(
+            Object.keys(en.fundDetail.metricInfo).sort(),
+        );
     });
 });

@@ -55,6 +55,7 @@
 - Excluded append-only reversed floating-interest accruals from Dashboard payable totals so corrected source rows are not counted alongside their active replacements.
 
 ### Changed
+- Added semantic icons and accessible localized definition tooltips to Fund Detail settlement, profitability, and reconciliation metrics, and clarified cumulative net-cash labels so returned principal is not mistaken for borrower overpayment.
 - Displayed exact fund-source settlement and profitability values with a localized semantic contract-to-ledger reconciliation card that never mutates financial records.
 - Replaced nested funding-usage cards and the duplicate desktop table with one responsive divider list featuring borrower-first hierarchy, exact source interest, and localized semantic loan-status badges.
 - Replaced nested mobile repayment-history cards and full-width review buttons with compact divider-separated transaction rows, non-zero exact allocation summaries, and full-row review navigation while retaining the desktop table.
