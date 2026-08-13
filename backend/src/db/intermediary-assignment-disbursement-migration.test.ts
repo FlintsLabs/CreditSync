@@ -298,6 +298,238 @@ describe("intermediary assignment and intermediated disbursement database contra
         expect(await insertEvent(owner, group.id, account.id, "valid")).toBeDefined();
     });
 
+    integrationTest("rejects null or blank reversal provenance", async () => {
+        // Break caught: PostgreSQL CHECK treats a NULL length expression as passing, or whitespace is accepted as a reason/hash.
+        const owner = await seed("tenant-reversal-shape", "provenance");
+        const account = await insertAccount(owner, "reversal");
+        await insertAssignment(owner);
+        const originalGroup = await insertGroup(owner, "original", "posted");
+        const originalEvent = await insertEvent(owner, originalGroup.id, account.id, "original", "posted");
+
+        for (const [suffix, reversalKey, requestHash, reason] of [
+            ["null-hash", "reversal-key-1", null, "operator correction"],
+            ["null-reason", "reversal-key-2", "reversal-hash-2", null],
+            ["blank-key", "   ", "reversal-hash-3", "operator correction"],
+            ["blank-hash", "reversal-key-4", "   ", "operator correction"],
+            ["blank-reason", "reversal-key-5", "reversal-hash-5", "   "],
+        ] as const) {
+            await expectDatabaseCode(() => db.execute(sql`
+                INSERT INTO intermediated_disbursement_groups
+                    (tenant_id, loan_id, intermediary_id, expected_funding_amount,
+                     expected_borrower_payout_amount, expected_advance_interest_return_amount,
+                     retained_balance_amount, status, idempotency_key, reversed_group_id,
+                     reversal_idempotency_key, reversal_request_hash, reversal_reason,
+                     posted_at, reversed_at, created_by_user_id, updated_by_user_id)
+                VALUES
+                    ('tenant-reversal-shape', ${owner.loan.id}, ${owner.intermediary.id}, 5000.00,
+                     4400.00, 600.00, 0.00, 'reversed', ${`reversal-group-${suffix}`}, ${originalGroup.id},
+                     ${reversalKey}, ${requestHash}, ${reason}, now(), now(), ${owner.actor.id}, ${owner.actor.id})
+            `), "23514");
+        }
+
+        for (const [suffix, reason] of [["null", null], ["blank", "   "]] as const) {
+            await expectDatabaseCode(() => db.execute(sql`
+                INSERT INTO intermediated_transfer_events
+                    (tenant_id, group_id, intermediary_bank_account_id, role, channel, amount,
+                     transferred_at, status, idempotency_key, reversed_event_id, reversal_reason,
+                     posted_at, reversed_at, created_by_user_id, updated_by_user_id)
+                VALUES
+                    ('tenant-reversal-shape', ${originalGroup.id}, ${account.id}, 'funding_to_intermediary',
+                     'adjustment', 5000.00, now(), 'reversed', ${`reversal-event-${suffix}`},
+                     ${originalEvent.id}, ${reason}, now(), now(), ${owner.actor.id}, ${owner.actor.id})
+            `), "23514");
+        }
+    });
+
+    integrationTest("rejects empty or whitespace-only mandatory identity and command keys", async () => {
+        // Break caught: NOT NULL alone admits unusable command keys that collapse retry identity and provenance.
+        const owner = await seed("tenant-key-shape", "keys");
+        const assignmentOwner = await seed("tenant-key-assignment", "assignment");
+        await insertAssignment(owner);
+        const group = await insertGroup(owner, "keys");
+        const event = await insertEvent(owner, group.id, null, "keys");
+
+        for (const [suffix, key] of [["empty", ""], ["space", "   "]] as const) {
+            await expectDatabaseCode(() => db.execute(sql`
+                INSERT INTO loan_intermediary_assignments
+                    (tenant_id, loan_id, intermediary_id, role, effective_from, idempotency_key,
+                     created_by_user_id, updated_by_user_id)
+                VALUES
+                    ('tenant-key-assignment', ${assignmentOwner.loan.id}, ${assignmentOwner.intermediary.id}, 'collection',
+                     ${`2027-01-0${suffix === "empty" ? "1" : "2"}`}::timestamptz, ${key},
+                     ${assignmentOwner.actor.id}, ${assignmentOwner.actor.id})
+            `), "23514");
+            await expectDatabaseCode(() => db.execute(sql`
+                INSERT INTO intermediated_disbursement_groups
+                    (tenant_id, loan_id, intermediary_id, expected_funding_amount,
+                     expected_borrower_payout_amount, expected_advance_interest_return_amount,
+                     retained_balance_amount, status, idempotency_key, created_by_user_id, updated_by_user_id)
+                VALUES
+                    ('tenant-key-shape', ${owner.loan.id}, ${owner.intermediary.id}, 5000.00,
+                     4400.00, 600.00, 0.00, 'draft', ${key}, ${owner.actor.id}, ${owner.actor.id})
+            `), "23514");
+            await expectDatabaseCode(() => db.execute(sql`
+                INSERT INTO intermediated_disbursement_groups
+                    (tenant_id, loan_id, intermediary_id, expected_funding_amount,
+                     expected_borrower_payout_amount, expected_advance_interest_return_amount,
+                     retained_balance_amount, status, idempotency_key, post_idempotency_key,
+                     posted_at, created_by_user_id, updated_by_user_id)
+                VALUES
+                    ('tenant-key-shape', ${owner.loan.id}, ${owner.intermediary.id}, 5000.00,
+                     4400.00, 600.00, 0.00, 'posted', ${`posted-group-${suffix}`}, ${key},
+                     now(), ${owner.actor.id}, ${owner.actor.id})
+            `), "23514");
+            await expectDatabaseCode(() => db.execute(sql`
+                INSERT INTO intermediated_transfer_events
+                    (tenant_id, group_id, role, channel, amount, transferred_at, status,
+                     idempotency_key, created_by_user_id, updated_by_user_id)
+                VALUES
+                    ('tenant-key-shape', ${group.id}, 'borrower_net_payout', 'cash', 1.00,
+                     now(), 'draft', ${key}, ${owner.actor.id}, ${owner.actor.id})
+            `), "23514");
+            await expectDatabaseCode(() => db.execute(sql`
+                INSERT INTO intermediated_transfer_events
+                    (tenant_id, group_id, role, channel, amount, bank_reference_hash,
+                     transferred_at, status, idempotency_key, created_by_user_id, updated_by_user_id)
+                VALUES
+                    ('tenant-key-shape', ${group.id}, 'borrower_net_payout', 'cash', 1.00, ${key},
+                     now(), 'draft', ${`bank-reference-${suffix}`}, ${owner.actor.id}, ${owner.actor.id})
+            `), "23514");
+            await expectDatabaseCode(() => db.execute(sql`
+                INSERT INTO intermediary_bank_accounts
+                    (tenant_id, intermediary_id, bank_name, account_name, account_number_last4,
+                     account_number_hash, status, created_by_user_id, updated_by_user_id)
+                VALUES
+                    ('tenant-key-shape', ${owner.intermediary.id}, 'KBank', 'Intermediary', '1234',
+                     ${key}, 'active', ${owner.actor.id}, ${owner.actor.id})
+            `), "23514");
+
+            const file = await db.execute(sql`
+                INSERT INTO files (tenant_id, owner_user_id, bucket, key, mime_type, size)
+                VALUES ('tenant-key-shape', ${owner.actor.id}, 'evidence', ${`key-shape-${suffix}.jpg`}, 'image/jpeg', 10)
+                RETURNING id
+            `).then((rows) => rows[0]!);
+            await expectDatabaseCode(() => db.execute(sql`
+                INSERT INTO intermediated_transfer_evidence_intents
+                    (tenant_id, event_id, file_id, status, evidence_hash, mime_type, declared_size,
+                     upload_expires_at, created_by_user_id, updated_by_user_id)
+                VALUES
+                    ('tenant-key-shape', ${event.id}, ${file.id}, 'pending', ${key}, 'image/jpeg', 10,
+                     now() + interval '5 minutes', ${owner.actor.id}, ${owner.actor.id})
+            `), "23514");
+            await expectDatabaseCode(() => db.execute(sql`
+                INSERT INTO intermediated_disbursement_group_previews
+                    (tenant_id, group_id, version, status, expected_funding_amount, actual_funding_amount,
+                     expected_borrower_payout_amount, actual_borrower_payout_amount,
+                     expected_advance_interest_return_amount, actual_advance_interest_return_amount,
+                     retained_balance_amount, variance_amount, evidence_ready, preview_hash, expires_at,
+                     created_by_user_id)
+                VALUES
+                    ('tenant-key-shape', ${group.id}, ${suffix === "empty" ? 1 : 2}, 'needs_review',
+                     5000.00, 0.00, 4400.00, 0.00, 600.00, 0.00, 0.00, 0.00, false, ${key},
+                     now() + interval '5 minutes', ${owner.actor.id})
+            `), "23514");
+        }
+    });
+
+    integrationTest("rejects non-finite numeric money including signed preview variance", async () => {
+        // Break caught: PostgreSQL numeric NaN/Infinity values can satisfy ordinary comparison and scale checks.
+        const owner = await seed("tenant-finite-money", "money");
+        await insertAssignment(owner);
+        const group = await insertGroup(owner, "finite");
+
+        for (const [suffix, amount] of [["nan", "NaN"], ["infinity", "Infinity"], ["negative-infinity", "-Infinity"]] as const) {
+            await expectDatabaseCode(() => db.execute(sql`
+                INSERT INTO intermediated_transfer_events
+                    (tenant_id, group_id, role, channel, amount, transferred_at, status,
+                     idempotency_key, created_by_user_id, updated_by_user_id)
+                VALUES
+                    ('tenant-finite-money', ${group.id}, 'borrower_net_payout', 'cash', ${amount}::numeric,
+                     now(), 'draft', ${`non-finite-event-${suffix}`}, ${owner.actor.id}, ${owner.actor.id})
+            `), "23514");
+        }
+
+        for (const [suffix, funding, borrower, advance, retained] of [
+            ["nan", "NaN", "NaN", "0", "0"],
+            ["infinity", "Infinity", "Infinity", "0", "0"],
+            ["negative-infinity", "0", "Infinity", "0", "-Infinity"],
+        ] as const) {
+            await expectDatabaseCode(() => db.execute(sql`
+                INSERT INTO intermediated_disbursement_groups
+                    (tenant_id, loan_id, intermediary_id, expected_funding_amount,
+                     expected_borrower_payout_amount, expected_advance_interest_return_amount,
+                     retained_balance_amount, status, idempotency_key, created_by_user_id, updated_by_user_id)
+                VALUES
+                    ('tenant-finite-money', ${owner.loan.id}, ${owner.intermediary.id}, ${funding}::numeric,
+                     ${borrower}::numeric, ${advance}::numeric, ${retained}::numeric, 'draft',
+                     ${`non-finite-group-${suffix}`}, ${owner.actor.id}, ${owner.actor.id})
+            `), "23514");
+        }
+
+        for (const [suffix, expectedFunding, expectedBorrower, actualFunding, actualBorrower, variance] of [
+            ["nan", "NaN", "NaN", "NaN", "0", "NaN"],
+            ["infinity", "Infinity", "Infinity", "Infinity", "0", "Infinity"],
+            ["negative-infinity", "5000", "4400", "0", "Infinity", "-Infinity"],
+        ] as const) {
+            await expectDatabaseCode(() => db.execute(sql`
+                INSERT INTO intermediated_disbursement_group_previews
+                    (tenant_id, group_id, version, status, expected_funding_amount, actual_funding_amount,
+                     expected_borrower_payout_amount, actual_borrower_payout_amount,
+                     expected_advance_interest_return_amount, actual_advance_interest_return_amount,
+                     retained_balance_amount, variance_amount, evidence_ready, preview_hash, expires_at,
+                     created_by_user_id)
+                VALUES
+                    ('tenant-finite-money', ${group.id}, ${suffix === "nan" ? 1 : suffix === "infinity" ? 2 : 3},
+                     'needs_review', ${expectedFunding}::numeric, ${actualFunding}::numeric,
+                     ${expectedBorrower}::numeric, ${actualBorrower}::numeric,
+                     ${suffix === "negative-infinity" ? "600" : "0"}::numeric, 0.00,
+                     0.00, ${variance}::numeric, false, ${`non-finite-preview-${suffix}`},
+                     now() + interval '5 minutes', ${owner.actor.id})
+            `), "23514");
+        }
+    });
+
+    integrationTest("accepts every supported role and freezes ready evidence intents", async () => {
+        // Break caught: a documented transfer role is rejected, or finalized upload provenance remains mutable.
+        const owner = await seed("tenant-positive-enums", "roles");
+        const account = await insertAccount(owner, "roles");
+        await insertAssignment(owner);
+        const group = await insertGroup(owner, "roles");
+        for (const [index, role] of ["funding_to_intermediary", "borrower_net_payout", "advance_interest_return"].entries()) {
+            await db.execute(sql`
+                INSERT INTO intermediated_transfer_events
+                    (tenant_id, group_id, intermediary_bank_account_id, role, channel, amount,
+                     transferred_at, status, idempotency_key, created_by_user_id, updated_by_user_id)
+                VALUES
+                    ('tenant-positive-enums', ${group.id}, ${account.id}, ${role}, 'bank_transfer',
+                     1.00, now(), 'ready', ${`positive-role-${index}`}, ${owner.actor.id}, ${owner.actor.id})
+            `);
+        }
+
+        const event = await insertEvent(owner, group.id, account.id, "intent");
+        const file = await db.execute(sql`
+            INSERT INTO files (tenant_id, owner_user_id, bucket, key, mime_type, size)
+            VALUES ('tenant-positive-enums', ${owner.actor.id}, 'evidence', 'ready-intent.jpg', 'image/jpeg', 10)
+            RETURNING id
+        `).then((rows) => rows[0]!);
+        const intent = await db.execute(sql`
+            INSERT INTO intermediated_transfer_evidence_intents
+                (tenant_id, event_id, file_id, status, evidence_hash, mime_type, declared_size,
+                 upload_expires_at, finalized_at, created_by_user_id, updated_by_user_id)
+            VALUES
+                ('tenant-positive-enums', ${event.id}, ${file.id}, 'ready', 'ready-intent-sha',
+                 'image/jpeg', 10, now() + interval '5 minutes', now(), ${owner.actor.id}, ${owner.actor.id})
+            RETURNING id
+        `).then((rows) => rows[0]!);
+        await expectDatabaseCode(() => db.execute(sql`
+            UPDATE intermediated_transfer_evidence_intents SET evidence_hash = 'changed'
+            WHERE id = ${intent.id}
+        `), "P0001");
+        await expectDatabaseCode(() => db.execute(sql`
+            DELETE FROM intermediated_transfer_evidence_intents WHERE id = ${intent.id}
+        `), "P0001");
+    });
+
     integrationTest("keeps event command keys and bank references unique within a tenant", async () => {
         // Break caught: command replay or the same transfer reference creates a second cash movement.
         const owner = await seed("tenant-event-unique", "events");

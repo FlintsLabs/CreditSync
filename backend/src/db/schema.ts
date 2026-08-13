@@ -1337,7 +1337,7 @@ export const intermediaryBankAccounts = pgTable("intermediary_bank_accounts", {
     index("intermediary_bank_accounts_tenant_intermediary_status_idx").on(table.tenantId, table.intermediaryId, table.status),
     check("intermediary_bank_accounts_status_check", sql`${table.status} IN ('active', 'inactive')`),
     check("intermediary_bank_accounts_last4_check", sql`${table.accountNumberLast4} ~ '^[0-9]{4}$'`),
-    check("intermediary_bank_accounts_identity_check", sql`length(${table.bankName}) > 0 AND length(${table.accountName}) > 0 AND length(${table.accountNumberHash}) > 0`),
+    check("intermediary_bank_accounts_identity_check", sql`length(btrim(${table.bankName})) > 0 AND length(btrim(${table.accountName})) > 0 AND length(btrim(${table.accountNumberHash})) > 0`),
     foreignKey({ name: "intermediary_bank_accounts_tenant_intermediary_fk", columns: [table.tenantId, table.intermediaryId], foreignColumns: [intermediaries.tenantId, intermediaries.id] }),
     foreignKey({ name: "intermediary_bank_accounts_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
     foreignKey({ name: "intermediary_bank_accounts_tenant_updated_by_fk", columns: [table.tenantId, table.updatedByUserId], foreignColumns: [users.tenantId, users.id] }),
@@ -1370,6 +1370,7 @@ export const loanIntermediaryAssignments = pgTable("loan_intermediary_assignment
     index("loan_intermediary_assignments_tenant_intermediary_status_idx").on(table.tenantId, table.intermediaryId, table.status),
     check("loan_intermediary_assignments_role_check", sql`${table.role} IN ('disbursement', 'collection', 'both')`),
     check("loan_intermediary_assignments_status_check", sql`${table.status} IN ('active', 'ended')`),
+    check("loan_intermediary_assignments_idempotency_key_check", sql`length(btrim(${table.idempotencyKey})) > 0`),
     check("loan_intermediary_assignments_date_order_check", sql`${table.effectiveTo} IS NULL OR ${table.effectiveTo} > ${table.effectiveFrom}`),
     check("loan_intermediary_assignments_lifecycle_check", sql`(${table.status} = 'active' AND ${table.effectiveTo} IS NULL) OR (${table.status} = 'ended' AND ${table.effectiveTo} IS NOT NULL)`),
     foreignKey({ name: "loan_intermediary_assignments_tenant_loan_fk", columns: [table.tenantId, table.loanId], foreignColumns: [loans.tenantId, loans.id] }),
@@ -1425,6 +1426,18 @@ export const intermediatedDisbursementGroups = pgTable("intermediated_disburseme
         AND scale(${table.expectedAdvanceInterestReturnAmount}) <= 2
         AND scale(${table.retainedBalanceAmount}) <= 2
     `),
+    check("intermediated_disbursement_groups_money_finite_check", sql`
+        ${table.expectedFundingAmount} NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
+        AND ${table.expectedBorrowerPayoutAmount} NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
+        AND ${table.expectedAdvanceInterestReturnAmount} NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
+        AND ${table.retainedBalanceAmount} NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
+    `),
+    check("intermediated_disbursement_groups_command_keys_check", sql`
+        length(btrim(${table.idempotencyKey})) > 0
+        AND (${table.postIdempotencyKey} IS NULL OR length(btrim(${table.postIdempotencyKey})) > 0)
+        AND (${table.reversalIdempotencyKey} IS NULL OR length(btrim(${table.reversalIdempotencyKey})) > 0)
+        AND (${table.reversalRequestHash} IS NULL OR length(btrim(${table.reversalRequestHash})) > 0)
+    `),
     check("intermediated_disbursement_groups_expected_balance_check", sql`
         ${table.expectedFundingAmount} = ${table.expectedBorrowerPayoutAmount}
             + ${table.expectedAdvanceInterestReturnAmount} + ${table.retainedBalanceAmount}
@@ -1437,8 +1450,9 @@ export const intermediatedDisbursementGroups = pgTable("intermediated_disburseme
             AND ${table.postedAt} IS NOT NULL AND ${table.reversedAt} IS NULL)
         OR (${table.status} = 'reversed'
             AND ${table.reversedGroupId} IS NOT NULL AND ${table.postedAt} IS NOT NULL AND ${table.reversedAt} IS NOT NULL
-            AND ${table.reversalIdempotencyKey} IS NOT NULL AND length(${table.reversalRequestHash}) > 0
-            AND length(${table.reversalReason}) > 0)
+            AND ${table.reversalIdempotencyKey} IS NOT NULL
+            AND ${table.reversalRequestHash} IS NOT NULL AND length(btrim(${table.reversalRequestHash})) > 0
+            AND ${table.reversalReason} IS NOT NULL AND length(btrim(${table.reversalReason})) > 0)
     `),
     foreignKey({ name: "intermediated_disbursement_groups_tenant_loan_fk", columns: [table.tenantId, table.loanId], foreignColumns: [loans.tenantId, loans.id] }),
     foreignKey({ name: "intermediated_disbursement_groups_tenant_intermediary_fk", columns: [table.tenantId, table.intermediaryId], foreignColumns: [intermediaries.tenantId, intermediaries.id] }),
@@ -1485,6 +1499,11 @@ export const intermediatedTransferEvents = pgTable("intermediated_transfer_event
     check("intermediated_transfer_events_status_check", sql`${table.status} IN ('draft', 'ready', 'posted', 'reversed')`),
     check("intermediated_transfer_events_money_check", sql`${table.amount} >= 0`),
     check("intermediated_transfer_events_money_scale_check", sql`scale(${table.amount}) <= 2`),
+    check("intermediated_transfer_events_money_finite_check", sql`${table.amount} NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)`),
+    check("intermediated_transfer_events_command_keys_check", sql`
+        length(btrim(${table.idempotencyKey})) > 0
+        AND (${table.bankReferenceHash} IS NULL OR length(btrim(${table.bankReferenceHash})) > 0)
+    `),
     check("intermediated_transfer_events_lifecycle_check", sql`
         (${table.status} IN ('draft', 'ready')
             AND ${table.reversedEventId} IS NULL AND ${table.postedAt} IS NULL AND ${table.reversedAt} IS NULL)
@@ -1492,7 +1511,7 @@ export const intermediatedTransferEvents = pgTable("intermediated_transfer_event
             AND ${table.reversedEventId} IS NULL AND ${table.postedAt} IS NOT NULL AND ${table.reversedAt} IS NULL)
         OR (${table.status} = 'reversed'
             AND ${table.reversedEventId} IS NOT NULL AND ${table.postedAt} IS NOT NULL AND ${table.reversedAt} IS NOT NULL
-            AND length(${table.reversalReason}) > 0)
+            AND ${table.reversalReason} IS NOT NULL AND length(btrim(${table.reversalReason})) > 0)
     `),
     foreignKey({ name: "intermediated_transfer_events_tenant_group_fk", columns: [table.tenantId, table.groupId], foreignColumns: [intermediatedDisbursementGroups.tenantId, intermediatedDisbursementGroups.id] }),
     foreignKey({ name: "intermediated_transfer_events_tenant_bank_account_fk", columns: [table.tenantId, table.intermediaryBankAccountId], foreignColumns: [intermediaryBankAccounts.tenantId, intermediaryBankAccounts.id] }),
@@ -1522,7 +1541,7 @@ export const intermediatedTransferEvidenceIntents = pgTable("intermediated_trans
     uniqueIndex("intermediated_transfer_evidence_intents_tenant_hash_unique").on(table.tenantId, table.evidenceHash),
     uniqueIndex("intermediated_transfer_evidence_intents_tenant_file_unique").on(table.tenantId, table.fileId),
     check("intermediated_transfer_evidence_intents_status_check", sql`${table.status} IN ('pending', 'ready')`),
-    check("intermediated_transfer_evidence_intents_metadata_check", sql`length(${table.evidenceHash}) > 0 AND length(${table.mimeType}) > 0 AND ${table.declaredSize} > 0`),
+    check("intermediated_transfer_evidence_intents_metadata_check", sql`length(btrim(${table.evidenceHash})) > 0 AND length(btrim(${table.mimeType})) > 0 AND ${table.declaredSize} > 0`),
     check("intermediated_transfer_evidence_intents_lifecycle_check", sql`
         (${table.status} = 'pending' AND ${table.finalizedAt} IS NULL)
         OR (${table.status} = 'ready' AND ${table.finalizedAt} IS NOT NULL)
@@ -1588,6 +1607,16 @@ export const intermediatedDisbursementGroupPreviews = pgTable("intermediated_dis
         AND scale(${table.expectedAdvanceInterestReturnAmount}) <= 2 AND scale(${table.actualAdvanceInterestReturnAmount}) <= 2
         AND scale(${table.retainedBalanceAmount}) <= 2 AND scale(${table.varianceAmount}) <= 2
     `),
+    check("intermediated_disbursement_group_previews_money_finite_check", sql`
+        ${table.expectedFundingAmount} NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
+        AND ${table.actualFundingAmount} NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
+        AND ${table.expectedBorrowerPayoutAmount} NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
+        AND ${table.actualBorrowerPayoutAmount} NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
+        AND ${table.expectedAdvanceInterestReturnAmount} NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
+        AND ${table.actualAdvanceInterestReturnAmount} NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
+        AND ${table.retainedBalanceAmount} NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
+        AND ${table.varianceAmount} NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
+    `),
     check("intermediated_disbursement_group_previews_expected_balance_check", sql`
         ${table.expectedFundingAmount} = ${table.expectedBorrowerPayoutAmount}
             + ${table.expectedAdvanceInterestReturnAmount} + ${table.retainedBalanceAmount}
@@ -1596,7 +1625,7 @@ export const intermediatedDisbursementGroupPreviews = pgTable("intermediated_dis
         ${table.varianceAmount} = ${table.actualFundingAmount} - ${table.actualBorrowerPayoutAmount}
             - ${table.actualAdvanceInterestReturnAmount} - ${table.retainedBalanceAmount}
     `),
-    check("intermediated_disbursement_group_previews_hash_check", sql`length(${table.previewHash}) > 0`),
+    check("intermediated_disbursement_group_previews_hash_check", sql`length(btrim(${table.previewHash})) > 0`),
     check("intermediated_disbursement_group_previews_expiry_check", sql`${table.expiresAt} > ${table.createdAt}`),
     check("intermediated_disbursement_group_previews_ready_check", sql`
         ${table.status} <> 'ready' OR (${table.varianceAmount} = 0 AND ${table.evidenceReady})
