@@ -5,11 +5,13 @@ import { db } from "../db";
 import {
     auditLogs,
     borrowers,
+    loanInterestAccruals,
     loanInterestRatePeriods,
     loans,
     transactions,
     users,
 } from "../db/schema";
+import { loansRoute } from "./loans";
 import { loanSettlementRoutes } from "./loan-settlement-routes";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
@@ -180,6 +182,63 @@ describe("loan settlement REST adapter", () => {
             requestId: "route-settlement-request",
             correlationId: "route-settlement-correlation",
         })]);
+    });
+
+    // Break caught: listing a paid floating loan tries to materialize more interest and fails the entire read.
+    integrationTest("lists a settled floating loan with settled payment health without new financial records", async () => {
+        const seeded = await seedRouteLoan();
+        const token = await authToken(seeded.actor);
+        const app = new Elysia().use(loanSettlementRoutes).use(loansRoute);
+        const preview = await jsonRequest(app, "/loan-settlements/preview", token, {
+            method: "POST",
+            body: JSON.stringify({ loanPublicId: seeded.loan.publicId, asOfDate: "2026-08-15" }),
+        });
+        const executed = await jsonRequest(
+            app,
+            `/loan-settlements/${preview.body.publicId}/execute`,
+            token,
+            {
+                method: "POST",
+                headers: { "idempotency-key": "route-settlement-list-health" },
+                body: JSON.stringify({
+                    previewHash: preview.body.previewHash,
+                    confirmed: true,
+                    reason: "Verify settled loan health reads",
+                }),
+            },
+        );
+        expect(executed.response.status, executed.text).toBe(200);
+        const accrualsBefore = await db.select().from(loanInterestAccruals)
+            .where(eq(loanInterestAccruals.loanId, seeded.loan.id))
+            .orderBy(loanInterestAccruals.id);
+        const transactionsBefore = await db.select().from(transactions)
+            .where(eq(transactions.loanId, seeded.loan.id))
+            .orderBy(transactions.id);
+
+        const listedResponse = await app.handle(new Request("http://localhost/loans", {
+            headers: { authorization: `Bearer ${token}` },
+        }));
+
+        expect(listedResponse.status).toBe(200);
+        expect(await listedResponse.json()).toEqual([
+            expect.objectContaining({
+                publicId: seeded.loan.publicId,
+                status: "paid",
+                paymentHealth: {
+                    status: "settled",
+                    dueTodayAmount: "0.00",
+                    overdueAmount: "0.00",
+                    overdueItemCount: 0,
+                    maxOverdueDays: 0,
+                },
+            }),
+        ]);
+        expect(await db.select().from(loanInterestAccruals)
+            .where(eq(loanInterestAccruals.loanId, seeded.loan.id))
+            .orderBy(loanInterestAccruals.id)).toEqual(accrualsBefore);
+        expect(await db.select().from(transactions)
+            .where(eq(transactions.loanId, seeded.loan.id))
+            .orderBy(transactions.id)).toEqual(transactionsBefore);
     });
 
     // Break caught: extra or malformed fields reach a destructive settlement command despite a closed public contract.

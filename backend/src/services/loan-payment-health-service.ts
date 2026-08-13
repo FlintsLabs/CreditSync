@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "../db";
-import { loanSchedules, loans } from "../db/schema";
+import { loanInterestAccruals, loanSchedules, loans } from "../db/schema";
 import { computeLoanPaymentHealth, type LoanPaymentHealth } from "../lib/loan-payment-health";
 import type { CommandContext } from "./command-context";
 import { accrueFloatingInterestThrough } from "./floating-interest-service";
@@ -24,7 +24,12 @@ export async function getLoanPaymentHealth(
     const businessDate = bangkokBusinessDate(input.asOf);
 
     if (loan.repaymentType === "floating") {
-        const rows = await accrueFloatingInterestThrough(executor, loan, input.asOf, input.context);
+        const rows = loan.status === "active"
+            ? await accrueFloatingInterestThrough(executor, loan, input.asOf, input.context)
+            : await executor.select().from(loanInterestAccruals).where(and(
+                eq(loanInterestAccruals.tenantId, loan.tenantId),
+                eq(loanInterestAccruals.loanId, loan.id),
+            ));
         return computeLoanPaymentHealth({
             lifecycleStatus: loan.status ?? "draft",
             repaymentType: loan.repaymentType,
