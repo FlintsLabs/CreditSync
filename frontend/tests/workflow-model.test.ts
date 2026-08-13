@@ -80,6 +80,13 @@ describe("workflow view models", () => {
         expect(isPositiveMoney("0.00")).toBe(false);
     });
 
+    test("rejects transient and non-decimal money grammar without coercion", () => {
+        for (const invalid of ["", "1.234", "1e3", "NaN", "Infinity"]) {
+            expect(() => sumMoney([invalid]), invalid).toThrow("Money must have at most two decimal places");
+            expect(() => formatMoneyExact(invalid, "en"), invalid).toThrow("Money must have at most two decimal places");
+        }
+    });
+
     test("builds all explicit allocation rows and preserves their exact amounts", () => {
         const allocations = toExplicitAllocations([
             { id: "row-a", borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: "", amount: "10.10" },

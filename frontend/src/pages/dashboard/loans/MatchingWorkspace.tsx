@@ -91,6 +91,15 @@ function formatCurrency(value: string, locale: string) {
     return formatMoneyExact(value, locale);
 }
 
+function moneyInputOrZero(value: string | undefined) {
+    if (!value?.trim()) return "0.00";
+    try {
+        return normalizeMoney(value);
+    } catch {
+        return "0.00";
+    }
+}
+
 export default function MatchingWorkspace() {
     const { t, i18n } = useTranslation();
     const [loading, setLoading] = useState(true);
@@ -185,7 +194,7 @@ export default function MatchingWorkspace() {
     const selectedLoan = loans.find((loan) => loan.id === selectedLoanId) ?? null;
     const selectedLoanPrincipal = selectedLoan?.principal ?? "0.00";
     const selectedLoanFundedAmount = selectedLoan?.fundedAmount ?? "0.00";
-    const pendingAllocationTotal = sumMoney(Object.values(draftAllocations).map((value) => value || "0"));
+    const pendingAllocationTotal = sumMoney(Object.values(draftAllocations).map(moneyInputOrZero));
     const selectedLoanGap = selectedLoan?.remainingGap ?? remainingMoney(selectedLoanPrincipal, [selectedLoanFundedAmount]);
     const remainingFundingGap = remainingMoney(selectedLoanGap, [pendingAllocationTotal]);
 
@@ -245,12 +254,16 @@ export default function MatchingWorkspace() {
             return;
         }
 
-        const entries = Object.entries(draftAllocations)
-            .filter(([, value]) => value.trim() && isPositiveMoney(value))
-            .map(([bankLoanPublicId, value]) => ({ bankLoanPublicId, amount: normalizeMoney(value) }));
-
-        if (entries.length === 0) {
-            setErrorMessage(t("matching.errors.enterAllocation", "Enter at least one allocation amount."));
+        let entries: Array<{ bankLoanPublicId: string; amount: string }>;
+        try {
+            entries = Object.entries(draftAllocations)
+                .filter(([, value]) => value.trim())
+                .map(([bankLoanPublicId, value]) => ({ bankLoanPublicId, amount: normalizeMoney(value) }));
+            if (entries.length === 0 || entries.some((entry) => !isPositiveMoney(entry.amount))) {
+                throw new Error("Invalid allocation amount");
+            }
+        } catch {
+            setErrorMessage(t("matching.errors.invalidAllocation", "Enter allocation amounts with at most two decimal places."));
             return;
         }
 
@@ -591,7 +604,7 @@ export default function MatchingWorkspace() {
                                 drawdowns.map((drawdown) => {
                                     const amount = drawdown.amount;
                                     const allocatedAmount = drawdown.allocatedAmount ?? "0.00";
-                                    const draftAmount = draftAllocations[drawdown.id] || "0";
+                                    const draftAmount = moneyInputOrZero(draftAllocations[drawdown.id]);
                                     const available = drawdown.remainingCapacity ?? remainingMoney(amount, [allocatedAmount]);
                                     const availableAfterDraft = remainingMoney(available, [draftAmount]);
                                     return (

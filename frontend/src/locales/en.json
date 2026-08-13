@@ -597,6 +597,7 @@
             "loadHistory": "Unable to load allocation history right now.",
             "selectLoanFirst": "Please select a borrower loan first.",
             "enterAllocation": "Enter at least one allocation amount.",
+            "invalidAllocation": "Enter allocation amounts with at most two decimal places.",
             "saveAllocations": "Unable to save allocations right now.",
             "completeReallocation": "Please complete source, target, and amount for reallocation.",
             "reallocate": "Unable to reallocate funding right now."

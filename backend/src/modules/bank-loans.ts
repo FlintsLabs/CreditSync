@@ -21,6 +21,7 @@ import { deriveProfitabilityMetrics, getBankLoanSettlementSummary } from "../lib
 import { computeOverdueSnapshot } from "../lib/overdue";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
 import { findBankLoanByPublicId, findBankLoanScheduleByPublicId, findBankProfileByPublicId } from "../lib/public-id";
+import { serializeMoney } from "../lib/money";
 
 export const bankLoansRoute = new Elysia({ prefix: "/bank-loans" })
     .use(authPlugin)
@@ -264,23 +265,24 @@ export const bankLoansRoute = new Elysia({ prefix: "/bank-loans" })
                         eq(loanFundingAllocations.tenantId, user.tenantId),
                         eq(loanFundingAllocations.bankLoanId, bankLoanId),
                     )
-                ).then((rows) => Number(rows[0]?.totalAllocated ?? 0));
+                ).then((rows) => new Decimal(rows[0]?.totalAllocated ?? "0"));
 
-                const drawdownAmount = Number(bankLoan.amount ?? 0);
-                const remainingCapacity = Math.max(0, drawdownAmount - netAllocated);
-                const overallocatedAmount = Math.max(0, netAllocated - drawdownAmount);
+                const drawdownAmount = new Decimal(bankLoan.amount ?? "0");
+                const zero = new Decimal("0");
+                const remainingCapacity = Decimal.max(zero, drawdownAmount.minus(netAllocated));
+                const overallocatedAmount = Decimal.max(zero, netAllocated.minus(drawdownAmount));
                 const state =
-                    netAllocated <= 0 ? "unallocated" :
-                    overallocatedAmount > 0 ? "overallocated" :
-                    remainingCapacity <= 0.0001 ? "fully_allocated" :
+                    netAllocated.lte(0) ? "unallocated" :
+                    overallocatedAmount.gt(0) ? "overallocated" :
+                    remainingCapacity.isZero() ? "fully_allocated" :
                     "partially_allocated";
 
                 return {
                     bankLoanId,
-                    drawdownAmount: Number(drawdownAmount.toFixed(2)),
-                    netAllocatedPrincipal: Number(netAllocated.toFixed(2)),
-                    remainingCapacity: Number(remainingCapacity.toFixed(2)),
-                    overallocatedAmount: Number(overallocatedAmount.toFixed(2)),
+                    drawdownAmount: serializeMoney(drawdownAmount),
+                    netAllocatedPrincipal: serializeMoney(netAllocated),
+                    remainingCapacity: serializeMoney(remainingCapacity),
+                    overallocatedAmount: serializeMoney(overallocatedAmount),
                     state,
                 };
             },

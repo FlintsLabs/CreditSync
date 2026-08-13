@@ -1,3 +1,4 @@
+import Decimal from "decimal.js";
 import { normalizeMoney, type PaymentAllocationInput } from "./workflow-api";
 
 export interface LoanTermsForm {
@@ -73,72 +74,76 @@ export function buildLoanTermsInput(form: LoanTermsForm) {
     return terms;
 }
 
-function moneyParts(value: string) {
-    const match = value.trim().match(/^(-?)(\d+)(?:\.(\d{1,2}))?$/);
-    if (!match) throw new Error("Money must have at most two decimal places");
-    const cents = BigInt(match[2]!) * 100n + BigInt((match[3] ?? "").padEnd(2, "0"));
-    return match[1] ? -cents : cents;
+function moneyValue(value: string) {
+    const normalized = value.trim();
+    if (!/^-?\d+(?:\.\d{1,2})?$/.test(normalized)) {
+        throw new Error("Money must have at most two decimal places");
+    }
+    const money = new Decimal(normalized);
+    if (!money.isFinite()) throw new Error("Money must be finite");
+    return money;
 }
 
-function centsToMoney(value: bigint) {
-    const negative = value < 0n;
-    const absolute = negative ? -value : value;
-    return `${negative ? "-" : ""}${absolute / 100n}.${(absolute % 100n).toString().padStart(2, "0")}`;
+function moneyToString(value: Decimal) {
+    return value.isZero() ? "0.00" : value.toFixed(2);
+}
+
+function groupWholeNumber(value: string, locale: string) {
+    const group = new Intl.NumberFormat(locale).formatToParts(1000)
+        .find((part) => part.type === "group")?.value ?? ",";
+    return value.replace(/\B(?=(\d{3})+(?!\d))/g, group);
 }
 
 export function sumMoney(values: string[]) {
-    return centsToMoney(values.reduce((total, value) => total + moneyParts(value), 0n));
+    return moneyToString(values.reduce((total, value) => total.plus(moneyValue(value)), new Decimal("0")));
 }
 
 export function moneyDifference(next: string, previous: string) {
-    return centsToMoney(moneyParts(next) - moneyParts(previous));
+    return moneyToString(moneyValue(next).minus(moneyValue(previous)));
 }
 
 export function remainingMoney(balance: string, deductions: string[]) {
-    const remaining = deductions.reduce((total, value) => total - moneyParts(value), moneyParts(balance));
-    return centsToMoney(remaining < 0n ? 0n : remaining);
+    const remaining = deductions.reduce((total, value) => total.minus(moneyValue(value)), moneyValue(balance));
+    return moneyToString(Decimal.max(new Decimal("0"), remaining));
 }
 
 export function absoluteMoney(value: string) {
-    const cents = moneyParts(value);
-    return centsToMoney(cents < 0n ? -cents : cents);
+    return moneyToString(moneyValue(value).abs());
 }
 
 export function isNegativeMoney(value: string) {
-    return moneyParts(value) < 0n;
+    const money = moneyValue(value);
+    return money.isNegative() && !money.isZero();
 }
 
 export function isPositiveMoney(value: string) {
-    return moneyParts(value) > 0n;
+    const money = moneyValue(value);
+    return money.isPositive() && !money.isZero();
 }
 
 export function formatDecimalExact(value: string, locale: string) {
-    const cents = moneyParts(value);
-    const negative = cents < 0n;
-    const absolute = negative ? -cents : cents;
-    const whole = absolute / 100n;
-    const fraction = (absolute % 100n).toString().padStart(2, "0");
+    const money = moneyValue(value);
+    const negative = money.isNegative() && !money.isZero();
+    const [whole, fraction] = money.abs().toFixed(2).split(".") as [string, string];
     const parts = new Intl.NumberFormat(locale, {
         minimumFractionDigits: 2, maximumFractionDigits: 2,
     }).formatToParts(negative ? -0 : 0);
     return parts.map((part) => {
-        if (part.type === "integer") return whole.toLocaleString(locale);
+        if (part.type === "integer") return groupWholeNumber(whole, locale);
         if (part.type === "fraction") return fraction;
         return part.value;
     }).join("");
 }
 
 export function formatMoneyExact(value: string, locale: string, currency = "THB") {
-    const cents = moneyParts(value);
-    const negative = cents < 0n;
-    const absolute = negative ? -cents : cents;
-    const whole = absolute / 100n;
-    const fraction = (absolute % 100n).toString().padStart(2, "0");
+    const money = moneyValue(value);
+    const negative = money.isNegative() && !money.isZero();
+    const [whole, fraction] = money.abs().toFixed(2).split(".") as [string, string];
     const parts = new Intl.NumberFormat(locale, {
         style: "currency", currency, minimumFractionDigits: 2, maximumFractionDigits: 2,
     }).formatToParts(negative ? -0 : 0);
     return parts.map((part) => {
-        if (part.type === "integer") return whole.toLocaleString(locale);
+        if (part.type === "integer") return groupWholeNumber(whole, locale);
         if (part.type === "fraction") return fraction;
         return part.value;
     }).join("");
