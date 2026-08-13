@@ -70,7 +70,9 @@ export function computeLoanPaymentHealth(input: LoanPaymentHealthInput): LoanPay
         for (const accrual of input.accruals) {
             if (["reversed", "paid", "accruing"].includes(accrual.status)) continue;
             const unpaid = Decimal.max(new Decimal(accrual.interestAmount).minus(accrual.paidAmount), 0);
-            const dueDate = accrual.periodEndDate ?? accrual.accrualDate;
+            const dueDate = ["accrued", "partial"].includes(accrual.status)
+                ? accrual.accrualDate
+                : accrual.periodEndDate ?? accrual.accrualDate;
             if (unpaid.isZero() || dueDate > input.businessDate) continue;
             payableByDueDate.set(dueDate, (payableByDueDate.get(dueDate) ?? zero()).plus(unpaid));
         }

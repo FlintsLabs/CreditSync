@@ -23,8 +23,9 @@ const loanTermsBody = t.Object({
 }, { additionalProperties: t.Never() });
 
 export const loanContractRoutes = new Elysia().use(authPlugin)
-    .get("/", async ({ user, query, set }) => {
+    .get("/", async ({ user, query, request, set }) => {
         if (!user) return loanUnauthorized(set);
+        const ctx = loanCommandContext(user, request);
 
         const conditions = loanAccessFilters(user);
         if (query.borrowerId) {
@@ -63,7 +64,7 @@ export const loanContractRoutes = new Elysia().use(authPlugin)
                     installmentAmount: loan.installmentAmount === null ? null : serializeMoney(loan.installmentAmount),
                     totalInstallments: loan.totalInstallments,
                     startDate: loan.startDate,
-                    paymentHealth: await getLoanPaymentHealth(db, loan, { asOf, actorUserId: user.id }),
+                    paymentHealth: await getLoanPaymentHealth(db, loan, { asOf, context: ctx }),
                 })));
             },
         });

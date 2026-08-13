@@ -1,15 +1,16 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, loanInterestAccruals, loanInterestRatePeriods, loans, users } from "../db/schema";
-import { accrueFloatingInterestThrough, floatingInterestDue } from "./floating-interest-service";
+import { auditLogs, borrowers, loanInterestAccruals, loanInterestRatePeriods, loans, transactions, users } from "../db/schema";
+import type { CommandContext } from "./command-context";
+import { accrueFloatingInterestThrough, correctFloatingInterestAccruals, floatingInterestDue } from "./floating-interest-service";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
 
 async function resetTables() {
     await db.execute(sql`SET client_min_messages TO WARNING`);
-    await db.execute(sql`TRUNCATE TABLE transactions, loan_interest_accruals, loan_interest_rate_periods, loans, borrowers, users RESTART IDENTITY CASCADE`);
+    await db.execute(sql`TRUNCATE TABLE audit_logs, loan_adjustments, transactions, loan_interest_accruals, loan_interest_rate_periods, loans, borrowers, users RESTART IDENTITY CASCADE`);
 }
 
 async function seedWeeklyLoan(tenantId: string) {
@@ -51,6 +52,17 @@ function bangkokNoon(date: string) {
     return new Date(`${date}T12:00:00+07:00`);
 }
 
+function context(actor: { id: number; tenantId: string }, idempotencyKey: string = crypto.randomUUID()): CommandContext {
+    return {
+        tenantId: actor.tenantId,
+        actorUserId: actor.id,
+        actorSource: "web",
+        requestId: `req-${actor.tenantId}`,
+        correlationId: `corr-${actor.tenantId}`,
+        idempotencyKey,
+    };
+}
+
 describe("floating interest accrual service", () => {
     if (integrationEnabled) beforeEach(resetTables);
 
@@ -70,7 +82,7 @@ describe("floating interest accrual service", () => {
         });
 
         for (const date of ["2026-08-13", "2026-08-14", "2026-08-15", "2026-08-16", "2026-08-17", "2026-08-18", "2026-08-19"]) {
-            expect((await floatingInterestDue(db, loan, bangkokNoon(date), actor.id)).toFixed(2)).toBe("0.00");
+            expect((await floatingInterestDue(db, loan, bangkokNoon(date), context(actor))).toFixed(2)).toBe("0.00");
         }
 
         const beforePromotion = await db.select().from(loanInterestAccruals)
@@ -101,7 +113,27 @@ describe("floating interest accrual service", () => {
             paidAmount: row.paidAmount,
         }));
 
-        expect((await floatingInterestDue(db, loan, bangkokNoon("2026-08-20"), actor.id)).toFixed(2)).toBe("600.00");
+        expect((await floatingInterestDue(db, loan, new Date("2026-08-19T16:59:59.999Z"), context(actor))).toFixed(2)).toBe("0.00");
+        expect((await floatingInterestDue(db, loan, new Date("2026-08-19T17:00:00.000Z"), context(actor))).toFixed(2)).toBe("600.00");
+
+        const promotionAudit = (await db.select().from(auditLogs).where(eq(
+            auditLogs.action,
+            "floating_interest_accruals_materialized",
+        ))).find((row) => (row.payload as { promotedAccrualPublicIds?: string[] }).promotedAccrualPublicIds?.length === 7);
+        expect(promotionAudit).toMatchObject({
+            actorUserId: actor.id,
+            actorSource: "web",
+            requestId: `req-${actor.tenantId}`,
+            correlationId: `corr-${actor.tenantId}`,
+            entityId: loan.publicId,
+        });
+        expect(promotionAudit?.payload).toMatchObject({
+            throughDate: "2026-08-20",
+            promotedAccrualPublicIds: expect.arrayContaining(beforePromotion.map((row) => row.publicId)),
+        });
+
+        // Persisted promotion is not permission to allocate the period before its boundary.
+        expect((await floatingInterestDue(db, loan, bangkokNoon("2026-08-15"), context(actor))).toFixed(2)).toBe("0.00");
 
         const afterPromotion = await db.select().from(loanInterestAccruals)
             .where(and(eq(loanInterestAccruals.tenantId, loan.tenantId), eq(loanInterestAccruals.loanId, loan.id)))
@@ -152,7 +184,7 @@ describe("floating interest accrual service", () => {
             },
         ]).returning();
 
-        await accrueFloatingInterestThrough(db, loan, bangkokNoon("2026-08-17"), actor.id);
+        await accrueFloatingInterestThrough(db, loan, bangkokNoon("2026-08-17"), context(actor));
 
         expect(await db.select({
             accrualDate: loanInterestAccruals.accrualDate,
@@ -168,5 +200,128 @@ describe("floating interest accrual service", () => {
             { accrualDate: "2026-08-16", interestRatePeriodId: periods[1]!.id, rate: "10.0000", interestAmount: "71.43", cumulativeInterestAmount: "328.57", contractualInterestAmount: "500.00" },
             { accrualDate: "2026-08-17", interestRatePeriodId: periods[1]!.id, rate: "10.0000", interestAmount: "71.43", cumulativeInterestAmount: "400.00", contractualInterestAmount: "500.00" },
         ]);
+    });
+
+    // Break caught: weekly correction applies the weekly quote as a daily rate, removes snapshot metadata, or erases an original payment before its later reversal date.
+    integrationTest("corrects weekly snapshots with signed transaction history effective on each Bangkok date", async () => {
+        const { actor, loan } = await seedWeeklyLoan("tenant-weekly-correction");
+        const ratePeriod = await db.insert(loanInterestRatePeriods).values({
+            tenantId: loan.tenantId,
+            loanId: loan.id,
+            effectiveDate: "2026-08-13",
+            expiryDate: null,
+            rateType: "percent",
+            rate: "12.0000",
+            periodUnit: "week",
+            periodLength: 1,
+            createdByUserId: actor.id,
+        }).returning().then((rows) => rows[0]!);
+        await accrueFloatingInterestThrough(db, loan, bangkokNoon("2026-08-20"), context(actor));
+        const original = await db.insert(transactions).values({
+            tenantId: loan.tenantId,
+            ownerUserId: actor.id,
+            loanId: loan.id,
+            amount: "1000.00",
+            principalComponent: "1000.00",
+            interestComponent: "0.00",
+            feeComponent: "0.00",
+            penaltyComponent: "0.00",
+            type: "repayment",
+            transactionDate: new Date("2026-08-15T12:00:00+07:00"),
+            recordedByUserId: actor.id,
+            entryType: "repayment",
+            idempotencyKey: "weekly-correction-original",
+            postedAt: new Date("2026-08-20T12:00:00+07:00"),
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(transactions).values({
+            tenantId: loan.tenantId,
+            ownerUserId: actor.id,
+            loanId: loan.id,
+            amount: "-1000.00",
+            principalComponent: "-1000.00",
+            interestComponent: "0.00",
+            feeComponent: "0.00",
+            penaltyComponent: "0.00",
+            type: "reversal",
+            transactionDate: new Date("2026-08-18T12:00:00+07:00"),
+            recordedByUserId: actor.id,
+            entryType: "reversal",
+            reversedTransactionId: original.id,
+            idempotencyKey: "weekly-correction-reversal",
+            postedAt: new Date("2026-08-20T12:00:00+07:00"),
+        });
+
+        await correctFloatingInterestAccruals(
+            context(actor, "weekly-correction-1"),
+            loan.publicId,
+            ["2026-08-16", "2026-08-17", "2026-08-18", "2026-08-19"],
+            "Apply signed historical principal timeline",
+        );
+
+        const active = await db.select({
+            accrualDate: loanInterestAccruals.accrualDate,
+            openingPrincipal: loanInterestAccruals.openingPrincipal,
+            interestRatePeriodId: loanInterestAccruals.interestRatePeriodId,
+            periodStartDate: loanInterestAccruals.periodStartDate,
+            periodEndDate: loanInterestAccruals.periodEndDate,
+            periodDayIndex: loanInterestAccruals.periodDayIndex,
+            interestAmount: loanInterestAccruals.interestAmount,
+            cumulativeInterestAmount: loanInterestAccruals.cumulativeInterestAmount,
+            status: loanInterestAccruals.status,
+            reversedAccrualId: loanInterestAccruals.reversedAccrualId,
+        }).from(loanInterestAccruals).where(and(
+            eq(loanInterestAccruals.loanId, loan.id),
+            sql`${loanInterestAccruals.status} <> 'reversed'`,
+        )).orderBy(loanInterestAccruals.accrualDate);
+        expect(active.slice(3, 7)).toEqual([
+            { accrualDate: "2026-08-16", openingPrincipal: "4000.00", interestRatePeriodId: ratePeriod.id, periodStartDate: "2026-08-13", periodEndDate: "2026-08-20", periodDayIndex: 4, interestAmount: "68.57", cumulativeInterestAmount: "325.71", status: "due", reversedAccrualId: expect.any(Number) },
+            { accrualDate: "2026-08-17", openingPrincipal: "4000.00", interestRatePeriodId: ratePeriod.id, periodStartDate: "2026-08-13", periodEndDate: "2026-08-20", periodDayIndex: 5, interestAmount: "68.57", cumulativeInterestAmount: "394.28", status: "due", reversedAccrualId: expect.any(Number) },
+            { accrualDate: "2026-08-18", openingPrincipal: "4000.00", interestRatePeriodId: ratePeriod.id, periodStartDate: "2026-08-13", periodEndDate: "2026-08-20", periodDayIndex: 6, interestAmount: "68.57", cumulativeInterestAmount: "462.85", status: "due", reversedAccrualId: expect.any(Number) },
+            { accrualDate: "2026-08-19", openingPrincipal: "5000.00", interestRatePeriodId: ratePeriod.id, periodStartDate: "2026-08-13", periodEndDate: "2026-08-20", periodDayIndex: 7, interestAmount: "85.71", cumulativeInterestAmount: "548.56", status: "due", reversedAccrualId: expect.any(Number) },
+        ]);
+        expect((await floatingInterestDue(db, loan, bangkokNoon("2026-08-20"), context(actor))).toFixed(2)).toBe("548.56");
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, loan.id) })).toMatchObject({ outstandingInterest: "548.56" });
+    });
+
+    // Break caught: standalone promotion commits row states before its contextual audit write and loses request/correlation provenance.
+    integrationTest("rolls back a standalone period promotion when its contextual audit cannot be written", async () => {
+        const { actor, loan } = await seedWeeklyLoan("tenant-weekly-atomic-promotion");
+        const ratePeriod = await db.insert(loanInterestRatePeriods).values({
+            tenantId: loan.tenantId, loanId: loan.id, effectiveDate: "2026-08-13", expiryDate: null,
+            rateType: "percent", rate: "12.0000", periodUnit: "week", periodLength: 1, createdByUserId: actor.id,
+        }).returning().then((rows) => rows[0]!);
+        const increments = ["85.71", "85.72", "85.71", "85.72", "85.71", "85.72", "85.71", "85.71"];
+        const cumulative = ["85.71", "171.43", "257.14", "342.86", "428.57", "514.29", "600.00", "85.71"];
+        await db.insert(loanInterestAccruals).values(increments.map((interestAmount, index) => ({
+            tenantId: loan.tenantId,
+            loanId: loan.id,
+            interestRatePeriodId: ratePeriod.id,
+            accrualDate: `2026-08-${String(13 + index).padStart(2, "0")}`,
+            openingPrincipal: "5000.00",
+            rateMode: "percent",
+            rate: "12.0000",
+            interestAmount,
+            periodStartDate: index < 7 ? "2026-08-13" : "2026-08-20",
+            periodEndDate: index < 7 ? "2026-08-20" : "2026-08-27",
+            periodDayIndex: index < 7 ? index + 1 : 1,
+            periodUnit: "week",
+            periodLength: 1,
+            contractualInterestAmount: "600.00",
+            cumulativeInterestAmount: cumulative[index]!,
+            dailyIncrementAmount: interestAmount,
+            status: "accruing",
+            createdByUserId: actor.id,
+        })));
+        const invalidContext = { ...context(actor), actorUserId: 2_147_483_647 };
+        const contextualAccrue = accrueFloatingInterestThrough as unknown as (
+            executor: typeof db,
+            selectedLoan: typeof loan,
+            through: Date,
+            ctx: CommandContext,
+        ) => Promise<unknown>;
+
+        await expect(contextualAccrue(db, loan, bangkokNoon("2026-08-20"), invalidContext)).rejects.toBeDefined();
+        expect((await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id))).every((row) => row.status === "accruing")).toBe(true);
+        expect(await db.select().from(auditLogs)).toHaveLength(0);
     });
 });

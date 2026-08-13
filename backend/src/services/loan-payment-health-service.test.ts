@@ -4,6 +4,7 @@ import { Elysia } from "elysia";
 import { db } from "../db";
 import { borrowers, loanInterestAccruals, loanInterestRatePeriods, loanSchedules, loans, users } from "../db/schema";
 import { loansRoute } from "../modules/loans";
+import type { CommandContext } from "./command-context";
 import { getLoanPaymentHealth } from "./loan-payment-health-service";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
@@ -18,6 +19,16 @@ async function seedActorAndBorrower(tenantId: string) {
     const actor = await db.insert(users).values({ tenantId, email: `${tenantId}@payment-health.test`, role: "owner" }).returning().then((rows) => rows[0]!);
     const borrower = await db.insert(borrowers).values({ tenantId, ownerUserId: actor.id, name: `${tenantId} Borrower` }).returning().then((rows) => rows[0]!);
     return { actor, borrower };
+}
+
+function context(actor: { id: number; tenantId: string }): CommandContext {
+    return {
+        tenantId: actor.tenantId,
+        actorUserId: actor.id,
+        actorSource: "web",
+        requestId: `req-${actor.tenantId}`,
+        correlationId: `corr-${actor.tenantId}`,
+    };
 }
 
 async function authToken(user: { id: number; email: string; role: string | null; tenantId: string }) {
@@ -56,7 +67,7 @@ describe("loan payment-health service", () => {
         ]);
 
         expect(await getLoanPaymentHealth(db, loan, {
-            asOf: new Date("2026-08-11T12:00:00+07:00"), actorUserId: actor.id,
+            asOf: new Date("2026-08-11T12:00:00+07:00"), context: context(actor),
         })).toEqual({
             status: "overdue", dueTodayAmount: "50.10", overdueAmount: "125.25",
             overdueItemCount: 1, maxOverdueDays: 1,
@@ -83,7 +94,7 @@ describe("loan payment-health service", () => {
             interestAmount: "15.00", paidAmount: "7.50", status: "accrued", createdByUserId: actor.id,
         });
 
-        const input = { asOf: new Date("2026-08-11T12:00:00+07:00"), actorUserId: actor.id };
+        const input = { asOf: new Date("2026-08-11T12:00:00+07:00"), context: context(actor) };
         const first = await getLoanPaymentHealth(db, loan, input);
         const second = await getLoanPaymentHealth(db, loan, input);
 
@@ -112,7 +123,7 @@ describe("loan payment-health service", () => {
             { tenantId: "tenant-a", loanId: loan.id, effectiveDate: "2026-09-01", expiryDate: null, rateType: "per_thousand", rate: "18.0000", createdByUserId: actor.id },
         ]).returning();
 
-        await getLoanPaymentHealth(db, loan, { asOf: new Date("2026-09-02T12:00:00+07:00"), actorUserId: actor.id });
+        await getLoanPaymentHealth(db, loan, { asOf: new Date("2026-09-02T12:00:00+07:00"), context: context(actor) });
 
         expect(await db.select({
             accrualDate: loanInterestAccruals.accrualDate,
@@ -143,19 +154,19 @@ describe("loan payment-health service", () => {
         });
 
         expect(await getLoanPaymentHealth(db, loan, {
-            asOf: new Date("2026-08-18T12:00:00+07:00"), actorUserId: actor.id,
+            asOf: new Date("2026-08-18T12:00:00+07:00"), context: context(actor),
         })).toEqual({
             status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00",
             overdueItemCount: 0, maxOverdueDays: 0,
         });
         expect(await getLoanPaymentHealth(db, loan, {
-            asOf: new Date("2026-08-20T12:00:00+07:00"), actorUserId: actor.id,
+            asOf: new Date("2026-08-20T12:00:00+07:00"), context: context(actor),
         })).toEqual({
             status: "due_today", dueTodayAmount: "600.00", overdueAmount: "0.00",
             overdueItemCount: 0, maxOverdueDays: 0,
         });
         expect(await getLoanPaymentHealth(db, loan, {
-            asOf: new Date("2026-08-21T12:00:00+07:00"), actorUserId: actor.id,
+            asOf: new Date("2026-08-21T12:00:00+07:00"), context: context(actor),
         })).toEqual({
             status: "overdue", dueTodayAmount: "0.00", overdueAmount: "600.00",
             overdueItemCount: 1, maxOverdueDays: 1,
@@ -172,7 +183,7 @@ describe("loan payment-health service", () => {
         }).returning().then((rows) => rows[0]!);
 
         expect(await getLoanPaymentHealth(db, loan, {
-            asOf: new Date("2026-08-11T12:00:00+07:00"), actorUserId: actor.id,
+            asOf: new Date("2026-08-11T12:00:00+07:00"), context: context(actor),
         })).toEqual({
             status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00",
             overdueItemCount: 0, maxOverdueDays: 0,

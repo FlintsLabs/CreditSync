@@ -55,7 +55,14 @@ describe("dashboard borrower health projection", () => {
         });
 
         const rows = await getDashboardBorrowerHealth(db, {
-            tenantId, actorUserId: actor.id, asOf: new Date("2026-08-11T12:00:00+07:00"),
+            context: {
+                tenantId,
+                actorUserId: actor.id,
+                actorSource: "web",
+                requestId: "req-dashboard-health",
+                correlationId: "corr-dashboard-health",
+            },
+            asOf: new Date("2026-08-11T12:00:00+07:00"),
         });
         const floating = rows.find((row) => row.loanId === floatingLoan.id);
 

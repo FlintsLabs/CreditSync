@@ -9,6 +9,7 @@ import { computeOverdueSnapshot } from "../lib/overdue";
 import { withTenantCache } from "../lib/cache";
 import { aggregateDashboardMoney, compareDashboardMoneyDescending, isPositiveDashboardMoney, positiveDashboardDifference, serializeDashboardProfitability, subtractDashboardMoney, sumDashboardMoney, sumDashboardPayableHealth } from "../lib/dashboard-money";
 import { getDashboardBorrowerHealth } from "../services/dashboard-borrower-health-service";
+import { loanCommandContext } from "./loan-http-support";
 
 function todayString() {
     return new Date().toISOString().slice(0, 10);
@@ -16,7 +17,7 @@ function todayString() {
 
 export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
     .use(authPlugin)
-    .get("/summary", async ({ user, set }) => {
+    .get("/summary", async ({ user, request, set }) => {
         if (!isTenantAdminUser(user)) {
             set.status = user ? 403 : 401;
             return { error: user ? "Forbidden" : "Unauthorized" };
@@ -31,7 +32,7 @@ export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
                 const today = todayString();
 
                 const [borrowerHealth, fundScheduleRows, allLoans, allDrawdowns, allocations] = await Promise.all([
-            getDashboardBorrowerHealth(db, { tenantId: user.tenantId, actorUserId: user.id, asOf: new Date() }),
+            getDashboardBorrowerHealth(db, { context: loanCommandContext(user, request), asOf: new Date() }),
             db.select().from(bankLoanSchedules).where(eq(bankLoanSchedules.tenantId, user.tenantId)),
             db.select().from(loans).where(eq(loans.tenantId, user.tenantId)),
             db.select().from(bankLoans).where(eq(bankLoans.tenantId, user.tenantId)),
@@ -84,7 +85,7 @@ export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
             },
         });
     })
-    .get("/borrower-due-queue", async ({ user, set }) => {
+    .get("/borrower-due-queue", async ({ user, request, set }) => {
         if (!isTenantAdminUser(user)) {
             set.status = user ? 403 : 401;
             return { error: user ? "Forbidden" : "Unauthorized" };
@@ -116,7 +117,7 @@ export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
             .leftJoin(loans, eq(loanSchedules.loanId, loans.id))
             .leftJoin(borrowers, eq(loans.borrowerId, borrowers.id))
             .where(and(eq(loanSchedules.tenantId, user.tenantId), eq(loans.tenantId, user.tenantId))),
-            getDashboardBorrowerHealth(db, { tenantId: user.tenantId, actorUserId: user.id, asOf: new Date() }),
+            getDashboardBorrowerHealth(db, { context: loanCommandContext(user, request), asOf: new Date() }),
         ]);
 
                 const scheduledRows = rows

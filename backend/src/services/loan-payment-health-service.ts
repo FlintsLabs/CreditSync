@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "../db";
 import { loanSchedules, loans } from "../db/schema";
 import { computeLoanPaymentHealth, type LoanPaymentHealth } from "../lib/loan-payment-health";
+import type { CommandContext } from "./command-context";
 import { accrueFloatingInterestThrough } from "./floating-interest-service";
 
 export function bangkokBusinessDate(value: Date) {
@@ -18,12 +19,12 @@ export function bangkokBusinessDate(value: Date) {
 export async function getLoanPaymentHealth(
     executor: typeof db,
     loan: typeof loans.$inferSelect,
-    input: { asOf: Date; actorUserId: number },
+    input: { asOf: Date; context: CommandContext },
 ): Promise<LoanPaymentHealth> {
     const businessDate = bangkokBusinessDate(input.asOf);
 
     if (loan.repaymentType === "floating") {
-        const rows = await accrueFloatingInterestThrough(executor, loan, input.asOf, input.actorUserId);
+        const rows = await accrueFloatingInterestThrough(executor, loan, input.asOf, input.context);
         return computeLoanPaymentHealth({
             lifecycleStatus: loan.status ?? "draft",
             repaymentType: loan.repaymentType,

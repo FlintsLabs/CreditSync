@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import Decimal from "decimal.js";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
@@ -36,7 +36,7 @@ import {
     reviewPaymentIntake,
     type EvidenceStorageGateway,
 } from "./payment-service";
-import { accrueFloatingInterestThrough, correctFloatingInterestAccruals } from "./floating-interest-service";
+import { accrueFloatingInterestThrough, correctFloatingInterestAccruals, floatingInterestDue } from "./floating-interest-service";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
@@ -166,6 +166,7 @@ describe("payment application service", () => {
     });
 
     if (integrationEnabled) beforeEach(resetApplicationTables);
+    afterEach(() => setSystemTime());
 
     // Break caught: a zero-valued legacy accrual silently makes a floating payment reduce principal despite a positive daily rate.
     integrationTest("blocks floating allocation when an active accrual has an impossible zero principal", async () => {
@@ -234,6 +235,7 @@ describe("payment application service", () => {
     integrationTest("allocates a day-three weekly payment entirely to principal and changes interest only from day four", async () => {
         const actor = await seedUser("tenant-floating-weekly-payment");
         const seeded = await seedWeeklyFloatingLoan(actor);
+        await accrueFloatingInterestThrough(db, seeded.loan, new Date("2026-08-16T05:00:00.000Z"), context(actor));
         const intake = await createPaymentIntake(context(actor), {
             amount: "1000.00",
             receivedAt: "2026-08-15T05:00:00.000Z",
@@ -251,20 +253,139 @@ describe("payment application service", () => {
         ]);
 
         const refreshedLoan = (await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) }))!;
-        await accrueFloatingInterestThrough(db, refreshedLoan, new Date("2026-08-16T05:00:00.000Z"), actor.id);
+        await accrueFloatingInterestThrough(db, refreshedLoan, new Date("2026-08-16T05:00:00.000Z"), context(actor));
         expect(await db.select({
             accrualDate: loanInterestAccruals.accrualDate,
             openingPrincipal: loanInterestAccruals.openingPrincipal,
             interestAmount: loanInterestAccruals.interestAmount,
             cumulativeInterestAmount: loanInterestAccruals.cumulativeInterestAmount,
             status: loanInterestAccruals.status,
-        }).from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, seeded.loan.id)).orderBy(loanInterestAccruals.accrualDate)).toEqual([
-            { accrualDate: "2026-08-13", openingPrincipal: "5000.00", interestAmount: "85.71", cumulativeInterestAmount: "85.71", status: "accruing" },
-            { accrualDate: "2026-08-14", openingPrincipal: "5000.00", interestAmount: "85.72", cumulativeInterestAmount: "171.43", status: "accruing" },
-            { accrualDate: "2026-08-15", openingPrincipal: "5000.00", interestAmount: "85.71", cumulativeInterestAmount: "257.14", status: "accruing" },
-            { accrualDate: "2026-08-16", openingPrincipal: "4000.00", interestAmount: "68.57", cumulativeInterestAmount: "325.71", status: "accruing" },
+            sourceTransactionId: loanInterestAccruals.sourceTransactionId,
+            reversedAccrualId: loanInterestAccruals.reversedAccrualId,
+        }).from(loanInterestAccruals).where(and(
+            eq(loanInterestAccruals.loanId, seeded.loan.id),
+            sql`${loanInterestAccruals.status} <> 'reversed'`,
+        )).orderBy(loanInterestAccruals.accrualDate)).toEqual([
+            { accrualDate: "2026-08-13", openingPrincipal: "5000.00", interestAmount: "85.71", cumulativeInterestAmount: "85.71", status: "accruing", sourceTransactionId: null, reversedAccrualId: null },
+            { accrualDate: "2026-08-14", openingPrincipal: "5000.00", interestAmount: "85.72", cumulativeInterestAmount: "171.43", status: "accruing", sourceTransactionId: null, reversedAccrualId: null },
+            { accrualDate: "2026-08-15", openingPrincipal: "5000.00", interestAmount: "85.71", cumulativeInterestAmount: "257.14", status: "accruing", sourceTransactionId: null, reversedAccrualId: null },
+            { accrualDate: "2026-08-16", openingPrincipal: "4000.00", interestAmount: "68.57", cumulativeInterestAmount: "325.71", status: "accruing", sourceTransactionId: expect.any(Number), reversedAccrualId: expect.any(Number) },
         ]);
+        expect(await db.select().from(loanInterestAccruals).where(and(
+            eq(loanInterestAccruals.loanId, seeded.loan.id),
+            eq(loanInterestAccruals.accrualDate, "2026-08-16"),
+        ))).toHaveLength(2);
         expect(refreshedLoan).toMatchObject({ outstandingPrincipal: "4000.00", outstandingInterest: "0.00" });
+    });
+
+    // Break caught: persisted due status from a later read makes a backdated payment consume interest before the weekly boundary.
+    integrationTest("keeps a backdated pre-boundary payment on principal after the weekly period was promoted", async () => {
+        setSystemTime(new Date("2026-08-18T12:00:00+07:00"));
+        const actor = await seedUser("tenant-floating-weekly-backdated");
+        const seeded = await seedWeeklyFloatingLoan(actor);
+        await accrueFloatingInterestThrough(db, seeded.loan, new Date("2026-08-20T12:00:00+07:00"), context(actor));
+        const intake = await createPaymentIntake(context(actor), {
+            amount: "1000.00",
+            receivedAt: "2026-08-15T12:00:00+07:00",
+        });
+        const preview = await previewPaymentMatch(context(actor), intake.publicId, {
+            allocations: [{ borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "1000.00" }],
+        });
+        const posted = await postPayment(context(actor), intake.publicId, { proposalPublicId: preview.publicId });
+
+        expect(posted.transactions).toEqual([
+            expect.objectContaining({ interestComponent: "0.00", principalComponent: "1000.00" }),
+        ]);
+        const postedTransaction = await db.query.transactions.findFirst({
+            where: eq(transactions.publicId, posted.transactions[0]!.publicId),
+        });
+        const active = await db.select().from(loanInterestAccruals).where(and(
+            eq(loanInterestAccruals.loanId, seeded.loan.id),
+            sql`${loanInterestAccruals.status} <> 'reversed'`,
+        )).orderBy(loanInterestAccruals.accrualDate);
+        expect(active.slice(0, 7).reduce((sum, row) => sum.plus(row.interestAmount), new Decimal(0)).toFixed(2)).toBe("531.43");
+        expect(active.slice(3).every((row) => row.openingPrincipal === "4000.00")).toBe(true);
+        expect(active.slice(3).every((row) => row.reversedAccrualId !== null && row.sourceTransactionId === postedTransaction!.id)).toBe(true);
+        expect((await floatingInterestDue(db, seeded.loan, new Date("2026-08-20T12:00:00+07:00"), context(actor))).toFixed(2)).toBe("531.43");
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({
+            outstandingPrincipal: "4000.00",
+            outstandingInterest: "531.43",
+        });
+
+        await reversePayment(context(actor), intake.publicId, { reason: "Reverse the backdated principal payment" });
+
+        const restored = await db.select().from(loanInterestAccruals).where(and(
+            eq(loanInterestAccruals.loanId, seeded.loan.id),
+            sql`${loanInterestAccruals.status} <> 'reversed'`,
+        )).orderBy(loanInterestAccruals.accrualDate);
+        expect(restored.map((row) => ({
+            accrualDate: row.accrualDate,
+            openingPrincipal: row.openingPrincipal,
+        }))).toEqual([
+            { accrualDate: "2026-08-13", openingPrincipal: "5000.00" },
+            { accrualDate: "2026-08-14", openingPrincipal: "5000.00" },
+            { accrualDate: "2026-08-15", openingPrincipal: "5000.00" },
+            { accrualDate: "2026-08-16", openingPrincipal: "4000.00" },
+            { accrualDate: "2026-08-17", openingPrincipal: "4000.00" },
+            { accrualDate: "2026-08-18", openingPrincipal: "4000.00" },
+            { accrualDate: "2026-08-19", openingPrincipal: "5000.00" },
+            { accrualDate: "2026-08-20", openingPrincipal: "5000.00" },
+        ]);
+        expect((await floatingInterestDue(db, seeded.loan, new Date("2026-08-20T12:00:00+07:00"), context(actor))).toFixed(2)).toBe("548.56");
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({
+            outstandingPrincipal: "5000.00",
+            outstandingInterest: "548.56",
+        });
+    });
+
+    // Break caught: a partial weekly payment or its reversal loses row-level paid state and exact period remainder.
+    integrationTest("restores exact weekly due rows after reversing a partial interest payment", async () => {
+        setSystemTime(new Date("2026-08-21T12:00:00+07:00"));
+        const actor = await seedUser("tenant-floating-weekly-partial-reversal");
+        const seeded = await seedWeeklyFloatingLoan(actor);
+        await accrueFloatingInterestThrough(db, seeded.loan, new Date("2026-08-20T12:00:00+07:00"), context(actor));
+        const intake = await createPaymentIntake(context(actor), {
+            amount: "100.00",
+            receivedAt: "2026-08-20T12:00:00+07:00",
+        });
+        const preview = await previewPaymentMatch(context(actor), intake.publicId, {
+            allocations: [{ borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "100.00" }],
+        });
+        const posted = await postPayment(context(actor), intake.publicId, { proposalPublicId: preview.publicId });
+
+        expect(posted.transactions).toEqual([
+            expect.objectContaining({ interestComponent: "100.00", principalComponent: "0.00" }),
+        ]);
+        const paidRows = await db.select().from(loanInterestAccruals).where(and(
+            eq(loanInterestAccruals.loanId, seeded.loan.id),
+            sql`${loanInterestAccruals.paidAmount} > 0`,
+        )).orderBy(loanInterestAccruals.accrualDate);
+        expect(paidRows.map((row) => ({ paidAmount: row.paidAmount, status: row.status }))).toEqual([
+            { paidAmount: "85.71", status: "paid" },
+            { paidAmount: "14.29", status: "partially_paid" },
+        ]);
+        expect((await floatingInterestDue(db, seeded.loan, new Date("2026-08-20T12:00:00+07:00"), context(actor))).toFixed(2)).toBe("500.00");
+
+        await reversePayment(context(actor), intake.publicId, { reason: "Undo partial weekly interest payment" });
+
+        const restored = await db.select().from(loanInterestAccruals).where(and(
+            eq(loanInterestAccruals.loanId, seeded.loan.id),
+            sql`${loanInterestAccruals.status} <> 'reversed'`,
+        )).orderBy(loanInterestAccruals.accrualDate);
+        expect(restored.slice(0, 7).map((row) => ({
+            accrualDate: row.accrualDate,
+            paidAmount: new Decimal(row.paidAmount).toFixed(2),
+            status: row.status,
+        }))).toEqual([
+            { accrualDate: "2026-08-13", paidAmount: "0.00", status: "due" },
+            { accrualDate: "2026-08-14", paidAmount: "0.00", status: "due" },
+            { accrualDate: "2026-08-15", paidAmount: "0.00", status: "due" },
+            { accrualDate: "2026-08-16", paidAmount: "0.00", status: "due" },
+            { accrualDate: "2026-08-17", paidAmount: "0.00", status: "due" },
+            { accrualDate: "2026-08-18", paidAmount: "0.00", status: "due" },
+            { accrualDate: "2026-08-19", paidAmount: "0.00", status: "due" },
+        ]);
+        expect((await floatingInterestDue(db, seeded.loan, new Date("2026-08-21T12:00:00+07:00"), context(actor))).toFixed(2)).toBe("600.00");
     });
 
     // Break caught: data-only intake is rejected, money is coerced through Number, or a retry creates a second row.

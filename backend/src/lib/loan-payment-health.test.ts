@@ -102,6 +102,29 @@ describe("computeLoanPaymentHealth", () => {
         });
     });
 
+    // Break caught: legacy daily rows backfilled with period metadata move their payable date one day later.
+    test("uses the accrual date for legacy accrued rows even when backfill added a period end", () => {
+        expect(computeLoanPaymentHealth({
+            ...base,
+            repaymentType: "floating",
+            businessDate: "2026-08-11",
+            schedules: [],
+            accruals: [{
+                accrualDate: "2026-08-11",
+                periodEndDate: "2026-08-12",
+                interestAmount: "15.00",
+                paidAmount: "0.00",
+                status: "accrued",
+            }],
+        })).toEqual({
+            status: "due_today",
+            dueTodayAmount: "15.00",
+            overdueAmount: "0.00",
+            overdueItemCount: 0,
+            maxOverdueDays: 0,
+        });
+    });
+
     // Break caught: seven daily snapshots for one weekly obligation are counted as seven overdue items or become due before the weekly boundary.
     test("groups a completed weekly period at its due boundary and skips the current accruing period", () => {
         const weekly = { ...base, repaymentType: "floating", schedules: [] };
