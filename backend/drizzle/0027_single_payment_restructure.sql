@@ -105,7 +105,10 @@ CREATE TABLE "loan_restructures" (
     "created_at" timestamp with time zone DEFAULT now() NOT NULL,
     "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT "loan_restructures_status_check" CHECK ("status" IN ('preview', 'executed', 'reversed', 'expired')),
-    CONSTRAINT "loan_restructures_cash_direction_check" CHECK ("cash_direction" IN ('payout', 'collection', 'none')),
+    CONSTRAINT "loan_restructures_cash_direction_check" CHECK (
+        ("cash_direction" = 'none' AND "cash_amount" = 0)
+        OR ("cash_direction" IN ('payout', 'collection') AND "cash_amount" > 0)
+    ),
     CONSTRAINT "loan_restructures_actor_source_check" CHECK ("actor_source" IN ('web', 'mcp', 'system')),
     CONSTRAINT "loan_restructures_amounts_check" CHECK (
         "gross_principal" >= 0 AND "gross_interest" >= 0 AND "gross_fees" >= 0 AND "gross_penalty" >= 0 AND
@@ -131,17 +134,38 @@ CREATE TABLE "loan_restructures" (
         ("reversal_idempotency_key" IS NULL) = ("reversal_request_hash" IS NULL)
     ),
     CONSTRAINT "loan_restructures_lifecycle_check" CHECK (
-        ("status" IN ('preview', 'expired') AND "executed_at" IS NULL AND "reversed_at" IS NULL)
-        OR
-        ("status" = 'executed' AND "new_loan_id" IS NOT NULL AND
+        ("status" NOT IN ('executed', 'reversed') OR (
+            "new_loan_id" IS NOT NULL AND "old_loan_id" <> "new_loan_id" AND
             "execute_idempotency_key" IS NOT NULL AND "execute_request_hash" IS NOT NULL AND
-            "executed_at" IS NOT NULL AND "reversal_idempotency_key" IS NULL AND
-            "reversal_request_hash" IS NULL AND "reversed_at" IS NULL)
-        OR
-        ("status" = 'reversed' AND "new_loan_id" IS NOT NULL AND
-            "execute_idempotency_key" IS NOT NULL AND "execute_request_hash" IS NOT NULL AND
-            "executed_at" IS NOT NULL AND "reversal_idempotency_key" IS NOT NULL AND
-            "reversal_request_hash" IS NOT NULL AND "reversed_at" IS NOT NULL)
+            "executed_audit_public_id" IS NOT NULL AND "pre_execution_old_loan_state" IS NOT NULL AND
+            "executed_at" IS NOT NULL AND "created_by_user_id" IS NOT NULL AND "executed_by_user_id" IS NOT NULL
+        )) AND
+        ("status" <> 'executed' OR (
+            "reversal_idempotency_key" IS NULL AND "reversal_request_hash" IS NULL AND
+            "reversed_audit_public_id" IS NULL AND "reversed_at" IS NULL AND "reversed_by_user_id" IS NULL
+        )) AND
+        ("status" <> 'reversed' OR (
+            "reversal_idempotency_key" IS NOT NULL AND
+            "reversal_request_hash" IS NOT NULL AND "reversed_audit_public_id" IS NOT NULL AND
+            "reversed_at" IS NOT NULL AND "reversed_by_user_id" IS NOT NULL
+        )) AND
+        ("status" NOT IN ('preview', 'expired') OR (
+            "new_loan_id" IS NULL AND "execute_idempotency_key" IS NULL AND "execute_request_hash" IS NULL AND
+            "executed_audit_public_id" IS NULL AND "pre_execution_old_loan_state" IS NULL AND "executed_at" IS NULL AND
+            "executed_by_user_id" IS NULL AND "reversal_idempotency_key" IS NULL AND "reversal_request_hash" IS NULL AND
+            "reversed_audit_public_id" IS NULL AND "reversed_at" IS NULL AND "reversed_by_user_id" IS NULL
+        ))
+    )
+);--> statement-breakpoint
+
+ALTER TABLE "loan_restructures" ADD CONSTRAINT "loan_restructures_pre_execution_snapshot_check" CHECK (
+    "status" NOT IN ('executed', 'reversed') OR (
+        jsonb_typeof("pre_execution_old_loan_state") = 'object' AND
+        "pre_execution_old_loan_state" ->> 'status' IS NOT NULL AND
+        "pre_execution_old_loan_state" ->> 'outstandingPrincipal' IS NOT NULL AND
+        "pre_execution_old_loan_state" ->> 'outstandingInterest' IS NOT NULL AND
+        "pre_execution_old_loan_state" ->> 'outstandingFees' IS NOT NULL AND
+        jsonb_path_exists("pre_execution_old_loan_state", '$.nextDueDate')
     )
 );--> statement-breakpoint
 
@@ -195,13 +219,19 @@ CREATE TABLE "loan_restructure_waivers" (
     CONSTRAINT "loan_restructure_waivers_amount_check" CHECK ("amount" > 0 AND scale("amount") <= 2),
     CONSTRAINT "loan_restructure_waivers_actor_source_check" CHECK ("actor_source" IN ('web', 'mcp', 'system')),
     CONSTRAINT "loan_restructure_waivers_reversal_check" CHECK (
-        ("status" = 'executed' AND "reversed_waiver_id" IS NULL AND "reversal_idempotency_key" IS NULL AND "reversal_request_hash" IS NULL)
+        ("status" = 'executed' AND "audit_public_id" IS NOT NULL AND "created_by_user_id" IS NOT NULL AND
+            "reversed_waiver_id" IS NULL AND "reversal_idempotency_key" IS NULL AND "reversal_request_hash" IS NULL AND
+            "reversed_by_user_id" IS NULL AND "reversed_at" IS NULL)
         OR
-        ("status" = 'reversed' AND "reversed_waiver_id" IS NOT NULL AND "reversal_idempotency_key" IS NOT NULL AND "reversal_request_hash" IS NOT NULL)
+        ("status" = 'reversed' AND "audit_public_id" IS NOT NULL AND "created_by_user_id" IS NOT NULL AND
+            "reversed_waiver_id" IS NOT NULL AND "reversal_idempotency_key" IS NOT NULL AND "reversal_request_hash" IS NOT NULL AND
+            "reversed_by_user_id" IS NOT NULL AND "reversed_at" IS NOT NULL)
     )
 );--> statement-breakpoint
 
+CREATE UNIQUE INDEX "audit_logs_tenant_public_id_unique" ON "audit_logs" ("tenant_id", "public_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "loan_restructures_tenant_id_id_unique" ON "loan_restructures" ("tenant_id", "id");--> statement-breakpoint
+CREATE UNIQUE INDEX "loan_restructures_tenant_id_new_loan_unique" ON "loan_restructures" ("tenant_id", "id", "new_loan_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "loan_restructures_tenant_execute_key_unique" ON "loan_restructures" ("tenant_id", "execute_idempotency_key") WHERE "execute_idempotency_key" IS NOT NULL;--> statement-breakpoint
 CREATE UNIQUE INDEX "loan_restructures_tenant_reversal_key_unique" ON "loan_restructures" ("tenant_id", "reversal_idempotency_key") WHERE "reversal_idempotency_key" IS NOT NULL;--> statement-breakpoint
 CREATE INDEX "loan_restructures_tenant_old_loan_status_idx" ON "loan_restructures" ("tenant_id", "old_loan_id", "status");--> statement-breakpoint
@@ -219,7 +249,10 @@ ALTER TABLE "loan_restructures" ADD CONSTRAINT "loan_restructures_tenant_created
 ALTER TABLE "loan_restructures" ADD CONSTRAINT "loan_restructures_tenant_updated_by_fk" FOREIGN KEY ("tenant_id", "updated_by_user_id") REFERENCES "users"("tenant_id", "id");--> statement-breakpoint
 ALTER TABLE "loan_restructures" ADD CONSTRAINT "loan_restructures_tenant_executed_by_fk" FOREIGN KEY ("tenant_id", "executed_by_user_id") REFERENCES "users"("tenant_id", "id");--> statement-breakpoint
 ALTER TABLE "loan_restructures" ADD CONSTRAINT "loan_restructures_tenant_reversed_by_fk" FOREIGN KEY ("tenant_id", "reversed_by_user_id") REFERENCES "users"("tenant_id", "id");--> statement-breakpoint
+ALTER TABLE "loan_restructures" ADD CONSTRAINT "loan_restructures_tenant_executed_audit_fk" FOREIGN KEY ("tenant_id", "executed_audit_public_id") REFERENCES "audit_logs"("tenant_id", "public_id");--> statement-breakpoint
+ALTER TABLE "loan_restructures" ADD CONSTRAINT "loan_restructures_tenant_reversed_audit_fk" FOREIGN KEY ("tenant_id", "reversed_audit_public_id") REFERENCES "audit_logs"("tenant_id", "public_id");--> statement-breakpoint
 ALTER TABLE "loan_opening_balance_components" ADD CONSTRAINT "loan_opening_balance_components_tenant_restructure_fk" FOREIGN KEY ("tenant_id", "restructure_id") REFERENCES "loan_restructures"("tenant_id", "id");--> statement-breakpoint
+ALTER TABLE "loan_opening_balance_components" ADD CONSTRAINT "loan_opening_balance_components_tenant_replacement_fk" FOREIGN KEY ("tenant_id", "restructure_id", "loan_id") REFERENCES "loan_restructures"("tenant_id", "id", "new_loan_id");--> statement-breakpoint
 ALTER TABLE "loan_opening_balance_components" ADD CONSTRAINT "loan_opening_balance_components_tenant_loan_fk" FOREIGN KEY ("tenant_id", "loan_id") REFERENCES "loans"("tenant_id", "id");--> statement-breakpoint
 ALTER TABLE "loan_opening_balance_components" ADD CONSTRAINT "loan_opening_balance_components_tenant_created_by_fk" FOREIGN KEY ("tenant_id", "created_by_user_id") REFERENCES "users"("tenant_id", "id");--> statement-breakpoint
 ALTER TABLE "loan_restructure_waivers" ADD CONSTRAINT "loan_restructure_waivers_tenant_restructure_fk" FOREIGN KEY ("tenant_id", "restructure_id") REFERENCES "loan_restructures"("tenant_id", "id");--> statement-breakpoint
@@ -227,6 +260,103 @@ ALTER TABLE "loan_restructure_waivers" ADD CONSTRAINT "loan_restructure_waivers_
 ALTER TABLE "loan_restructure_waivers" ADD CONSTRAINT "loan_restructure_waivers_tenant_reversed_waiver_fk" FOREIGN KEY ("tenant_id", "reversed_waiver_id") REFERENCES "loan_restructure_waivers"("tenant_id", "id");--> statement-breakpoint
 ALTER TABLE "loan_restructure_waivers" ADD CONSTRAINT "loan_restructure_waivers_tenant_created_by_fk" FOREIGN KEY ("tenant_id", "created_by_user_id") REFERENCES "users"("tenant_id", "id");--> statement-breakpoint
 ALTER TABLE "loan_restructure_waivers" ADD CONSTRAINT "loan_restructure_waivers_tenant_reversed_by_fk" FOREIGN KEY ("tenant_id", "reversed_by_user_id") REFERENCES "users"("tenant_id", "id");--> statement-breakpoint
+ALTER TABLE "loan_restructure_waivers" ADD CONSTRAINT "loan_restructure_waivers_tenant_audit_fk" FOREIGN KEY ("tenant_id", "audit_public_id") REFERENCES "audit_logs"("tenant_id", "public_id");--> statement-breakpoint
+
+CREATE FUNCTION reject_activated_loan_contract_mutation() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF OLD."status" IS DISTINCT FROM 'draft' THEN
+        IF TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION 'activated loans are immutable; DELETE is not allowed';
+        END IF;
+        IF ROW(
+            OLD."borrower_id", OLD."bank_loan_id", OLD."funding_bank_profile_id",
+            OLD."daily_interest_mode", OLD."daily_interest_rate", OLD."first_day_treatment", OLD."interest_start_date",
+            OLD."daily_term_unit", OLD."daily_term_value", OLD."daily_entry_mode", OLD."daily_interest_input_mode",
+            OLD."daily_interest_input_value", OLD."daily_flat_rate_percent",
+            OLD."single_payment_due_date", OLD."single_payment_fixed_agreed_interest", OLD."single_payment_interest_policy",
+            OLD."single_payment_retroactive_rate_type", OLD."single_payment_retroactive_rate", OLD."floating_accrual_cycle",
+            OLD."single_payment_late_penalty_mode", OLD."single_payment_late_penalty_amount_per_day", OLD."single_payment_late_penalty_grace_days",
+            OLD."principal_amount", OLD."interest_rate", OLD."repayment_type", OLD."term_months", OLD."installment_amount",
+            OLD."total_installments", OLD."grace_period_days", OLD."late_fee_mode", OLD."late_fee_amount",
+            OLD."start_date", OLD."cloned_from_loan_id"
+        ) IS DISTINCT FROM ROW(
+            NEW."borrower_id", NEW."bank_loan_id", NEW."funding_bank_profile_id",
+            NEW."daily_interest_mode", NEW."daily_interest_rate", NEW."first_day_treatment", NEW."interest_start_date",
+            NEW."daily_term_unit", NEW."daily_term_value", NEW."daily_entry_mode", NEW."daily_interest_input_mode",
+            NEW."daily_interest_input_value", NEW."daily_flat_rate_percent",
+            NEW."single_payment_due_date", NEW."single_payment_fixed_agreed_interest", NEW."single_payment_interest_policy",
+            NEW."single_payment_retroactive_rate_type", NEW."single_payment_retroactive_rate", NEW."floating_accrual_cycle",
+            NEW."single_payment_late_penalty_mode", NEW."single_payment_late_penalty_amount_per_day", NEW."single_payment_late_penalty_grace_days",
+            NEW."principal_amount", NEW."interest_rate", NEW."repayment_type", NEW."term_months", NEW."installment_amount",
+            NEW."total_installments", NEW."grace_period_days", NEW."late_fee_mode", NEW."late_fee_amount",
+            NEW."start_date", NEW."cloned_from_loan_id"
+        ) THEN
+            RAISE EXCEPTION 'activated loan contractual terms are immutable';
+        END IF;
+    END IF;
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+END;
+$$;--> statement-breakpoint
+CREATE TRIGGER loans_activated_contract_immutable
+BEFORE UPDATE OR DELETE ON "loans"
+FOR EACH ROW EXECUTE FUNCTION reject_activated_loan_contract_mutation();--> statement-breakpoint
+
+CREATE FUNCTION reject_activated_loan_schedule_contract_mutation() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    loan_status text;
+BEGIN
+    SELECT "status" INTO loan_status
+    FROM "loans"
+    WHERE "tenant_id" = OLD."tenant_id" AND "id" = OLD."loan_id";
+
+    IF loan_status IS DISTINCT FROM 'draft' THEN
+        IF TG_OP = 'DELETE' THEN
+            RAISE EXCEPTION 'activated loan schedules are immutable; DELETE is not allowed';
+        END IF;
+        IF ROW(
+            OLD."tenant_id", OLD."loan_id", OLD."installment_no", OLD."due_date",
+            OLD."scheduled_principal", OLD."scheduled_interest", OLD."scheduled_fee", OLD."scheduled_total"
+        ) IS DISTINCT FROM ROW(
+            NEW."tenant_id", NEW."loan_id", NEW."installment_no", NEW."due_date",
+            NEW."scheduled_principal", NEW."scheduled_interest", NEW."scheduled_fee", NEW."scheduled_total"
+        ) THEN
+            RAISE EXCEPTION 'activated loan schedule contractual fields are immutable';
+        END IF;
+    END IF;
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+END;
+$$;--> statement-breakpoint
+CREATE TRIGGER loan_schedules_activated_contract_immutable
+BEFORE UPDATE OR DELETE ON "loan_schedules"
+FOR EACH ROW EXECUTE FUNCTION reject_activated_loan_schedule_contract_mutation();--> statement-breakpoint
+
+CREATE FUNCTION validate_loan_opening_balance_source() RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW."source_type" = 'loan' AND NOT EXISTS (
+        SELECT 1 FROM "loans" WHERE "tenant_id" = NEW."tenant_id" AND "public_id" = NEW."source_public_id"
+    ) THEN
+        RAISE EXCEPTION USING ERRCODE = '23503', MESSAGE = 'loan opening balance source loan does not exist in tenant';
+    ELSIF NEW."source_type" = 'loan_restructure' AND NOT EXISTS (
+        SELECT 1 FROM "loan_restructures" WHERE "tenant_id" = NEW."tenant_id" AND "public_id" = NEW."source_public_id"
+    ) THEN
+        RAISE EXCEPTION USING ERRCODE = '23503', MESSAGE = 'loan opening balance source restructure does not exist in tenant';
+    ELSIF NEW."source_type" = 'loan_restructure_waiver' AND NOT EXISTS (
+        SELECT 1 FROM "loan_restructure_waivers" WHERE "tenant_id" = NEW."tenant_id" AND "public_id" = NEW."source_public_id"
+    ) THEN
+        RAISE EXCEPTION USING ERRCODE = '23503', MESSAGE = 'loan opening balance source waiver does not exist in tenant';
+    END IF;
+    RETURN NEW;
+END;
+$$;--> statement-breakpoint
+CREATE TRIGGER loan_opening_balance_components_source_valid
+BEFORE INSERT ON "loan_opening_balance_components"
+FOR EACH ROW EXECUTE FUNCTION validate_loan_opening_balance_source();--> statement-breakpoint
 
 CREATE FUNCTION reject_immutable_loan_restructure_mutation() RETURNS trigger
 LANGUAGE plpgsql

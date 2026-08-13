@@ -62,3 +62,37 @@ Observed: migrations applied successfully; `6 pass, 0 fail`. The integration tes
 - The migration number differs from the original plan only because `0023`-`0026` already exist in this branch; `0027` is the next journal index.
 - Task 3 must populate explicit `floatingAccrualCycle` for new floating loans and the normalized single-payment columns for new single-payment loans. The migration backfills only historical floating loans by design.
 - Task 4 remains responsible for transactional preview/execute/reverse orchestration and downstream reversal blockers; this task supplies durable constraints and immutability boundaries but does not implement services.
+
+## Review Fix Round 1
+
+Addressed every Critical/Important finding from `task-2-review.md`:
+
+- Added `loans` and `loan_schedules` triggers that freeze contractual fields after a loan leaves `draft`, while allowing operational loan balance/status/due-state changes and schedule paid/remaining/penalty/overdue/status changes. Activated and terminal loan deletion plus activated schedule deletion are rejected.
+- Closed restructure lifecycles: executed/reversed rows require distinct old/new loans, complete execution audit, actor, timestamp, and pre-execution balance snapshot data; reversed rows additionally require complete reversal audit, actor, timestamp, key, and hash data. Preview/expired rows forbid execution/reversal-only metadata.
+- Closed waiver lifecycles: every executed/reversed row requires a tenant-valid audit public ID, creator, and execution timestamp; executed rows forbid reversal metadata; compensating reversal rows require source waiver, reversal key/hash, reversal actor, and reversal timestamp.
+- Added tenant-composite audit public-ID foreign keys, a replacement consistency composite foreign key requiring each opening component's loan to equal the restructure's new loan, and `old_loan_id <> new_loan_id` enforcement for executed/reversed rows.
+- Added a polymorphic source validation trigger requiring `source_public_id` to exist in the row tenant and selected `source_type` table (`loans`, `loan_restructures`, or `loan_restructure_waivers`).
+- Coupled cash direction and amount: `none` requires exactly zero; `payout` and `collection` require a positive exact amount.
+- Replaced the original same-loan success fixture with distinct old/new loans and added positive operational-mutation/source/cash cases plus negative contract mutation, incomplete/contradictory lifecycle, cross-tenant/nonexistent source, wrong replacement, self-restructure, cross-tenant audit, and inconsistent cash cases.
+
+### Review RED
+
+Command:
+
+```text
+cd backend && ./scripts/test-disposable-postgres.sh src/db/single-payment-restructure-migration.test.ts
+```
+
+After correcting a test-only misuse of `expect(...).resolves` with the PostgreSQL PromiseLike, the feature RED completed normally with `5 pass, 1 fail`: an active single-payment due-date update returned no database error (`Received: "undefined"`) where the new test expected `contractual terms are immutable`. Subsequent focused REDs also exposed the missing lifecycle completeness constraint until the valid fixture supplied a real JSON object and complete audit/snapshot state.
+
+### Review GREEN
+
+Commands:
+
+```text
+cd backend && bun test src/db/single-payment-restructure-migration.test.ts src/db/agent-workflow-schema.test.ts
+cd backend && bun run typecheck
+cd backend && ./scripts/test-disposable-postgres.sh src/db/single-payment-restructure-migration.test.ts
+```
+
+Final results: focused static suite `11 pass, 1 skip, 0 fail`; TypeScript typecheck exited 0; disposable PostgreSQL migrations applied successfully and the database suite reported `6 pass, 0 fail` with `161 expect()` calls.

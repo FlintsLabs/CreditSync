@@ -568,6 +568,7 @@ export const auditLogs = pgTable("audit_logs", {
     payload: jsonb("payload"),
     createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
+    uniqueIndex("audit_logs_tenant_public_id_unique").on(table.tenantId, table.publicId),
     check("audit_logs_actor_source_check", sql`${table.actorSource} IN ('web', 'mcp', 'system')`),
 ]);
 
@@ -1038,7 +1039,13 @@ export const loanRestructures = pgTable("loan_restructures", {
     reversalRequestHash: text("reversal_request_hash"),
     executedAuditPublicId: uuid("executed_audit_public_id"),
     reversedAuditPublicId: uuid("reversed_audit_public_id"),
-    preExecutionOldLoanState: jsonb("pre_execution_old_loan_state").$type<Record<string, unknown>>(),
+    preExecutionOldLoanState: jsonb("pre_execution_old_loan_state").$type<{
+        status: string;
+        outstandingPrincipal: string;
+        outstandingInterest: string;
+        outstandingFees: string;
+        nextDueDate: string | null;
+    }>(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     executedAt: timestamp("executed_at", { withTimezone: true }),
     reversedAt: timestamp("reversed_at", { withTimezone: true }),
@@ -1050,6 +1057,7 @@ export const loanRestructures = pgTable("loan_restructures", {
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
     uniqueIndex("loan_restructures_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("loan_restructures_tenant_id_new_loan_unique").on(table.tenantId, table.id, table.newLoanId),
     uniqueIndex("loan_restructures_tenant_execute_key_unique")
         .on(table.tenantId, table.executeIdempotencyKey)
         .where(sql`${table.executeIdempotencyKey} IS NOT NULL`),
@@ -1058,7 +1066,10 @@ export const loanRestructures = pgTable("loan_restructures", {
         .where(sql`${table.reversalIdempotencyKey} IS NOT NULL`),
     index("loan_restructures_tenant_old_loan_status_idx").on(table.tenantId, table.oldLoanId, table.status),
     check("loan_restructures_status_check", sql`${table.status} IN ('preview', 'executed', 'reversed', 'expired')`),
-    check("loan_restructures_cash_direction_check", sql`${table.cashDirection} IN ('payout', 'collection', 'none')`),
+    check("loan_restructures_cash_direction_check", sql`
+        (${table.cashDirection} = 'none' AND ${table.cashAmount} = 0)
+        OR (${table.cashDirection} IN ('payout', 'collection') AND ${table.cashAmount} > 0)
+    `),
     check("loan_restructures_actor_source_check", sql`${table.actorSource} IN ('web', 'mcp', 'system')`),
     check("loan_restructures_amounts_check", sql`
         ${table.grossPrincipal} >= 0 AND ${table.grossInterest} >= 0 AND ${table.grossFees} >= 0 AND ${table.grossPenalty} >= 0 AND
@@ -1084,17 +1095,37 @@ export const loanRestructures = pgTable("loan_restructures", {
         (${table.reversalIdempotencyKey} IS NULL) = (${table.reversalRequestHash} IS NULL)
     `),
     check("loan_restructures_lifecycle_check", sql`
-        (${table.status} IN ('preview', 'expired') AND ${table.executedAt} IS NULL AND ${table.reversedAt} IS NULL)
-        OR
-        (${table.status} = 'executed' AND ${table.newLoanId} IS NOT NULL AND
+        (${table.status} NOT IN ('executed', 'reversed') OR (
+            ${table.newLoanId} IS NOT NULL AND ${table.oldLoanId} <> ${table.newLoanId} AND
             ${table.executeIdempotencyKey} IS NOT NULL AND ${table.executeRequestHash} IS NOT NULL AND
-            ${table.executedAt} IS NOT NULL AND ${table.reversalIdempotencyKey} IS NULL AND
-            ${table.reversalRequestHash} IS NULL AND ${table.reversedAt} IS NULL)
-        OR
-        (${table.status} = 'reversed' AND ${table.newLoanId} IS NOT NULL AND
-            ${table.executeIdempotencyKey} IS NOT NULL AND ${table.executeRequestHash} IS NOT NULL AND
-            ${table.executedAt} IS NOT NULL AND ${table.reversalIdempotencyKey} IS NOT NULL AND
-            ${table.reversalRequestHash} IS NOT NULL AND ${table.reversedAt} IS NOT NULL)
+            ${table.executedAuditPublicId} IS NOT NULL AND ${table.preExecutionOldLoanState} IS NOT NULL AND
+            ${table.executedAt} IS NOT NULL AND ${table.createdByUserId} IS NOT NULL AND ${table.executedByUserId} IS NOT NULL
+        )) AND
+        (${table.status} <> 'executed' OR (
+            ${table.reversalIdempotencyKey} IS NULL AND ${table.reversalRequestHash} IS NULL AND
+            ${table.reversedAuditPublicId} IS NULL AND ${table.reversedAt} IS NULL AND ${table.reversedByUserId} IS NULL
+        )) AND
+        (${table.status} <> 'reversed' OR (
+            ${table.reversalIdempotencyKey} IS NOT NULL AND
+            ${table.reversalRequestHash} IS NOT NULL AND ${table.reversedAuditPublicId} IS NOT NULL AND
+            ${table.reversedAt} IS NOT NULL AND ${table.reversedByUserId} IS NOT NULL
+        )) AND
+        (${table.status} NOT IN ('preview', 'expired') OR (
+            ${table.newLoanId} IS NULL AND ${table.executeIdempotencyKey} IS NULL AND ${table.executeRequestHash} IS NULL AND
+            ${table.executedAuditPublicId} IS NULL AND ${table.preExecutionOldLoanState} IS NULL AND ${table.executedAt} IS NULL AND
+            ${table.executedByUserId} IS NULL AND ${table.reversalIdempotencyKey} IS NULL AND ${table.reversalRequestHash} IS NULL AND
+            ${table.reversedAuditPublicId} IS NULL AND ${table.reversedAt} IS NULL AND ${table.reversedByUserId} IS NULL
+        ))
+    `),
+    check("loan_restructures_pre_execution_snapshot_check", sql`
+        ${table.status} NOT IN ('executed', 'reversed') OR (
+            jsonb_typeof(${table.preExecutionOldLoanState}) = 'object' AND
+            ${table.preExecutionOldLoanState} ->> 'status' IS NOT NULL AND
+            ${table.preExecutionOldLoanState} ->> 'outstandingPrincipal' IS NOT NULL AND
+            ${table.preExecutionOldLoanState} ->> 'outstandingInterest' IS NOT NULL AND
+            ${table.preExecutionOldLoanState} ->> 'outstandingFees' IS NOT NULL AND
+            jsonb_path_exists(${table.preExecutionOldLoanState}, '$.nextDueDate')
+        )
     `),
     foreignKey({ name: "loan_restructures_tenant_old_loan_fk", columns: [table.tenantId, table.oldLoanId], foreignColumns: [loans.tenantId, loans.id] }),
     foreignKey({ name: "loan_restructures_tenant_new_loan_fk", columns: [table.tenantId, table.newLoanId], foreignColumns: [loans.tenantId, loans.id] }),
@@ -1102,6 +1133,8 @@ export const loanRestructures = pgTable("loan_restructures", {
     foreignKey({ name: "loan_restructures_tenant_updated_by_fk", columns: [table.tenantId, table.updatedByUserId], foreignColumns: [users.tenantId, users.id] }),
     foreignKey({ name: "loan_restructures_tenant_executed_by_fk", columns: [table.tenantId, table.executedByUserId], foreignColumns: [users.tenantId, users.id] }),
     foreignKey({ name: "loan_restructures_tenant_reversed_by_fk", columns: [table.tenantId, table.reversedByUserId], foreignColumns: [users.tenantId, users.id] }),
+    foreignKey({ name: "loan_restructures_tenant_executed_audit_fk", columns: [table.tenantId, table.executedAuditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
+    foreignKey({ name: "loan_restructures_tenant_reversed_audit_fk", columns: [table.tenantId, table.reversedAuditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
 ]);
 
 export const loanOpeningBalanceComponents = pgTable("loan_opening_balance_components", {
@@ -1126,6 +1159,7 @@ export const loanOpeningBalanceComponents = pgTable("loan_opening_balance_compon
     check("loan_opening_balance_components_amount_check", sql`${table.amount} >= 0 AND scale(${table.amount}) <= 2`),
     check("loan_opening_balance_components_source_type_check", sql`${table.sourceType} IN ('loan', 'loan_restructure', 'loan_restructure_waiver')`),
     foreignKey({ name: "loan_opening_balance_components_tenant_restructure_fk", columns: [table.tenantId, table.restructureId], foreignColumns: [loanRestructures.tenantId, loanRestructures.id] }),
+    foreignKey({ name: "loan_opening_balance_components_tenant_replacement_fk", columns: [table.tenantId, table.restructureId, table.loanId], foreignColumns: [loanRestructures.tenantId, loanRestructures.id, loanRestructures.newLoanId] }),
     foreignKey({ name: "loan_opening_balance_components_tenant_loan_fk", columns: [table.tenantId, table.loanId], foreignColumns: [loans.tenantId, loans.id] }),
     foreignKey({ name: "loan_opening_balance_components_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
 ]);
@@ -1170,15 +1204,20 @@ export const loanRestructureWaivers = pgTable("loan_restructure_waivers", {
     check("loan_restructure_waivers_amount_check", sql`${table.amount} > 0 AND scale(${table.amount}) <= 2`),
     check("loan_restructure_waivers_actor_source_check", sql`${table.actorSource} IN ('web', 'mcp', 'system')`),
     check("loan_restructure_waivers_reversal_check", sql`
-        (${table.status} = 'executed' AND ${table.reversedWaiverId} IS NULL AND ${table.reversalIdempotencyKey} IS NULL AND ${table.reversalRequestHash} IS NULL)
+        (${table.status} = 'executed' AND ${table.auditPublicId} IS NOT NULL AND ${table.createdByUserId} IS NOT NULL AND
+            ${table.reversedWaiverId} IS NULL AND ${table.reversalIdempotencyKey} IS NULL AND ${table.reversalRequestHash} IS NULL AND
+            ${table.reversedByUserId} IS NULL AND ${table.reversedAt} IS NULL)
         OR
-        (${table.status} = 'reversed' AND ${table.reversedWaiverId} IS NOT NULL AND ${table.reversalIdempotencyKey} IS NOT NULL AND ${table.reversalRequestHash} IS NOT NULL)
+        (${table.status} = 'reversed' AND ${table.auditPublicId} IS NOT NULL AND ${table.createdByUserId} IS NOT NULL AND
+            ${table.reversedWaiverId} IS NOT NULL AND ${table.reversalIdempotencyKey} IS NOT NULL AND ${table.reversalRequestHash} IS NOT NULL AND
+            ${table.reversedByUserId} IS NOT NULL AND ${table.reversedAt} IS NOT NULL)
     `),
     foreignKey({ name: "loan_restructure_waivers_tenant_restructure_fk", columns: [table.tenantId, table.restructureId], foreignColumns: [loanRestructures.tenantId, loanRestructures.id] }),
     foreignKey({ name: "loan_restructure_waivers_tenant_loan_fk", columns: [table.tenantId, table.loanId], foreignColumns: [loans.tenantId, loans.id] }),
     foreignKey({ name: "loan_restructure_waivers_tenant_reversed_waiver_fk", columns: [table.tenantId, table.reversedWaiverId], foreignColumns: [table.tenantId, table.id] }),
     foreignKey({ name: "loan_restructure_waivers_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
     foreignKey({ name: "loan_restructure_waivers_tenant_reversed_by_fk", columns: [table.tenantId, table.reversedByUserId], foreignColumns: [users.tenantId, users.id] }),
+    foreignKey({ name: "loan_restructure_waivers_tenant_audit_fk", columns: [table.tenantId, table.auditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
 ]);
 
 export const loanAdjustments = pgTable("loan_adjustments", {

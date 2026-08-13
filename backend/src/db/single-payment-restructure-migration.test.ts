@@ -219,11 +219,103 @@ if (!testDatabaseUrl) {
                 FROM users JOIN borrowers USING (tenant_id) WHERE users.tenant_id IN ('tenant-a', 'tenant-b')
             `;
 
-            const tenantALoans = await sql<{ id: number }[]>`SELECT id FROM loans WHERE tenant_id = 'tenant-a' AND repayment_type = 'single_payment'`;
-            const tenantBLoans = await sql<{ id: number }[]>`SELECT id FROM loans WHERE tenant_id = 'tenant-b' AND repayment_type = 'single_payment'`;
+            await sql`
+                INSERT INTO loans (
+                    tenant_id, owner_user_id, borrower_id, principal_amount, interest_rate, repayment_type, status,
+                    single_payment_due_date, single_payment_fixed_agreed_interest, single_payment_interest_policy,
+                    single_payment_late_penalty_mode
+                )
+                SELECT users.tenant_id, users.id, borrowers.id, 1000 + generated.sequence, 0, 'single_payment', 'active',
+                       DATE '2026-09-01' + generated.sequence::integer, 100, 'fixed_only', 'none'
+                FROM users JOIN borrowers USING (tenant_id)
+                CROSS JOIN generate_series(1, 2) AS generated(sequence)
+                WHERE users.tenant_id = 'tenant-a'
+            `;
+
+            const tenantALoans = await sql<{ id: number; public_id: string }[]>`
+                SELECT id, public_id FROM loans WHERE tenant_id = 'tenant-a' AND repayment_type = 'single_payment' ORDER BY id
+            `;
+            const tenantBLoans = await sql<{ id: number; public_id: string }[]>`
+                SELECT id, public_id FROM loans WHERE tenant_id = 'tenant-b' AND repayment_type = 'single_payment' ORDER BY id
+            `;
             const tenantAActor = await sql<{ id: number }[]>`SELECT id FROM users WHERE tenant_id = 'tenant-a'`;
 
-            const insertRestructure = (newLoanId: number, executeKey: string, waivedInterest = "10") => sql`
+            const draftLoan = await sql<{ id: number }[]>`
+                INSERT INTO loans (
+                    tenant_id, owner_user_id, borrower_id, principal_amount, interest_rate, repayment_type, status,
+                    single_payment_due_date, single_payment_fixed_agreed_interest, single_payment_interest_policy,
+                    single_payment_late_penalty_mode
+                )
+                SELECT users.tenant_id, users.id, borrowers.id, 500, 0, 'single_payment', 'draft',
+                       DATE '2026-10-01', 50, 'fixed_only', 'none'
+                FROM users JOIN borrowers USING (tenant_id) WHERE users.tenant_id = 'tenant-a'
+                RETURNING id
+            `;
+            expect((await sql`UPDATE loans SET single_payment_fixed_agreed_interest = 55 WHERE id = ${draftLoan[0]!.id}`).count).toBe(1);
+            await sql`UPDATE loans SET status = 'active', outstanding_principal = 500 WHERE id = ${draftLoan[0]!.id}`;
+            expect(String(await postgresError(sql`UPDATE loans SET single_payment_due_date = DATE '2026-10-02' WHERE id = ${draftLoan[0]!.id}`))).toMatch(/contractual terms are immutable/);
+            expect(String(await postgresError(sql`DELETE FROM loans WHERE id = ${draftLoan[0]!.id}`))).toMatch(/activated loans are immutable/);
+            expect((await sql`
+                UPDATE loans SET outstanding_principal = 400, outstanding_interest = 5,
+                    outstanding_fees = 2, next_due_date = DATE '2026-10-01', status = 'paid'
+                WHERE id = ${draftLoan[0]!.id}
+            `).count).toBe(1);
+            expect((await sql`UPDATE loans SET outstanding_principal = 0, next_due_date = NULL WHERE id = ${draftLoan[0]!.id}`).count).toBe(1);
+            expect(String(await postgresError(sql`UPDATE loans SET single_payment_fixed_agreed_interest = 60 WHERE id = ${draftLoan[0]!.id}`))).toMatch(/contractual terms are immutable/);
+            expect(String(await postgresError(sql`UPDATE loans SET floating_accrual_cycle = 'weekly' WHERE tenant_id = 'tenant-a' AND repayment_type = 'floating'`))).toMatch(/contractual terms are immutable/);
+
+            const schedule = await sql<{ id: number }[]>`
+                INSERT INTO loan_schedules (
+                    tenant_id, loan_id, installment_no, due_date, scheduled_principal,
+                    scheduled_interest, scheduled_fee, scheduled_total, paid_total,
+                    paid_penalty, remaining_due, overdue_days, status
+                ) VALUES (
+                    'tenant-a', ${tenantALoans[0]!.id}, 1, DATE '2026-09-01', 1000, 100, 0, 1100, 0, 0, 1100, 0, 'pending'
+                ) RETURNING id
+            `;
+            expect((await sql`
+                UPDATE loan_schedules SET paid_total = 100, paid_penalty = 5,
+                    remaining_due = 1000, overdue_days = 1, status = 'partial', updated_at = now()
+                WHERE id = ${schedule[0]!.id}
+            `).count).toBe(1);
+            expect(String(await postgresError(sql`UPDATE loan_schedules SET due_date = DATE '2026-09-02' WHERE id = ${schedule[0]!.id}`))).toMatch(/contractual fields are immutable/);
+            expect(String(await postgresError(sql`UPDATE loan_schedules SET scheduled_total = 1200 WHERE id = ${schedule[0]!.id}`))).toMatch(/contractual fields are immutable/);
+            expect(String(await postgresError(sql`DELETE FROM loan_schedules WHERE id = ${schedule[0]!.id}`))).toMatch(/activated loan schedules are immutable/);
+
+            const audits = await sql<{ public_id: string }[]>`
+                INSERT INTO audit_logs (tenant_id, entity_type, entity_id, action, actor_user_id, actor_source, correlation_id)
+                VALUES
+                    ('tenant-a', 'loan_restructure', 'execute', 'executed', ${tenantAActor[0]!.id}, 'web', 'audit-execute'),
+                    ('tenant-a', 'loan_restructure', 'reverse', 'reversed', ${tenantAActor[0]!.id}, 'web', 'audit-reverse'),
+                    ('tenant-a', 'loan_restructure_waiver', 'execute', 'executed', ${tenantAActor[0]!.id}, 'web', 'audit-waiver'),
+                    ('tenant-a', 'loan_restructure_waiver', 'reverse', 'reversed', ${tenantAActor[0]!.id}, 'web', 'audit-waiver-reverse')
+                RETURNING public_id
+            `;
+            const tenantBAudit = await sql<{ public_id: string }[]>`
+                INSERT INTO audit_logs (tenant_id, entity_type, entity_id, action, actor_user_id, actor_source, correlation_id)
+                SELECT 'tenant-b', 'loan_restructure', 'execute-b', 'executed', id, 'web', 'audit-execute-b'
+                FROM users WHERE tenant_id = 'tenant-b'
+                RETURNING public_id
+            `;
+
+            const insertRestructure = (
+                newLoanId: number,
+                executeKey: string,
+                waivedInterest = "10",
+                cashDirection: "none" | "payout" | "collection" = "none",
+                cashAmount = "0",
+                auditPublicId: string | null = audits[0]!.public_id,
+                preExecutionState: Record<string, string | null> | null = {
+                    status: "active",
+                    outstandingPrincipal: "1000.00",
+                    outstandingInterest: "0.00",
+                    outstandingFees: "0.00",
+                    nextDueDate: "2026-09-01",
+                },
+                executedByUserId: number | null = tenantAActor[0]!.id,
+                reversedAuditPublicId: string | null = null,
+                reversedByUserId: number | null = null,
+            ) => sql`
                 INSERT INTO loan_restructures (
                     tenant_id, old_loan_id, new_loan_id, settlement_date, old_balance_version,
                     status, preview_hash, request_hash, requested_replacement_terms,
@@ -232,45 +324,110 @@ if (!testDatabaseUrl) {
                     net_principal, net_interest, net_fees, net_penalty,
                     external_settlement_credits, additional_principal, cash_direction, cash_amount,
                     reason, actor_source, correlation_id, execute_idempotency_key,
-                    execute_request_hash, expires_at, executed_at, created_by_user_id, executed_by_user_id
+                    execute_request_hash, executed_audit_public_id, reversed_audit_public_id,
+                    pre_execution_old_loan_state, expires_at, executed_at,
+                    created_by_user_id, executed_by_user_id, reversed_by_user_id
                 ) VALUES (
                     'tenant-a', ${tenantALoans[0]!.id}, ${newLoanId}, DATE '2026-08-20', 'balance-v1',
                     'executed', 'preview-hash', 'request-hash', '{}'::jsonb,
                     1000, 100, 20, 5, ${waivedInterest}, 0, 0, 1000, 90, 20, 5,
-                    0, 0, 'none', 0, 'customer request', 'web', 'correlation-a', ${executeKey},
-                    'execute-hash', now() + interval '1 hour', now(), ${tenantAActor[0]!.id}, ${tenantAActor[0]!.id}
+                    0, 0, ${cashDirection}, ${cashAmount}, 'customer request', 'web', 'correlation-a', ${executeKey},
+                    'execute-hash', ${auditPublicId}, ${reversedAuditPublicId}, ${preExecutionState === null ? null : sql.json(preExecutionState)},
+                    now() + interval '1 hour', now(), ${tenantAActor[0]!.id}, ${executedByUserId}, ${reversedByUserId}
                 ) RETURNING id, public_id
             `;
 
-            expect(await postgresError(insertRestructure(tenantALoans[0]!.id, "cross-tenant", "10"))).toBeUndefined();
+            expect(await postgresError(insertRestructure(tenantALoans[1]!.id, "valid-restructure", "10"))).toBeUndefined();
             expect(await postgresError(insertRestructure(tenantBLoans[0]!.id, "cross-tenant-2", "10"))).toMatchObject({ code: "23503" });
-            expect(await postgresError(insertRestructure(tenantALoans[0]!.id, "over-waiver", "101"))).toMatchObject({ code: "23514" });
+            expect(await postgresError(insertRestructure(tenantALoans[1]!.id, "over-waiver", "101"))).toMatchObject({ code: "23514" });
+            expect(await postgresError(insertRestructure(tenantALoans[0]!.id, "self-restructure"))).toMatchObject({ code: "23514" });
+            expect(await postgresError(insertRestructure(tenantALoans[1]!.id, "missing-execution-audit", "10", "none", "0", null))).toMatchObject({ code: "23514" });
+            expect(await postgresError(insertRestructure(tenantALoans[1]!.id, "cross-tenant-execution-audit", "10", "none", "0", tenantBAudit[0]!.public_id))).toMatchObject({ code: "23503" });
+            expect(await postgresError(insertRestructure(tenantALoans[1]!.id, "missing-pre-state", "10", "none", "0", audits[0]!.public_id, null))).toMatchObject({ code: "23514" });
+            expect(await postgresError(insertRestructure(tenantALoans[1]!.id, "incomplete-pre-state", "10", "none", "0", audits[0]!.public_id, {}))).toMatchObject({ code: "23514" });
+            expect(await postgresError(insertRestructure(tenantALoans[1]!.id, "missing-execution-actor", "10", "none", "0", audits[0]!.public_id, undefined, null))).toMatchObject({ code: "23514" });
+            expect(await postgresError(insertRestructure(
+                tenantALoans[1]!.id, "executed-with-reversal-metadata", "10", "none", "0",
+                audits[0]!.public_id, undefined, tenantAActor[0]!.id, audits[1]!.public_id, tenantAActor[0]!.id,
+            ))).toMatchObject({ code: "23514" });
+            expect(await postgresError(insertRestructure(tenantALoans[1]!.id, "cash-none-positive", "10", "none", "1"))).toMatchObject({ code: "23514" });
+            expect(await postgresError(insertRestructure(tenantALoans[1]!.id, "cash-payout-zero", "10", "payout", "0"))).toMatchObject({ code: "23514" });
+            expect(await postgresError(insertRestructure(tenantALoans[1]!.id, "cash-collection-zero", "10", "collection", "0"))).toMatchObject({ code: "23514" });
+            expect(await postgresError(insertRestructure(tenantALoans[1]!.id, "cash-payout-positive", "10", "payout", "25"))).toBeUndefined();
+            expect(await postgresError(insertRestructure(tenantALoans[1]!.id, "cash-collection-positive", "10", "collection", "25"))).toBeUndefined();
 
             const restructure = await sql<{ id: number; public_id: string }[]>`
-                SELECT id, public_id FROM loan_restructures WHERE execute_idempotency_key = 'cross-tenant'
+                SELECT id, public_id FROM loan_restructures WHERE execute_idempotency_key = 'valid-restructure'
             `;
-            expect(await postgresError(insertRestructure(tenantALoans[0]!.id, "cross-tenant", "10"))).toMatchObject({ code: "23505" });
+            expect(await postgresError(insertRestructure(tenantALoans[1]!.id, "valid-restructure", "10"))).toMatchObject({ code: "23505" });
 
-            const oldLoanPublicId = await sql<{ public_id: string }[]>`SELECT public_id FROM loans WHERE tenant_id = 'tenant-a' AND id = ${tenantALoans[0]!.id}`;
             const component = await sql<{ id: number }[]>`
                 INSERT INTO loan_opening_balance_components (
                     tenant_id, restructure_id, loan_id, component_kind, amount, source_type, source_public_id, created_by_user_id
                 ) VALUES (
-                    'tenant-a', ${restructure[0]!.id}, ${tenantALoans[0]!.id}, 'carried_principal', 1000,
-                    'loan', ${oldLoanPublicId[0]!.public_id}, ${tenantAActor[0]!.id}
+                    'tenant-a', ${restructure[0]!.id}, ${tenantALoans[1]!.id}, 'carried_principal', 1000,
+                    'loan', ${tenantALoans[0]!.public_id}::uuid, ${tenantAActor[0]!.id}
                 ) RETURNING id
             `;
+            expect(await postgresError(sql`
+                INSERT INTO loan_opening_balance_components (
+                    tenant_id, restructure_id, loan_id, component_kind, amount, source_type, source_public_id, created_by_user_id
+                ) VALUES (
+                    'tenant-a', ${restructure[0]!.id}, ${tenantALoans[1]!.id}, 'carried_interest', 10,
+                    'loan_restructure', ${restructure[0]!.public_id}::uuid, ${tenantAActor[0]!.id}
+                )
+            `)).toBeUndefined();
+            expect(await postgresError(sql`
+                INSERT INTO loan_opening_balance_components (
+                    tenant_id, restructure_id, loan_id, component_kind, amount, source_type, source_public_id, created_by_user_id
+                ) VALUES (
+                    'tenant-a', ${restructure[0]!.id}, ${tenantALoans[2]!.id}, 'carried_interest', 10,
+                    'loan', ${tenantALoans[0]!.public_id}::uuid, ${tenantAActor[0]!.id}
+                )
+            `)).toMatchObject({ code: "23503" });
+            expect(await postgresError(sql`
+                INSERT INTO loan_opening_balance_components (
+                    tenant_id, restructure_id, loan_id, component_kind, amount, source_type, source_public_id, created_by_user_id
+                ) VALUES (
+                    'tenant-a', ${restructure[0]!.id}, ${tenantALoans[1]!.id}, 'carried_interest', 10,
+                    'loan', '00000000-0000-0000-0000-000000000001', ${tenantAActor[0]!.id}
+                )
+            `)).toMatchObject({ code: "23503" });
+            expect(await postgresError(sql`
+                INSERT INTO loan_opening_balance_components (
+                    tenant_id, restructure_id, loan_id, component_kind, amount, source_type, source_public_id, created_by_user_id
+                ) VALUES (
+                    'tenant-a', ${restructure[0]!.id}, ${tenantALoans[1]!.id}, 'carried_interest', 10,
+                    'loan', ${tenantBLoans[0]!.public_id}::uuid, ${tenantAActor[0]!.id}
+                )
+            `)).toMatchObject({ code: "23503" });
+            expect(await postgresError(sql`
+                INSERT INTO loan_opening_balance_components (
+                    tenant_id, restructure_id, loan_id, component_kind, amount, source_type, source_public_id, created_by_user_id
+                ) VALUES (
+                    'tenant-a', ${restructure[0]!.id}, ${tenantALoans[1]!.id}, 'carried_interest', 10,
+                    'loan_restructure', ${tenantALoans[0]!.public_id}::uuid, ${tenantAActor[0]!.id}
+                )
+            `)).toMatchObject({ code: "23503" });
             expect(String(await postgresError(sql`UPDATE loan_restructures SET gross_principal = 999 WHERE id = ${restructure[0]!.id}`))).toMatch(/immutable/);
             expect(String(await postgresError(sql`DELETE FROM loan_restructures WHERE id = ${restructure[0]!.id}`))).toMatch(/immutable/);
             expect(String(await postgresError(sql`UPDATE loan_opening_balance_components SET amount = 999 WHERE id = ${component[0]!.id}`))).toMatch(/immutable/);
             expect(String(await postgresError(sql`DELETE FROM loan_opening_balance_components WHERE id = ${component[0]!.id}`))).toMatch(/immutable/);
 
-            const reversedRestructure = await insertRestructure(tenantALoans[0]!.id, "restructure-to-reverse", "10");
+            const reversedRestructure = await insertRestructure(tenantALoans[1]!.id, "restructure-to-reverse", "10");
+            expect(await postgresError(sql`
+                UPDATE loan_restructures SET
+                    status = 'reversed', reversal_idempotency_key = 'missing-reversal-audit-key',
+                    reversal_request_hash = 'missing-reversal-audit-hash', reversed_at = now(),
+                    reversed_by_user_id = ${tenantAActor[0]!.id}, updated_by_user_id = ${tenantAActor[0]!.id}, updated_at = now()
+                WHERE id = ${reversedRestructure[0]!.id}
+            `)).toMatchObject({ code: "23514" });
             await sql`
                 UPDATE loan_restructures SET
                     status = 'reversed',
                     reversal_idempotency_key = 'restructure-reverse-key',
                     reversal_request_hash = 'restructure-reverse-hash',
+                    reversed_audit_public_id = ${audits[1]!.public_id},
                     reversed_at = now(),
                     reversed_by_user_id = ${tenantAActor[0]!.id},
                     updated_by_user_id = ${tenantAActor[0]!.id},
@@ -284,24 +441,99 @@ if (!testDatabaseUrl) {
                 INSERT INTO loan_restructure_waivers (
                     tenant_id, restructure_id, loan_id, component_kind, amount, reason,
                     status, actor_source, correlation_id, execute_idempotency_key, execute_request_hash,
-                    created_by_user_id, executed_at
+                    audit_public_id, created_by_user_id, executed_at
                 ) VALUES (
-                    'tenant-a', ${restructure[0]!.id}, ${tenantALoans[0]!.id}, 'interest', 5, 'courtesy',
+                    'tenant-a', ${restructure[0]!.id}, ${tenantALoans[1]!.id}, 'interest', 5, 'courtesy',
                     'executed', 'web', 'correlation-waiver', 'waiver-key', 'waiver-hash',
-                    ${tenantAActor[0]!.id}, now()
+                    ${audits[2]!.public_id}, ${tenantAActor[0]!.id}, now()
                 ) RETURNING id
             `;
             expect(await postgresError(sql`
                 INSERT INTO loan_restructure_waivers (
                     tenant_id, restructure_id, loan_id, component_kind, amount, reason,
-                    status, actor_source, correlation_id, execute_idempotency_key, execute_request_hash, executed_at
+                    status, actor_source, correlation_id, execute_idempotency_key, execute_request_hash,
+                    created_by_user_id, executed_at
                 ) VALUES (
-                    'tenant-a', ${restructure[0]!.id}, ${tenantALoans[0]!.id}, 'interest', 1, 'duplicate',
-                    'executed', 'web', 'correlation-waiver-2', 'waiver-key', 'other-hash', now()
+                    'tenant-a', ${restructure[0]!.id}, ${tenantALoans[1]!.id}, 'interest', 1, 'missing audit',
+                    'executed', 'web', 'correlation-waiver-no-audit', 'waiver-no-audit', 'waiver-no-audit-hash',
+                    ${tenantAActor[0]!.id}, now()
+                )
+            `)).toMatchObject({ code: "23514" });
+            expect(await postgresError(sql`
+                INSERT INTO loan_restructure_waivers (
+                    tenant_id, restructure_id, loan_id, component_kind, amount, reason,
+                    status, actor_source, correlation_id, execute_idempotency_key, execute_request_hash,
+                    audit_public_id, executed_at
+                ) VALUES (
+                    'tenant-a', ${restructure[0]!.id}, ${tenantALoans[1]!.id}, 'interest', 1, 'missing actor',
+                    'executed', 'web', 'correlation-waiver-no-actor', 'waiver-no-actor', 'waiver-no-actor-hash',
+                    ${audits[2]!.public_id}, now()
+                )
+            `)).toMatchObject({ code: "23514" });
+            expect(await postgresError(sql`
+                INSERT INTO loan_restructure_waivers (
+                    tenant_id, restructure_id, loan_id, component_kind, amount, reason,
+                    status, actor_source, correlation_id, execute_idempotency_key, execute_request_hash,
+                    audit_public_id, created_by_user_id, reversed_by_user_id, executed_at, reversed_at
+                ) VALUES (
+                    'tenant-a', ${restructure[0]!.id}, ${tenantALoans[1]!.id}, 'interest', 1, 'contradictory reverse metadata',
+                    'executed', 'web', 'correlation-waiver-contradictory', 'waiver-contradictory', 'waiver-contradictory-hash',
+                    ${audits[2]!.public_id}, ${tenantAActor[0]!.id}, ${tenantAActor[0]!.id}, now(), now()
+                )
+            `)).toMatchObject({ code: "23514" });
+            expect(await postgresError(sql`
+                INSERT INTO loan_restructure_waivers (
+                    tenant_id, restructure_id, loan_id, component_kind, amount, reason,
+                    status, actor_source, correlation_id, execute_idempotency_key, execute_request_hash,
+                    audit_public_id, created_by_user_id, executed_at
+                ) VALUES (
+                    'tenant-a', ${restructure[0]!.id}, ${tenantALoans[1]!.id}, 'interest', 1, 'duplicate',
+                    'executed', 'web', 'correlation-waiver-2', 'waiver-key', 'other-hash',
+                    ${audits[2]!.public_id}, ${tenantAActor[0]!.id}, now()
                 )
             `)).toMatchObject({ code: "23505" });
             expect(String(await postgresError(sql`UPDATE loan_restructure_waivers SET amount = 4 WHERE id = ${waiver[0]!.id}`))).toMatch(/immutable/);
             expect(String(await postgresError(sql`DELETE FROM loan_restructure_waivers WHERE id = ${waiver[0]!.id}`))).toMatch(/immutable/);
+            const waiverPublicId = await sql<{ public_id: string }[]>`SELECT public_id FROM loan_restructure_waivers WHERE id = ${waiver[0]!.id}`;
+            expect(await postgresError(sql`
+                INSERT INTO loan_opening_balance_components (
+                    tenant_id, restructure_id, loan_id, component_kind, amount, source_type, source_public_id, created_by_user_id
+                ) VALUES (
+                    'tenant-a', ${restructure[0]!.id}, ${tenantALoans[1]!.id}, 'carried_interest', 5,
+                    'loan_restructure_waiver', ${waiverPublicId[0]!.public_id}::uuid, ${tenantAActor[0]!.id}
+                )
+            `)).toBeUndefined();
+
+            expect(await postgresError(sql`
+                INSERT INTO loan_restructure_waivers (
+                    tenant_id, restructure_id, loan_id, component_kind, amount, reason,
+                    status, reversed_waiver_id, actor_source, correlation_id,
+                    execute_idempotency_key, execute_request_hash,
+                    reversal_idempotency_key, reversal_request_hash,
+                    audit_public_id, created_by_user_id, executed_at, reversed_at
+                ) VALUES (
+                    'tenant-a', ${restructure[0]!.id}, ${tenantALoans[1]!.id}, 'interest', 5, 'missing reversal actor',
+                    'reversed', ${waiver[0]!.id}, 'web', 'correlation-waiver-reverse-no-actor',
+                    'waiver-reversal-no-actor-entry-key', 'waiver-reversal-no-actor-entry-hash',
+                    'waiver-reverse-no-actor-key', 'waiver-reverse-no-actor-hash',
+                    ${audits[3]!.public_id}, ${tenantAActor[0]!.id}, now(), now()
+                )
+            `)).toMatchObject({ code: "23514" });
+            expect(await postgresError(sql`
+                INSERT INTO loan_restructure_waivers (
+                    tenant_id, restructure_id, loan_id, component_kind, amount, reason,
+                    status, reversed_waiver_id, actor_source, correlation_id,
+                    execute_idempotency_key, execute_request_hash,
+                    reversal_idempotency_key, reversal_request_hash,
+                    audit_public_id, created_by_user_id, reversed_by_user_id, executed_at
+                ) VALUES (
+                    'tenant-a', ${restructure[0]!.id}, ${tenantALoans[1]!.id}, 'interest', 5, 'missing reversal timestamp',
+                    'reversed', ${waiver[0]!.id}, 'web', 'correlation-waiver-reverse-no-time',
+                    'waiver-reversal-no-time-entry-key', 'waiver-reversal-no-time-entry-hash',
+                    'waiver-reverse-no-time-key', 'waiver-reverse-no-time-hash',
+                    ${audits[3]!.public_id}, ${tenantAActor[0]!.id}, ${tenantAActor[0]!.id}, now()
+                )
+            `)).toMatchObject({ code: "23514" });
 
             const reversedWaiver = await sql<{ id: number }[]>`
                 INSERT INTO loan_restructure_waivers (
@@ -309,13 +541,13 @@ if (!testDatabaseUrl) {
                     status, reversed_waiver_id, actor_source, correlation_id,
                     execute_idempotency_key, execute_request_hash,
                     reversal_idempotency_key, reversal_request_hash,
-                    created_by_user_id, reversed_by_user_id, executed_at, reversed_at
+                    audit_public_id, created_by_user_id, reversed_by_user_id, executed_at, reversed_at
                 ) VALUES (
-                    'tenant-a', ${restructure[0]!.id}, ${tenantALoans[0]!.id}, 'interest', 5, 'restore waiver',
+                    'tenant-a', ${restructure[0]!.id}, ${tenantALoans[1]!.id}, 'interest', 5, 'restore waiver',
                     'reversed', ${waiver[0]!.id}, 'web', 'correlation-waiver-reverse',
                     'waiver-reversal-entry-key', 'waiver-reversal-entry-hash',
                     'waiver-reverse-key', 'waiver-reverse-hash',
-                    ${tenantAActor[0]!.id}, ${tenantAActor[0]!.id}, now(), now()
+                    ${audits[3]!.public_id}, ${tenantAActor[0]!.id}, ${tenantAActor[0]!.id}, now(), now()
                 ) RETURNING id
             `;
             expect(String(await postgresError(sql`UPDATE loan_restructure_waivers SET reason = 'changed' WHERE id = ${reversedWaiver[0]!.id}`))).toMatch(/immutable/);
