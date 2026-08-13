@@ -9,6 +9,7 @@ import {
     intermediatedDisbursementGroups,
     intermediatedTransferEvidenceIntents,
     intermediatedTransferEvents,
+    loanDisbursements,
     loanIntermediaryAssignments,
     loans,
     users,
@@ -28,6 +29,8 @@ import {
 } from "../lib/floating-interest-policy";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
+import { intermediaryHeldBalanceProjection } from "./intermediary-service";
+import { recordIntermediatedLoanPayout, reverseIntermediatedLoanPayout } from "./loan-disbursement-service";
 
 type Executor = any;
 type Actor = typeof users.$inferSelect;
@@ -162,6 +165,27 @@ function transferAggregates(
         actualAdvanceInterestReturn,
         variance: actualFunding.minus(actualBorrowerPayout).minus(actualAdvanceInterestReturn).minus(retainedBalance),
     };
+}
+
+function previewStateHash(groupPublicId: string, group: GroupRow, events: EventRow[], evidenceReady: boolean) {
+    return fingerprint({
+        contract: "intermediated-disbursement-preview",
+        version: 1,
+        groupPublicId,
+        expectedFunding: serializeMoney(group.expectedFundingAmount),
+        expectedBorrowerPayout: serializeMoney(group.expectedBorrowerPayoutAmount),
+        expectedAdvanceInterestReturn: serializeMoney(group.expectedAdvanceInterestReturnAmount),
+        retainedBalance: serializeMoney(group.retainedBalanceAmount),
+        events: events.map((event) => ({
+            publicId: event.publicId,
+            role: event.role,
+            amount: serializeMoney(event.amount),
+            transferredAt: event.transferredAt.toISOString(),
+            status: event.status,
+            bankReferenceHash: event.bankReferenceHash,
+        })),
+        evidenceReady,
+    });
 }
 
 function assertPublicTransferAggregates(aggregates: ReturnType<typeof transferAggregates>) {
@@ -728,24 +752,7 @@ export async function previewIntermediatedDisbursement(ctx: CommandContext, grou
             ));
         }
         const version = (prior[0]?.version ?? 0) + 1;
-        const previewHash = fingerprint({
-            contract: "intermediated-disbursement-preview",
-            version: 1,
-            groupPublicId,
-            expectedFunding: serializeMoney(expectedFunding),
-            expectedBorrowerPayout: serializeMoney(expectedBorrowerPayout),
-            expectedAdvanceInterestReturn: serializeMoney(expectedAdvanceInterestReturn),
-            retainedBalance: serializeMoney(retainedBalance),
-            events: events.map((event) => ({
-                publicId: event.publicId,
-                role: event.role,
-                amount: serializeMoney(event.amount),
-                transferredAt: event.transferredAt.toISOString(),
-                status: event.status,
-                bankReferenceHash: event.bankReferenceHash,
-            })),
-            evidenceReady,
-        });
+        const previewHash = previewStateHash(groupPublicId, group, events, evidenceReady);
         const expiresAt = new Date(Date.now() + 15 * 60_000);
         const row = await tx.insert(intermediatedDisbursementGroupPreviews).values({
             tenantId: ctx.tenantId,
@@ -797,6 +804,443 @@ export async function previewIntermediatedDisbursement(ctx: CommandContext, grou
         return {
             ...after,
             groupPublicId,
+            auditPublicId: audit.publicId,
+            correlationId: ctx.correlationId,
+        };
+    });
+}
+
+type PostedGroupResult = ReturnType<typeof presentGroup> & {
+    proposalPublicId: string;
+    loanDisbursementPublicId: string;
+    advanceInterestProjectionPublicId: string;
+    fundingAmount: string;
+    borrowerPayoutAmount: string;
+    advanceInterestAmount: string;
+    intermediaryHeldBalance: string;
+    transferEventPublicIds: string[];
+};
+
+function latestTransferTime(events: EventRow[]) {
+    return events.reduce(
+        (latest, event) => event.transferredAt.getTime() > latest.getTime() ? event.transferredAt : latest,
+        events[0]!.transferredAt,
+    );
+}
+
+async function finalizedEvidenceReady(executor: Executor, ctx: CommandContext, events: EventRow[]) {
+    if (!events.length) return false;
+    const pending = await executor.query.intermediatedTransferEvidenceIntents.findFirst({ where: and(
+        eq(intermediatedTransferEvidenceIntents.tenantId, ctx.tenantId),
+        inArray(intermediatedTransferEvidenceIntents.eventId, events.map((event) => event.id)),
+        eq(intermediatedTransferEvidenceIntents.status, "pending"),
+    ) });
+    return !pending;
+}
+
+function storedPostedResult(row: typeof auditLogs.$inferSelect | undefined) {
+    return auditedResult<PostedGroupResult>(row);
+}
+
+function reversalRequestHash(groupPublicId: string, reason: string) {
+    return fingerprint({
+        contract: "intermediated-disbursement-reversal",
+        version: 1,
+        groupPublicId,
+        reason,
+    });
+}
+
+export async function postIntermediatedDisbursement(
+    ctx: CommandContext,
+    groupPublicId: string,
+    proposalPublicId: string,
+    confirmed: boolean,
+) {
+    requirePublicId(groupPublicId, "groupPublicId");
+    requirePublicId(proposalPublicId, "proposalPublicId");
+    if (!confirmed) {
+        throw new DomainError(
+            "INTERMEDIATED_DISBURSEMENT_CONFIRMATION_REQUIRED",
+            "Explicit confirmation is required to post an intermediated disbursement",
+            400,
+        );
+    }
+    const postIdempotencyKey = commandKey(ctx);
+    const accessible = await accessibleGroup(ctx, groupPublicId);
+    return db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`intermediated-group-post:${ctx.tenantId}:${postIdempotencyKey}`}, 0))`);
+        const reusedKey = await tx.query.intermediatedDisbursementGroups.findFirst({ where: and(
+            eq(intermediatedDisbursementGroups.tenantId, ctx.tenantId),
+            eq(intermediatedDisbursementGroups.postIdempotencyKey, postIdempotencyKey),
+        ) });
+        if (reusedKey && reusedKey.id !== accessible.group.id) {
+            throw new DomainError(
+                "IDEMPOTENCY_KEY_CONFLICT",
+                "Idempotency key was already used for another intermediated disbursement post",
+                409,
+            );
+        }
+        await tx.execute(sql`SELECT id FROM intermediated_disbursement_groups WHERE tenant_id = ${ctx.tenantId} AND id = ${accessible.group.id} FOR UPDATE`);
+        const group = await tx.query.intermediatedDisbursementGroups.findFirst({ where: and(
+            eq(intermediatedDisbursementGroups.tenantId, ctx.tenantId),
+            eq(intermediatedDisbursementGroups.id, accessible.group.id),
+        ) });
+        if (!group) throw new DomainError("INTERMEDIATED_DISBURSEMENT_NOT_FOUND", "Intermediated disbursement group not found", 404);
+        if (group.status === "posted") {
+            if (group.postIdempotencyKey !== postIdempotencyKey) {
+                throw new DomainError(
+                    "INTERMEDIATED_DISBURSEMENT_ALREADY_POSTED",
+                    "Intermediated disbursement was already posted with another idempotency key",
+                    409,
+                );
+            }
+            const storedAudit = await priorAudit(tx, ctx, group.publicId, "posted");
+            const prior = storedPostedResult(storedAudit);
+            if (!storedAudit || !prior || prior.proposalPublicId !== proposalPublicId) {
+                throw new DomainError(
+                    "IDEMPOTENCY_KEY_CONFLICT",
+                    "The post idempotency key was replayed with a different proposal",
+                    409,
+                );
+            }
+            return {
+                ...prior,
+                duplicate: true,
+                auditPublicId: storedAudit.publicId,
+                correlationId: storedAudit.correlationId ?? ctx.correlationId,
+            };
+        }
+        if (group.status === "reversed") {
+            throw new DomainError("INTERMEDIATED_DISBURSEMENT_LOCKED", "Reversed groups cannot be posted", 409);
+        }
+
+        await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${group.loanId} FOR UPDATE`);
+        await tx.execute(sql`SELECT id FROM intermediated_transfer_events WHERE tenant_id = ${ctx.tenantId} AND group_id = ${group.id} ORDER BY id FOR UPDATE`);
+        const events = await tx.select().from(intermediatedTransferEvents).where(and(
+            eq(intermediatedTransferEvents.tenantId, ctx.tenantId),
+            eq(intermediatedTransferEvents.groupId, group.id),
+        )).orderBy(asc(intermediatedTransferEvents.id));
+        const proposal = await tx.query.intermediatedDisbursementGroupPreviews.findFirst({ where: and(
+            eq(intermediatedDisbursementGroupPreviews.tenantId, ctx.tenantId),
+            eq(intermediatedDisbursementGroupPreviews.groupId, group.id),
+            eq(intermediatedDisbursementGroupPreviews.publicId, proposalPublicId),
+        ) });
+        const latestProposal = await tx.query.intermediatedDisbursementGroupPreviews.findFirst({
+            where: and(
+                eq(intermediatedDisbursementGroupPreviews.tenantId, ctx.tenantId),
+                eq(intermediatedDisbursementGroupPreviews.groupId, group.id),
+            ),
+            orderBy: desc(intermediatedDisbursementGroupPreviews.version),
+        });
+        if (!proposal
+            || !latestProposal
+            || proposal.id !== latestProposal.id
+            || proposal.status === "stale"
+            || proposal.status === "expired"
+            || proposal.expiresAt.getTime() <= Date.now()) {
+            throw new DomainError(
+                "STALE_INTERMEDIATED_DISBURSEMENT_PROPOSAL",
+                "The intermediated disbursement proposal is stale or expired",
+                409,
+            );
+        }
+        const evidenceReady = await finalizedEvidenceReady(tx, ctx, events);
+        const aggregates = transferAggregates(events, new FinancialDecimal(group.retainedBalanceAmount));
+        const roleTotalsMatch = aggregates.actualFunding.eq(group.expectedFundingAmount)
+            && aggregates.actualBorrowerPayout.eq(group.expectedBorrowerPayoutAmount)
+            && aggregates.actualAdvanceInterestReturn.eq(group.expectedAdvanceInterestReturnAmount);
+        const currentPreviewHash = previewStateHash(groupPublicId, group, events, evidenceReady);
+        if (currentPreviewHash !== proposal.previewHash) {
+            throw new DomainError(
+                "STALE_INTERMEDIATED_DISBURSEMENT_PROPOSAL",
+                "The intermediated disbursement proposal no longer matches current transfer state",
+                409,
+            );
+        }
+        if (proposal.status !== "ready"
+            || group.status !== "ready"
+            || !roleTotalsMatch
+            || !aggregates.variance.isZero()
+            || !evidenceReady
+            || !events.length
+            || events.some((event) => event.status !== "ready")) {
+            throw new DomainError(
+                "INTERMEDIATED_DISBURSEMENT_NOT_READY",
+                "Only an exact zero-variance ready proposal can be posted",
+                409,
+            );
+        }
+
+        const advanceProjection = await tx.query.loanDisbursements.findFirst({ where: and(
+            eq(loanDisbursements.tenantId, ctx.tenantId),
+            eq(loanDisbursements.loanId, group.loanId),
+        ) });
+        if (!advanceProjection
+            || !new FinancialDecimal(advanceProjection.grossPrincipal).eq(group.expectedFundingAmount)
+            || !new FinancialDecimal(advanceProjection.firstDayInterestDeducted).eq(group.expectedAdvanceInterestReturnAmount)
+            || !new FinancialDecimal(advanceProjection.netDisbursement).eq(
+                new FinancialDecimal(group.expectedFundingAmount).minus(group.expectedAdvanceInterestReturnAmount),
+            )) {
+            throw new DomainError(
+                "INTERMEDIATED_ADVANCE_INTEREST_PROJECTION_MISMATCH",
+                "The loan activation disbursement projection no longer matches this intermediary group",
+                409,
+            );
+        }
+        const borrowerEvents = events.filter((event) => event.role === "borrower_net_payout");
+        const borrowerChannels = new Set(borrowerEvents.map((event) => event.channel));
+        const payout = await recordIntermediatedLoanPayout(tx, ctx, {
+            loanId: group.loanId,
+            groupPublicId,
+            amount: serializeMoney(aggregates.actualBorrowerPayout),
+            channel: borrowerChannels.size === 1
+                ? borrowerEvents[0]!.channel as TransferChannel
+                : "adjustment",
+            payeeHint: borrowerEvents.map((event) => event.payeeHint).find(Boolean) ?? null,
+            disbursedAt: latestTransferTime(borrowerEvents.length ? borrowerEvents : events),
+        });
+        const postedAt = new Date();
+        const postedEvents = await tx.update(intermediatedTransferEvents).set({
+            status: "posted",
+            postedAt,
+            updatedByUserId: ctx.actorUserId,
+            updatedAt: postedAt,
+        }).where(and(
+            eq(intermediatedTransferEvents.tenantId, ctx.tenantId),
+            eq(intermediatedTransferEvents.groupId, group.id),
+            eq(intermediatedTransferEvents.status, "ready"),
+        )).returning();
+        if (postedEvents.length !== events.length) {
+            throw new DomainError("INTERMEDIATED_DISBURSEMENT_LOCKED", "Transfer events changed before posting", 409);
+        }
+        const postedGroup = await tx.update(intermediatedDisbursementGroups).set({
+            status: "posted",
+            postIdempotencyKey,
+            postedByUserId: ctx.actorUserId,
+            postedAt,
+            updatedByUserId: ctx.actorUserId,
+            updatedAt: postedAt,
+        }).where(and(
+            eq(intermediatedDisbursementGroups.tenantId, ctx.tenantId),
+            eq(intermediatedDisbursementGroups.id, group.id),
+            eq(intermediatedDisbursementGroups.status, "ready"),
+        )).returning().then((rows) => rows[0]);
+        if (!postedGroup) {
+            throw new DomainError("INTERMEDIATED_DISBURSEMENT_LOCKED", "Group changed before posting", 409);
+        }
+        await tx.update(intermediatedDisbursementGroupPreviews).set({ status: "executed" }).where(and(
+            eq(intermediatedDisbursementGroupPreviews.tenantId, ctx.tenantId),
+            eq(intermediatedDisbursementGroupPreviews.id, proposal.id),
+            eq(intermediatedDisbursementGroupPreviews.status, "ready"),
+        ));
+        const held = await intermediaryHeldBalanceProjection(tx, ctx.tenantId, group.intermediaryId);
+        const after: PostedGroupResult = {
+            ...presentGroup(postedGroup, {
+                loanPublicId: accessible.loan.publicId,
+                intermediaryPublicId: accessible.intermediary.publicId,
+            }),
+            proposalPublicId: proposal.publicId,
+            loanDisbursementPublicId: payout.publicId,
+            advanceInterestProjectionPublicId: advanceProjection.publicId,
+            fundingAmount: serializeMoney(aggregates.actualFunding),
+            borrowerPayoutAmount: serializeMoney(aggregates.actualBorrowerPayout),
+            advanceInterestAmount: serializeMoney(aggregates.actualAdvanceInterestReturn),
+            intermediaryHeldBalance: serializeMoney(held.disbursementHeldBalance),
+            transferEventPublicIds: postedEvents.map((event) => event.publicId),
+        };
+        const audit = await createAuditLog(tx, {
+            ...auditContext(ctx),
+            entityType: "intermediated_disbursement_group",
+            entityId: group.publicId,
+            action: "posted",
+            payload: {
+                proposalPublicId: proposal.publicId,
+                loanDisbursementPublicId: payout.publicId,
+                advanceInterestProjectionPublicId: advanceProjection.publicId,
+                transferEventPublicIds: after.transferEventPublicIds,
+                postIdempotencyKey,
+                after,
+            },
+        });
+        return {
+            ...after,
+            duplicate: false,
+            auditPublicId: audit.publicId,
+            correlationId: ctx.correlationId,
+        };
+    });
+}
+
+export async function reverseIntermediatedDisbursement(
+    ctx: CommandContext,
+    groupPublicId: string,
+    reasonInput: string,
+) {
+    requirePublicId(groupPublicId, "groupPublicId");
+    const reversalIdempotencyKey = commandKey(ctx);
+    const reason = normalizedText(reasonInput);
+    if (!reason) throw new DomainError("REVERSAL_REASON_REQUIRED", "A reversal reason is required", 400);
+    const accessible = await accessibleGroup(ctx, groupPublicId);
+    const requestHash = reversalRequestHash(groupPublicId, reason);
+    return db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`intermediated-group-reverse:${ctx.tenantId}:${reversalIdempotencyKey}`}, 0))`);
+        const reusedKey = await tx.query.intermediatedDisbursementGroups.findFirst({ where: and(
+            eq(intermediatedDisbursementGroups.tenantId, ctx.tenantId),
+            eq(intermediatedDisbursementGroups.reversalIdempotencyKey, reversalIdempotencyKey),
+        ) });
+        if (reusedKey && (reusedKey.reversedGroupId !== accessible.group.id || reusedKey.reversalRequestHash !== requestHash)) {
+            throw new DomainError(
+                "INTERMEDIATED_DISBURSEMENT_REVERSAL_CONFLICT",
+                "The reversal idempotency key was already used for another group or reason",
+                409,
+            );
+        }
+        await tx.execute(sql`SELECT id FROM intermediated_disbursement_groups WHERE tenant_id = ${ctx.tenantId} AND id = ${accessible.group.id} FOR UPDATE`);
+        const original = await tx.query.intermediatedDisbursementGroups.findFirst({ where: and(
+            eq(intermediatedDisbursementGroups.tenantId, ctx.tenantId),
+            eq(intermediatedDisbursementGroups.id, accessible.group.id),
+        ) });
+        if (!original || original.status !== "posted") {
+            throw new DomainError(
+                "INTERMEDIATED_DISBURSEMENT_NOT_POSTED",
+                "Only a posted intermediated disbursement can be reversed",
+                409,
+            );
+        }
+        const existing = await tx.query.intermediatedDisbursementGroups.findFirst({ where: and(
+            eq(intermediatedDisbursementGroups.tenantId, ctx.tenantId),
+            eq(intermediatedDisbursementGroups.reversedGroupId, original.id),
+        ) });
+        if (existing) {
+            if (existing.reversalIdempotencyKey !== reversalIdempotencyKey
+                || existing.reversalRequestHash !== requestHash) {
+                throw new DomainError(
+                    "INTERMEDIATED_DISBURSEMENT_REVERSAL_CONFLICT",
+                    "This group was already reversed with another idempotency key or reason",
+                    409,
+                );
+            }
+            const storedAudit = await priorAudit(tx, ctx, existing.publicId, "reversed");
+            const prior = storedAudit && auditedResult<Record<string, unknown>>(storedAudit);
+            if (!storedAudit || !prior) {
+                throw new DomainError("IDEMPOTENT_RESULT_NOT_FOUND", "Stored reversal result is unavailable", 409);
+            }
+            return {
+                ...prior,
+                duplicate: true,
+                auditPublicId: storedAudit.publicId,
+                correlationId: storedAudit.correlationId ?? ctx.correlationId,
+            };
+        }
+        await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${original.loanId} FOR UPDATE`);
+        await tx.execute(sql`SELECT id FROM intermediated_transfer_events WHERE tenant_id = ${ctx.tenantId} AND group_id = ${original.id} ORDER BY id FOR UPDATE`);
+        const events = await tx.select().from(intermediatedTransferEvents).where(and(
+            eq(intermediatedTransferEvents.tenantId, ctx.tenantId),
+            eq(intermediatedTransferEvents.groupId, original.id),
+        )).orderBy(asc(intermediatedTransferEvents.id));
+        if (!events.length || events.some((event) => event.status !== "posted")) {
+            throw new DomainError(
+                "INTERMEDIATED_DISBURSEMENT_REVERSAL_BLOCKED",
+                "Every source transfer must remain posted before reversing the group",
+                409,
+            );
+        }
+        const postAudit = await priorAudit(tx, ctx, original.publicId, "posted");
+        const posted = storedPostedResult(postAudit);
+        if (!posted) {
+            throw new DomainError("FINANCIAL_AUDIT_NOT_FOUND", "Posted intermediated disbursement audit record is missing", 409);
+        }
+        const payoutReversal = await reverseIntermediatedLoanPayout(tx, ctx, {
+            groupPublicId,
+            disbursementPublicId: posted.loanDisbursementPublicId,
+            reason,
+        });
+        const reversedAt = new Date();
+        const reversalGroup = await tx.insert(intermediatedDisbursementGroups).values({
+            tenantId: ctx.tenantId,
+            loanId: original.loanId,
+            intermediaryId: original.intermediaryId,
+            expectedFundingAmount: original.expectedFundingAmount,
+            expectedBorrowerPayoutAmount: original.expectedBorrowerPayoutAmount,
+            expectedAdvanceInterestReturnAmount: original.expectedAdvanceInterestReturnAmount,
+            retainedBalanceAmount: original.retainedBalanceAmount,
+            status: "reversed",
+            idempotencyKey: `reversal:${original.publicId}`,
+            postIdempotencyKey: null,
+            reversedGroupId: original.id,
+            reversalIdempotencyKey,
+            reversalRequestHash: requestHash,
+            reversalReason: reason,
+            note: reason,
+            createdByUserId: ctx.actorUserId,
+            updatedByUserId: ctx.actorUserId,
+            postedByUserId: original.postedByUserId,
+            reversedByUserId: ctx.actorUserId,
+            postedAt: original.postedAt,
+            reversedAt,
+            createdAt: reversedAt,
+            updatedAt: reversedAt,
+        }).returning().then((rows) => rows[0]!);
+        const reversalEvents = await tx.insert(intermediatedTransferEvents).values(events.map((event) => ({
+            tenantId: ctx.tenantId,
+            groupId: reversalGroup.id,
+            intermediaryBankAccountId: event.intermediaryBankAccountId,
+            role: event.role,
+            channel: event.channel,
+            amount: event.amount,
+            senderHint: event.senderHint,
+            payeeHint: event.payeeHint,
+            bankReference: null,
+            bankReferenceHash: null,
+            transferredAt: event.transferredAt,
+            status: "reversed",
+            idempotencyKey: `reversal:${event.publicId}`,
+            reversedEventId: event.id,
+            reversalReason: reason,
+            note: reason,
+            createdByUserId: ctx.actorUserId,
+            updatedByUserId: ctx.actorUserId,
+            postedAt: event.postedAt,
+            reversedAt,
+            createdAt: reversedAt,
+            updatedAt: reversedAt,
+        }))).returning();
+        const held = await intermediaryHeldBalanceProjection(tx, ctx.tenantId, original.intermediaryId);
+        const after = {
+            ...presentGroup(reversalGroup, {
+                loanPublicId: accessible.loan.publicId,
+                intermediaryPublicId: accessible.intermediary.publicId,
+            }),
+            reversedGroupPublicId: original.publicId,
+            reversedLoanDisbursementPublicId: posted.loanDisbursementPublicId,
+            loanDisbursementPublicId: payoutReversal.publicId,
+            advanceInterestProjectionPublicId: posted.advanceInterestProjectionPublicId,
+            fundingAmount: posted.fundingAmount,
+            borrowerPayoutAmount: posted.borrowerPayoutAmount,
+            advanceInterestAmount: posted.advanceInterestAmount,
+            intermediaryHeldBalance: serializeMoney(held.disbursementHeldBalance),
+            transferEventPublicIds: reversalEvents.map((event) => event.publicId),
+            reversalReason: reason,
+        };
+        const audit = await createAuditLog(tx, {
+            ...auditContext(ctx),
+            entityType: "intermediated_disbursement_group",
+            entityId: reversalGroup.publicId,
+            action: "reversed",
+            payload: {
+                reversedGroupPublicId: original.publicId,
+                reversedLoanDisbursementPublicId: posted.loanDisbursementPublicId,
+                loanDisbursementPublicId: payoutReversal.publicId,
+                advanceInterestProjectionPublicId: posted.advanceInterestProjectionPublicId,
+                reversalIdempotencyKey,
+                reason,
+                after,
+            },
+        });
+        return {
+            ...after,
+            duplicate: false,
             auditPublicId: audit.publicId,
             correlationId: ctx.correlationId,
         };

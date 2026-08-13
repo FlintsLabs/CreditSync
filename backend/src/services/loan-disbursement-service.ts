@@ -178,6 +178,133 @@ async function writeAudit(executor: Executor, ctx: CommandContext, event: EventR
     return executor.insert(auditLogs).values({ ...auditContext(ctx), entityType: "loan_disbursement", entityId: event.publicId, action, payload }).returning().then((rows: Array<typeof auditLogs.$inferSelect>) => rows[0]!);
 }
 
+export interface IntermediatedLoanPayoutProjectionInput {
+    loanId: number;
+    groupPublicId: string;
+    amount: string;
+    channel: "bank_transfer" | "cash" | "adjustment";
+    payeeHint?: string | null;
+    disbursedAt: Date;
+}
+
+/**
+ * Internal transaction-aware projection used by the three-leg intermediary
+ * workflow. The physical lender and advance-return legs remain on their own
+ * transfer ledger; this row records only the exact cash paid to the borrower.
+ */
+export async function recordIntermediatedLoanPayout(
+    executor: Executor,
+    ctx: CommandContext,
+    input: IntermediatedLoanPayoutProjectionInput,
+) {
+    requirePublicId(input.groupPublicId, "groupPublicId");
+    const amount = serializeMoney(money(input.amount, "amount"));
+    const postIdempotencyKey = `intermediated-payout:${input.groupPublicId}`;
+    const existing = await executor.query.loanDisbursementEvents.findFirst({ where: and(
+        eq(loanDisbursementEvents.tenantId, ctx.tenantId),
+        eq(loanDisbursementEvents.postIdempotencyKey, postIdempotencyKey),
+    ) });
+    if (existing) {
+        // Exact group retries are resolved from the locked group audit before this
+        // helper runs. Reusing any preexisting row here would let a regular,
+        // caller-keyed disbursement impersonate this group's payout provenance.
+        throw new DomainError(
+            "INTERMEDIATED_LOAN_PAYOUT_CONFLICT",
+            "The intermediary payout projection key is already occupied",
+            409,
+        );
+    }
+    const loan = await executor.query.loans.findFirst({ where: and(
+        eq(loans.tenantId, ctx.tenantId),
+        eq(loans.id, input.loanId),
+    ) });
+    if (!loan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+    const event = await executor.insert(loanDisbursementEvents).values({
+        tenantId: ctx.tenantId,
+        loanId: input.loanId,
+        grossAmount: amount,
+        loanAttributedAmount: amount,
+        channel: input.channel,
+        payeeHint: normalizedText(input.payeeHint),
+        status: "posted",
+        note: `Actual borrower payout projected from intermediary group ${input.groupPublicId}`,
+        disbursedAt: input.disbursedAt,
+        postedAt: new Date(),
+        postIdempotencyKey,
+        createdByUserId: ctx.actorUserId,
+    }).returning().then((rows: Array<typeof loanDisbursementEvents.$inferSelect>) => rows[0]!);
+    await writeAudit(executor, ctx, event, "intermediated_posted", {
+        groupPublicId: input.groupPublicId,
+        grossAmount: amount,
+        loanAttributedAmount: amount,
+    });
+    return event;
+}
+
+export async function reverseIntermediatedLoanPayout(
+    executor: Executor,
+    ctx: CommandContext,
+    input: { groupPublicId: string; disbursementPublicId: string; reason: string },
+) {
+    requirePublicId(input.groupPublicId, "groupPublicId");
+    requirePublicId(input.disbursementPublicId, "disbursementPublicId");
+    const reason = normalizedText(input.reason);
+    if (!reason) throw new DomainError("REVERSAL_REASON_REQUIRED", "A reversal reason is required", 400);
+    const original = await executor.query.loanDisbursementEvents.findFirst({ where: and(
+        eq(loanDisbursementEvents.tenantId, ctx.tenantId),
+        eq(loanDisbursementEvents.publicId, input.disbursementPublicId),
+    ) });
+    if (!original || original.status !== "posted") {
+        throw new DomainError(
+            "INTERMEDIATED_LOAN_PAYOUT_NOT_POSTED",
+            "The linked intermediary loan payout is not posted",
+            409,
+        );
+    }
+    await executor.execute(sql`SELECT id FROM loan_disbursement_events WHERE tenant_id = ${ctx.tenantId} AND id = ${original.id} FOR UPDATE`);
+    const reversalIdempotencyKey = `intermediated-payout-reversal:${input.groupPublicId}`;
+    const reversalRequestHash = disbursementReversalRequestHash(original.publicId, reason);
+    const existing = await executor.query.loanDisbursementEvents.findFirst({ where: and(
+        eq(loanDisbursementEvents.tenantId, ctx.tenantId),
+        eq(loanDisbursementEvents.reversedEventId, original.id),
+    ) });
+    if (existing) {
+        if (existing.reversalIdempotencyKey !== reversalIdempotencyKey
+            || existing.reversalRequestHash !== reversalRequestHash) {
+            throw new DomainError(
+                "INTERMEDIATED_LOAN_PAYOUT_REVERSAL_CONFLICT",
+                "The linked intermediary loan payout was already reversed differently",
+                409,
+            );
+        }
+        return existing;
+    }
+    const reversal = await executor.insert(loanDisbursementEvents).values({
+        tenantId: ctx.tenantId,
+        loanId: original.loanId,
+        grossAmount: original.grossAmount,
+        loanAttributedAmount: original.loanAttributedAmount,
+        channel: original.channel,
+        sourceBankProfileId: original.sourceBankProfileId,
+        payeeHint: original.payeeHint,
+        status: "reversed",
+        reversedEventId: original.id,
+        note: reason,
+        disbursedAt: original.disbursedAt,
+        postedAt: new Date(),
+        reversedAt: new Date(),
+        reversalIdempotencyKey,
+        reversalRequestHash,
+        createdByUserId: ctx.actorUserId,
+    }).returning().then((rows: Array<typeof loanDisbursementEvents.$inferSelect>) => rows[0]!);
+    await writeAudit(executor, ctx, reversal, "intermediated_reversed", {
+        groupPublicId: input.groupPublicId,
+        reversedEventPublicId: original.publicId,
+        reason,
+    });
+    return reversal;
+}
+
 export async function createDisbursementDraft(ctx: CommandContext, loanPublicId: string, input: CreateDisbursementDraftInput) {
     const loan = await accessibleLoan(ctx, loanPublicId);
     const draft = validateDraft(input);

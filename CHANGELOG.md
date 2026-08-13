@@ -8,6 +8,7 @@
 - Added audited intermediary profile APIs for confirmed-alias reuse, masked reusable bank accounts, effective-dated assignment history, and role-filtered active managed loans with strict tenant-safe command contracts.
 - Added strict authenticated APIs for audited intermediary disbursement groups and split transfer events, deriving exact contractual targets from immutable activation snapshots and persisting versioned reconciliation previews with role-level under/over warnings, explicit retained balances, evidence readiness, and automatic stale-proposal invalidation.
 - Added tenant-scoped multi-slip evidence for every intermediary transfer event with signed PUT preparation, exact MinIO ownership and checksum finalization, immutable finalized links, redacted audit provenance, and short-lived on-demand access descriptors.
+- Added explicitly confirmed atomic posting and compensating reversal for zero-variance intermediary disbursement groups, linking exact borrower payout and activation-time advance-interest projections by public provenance IDs while preserving optional evidence, collection/remittance ledgers, and Decimal-only held balances.
 
 ### Fixed
 - Canonicalized reusable intermediary bank identity on required uppercase bank codes with safe legacy ambiguity stops, rejected fully exposed four-digit account masks, replayed original assignment-create audit snapshots after later ends, and grouped multi-role managed portfolios by loan to prevent double-counting.

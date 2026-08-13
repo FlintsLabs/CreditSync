@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
-import { auditLogs, borrowers, files, intermediaries, intermediaryCollections, intermediaryRemittanceAllocations, intermediaryRemittanceEvidence, intermediaryRemittanceEvidenceIntents, intermediaryRemittanceProposals, intermediaryRemittances, loans, paymentIntakes, transactions, users } from "../db/schema";
+import { auditLogs, borrowers, files, intermediaries, intermediaryCollections, intermediaryRemittanceAllocations, intermediaryRemittanceEvidence, intermediaryRemittanceEvidenceIntents, intermediaryRemittanceProposals, intermediaryRemittances, intermediatedDisbursementGroups, intermediatedTransferEvents, loans, paymentIntakes, transactions, users } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import { canAccessTenantWideData } from "../lib/access";
+import { FinancialDecimal } from "../lib/financial-decimal";
 import { parseMoney, serializeMoney } from "../lib/money";
 import { BUCKET_NAME, createSignedPutUrl, headStoredObject, toStorageReference, type SignedPutRequest, type StoredObjectHead } from "../lib/storage";
 import type { CommandContext } from "./command-context";
@@ -83,6 +84,80 @@ export async function listIntermediaries(ctx: CommandContext, status: "active" |
     if (status !== "all") conditions.push(eq(intermediaries.status, status));
     if (actor && !canAccessTenantWideData({ role: actor.role ?? "viewer" })) conditions.push(eq(intermediaries.ownerUserId, actor.id));
     return (await db.select().from(intermediaries).where(and(...conditions))).map(presentIntermediary);
+}
+
+export async function intermediaryHeldBalanceProjection(
+    executor: any,
+    tenantId: string,
+    intermediaryId: number,
+) {
+    const [transferRows, collectionRows] = await Promise.all([
+        executor.select({
+            role: intermediatedTransferEvents.role,
+            amount: intermediatedTransferEvents.amount,
+            status: intermediatedTransferEvents.status,
+        }).from(intermediatedTransferEvents)
+            .innerJoin(intermediatedDisbursementGroups, and(
+                eq(intermediatedDisbursementGroups.tenantId, intermediatedTransferEvents.tenantId),
+                eq(intermediatedDisbursementGroups.id, intermediatedTransferEvents.groupId),
+            ))
+            .where(and(
+                eq(intermediatedTransferEvents.tenantId, tenantId),
+                eq(intermediatedDisbursementGroups.intermediaryId, intermediaryId),
+                inArray(intermediatedDisbursementGroups.status, ["posted", "reversed"]),
+                inArray(intermediatedTransferEvents.status, ["posted", "reversed"]),
+            )),
+        executor.select({ amount: intermediaryCollections.amount })
+            .from(intermediaryCollections)
+            .where(and(
+                eq(intermediaryCollections.tenantId, tenantId),
+                eq(intermediaryCollections.intermediaryId, intermediaryId),
+                inArray(intermediaryCollections.status, ["pending_remittance", "allocated"]),
+            )),
+    ]);
+    const roleTotal = (role: string) => transferRows
+        .filter((row: { role: string }) => row.role === role)
+        .reduce((total: Decimal, row: { amount: string; status: string }) => (
+            row.status === "reversed" ? total.minus(row.amount) : total.plus(row.amount)
+        ), new FinancialDecimal(0));
+    const fundingReceived = roleTotal("funding_to_intermediary");
+    const borrowerPayout = roleTotal("borrower_net_payout");
+    const advanceInterestReturned = roleTotal("advance_interest_return");
+    const disbursementHeldBalance = fundingReceived.minus(borrowerPayout).minus(advanceInterestReturned);
+    const collectionHeldBalance = collectionRows.reduce(
+        (total: Decimal, row: { amount: string }) => total.plus(row.amount),
+        new FinancialDecimal(0),
+    );
+    return {
+        fundingReceived,
+        borrowerPayout,
+        advanceInterestReturned,
+        disbursementHeldBalance,
+        collectionHeldBalance,
+        totalHeldBalance: disbursementHeldBalance.plus(collectionHeldBalance),
+    };
+}
+
+export async function getIntermediaryHeldBalance(ctx: CommandContext, intermediaryPublicId: string) {
+    const actor = await actorFor(ctx);
+    const intermediary = await db.query.intermediaries.findFirst({ where: and(
+        eq(intermediaries.tenantId, ctx.tenantId),
+        eq(intermediaries.publicId, intermediaryPublicId),
+    ) });
+    if (!intermediary
+        || (actor && !canAccessTenantWideData({ role: actor.role ?? "viewer" }) && intermediary.ownerUserId !== actor.id)) {
+        throw new DomainError("INTERMEDIARY_NOT_FOUND", "Intermediary not found", 404);
+    }
+    const balance = await intermediaryHeldBalanceProjection(db, ctx.tenantId, intermediary.id);
+    return {
+        intermediaryPublicId: intermediary.publicId,
+        fundingReceived: serializeMoney(balance.fundingReceived),
+        borrowerPayout: serializeMoney(balance.borrowerPayout),
+        advanceInterestReturned: serializeMoney(balance.advanceInterestReturned),
+        disbursementHeldBalance: serializeMoney(balance.disbursementHeldBalance),
+        collectionHeldBalance: serializeMoney(balance.collectionHeldBalance),
+        totalHeldBalance: serializeMoney(balance.totalHeldBalance),
+    };
 }
 
 export async function searchIntermediaries(ctx: CommandContext, query: string) {

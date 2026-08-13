@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { borrowers, intermediaries, loanIntermediaryAssignments, loans, users } from "../db/schema";
+import { borrowers, intermediaries, loanDisbursements, loanIntermediaryAssignments, loans, users } from "../db/schema";
 import type { SignedPutRequest, StoredObjectHead, StoredObjectLocation } from "../lib/storage";
 import { createIntermediatedDisbursementsRoute, intermediatedDisbursementsRoute } from "./intermediated-disbursements";
 
@@ -84,6 +84,15 @@ async function seed() {
         createdByUserId: actor.id,
         updatedByUserId: actor.id,
     });
+    await db.insert(loanDisbursements).values({
+        tenantId: actor.tenantId,
+        loanId: loan.id,
+        grossPrincipal: "5000.00",
+        firstDayInterestDeducted: "600.00",
+        netDisbursement: "4400.00",
+        disbursedAt: new Date("2026-08-13T09:00:00.000Z"),
+        createdByUserId: actor.id,
+    });
     return { actor, borrower, loan, intermediary };
 }
 
@@ -129,6 +138,8 @@ describe("intermediated disbursement REST contract", () => {
                 transferredAt: "2026-08-13T09:00:00.000Z",
             })],
             ["POST", "/intermediated-disbursements/00000000-0000-7000-8000-000000000000/preview", undefined],
+            ["POST", "/intermediated-disbursements/00000000-0000-7000-8000-000000000000/post", JSON.stringify({ proposalPublicId: "00000000-0000-7000-8000-000000000001", confirmed: true })],
+            ["POST", "/intermediated-disbursements/00000000-0000-7000-8000-000000000000/reverse", JSON.stringify({ reason: "Confirmed reversal", confirmed: true })],
             ["GET", "/intermediated-disbursements/00000000-0000-7000-8000-000000000000/events/00000000-0000-7000-8000-000000000001/evidence", undefined],
             ["POST", "/intermediated-disbursements/00000000-0000-7000-8000-000000000000/events/00000000-0000-7000-8000-000000000001/evidence/upload-intents", JSON.stringify({ mimeType: "image/png", size: 4, sha256: "a".repeat(64) })],
             ["POST", "/intermediated-disbursements/00000000-0000-7000-8000-000000000000/events/00000000-0000-7000-8000-000000000001/evidence/00000000-0000-7000-8000-000000000002/finalize", undefined],
@@ -380,5 +391,45 @@ describe("intermediated disbursement REST contract", () => {
 
         const unknownQuery = await jsonRequest(app, "/intermediated-disbursements?unexpected=true", token);
         expect(unknownQuery.response.status).toBe(422);
+
+        const unconfirmed = await jsonRequest(app, `/intermediated-disbursements/${created.body.publicId}/post`, token, {
+            method: "POST",
+            headers: { "idempotency-key": "route-post-unconfirmed" },
+            body: JSON.stringify({ proposalPublicId: preview.body.publicId, confirmed: false }),
+        });
+        expect(unconfirmed.response.status).toBe(422);
+
+        const posted = await jsonRequest(app, `/intermediated-disbursements/${created.body.publicId}/post`, token, {
+            method: "POST",
+            headers: { "idempotency-key": "route-post", "x-correlation-id": "corr-route-post" },
+            body: JSON.stringify({ proposalPublicId: preview.body.publicId, confirmed: true }),
+        });
+        expect(posted.response.status).toBe(200);
+        expect(posted.body).toMatchObject({
+            publicId: created.body.publicId,
+            status: "posted",
+            fundingAmount: "5000.00",
+            borrowerPayoutAmount: "4400.00",
+            advanceInterestAmount: "600.00",
+            intermediaryHeldBalance: "0.00",
+            loanDisbursementPublicId: expect.any(String),
+            advanceInterestProjectionPublicId: expect.any(String),
+            correlationId: "corr-route-post",
+        });
+
+        const reversed = await jsonRequest(app, `/intermediated-disbursements/${created.body.publicId}/reverse`, token, {
+            method: "POST",
+            headers: { "idempotency-key": "route-reverse", "x-correlation-id": "corr-route-reverse" },
+            body: JSON.stringify({ reason: "Operator confirmed the transfer was recalled", confirmed: true }),
+        });
+        expect(reversed.response.status).toBe(200);
+        expect(reversed.body).toMatchObject({
+            status: "reversed",
+            reversedGroupPublicId: created.body.publicId,
+            reversedLoanDisbursementPublicId: posted.body.loanDisbursementPublicId,
+            intermediaryHeldBalance: "0.00",
+            correlationId: "corr-route-reverse",
+        });
+        expect(JSON.stringify({ posted: posted.body, reversed: reversed.body })).not.toMatch(/"(?:loanId|intermediaryId|groupId|reversedGroupId|reversedEventId)"/);
     });
 });

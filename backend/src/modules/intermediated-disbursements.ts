@@ -7,7 +7,9 @@ import {
     createTransferEvent,
     getIntermediatedDisbursementGroup,
     listIntermediatedDisbursementGroups,
+    postIntermediatedDisbursement,
     previewIntermediatedDisbursement,
+    reverseIntermediatedDisbursement,
 } from "../services/intermediated-disbursement-service";
 import {
     finalizeTransferEvidence,
@@ -188,6 +190,37 @@ export function createIntermediatedDisbursementsRoute(evidenceGateway?: Transfer
         {
             ...groupId,
             body: t.Object({}, { additionalProperties: t.Never() }),
+        },
+    )
+    .post(
+        "/intermediated-disbursements/:id/post",
+        ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => postIntermediatedDisbursement(
+            ctx,
+            params.id,
+            body.proposalPublicId,
+            body.confirmed,
+        )),
+        {
+            ...groupId,
+            body: t.Object({
+                proposalPublicId: t.String({ format: "uuid" }),
+                confirmed: t.Literal(true),
+            }, { additionalProperties: t.Never() }),
+        },
+    )
+    .post(
+        "/intermediated-disbursements/:id/reverse",
+        ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => reverseIntermediatedDisbursement(
+            ctx,
+            params.id,
+            body.reason,
+        )),
+        {
+            ...groupId,
+            body: t.Object({
+                reason: t.String({ minLength: 1, maxLength: 2000 }),
+                confirmed: t.Literal(true),
+            }, { additionalProperties: t.Never() }),
         },
     );
 }
