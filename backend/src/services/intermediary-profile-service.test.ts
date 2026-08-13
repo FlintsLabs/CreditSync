@@ -292,6 +292,38 @@ describe("intermediary profile, account, and assignment service", () => {
         expect(await db.select().from(intermediaryBankAccounts)).toHaveLength(1);
     });
 
+    // Break caught: an unresolved pre-upgrade null-code row lets the same account be recreated under canonical-code identity.
+    integrationTest("stops canonical bank saves that collide with an unresolved legacy last-four identity", async () => {
+        const firstActor = await seedActor("tenant-bank-legacy-review", "bank-legacy-first", "collector");
+        const secondActor = await seedActor("tenant-bank-legacy-review", "bank-legacy-second", "collector");
+        const firstIntermediary = await createIntermediary(context(firstActor), { name: "Legacy Account Owner" });
+        const secondIntermediary = await createIntermediary(context(secondActor), { name: "Canonical Account Owner" });
+        const firstRow = await db.query.intermediaries.findFirst({
+            where: eq(intermediaries.publicId, firstIntermediary.publicId),
+        });
+        const legacyNameHash = createHash("sha256")
+            .update([firstActor.tenantId, "siam commercial bank", "1111222233"].join("\0"))
+            .digest("hex");
+        await db.insert(intermediaryBankAccounts).values({
+            tenantId: firstActor.tenantId,
+            intermediaryId: firstRow!.id,
+            bankCode: null,
+            bankName: "Siam Commercial Bank",
+            accountName: "Legacy Account Owner",
+            accountNumberLast4: "2233",
+            accountNumberHash: legacyNameHash,
+            createdByUserId: firstActor.id,
+            updatedByUserId: firstActor.id,
+        });
+
+        await expect(saveIntermediaryBankAccount(
+            context(secondActor, "bank-legacy-review"),
+            secondIntermediary.publicId,
+            { bankCode: "SCB", bankName: "SCB", accountName: "Canonical Account Owner", accountNumber: "111-1-22223-3" },
+        )).rejects.toMatchObject({ code: "BANK_ACCOUNT_LEGACY_IDENTITY_REVIEW_REQUIRED", status: 409 });
+        expect(await db.select().from(intermediaryBankAccounts)).toHaveLength(1);
+    });
+
     // Break caught: accepting four digits makes the masked value and audit snapshot reveal the complete account number.
     integrationTest("requires a hidden account digit and never exposes the minimum accepted raw number", async () => {
         const actor = await seedActor("tenant-bank-mask", "bank-mask-owner");

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
     auditLogs,
@@ -310,6 +310,20 @@ export async function saveIntermediaryBankAccount(ctx: CommandContext, intermedi
                 eq(intermediaryBankAccounts.accountNumberHash, accountNumberHash),
             ),
         });
+        const unresolvedLegacy = await tx.query.intermediaryBankAccounts.findFirst({
+            where: and(
+                eq(intermediaryBankAccounts.tenantId, ctx.tenantId),
+                isNull(intermediaryBankAccounts.bankCode),
+                eq(intermediaryBankAccounts.accountNumberLast4, accountDigits.slice(-4)),
+            ),
+        });
+        if (!existing && unresolvedLegacy) {
+            throw new DomainError(
+                "BANK_ACCOUNT_LEGACY_IDENTITY_REVIEW_REQUIRED",
+                "A legacy bank account with the same last four digits requires canonical identity review",
+                409,
+            );
+        }
         if (existing && existing.intermediaryId !== currentIntermediary.id) {
             throw new DomainError("BANK_ACCOUNT_ALREADY_ASSIGNED", "Bank account is already assigned to another intermediary", 409);
         }
