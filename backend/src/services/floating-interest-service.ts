@@ -423,7 +423,21 @@ async function replaceGeneralizedAccruals(
 
         const accrued = calculateAccruedInterest(openingPrincipal, policy, segmentElapsedDays);
         periodCumulative = periodCumulative.plus(accrued.incrementAmount);
-        const paidAmount = Decimal.min(new Decimal(row.paidAmount), new Decimal(accrued.incrementAmount));
+        const paidAmount = new Decimal(row.paidAmount);
+        if (paidAmount.gt(accrued.incrementAmount)) {
+            throw new DomainError(
+                "FLOATING_ACCRUAL_PAID_CONFLICT",
+                "Recalculated floating interest cannot be lower than its immutable paid allocation",
+                409,
+                {
+                    loanPublicId: loan.publicId,
+                    accrualPublicId: row.publicId,
+                    accrualDate: row.accrualDate,
+                    paidAmount: paidAmount.toFixed(2),
+                    recalculatedInterestAmount: new Decimal(accrued.incrementAmount).toFixed(2),
+                },
+            );
+        }
         const status = replacementStatus(row, paidAmount, accrued.incrementAmount, materializedThrough);
         await tx.update(loanInterestAccruals).set({ status: "reversed" }).where(and(
             eq(loanInterestAccruals.tenantId, ctx.tenantId),
@@ -521,7 +535,13 @@ export async function correctFloatingInterestAccruals(ctx: CommandContext, loanP
         let delta = new Decimal(0);
         let replacements: Array<typeof loanInterestAccruals.$inferSelect> = [];
         if (hasPeriodPolicy(loan)) {
-            ({ replacements, delta } = await replaceGeneralizedAccruals(tx, ctx, loan, oldRows, null));
+            const suffixRows = await tx.select().from(loanInterestAccruals).where(and(
+                eq(loanInterestAccruals.tenantId, ctx.tenantId),
+                eq(loanInterestAccruals.loanId, loan.id),
+                sql`${loanInterestAccruals.status} <> 'reversed'`,
+                sql`${loanInterestAccruals.accrualDate} >= ${oldRows[0]!.accrualDate}`,
+            )).orderBy(asc(loanInterestAccruals.accrualDate), asc(loanInterestAccruals.id));
+            ({ replacements, delta } = await replaceGeneralizedAccruals(tx, ctx, loan, suffixRows, null));
         } else {
             const periodRows = await tx.select().from(loanInterestRatePeriods).where(and(
                 eq(loanInterestRatePeriods.tenantId, ctx.tenantId),

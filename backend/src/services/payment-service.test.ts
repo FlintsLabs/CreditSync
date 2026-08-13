@@ -338,6 +338,63 @@ describe("payment application service", () => {
         });
     });
 
+    // Break caught: lowering a paid weekly snapshot silently clamps paidAmount and orphans part of an immutable posted interest payment.
+    integrationTest("rejects a backdated principal posting atomically when reprojection would orphan paid interest", async () => {
+        setSystemTime(new Date("2026-08-21T12:00:00+07:00"));
+        const actor = await seedUser("tenant-floating-weekly-paid-conflict");
+        const seeded = await seedWeeklyFloatingLoan(actor);
+        await accrueFloatingInterestThrough(db, seeded.loan, new Date("2026-08-20T12:00:00+07:00"), context(actor));
+
+        const interestIntake = await createPaymentIntake(context(actor), {
+            amount: "600.00",
+            receivedAt: "2026-08-20T12:00:00+07:00",
+        });
+        const interestPreview = await previewPaymentMatch(context(actor), interestIntake.publicId, {
+            allocations: [{ borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "600.00" }],
+        });
+        const paid = await postPayment(context(actor), interestIntake.publicId, { proposalPublicId: interestPreview.publicId });
+        expect(paid.transactions).toEqual([
+            expect.objectContaining({ interestComponent: "600.00", principalComponent: "0.00" }),
+        ]);
+
+        const backdatedIntake = await createPaymentIntake(context(actor), {
+            amount: "1000.00",
+            receivedAt: "2026-08-15T12:00:00+07:00",
+        });
+        const backdatedPreview = await previewPaymentMatch(context(actor), backdatedIntake.publicId, {
+            allocations: [{ borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "1000.00" }],
+        });
+        const before = {
+            transactions: await db.select().from(transactions).orderBy(transactions.id),
+            accruals: await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, seeded.loan.id)).orderBy(loanInterestAccruals.id),
+            auditLogs: await db.select().from(auditLogs).orderBy(auditLogs.id),
+            ledgerEntries: await db.select().from(fundLedgerEntries).orderBy(fundLedgerEntries.id),
+            paymentIntakes: await db.select().from(paymentIntakes).orderBy(paymentIntakes.id),
+            loan: await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) }),
+        };
+
+        await expect(postPayment(context(actor), backdatedIntake.publicId, {
+            proposalPublicId: backdatedPreview.publicId,
+        })).rejects.toMatchObject({
+            code: "FLOATING_ACCRUAL_PAID_CONFLICT",
+            status: 409,
+            details: {
+                accrualDate: "2026-08-16",
+                paidAmount: "85.72",
+                recalculatedInterestAmount: "68.57",
+            },
+        });
+
+        expect(await db.select().from(transactions).orderBy(transactions.id)).toEqual(before.transactions);
+        expect(await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, seeded.loan.id)).orderBy(loanInterestAccruals.id)).toEqual(before.accruals);
+        expect(await db.select().from(auditLogs).orderBy(auditLogs.id)).toEqual(before.auditLogs);
+        expect(await db.select().from(fundLedgerEntries).orderBy(fundLedgerEntries.id)).toEqual(before.ledgerEntries);
+        expect(await db.select().from(paymentIntakes).orderBy(paymentIntakes.id)).toEqual(before.paymentIntakes);
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toEqual(before.loan);
+        expect(await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, backdatedIntake.publicId) }))
+            .toMatchObject({ status: "ready", postedAt: null });
+    });
+
     // Break caught: a partial weekly payment or its reversal loses row-level paid state and exact period remainder.
     integrationTest("restores exact weekly due rows after reversing a partial interest payment", async () => {
         setSystemTime(new Date("2026-08-21T12:00:00+07:00"));

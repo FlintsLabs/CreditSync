@@ -283,6 +283,77 @@ describe("floating interest accrual service", () => {
         expect(await db.query.loans.findFirst({ where: eq(loans.id, loan.id) })).toMatchObject({ outstandingInterest: "548.56" });
     });
 
+    // Break caught: sparse correction targets let an untouched row overwrite the running weekly cumulative delta and leave the later suffix on stale principal.
+    integrationTest("reprojects the complete materialized suffix for sparse weekly correction dates", async () => {
+        const { actor, loan } = await seedWeeklyLoan("tenant-weekly-sparse-correction");
+        const ratePeriod = await db.insert(loanInterestRatePeriods).values({
+            tenantId: loan.tenantId,
+            loanId: loan.id,
+            effectiveDate: "2026-08-13",
+            expiryDate: null,
+            rateType: "percent",
+            rate: "12.0000",
+            periodUnit: "week",
+            periodLength: 1,
+            createdByUserId: actor.id,
+        }).returning().then((rows) => rows[0]!);
+        await accrueFloatingInterestThrough(db, loan, bangkokNoon("2026-08-20"), context(actor));
+        await db.insert(transactions).values({
+            tenantId: loan.tenantId,
+            ownerUserId: actor.id,
+            loanId: loan.id,
+            amount: "1000.00",
+            principalComponent: "1000.00",
+            interestComponent: "0.00",
+            feeComponent: "0.00",
+            penaltyComponent: "0.00",
+            type: "repayment",
+            transactionDate: new Date("2026-08-15T12:00:00+07:00"),
+            recordedByUserId: actor.id,
+            entryType: "repayment",
+            idempotencyKey: "weekly-sparse-correction-payment",
+            postedAt: new Date("2026-08-20T12:00:00+07:00"),
+        });
+
+        const corrected = await correctFloatingInterestAccruals(
+            context(actor, "weekly-sparse-correction-1"),
+            loan.publicId,
+            ["2026-08-18", "2026-08-16"],
+            "Repair the full suffix from sparse evidence dates",
+        );
+
+        const activeSuffix = await db.select({
+            accrualDate: loanInterestAccruals.accrualDate,
+            openingPrincipal: loanInterestAccruals.openingPrincipal,
+            interestRatePeriodId: loanInterestAccruals.interestRatePeriodId,
+            contractualInterestAmount: loanInterestAccruals.contractualInterestAmount,
+            interestAmount: loanInterestAccruals.interestAmount,
+            cumulativeInterestAmount: loanInterestAccruals.cumulativeInterestAmount,
+            status: loanInterestAccruals.status,
+            reversedAccrualId: loanInterestAccruals.reversedAccrualId,
+        }).from(loanInterestAccruals).where(and(
+            eq(loanInterestAccruals.loanId, loan.id),
+            sql`${loanInterestAccruals.status} <> 'reversed'`,
+            sql`${loanInterestAccruals.accrualDate} >= '2026-08-16'`,
+        )).orderBy(loanInterestAccruals.accrualDate);
+        expect(activeSuffix).toEqual([
+            { accrualDate: "2026-08-16", openingPrincipal: "4000.00", interestRatePeriodId: ratePeriod.id, contractualInterestAmount: "480.00", interestAmount: "68.57", cumulativeInterestAmount: "325.71", status: "due", reversedAccrualId: expect.any(Number) },
+            { accrualDate: "2026-08-17", openingPrincipal: "4000.00", interestRatePeriodId: ratePeriod.id, contractualInterestAmount: "480.00", interestAmount: "68.57", cumulativeInterestAmount: "394.28", status: "due", reversedAccrualId: expect.any(Number) },
+            { accrualDate: "2026-08-18", openingPrincipal: "4000.00", interestRatePeriodId: ratePeriod.id, contractualInterestAmount: "480.00", interestAmount: "68.57", cumulativeInterestAmount: "462.85", status: "due", reversedAccrualId: expect.any(Number) },
+            { accrualDate: "2026-08-19", openingPrincipal: "4000.00", interestRatePeriodId: ratePeriod.id, contractualInterestAmount: "480.00", interestAmount: "68.58", cumulativeInterestAmount: "531.43", status: "due", reversedAccrualId: expect.any(Number) },
+            { accrualDate: "2026-08-20", openingPrincipal: "4000.00", interestRatePeriodId: ratePeriod.id, contractualInterestAmount: "480.00", interestAmount: "68.57", cumulativeInterestAmount: "68.57", status: "accruing", reversedAccrualId: expect.any(Number) },
+        ]);
+        expect(corrected).toMatchObject({
+            correctedDates: ["2026-08-16", "2026-08-18"],
+            amount: "-85.71",
+        });
+        expect(await db.select().from(loanInterestAccruals).where(and(
+            eq(loanInterestAccruals.loanId, loan.id),
+            eq(loanInterestAccruals.status, "reversed"),
+        ))).toHaveLength(5);
+        expect((await floatingInterestDue(db, loan, bangkokNoon("2026-08-20"), context(actor))).toFixed(2)).toBe("531.43");
+    });
+
     // Break caught: standalone promotion commits row states before its contextual audit write and loses request/correlation provenance.
     integrationTest("rolls back a standalone period promotion when its contextual audit cannot be written", async () => {
         const { actor, loan } = await seedWeeklyLoan("tenant-weekly-atomic-promotion");
