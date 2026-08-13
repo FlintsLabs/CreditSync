@@ -1,6 +1,6 @@
 # CreditSync Plugin Changelog
 
-## 2.5.0 - 2026-08-13
+## 3.0.0 - 2026-08-13
 
 ### Added
 
@@ -9,6 +9,14 @@
 ### Changed
 
 - Generalized floating origination to preserve day-or-week policy data, required a stable activation idempotency key, and synchronized the manifest, local validation command, references, and frozen 43-tool contract.
+
+### Fixed
+
+- Required literal settlement confirmation instead of treating omission as approval, and recorded the exact displayed preview composition before confirmation and execution in the executable eval harness.
+
+### Compatibility
+
+- Released a new major plugin because generalized floating origination replaces the legacy daily-only input and loan activation now requires an idempotency key. MCP payload schema version remains `1.0`.
 
 ## 2.4.0 - 2026-08-13
 

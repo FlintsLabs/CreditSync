@@ -48,13 +48,43 @@ describe("CreditSync executable orchestration evals", () => {
             reason: "Borrower confirmed the exact displayed close-out",
             idempotencyKey: "floating-settlement-20260815-1",
         });
+        expect(result.events).toEqual([
+            { type: "tool", name: "borrower.portfolio" },
+            { type: "tool", name: "loan.settlement.preview" },
+            {
+                type: "presentation",
+                name: "floating-settlement-preview",
+                data: {
+                    publicId: "0198c481-3e2b-7000-8000-000000000071",
+                    outstandingPrincipal: "5000.00",
+                    dueInterest: "25.00",
+                    accruedNotDueInterest: "17.14",
+                    outstandingFees: "10.00",
+                    outstandingPenalties: "5.00",
+                    nonRefundableAdvanceInterest: "600.00",
+                    settlementTotal: "5057.14",
+                    expiresAt: "2026-08-15T06:15:00.000Z",
+                    balanceVersion: `v1:${"c".repeat(64)}`,
+                    previewHash: `v1:${"d".repeat(64)}`,
+                },
+            },
+            { type: "confirmation", name: "floating-settlement", confirmed: true },
+            { type: "tool", name: "loan.settlement.execute" },
+        ]);
     });
 
-    test("floating settlement stops for missing confirmation, stale state, and refund requests", async () => {
+    test("floating settlement treats an omitted confirmation as unconfirmed", async () => {
         const unconfirmed = await runEvalScenario("floating-settlement-missing-confirmation");
         expect(unconfirmed).toMatchObject({ outcome: "stopped", stopReason: "settlement-confirmation-required" });
         expect(unconfirmed.calls.some((call) => call.name === "loan.settlement.execute")).toBe(false);
+        expect(unconfirmed.events?.at(-1)).toEqual({
+            type: "confirmation",
+            name: "floating-settlement",
+            confirmed: false,
+        });
+    });
 
+    test("floating settlement stops for stale state and refund requests", async () => {
         const stale = await runEvalScenario("floating-settlement-stale-preview");
         expect(stale).toMatchObject({ outcome: "stopped", stopReason: "fresh-settlement-confirmation-required" });
         expect(stale.calls.map((call) => call.name)).toEqual([

@@ -158,7 +158,7 @@ The web app exposes `/payments` as the human review inbox. It persists and shows
 │   ├── src/lib/          # api client, auth helpers, i18n
 │   └── src/pages/        # landing, login, dashboard screens
 ├── docs/                 # ADRs and planning docs
-├── plugins/creditsync/   # Private Codex plugin 2.5.0, skills, evals, and validation
+├── plugins/creditsync/   # Private Codex plugin 3.0.0, skills, evals, and validation
 ├── k8s/                  # Kubernetes manifests
 ├── docker-compose.yml    # local development infra
 ├── docker-compose.infra.yml  # production-style infra including dragonfly cache
@@ -350,7 +350,7 @@ renewal.preview       renewal.execute
 renewal.reverse       funding-source.list
 ```
 
-Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Disbursement drafts support strict non-empty PATCH updates to editable metadata; each update retains finalized evidence and requires a re-list plus fresh confirmation before posting. Payment posting/reversal, idempotent loan activation, floating-interest execution and settlement, renewal execution/reversal, disbursement post/reverse, and intermediary remittance posting follow explicit confirmation and audit boundaries. Settlement preview is inspectable but persists a short-lived, balance-versioned command artifact; execute accepts only the exact current preview and returns safe audit/correlation identifiers. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces. The bundled Plugin `2.5.0` freezes the matching 43-tool backend contract.
+Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Disbursement drafts support strict non-empty PATCH updates to editable metadata; each update retains finalized evidence and requires a re-list plus fresh confirmation before posting. Payment posting/reversal, idempotent loan activation, floating-interest execution and settlement, renewal execution/reversal, disbursement post/reverse, and intermediary remittance posting follow explicit confirmation and audit boundaries. Settlement preview is inspectable but persists a short-lived, balance-versioned command artifact; execute accepts only the exact current preview and returns safe audit/correlation identifiers. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces. The bundled Plugin `3.0.0` freezes the matching 43-tool backend contract.
 
 ### Configure and rotate the bearer token
 
@@ -372,7 +372,7 @@ For rotation, put the old and new hashes in `MCP_API_TOKEN_HASHES` separated by 
 
 ## Private CreditSync Plugin
 
-The repository includes CreditSync Plugin `2.5.0` under [`plugins/creditsync`](./plugins/creditsync). It combines nine orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
+The repository includes CreditSync Plugin `3.0.0` under [`plugins/creditsync`](./plugins/creditsync). It combines nine orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
 
 Before installation, register the deployed MCP endpoint as a private Codex app and replace the conspicuous `plugin_asdk_app_REPLACE_AFTER_PRIVATE_REGISTRATION` value in `plugins/creditsync/.app.json` with the returned `plugin_asdk_app...` technical ID. Then validate the package, add this Git repository as the marketplace that tracks `main`, and install the plugin:
 

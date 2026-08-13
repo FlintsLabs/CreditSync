@@ -1,6 +1,6 @@
 {
   "name": "creditsync",
-  "version": "2.5.0",
+  "version": "3.0.0",
   "description": "Private CreditSync borrower, payment, intermediary-remittance, floating-interest settlement, disbursement, renewal, and reversal workflows for Codex.",
   "author": {
     "name": "CreditSync"
