@@ -3,6 +3,7 @@
 ## v0.3.11 - 2026-08-13
 
 ### Added
+- Added the approved design for a strict, audited MCP PATCH tool that updates only editable loan-disbursement draft fields, preserves evidence, and requires re-inspection plus fresh post confirmation.
 - Added the v0.3.11 TDD implementation plan for repairing and deploying the strict `intake.get` evidence contract with synchronized plugin validation.
 - Added the approved design for repairing the strict `intake.get` evidence contract, regression coverage, synchronized plugin validation, and read-only production verification.
 - Added the approved design and TDD implementation plan for a flat, divider-separated mobile repayment-history list with concise exact allocation summaries.
