@@ -2238,7 +2238,7 @@
         },
         "intermediary_bank_accounts_identity_check": {
           "name": "intermediary_bank_accounts_identity_check",
-          "value": "length(btrim(\"intermediary_bank_accounts\".\"bank_name\")) > 0 AND length(btrim(\"intermediary_bank_accounts\".\"account_name\")) > 0 AND length(btrim(\"intermediary_bank_accounts\".\"account_number_hash\")) > 0"
+          "value": "\"intermediary_bank_accounts\".\"bank_name\" ~ '[^[:space:]]' AND \"intermediary_bank_accounts\".\"account_name\" ~ '[^[:space:]]' AND \"intermediary_bank_accounts\".\"account_number_hash\" ~ '[^[:space:]]'"
         }
       },
       "isRLSEnabled": false
@@ -4001,7 +4001,7 @@
         },
         "intermediated_disbursement_group_previews_hash_check": {
           "name": "intermediated_disbursement_group_previews_hash_check",
-          "value": "length(btrim(\"intermediated_disbursement_group_previews\".\"preview_hash\")) > 0"
+          "value": "\"intermediated_disbursement_group_previews\".\"preview_hash\" ~ '[^[:space:]]'"
         },
         "intermediated_disbursement_group_previews_expiry_check": {
           "name": "intermediated_disbursement_group_previews_expiry_check",
@@ -4475,7 +4475,7 @@
         },
         "intermediated_disbursement_groups_command_keys_check": {
           "name": "intermediated_disbursement_groups_command_keys_check",
-          "value": "\n        length(btrim(\"intermediated_disbursement_groups\".\"idempotency_key\")) > 0\n        AND (\"intermediated_disbursement_groups\".\"post_idempotency_key\" IS NULL OR length(btrim(\"intermediated_disbursement_groups\".\"post_idempotency_key\")) > 0)\n        AND (\"intermediated_disbursement_groups\".\"reversal_idempotency_key\" IS NULL OR length(btrim(\"intermediated_disbursement_groups\".\"reversal_idempotency_key\")) > 0)\n        AND (\"intermediated_disbursement_groups\".\"reversal_request_hash\" IS NULL OR length(btrim(\"intermediated_disbursement_groups\".\"reversal_request_hash\")) > 0)\n    "
+          "value": "\n        \"intermediated_disbursement_groups\".\"idempotency_key\" ~ '[^[:space:]]'\n        AND (\"intermediated_disbursement_groups\".\"post_idempotency_key\" IS NULL OR \"intermediated_disbursement_groups\".\"post_idempotency_key\" ~ '[^[:space:]]')\n        AND (\"intermediated_disbursement_groups\".\"reversal_idempotency_key\" IS NULL OR \"intermediated_disbursement_groups\".\"reversal_idempotency_key\" ~ '[^[:space:]]')\n        AND (\"intermediated_disbursement_groups\".\"reversal_request_hash\" IS NULL OR \"intermediated_disbursement_groups\".\"reversal_request_hash\" ~ '[^[:space:]]')\n    "
         },
         "intermediated_disbursement_groups_expected_balance_check": {
           "name": "intermediated_disbursement_groups_expected_balance_check",
@@ -4483,7 +4483,7 @@
         },
         "intermediated_disbursement_groups_lifecycle_check": {
           "name": "intermediated_disbursement_groups_lifecycle_check",
-          "value": "\n        (\"intermediated_disbursement_groups\".\"status\" IN ('draft', 'needs_review', 'ready')\n            AND \"intermediated_disbursement_groups\".\"reversed_group_id\" IS NULL AND \"intermediated_disbursement_groups\".\"posted_at\" IS NULL AND \"intermediated_disbursement_groups\".\"reversed_at\" IS NULL)\n        OR (\"intermediated_disbursement_groups\".\"status\" = 'posted'\n            AND \"intermediated_disbursement_groups\".\"reversed_group_id\" IS NULL AND \"intermediated_disbursement_groups\".\"post_idempotency_key\" IS NOT NULL\n            AND \"intermediated_disbursement_groups\".\"posted_at\" IS NOT NULL AND \"intermediated_disbursement_groups\".\"reversed_at\" IS NULL)\n        OR (\"intermediated_disbursement_groups\".\"status\" = 'reversed'\n            AND \"intermediated_disbursement_groups\".\"reversed_group_id\" IS NOT NULL AND \"intermediated_disbursement_groups\".\"posted_at\" IS NOT NULL AND \"intermediated_disbursement_groups\".\"reversed_at\" IS NOT NULL\n            AND \"intermediated_disbursement_groups\".\"reversal_idempotency_key\" IS NOT NULL\n            AND \"intermediated_disbursement_groups\".\"reversal_request_hash\" IS NOT NULL AND length(btrim(\"intermediated_disbursement_groups\".\"reversal_request_hash\")) > 0\n            AND \"intermediated_disbursement_groups\".\"reversal_reason\" IS NOT NULL AND length(btrim(\"intermediated_disbursement_groups\".\"reversal_reason\")) > 0)\n    "
+          "value": "\n        (\"intermediated_disbursement_groups\".\"status\" IN ('draft', 'needs_review', 'ready')\n            AND \"intermediated_disbursement_groups\".\"reversed_group_id\" IS NULL AND \"intermediated_disbursement_groups\".\"posted_at\" IS NULL AND \"intermediated_disbursement_groups\".\"reversed_at\" IS NULL)\n        OR (\"intermediated_disbursement_groups\".\"status\" = 'posted'\n            AND \"intermediated_disbursement_groups\".\"reversed_group_id\" IS NULL AND \"intermediated_disbursement_groups\".\"post_idempotency_key\" IS NOT NULL\n            AND \"intermediated_disbursement_groups\".\"posted_at\" IS NOT NULL AND \"intermediated_disbursement_groups\".\"reversed_at\" IS NULL)\n        OR (\"intermediated_disbursement_groups\".\"status\" = 'reversed'\n            AND \"intermediated_disbursement_groups\".\"reversed_group_id\" IS NOT NULL AND \"intermediated_disbursement_groups\".\"posted_at\" IS NOT NULL AND \"intermediated_disbursement_groups\".\"reversed_at\" IS NOT NULL\n            AND \"intermediated_disbursement_groups\".\"reversal_idempotency_key\" IS NOT NULL\n            AND \"intermediated_disbursement_groups\".\"reversal_request_hash\" IS NOT NULL AND \"intermediated_disbursement_groups\".\"reversal_request_hash\" ~ '[^[:space:]]'\n            AND \"intermediated_disbursement_groups\".\"reversal_reason\" IS NOT NULL AND \"intermediated_disbursement_groups\".\"reversal_reason\" ~ '[^[:space:]]')\n    "
         }
       },
       "isRLSEnabled": false
@@ -4871,11 +4871,11 @@
         },
         "intermediated_transfer_events_command_keys_check": {
           "name": "intermediated_transfer_events_command_keys_check",
-          "value": "\n        length(btrim(\"intermediated_transfer_events\".\"idempotency_key\")) > 0\n        AND (\"intermediated_transfer_events\".\"bank_reference_hash\" IS NULL OR length(btrim(\"intermediated_transfer_events\".\"bank_reference_hash\")) > 0)\n    "
+          "value": "\n        \"intermediated_transfer_events\".\"idempotency_key\" ~ '[^[:space:]]'\n        AND (\"intermediated_transfer_events\".\"bank_reference_hash\" IS NULL OR \"intermediated_transfer_events\".\"bank_reference_hash\" ~ '[^[:space:]]')\n    "
         },
         "intermediated_transfer_events_lifecycle_check": {
           "name": "intermediated_transfer_events_lifecycle_check",
-          "value": "\n        (\"intermediated_transfer_events\".\"status\" IN ('draft', 'ready')\n            AND \"intermediated_transfer_events\".\"reversed_event_id\" IS NULL AND \"intermediated_transfer_events\".\"posted_at\" IS NULL AND \"intermediated_transfer_events\".\"reversed_at\" IS NULL)\n        OR (\"intermediated_transfer_events\".\"status\" = 'posted'\n            AND \"intermediated_transfer_events\".\"reversed_event_id\" IS NULL AND \"intermediated_transfer_events\".\"posted_at\" IS NOT NULL AND \"intermediated_transfer_events\".\"reversed_at\" IS NULL)\n        OR (\"intermediated_transfer_events\".\"status\" = 'reversed'\n            AND \"intermediated_transfer_events\".\"reversed_event_id\" IS NOT NULL AND \"intermediated_transfer_events\".\"posted_at\" IS NOT NULL AND \"intermediated_transfer_events\".\"reversed_at\" IS NOT NULL\n            AND \"intermediated_transfer_events\".\"reversal_reason\" IS NOT NULL AND length(btrim(\"intermediated_transfer_events\".\"reversal_reason\")) > 0)\n    "
+          "value": "\n        (\"intermediated_transfer_events\".\"status\" IN ('draft', 'ready')\n            AND \"intermediated_transfer_events\".\"reversed_event_id\" IS NULL AND \"intermediated_transfer_events\".\"posted_at\" IS NULL AND \"intermediated_transfer_events\".\"reversed_at\" IS NULL)\n        OR (\"intermediated_transfer_events\".\"status\" = 'posted'\n            AND \"intermediated_transfer_events\".\"reversed_event_id\" IS NULL AND \"intermediated_transfer_events\".\"posted_at\" IS NOT NULL AND \"intermediated_transfer_events\".\"reversed_at\" IS NULL)\n        OR (\"intermediated_transfer_events\".\"status\" = 'reversed'\n            AND \"intermediated_transfer_events\".\"reversed_event_id\" IS NOT NULL AND \"intermediated_transfer_events\".\"posted_at\" IS NOT NULL AND \"intermediated_transfer_events\".\"reversed_at\" IS NOT NULL\n            AND \"intermediated_transfer_events\".\"reversal_reason\" IS NOT NULL AND \"intermediated_transfer_events\".\"reversal_reason\" ~ '[^[:space:]]')\n    "
         }
       },
       "isRLSEnabled": false
@@ -5284,7 +5284,7 @@
         },
         "intermediated_transfer_evidence_intents_metadata_check": {
           "name": "intermediated_transfer_evidence_intents_metadata_check",
-          "value": "length(btrim(\"intermediated_transfer_evidence_intents\".\"evidence_hash\")) > 0 AND length(btrim(\"intermediated_transfer_evidence_intents\".\"mime_type\")) > 0 AND \"intermediated_transfer_evidence_intents\".\"declared_size\" > 0"
+          "value": "\"intermediated_transfer_evidence_intents\".\"evidence_hash\" ~ '[^[:space:]]' AND \"intermediated_transfer_evidence_intents\".\"mime_type\" ~ '[^[:space:]]' AND \"intermediated_transfer_evidence_intents\".\"declared_size\" > 0"
         },
         "intermediated_transfer_evidence_intents_lifecycle_check": {
           "name": "intermediated_transfer_evidence_intents_lifecycle_check",
@@ -7583,7 +7583,7 @@
         },
         "loan_intermediary_assignments_idempotency_key_check": {
           "name": "loan_intermediary_assignments_idempotency_key_check",
-          "value": "length(btrim(\"loan_intermediary_assignments\".\"idempotency_key\")) > 0"
+          "value": "\"loan_intermediary_assignments\".\"idempotency_key\" ~ '[^[:space:]]'"
         },
         "loan_intermediary_assignments_date_order_check": {
           "name": "loan_intermediary_assignments_date_order_check",

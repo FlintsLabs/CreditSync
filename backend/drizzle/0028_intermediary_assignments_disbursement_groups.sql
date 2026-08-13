@@ -17,7 +17,7 @@ CREATE TABLE "intermediary_bank_accounts" (
 	CONSTRAINT "intermediary_bank_accounts_public_id_unique" UNIQUE("public_id"),
 	CONSTRAINT "intermediary_bank_accounts_status_check" CHECK ("intermediary_bank_accounts"."status" IN ('active', 'inactive')),
 	CONSTRAINT "intermediary_bank_accounts_last4_check" CHECK ("intermediary_bank_accounts"."account_number_last4" ~ '^[0-9]{4}$'),
-	CONSTRAINT "intermediary_bank_accounts_identity_check" CHECK (length(btrim("intermediary_bank_accounts"."bank_name")) > 0 AND length(btrim("intermediary_bank_accounts"."account_name")) > 0 AND length(btrim("intermediary_bank_accounts"."account_number_hash")) > 0)
+	CONSTRAINT "intermediary_bank_accounts_identity_check" CHECK ("intermediary_bank_accounts"."bank_name" ~ '[^[:space:]]' AND "intermediary_bank_accounts"."account_name" ~ '[^[:space:]]' AND "intermediary_bank_accounts"."account_number_hash" ~ '[^[:space:]]')
 );
 --> statement-breakpoint
 CREATE TABLE "intermediated_disbursement_group_previews" (
@@ -74,7 +74,7 @@ CREATE TABLE "intermediated_disbursement_group_previews" (
         "intermediated_disbursement_group_previews"."variance_amount" = "intermediated_disbursement_group_previews"."actual_funding_amount" - "intermediated_disbursement_group_previews"."actual_borrower_payout_amount"
             - "intermediated_disbursement_group_previews"."actual_advance_interest_return_amount" - "intermediated_disbursement_group_previews"."retained_balance_amount"
     ),
-	CONSTRAINT "intermediated_disbursement_group_previews_hash_check" CHECK (length(btrim("intermediated_disbursement_group_previews"."preview_hash")) > 0),
+	CONSTRAINT "intermediated_disbursement_group_previews_hash_check" CHECK ("intermediated_disbursement_group_previews"."preview_hash" ~ '[^[:space:]]'),
 	CONSTRAINT "intermediated_disbursement_group_previews_expiry_check" CHECK ("intermediated_disbursement_group_previews"."expires_at" > "intermediated_disbursement_group_previews"."created_at"),
 	CONSTRAINT "intermediated_disbursement_group_previews_ready_check" CHECK (
         "intermediated_disbursement_group_previews"."status" <> 'ready' OR ("intermediated_disbursement_group_previews"."variance_amount" = 0 AND "intermediated_disbursement_group_previews"."evidence_ready")
@@ -128,10 +128,10 @@ CREATE TABLE "intermediated_disbursement_groups" (
         AND "intermediated_disbursement_groups"."retained_balance_amount" NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)
     ),
 	CONSTRAINT "intermediated_disbursement_groups_command_keys_check" CHECK (
-        length(btrim("intermediated_disbursement_groups"."idempotency_key")) > 0
-        AND ("intermediated_disbursement_groups"."post_idempotency_key" IS NULL OR length(btrim("intermediated_disbursement_groups"."post_idempotency_key")) > 0)
-        AND ("intermediated_disbursement_groups"."reversal_idempotency_key" IS NULL OR length(btrim("intermediated_disbursement_groups"."reversal_idempotency_key")) > 0)
-        AND ("intermediated_disbursement_groups"."reversal_request_hash" IS NULL OR length(btrim("intermediated_disbursement_groups"."reversal_request_hash")) > 0)
+        "intermediated_disbursement_groups"."idempotency_key" ~ '[^[:space:]]'
+        AND ("intermediated_disbursement_groups"."post_idempotency_key" IS NULL OR "intermediated_disbursement_groups"."post_idempotency_key" ~ '[^[:space:]]')
+        AND ("intermediated_disbursement_groups"."reversal_idempotency_key" IS NULL OR "intermediated_disbursement_groups"."reversal_idempotency_key" ~ '[^[:space:]]')
+        AND ("intermediated_disbursement_groups"."reversal_request_hash" IS NULL OR "intermediated_disbursement_groups"."reversal_request_hash" ~ '[^[:space:]]')
     ),
 	CONSTRAINT "intermediated_disbursement_groups_expected_balance_check" CHECK (
         "intermediated_disbursement_groups"."expected_funding_amount" = "intermediated_disbursement_groups"."expected_borrower_payout_amount"
@@ -146,8 +146,8 @@ CREATE TABLE "intermediated_disbursement_groups" (
         OR ("intermediated_disbursement_groups"."status" = 'reversed'
             AND "intermediated_disbursement_groups"."reversed_group_id" IS NOT NULL AND "intermediated_disbursement_groups"."posted_at" IS NOT NULL AND "intermediated_disbursement_groups"."reversed_at" IS NOT NULL
             AND "intermediated_disbursement_groups"."reversal_idempotency_key" IS NOT NULL
-            AND "intermediated_disbursement_groups"."reversal_request_hash" IS NOT NULL AND length(btrim("intermediated_disbursement_groups"."reversal_request_hash")) > 0
-            AND "intermediated_disbursement_groups"."reversal_reason" IS NOT NULL AND length(btrim("intermediated_disbursement_groups"."reversal_reason")) > 0)
+            AND "intermediated_disbursement_groups"."reversal_request_hash" IS NOT NULL AND "intermediated_disbursement_groups"."reversal_request_hash" ~ '[^[:space:]]'
+            AND "intermediated_disbursement_groups"."reversal_reason" IS NOT NULL AND "intermediated_disbursement_groups"."reversal_reason" ~ '[^[:space:]]')
     )
 );
 --> statement-breakpoint
@@ -184,8 +184,8 @@ CREATE TABLE "intermediated_transfer_events" (
 	CONSTRAINT "intermediated_transfer_events_money_scale_check" CHECK (scale("intermediated_transfer_events"."amount") <= 2),
 	CONSTRAINT "intermediated_transfer_events_money_finite_check" CHECK ("intermediated_transfer_events"."amount" NOT IN ('NaN'::numeric, 'Infinity'::numeric, '-Infinity'::numeric)),
 	CONSTRAINT "intermediated_transfer_events_command_keys_check" CHECK (
-        length(btrim("intermediated_transfer_events"."idempotency_key")) > 0
-        AND ("intermediated_transfer_events"."bank_reference_hash" IS NULL OR length(btrim("intermediated_transfer_events"."bank_reference_hash")) > 0)
+        "intermediated_transfer_events"."idempotency_key" ~ '[^[:space:]]'
+        AND ("intermediated_transfer_events"."bank_reference_hash" IS NULL OR "intermediated_transfer_events"."bank_reference_hash" ~ '[^[:space:]]')
     ),
 	CONSTRAINT "intermediated_transfer_events_lifecycle_check" CHECK (
         ("intermediated_transfer_events"."status" IN ('draft', 'ready')
@@ -194,7 +194,7 @@ CREATE TABLE "intermediated_transfer_events" (
             AND "intermediated_transfer_events"."reversed_event_id" IS NULL AND "intermediated_transfer_events"."posted_at" IS NOT NULL AND "intermediated_transfer_events"."reversed_at" IS NULL)
         OR ("intermediated_transfer_events"."status" = 'reversed'
             AND "intermediated_transfer_events"."reversed_event_id" IS NOT NULL AND "intermediated_transfer_events"."posted_at" IS NOT NULL AND "intermediated_transfer_events"."reversed_at" IS NOT NULL
-            AND "intermediated_transfer_events"."reversal_reason" IS NOT NULL AND length(btrim("intermediated_transfer_events"."reversal_reason")) > 0)
+            AND "intermediated_transfer_events"."reversal_reason" IS NOT NULL AND "intermediated_transfer_events"."reversal_reason" ~ '[^[:space:]]')
     )
 );
 --> statement-breakpoint
@@ -225,7 +225,7 @@ CREATE TABLE "intermediated_transfer_evidence_intents" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "intermediated_transfer_evidence_intents_public_id_unique" UNIQUE("public_id"),
 	CONSTRAINT "intermediated_transfer_evidence_intents_status_check" CHECK ("intermediated_transfer_evidence_intents"."status" IN ('pending', 'ready')),
-	CONSTRAINT "intermediated_transfer_evidence_intents_metadata_check" CHECK (length(btrim("intermediated_transfer_evidence_intents"."evidence_hash")) > 0 AND length(btrim("intermediated_transfer_evidence_intents"."mime_type")) > 0 AND "intermediated_transfer_evidence_intents"."declared_size" > 0),
+	CONSTRAINT "intermediated_transfer_evidence_intents_metadata_check" CHECK ("intermediated_transfer_evidence_intents"."evidence_hash" ~ '[^[:space:]]' AND "intermediated_transfer_evidence_intents"."mime_type" ~ '[^[:space:]]' AND "intermediated_transfer_evidence_intents"."declared_size" > 0),
 	CONSTRAINT "intermediated_transfer_evidence_intents_lifecycle_check" CHECK (
         ("intermediated_transfer_evidence_intents"."status" = 'pending' AND "intermediated_transfer_evidence_intents"."finalized_at" IS NULL)
         OR ("intermediated_transfer_evidence_intents"."status" = 'ready' AND "intermediated_transfer_evidence_intents"."finalized_at" IS NOT NULL)
@@ -251,7 +251,7 @@ CREATE TABLE "loan_intermediary_assignments" (
 	CONSTRAINT "loan_intermediary_assignments_public_id_unique" UNIQUE("public_id"),
 	CONSTRAINT "loan_intermediary_assignments_role_check" CHECK ("loan_intermediary_assignments"."role" IN ('disbursement', 'collection', 'both')),
 	CONSTRAINT "loan_intermediary_assignments_status_check" CHECK ("loan_intermediary_assignments"."status" IN ('active', 'ended')),
-	CONSTRAINT "loan_intermediary_assignments_idempotency_key_check" CHECK (length(btrim("loan_intermediary_assignments"."idempotency_key")) > 0),
+	CONSTRAINT "loan_intermediary_assignments_idempotency_key_check" CHECK ("loan_intermediary_assignments"."idempotency_key" ~ '[^[:space:]]'),
 	CONSTRAINT "loan_intermediary_assignments_date_order_check" CHECK ("loan_intermediary_assignments"."effective_to" IS NULL OR "loan_intermediary_assignments"."effective_to" > "loan_intermediary_assignments"."effective_from"),
 	CONSTRAINT "loan_intermediary_assignments_lifecycle_check" CHECK (("loan_intermediary_assignments"."status" = 'active' AND "loan_intermediary_assignments"."effective_to" IS NULL) OR ("loan_intermediary_assignments"."status" = 'ended' AND "loan_intermediary_assignments"."effective_to" IS NOT NULL))
 );

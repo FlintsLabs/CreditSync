@@ -298,8 +298,8 @@ describe("intermediary assignment and intermediated disbursement database contra
         expect(await insertEvent(owner, group.id, account.id, "valid")).toBeDefined();
     });
 
-    integrationTest("rejects null or blank reversal provenance", async () => {
-        // Break caught: PostgreSQL CHECK treats a NULL length expression as passing, or whitespace is accepted as a reason/hash.
+    integrationTest("rejects null or whitespace-only reversal provenance", async () => {
+        // Break caught: PostgreSQL CHECK treats a NULL expression as passing, and btrim(text) does not remove tabs or newlines.
         const owner = await seed("tenant-reversal-shape", "provenance");
         const account = await insertAccount(owner, "reversal");
         await insertAssignment(owner);
@@ -309,9 +309,6 @@ describe("intermediary assignment and intermediated disbursement database contra
         for (const [suffix, reversalKey, requestHash, reason] of [
             ["null-hash", "reversal-key-1", null, "operator correction"],
             ["null-reason", "reversal-key-2", "reversal-hash-2", null],
-            ["blank-key", "   ", "reversal-hash-3", "operator correction"],
-            ["blank-hash", "reversal-key-4", "   ", "operator correction"],
-            ["blank-reason", "reversal-key-5", "reversal-hash-5", "   "],
         ] as const) {
             await expectDatabaseCode(() => db.execute(sql`
                 INSERT INTO intermediated_disbursement_groups
@@ -327,7 +324,44 @@ describe("intermediary assignment and intermediated disbursement database contra
             `), "23514");
         }
 
-        for (const [suffix, reason] of [["null", null], ["blank", "   "]] as const) {
+        await expectDatabaseCode(() => db.execute(sql`
+            INSERT INTO intermediated_transfer_events
+                (tenant_id, group_id, intermediary_bank_account_id, role, channel, amount,
+                 transferred_at, status, idempotency_key, reversed_event_id, reversal_reason,
+                 posted_at, reversed_at, created_by_user_id, updated_by_user_id)
+            VALUES
+                ('tenant-reversal-shape', ${originalGroup.id}, ${account.id}, 'funding_to_intermediary',
+                 'adjustment', 5000.00, now(), 'reversed', 'reversal-event-null',
+                 ${originalEvent.id}, NULL, now(), now(), ${owner.actor.id}, ${owner.actor.id})
+        `), "23514");
+
+        const whitespaceOnlyValues = [
+            ["empty", ""],
+            ["space", "   "],
+            ["tab", "\t"],
+            ["newline", "\n"],
+            ["mixed", "\t \n"],
+        ] as const;
+        for (const [suffix, value] of whitespaceOnlyValues) {
+            for (const [field, reversalKey, requestHash, reason] of [
+                ["key", value, `reversal-hash-${suffix}-key`, "operator correction"],
+                ["hash", `reversal-key-${suffix}-hash`, value, "operator correction"],
+                ["reason", `reversal-key-${suffix}-reason`, `reversal-hash-${suffix}-reason`, value],
+            ] as const) {
+                await expectDatabaseCode(() => db.execute(sql`
+                    INSERT INTO intermediated_disbursement_groups
+                        (tenant_id, loan_id, intermediary_id, expected_funding_amount,
+                         expected_borrower_payout_amount, expected_advance_interest_return_amount,
+                         retained_balance_amount, status, idempotency_key, reversed_group_id,
+                         reversal_idempotency_key, reversal_request_hash, reversal_reason,
+                         posted_at, reversed_at, created_by_user_id, updated_by_user_id)
+                    VALUES
+                        ('tenant-reversal-shape', ${owner.loan.id}, ${owner.intermediary.id}, 5000.00,
+                         4400.00, 600.00, 0.00, 'reversed', ${`reversal-group-${suffix}-${field}`}, ${originalGroup.id},
+                         ${reversalKey}, ${requestHash}, ${reason}, now(), now(), ${owner.actor.id}, ${owner.actor.id})
+                `), "23514");
+            }
+
             await expectDatabaseCode(() => db.execute(sql`
                 INSERT INTO intermediated_transfer_events
                     (tenant_id, group_id, intermediary_bank_account_id, role, channel, amount,
@@ -336,7 +370,7 @@ describe("intermediary assignment and intermediated disbursement database contra
                 VALUES
                     ('tenant-reversal-shape', ${originalGroup.id}, ${account.id}, 'funding_to_intermediary',
                      'adjustment', 5000.00, now(), 'reversed', ${`reversal-event-${suffix}`},
-                     ${originalEvent.id}, ${reason}, now(), now(), ${owner.actor.id}, ${owner.actor.id})
+                     ${originalEvent.id}, ${value}, now(), now(), ${owner.actor.id}, ${owner.actor.id})
             `), "23514");
         }
     });
@@ -349,14 +383,21 @@ describe("intermediary assignment and intermediated disbursement database contra
         const group = await insertGroup(owner, "keys");
         const event = await insertEvent(owner, group.id, null, "keys");
 
-        for (const [suffix, key] of [["empty", ""], ["space", "   "]] as const) {
+        const whitespaceOnlyValues = [
+            ["empty", ""],
+            ["space", "   "],
+            ["tab", "\t"],
+            ["newline", "\n"],
+            ["mixed", "\t \n"],
+        ] as const;
+        for (const [index, [suffix, key]] of whitespaceOnlyValues.entries()) {
             await expectDatabaseCode(() => db.execute(sql`
                 INSERT INTO loan_intermediary_assignments
                     (tenant_id, loan_id, intermediary_id, role, effective_from, idempotency_key,
                      created_by_user_id, updated_by_user_id)
                 VALUES
                     ('tenant-key-assignment', ${assignmentOwner.loan.id}, ${assignmentOwner.intermediary.id}, 'collection',
-                     ${`2027-01-0${suffix === "empty" ? "1" : "2"}`}::timestamptz, ${key},
+                     ${`2027-01-${String(index + 1).padStart(2, "0")}`}::timestamptz, ${key},
                      ${assignmentOwner.actor.id}, ${assignmentOwner.actor.id})
             `), "23514");
             await expectDatabaseCode(() => db.execute(sql`
@@ -395,14 +436,20 @@ describe("intermediary assignment and intermediated disbursement database contra
                     ('tenant-key-shape', ${group.id}, 'borrower_net_payout', 'cash', 1.00, ${key},
                      now(), 'draft', ${`bank-reference-${suffix}`}, ${owner.actor.id}, ${owner.actor.id})
             `), "23514");
-            await expectDatabaseCode(() => db.execute(sql`
-                INSERT INTO intermediary_bank_accounts
-                    (tenant_id, intermediary_id, bank_name, account_name, account_number_last4,
-                     account_number_hash, status, created_by_user_id, updated_by_user_id)
-                VALUES
-                    ('tenant-key-shape', ${owner.intermediary.id}, 'KBank', 'Intermediary', '1234',
-                     ${key}, 'active', ${owner.actor.id}, ${owner.actor.id})
-            `), "23514");
+            for (const [field, bankName, accountName, accountNumberHash] of [
+                ["bank-name", key, "Intermediary", `account-hash-${suffix}-bank-name`],
+                ["account-name", "KBank", key, `account-hash-${suffix}-account-name`],
+                ["account-hash", "KBank", "Intermediary", key],
+            ] as const) {
+                await expectDatabaseCode(() => db.execute(sql`
+                    INSERT INTO intermediary_bank_accounts
+                        (tenant_id, intermediary_id, bank_name, account_name, account_number_last4,
+                         account_number_hash, status, note, created_by_user_id, updated_by_user_id)
+                    VALUES
+                        ('tenant-key-shape', ${owner.intermediary.id}, ${bankName}, ${accountName}, '1234',
+                         ${accountNumberHash}, 'active', ${field}, ${owner.actor.id}, ${owner.actor.id})
+                `), "23514");
+            }
 
             const file = await db.execute(sql`
                 INSERT INTO files (tenant_id, owner_user_id, bucket, key, mime_type, size)
@@ -418,6 +465,14 @@ describe("intermediary assignment and intermediated disbursement database contra
                      now() + interval '5 minutes', ${owner.actor.id}, ${owner.actor.id})
             `), "23514");
             await expectDatabaseCode(() => db.execute(sql`
+                INSERT INTO intermediated_transfer_evidence_intents
+                    (tenant_id, event_id, file_id, status, evidence_hash, mime_type, declared_size,
+                     upload_expires_at, created_by_user_id, updated_by_user_id)
+                VALUES
+                    ('tenant-key-shape', ${event.id}, ${file.id}, 'pending', ${`evidence-hash-${suffix}`}, ${key}, 10,
+                     now() + interval '5 minutes', ${owner.actor.id}, ${owner.actor.id})
+            `), "23514");
+            await expectDatabaseCode(() => db.execute(sql`
                 INSERT INTO intermediated_disbursement_group_previews
                     (tenant_id, group_id, version, status, expected_funding_amount, actual_funding_amount,
                      expected_borrower_payout_amount, actual_borrower_payout_amount,
@@ -425,7 +480,7 @@ describe("intermediary assignment and intermediated disbursement database contra
                      retained_balance_amount, variance_amount, evidence_ready, preview_hash, expires_at,
                      created_by_user_id)
                 VALUES
-                    ('tenant-key-shape', ${group.id}, ${suffix === "empty" ? 1 : 2}, 'needs_review',
+                    ('tenant-key-shape', ${group.id}, ${index + 1}, 'needs_review',
                      5000.00, 0.00, 4400.00, 0.00, 600.00, 0.00, 0.00, 0.00, false, ${key},
                      now() + interval '5 minutes', ${owner.actor.id})
             `), "23514");
