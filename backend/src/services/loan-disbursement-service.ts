@@ -78,6 +78,16 @@ function dateTime(value: string) {
 
 function normalizedText(value: string | null | undefined) { return value?.trim() || null; }
 
+function rejectReservedIdempotencyKey(idempotencyKey: string) {
+    if (idempotencyKey.startsWith("internal:")) {
+        throw new DomainError(
+            "RESERVED_IDEMPOTENCY_KEY",
+            "Idempotency keys beginning with internal: are reserved",
+            400,
+        );
+    }
+}
+
 function editableSnapshot(event: EventRow) {
     return {
         grossAmount: serializeMoney(event.grossAmount), loanAttributedAmount: serializeMoney(event.loanAttributedAmount),
@@ -166,12 +176,22 @@ async function evidenceIds(ctx: CommandContext, eventId: number, executor: Execu
     return rows.map((row: { publicId: string }) => row.publicId);
 }
 
-async function lockEventAndLoan(tx: Executor, ctx: CommandContext, eventId: number) {
+async function lockLoanAndEvent(tx: Executor, ctx: CommandContext, eventId: number) {
+    const snapshot = await tx.query.loanDisbursementEvents.findFirst({ where: and(
+        eq(loanDisbursementEvents.id, eventId),
+        eq(loanDisbursementEvents.tenantId, ctx.tenantId),
+    ) });
+    if (!snapshot) throw new DomainError("DISBURSEMENT_NOT_FOUND", "Disbursement not found", 404);
+    await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${snapshot.loanId} FOR UPDATE`);
     await tx.execute(sql`SELECT id FROM loan_disbursement_events WHERE tenant_id = ${ctx.tenantId} AND id = ${eventId} FOR UPDATE`);
-    const event = await tx.query.loanDisbursementEvents.findFirst({ where: and(eq(loanDisbursementEvents.id, eventId), eq(loanDisbursementEvents.tenantId, ctx.tenantId)) });
-    if (!event) throw new DomainError("DISBURSEMENT_NOT_FOUND", "Disbursement not found", 404);
-    await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${event.loanId} FOR UPDATE`);
-    return event;
+    const current = await tx.query.loanDisbursementEvents.findFirst({ where: and(
+        eq(loanDisbursementEvents.id, eventId),
+        eq(loanDisbursementEvents.tenantId, ctx.tenantId),
+    ) });
+    if (!current || current.loanId !== snapshot.loanId) {
+        throw new DomainError("DISBURSEMENT_NOT_FOUND", "Disbursement not found", 404);
+    }
+    return current;
 }
 
 async function writeAudit(executor: Executor, ctx: CommandContext, event: EventRow, action: string, payload: unknown) {
@@ -199,7 +219,7 @@ export async function recordIntermediatedLoanPayout(
 ) {
     requirePublicId(input.groupPublicId, "groupPublicId");
     const amount = serializeMoney(money(input.amount, "amount"));
-    const postIdempotencyKey = `intermediated-payout:${input.groupPublicId}`;
+    const postIdempotencyKey = `internal:intermediated-payout:${input.groupPublicId}`;
     const existing = await executor.query.loanDisbursementEvents.findFirst({ where: and(
         eq(loanDisbursementEvents.tenantId, ctx.tenantId),
         eq(loanDisbursementEvents.postIdempotencyKey, postIdempotencyKey),
@@ -322,7 +342,7 @@ export async function createDisbursementDraft(ctx: CommandContext, loanPublicId:
 export async function updateDisbursementDraft(ctx: CommandContext, disbursementPublicId: string, input: UpdateDisbursementDraftInput) {
     const { event } = await accessibleEvent(ctx, disbursementPublicId);
     return db.transaction(async (tx) => {
-        const current = await lockEventAndLoan(tx, ctx, event.id);
+        const current = await lockLoanAndEvent(tx, ctx, event.id);
         if (current.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Posted or reversed disbursements cannot be edited", 409);
         const merged: CreateDisbursementDraftInput = {
             grossAmount: input.grossAmount ?? serializeMoney(current.grossAmount), loanAttributedAmount: input.loanAttributedAmount ?? serializeMoney(current.loanAttributedAmount),
@@ -360,6 +380,7 @@ export async function listLoanDisbursements(ctx: CommandContext, loanPublicId: s
 export async function postDisbursement(ctx: CommandContext, disbursementPublicId: string) {
     const idempotencyKey = ctx.idempotencyKey?.trim();
     if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required to post a disbursement", 400);
+    rejectReservedIdempotencyKey(idempotencyKey);
     const { event } = await accessibleEvent(ctx, disbursementPublicId);
     return db.transaction(async (tx) => {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`loan-disbursement-post:${ctx.tenantId}:${idempotencyKey}`}, 0))`);
@@ -369,7 +390,7 @@ export async function postDisbursement(ctx: CommandContext, disbursementPublicId
         if (reusedKey && reusedKey.id !== event.id) {
             throw new DomainError("IDEMPOTENCY_KEY_CONFLICT", "Idempotency-Key was already used for another disbursement post", 409);
         }
-        const current = await lockEventAndLoan(tx, ctx, event.id);
+        const current = await lockLoanAndEvent(tx, ctx, event.id);
         if (current.status === "posted") {
             if (current.postIdempotencyKey === idempotencyKey) {
                 return { ...await presentEvent(current, await evidenceIds(ctx, current.id, tx), tx), duplicate: true, auditPublicId: null, correlationId: ctx.correlationId };
@@ -400,13 +421,7 @@ export async function postDisbursement(ctx: CommandContext, disbursementPublicId
 export async function reverseDisbursement(ctx: CommandContext, disbursementPublicId: string, reason: string) {
     const idempotencyKey = ctx.idempotencyKey?.trim();
     if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required to reverse a disbursement", 400);
-    if (idempotencyKey.startsWith("internal:")) {
-        throw new DomainError(
-            "RESERVED_IDEMPOTENCY_KEY",
-            "Idempotency keys beginning with internal: are reserved",
-            400,
-        );
-    }
+    rejectReservedIdempotencyKey(idempotencyKey);
     const note = reason.trim();
     if (!note) throw new DomainError("REVERSAL_REASON_REQUIRED", "A reversal reason is required", 400);
     const { event } = await accessibleEvent(ctx, disbursementPublicId);
@@ -419,7 +434,7 @@ export async function reverseDisbursement(ctx: CommandContext, disbursementPubli
         if (reusedKey && (reusedKey.reversedEventId !== event.id || reusedKey.reversalRequestHash !== reversalRequestHash)) {
             throw new DomainError("REVERSAL_IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used for another reversal or payload", 409);
         }
-        const original = await lockEventAndLoan(tx, ctx, event.id);
+        const original = await lockLoanAndEvent(tx, ctx, event.id);
         if (original.status !== "posted") throw new DomainError("DISBURSEMENT_NOT_POSTED", "Only posted disbursements can be reversed", 409);
         const intermediaryProjectionAudit = await tx.query.auditLogs.findFirst({ where: and(
             eq(auditLogs.tenantId, ctx.tenantId),
@@ -494,7 +509,7 @@ export async function prepareDisbursementEvidence(ctx: CommandContext, disbursem
         }
         const signed = await gateway.preparePut({ bucket: file.bucket, key: file.key, contentType: input.mimeType, contentLength: input.size, checksumSha256: sha256, metadata: { tenant: ctx.tenantId, disbursement: event.publicId } });
         await db.transaction(async (tx) => {
-            const current = await lockEventAndLoan(tx, ctx, event.id);
+            const current = await lockLoanAndEvent(tx, ctx, event.id);
             if (current.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Evidence can only be prepared for a draft", 409);
             await tx.update(loanDisbursementEvidenceIntents).set({ uploadExpiresAt: signed.expiresAt, updatedByUserId: ctx.actorUserId, updatedAt: new Date() })
                 .where(and(eq(loanDisbursementEvidenceIntents.id, existing.id), eq(loanDisbursementEvidenceIntents.status, "pending")));
@@ -505,7 +520,7 @@ export async function prepareDisbursementEvidence(ctx: CommandContext, disbursem
     let created: { file: typeof files.$inferSelect; intent: typeof loanDisbursementEvidenceIntents.$inferSelect };
     try {
         created = await db.transaction(async (tx) => {
-            const current = await lockEventAndLoan(tx, ctx, event.id);
+            const current = await lockLoanAndEvent(tx, ctx, event.id);
             if (current.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Evidence can only be prepared for a draft", 409);
             const file = await tx.insert(files).values({ tenantId: ctx.tenantId, ownerUserId: ctx.actorUserId, bucket: BUCKET_NAME, key, originalName: normalizedText(input.originalName), mimeType: input.mimeType, size: input.size, url: toStorageReference({ provider: "s3", bucket: BUCKET_NAME, key }) }).returning().then((rows) => rows[0]!);
             const intent = await tx.insert(loanDisbursementEvidenceIntents).values({ tenantId: ctx.tenantId, loanDisbursementEventId: event.id, fileId: file.id, status: "pending", evidenceHash: sha256, mimeType: input.mimeType, declaredSize: input.size, createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((rows) => rows[0]!);
@@ -522,7 +537,7 @@ export async function prepareDisbursementEvidence(ctx: CommandContext, disbursem
     try {
         signed = await gateway.preparePut({ bucket: BUCKET_NAME, key, contentType: input.mimeType, contentLength: input.size, checksumSha256: sha256, metadata: { tenant: ctx.tenantId, disbursement: event.publicId } });
         await db.transaction(async (tx) => {
-            const current = await lockEventAndLoan(tx, ctx, event.id);
+            const current = await lockLoanAndEvent(tx, ctx, event.id);
             if (current.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Evidence can only be prepared for a draft", 409);
             await tx.update(loanDisbursementEvidenceIntents).set({ uploadExpiresAt: signed.expiresAt, updatedByUserId: ctx.actorUserId, updatedAt: new Date() })
                 .where(and(eq(loanDisbursementEvidenceIntents.id, created.intent.id), eq(loanDisbursementEvidenceIntents.status, "pending")));
@@ -550,7 +565,7 @@ export async function finalizeDisbursementEvidence(ctx: CommandContext, disburse
         throw new DomainError("EVIDENCE_METADATA_MISMATCH", "Stored evidence metadata, size, type, or ownership does not match", 409);
     }
     return db.transaction(async (tx) => {
-        const current = await lockEventAndLoan(tx, ctx, event.id);
+        const current = await lockLoanAndEvent(tx, ctx, event.id);
         if (current.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Evidence can only be finalized for a draft", 409);
         const locked = await tx.query.loanDisbursementEvidenceIntents.findFirst({ where: and(eq(loanDisbursementEvidenceIntents.id, intent.id), eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId)) });
         if (!locked) throw new DomainError("EVIDENCE_NOT_FOUND", "Disbursement evidence not found", 404);

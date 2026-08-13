@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
+import postgres from "postgres";
 import { db } from "../db";
 import {
     auditLogs,
@@ -723,42 +724,44 @@ describe("intermediated disbursement groups and exact preview", () => {
         ) }))?.status).toBe("ready");
     });
 
-    // Break caught: a caller-controlled regular disbursement key that resembles the
-    // internal group projection key is reused as if it proved group provenance.
-    integrationTest("rejects a preexisting loan payout key collision instead of hijacking its provenance", async () => {
-        const owner = await seed("tenant-payout-key-collision", "payout-key-collision");
-        const group = await createGroup(owner, "payout-key-collision");
-        await addExactEvents(owner, group.publicId, "payout-key-collision");
+    // Break caught: the intermediary payout uses a public command-key namespace,
+    // allowing a regular post command to preoccupy a legitimate group projection.
+    integrationTest("reserves the internal borrower-payout key namespace from public post commands", async () => {
+        const owner = await seed("tenant-payout-key-isolation", "payout-key-isolation");
+        const group = await createGroup(owner, "payout-key-isolation");
+        await addExactEvents(owner, group.publicId, "payout-key-isolation");
         const preview = await previewIntermediatedDisbursement(context(owner.actor), group.publicId);
-        const unrelated = await db.insert(loanDisbursementEvents).values({
-            tenantId: owner.actor.tenantId,
-            loanId: owner.loan.id,
-            grossAmount: "4400.00",
-            loanAttributedAmount: "4400.00",
-            channel: "bank_transfer",
-            status: "posted",
-            note: "Regular payout with a colliding caller-controlled key",
-            disbursedAt: new Date("2026-08-13T09:00:00.000Z"),
-            postedAt: new Date("2026-08-13T09:00:00.000Z"),
-            postIdempotencyKey: `intermediated-payout:${group.publicId}`,
-            createdByUserId: owner.actor.id,
-        }).returning().then((rows) => rows[0]!);
+        const ordinaryDraft = await createDisbursementDraft(context(owner.actor), owner.loan.publicId, {
+            grossAmount: "1.00",
+            loanAttributedAmount: "1.00",
+            channel: "cash",
+            disbursedAt: "2026-08-13T10:00:00.000Z",
+        });
+        const internalPayoutKey = `internal:intermediated-payout:${group.publicId}`;
 
-        await expect(postGroup(
-            context(owner.actor, "post-payout-key-collision"),
+        await expect(postDisbursement(
+            context(owner.actor, internalPayoutKey),
+            ordinaryDraft.publicId,
+        )).rejects.toMatchObject({ code: "RESERVED_IDEMPOTENCY_KEY", status: 400 });
+        const posted = await postGroup(
+            context(owner.actor, "post-payout-key-isolation"),
             group.publicId,
             preview.publicId,
-        )).rejects.toMatchObject({ code: "INTERMEDIATED_LOAN_PAYOUT_CONFLICT", status: 409 });
+        );
 
-        expect(await db.select().from(loanDisbursementEvents)).toEqual([unrelated]);
-        expect((await db.select().from(intermediatedDisbursementGroups).where(
-            eq(intermediatedDisbursementGroups.publicId, group.publicId),
-        ))[0]?.status).toBe("ready");
-        expect((await db.select().from(intermediatedTransferEvents)).every((event) => event.status === "ready")).toBe(true);
-        expect(await db.select().from(auditLogs).where(and(
-            eq(auditLogs.entityType, "intermediated_disbursement_group"),
-            eq(auditLogs.action, "posted"),
-        ))).toHaveLength(0);
+        expect(await db.query.loanDisbursementEvents.findFirst({ where: eq(
+            loanDisbursementEvents.publicId,
+            ordinaryDraft.publicId,
+        ) })).toMatchObject({ status: "draft", postIdempotencyKey: null });
+        expect(await db.query.loanDisbursementEvents.findFirst({ where: eq(
+            loanDisbursementEvents.publicId,
+            posted.loanDisbursementPublicId,
+        ) })).toMatchObject({
+            status: "posted",
+            postIdempotencyKey: internalPayoutKey,
+            grossAmount: "4400.00",
+            loanAttributedAmount: "4400.00",
+        });
     });
 
     // Break caught: post trusts a stale or needs-review preview and creates partial financial
@@ -885,6 +888,92 @@ describe("intermediated disbursement groups and exact preview", () => {
         await expect(reverseGroup(context(owner.actor, "reverse-other-key"), group.publicId, "Different reason"))
             .rejects.toMatchObject({ code: "INTERMEDIATED_DISBURSEMENT_REVERSAL_CONFLICT", status: 409 });
     });
+
+    // Break caught: generic reversal locks payout-event then loan while group reversal
+    // locks loan then payout-event, producing a real PostgreSQL deadlock under overlap.
+    integrationTest("completes concurrent generic and group reversal without deadlock", async () => {
+        const owner = await seed("tenant-reversal-lock-order", "reversal-lock-order");
+        const group = await createGroup(owner, "reversal-lock-order");
+        await addExactEvents(owner, group.publicId, "reversal-lock-order");
+        const preview = await previewIntermediatedDisbursement(context(owner.actor), group.publicId);
+        const posted = await postGroup(context(owner.actor, "reversal-lock-order-post"), group.publicId, preview.publicId);
+        const payout = await db.query.loanDisbursementEvents.findFirst({ where: eq(
+            loanDisbursementEvents.publicId,
+            posted.loanDisbursementPublicId,
+        ) });
+        const databaseUrl = process.env.TEST_DATABASE_URL!;
+        const blocker = postgres(databaseUrl, { max: 1 });
+        const observer = postgres(databaseUrl, { max: 1 });
+        let releaseBlocker!: () => void;
+        let confirmLocked!: () => void;
+        const release = new Promise<void>((resolve) => { releaseBlocker = resolve; });
+        const locked = new Promise<void>((resolve) => { confirmLocked = resolve; });
+        const blockerTransaction = blocker.begin(async (connection) => {
+            await connection`SELECT id FROM loan_disbursement_events WHERE id = ${payout!.id} FOR UPDATE`;
+            confirmLocked();
+            await release;
+        });
+        const waitForLockWaiters = async (minimum: number) => {
+            for (let attempt = 0; attempt < 200; attempt += 1) {
+                const rows = await observer<{ count: number }[]>`
+                    SELECT count(DISTINCT pid)::int AS count
+                    FROM pg_stat_activity
+                    WHERE datname = current_database()
+                      AND pid <> pg_backend_pid()
+                      AND wait_event_type = 'Lock'
+                `;
+                if ((rows[0]?.count ?? 0) >= minimum) return;
+                await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+            throw new Error(`Timed out waiting for ${minimum} PostgreSQL lock waiters`);
+        };
+
+        try {
+            await locked;
+            const generic = reverseDisbursement(
+                context(owner.actor, "concurrent-generic-reversal"),
+                posted.loanDisbursementPublicId,
+                "Wrong generic workflow",
+            );
+            await waitForLockWaiters(1);
+            const grouped = reverseGroup(
+                context(owner.actor, "concurrent-group-reversal"),
+                group.publicId,
+                "Operator confirmed the transfer was recalled",
+            );
+            await waitForLockWaiters(2);
+            releaseBlocker();
+
+            const results = await Promise.race([
+                Promise.allSettled([generic, grouped]),
+                new Promise<never>((_, reject) => setTimeout(
+                    () => reject(new Error("Concurrent reversals did not complete")),
+                    5_000,
+                )),
+            ]);
+            expect(results[0]).toMatchObject({
+                status: "rejected",
+                reason: { code: "INTERMEDIATED_DISBURSEMENT_REVERSAL_REQUIRED", status: 409 },
+            });
+            expect(results[1]).toMatchObject({
+                status: "fulfilled",
+                value: { status: "reversed", reversedGroupPublicId: group.publicId },
+            });
+            expect(results.map((result) => result.status)).toEqual(["rejected", "fulfilled"]);
+            expect(await db.select().from(intermediatedDisbursementGroups).where(
+                eq(intermediatedDisbursementGroups.reversedGroupId, (await db.query.intermediatedDisbursementGroups.findFirst({
+                    where: eq(intermediatedDisbursementGroups.publicId, group.publicId),
+                }))!.id),
+            )).toHaveLength(1);
+            expect(await db.select().from(loanDisbursementEvents).where(
+                eq(loanDisbursementEvents.reversedEventId, payout!.id),
+            )).toHaveLength(1);
+        } finally {
+            releaseBlocker();
+            await blockerTransaction.catch(() => undefined);
+            await Promise.all([blocker.end(), observer.end()]);
+        }
+    }, 10_000);
 
     // Break caught: predictable internal compensating keys share the public command
     // namespace, so ordinary drafts can permanently preoccupy a legitimate reversal.
