@@ -201,11 +201,16 @@ export const loans = pgTable("loans", {
     outstandingInterest: numeric("outstanding_interest").default("0"),
     outstandingFees: numeric("outstanding_fees").default("0"),
     status: text("status").default("draft"), // draft, active, paid, defaulted
+    activationIdempotencyKey: text("activation_idempotency_key"),
+    activationResult: jsonb("activation_result").$type<Record<string, unknown>>(),
     clonedFromLoanId: integer("cloned_from_loan_id"), // traceability for Refinance/Top-up
     createdAt: timestamp("created_at").defaultNow(),
     updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
     uniqueIndex("loans_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("loans_tenant_activation_idempotency_unique")
+        .on(table.tenantId, table.activationIdempotencyKey)
+        .where(sql`${table.activationIdempotencyKey} IS NOT NULL`),
     check("loans_term_months_check", sql`${table.termMonths} IS NULL OR ${table.termMonths} > 0`),
     check("loans_one_funding_source_check", sql`${table.bankLoanId} IS NULL OR ${table.fundingBankProfileId} IS NULL`),
     check("loans_interest_period_unit_check", sql`${table.interestPeriodUnit} IS NULL OR ${table.interestPeriodUnit} IN ('day', 'week')`),
@@ -220,6 +225,10 @@ export const loans = pgTable("loans", {
         (${table.interestPeriodUnit} IS NOT NULL AND ${table.interestPeriodLength} IS NOT NULL
             AND ${table.advanceInterestPeriods} IS NOT NULL AND ${table.advanceInterestRefundPolicy} IS NOT NULL
             AND ${table.interestPeriodAnchorDate} IS NOT NULL)
+    `),
+    check("loans_activation_command_completeness_check", sql`
+        (${table.activationIdempotencyKey} IS NULL AND ${table.activationResult} IS NULL)
+        OR (${table.activationIdempotencyKey} IS NOT NULL AND ${table.activationResult} IS NOT NULL)
     `),
 ]);
 

@@ -10,6 +10,7 @@ import { createBorrower } from "./borrower-service";
 import {
     activateLoan,
     createLoanDraft,
+    getLoanApplication,
     previewLoan,
     updateLoanDraft,
 } from "./loan-application-service";
@@ -164,7 +165,7 @@ describe("loan application service", () => {
             interestPeriodAnchorDate: "2026-08-13",
         });
 
-        await activateLoan(ctx, draft.publicId);
+        const firstActivation = await activateLoan(ctx, draft.publicId);
 
         const firstSnapshots = await db.select().from(loanInterestAccruals)
             .where(eq(loanInterestAccruals.loanId, stored!.id))
@@ -216,11 +217,41 @@ describe("loan application service", () => {
             },
         });
 
-        const activated = await activateLoan(context("tenant-a", actor.id, "weekly-advance-retry"), draft.publicId);
-        expect(activated.status).toBe("active");
+        await db.update(loans).set({ status: "closed", outstandingPrincipal: "0.00" }).where(eq(loans.id, stored!.id));
+        const replayed = await activateLoan(context("tenant-a", actor.id, "weekly-advance-activation"), draft.publicId);
+        expect(replayed).toEqual(firstActivation);
         expect(await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, stored!.id))).toHaveLength(7);
         expect(await db.select().from(loanDisbursements).where(eq(loanDisbursements.loanId, stored!.id))).toHaveLength(1);
         expect(await db.select().from(auditLogs).where(and(eq(auditLogs.entityId, draft.publicId), eq(auditLogs.action, "activated")))).toHaveLength(1);
+    });
+
+    // Break caught: a new key can replay an already-consumed activation command and receive resource-state success.
+    integrationTest("rejects a different idempotency key for an already-activated loan", async () => {
+        const actor = await seedUser("tenant-a", "activation-different-key@example.test", "collector");
+        const firstCtx = context("tenant-a", actor.id, "activation-original-key");
+        const borrower = await createBorrower(firstCtx, { name: "Different Activation Key Borrower" });
+        const draft = await createLoanDraft(firstCtx, { borrowerPublicId: borrower.publicId, ...terms });
+        await activateLoan(firstCtx, draft.publicId);
+
+        await expect(activateLoan(context("tenant-a", actor.id, "activation-different-key"), draft.publicId))
+            .rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_CONFLICT", status: 409 });
+    });
+
+    // Break caught: one tenant-scoped activation key can be consumed by two different loan commands.
+    integrationTest("rejects reuse of an activation key for another loan in the same tenant", async () => {
+        const actor = await seedUser("tenant-a", "activation-reused-key@example.test", "collector");
+        const ctx = context("tenant-a", actor.id, "tenant-activation-key");
+        const firstBorrower = await createBorrower(ctx, { name: "First Activation Key Borrower" });
+        const secondBorrower = await createBorrower(ctx, { name: "Second Activation Key Borrower" });
+        const firstDraft = await createLoanDraft(ctx, { borrowerPublicId: firstBorrower.publicId, ...terms });
+        const secondDraft = await createLoanDraft(ctx, { borrowerPublicId: secondBorrower.publicId, ...terms });
+        await activateLoan(ctx, firstDraft.publicId);
+
+        await expect(activateLoan(ctx, secondDraft.publicId))
+            .rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_CONFLICT", status: 409 });
+        const secondStored = await db.query.loans.findFirst({ where: eq(loans.publicId, secondDraft.publicId) });
+        expect(secondStored?.status).toBe("draft");
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, secondStored!.id))).toHaveLength(0);
     });
 
     // Break caught: a financial activation can be posted without an idempotency identity.
@@ -306,7 +337,7 @@ describe("loan application service", () => {
         const firstSchedules = await db.select().from(loanSchedules);
         expect(firstSchedules).toHaveLength(3);
 
-        const retried = await activateLoan(context("tenant-a", actor.id, "activation-retry"), draft.publicId);
+        const retried = await activateLoan(ctx, draft.publicId);
         expect(retried).toEqual(activated);
         expect(await db.select().from(loanSchedules)).toHaveLength(3);
 
@@ -476,8 +507,8 @@ describe("loan application service", () => {
             await held;
         });
         await barrier;
-        const first = activateLoan(context("tenant-a", actor.id, "simultaneous-a"), draft.publicId);
-        const second = activateLoan(context("tenant-a", actor.id, "simultaneous-b"), draft.publicId);
+        const first = activateLoan(context("tenant-a", actor.id, "simultaneous"), draft.publicId);
+        const second = activateLoan(context("tenant-a", actor.id, "simultaneous"), draft.publicId);
         await Bun.sleep(20);
         release();
         await blocker;
@@ -721,7 +752,7 @@ describe("loan application service", () => {
             status: "active",
         }).returning().then((rows) => rows[0]!);
 
-        const compatible = await activateLoan(firstCtx, legacy.publicId);
+        const compatible = await getLoanApplication(firstCtx, legacy.publicId);
         expect(compatible).toMatchObject({ publicId: legacy.publicId, status: "active", termMonths: null });
         expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, legacy.id))).toHaveLength(0);
     });
@@ -775,7 +806,7 @@ describe("loan application service", () => {
             outstandingPrincipal: "100.00",
         });
         const retried = await jsonRequest(app, `/loans/${created.body.publicId}/activate`, {
-            method: "POST", headers: { ...headers, "idempotency-key": "rest-loan-activation-retry" },
+            method: "POST", headers: { ...headers, "idempotency-key": "rest-loan-activation" },
         });
         expect(retried.body).toEqual(activated.body);
 

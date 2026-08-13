@@ -59,6 +59,10 @@ test("migration journals the additive policy schema and backfills legacy daily p
     expect(migration).toMatch(/"advance_interest_periods" = CASE[\s\S]*"first_day_treatment" = 'deduct' THEN 1[\s\S]*ELSE 0/);
     expect(migration).toMatch(/"advance_interest_refund_policy" = 'non_refundable'/);
     expect(migration).not.toMatch(/UPDATE "loan_interest_accruals"[\s\S]*SET[\s\S]*"interest_amount"\s*=/);
+    expect(migration).toContain('ADD COLUMN "activation_idempotency_key" text');
+    expect(migration).toContain('ADD COLUMN "activation_result" jsonb');
+    expect(migration).toMatch(/CREATE UNIQUE INDEX "loans_tenant_activation_idempotency_unique"[\s\S]*\("tenant_id","activation_idempotency_key"\)[\s\S]*IS NOT NULL/);
+    expect(migration).toMatch(/CONSTRAINT "loans_activation_command_completeness_check"[\s\S]*"activation_idempotency_key" IS NULL AND "loans"\."activation_result" IS NULL[\s\S]*"activation_idempotency_key" IS NOT NULL AND "loans"\."activation_result" IS NOT NULL/);
 });
 
 describe("floating period policy database contract", () => {
@@ -89,6 +93,58 @@ describe("floating period policy database contract", () => {
             advance_interest_refund_policy: "non_refundable",
             interest_period_anchor_date: "2026-08-13",
         });
+    });
+
+    integrationTest("requires activation command keys and replay results together", async () => {
+        const { loan } = await seedLoan("tenant-activation-shape", "pair");
+
+        await expectConstraintViolation(sql`
+            UPDATE loans
+            SET activation_idempotency_key = 'activation-pair-key'
+            WHERE id = ${loan.id}
+        `);
+        await expectConstraintViolation(sql`
+            UPDATE loans
+            SET activation_result = ${JSON.stringify({ publicId: loan.publicId })}::jsonb
+            WHERE id = ${loan.id}
+        `);
+    });
+
+    integrationTest("keeps activation command keys unique within a tenant", async () => {
+        const first = await seedLoan("tenant-activation-unique", "first");
+        const second = await seedLoan("tenant-activation-unique", "second");
+        await db.execute(sql`
+            UPDATE loans
+            SET activation_idempotency_key = 'shared-activation-key',
+                activation_result = ${JSON.stringify({ publicId: first.loan.publicId })}::jsonb
+            WHERE id = ${first.loan.id}
+        `);
+
+        const duplicate = async () => db.execute(sql`
+            UPDATE loans
+            SET activation_idempotency_key = 'shared-activation-key',
+                activation_result = ${JSON.stringify({ publicId: second.loan.publicId })}::jsonb
+            WHERE id = ${second.loan.id}
+        `);
+        await expect(duplicate()).rejects.toMatchObject({ cause: { code: "23505" } });
+    });
+
+    integrationTest("allows the same activation command key in different tenants", async () => {
+        const first = await seedLoan("tenant-activation-a", "first");
+        const second = await seedLoan("tenant-activation-b", "second");
+
+        await db.execute(sql`
+            UPDATE loans
+            SET activation_idempotency_key = 'cross-tenant-key',
+                activation_result = ${JSON.stringify({ publicId: first.loan.publicId })}::jsonb
+            WHERE id = ${first.loan.id}
+        `);
+        await db.execute(sql`
+            UPDATE loans
+            SET activation_idempotency_key = 'cross-tenant-key',
+                activation_result = ${JSON.stringify({ publicId: second.loan.publicId })}::jsonb
+            WHERE id = ${second.loan.id}
+        `);
     });
 
     integrationTest("rejects a loan policy outside day or week", async () => {

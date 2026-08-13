@@ -20,7 +20,7 @@ const loanTermsBody = t.Object({
     principal: t.String(), interestRate: t.String(), termMonths: t.Number(), repaymentType,
     startDate: t.String(), totalInstallments: t.Optional(t.Number()), installmentAmount: t.Optional(t.String()),
     floatingInterestPolicy: t.Optional(floatingInterestPolicy), dailyEntry: t.Optional(dailyEntry),
-});
+}, { additionalProperties: t.Never() });
 
 export const loanContractRoutes = new Elysia().use(authPlugin)
     .get("/", async ({ user, query, set }) => {
@@ -205,7 +205,7 @@ export const loanContractRoutes = new Elysia().use(authPlugin)
             principal: t.String(), interestRate: t.String(), repaymentType, termMonths: t.Number(),
             totalInstallments: t.Optional(t.Number()), installmentAmount: t.Optional(t.String()),
             floatingInterestPolicy: t.Optional(floatingInterestPolicy), dailyEntry: t.Optional(dailyEntry), startDate: t.String(),
-        }),
+        }, { additionalProperties: t.Never() }),
     })
     .put("/:id", async ({ params, body, user, request, set }) => {
         if (!user) return loanUnauthorized(set);
@@ -226,7 +226,7 @@ export const loanContractRoutes = new Elysia().use(authPlugin)
             repaymentType: t.Optional(repaymentType), termMonths: t.Optional(t.Number()),
             totalInstallments: t.Optional(t.Number()), installmentAmount: t.Optional(t.String()),
             floatingInterestPolicy: t.Optional(floatingInterestPolicy), dailyEntry: t.Optional(dailyEntry), startDate: t.Optional(t.String()),
-        }),
+        }, { additionalProperties: t.Never() }),
     })
     .post("/:id/activate", async ({ params, user, request, set }) => {
         if (!user) return loanUnauthorized(set);

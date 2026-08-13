@@ -219,6 +219,24 @@ export async function presentLoan(row: LoanRow) {
     };
 }
 
+type PresentedLoan = Awaited<ReturnType<typeof presentLoan>>;
+
+function storedActivationResult(value: unknown): PresentedLoan {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new DomainError("ACTIVATION_COMMAND_CORRUPT", "Stored loan activation result is unavailable", 409);
+    }
+    const stored = value as PresentedLoan & { createdAt: Date | string | null; updatedAt: Date | string | null };
+    return {
+        ...stored,
+        createdAt: stored.createdAt === null ? null : new Date(stored.createdAt),
+        updatedAt: stored.updatedAt === null ? null : new Date(stored.updatedAt),
+    };
+}
+
+function activationIdempotencyConflict() {
+    return new DomainError("IDEMPOTENCY_KEY_CONFLICT", "Idempotency key is already bound to another loan activation command", 409);
+}
+
 function existingDailyEntry(row: LoanRow): DailyLoanEntryInput | undefined {
     if (!row.dailyEntryMode || !row.dailyTermUnit || !row.dailyTermValue) return undefined;
     if (row.dailyEntryMode === "daily_payment" && row.installmentAmount !== null) {
@@ -462,12 +480,23 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
     }
     const accessible = await accessibleLoan(ctx, publicId);
     return db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`loan-activation:${ctx.tenantId}:${idempotencyKey}`}, 0))`);
+        const existingCommand = await tx.query.loans.findFirst({ where: and(
+            eq(loans.tenantId, ctx.tenantId),
+            eq(loans.activationIdempotencyKey, idempotencyKey),
+        ) });
+        if (existingCommand) {
+            if (existingCommand.id !== accessible.id) throw activationIdempotencyConflict();
+            return storedActivationResult(existingCommand.activationResult);
+        }
         await tx.execute(sql`SELECT id FROM loans WHERE id = ${accessible.id} AND tenant_id = ${ctx.tenantId} FOR UPDATE`);
         const current = await tx.query.loans.findFirst({
             where: and(eq(loans.id, accessible.id), eq(loans.tenantId, ctx.tenantId)),
         });
         if (!current) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
-        if (current.status === "active") return presentLoan(current);
+        if (current.status === "active" || current.activationIdempotencyKey !== null) {
+            throw activationIdempotencyConflict();
+        }
         if (current.status !== "draft") {
             throw new DomainError("LOAN_NOT_ACTIVATABLE", "Only draft loans can be activated", 409);
         }
@@ -624,19 +653,32 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
                 createdByUserId: ctx.actorUserId,
             });
         }
-        const row = await tx.update(loans).set({
+        const updatedAt = new Date();
+        const activatedState = {
+            ...current,
             status: "active",
-            nextDueDate: rollup.nextDueDate ?? undefined,
+            nextDueDate: rollup.nextDueDate ?? current.nextDueDate,
             outstandingPrincipal: serializeMoney(rollup.outstandingPrincipal),
             outstandingInterest: serializeMoney(rollup.outstandingInterest),
             outstandingFees: serializeMoney(rollup.outstandingFees),
-            updatedAt: new Date(),
-        }).where(and(eq(loans.id, current.id), eq(loans.tenantId, ctx.tenantId)))
-            .returning().then((rows) => rows[0]!);
+            updatedAt,
+        } as LoanRow;
         const before = await presentLoan(current);
-        const after = await presentLoan(row);
+        const after = await presentLoan(activatedState);
+        const row = await tx.update(loans).set({
+            status: activatedState.status,
+            nextDueDate: activatedState.nextDueDate,
+            outstandingPrincipal: activatedState.outstandingPrincipal,
+            outstandingInterest: activatedState.outstandingInterest,
+            outstandingFees: activatedState.outstandingFees,
+            activationIdempotencyKey: idempotencyKey,
+            activationResult: after,
+            updatedAt,
+        }).where(and(eq(loans.id, current.id), eq(loans.tenantId, ctx.tenantId), eq(loans.status, "draft")))
+            .returning().then((rows) => rows[0]);
+        if (!row) throw new DomainError("LOAN_NOT_ACTIVATABLE", "Only draft loans can be activated", 409);
         await createAuditLog(tx, {
-            ...auditContext(ctx), entityType: "loan", entityId: row.publicId,
+            ...auditContext(ctx), entityType: "loan", entityId: current.publicId,
             action: "activated", payload: {
                 before,
                 after,

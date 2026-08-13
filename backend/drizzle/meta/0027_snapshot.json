@@ -6549,6 +6549,18 @@
           "notNull": false,
           "default": "'draft'"
         },
+        "activation_idempotency_key": {
+          "name": "activation_idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "activation_result": {
+          "name": "activation_result",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "cloned_from_loan_id": {
           "name": "cloned_from_loan_id",
           "type": "integer",
@@ -6588,6 +6600,28 @@
             }
           ],
           "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "loans_tenant_activation_idempotency_unique": {
+          "name": "loans_tenant_activation_idempotency_unique",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "activation_idempotency_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"loans\".\"activation_idempotency_key\" IS NOT NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -6686,6 +6720,10 @@
         "loans_interest_period_policy_completeness_check": {
           "name": "loans_interest_period_policy_completeness_check",
           "value": "\n        (\"loans\".\"interest_period_unit\" IS NULL AND \"loans\".\"interest_period_length\" IS NULL\n            AND \"loans\".\"advance_interest_periods\" IS NULL AND \"loans\".\"advance_interest_refund_policy\" IS NULL\n            AND \"loans\".\"interest_period_anchor_date\" IS NULL)\n        OR\n        (\"loans\".\"interest_period_unit\" IS NOT NULL AND \"loans\".\"interest_period_length\" IS NOT NULL\n            AND \"loans\".\"advance_interest_periods\" IS NOT NULL AND \"loans\".\"advance_interest_refund_policy\" IS NOT NULL\n            AND \"loans\".\"interest_period_anchor_date\" IS NOT NULL)\n    "
+        },
+        "loans_activation_command_completeness_check": {
+          "name": "loans_activation_command_completeness_check",
+          "value": "\n        (\"loans\".\"activation_idempotency_key\" IS NULL AND \"loans\".\"activation_result\" IS NULL)\n        OR (\"loans\".\"activation_idempotency_key\" IS NOT NULL AND \"loans\".\"activation_result\" IS NOT NULL)\n    "
         }
       },
       "isRLSEnabled": false

@@ -123,4 +123,11 @@ ALTER TABLE "loans" ADD CONSTRAINT "loans_interest_period_policy_completeness_ch
         ("loans"."interest_period_unit" IS NOT NULL AND "loans"."interest_period_length" IS NOT NULL
             AND "loans"."advance_interest_periods" IS NOT NULL AND "loans"."advance_interest_refund_policy" IS NOT NULL
             AND "loans"."interest_period_anchor_date" IS NOT NULL)
+    );--> statement-breakpoint
+ALTER TABLE "loans" ADD COLUMN "activation_idempotency_key" text;--> statement-breakpoint
+ALTER TABLE "loans" ADD COLUMN "activation_result" jsonb;--> statement-breakpoint
+CREATE UNIQUE INDEX "loans_tenant_activation_idempotency_unique" ON "loans" USING btree ("tenant_id","activation_idempotency_key") WHERE "loans"."activation_idempotency_key" IS NOT NULL;--> statement-breakpoint
+ALTER TABLE "loans" ADD CONSTRAINT "loans_activation_command_completeness_check" CHECK (
+        ("loans"."activation_idempotency_key" IS NULL AND "loans"."activation_result" IS NULL)
+        OR ("loans"."activation_idempotency_key" IS NOT NULL AND "loans"."activation_result" IS NOT NULL)
     );

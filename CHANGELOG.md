@@ -33,6 +33,7 @@
 - Added the Git-backed `creditsync-marketplace` catalog with exact source-path and package validation plus consistent install, refresh, reinstall, and new-task instructions.
 
 ### Fixed
+- Rejected unknown top-level and nested floating-origination fields before Elysia normalization, and persisted tenant-scoped activation command keys/results so only exact same-key retries replay while conflicting keys stop without financial side effects.
 - Prorated floating-interest accruals from the exact unrounded contractual period amount before cumulative cent rounding, preventing fractional-cent weekly overcharges.
 
 ## v0.3.10 - 2026-08-12
