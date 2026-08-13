@@ -9,6 +9,13 @@ import {
     listIntermediatedDisbursementGroups,
     previewIntermediatedDisbursement,
 } from "../services/intermediated-disbursement-service";
+import {
+    finalizeTransferEvidence,
+    getTransferEvidenceAccess,
+    listTransferEvidence,
+    prepareTransferEvidence,
+    type TransferEvidenceStorageGateway,
+} from "../services/transfer-evidence-service";
 
 type RouteUser = { id: number; tenantId: string };
 
@@ -46,8 +53,18 @@ async function invoke<T>(
 
 const money = t.String({ pattern: "^(0|[1-9]\\d*)\\.\\d{2}$", maxLength: 32 });
 const groupId = { params: t.Object({ id: t.String({ format: "uuid" }) }, { additionalProperties: t.Never() }) };
+const eventEvidenceIds = t.Object({
+    id: t.String({ format: "uuid" }),
+    eventId: t.String({ format: "uuid" }),
+}, { additionalProperties: t.Never() });
+const evidenceIds = t.Object({
+    id: t.String({ format: "uuid" }),
+    eventId: t.String({ format: "uuid" }),
+    evidenceId: t.String({ format: "uuid" }),
+}, { additionalProperties: t.Never() });
 
-export const intermediatedDisbursementsRoute = new Elysia({ normalize: false })
+export function createIntermediatedDisbursementsRoute(evidenceGateway?: TransferEvidenceStorageGateway) {
+    return new Elysia({ normalize: false })
     .use(authPlugin)
     .get(
         "/intermediated-disbursements",
@@ -109,6 +126,59 @@ export const intermediatedDisbursementsRoute = new Elysia({ normalize: false })
             }, { additionalProperties: t.Never() }),
         },
     )
+    .get(
+        "/intermediated-disbursements/:id/events/:eventId/evidence",
+        ({ params, user, request, set }) => invoke(user, request, set, (ctx) => listTransferEvidence(ctx, params.id, params.eventId)),
+        { params: eventEvidenceIds },
+    )
+    .post(
+        "/intermediated-disbursements/:id/events/:eventId/evidence/upload-intents",
+        ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => prepareTransferEvidence(
+            ctx,
+            params.id,
+            params.eventId,
+            body,
+            evidenceGateway,
+        )),
+        {
+            params: eventEvidenceIds,
+            body: t.Object({
+                mimeType: t.Union([
+                    t.Literal("image/jpeg"),
+                    t.Literal("image/png"),
+                    t.Literal("application/pdf"),
+                ]),
+                size: t.Integer({ minimum: 1 }),
+                sha256: t.String({ pattern: "^[0-9a-fA-F]{64}$" }),
+                originalName: t.Optional(t.Nullable(t.String({ maxLength: 500 }))),
+            }, { additionalProperties: t.Never() }),
+        },
+    )
+    .post(
+        "/intermediated-disbursements/:id/events/:eventId/evidence/:evidenceId/finalize",
+        ({ params, user, request, set }) => invoke(user, request, set, (ctx) => finalizeTransferEvidence(
+            ctx,
+            params.id,
+            params.eventId,
+            params.evidenceId,
+            evidenceGateway,
+        )),
+        {
+            params: evidenceIds,
+            body: t.Optional(t.Object({}, { additionalProperties: t.Never() })),
+        },
+    )
+    .get(
+        "/intermediated-disbursements/:id/events/:eventId/evidence/:evidenceId/access",
+        ({ params, user, request, set }) => invoke(user, request, set, (ctx) => getTransferEvidenceAccess(
+            ctx,
+            params.id,
+            params.eventId,
+            params.evidenceId,
+            evidenceGateway,
+        )),
+        { params: evidenceIds },
+    )
     .post(
         "/intermediated-disbursements/:id/preview",
         ({ params, user, request, set }) => invoke(user, request, set, (ctx) => previewIntermediatedDisbursement(ctx, params.id)),
@@ -117,3 +187,6 @@ export const intermediatedDisbursementsRoute = new Elysia({ normalize: false })
             body: t.Object({}, { additionalProperties: t.Never() }),
         },
     );
+}
+
+export const intermediatedDisbursementsRoute = createIntermediatedDisbursementsRoute();

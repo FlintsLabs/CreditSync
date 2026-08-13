@@ -11,7 +11,7 @@ export interface StoredObjectLocation {
 }
 
 const storageProvider: StorageProvider = process.env.STORAGE_PROVIDER === "azure-blob" ? "azure-blob" : "s3";
-const signedUrlTtlSeconds = Math.max(60, Number(process.env.FILE_URL_TTL_SECONDS ?? 900));
+const signedUrlTtlSeconds = Math.max(60, Math.min(900, Number(process.env.FILE_URL_TTL_SECONDS ?? 900)));
 
 const s3AccessKeyId = process.env.MINIO_ROOT_USER || process.env.MINIO_ACCESS_KEY || "minioadmin";
 const s3SecretAccessKey = process.env.MINIO_ROOT_PASSWORD || process.env.MINIO_SECRET_KEY || "minioadmin";
@@ -239,6 +239,13 @@ export async function createSignedObjectUrl(location: StoredObjectLocation): Pro
     }) as any, {
         expiresIn: signedUrlTtlSeconds,
     });
+}
+
+export async function createSignedObjectAccess(location: StoredObjectLocation) {
+    return {
+        url: await createSignedObjectUrl(location),
+        expiresAt: new Date(Date.now() + signedUrlTtlSeconds * 1000),
+    };
 }
 
 export async function resolveStoredFileUrl(value: string | null | undefined): Promise<string | null> {

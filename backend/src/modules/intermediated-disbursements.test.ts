@@ -3,7 +3,8 @@ import { sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
 import { borrowers, intermediaries, loanIntermediaryAssignments, loans, users } from "../db/schema";
-import { intermediatedDisbursementsRoute } from "./intermediated-disbursements";
+import type { SignedPutRequest, StoredObjectHead, StoredObjectLocation } from "../lib/storage";
+import { createIntermediatedDisbursementsRoute, intermediatedDisbursementsRoute } from "./intermediated-disbursements";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
@@ -128,6 +129,10 @@ describe("intermediated disbursement REST contract", () => {
                 transferredAt: "2026-08-13T09:00:00.000Z",
             })],
             ["POST", "/intermediated-disbursements/00000000-0000-7000-8000-000000000000/preview", undefined],
+            ["GET", "/intermediated-disbursements/00000000-0000-7000-8000-000000000000/events/00000000-0000-7000-8000-000000000001/evidence", undefined],
+            ["POST", "/intermediated-disbursements/00000000-0000-7000-8000-000000000000/events/00000000-0000-7000-8000-000000000001/evidence/upload-intents", JSON.stringify({ mimeType: "image/png", size: 4, sha256: "a".repeat(64) })],
+            ["POST", "/intermediated-disbursements/00000000-0000-7000-8000-000000000000/events/00000000-0000-7000-8000-000000000001/evidence/00000000-0000-7000-8000-000000000002/finalize", undefined],
+            ["GET", "/intermediated-disbursements/00000000-0000-7000-8000-000000000000/events/00000000-0000-7000-8000-000000000001/evidence/00000000-0000-7000-8000-000000000002/access", undefined],
         ]) {
             const response = await app.handle(new Request(`http://localhost${path}`, {
                 method,
@@ -143,7 +148,26 @@ describe("intermediated disbursement REST contract", () => {
     integrationTest("serves closed exact group, split-event, list/detail, and preview contracts", async () => {
         const owner = await seed();
         const token = await authToken(owner.actor);
-        const app = new Elysia().use(intermediatedDisbursementsRoute);
+        const putRequests: SignedPutRequest[] = [];
+        const heads = new Map<string, StoredObjectHead>();
+        const accessExpiresAt = new Date(Date.now() + 5 * 60_000);
+        const evidenceGateway = {
+            async preparePut(request: SignedPutRequest) {
+                putRequests.push(request);
+                return {
+                    uploadUrl: `https://upload.example/${encodeURIComponent(request.key)}`,
+                    expiresAt: new Date(Date.now() + 5 * 60_000),
+                    requiredHeaders: { "content-type": request.contentType },
+                };
+            },
+            async head(key: string) {
+                return heads.get(key) ?? { exists: false, contentType: null, contentLength: null, checksumSha256: null, metadata: {} };
+            },
+            async createAccess(location: StoredObjectLocation) {
+                return { url: `https://access.example/${encodeURIComponent(location.key)}`, expiresAt: accessExpiresAt };
+            },
+        };
+        const app = new Elysia().use(createIntermediatedDisbursementsRoute(evidenceGateway));
 
         const missingKey = await jsonRequest(app, "/intermediated-disbursements", token, {
             method: "POST",
@@ -206,6 +230,7 @@ describe("intermediated disbursement REST contract", () => {
         });
         expect(invalidEvent.response.status).toBe(422);
 
+        const createdEvents: Array<{ publicId: string; role: string }> = [];
         for (const [suffix, role, amount] of [
             ["funding", "funding_to_intermediary", "5000.00"],
             ["borrower-a", "borrower_net_payout", "2000.00"],
@@ -227,7 +252,84 @@ describe("intermediated disbursement REST contract", () => {
             expect(event.body).toMatchObject({ role, amount, status: "ready", correlationId: expect.any(String) });
             expect(event.body).not.toHaveProperty("groupId");
             expect(event.body).not.toHaveProperty("bankReferenceHash");
+            createdEvents.push(event.body);
         }
+
+        const fundingEvent = createdEvents.find((event) => event.role === "funding_to_intermediary")!;
+        const evidenceBase = `/intermediated-disbursements/${created.body.publicId}/events/${fundingEvent.publicId}/evidence`;
+        const unknownEvidenceField = await jsonRequest(app, `${evidenceBase}/upload-intents`, token, {
+            method: "POST",
+            body: JSON.stringify({ mimeType: "image/png", size: 128, sha256: "a".repeat(64), fileUrl: "https://unsafe.example/slip" }),
+        });
+        expect(unknownEvidenceField.response.status).toBe(422);
+
+        const invalidEvidence = await jsonRequest(app, `${evidenceBase}/upload-intents`, token, {
+            method: "POST",
+            body: JSON.stringify({ mimeType: "text/plain", size: 128, sha256: "a".repeat(64) }),
+        });
+        expect(invalidEvidence.response.status).toBe(422);
+
+        const prepared = await jsonRequest(app, `${evidenceBase}/upload-intents`, token, {
+            method: "POST",
+            headers: { "x-request-id": "req-route-evidence", "x-correlation-id": "corr-route-evidence" },
+            body: JSON.stringify({ mimeType: "image/png", size: 128, sha256: "a".repeat(64), originalName: "funding.png" }),
+        });
+        const evidencePublicId = prepared.body.publicId as string;
+        const evidenceFilePublicId = prepared.body.filePublicId as string;
+        expect(prepared.response.status).toBe(200);
+        expect(prepared.body).toMatchObject({
+            publicId: expect.any(String),
+            filePublicId: expect.any(String),
+            status: "pending",
+            uploadUrl: expect.stringContaining("https://upload.example/"),
+            requiredHeaders: { "content-type": "image/png" },
+            expiresAt: expect.any(String),
+        });
+        expect(putRequests[0]!.metadata).toEqual({
+            tenant: owner.actor.tenantId,
+            group: created.body.publicId,
+            event: fundingEvent.publicId,
+        });
+        heads.set(putRequests[0]!.key, {
+            exists: true,
+            contentType: "image/png",
+            contentLength: 128,
+            checksumSha256: "a".repeat(64),
+            metadata: putRequests[0]!.metadata,
+        });
+
+        const finalized = await jsonRequest(app, `${evidenceBase}/${evidencePublicId}/finalize`, token, { method: "POST" });
+        expect({ status: finalized.response.status, body: finalized.body }).toMatchObject({ status: 200 });
+        expect(finalized.body).toMatchObject({ publicId: evidencePublicId, status: "ready", sha256: "a".repeat(64) });
+
+        const unknownFinalizeField = await jsonRequest(app, `${evidenceBase}/${evidencePublicId}/finalize`, token, {
+            method: "POST",
+            body: JSON.stringify({ filePublicId: evidenceFilePublicId }),
+        });
+        expect(unknownFinalizeField.response.status).toBe(422);
+
+        const readyRetry = await jsonRequest(app, `${evidenceBase}/upload-intents`, token, {
+            method: "POST",
+            body: JSON.stringify({ mimeType: "image/png", size: 128, sha256: "a".repeat(64) }),
+        });
+        expect(readyRetry.body).toMatchObject({ publicId: evidencePublicId, status: "ready" });
+        expect(putRequests).toHaveLength(1);
+
+        const evidence = await jsonRequest(app, evidenceBase, token);
+        expect(evidence.response.status).toBe(200);
+        expect(evidence.body).toEqual([expect.objectContaining({ publicId: evidencePublicId, status: "ready", mimeType: "image/png" })]);
+        expect(JSON.stringify(evidence.body)).not.toMatch(/uploadUrl|objectKey|bucket|fileId/);
+
+        const access = await jsonRequest(app, `${evidenceBase}/${evidencePublicId}/access`, token);
+        expect(access.response.status).toBe(200);
+        expect(access.body).toEqual({
+            publicId: evidencePublicId,
+            filePublicId: evidenceFilePublicId,
+            status: "ready",
+            mimeType: "image/png",
+            url: expect.stringContaining("https://access.example/"),
+            expiresAt: accessExpiresAt.toISOString(),
+        });
 
         const unknownPreviewField = await jsonRequest(app, `/intermediated-disbursements/${created.body.publicId}/preview`, token, {
             method: "POST",
