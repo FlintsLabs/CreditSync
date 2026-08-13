@@ -85,7 +85,9 @@ CREATE TABLE "loan_restructures" (
     "cash_direction" text NOT NULL,
     "cash_amount" numeric DEFAULT 0 NOT NULL,
     "reason" text NOT NULL,
-    "actor_source" text NOT NULL,
+    "created_actor_source" text NOT NULL,
+    "execute_actor_source" text,
+    "reversal_actor_source" text,
     "request_id" text,
     "correlation_id" text NOT NULL,
     "execute_idempotency_key" text,
@@ -109,7 +111,11 @@ CREATE TABLE "loan_restructures" (
         ("cash_direction" = 'none' AND "cash_amount" = 0)
         OR ("cash_direction" IN ('payout', 'collection') AND "cash_amount" > 0)
     ),
-    CONSTRAINT "loan_restructures_actor_source_check" CHECK ("actor_source" IN ('web', 'mcp', 'system')),
+    CONSTRAINT "loan_restructures_actor_sources_check" CHECK (
+        "created_actor_source" IN ('web', 'mcp', 'system') AND
+        ("execute_actor_source" IS NULL OR "execute_actor_source" IN ('web', 'mcp', 'system')) AND
+        ("reversal_actor_source" IS NULL OR "reversal_actor_source" IN ('web', 'mcp', 'system'))
+    ),
     CONSTRAINT "loan_restructures_amounts_check" CHECK (
         "gross_principal" >= 0 AND "gross_interest" >= 0 AND "gross_fees" >= 0 AND "gross_penalty" >= 0 AND
         "waived_interest" >= 0 AND "waived_fees" >= 0 AND "waived_penalty" >= 0 AND
@@ -134,27 +140,32 @@ CREATE TABLE "loan_restructures" (
         ("reversal_idempotency_key" IS NULL) = ("reversal_request_hash" IS NULL)
     ),
     CONSTRAINT "loan_restructures_lifecycle_check" CHECK (
+        ("created_actor_source" = 'system' OR "created_by_user_id" IS NOT NULL) AND
         ("status" NOT IN ('executed', 'reversed') OR (
             "new_loan_id" IS NOT NULL AND "old_loan_id" <> "new_loan_id" AND
             "execute_idempotency_key" IS NOT NULL AND "execute_request_hash" IS NOT NULL AND
             "executed_audit_public_id" IS NOT NULL AND "pre_execution_old_loan_state" IS NOT NULL AND
-            "executed_at" IS NOT NULL AND
-            ("actor_source" = 'system' OR ("created_by_user_id" IS NOT NULL AND "executed_by_user_id" IS NOT NULL))
+            "executed_at" IS NOT NULL AND "execute_actor_source" IS NOT NULL AND
+            ("execute_actor_source" = 'system' OR "executed_by_user_id" IS NOT NULL)
         )) AND
         ("status" <> 'executed' OR (
             "reversal_idempotency_key" IS NULL AND "reversal_request_hash" IS NULL AND
-            "reversed_audit_public_id" IS NULL AND "reversed_at" IS NULL AND "reversed_by_user_id" IS NULL
+            "reversal_actor_source" IS NULL AND "reversed_audit_public_id" IS NULL AND
+            "reversed_at" IS NULL AND "reversed_by_user_id" IS NULL
         )) AND
         ("status" <> 'reversed' OR (
             "reversal_idempotency_key" IS NOT NULL AND
             "reversal_request_hash" IS NOT NULL AND "reversed_audit_public_id" IS NOT NULL AND
-            "reversed_at" IS NOT NULL AND ("actor_source" = 'system' OR "reversed_by_user_id" IS NOT NULL)
+            "reversal_actor_source" IS NOT NULL AND "reversed_at" IS NOT NULL AND
+            ("reversal_actor_source" = 'system' OR "reversed_by_user_id" IS NOT NULL)
         )) AND
         ("status" NOT IN ('preview', 'expired') OR (
             "new_loan_id" IS NULL AND "execute_idempotency_key" IS NULL AND "execute_request_hash" IS NULL AND
-            "executed_audit_public_id" IS NULL AND "pre_execution_old_loan_state" IS NULL AND "executed_at" IS NULL AND
+            "execute_actor_source" IS NULL AND "executed_audit_public_id" IS NULL AND
+            "pre_execution_old_loan_state" IS NULL AND "executed_at" IS NULL AND
             "executed_by_user_id" IS NULL AND "reversal_idempotency_key" IS NULL AND "reversal_request_hash" IS NULL AND
-            "reversed_audit_public_id" IS NULL AND "reversed_at" IS NULL AND "reversed_by_user_id" IS NULL
+            "reversal_actor_source" IS NULL AND "reversed_audit_public_id" IS NULL AND
+            "reversed_at" IS NULL AND "reversed_by_user_id" IS NULL
         ))
     )
 );--> statement-breakpoint
@@ -370,8 +381,8 @@ AS $$
 BEGIN
     IF OLD."status" = 'executed' AND TG_OP = 'UPDATE'
         AND NEW."status" = 'reversed'
-        AND (to_jsonb(NEW) - ARRAY['status', 'reversal_idempotency_key', 'reversal_request_hash', 'reversed_audit_public_id', 'reversed_at', 'reversed_by_user_id', 'updated_by_user_id', 'updated_at'])
-            = (to_jsonb(OLD) - ARRAY['status', 'reversal_idempotency_key', 'reversal_request_hash', 'reversed_audit_public_id', 'reversed_at', 'reversed_by_user_id', 'updated_by_user_id', 'updated_at']) THEN
+        AND (to_jsonb(NEW) - ARRAY['status', 'reversal_idempotency_key', 'reversal_request_hash', 'reversal_actor_source', 'reversed_audit_public_id', 'reversed_at', 'reversed_by_user_id', 'updated_by_user_id', 'updated_at'])
+            = (to_jsonb(OLD) - ARRAY['status', 'reversal_idempotency_key', 'reversal_request_hash', 'reversal_actor_source', 'reversed_audit_public_id', 'reversed_at', 'reversed_by_user_id', 'updated_by_user_id', 'updated_at']) THEN
         RETURN NEW;
     END IF;
     IF OLD."status" IN ('executed', 'reversed') THEN

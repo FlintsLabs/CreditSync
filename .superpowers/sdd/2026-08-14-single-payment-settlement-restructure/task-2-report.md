@@ -124,3 +124,32 @@ cd backend && ./scripts/test-disposable-postgres.sh src/db/single-payment-restru
 ```
 
 Final results: focused static suite `11 pass, 1 skip, 0 fail` with `485 expect()` calls; TypeScript typecheck exited 0; disposable PostgreSQL migrations applied successfully and the database suite reported `6 pass, 0 fail` with `167 expect()` calls.
+
+## Review Fix Round 3
+
+- Replaced the ambiguous restructure-level `actor_source` with explicit `created_actor_source`, `execute_actor_source`, and `reversal_actor_source` provenance in both SQL and Drizzle.
+- Bound `created_by_user_id`, `executed_by_user_id`, and `reversed_by_user_id` requirements to their corresponding operation source: `web`/`mcp` require a user, while `system` may omit one.
+- Kept execution provenance immutable after execution. The only permitted `executed -> reversed` mutation now includes setting `reversal_actor_source` alongside the existing reversal key/hash, audit, timestamp, actor, and update metadata.
+- Added behavioral coverage for `web -> system` reversal without a user, `system -> web` reversal rejection without a user and success with one, plus rejection of execution-source mutation during reversal.
+
+### Review RED
+
+Command:
+
+```text
+cd backend && ./scripts/test-disposable-postgres.sh src/db/single-payment-restructure-migration.test.ts
+```
+
+Observed: `5 pass, 1 fail`. The first mixed-source reversal failed with PostgreSQL `42703` because `loan_restructures.reversal_actor_source` did not exist.
+
+### Review GREEN
+
+Commands:
+
+```text
+cd backend && bun test src/db/single-payment-restructure-migration.test.ts src/db/agent-workflow-schema.test.ts
+cd backend && bun run typecheck
+cd backend && ./scripts/test-disposable-postgres.sh src/db/single-payment-restructure-migration.test.ts
+```
+
+Final results: focused static suite `11 pass, 1 skip, 0 fail` with `487 expect()` calls; TypeScript typecheck exited 0; disposable PostgreSQL migrations applied successfully and the database suite reported `6 pass, 0 fail` with `172 expect()` calls.

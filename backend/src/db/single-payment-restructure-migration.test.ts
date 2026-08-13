@@ -101,6 +101,9 @@ describe("single-payment restructure schema contract", () => {
             "loan_restructures_status_check",
             "loan_restructures_lifecycle_check",
         ]));
+        expect(columnNames("loanRestructures")).toEqual(expect.arrayContaining([
+            "created_actor_source", "execute_actor_source", "reversal_actor_source",
+        ]));
         expect(config("loanRestructureWaivers").checks.map((check) => check.name)).toContain("loan_restructure_waivers_status_check");
 
         const expectedUniqueIndexes: Record<string, string[]> = {
@@ -328,8 +331,9 @@ if (!testDatabaseUrl) {
                 executedByUserId: number | null = tenantAActor[0]!.id,
                 reversedAuditPublicId: string | null = null,
                 reversedByUserId: number | null = null,
-                actorSource: "web" | "mcp" | "system" = "web",
+                executeActorSource: "web" | "mcp" | "system" = "web",
                 createdByUserId: number | null = tenantAActor[0]!.id,
+                createdActorSource: "web" | "mcp" | "system" = executeActorSource,
             ) => sql`
                 INSERT INTO loan_restructures (
                     tenant_id, old_loan_id, new_loan_id, settlement_date, old_balance_version,
@@ -338,7 +342,7 @@ if (!testDatabaseUrl) {
                     waived_interest, waived_fees, waived_penalty,
                     net_principal, net_interest, net_fees, net_penalty,
                     external_settlement_credits, additional_principal, cash_direction, cash_amount,
-                    reason, actor_source, correlation_id, execute_idempotency_key,
+                    reason, created_actor_source, execute_actor_source, correlation_id, execute_idempotency_key,
                     execute_request_hash, executed_audit_public_id, reversed_audit_public_id,
                     pre_execution_old_loan_state, expires_at, executed_at,
                     created_by_user_id, executed_by_user_id, reversed_by_user_id
@@ -346,7 +350,7 @@ if (!testDatabaseUrl) {
                     'tenant-a', ${tenantALoans[0]!.id}, ${newLoanId}, DATE '2026-08-20', 'balance-v1',
                     'executed', 'preview-hash', 'request-hash', '{}'::jsonb,
                     1000, 100, 20, 5, ${waivedInterest}, 0, 0, 1000, 90, 20, 5,
-                    0, 0, ${cashDirection}, ${cashAmount}, 'customer request', ${actorSource}, 'correlation-a', ${executeKey},
+                    0, 0, ${cashDirection}, ${cashAmount}, 'customer request', ${createdActorSource}, ${executeActorSource}, 'correlation-a', ${executeKey},
                     'execute-hash', ${auditPublicId}, ${reversedAuditPublicId}, ${preExecutionState === null ? null : sql.json(preExecutionState)},
                     now() + interval '1 hour', now(), ${createdByUserId}, ${executedByUserId}, ${reversedByUserId}
                 ) RETURNING id, public_id
@@ -433,6 +437,16 @@ if (!testDatabaseUrl) {
             expect(String(await postgresError(sql`UPDATE loan_opening_balance_components SET amount = 999 WHERE id = ${component[0]!.id}`))).toMatch(/immutable/);
             expect(String(await postgresError(sql`DELETE FROM loan_opening_balance_components WHERE id = ${component[0]!.id}`))).toMatch(/immutable/);
 
+            const executionSourceMutation = await insertRestructure(tenantALoans[1]!.id, "execution-source-mutation", "10");
+            expect(String(await postgresError(sql`
+                UPDATE loan_restructures SET
+                    status = 'reversed', execute_actor_source = 'system', reversal_actor_source = 'system',
+                    reversal_idempotency_key = 'execution-source-mutation-reverse',
+                    reversal_request_hash = 'execution-source-mutation-reverse-hash',
+                    reversed_audit_public_id = ${systemAudits[1]!.public_id}, reversed_at = now(), updated_at = now()
+                WHERE id = ${executionSourceMutation[0]!.id}
+            `))).toMatch(/immutable/);
+
             const reversedRestructure = await insertRestructure(tenantALoans[1]!.id, "restructure-to-reverse", "10");
             expect(await postgresError(sql`
                 UPDATE loan_restructures SET
@@ -441,25 +455,32 @@ if (!testDatabaseUrl) {
                     reversed_by_user_id = ${tenantAActor[0]!.id}, updated_by_user_id = ${tenantAActor[0]!.id}, updated_at = now()
                 WHERE id = ${reversedRestructure[0]!.id}
             `)).toMatchObject({ code: "23514" });
-            await sql`
+            expect(await postgresError(sql`
                 UPDATE loan_restructures SET
                     status = 'reversed',
                     reversal_idempotency_key = 'restructure-reverse-key',
                     reversal_request_hash = 'restructure-reverse-hash',
-                    reversed_audit_public_id = ${audits[1]!.public_id},
+                    reversal_actor_source = 'system',
+                    reversed_audit_public_id = ${systemAudits[1]!.public_id},
                     reversed_at = now(),
-                    reversed_by_user_id = ${tenantAActor[0]!.id},
-                    updated_by_user_id = ${tenantAActor[0]!.id},
                     updated_at = now()
                 WHERE id = ${reversedRestructure[0]!.id}
-            `;
+            `)).toBeUndefined();
             expect(String(await postgresError(sql`UPDATE loan_restructures SET reason = 'changed' WHERE id = ${reversedRestructure[0]!.id}`))).toMatch(/immutable/);
             expect(String(await postgresError(sql`DELETE FROM loan_restructures WHERE id = ${reversedRestructure[0]!.id}`))).toMatch(/immutable/);
+            expect(await postgresError(sql`
+                UPDATE loan_restructures SET
+                    status = 'reversed', reversal_idempotency_key = 'system-restructure-reverse',
+                    reversal_request_hash = 'system-restructure-reverse-hash', reversal_actor_source = 'web',
+                    reversed_audit_public_id = ${audits[1]!.public_id}, reversed_at = now(), updated_at = now()
+                WHERE id = ${systemRestructure[0]!.id}
+            `)).toMatchObject({ code: "23514" });
             expect((await sql`
                 UPDATE loan_restructures SET
                     status = 'reversed', reversal_idempotency_key = 'system-restructure-reverse',
                     reversal_request_hash = 'system-restructure-reverse-hash',
-                    reversed_audit_public_id = ${systemAudits[1]!.public_id}, reversed_at = now(), updated_at = now()
+                    reversal_actor_source = 'web', reversed_by_user_id = ${tenantAActor[0]!.id},
+                    reversed_audit_public_id = ${audits[1]!.public_id}, reversed_at = now(), updated_at = now()
                 WHERE id = ${systemRestructure[0]!.id}
             `).count).toBe(1);
 

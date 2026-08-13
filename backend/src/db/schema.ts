@@ -1030,7 +1030,9 @@ export const loanRestructures = pgTable("loan_restructures", {
     cashDirection: text("cash_direction").notNull(),
     cashAmount: numeric("cash_amount").default("0").notNull(),
     reason: text("reason").notNull(),
-    actorSource: text("actor_source").notNull(),
+    createdActorSource: text("created_actor_source").notNull(),
+    executeActorSource: text("execute_actor_source"),
+    reversalActorSource: text("reversal_actor_source"),
     requestId: text("request_id"),
     correlationId: text("correlation_id").notNull(),
     executeIdempotencyKey: text("execute_idempotency_key"),
@@ -1070,7 +1072,11 @@ export const loanRestructures = pgTable("loan_restructures", {
         (${table.cashDirection} = 'none' AND ${table.cashAmount} = 0)
         OR (${table.cashDirection} IN ('payout', 'collection') AND ${table.cashAmount} > 0)
     `),
-    check("loan_restructures_actor_source_check", sql`${table.actorSource} IN ('web', 'mcp', 'system')`),
+    check("loan_restructures_actor_sources_check", sql`
+        ${table.createdActorSource} IN ('web', 'mcp', 'system') AND
+        (${table.executeActorSource} IS NULL OR ${table.executeActorSource} IN ('web', 'mcp', 'system')) AND
+        (${table.reversalActorSource} IS NULL OR ${table.reversalActorSource} IN ('web', 'mcp', 'system'))
+    `),
     check("loan_restructures_amounts_check", sql`
         ${table.grossPrincipal} >= 0 AND ${table.grossInterest} >= 0 AND ${table.grossFees} >= 0 AND ${table.grossPenalty} >= 0 AND
         ${table.waivedInterest} >= 0 AND ${table.waivedFees} >= 0 AND ${table.waivedPenalty} >= 0 AND
@@ -1095,27 +1101,32 @@ export const loanRestructures = pgTable("loan_restructures", {
         (${table.reversalIdempotencyKey} IS NULL) = (${table.reversalRequestHash} IS NULL)
     `),
     check("loan_restructures_lifecycle_check", sql`
+        (${table.createdActorSource} = 'system' OR ${table.createdByUserId} IS NOT NULL) AND
         (${table.status} NOT IN ('executed', 'reversed') OR (
             ${table.newLoanId} IS NOT NULL AND ${table.oldLoanId} <> ${table.newLoanId} AND
             ${table.executeIdempotencyKey} IS NOT NULL AND ${table.executeRequestHash} IS NOT NULL AND
             ${table.executedAuditPublicId} IS NOT NULL AND ${table.preExecutionOldLoanState} IS NOT NULL AND
-            ${table.executedAt} IS NOT NULL AND
-            (${table.actorSource} = 'system' OR (${table.createdByUserId} IS NOT NULL AND ${table.executedByUserId} IS NOT NULL))
+            ${table.executedAt} IS NOT NULL AND ${table.executeActorSource} IS NOT NULL AND
+            (${table.executeActorSource} = 'system' OR ${table.executedByUserId} IS NOT NULL)
         )) AND
         (${table.status} <> 'executed' OR (
             ${table.reversalIdempotencyKey} IS NULL AND ${table.reversalRequestHash} IS NULL AND
-            ${table.reversedAuditPublicId} IS NULL AND ${table.reversedAt} IS NULL AND ${table.reversedByUserId} IS NULL
+            ${table.reversalActorSource} IS NULL AND ${table.reversedAuditPublicId} IS NULL AND
+            ${table.reversedAt} IS NULL AND ${table.reversedByUserId} IS NULL
         )) AND
         (${table.status} <> 'reversed' OR (
             ${table.reversalIdempotencyKey} IS NOT NULL AND
             ${table.reversalRequestHash} IS NOT NULL AND ${table.reversedAuditPublicId} IS NOT NULL AND
-            ${table.reversedAt} IS NOT NULL AND (${table.actorSource} = 'system' OR ${table.reversedByUserId} IS NOT NULL)
+            ${table.reversalActorSource} IS NOT NULL AND ${table.reversedAt} IS NOT NULL AND
+            (${table.reversalActorSource} = 'system' OR ${table.reversedByUserId} IS NOT NULL)
         )) AND
         (${table.status} NOT IN ('preview', 'expired') OR (
             ${table.newLoanId} IS NULL AND ${table.executeIdempotencyKey} IS NULL AND ${table.executeRequestHash} IS NULL AND
-            ${table.executedAuditPublicId} IS NULL AND ${table.preExecutionOldLoanState} IS NULL AND ${table.executedAt} IS NULL AND
+            ${table.executeActorSource} IS NULL AND ${table.executedAuditPublicId} IS NULL AND
+            ${table.preExecutionOldLoanState} IS NULL AND ${table.executedAt} IS NULL AND
             ${table.executedByUserId} IS NULL AND ${table.reversalIdempotencyKey} IS NULL AND ${table.reversalRequestHash} IS NULL AND
-            ${table.reversedAuditPublicId} IS NULL AND ${table.reversedAt} IS NULL AND ${table.reversedByUserId} IS NULL
+            ${table.reversalActorSource} IS NULL AND ${table.reversedAuditPublicId} IS NULL AND
+            ${table.reversedAt} IS NULL AND ${table.reversedByUserId} IS NULL
         ))
     `),
     check("loan_restructures_pre_execution_snapshot_check", sql`
