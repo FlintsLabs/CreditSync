@@ -3,6 +3,7 @@
 ## v0.3.11 - 2026-08-13
 
 ### Added
+- Added the approved design for post-activation, append-only multi-source loan funding allocation with compensating adjustments, exact preview/execute workflows, and synchronized Web and MCP visibility.
 - Added exact source-attributed collected interest to funding-usage rows, including proportional multi-source allocation and append-only reversal handling.
 - Added the v0.3.11 TDD implementation plan for a responsive flat funding-usage list with localized semantic statuses and exact source-attributed collected interest.
 - Added the approved responsive fund-usage flat-list design with localized semantic statuses and exact source-attributed collected interest that remains correct across multi-source funding and compensating reversals.
