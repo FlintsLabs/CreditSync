@@ -1311,3 +1311,296 @@ export const intermediaryRemittanceEvidenceIntents = pgTable("intermediary_remit
     foreignKey({ name: "intermediary_remittance_evidence_intents_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
     foreignKey({ name: "intermediary_remittance_evidence_intents_tenant_updated_by_fk", columns: [table.tenantId, table.updatedByUserId], foreignColumns: [users.tenantId, users.id] }),
 ]);
+
+// Reusable, masked payment destinations owned by an intermediary. The clear
+// account number is intentionally not persisted: services retain only a
+// tenant-scoped identity hash and the last four digits required for display.
+export const intermediaryBankAccounts = pgTable("intermediary_bank_accounts", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId,
+    intermediaryId: integer("intermediary_id").notNull(),
+    bankCode: text("bank_code"),
+    bankName: text("bank_name").notNull(),
+    accountName: text("account_name").notNull(),
+    accountNumberLast4: text("account_number_last4").notNull(),
+    accountNumberHash: text("account_number_hash").notNull(),
+    status: text("status").default("active").notNull(),
+    note: text("note"),
+    createdByUserId: integer("created_by_user_id"),
+    updatedByUserId: integer("updated_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("intermediary_bank_accounts_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("intermediary_bank_accounts_tenant_hash_unique").on(table.tenantId, table.accountNumberHash),
+    index("intermediary_bank_accounts_tenant_intermediary_status_idx").on(table.tenantId, table.intermediaryId, table.status),
+    check("intermediary_bank_accounts_status_check", sql`${table.status} IN ('active', 'inactive')`),
+    check("intermediary_bank_accounts_last4_check", sql`${table.accountNumberLast4} ~ '^[0-9]{4}$'`),
+    check("intermediary_bank_accounts_identity_check", sql`length(${table.bankName}) > 0 AND length(${table.accountName}) > 0 AND length(${table.accountNumberHash}) > 0`),
+    foreignKey({ name: "intermediary_bank_accounts_tenant_intermediary_fk", columns: [table.tenantId, table.intermediaryId], foreignColumns: [intermediaries.tenantId, intermediaries.id] }),
+    foreignKey({ name: "intermediary_bank_accounts_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+    foreignKey({ name: "intermediary_bank_accounts_tenant_updated_by_fk", columns: [table.tenantId, table.updatedByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
+
+// Effective-dated responsibility is append-only history. PostgreSQL exclusion
+// constraints in migration 0028 prevent a loan from having overlapping
+// disbursement or collection responsibility (the `both` role participates in
+// both constraints).
+export const loanIntermediaryAssignments = pgTable("loan_intermediary_assignments", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId,
+    loanId: integer("loan_id").notNull(),
+    intermediaryId: integer("intermediary_id").notNull(),
+    role: text("role").notNull(),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull(),
+    effectiveTo: timestamp("effective_to", { withTimezone: true }),
+    status: text("status").default("active").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    note: text("note"),
+    createdByUserId: integer("created_by_user_id"),
+    updatedByUserId: integer("updated_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("loan_intermediary_assignments_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("loan_intermediary_assignments_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
+    index("loan_intermediary_assignments_tenant_loan_effective_idx").on(table.tenantId, table.loanId, table.effectiveFrom),
+    index("loan_intermediary_assignments_tenant_intermediary_status_idx").on(table.tenantId, table.intermediaryId, table.status),
+    check("loan_intermediary_assignments_role_check", sql`${table.role} IN ('disbursement', 'collection', 'both')`),
+    check("loan_intermediary_assignments_status_check", sql`${table.status} IN ('active', 'ended')`),
+    check("loan_intermediary_assignments_date_order_check", sql`${table.effectiveTo} IS NULL OR ${table.effectiveTo} > ${table.effectiveFrom}`),
+    check("loan_intermediary_assignments_lifecycle_check", sql`(${table.status} = 'active' AND ${table.effectiveTo} IS NULL) OR (${table.status} = 'ended' AND ${table.effectiveTo} IS NOT NULL)`),
+    foreignKey({ name: "loan_intermediary_assignments_tenant_loan_fk", columns: [table.tenantId, table.loanId], foreignColumns: [loans.tenantId, loans.id] }),
+    foreignKey({ name: "loan_intermediary_assignments_tenant_intermediary_fk", columns: [table.tenantId, table.intermediaryId], foreignColumns: [intermediaries.tenantId, intermediaries.id] }),
+    foreignKey({ name: "loan_intermediary_assignments_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+    foreignKey({ name: "loan_intermediary_assignments_tenant_updated_by_fk", columns: [table.tenantId, table.updatedByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
+
+export const intermediatedDisbursementGroups = pgTable("intermediated_disbursement_groups", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId,
+    loanId: integer("loan_id").notNull(),
+    intermediaryId: integer("intermediary_id").notNull(),
+    expectedFundingAmount: numeric("expected_funding_amount").notNull(),
+    expectedBorrowerPayoutAmount: numeric("expected_borrower_payout_amount").notNull(),
+    expectedAdvanceInterestReturnAmount: numeric("expected_advance_interest_return_amount").notNull(),
+    retainedBalanceAmount: numeric("retained_balance_amount").default("0").notNull(),
+    status: text("status").default("draft").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    postIdempotencyKey: text("post_idempotency_key"),
+    reversedGroupId: integer("reversed_group_id"),
+    reversalIdempotencyKey: text("reversal_idempotency_key"),
+    reversalRequestHash: text("reversal_request_hash"),
+    reversalReason: text("reversal_reason"),
+    note: text("note"),
+    createdByUserId: integer("created_by_user_id"),
+    updatedByUserId: integer("updated_by_user_id"),
+    postedByUserId: integer("posted_by_user_id"),
+    reversedByUserId: integer("reversed_by_user_id"),
+    postedAt: timestamp("posted_at", { withTimezone: true }),
+    reversedAt: timestamp("reversed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("intermediated_disbursement_groups_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("intermediated_disbursement_groups_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
+    uniqueIndex("intermediated_disbursement_groups_tenant_post_idempotency_unique").on(table.tenantId, table.postIdempotencyKey).where(sql`${table.postIdempotencyKey} IS NOT NULL`),
+    uniqueIndex("intermediated_disbursement_groups_tenant_reversal_idempotency_unique").on(table.tenantId, table.reversalIdempotencyKey).where(sql`${table.reversalIdempotencyKey} IS NOT NULL`),
+    uniqueIndex("intermediated_disbursement_groups_tenant_reversed_group_unique").on(table.tenantId, table.reversedGroupId).where(sql`${table.reversedGroupId} IS NOT NULL`),
+    index("intermediated_disbursement_groups_tenant_loan_status_idx").on(table.tenantId, table.loanId, table.status),
+    index("intermediated_disbursement_groups_tenant_intermediary_status_idx").on(table.tenantId, table.intermediaryId, table.status),
+    check("intermediated_disbursement_groups_status_check", sql`${table.status} IN ('draft', 'needs_review', 'ready', 'posted', 'reversed')`),
+    check("intermediated_disbursement_groups_money_check", sql`
+        ${table.expectedFundingAmount} >= 0
+        AND ${table.expectedBorrowerPayoutAmount} >= 0
+        AND ${table.expectedAdvanceInterestReturnAmount} >= 0
+        AND ${table.retainedBalanceAmount} >= 0
+    `),
+    check("intermediated_disbursement_groups_money_scale_check", sql`
+        scale(${table.expectedFundingAmount}) <= 2
+        AND scale(${table.expectedBorrowerPayoutAmount}) <= 2
+        AND scale(${table.expectedAdvanceInterestReturnAmount}) <= 2
+        AND scale(${table.retainedBalanceAmount}) <= 2
+    `),
+    check("intermediated_disbursement_groups_expected_balance_check", sql`
+        ${table.expectedFundingAmount} = ${table.expectedBorrowerPayoutAmount}
+            + ${table.expectedAdvanceInterestReturnAmount} + ${table.retainedBalanceAmount}
+    `),
+    check("intermediated_disbursement_groups_lifecycle_check", sql`
+        (${table.status} IN ('draft', 'needs_review', 'ready')
+            AND ${table.reversedGroupId} IS NULL AND ${table.postedAt} IS NULL AND ${table.reversedAt} IS NULL)
+        OR (${table.status} = 'posted'
+            AND ${table.reversedGroupId} IS NULL AND ${table.postIdempotencyKey} IS NOT NULL
+            AND ${table.postedAt} IS NOT NULL AND ${table.reversedAt} IS NULL)
+        OR (${table.status} = 'reversed'
+            AND ${table.reversedGroupId} IS NOT NULL AND ${table.postedAt} IS NOT NULL AND ${table.reversedAt} IS NOT NULL
+            AND ${table.reversalIdempotencyKey} IS NOT NULL AND length(${table.reversalRequestHash}) > 0
+            AND length(${table.reversalReason}) > 0)
+    `),
+    foreignKey({ name: "intermediated_disbursement_groups_tenant_loan_fk", columns: [table.tenantId, table.loanId], foreignColumns: [loans.tenantId, loans.id] }),
+    foreignKey({ name: "intermediated_disbursement_groups_tenant_intermediary_fk", columns: [table.tenantId, table.intermediaryId], foreignColumns: [intermediaries.tenantId, intermediaries.id] }),
+    foreignKey({ name: "intermediated_disbursement_groups_tenant_reversed_group_fk", columns: [table.tenantId, table.reversedGroupId], foreignColumns: [table.tenantId, table.id] }),
+    foreignKey({ name: "intermediated_disbursement_groups_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+    foreignKey({ name: "intermediated_disbursement_groups_tenant_updated_by_fk", columns: [table.tenantId, table.updatedByUserId], foreignColumns: [users.tenantId, users.id] }),
+    foreignKey({ name: "intermediated_disbursement_groups_tenant_posted_by_fk", columns: [table.tenantId, table.postedByUserId], foreignColumns: [users.tenantId, users.id] }),
+    foreignKey({ name: "intermediated_disbursement_groups_tenant_reversed_by_fk", columns: [table.tenantId, table.reversedByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
+
+export const intermediatedTransferEvents = pgTable("intermediated_transfer_events", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId,
+    groupId: integer("group_id").notNull(),
+    intermediaryBankAccountId: integer("intermediary_bank_account_id"),
+    role: text("role").notNull(),
+    channel: text("channel").notNull(),
+    amount: numeric("amount").notNull(),
+    senderHint: text("sender_hint"),
+    payeeHint: text("payee_hint"),
+    bankReference: text("bank_reference"),
+    bankReferenceHash: text("bank_reference_hash"),
+    transferredAt: timestamp("transferred_at", { withTimezone: true }).notNull(),
+    status: text("status").default("draft").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    reversedEventId: integer("reversed_event_id"),
+    reversalReason: text("reversal_reason"),
+    note: text("note"),
+    createdByUserId: integer("created_by_user_id"),
+    updatedByUserId: integer("updated_by_user_id"),
+    postedAt: timestamp("posted_at", { withTimezone: true }),
+    reversedAt: timestamp("reversed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("intermediated_transfer_events_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("intermediated_transfer_events_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
+    uniqueIndex("intermediated_transfer_events_tenant_reference_unique").on(table.tenantId, table.bankReferenceHash).where(sql`${table.bankReferenceHash} IS NOT NULL`),
+    uniqueIndex("intermediated_transfer_events_tenant_reversed_event_unique").on(table.tenantId, table.reversedEventId).where(sql`${table.reversedEventId} IS NOT NULL`),
+    index("intermediated_transfer_events_tenant_group_role_idx").on(table.tenantId, table.groupId, table.role),
+    check("intermediated_transfer_events_role_check", sql`${table.role} IN ('funding_to_intermediary', 'borrower_net_payout', 'advance_interest_return')`),
+    check("intermediated_transfer_events_channel_check", sql`${table.channel} IN ('bank_transfer', 'cash', 'adjustment')`),
+    check("intermediated_transfer_events_status_check", sql`${table.status} IN ('draft', 'ready', 'posted', 'reversed')`),
+    check("intermediated_transfer_events_money_check", sql`${table.amount} >= 0`),
+    check("intermediated_transfer_events_money_scale_check", sql`scale(${table.amount}) <= 2`),
+    check("intermediated_transfer_events_lifecycle_check", sql`
+        (${table.status} IN ('draft', 'ready')
+            AND ${table.reversedEventId} IS NULL AND ${table.postedAt} IS NULL AND ${table.reversedAt} IS NULL)
+        OR (${table.status} = 'posted'
+            AND ${table.reversedEventId} IS NULL AND ${table.postedAt} IS NOT NULL AND ${table.reversedAt} IS NULL)
+        OR (${table.status} = 'reversed'
+            AND ${table.reversedEventId} IS NOT NULL AND ${table.postedAt} IS NOT NULL AND ${table.reversedAt} IS NOT NULL
+            AND length(${table.reversalReason}) > 0)
+    `),
+    foreignKey({ name: "intermediated_transfer_events_tenant_group_fk", columns: [table.tenantId, table.groupId], foreignColumns: [intermediatedDisbursementGroups.tenantId, intermediatedDisbursementGroups.id] }),
+    foreignKey({ name: "intermediated_transfer_events_tenant_bank_account_fk", columns: [table.tenantId, table.intermediaryBankAccountId], foreignColumns: [intermediaryBankAccounts.tenantId, intermediaryBankAccounts.id] }),
+    foreignKey({ name: "intermediated_transfer_events_tenant_reversed_event_fk", columns: [table.tenantId, table.reversedEventId], foreignColumns: [table.tenantId, table.id] }),
+    foreignKey({ name: "intermediated_transfer_events_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+    foreignKey({ name: "intermediated_transfer_events_tenant_updated_by_fk", columns: [table.tenantId, table.updatedByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
+
+export const intermediatedTransferEvidenceIntents = pgTable("intermediated_transfer_evidence_intents", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId,
+    eventId: integer("event_id").notNull(),
+    fileId: integer("file_id").notNull(),
+    status: text("status").default("pending").notNull(),
+    evidenceHash: text("evidence_hash").notNull(),
+    mimeType: text("mime_type").notNull(),
+    declaredSize: integer("declared_size").notNull(),
+    uploadExpiresAt: timestamp("upload_expires_at", { withTimezone: true }).notNull(),
+    finalizedAt: timestamp("finalized_at", { withTimezone: true }),
+    createdByUserId: integer("created_by_user_id"),
+    updatedByUserId: integer("updated_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("intermediated_transfer_evidence_intents_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("intermediated_transfer_evidence_intents_tenant_hash_unique").on(table.tenantId, table.evidenceHash),
+    uniqueIndex("intermediated_transfer_evidence_intents_tenant_file_unique").on(table.tenantId, table.fileId),
+    check("intermediated_transfer_evidence_intents_status_check", sql`${table.status} IN ('pending', 'ready')`),
+    check("intermediated_transfer_evidence_intents_metadata_check", sql`length(${table.evidenceHash}) > 0 AND length(${table.mimeType}) > 0 AND ${table.declaredSize} > 0`),
+    check("intermediated_transfer_evidence_intents_lifecycle_check", sql`
+        (${table.status} = 'pending' AND ${table.finalizedAt} IS NULL)
+        OR (${table.status} = 'ready' AND ${table.finalizedAt} IS NOT NULL)
+    `),
+    foreignKey({ name: "intermediated_transfer_evidence_intents_tenant_event_fk", columns: [table.tenantId, table.eventId], foreignColumns: [intermediatedTransferEvents.tenantId, intermediatedTransferEvents.id] }),
+    foreignKey({ name: "intermediated_transfer_evidence_intents_tenant_file_fk", columns: [table.tenantId, table.fileId], foreignColumns: [files.tenantId, files.id] }),
+    foreignKey({ name: "intermediated_transfer_evidence_intents_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+    foreignKey({ name: "intermediated_transfer_evidence_intents_tenant_updated_by_fk", columns: [table.tenantId, table.updatedByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
+
+export const intermediatedTransferEvidence = pgTable("intermediated_transfer_evidence", {
+    id: serial("id").primaryKey(),
+    tenantId,
+    eventId: integer("event_id").notNull(),
+    fileId: integer("file_id").notNull(),
+    createdByUserId: integer("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("intermediated_transfer_evidence_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("intermediated_transfer_evidence_event_file_unique").on(table.eventId, table.fileId),
+    uniqueIndex("intermediated_transfer_evidence_tenant_file_unique").on(table.tenantId, table.fileId),
+    foreignKey({ name: "intermediated_transfer_evidence_tenant_event_fk", columns: [table.tenantId, table.eventId], foreignColumns: [intermediatedTransferEvents.tenantId, intermediatedTransferEvents.id] }),
+    foreignKey({ name: "intermediated_transfer_evidence_tenant_file_fk", columns: [table.tenantId, table.fileId], foreignColumns: [files.tenantId, files.id] }),
+    foreignKey({ name: "intermediated_transfer_evidence_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
+
+export const intermediatedDisbursementGroupPreviews = pgTable("intermediated_disbursement_group_previews", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId,
+    groupId: integer("group_id").notNull(),
+    version: integer("version").notNull(),
+    status: text("status").notNull(),
+    expectedFundingAmount: numeric("expected_funding_amount").notNull(),
+    actualFundingAmount: numeric("actual_funding_amount").notNull(),
+    expectedBorrowerPayoutAmount: numeric("expected_borrower_payout_amount").notNull(),
+    actualBorrowerPayoutAmount: numeric("actual_borrower_payout_amount").notNull(),
+    expectedAdvanceInterestReturnAmount: numeric("expected_advance_interest_return_amount").notNull(),
+    actualAdvanceInterestReturnAmount: numeric("actual_advance_interest_return_amount").notNull(),
+    retainedBalanceAmount: numeric("retained_balance_amount").notNull(),
+    varianceAmount: numeric("variance_amount").notNull(),
+    evidenceReady: boolean("evidence_ready").default(false).notNull(),
+    warnings: jsonb("warnings").$type<Array<Record<string, unknown>>>().default([]).notNull(),
+    previewHash: text("preview_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdByUserId: integer("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("intermediated_disbursement_group_previews_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("intermediated_disbursement_group_previews_version_unique").on(table.tenantId, table.groupId, table.version),
+    index("intermediated_disbursement_group_previews_tenant_group_created_idx").on(table.tenantId, table.groupId, table.createdAt),
+    check("intermediated_disbursement_group_previews_version_check", sql`${table.version} > 0`),
+    check("intermediated_disbursement_group_previews_status_check", sql`${table.status} IN ('needs_review', 'ready', 'stale', 'expired', 'executed')`),
+    check("intermediated_disbursement_group_previews_amount_check", sql`
+        ${table.expectedFundingAmount} >= 0 AND ${table.actualFundingAmount} >= 0
+        AND ${table.expectedBorrowerPayoutAmount} >= 0 AND ${table.actualBorrowerPayoutAmount} >= 0
+        AND ${table.expectedAdvanceInterestReturnAmount} >= 0 AND ${table.actualAdvanceInterestReturnAmount} >= 0
+        AND ${table.retainedBalanceAmount} >= 0
+    `),
+    check("intermediated_disbursement_group_previews_money_scale_check", sql`
+        scale(${table.expectedFundingAmount}) <= 2 AND scale(${table.actualFundingAmount}) <= 2
+        AND scale(${table.expectedBorrowerPayoutAmount}) <= 2 AND scale(${table.actualBorrowerPayoutAmount}) <= 2
+        AND scale(${table.expectedAdvanceInterestReturnAmount}) <= 2 AND scale(${table.actualAdvanceInterestReturnAmount}) <= 2
+        AND scale(${table.retainedBalanceAmount}) <= 2 AND scale(${table.varianceAmount}) <= 2
+    `),
+    check("intermediated_disbursement_group_previews_expected_balance_check", sql`
+        ${table.expectedFundingAmount} = ${table.expectedBorrowerPayoutAmount}
+            + ${table.expectedAdvanceInterestReturnAmount} + ${table.retainedBalanceAmount}
+    `),
+    check("intermediated_disbursement_group_previews_actual_balance_check", sql`
+        ${table.varianceAmount} = ${table.actualFundingAmount} - ${table.actualBorrowerPayoutAmount}
+            - ${table.actualAdvanceInterestReturnAmount} - ${table.retainedBalanceAmount}
+    `),
+    check("intermediated_disbursement_group_previews_hash_check", sql`length(${table.previewHash}) > 0`),
+    check("intermediated_disbursement_group_previews_expiry_check", sql`${table.expiresAt} > ${table.createdAt}`),
+    check("intermediated_disbursement_group_previews_ready_check", sql`
+        ${table.status} <> 'ready' OR (${table.varianceAmount} = 0 AND ${table.evidenceReady})
+    `),
+    foreignKey({ name: "intermediated_disbursement_group_previews_tenant_group_fk", columns: [table.tenantId, table.groupId], foreignColumns: [intermediatedDisbursementGroups.tenantId, intermediatedDisbursementGroups.id] }),
+    foreignKey({ name: "intermediated_disbursement_group_previews_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);

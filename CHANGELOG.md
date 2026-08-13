@@ -4,6 +4,7 @@
 
 ### Added
 - Added localized Web controls and backend-owned previews for daily or weekly floating-interest policy origination, exact due-versus-accruing loan summaries, and explicitly confirmed settlement with automatic stale-preview refresh.
+- Added tenant-safe intermediary bank accounts and effective-dated loan assignments, plus exact intermediated disbursement groups, split transfer events, multi-evidence persistence, and expiring reconciliation previews with overlap, idempotency, uniqueness, and immutability protections.
 
 ### Fixed
 - Preserved exact loan-detail and settlement money strings beyond JavaScript's safe-integer range, labeled rate timelines by their locked daily/weekly contract, and attached stable idempotency keys to Web loan activation commands.
