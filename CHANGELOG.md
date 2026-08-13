@@ -3,6 +3,7 @@
 ## v0.3.11 - 2026-08-13
 
 ### Added
+- Added a shared accessible Radix tooltip primitive with keyboard, pointer, and touch interaction support for concise contextual guidance.
 - Added the v0.3.11 TDD implementation plan for semantic fund-metric icons, accessible localized definition tooltips, clarified net-cash labels, and clean frontend deployment.
 - Added the approved design for semantic fund-metric icons and accessible localized definition tooltips across settlement, profitability, and reconciliation summaries.
 - Added a Decimal-only funding-attribution kernel that reduces signed allocation history into exact positive per-source shares before attributing borrower payment components.
