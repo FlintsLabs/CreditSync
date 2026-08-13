@@ -131,6 +131,57 @@ describe("CreditSync stateless MCP contract", () => {
         await client.close();
     });
 
+    // Break caught: REST accidentally applies the 32-character money limit to a daily rate that MCP and the service accept.
+    test("keeps a 33-digit daily percent rate in parity across service, REST, and MCP", async () => {
+        const rate = "100000000000000000000000000000000";
+        const requestBody = {
+            principal: "0.01",
+            interestRate: "0.00",
+            termMonths: 1,
+            repaymentType: "daily",
+            startDate: "2026-08-10",
+            dailyEntry: {
+                durationUnit: "days",
+                durationValue: 1,
+                entryMode: "daily_interest",
+                interestInput: { mode: "percent", value: rate },
+            },
+        } as const;
+        const expectedSchedule = [{
+            amount: "10000000000000000000000000000.01",
+            principalComponent: "0.01",
+            interestComponent: "10000000000000000000000000000.00",
+            remainingPrincipal: "0.00",
+        }];
+
+        const servicePreview = previewLoan(requestBody);
+        expect(servicePreview).toMatchObject({ schedule: expectedSchedule });
+
+        const restApp = new Elysia().use(loansRoute);
+        const restResponse = await restApp.handle(new Request("http://localhost/loans/preview", {
+            method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(requestBody),
+        }));
+        expect(restResponse.status).toBe(200);
+        expect(await restResponse.json()).toMatchObject({ schedule: expectedSchedule });
+
+        const baseUrl = await startServer({ toolHandlers: { "loan.preview": async (_ctx, input) => previewLoan(input as unknown as Parameters<typeof previewLoan>[0]) } });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const previewTool = (await client.listTools()).tools.find((tool) => tool.name === "loan.preview");
+        const previewInput = previewTool?.inputSchema as {
+            properties?: {
+                dailyEntry?: { properties?: { interestInput?: { properties?: { value?: { maxLength?: number } } } } };
+                floatingInterestPolicy?: { properties?: { rate?: { maxLength?: number } } };
+            };
+        } | undefined;
+        expect(previewInput?.properties?.dailyEntry?.properties?.interestInput?.properties?.value?.maxLength).toBeUndefined();
+        expect(previewInput?.properties?.floatingInterestPolicy?.properties?.rate?.maxLength).toBe(32);
+        const mcpResponse = await client.callTool({ name: "loan.preview", arguments: requestBody });
+        expect(mcpResponse.isError).not.toBe(true);
+        expect(mcpResponse.structuredContent).toMatchObject({ data: { schedule: expectedSchedule } });
+        await client.close();
+    });
+
     // Break caught: generalized weekly-policy input or output is rejected by the stale daily-only MCP contract.
     test("returns a generalized weekly floating-loan preview through the public MCP contract", async () => {
         const baseUrl = await startServer({
