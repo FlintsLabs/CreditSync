@@ -395,6 +395,54 @@ if (!testDatabaseUrl) {
                 )
             `)).toMatchObject({ code: "23514" });
 
+            expect(String(await postgresError(sql`
+                INSERT INTO floating_penalty_ledger_entries (
+                    tenant_id, loan_id, due_date, penalty_date, entry_type, amount,
+                    opening_interest_basis, late_fee_mode, late_fee_value, grace_period_days,
+                    adjusts_entry_id, reason, idempotency_key, audit_public_id,
+                    actor_source, request_id, correlation_id
+                ) VALUES (
+                    'tenant-a', ${mainLoanId}, ${cutoverDate}::date + 20, ${cutoverDate}::date + 21,
+                    'adjustment', -20, 90, 'fixed', 10, 0,
+                    ${baseAssessment.id}, 'over-adjustment', 'over-adjustment', ${mainAudit},
+                    'system', 'test', 'test-over-adjustment'
+                )
+            `))).toMatch(/reduce assessment below paid penalty/);
+
+            const forgedPenaltyPayment = (await sql<{ id: number }[]>`
+                INSERT INTO transactions (
+                    tenant_id, loan_id, amount, principal_component, interest_component,
+                    fee_component, penalty_component, transaction_date, entry_type, posted_at
+                ) VALUES (
+                    'tenant-a', ${mainLoanId}, 1, 0, 0, 0, 1,
+                    CURRENT_TIMESTAMP AT TIME ZONE 'UTC', 'repayment', CURRENT_TIMESTAMP AT TIME ZONE 'UTC'
+                ) RETURNING id
+            `)[0]!;
+            expect(String(await postgresError(sql`
+                INSERT INTO floating_transaction_allocations (
+                    tenant_id, loan_id, transaction_id, due_date, component,
+                    interest_accrual_id, effective_date, allocation_order, entry_type,
+                    amount, reversed_allocation_id, reason, idempotency_key,
+                    audit_public_id, actor_source, request_id, correlation_id
+                ) VALUES (
+                    'tenant-a', ${mainLoanId}, ${forgedPenaltyPayment.id}, ${cutoverDate}::date + 20,
+                    'penalty', NULL, ${cutoverDate}::date + 21, 1, 'payment', 99,
+                    NULL, NULL, 'forged-penalty-total', ${mainAudit}, 'system', 'test', 'test-forged-total'
+                )
+            `))).toMatch(/does not match transaction component/);
+            expect(String(await postgresError(sql`
+                INSERT INTO floating_transaction_allocations (
+                    tenant_id, loan_id, transaction_id, due_date, component,
+                    interest_accrual_id, effective_date, allocation_order, entry_type,
+                    amount, reversed_allocation_id, reason, idempotency_key,
+                    audit_public_id, actor_source, request_id, correlation_id
+                ) VALUES (
+                    'tenant-a', ${mainLoanId}, ${forgedPenaltyPayment.id}, ${cutoverDate}::date + 99,
+                    'penalty', NULL, ${cutoverDate}::date + 21, 1, 'payment', 1,
+                    NULL, NULL, 'missing-penalty-group', ${mainAudit}, 'system', 'test', 'test-missing-group'
+                )
+            `))).toMatch(/requires an assessed due group/);
+
             const crossLoanTransactionId = fifoTransactions[0]!.id;
             expect(await postgresError(sql`
                 INSERT INTO floating_transaction_allocations (

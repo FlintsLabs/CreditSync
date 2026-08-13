@@ -111,6 +111,10 @@ Final verification:
 - CreditSync plugin: `32 pass, 0 fail`, `697 expect()` calls; validator passed for Plugin `2.4.0`, eight skills, and the frozen 41-tool contract.
 - `git diff --check` passed.
 
+## Reviewer-validated database invariant fix
+
+The final review reproduced two PostgreSQL-boundary exploits: a `99.00` penalty allocation could reference a transaction with a `1.00` penalty component, and a `-20.00` adjustment could reduce a `10.00` assessment below zero. Deferred constraint triggers now require signed allocation totals to equal the referenced transaction component, require every penalty allocation to target an assessed due group without exceeding its dated assessment, and reject adjustments that reduce a due group below zero or below signed paid penalty. Direct-SQL regression coverage increased the migration fixture to `55 expect()` calls; the focused payment, closing, health, and migration run passed `58 tests`, `320 expect()` calls.
+
 ## Review Fix Round 2
 
 - Replaced boundary-only weekly charging with the approved cumulative-difference model. A `5000.00` principal at `12%` weekly now records daily increments of `85.71`, `85.72`, and `85.71` through day three (`257.14` cumulative) and reaches exactly `600.00` on day seven.
