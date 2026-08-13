@@ -17,6 +17,10 @@ function bangkokDate(value: Date) {
     return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
+function calendarDays(from: string, to: string) {
+    return Math.max(0, Math.floor((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000));
+}
+
 type WeeklyExpectedAccrual = {
     accrualDate: string;
     interestRatePeriodId: number;
@@ -72,7 +76,8 @@ async function weeklyExpectedAccruals(
     let periodCumulative = new Decimal(0);
     return dates.map((accrualDate) => {
         const snapshot = weeklySnapshotPeriod(loan.interestStartDate!, accrualDate);
-        const periodValue = resolveRatePeriod(periods, accrualDate);
+        const advanceCovered = loan.firstDayTreatment === "deduct" && snapshot.periodStartDate === loan.interestStartDate;
+        const periodValue = resolveRatePeriod(periods, advanceCovered ? loan.interestStartDate! : accrualDate);
         const storedPeriod = periodValue ? rowByPublicId.get(periodValue.publicId) : undefined;
         if (!periodValue || !storedPeriod) {
             throw new DomainError("RATE_PERIOD_MISSING_COVERAGE", "Floating loan has no interest rate for an accrual date", 409, {
@@ -87,7 +92,9 @@ async function weeklyExpectedAccruals(
                 && !reversedTransactionIds.has(row.id)
                 && bangkokDate(row.transactionDate) < accrualDate)
             .reduce((sum: Decimal, row: typeof transactions.$inferSelect) => sum.plus(row.principalComponent), new Decimal(0));
-        const openingPrincipal = Decimal.max(0, new Decimal(loan.principalAmount).minus(principalAppliedBefore)).toFixed(2);
+        const openingPrincipal = advanceCovered
+            ? new Decimal(loan.principalAmount).toFixed(2)
+            : Decimal.max(0, new Decimal(loan.principalAmount).minus(principalAppliedBefore)).toFixed(2);
         const nextPeriodKey = `${snapshot.periodStartDate}:${snapshot.periodEndDate}`;
         if (nextPeriodKey !== periodKey) {
             periodKey = nextPeriodKey;
@@ -95,11 +102,11 @@ async function weeklyExpectedAccruals(
             segmentKey = "";
         }
         const nextSegmentKey = `${nextPeriodKey}:${storedPeriod.id}:${openingPrincipal}:${periodValue.rateType}:${periodValue.rate}`;
-        segmentElapsed = nextSegmentKey === segmentKey ? segmentElapsed + 1 : 1;
+        segmentElapsed = advanceCovered ? snapshot.dayIndex : nextSegmentKey === segmentKey ? segmentElapsed + 1 : 1;
         segmentKey = nextSegmentKey;
         const calculated = calculateWeeklyAccruedInterest(openingPrincipal, periodValue.rateType, periodValue.rate, segmentElapsed);
         periodCumulative = periodCumulative.plus(calculated.incrementAmount);
-        const advancePaid = loan.firstDayTreatment === "deduct" && snapshot.periodStartDate === loan.interestStartDate;
+        const advancePaid = advanceCovered;
         const periodComplete = throughDate >= snapshot.periodEndDate;
         return {
             accrualDate,
@@ -255,7 +262,38 @@ export async function floatingInterestBalances(tx: Executor, loan: typeof loans.
         if (row.status === "accruing") accruingInterest = accruingInterest.plus(unpaid);
         else dueInterest = dueInterest.plus(unpaid);
     }
-    return { rows, dueInterest, accruingInterest };
+    const throughDate = bangkokDate(through);
+    const payableGroups = new Map<string, Decimal>();
+    for (const row of rows as Array<typeof loanInterestAccruals.$inferSelect>) {
+        if (!["accrued", "due", "partially_paid"].includes(row.status)) continue;
+        const dueDate = row.periodEndDate ?? row.accrualDate;
+        const unpaid = Decimal.max(new Decimal(row.interestAmount).minus(row.paidAmount), 0);
+        if (unpaid.gt(0)) payableGroups.set(dueDate, (payableGroups.get(dueDate) ?? new Decimal(0)).plus(unpaid));
+    }
+    const feeValue = new Decimal(loan.lateFeeAmount ?? "0.00");
+    const graceDays = Math.max(0, loan.gracePeriodDays ?? 0);
+    let calculatedPenalty = new Decimal(0);
+    for (const [dueDate, unpaid] of payableGroups) {
+        const overdueDays = Math.max(0, calendarDays(dueDate, throughDate) - graceDays);
+        if (overdueDays === 0) continue;
+        if (loan.lateFeeMode === "fixed" || loan.lateFeeMode === "fixed_plus_percent") {
+            calculatedPenalty = calculatedPenalty.plus(feeValue);
+        }
+        if (loan.lateFeeMode === "daily_percent" || loan.lateFeeMode === "fixed_plus_percent") {
+            calculatedPenalty = calculatedPenalty.plus(unpaid.times(feeValue).div(100).times(overdueDays));
+        }
+    }
+    calculatedPenalty = calculatedPenalty.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const transactionRows = await tx.select().from(transactions).where(and(
+        eq(transactions.tenantId, loan.tenantId),
+        eq(transactions.loanId, loan.id),
+    ));
+    const paidPenalty = transactionRows.reduce(
+        (sum: Decimal, transaction: typeof transactions.$inferSelect) => sum.plus(transaction.penaltyComponent),
+        new Decimal(0),
+    );
+    const applicablePenalty = Decimal.max(calculatedPenalty.minus(paidPenalty), 0);
+    return { rows, dueInterest, accruingInterest, applicablePenalty };
 }
 
 export async function correctFloatingInterestAccruals(ctx: CommandContext, loanPublicId: string, dates: string[], reason: string) {

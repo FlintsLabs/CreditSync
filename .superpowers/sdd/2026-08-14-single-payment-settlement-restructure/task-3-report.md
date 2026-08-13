@@ -127,3 +127,16 @@ The focused non-database RED run reported `9 pass, 4 fail, 1 error`: the period 
 After implementation, the focused non-database suite passed and backend typecheck passed. The initial focused disposable PostgreSQL suite reported `63 pass, 0 fail`, `488 expect()` calls; subsequent focused payment/health verification reported `34 pass, 0 fail`, including exact boundary allocation, rate segmentation, and database-enforced snapshot immutability.
 
 Final verification: backend non-database `165 pass, 136 skip, 0 fail`; full disposable PostgreSQL `300 pass, 1 skip, 0 fail`, `2015 expect()` calls; frontend Vitest `100 pass, 0 fail`, ESLint and production build passed with only the existing chunk-size advisory; CreditSync plugin `32 pass, 0 fail`, `697 expect()` calls, and both validators passed; `git diff --check` passed.
+
+## Review Fix Round 3
+
+- Rebuilt the floating closing summary from the current obligation: `outstandingPrincipal + unpaid due interest + accruing interest + outstandingFees + applicable penalty`. Historical signed payments remain an informational `totalPaid` field and are not subtracted a second time. Closing responses now expose exact `fees` and `penalty` components.
+- Added database-backed closing regressions after interest-only payment, mixed interest/principal payment, compensating reversal, and settlement during an advance-covered first period. Fixed and daily-percent late policies are calculated per overdue obligation group with Bangkok grace-day handling and net paid-penalty history.
+- Made the advance-covered first weekly period reconstruct from immutable activation principal and initial rate-period basis. A later principal repayment no longer reduces a corrected paid snapshot; seven active paid rows remain exactly `600.00` for `5000.00 @ 12% weekly`.
+- Replaced ambiguous weekly preview labels with typed public fields: `fullPeriodInterest`, `advanceInterest`, `netBorrowerPayout`, `coveredStartDate`, `coveredEndDate`, `periodDays`, `nextInterestDate`, and `nonRefundable`. Weekly deduct returns the true next boundary; daily preview remains byte-compatible. The frozen MCP projection maps these values into its legacy response shape until Task 6 owns the synchronized contract.
+
+### Review Round 3 TDD Evidence
+
+The non-database RED showed weekly preview still returning `dailyInterestAtCurrentPrincipal` and the anchor date. The PostgreSQL RED reported four intended failures: correction reduced the paid advance total from `600.00` to `582.86`; closing after interest-only payment reported `5485.71` instead of `5620.71`; mixed payment reported `4300.00` instead of `4900.00`; and the new preview contract was absent. Reversal and covered-advance closing cases already passed and remain regression coverage.
+
+Final verification: backend non-database `165 pass, 141 skip, 0 fail`, `1107 expect()` calls and typecheck passed; full disposable PostgreSQL `305 pass, 1 skip, 0 fail`, `2040 expect()` calls; frontend Vitest `100 pass, 0 fail`, ESLint and production build passed with only the existing chunk-size advisory; CreditSync plugin `32 pass, 0 fail`, `697 expect()` calls, and its TypeScript validator passed for Plugin `2.4.0`, eight skills, and the frozen 41-tool contract; `git diff --check` passed.

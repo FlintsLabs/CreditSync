@@ -3,7 +3,7 @@ import Decimal from "decimal.js";
 import { and, eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { auditLogs, bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanSchedules, loans, users } from "../db/schema";
+import { auditLogs, bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanSchedules, loans, transactions, users } from "../db/schema";
 import { loansRoute } from "../modules/loans";
 import type { CommandContext } from "./command-context";
 import { createBorrower } from "./borrower-service";
@@ -13,6 +13,7 @@ import {
     previewLoan,
     updateLoanDraft,
 } from "./loan-application-service";
+import { correctFloatingInterestAccruals } from "./floating-interest-service";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
@@ -154,20 +155,31 @@ describe("loan application service", () => {
             mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "weekly",
         });
         expect(weekly).toMatchObject({
-            firstDayInterest: "0.00",
-            dailyInterestAtCurrentPrincipal: "50.00",
-            netDisbursement: "5000.00",
+            fullPeriodInterest: "50.00",
+            advanceInterest: "0.00",
+            netBorrowerPayout: "5000.00",
+            coveredStartDate: null,
+            coveredEndDate: null,
+            periodDays: 7,
+            nonRefundable: false,
             nextInterestDate: "2026-08-17",
         });
-        expect(previewLoan({
+        expect(weekly).not.toHaveProperty("dailyInterestAtCurrentPrincipal");
+        const advance = previewLoan({
             ...base,
-            floatingDailyInterest: { mode: "percent", rate: "1", firstDayTreatment: "deduct", accrualCycle: "weekly" },
-        })).toMatchObject({
-            firstDayInterest: "50.00",
-            dailyInterestAtCurrentPrincipal: "50.00",
-            netDisbursement: "4950.00",
-            nextInterestDate: "2026-08-10",
+            floatingDailyInterest: { mode: "percent", rate: "12", firstDayTreatment: "deduct", accrualCycle: "weekly" },
         });
+        expect(advance).toMatchObject({
+            fullPeriodInterest: "600.00",
+            advanceInterest: "600.00",
+            netBorrowerPayout: "4400.00",
+            coveredStartDate: "2026-08-10",
+            coveredEndDate: "2026-08-17",
+            periodDays: 7,
+            nonRefundable: true,
+            nextInterestDate: "2026-08-17",
+        });
+        expect(advance).not.toHaveProperty("dailyInterestAtCurrentPrincipal");
     });
 
     if (integrationEnabled) beforeEach(resetApplicationTables);
@@ -485,6 +497,50 @@ describe("loan application service", () => {
         });
         expect(accruals[6]).toMatchObject({
             accrualDate: "2026-08-17", periodDayIndex: 7, cumulativeInterestAmount: "15.00",
+        });
+    });
+
+    // Break caught: correcting a future snapshot in an advance-paid period
+    // reprices the non-refundable charge from a later principal payment.
+    integrationTest("keeps the activation basis immutable when correcting a weekly advance period", async () => {
+        const actor = await seedUser("tenant-advance-correction", "advance-correction@example.test", "owner");
+        const createContext = context(actor.tenantId, actor.id, "advance-create");
+        const borrower = await createBorrower(createContext, { name: "Advance Correction Borrower" });
+        const draft = await createLoanDraft(createContext, {
+            borrowerPublicId: borrower.publicId,
+            principal: "5000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1,
+            startDate: "2026-08-10",
+            floatingDailyInterest: {
+                mode: "percent", rate: "12.0000", firstDayTreatment: "deduct", accrualCycle: "weekly",
+            },
+        });
+        await activateLoan(createContext, draft.publicId);
+        const stored = (await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) }))!;
+        await db.insert(transactions).values({
+            tenantId: actor.tenantId, ownerUserId: actor.id, loanId: stored.id,
+            amount: "1000.00", principalComponent: "1000.00", interestComponent: "0.00",
+            feeComponent: "0.00", penaltyComponent: "0.00", transactionDate: new Date("2026-08-12T05:00:00.000Z"),
+            recordedByUserId: actor.id, entryType: "repayment", postedAt: new Date("2026-08-12T05:00:00.000Z"),
+        });
+
+        await correctFloatingInterestAccruals(
+            context(actor.tenantId, actor.id, "advance-correction"),
+            draft.publicId,
+            ["2026-08-13"],
+            "Repair paid advance snapshot",
+        );
+
+        const active = await db.select().from(loanInterestAccruals).where(and(
+            eq(loanInterestAccruals.loanId, stored.id),
+            sql`${loanInterestAccruals.status} <> 'reversed'`,
+        )).orderBy(loanInterestAccruals.accrualDate);
+        expect(active).toHaveLength(7);
+        expect(active.every((row) => row.status === "paid" && row.interestAmount === row.paidAmount)).toBe(true);
+        expect(active.reduce((sum, row) => sum.plus(row.interestAmount), new Decimal(0)).toFixed(2)).toBe("600.00");
+        expect(active.reduce((sum, row) => sum.plus(row.paidAmount), new Decimal(0)).toFixed(2)).toBe("600.00");
+        expect(active[2]).toMatchObject({
+            accrualDate: "2026-08-13", openingPrincipal: "5000.00",
+            interestAmount: "85.71", cumulativeInterestAmount: "257.14", status: "paid",
         });
     });
 

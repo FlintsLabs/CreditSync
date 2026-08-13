@@ -72,13 +72,13 @@ Account identity and tenant role are read-only values supplied by the authorized
 - calculate repayment schedules before saving
 - support `single_payment`, `daily`, `weekly`, `monthly`, and `floating` repayment types
 - preview and persist exact single-payment due dates, agreed fixed-interest floors, optional greater-of retroactive interest, and contracted late penalties before activation creates one immutable maturity row
-- preserve legacy floating contracts as daily-accrual while allowing new floating terms to state an explicit `daily` or `weekly` accrual cycle; a weekly rate accrues proportionally into immutable daily snapshots, becomes normally payable only at the seven-day boundary anchored to `interestStartDate`, and is charged as one paid, non-refundable first period when `deduct` is selected
+- preserve legacy floating contracts as daily-accrual while allowing new floating terms to state an explicit `daily` or `weekly` accrual cycle; weekly preview separates full-period/advance interest, net payout, covered dates, the true next boundary, and non-refundable treatment; a weekly rate accrues proportionally into immutable daily snapshots, becomes normally payable only at the seven-day boundary anchored to `interestStartDate`, and is charged as one paid, non-refundable first period when `deduct` is selected
 - manage effective-dated floating-interest periods from Loan Detail, including exact current daily interest, future scheduled changes, previewed automatic range splitting, and audited confirmation
 - create editable loan drafts, then activate them to lock terms and generate schedules exactly once
 - use separate preview, draft-save, and activation confirmations in the web wizard
 - distinguish due-now and overdue scheduled or floating daily-interest obligations directly on the loan-agreement list before opening details
 - preview installment breakdown
-- calculate closing balance based on elapsed time and payments already received
+- calculate floating closing obligations from current outstanding principal, unpaid due and accruing interest, outstanding fees, and applicable penalties while reporting payment history separately
 - record actual borrower cash, bank-transfer, or adjustment disbursements independently of approved loan terms
 
 ### 4. Transaction Management

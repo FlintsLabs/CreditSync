@@ -180,6 +180,18 @@ describe("loans route composition", () => {
         expect(weekly.body.floatingDailyInterest).toEqual({
             mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "weekly",
         });
+
+        const advance = await postPreview({
+            ...base,
+            floatingDailyInterest: { mode: "percent", rate: "12", firstDayTreatment: "deduct", accrualCycle: "weekly" },
+        });
+        expect(advance.response.status, advance.text).toBe(200);
+        expect(advance.body).toMatchObject({
+            fullPeriodInterest: "600.00", advanceInterest: "600.00", netBorrowerPayout: "4400.00",
+            coveredStartDate: "2026-08-10", coveredEndDate: "2026-08-17",
+            nextInterestDate: "2026-08-17", periodDays: 7, nonRefundable: true,
+        });
+        expect(advance.body).not.toHaveProperty("dailyInterestAtCurrentPrincipal");
     });
 
     // Break caught: malformed floating policies escape as HTTP 500/DecimalError,

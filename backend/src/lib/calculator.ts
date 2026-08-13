@@ -58,6 +58,17 @@ export interface PublicInstallmentSchedule {
     remainingPrincipal: string;
 }
 
+export interface PublicWeeklyFloatingInterestPreviewFields {
+    fullPeriodInterest: string;
+    advanceInterest: string;
+    netBorrowerPayout: string;
+    coveredStartDate: string | null;
+    coveredEndDate: string | null;
+    nextInterestDate: string;
+    periodDays: 7;
+    nonRefundable: boolean;
+}
+
 export interface PublicLoanTerms {
     principal: string;
     interestRate: string;

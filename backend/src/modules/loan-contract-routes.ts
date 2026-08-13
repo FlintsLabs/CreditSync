@@ -174,11 +174,11 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
         if (loan.repaymentType === "floating") {
             const now = new Date();
             const balances = await floatingInterestBalances(db, loan, now, user.id);
-            const principal = new Decimal(loan.principalAmount);
+            const principal = new Decimal(loan.outstandingPrincipal ?? loan.principalAmount);
             const totalInterest = balances.dueInterest.plus(balances.accruingInterest);
             const totalPaid = loanTransactions.reduce((sum, transaction) => sum.plus(transaction.amount), new Decimal(0));
-            const totalDue = principal.plus(totalInterest);
-            const balance = totalDue.minus(totalPaid);
+            const fees = new Decimal(loan.outstandingFees ?? "0.00");
+            const totalDue = principal.plus(totalInterest).plus(fees).plus(balances.applicablePenalty);
             const start = Date.parse(`${loan.startDate ?? now.toISOString().slice(0, 10)}T00:00:00Z`);
             const end = Date.parse(`${bangkokBusinessDate(now)}T00:00:00Z`);
             return {
@@ -188,9 +188,11 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                 totalInterest: totalInterest.toFixed(2),
                 accruingInterest: balances.accruingInterest.toFixed(2),
                 dueInterest: balances.dueInterest.toFixed(2),
+                fees: fees.toFixed(2),
+                penalty: balances.applicablePenalty.toFixed(2),
                 totalPaid: totalPaid.toFixed(2),
                 totalDue: totalDue.toFixed(2),
-                balance: balance.toFixed(2),
+                balance: totalDue.toFixed(2),
                 daysSinceStart: Math.max(0, Math.floor((end - start) / 86_400_000)),
             };
         }

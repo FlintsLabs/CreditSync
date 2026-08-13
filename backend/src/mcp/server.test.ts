@@ -92,7 +92,12 @@ describe("CreditSync stateless MCP contract", () => {
     test("returns a floating-loan preview through the public MCP contract", async () => {
         const baseUrl = await startServer({
             toolHandlers: {
-                "loan.preview": async (_ctx, input) => previewLoan(input as unknown as Parameters<typeof previewLoan>[0]),
+                "loan.preview": async (_ctx, input) => {
+                    const terms = input as unknown as Parameters<typeof previewLoan>[0];
+                    return previewLoan(terms.principal === "5000.00"
+                        ? { ...terms, floatingDailyInterest: { ...terms.floatingDailyInterest!, accrualCycle: "weekly" } }
+                        : terms);
+                },
             },
         });
         const { client, transport } = clientFor(baseUrl);
@@ -123,6 +128,34 @@ describe("CreditSync stateless MCP contract", () => {
                 dailyInterestAtCurrentPrincipal: "60.00",
                 netDisbursement: "3940.00",
                 nextInterestDate: "2026-08-06",
+                schedule: [],
+            },
+        });
+
+        const weekly = await client.callTool({
+            name: "loan.preview",
+            arguments: {
+                principal: "5000.00",
+                interestRate: "0.00",
+                termMonths: 1,
+                repaymentType: "floating",
+                startDate: "2026-08-10",
+                floatingDailyInterest: {
+                    mode: "percent",
+                    rate: "12.00",
+                    firstDayTreatment: "deduct",
+                },
+            },
+        });
+        expect(weekly.isError).not.toBe(true);
+        expect(weekly.structuredContent).toMatchObject({
+            schemaVersion: "1.0",
+            data: {
+                floatingDailyInterest: { mode: "percent", rate: "12.0000", firstDayTreatment: "deduct" },
+                firstDayInterest: "600.00",
+                dailyInterestAtCurrentPrincipal: "600.00",
+                netDisbursement: "4400.00",
+                nextInterestDate: "2026-08-17",
                 schedule: [],
             },
         });

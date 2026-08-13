@@ -9,6 +9,7 @@ import {
     normalizePublicLoanTerms,
     type PublicLoanCalculationParams,
     type RepaymentType,
+    type PublicWeeklyFloatingInterestPreviewFields,
 } from "../lib/calculator";
 import { generateLoanSchedule } from "../lib/loan-schedule";
 import { computeLoanRollup } from "../lib/loan-rollup";
@@ -288,6 +289,21 @@ export function previewLoan(input: PublicLoanCalculationParams) {
         const schedule = calculatePublicLoanSchedule({ ...input, ...terms });
         if (!policy) return { terms, schedule, dailyLoanCalculation: dailyEntry };
         const dailyInterestAtCurrentPrincipal = calculateDailyInterest(terms.principal, policy);
+        if (policy.accrualCycle === "weekly") {
+            const hasAdvance = policy.firstDayTreatment === "deduct";
+            const periodEndDate = addBangkokCalendarDays(input.startDate, 7);
+            const weeklyFields: PublicWeeklyFloatingInterestPreviewFields = {
+                fullPeriodInterest: dailyInterestAtCurrentPrincipal,
+                advanceInterest: hasAdvance ? dailyInterestAtCurrentPrincipal : "0.00",
+                netBorrowerPayout: serializeMoney(new Decimal(terms.principal).minus(hasAdvance ? dailyInterestAtCurrentPrincipal : "0.00")),
+                coveredStartDate: hasAdvance ? input.startDate : null,
+                coveredEndDate: hasAdvance ? periodEndDate : null,
+                nextInterestDate: periodEndDate,
+                periodDays: 7,
+                nonRefundable: hasAdvance,
+            };
+            return { terms, schedule, floatingDailyInterest: policy, ...weeklyFields };
+        }
         const firstDayInterest = policy.firstDayTreatment === "deduct" ? dailyInterestAtCurrentPrincipal : "0.00";
         return { terms, schedule, floatingDailyInterest: policy, firstDayInterest, dailyInterestAtCurrentPrincipal, netDisbursement: serializeMoney(new Decimal(terms.principal).minus(firstDayInterest)), nextInterestDate: nextInterestDate(input.startDate, policy.firstDayTreatment, policy.accrualCycle) };
     } catch (error) {
