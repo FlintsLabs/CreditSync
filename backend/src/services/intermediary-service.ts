@@ -53,9 +53,22 @@ export async function createIntermediary(ctx: CommandContext, input: { name: str
     const name = input.name?.trim();
     const normalizedName = normalizeIntermediaryText(name ?? "");
     if (!name || !normalizedName) throw new DomainError("INVALID_INTERMEDIARY", "Intermediary name is required", 400);
-    await actorFor(ctx);
-    const existing = await db.query.intermediaries.findFirst({ where: and(eq(intermediaries.tenantId, ctx.tenantId), eq(intermediaries.normalizedName, normalizedName)) });
-    if (existing) return presentIntermediary(existing);
+    const actor = await actorFor(ctx);
+    const identityMatches = (await db.select().from(intermediaries).where(eq(intermediaries.tenantId, ctx.tenantId)))
+        .filter((row) => row.normalizedName === normalizedName
+            || row.aliases.some((alias) => normalizeIntermediaryText(alias) === normalizedName));
+    if (identityMatches.length > 1) {
+        throw new DomainError("AMBIGUOUS_INTERMEDIARY_ALIAS", "Intermediary identity matches more than one confirmed profile", 409);
+    }
+    if (identityMatches[0]) {
+        const accessible = actor === null
+            || canAccessTenantWideData({ role: actor.role ?? "viewer" })
+            || identityMatches[0].ownerUserId === actor.id;
+        if (!accessible) {
+            throw new DomainError("INTERMEDIARY_IDENTITY_CONFLICT", "Intermediary identity already exists but is outside the actor's access scope", 409);
+        }
+        return presentIntermediary(identityMatches[0]);
+    }
     return db.transaction(async (tx) => {
         const row = await tx.insert(intermediaries).values({ tenantId: ctx.tenantId, ownerUserId: ctx.actorUserId, name, normalizedName, aliases: input.aliases ?? [], notes: input.notes ?? null, createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((rows) => rows[0]!);
         const after = presentIntermediary(row);

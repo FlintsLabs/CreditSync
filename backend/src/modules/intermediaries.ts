@@ -9,6 +9,13 @@ import {
     postIntermediaryRemittance, prepareIntermediaryRemittanceEvidence, previewIntermediaryRemittance, reverseIntermediaryRemittance,
     saveRemittanceAllocations, searchIntermediaries, updateIntermediary,
 } from "../services/intermediary-service";
+import {
+    assignIntermediaryToLoan,
+    endIntermediaryAssignment,
+    getIntermediaryProfile,
+    listManagedLoans,
+    saveIntermediaryBankAccount,
+} from "../services/intermediary-profile-service";
 
 type RouteUser = { id: number; tenantId: string };
 const context = (user: RouteUser, request: Request): CommandContext => {
@@ -23,6 +30,40 @@ const invoke = async <T>(user: RouteUser | null, request: Request, set: { status
 };
 
 const uuidParam = { params: t.Object({ id: t.String({ format: "uuid" }) }) };
+
+const intermediaryProfileRoutes = new Elysia({ normalize: false })
+    .use(authPlugin)
+    .get("/intermediaries/:id", ({ params, user, request, set }) => invoke(user, request, set, (ctx) => getIntermediaryProfile(ctx, params.id)), uuidParam)
+    .put("/intermediaries/:id/bank-accounts", ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => saveIntermediaryBankAccount(ctx, params.id, body)), {
+        ...uuidParam,
+        body: t.Object({
+            bankCode: t.Optional(t.Nullable(t.String({ maxLength: 50 }))),
+            bankName: t.String({ minLength: 1, maxLength: 200 }),
+            accountName: t.String({ minLength: 1, maxLength: 200 }),
+            accountNumber: t.String({ minLength: 4, maxLength: 64 }),
+            note: t.Optional(t.Nullable(t.String({ maxLength: 1000 }))),
+        }, { additionalProperties: t.Never() }),
+    })
+    .get("/intermediaries/:id/managed-loans", ({ params, query, user, request, set }) => invoke(user, request, set, (ctx) => listManagedLoans(ctx, params.id, query)), {
+        ...uuidParam,
+        query: t.Object({ role: t.Optional(t.Union([t.Literal("disbursement"), t.Literal("collection"), t.Literal("all")])) }, { additionalProperties: t.Never() }),
+    })
+    .post("/loans/:id/intermediary-assignments", ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => assignIntermediaryToLoan(ctx, params.id, body)), {
+        ...uuidParam,
+        body: t.Object({
+            intermediaryPublicId: t.String({ format: "uuid" }),
+            role: t.Union([t.Literal("disbursement"), t.Literal("collection"), t.Literal("both")]),
+            effectiveFrom: t.String({ format: "date-time" }),
+            note: t.Optional(t.Nullable(t.String({ maxLength: 1000 }))),
+        }, { additionalProperties: t.Never() }),
+    })
+    .post("/intermediary-assignments/:id/end", ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => endIntermediaryAssignment(ctx, params.id, body)), {
+        ...uuidParam,
+        body: t.Object({
+            effectiveTo: t.String({ format: "date-time" }),
+            reason: t.Optional(t.Nullable(t.String({ maxLength: 1000 }))),
+        }, { additionalProperties: t.Never() }),
+    });
 
 export const intermediariesRoute = new Elysia()
     .use(authPlugin)
@@ -41,4 +82,5 @@ export const intermediariesRoute = new Elysia()
     .put("/intermediary-remittances/:id/allocations", ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => saveRemittanceAllocations(ctx, params.id, body)), { ...uuidParam, body: t.Object({ collectionPublicIds: t.Array(t.String({ format: "uuid" })) }) })
     .post("/intermediary-remittances/:id/preview", ({ params, user, request, set }) => invoke(user, request, set, (ctx) => previewIntermediaryRemittance(ctx, params.id)), uuidParam)
     .post("/intermediary-remittances/:id/post", ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => postIntermediaryRemittance(ctx, params.id, body)), { ...uuidParam, body: t.Object({ proposalPublicId: t.String({ format: "uuid" }), confirmed: t.Literal(true) }) })
-    .post("/intermediary-remittances/:id/reverse", ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => reverseIntermediaryRemittance(ctx, params.id, body)), { ...uuidParam, body: t.Object({ reason: t.String() }) });
+    .post("/intermediary-remittances/:id/reverse", ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => reverseIntermediaryRemittance(ctx, params.id, body)), { ...uuidParam, body: t.Object({ reason: t.String() }) })
+    .use(intermediaryProfileRoutes);
