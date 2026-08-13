@@ -3,6 +3,7 @@
 ## v0.3.11 - 2026-08-13
 
 ### Added
+- Added the v0.3.11 TDD implementation plan for semantic fund-metric icons, accessible localized definition tooltips, clarified net-cash labels, and clean frontend deployment.
 - Added the approved design for semantic fund-metric icons and accessible localized definition tooltips across settlement, profitability, and reconciliation summaries.
 - Added a Decimal-only funding-attribution kernel that reduces signed allocation history into exact positive per-source shares before attributing borrower payment components.
 - Added the v0.3.11 TDD implementation plan for exact direct-capital fund profitability, historical payment attribution, contract-to-ledger reconciliation, localized presentation, and read-only production verification.
