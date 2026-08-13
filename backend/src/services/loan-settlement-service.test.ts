@@ -3,8 +3,11 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
     auditLogs,
+    bankProfiles,
     borrowers,
+    fundLedgerEntries,
     loanDisbursements,
+    loanFundingAllocations,
     loanInterestAccruals,
     loanInterestRatePeriods,
     loans,
@@ -209,6 +212,39 @@ describe("loan settlement service", () => {
         });
     });
 
+    // Break caught: a backdated execute closes the loan while active later accruals remain unpaid.
+    integrationTest("rejects a backdated execute when later active accruals already exist", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-backdated-execute" });
+        await accrueFloatingInterestThrough(
+            db,
+            seeded.loan,
+            new Date("2026-08-20T12:00:00+07:00"),
+            context(seeded.actor),
+        );
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-15");
+        const accrualsBefore = await db.select().from(loanInterestAccruals)
+            .where(eq(loanInterestAccruals.loanId, seeded.loan.id)).orderBy(loanInterestAccruals.id);
+
+        await expect(executeLoanSettlement(context(seeded.actor, "settlement-backdated-execute"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "Attempt a historical close after later accruals exist",
+        })).rejects.toMatchObject({ code: "STALE_SETTLEMENT_PREVIEW", status: 409 });
+
+        expect(await db.query.loanSettlementPreviews.findFirst({
+            where: eq(loanSettlementPreviews.publicId, preview.publicId),
+        })).toMatchObject({ status: "ready", executedAt: null });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({
+            status: "active",
+            outstandingPrincipal: "5000.00",
+        });
+        expect(await db.select().from(transactions).where(eq(transactions.loanId, seeded.loan.id))).toHaveLength(0);
+        expect(await db.select().from(fundLedgerEntries).where(eq(fundLedgerEntries.loanId, seeded.loan.id))).toHaveLength(0);
+        expect(await db.select().from(loanInterestAccruals)
+            .where(eq(loanInterestAccruals.loanId, seeded.loan.id)).orderBy(loanInterestAccruals.id)).toEqual(accrualsBefore);
+    });
+
     // Break caught: close-out refunds an unused part of the already-paid advance period or charges it twice.
     integrationTest("previews only THB 5,000.00 during an advance-covered period and preserves THB 600.00 as non-refundable history", async () => {
         const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-advance", advancePeriods: 1 });
@@ -307,6 +343,69 @@ describe("loan settlement service", () => {
             requestId: "req-settlement-execute-once",
             correlationId: "corr-settlement-execute-once",
         })]);
+    });
+
+    // Break caught: close-account posting bypasses the funded principal return and income ledger effects.
+    integrationTest("posts exact principal, interest, and fee fund effects for a funded settlement", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-funded" });
+        const profile = await db.insert(bankProfiles).values({
+            tenantId: seeded.actor.tenantId,
+            name: "Settlement fund",
+            type: "personal_savings",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanFundingAllocations).values({
+            tenantId: seeded.actor.tenantId,
+            loanId: seeded.loan.id,
+            bankProfileId: profile.id,
+            allocatedAmount: "5000.00",
+            allocationDate: "2026-08-13",
+            createdByUserId: seeded.actor.id,
+        });
+        await db.update(loans).set({ outstandingFees: "12.34", updatedAt: new Date() })
+            .where(eq(loans.id, seeded.loan.id));
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-15");
+
+        const executed = await executeLoanSettlement(context(seeded.actor, "settlement-funded-execute"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "Return funded principal and recognize exact income",
+        });
+
+        expect(executed).toMatchObject({
+            settlementTotal: "5269.48",
+            transaction: {
+                principalComponent: "5000.00",
+                interestComponent: "257.14",
+                feeComponent: "12.34",
+            },
+        });
+        const transaction = await db.query.transactions.findFirst({
+            where: eq(transactions.publicId, executed.transaction.publicId),
+        });
+        const ledger = await db.select().from(fundLedgerEntries)
+            .where(eq(fundLedgerEntries.loanId, seeded.loan.id)).orderBy(fundLedgerEntries.id);
+        expect(ledger).toHaveLength(3);
+        expect(ledger).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                bankProfileId: profile.id,
+                transactionId: transaction!.id,
+                entryType: "principal_return_in",
+                amount: "5000.00",
+            }),
+            expect.objectContaining({
+                bankProfileId: profile.id,
+                transactionId: transaction!.id,
+                entryType: "interest_income_in",
+                amount: "257.14",
+            }),
+            expect.objectContaining({
+                bankProfileId: profile.id,
+                transactionId: transaction!.id,
+                entryType: "fee_income_in",
+                amount: "12.34",
+            }),
+        ]));
     });
 
     // Break caught: caller-supplied hash is trusted instead of the persisted versioned settlement proposal.

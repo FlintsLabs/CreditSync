@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
     auditLogs,
@@ -21,6 +21,7 @@ import {
     accrueFloatingInterestThrough,
     isFloatingAccrualPayableThrough,
 } from "./floating-interest-service";
+import { writeFundEffects } from "./payment-service";
 
 type Executor = any;
 type LoanRow = typeof loans.$inferSelect;
@@ -408,6 +409,16 @@ function sameStoredAmounts(row: SettlementRow, snapshot: SettlementSnapshot) {
         && new Decimal(row.settlementTotal).eq(snapshot.settlementTotal);
 }
 
+async function hasLaterActiveAccruals(tx: Executor, tenantId: string, loanId: number, asOfDate: string) {
+    const rows = await tx.select({ id: loanInterestAccruals.id }).from(loanInterestAccruals).where(and(
+        eq(loanInterestAccruals.tenantId, tenantId),
+        eq(loanInterestAccruals.loanId, loanId),
+        inArray(loanInterestAccruals.status, ["accrued", "accruing", "due", "partially_paid"]),
+        sql`${loanInterestAccruals.accrualDate} > ${asOfDate}`,
+    )).limit(1);
+    return rows.length > 0;
+}
+
 export async function executeLoanSettlement(ctx: CommandContext, input: ExecuteLoanSettlementInput) {
     const { reason, idempotencyKey } = requireExecution(ctx, input);
     const accessible = await accessibleSettlement(ctx, input.settlementPublicId);
@@ -452,6 +463,9 @@ export async function executeLoanSettlement(ctx: CommandContext, input: ExecuteL
             return { stale: true as const };
         }
         const snapshot = await settlementSnapshot(tx, ctx, loan, settlement.asOfDate);
+        if (await hasLaterActiveAccruals(tx, ctx.tenantId, loan.id, settlement.asOfDate)) {
+            return { stale: true as const };
+        }
         const currentPreviewHash = settlementPreviewHash(settlement.asOfDate, snapshot);
         if (snapshot.balanceVersion !== settlement.balanceVersion
             || currentPreviewHash !== settlement.previewHash
@@ -464,6 +478,7 @@ export async function executeLoanSettlement(ctx: CommandContext, input: ExecuteL
         }
 
         const interestComponent = snapshot.dueInterest.plus(snapshot.accruedNotDueInterest).toDecimalPlaces(2);
+        const transactionDate = parseAsOfDate(settlement.asOfDate);
         const transaction = await tx.insert(transactions).values({
             tenantId: ctx.tenantId,
             ownerUserId: loan.ownerUserId ?? ctx.actorUserId,
@@ -474,7 +489,7 @@ export async function executeLoanSettlement(ctx: CommandContext, input: ExecuteL
             feeComponent: snapshot.outstandingFees.toFixed(2),
             penaltyComponent: snapshot.outstandingPenalties.toFixed(2),
             type: "close_account",
-            transactionDate: parseAsOfDate(settlement.asOfDate),
+            transactionDate,
             notes: reason,
             recordedByUserId: ctx.actorUserId,
             entryType: "repayment",
@@ -483,6 +498,12 @@ export async function executeLoanSettlement(ctx: CommandContext, input: ExecuteL
             createdAt: executedAt,
             updatedAt: executedAt,
         }).returning().then((rows: TransactionRow[]) => rows[0]!);
+        await writeFundEffects(tx, ctx, loan.id, transaction.id, transactionDate, {
+            principal: snapshot.outstandingPrincipal,
+            interest: interestComponent,
+            fee: snapshot.outstandingFees,
+            penalty: snapshot.outstandingPenalties,
+        });
 
         const accrualRows = await tx.select().from(loanInterestAccruals).where(and(
             eq(loanInterestAccruals.tenantId, ctx.tenantId),

@@ -1126,7 +1126,7 @@ function allocateScheduleComponents(
     return { fee, interest, principal, penalty };
 }
 
-async function writeFundEffects(tx: Executor, ctx: CommandContext, loanId: number, transactionId: number, entryDate: Date, components: Record<string, Decimal>) {
+export async function writeFundEffects(tx: Executor, ctx: CommandContext, loanId: number, transactionId: number, entryDate: Date, components: Record<string, Decimal>) {
     const [funding, loan] = await Promise.all([
         tx.select().from(loanFundingAllocations).where(and(
             eq(loanFundingAllocations.tenantId, ctx.tenantId), eq(loanFundingAllocations.loanId, loanId),
