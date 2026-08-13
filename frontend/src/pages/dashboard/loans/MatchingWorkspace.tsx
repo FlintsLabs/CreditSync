@@ -7,19 +7,28 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui
 import { Input } from "../../../components/ui/Input";
 import { Badge } from "../../../components/ui/badge";
 import { useTranslation } from "react-i18next";
+import { normalizeMoney } from "../../../lib/workflow-api";
+import {
+    absoluteMoney,
+    formatMoneyExact,
+    isNegativeMoney,
+    isPositiveMoney,
+    remainingMoney,
+    sumMoney,
+} from "../../../lib/workflow-model";
 
 interface LoanRow {
     id: string;
     borrowerId: string;
     borrowerName: string;
-    principal: string | number;
+    principal: string;
     status: string;
     repaymentType: string;
     createdAt: string;
-    interestRate: string | number;
-    fundedAmount?: number;
+    interestRate: string;
+    fundedAmount?: string;
     allocationState?: string;
-    remainingGap?: number;
+    remainingGap?: string;
 }
 
 interface AllocationRow {
@@ -41,9 +50,9 @@ interface DrawdownRow {
     outstandingPrincipal: string | null;
     nextDueDate: string | null;
     status: string | null;
-    allocatedAmount?: number;
+    allocatedAmount?: string;
     allocationState?: string;
-    remainingCapacity?: number;
+    remainingCapacity?: string;
 }
 
 interface LoanAllocationState {
@@ -57,10 +66,10 @@ interface LoanAllocationState {
 
 interface DrawdownAllocationState {
     bankLoanId: string;
-    drawdownAmount: number;
-    netAllocatedPrincipal: number;
-    remainingCapacity: number;
-    overallocatedAmount: number;
+    drawdownAmount: string;
+    netAllocatedPrincipal: string;
+    remainingCapacity: string;
+    overallocatedAmount: string;
     state: string;
 }
 
@@ -78,8 +87,8 @@ interface BankProfile {
     name: string;
 }
 
-function formatCurrency(value: number, locale?: string) {
-    return `฿${value.toLocaleString(locale)}`;
+function formatCurrency(value: string, locale: string) {
+    return formatMoneyExact(value, locale);
 }
 
 export default function MatchingWorkspace() {
@@ -125,16 +134,16 @@ export default function MatchingWorkspace() {
                 Promise.all(rawDrawdowns.map((drawdown: DrawdownRow) => api.get(`/bank-loans/${drawdown.id}/allocation-state`).then((res) => ({ bankLoanId: drawdown.id, state: res.data as DrawdownAllocationState })))),
             ]);
 
-            const fundedByLoan = new Map<string, number>(
+            const fundedByLoan = new Map<string, string>(
                 loanStates.map(({ loanId, state }) => [
                     loanId,
-                    Number(state?.netAllocatedPrincipal ?? 0),
+                    state?.netAllocatedPrincipal ?? "0.00",
                 ])
             );
-            const allocatedByDrawdown = new Map<string, number>(
+            const allocatedByDrawdown = new Map<string, string>(
                 drawdownStates.map(({ bankLoanId, state }) => [
                     bankLoanId,
-                    Number(state?.netAllocatedPrincipal ?? 0),
+                    state?.netAllocatedPrincipal ?? "0.00",
                 ])
             );
             const loanStateById = new Map<string, LoanAllocationState>(loanStates.map(({ loanId, state }) => [loanId, state]));
@@ -142,15 +151,15 @@ export default function MatchingWorkspace() {
 
             const normalizedLoans: LoanRow[] = rawLoans.map((loan: LoanRow) => ({
                 ...loan,
-                fundedAmount: Number((fundedByLoan.get(loan.id) ?? 0).toFixed(2)),
+                fundedAmount: fundedByLoan.get(loan.id) ?? "0.00",
                 allocationState: loanStateById.get(loan.id)?.state,
-                remainingGap: Number(Number(loanStateById.get(loan.id)?.remainingGap ?? 0).toFixed(2)),
+                remainingGap: loanStateById.get(loan.id)?.remainingGap ?? "0.00",
             }));
             const normalizedDrawdowns = rawDrawdowns.map((drawdown: DrawdownRow) => ({
                 ...drawdown,
-                allocatedAmount: Number((allocatedByDrawdown.get(drawdown.id) ?? 0).toFixed(2)),
+                allocatedAmount: allocatedByDrawdown.get(drawdown.id) ?? "0.00",
                 allocationState: drawdownStateById.get(drawdown.id)?.state,
-                remainingCapacity: Number((drawdownStateById.get(drawdown.id)?.remainingCapacity ?? 0).toFixed(2)),
+                remainingCapacity: drawdownStateById.get(drawdown.id)?.remainingCapacity ?? "0.00",
             }));
 
             setLoans(normalizedLoans);
@@ -174,10 +183,11 @@ export default function MatchingWorkspace() {
     }, []);
 
     const selectedLoan = loans.find((loan) => loan.id === selectedLoanId) ?? null;
-    const selectedLoanPrincipal = Number(selectedLoan?.principal ?? 0);
-    const selectedLoanFundedAmount = Number(selectedLoan?.fundedAmount ?? 0);
-    const pendingAllocationTotal = Object.values(draftAllocations).reduce((sum, value) => sum + Number(value || 0), 0);
-    const remainingFundingGap = Math.max(0, (selectedLoan?.remainingGap ?? Math.max(0, selectedLoanPrincipal - selectedLoanFundedAmount)) - pendingAllocationTotal);
+    const selectedLoanPrincipal = selectedLoan?.principal ?? "0.00";
+    const selectedLoanFundedAmount = selectedLoan?.fundedAmount ?? "0.00";
+    const pendingAllocationTotal = sumMoney(Object.values(draftAllocations).map((value) => value || "0"));
+    const selectedLoanGap = selectedLoan?.remainingGap ?? remainingMoney(selectedLoanPrincipal, [selectedLoanFundedAmount]);
+    const remainingFundingGap = remainingMoney(selectedLoanGap, [pendingAllocationTotal]);
 
     const needsFundingLoans = useMemo(
         () => loans.filter((loan) => loan.allocationState !== "fully_funded"),
@@ -236,8 +246,8 @@ export default function MatchingWorkspace() {
         }
 
         const entries = Object.entries(draftAllocations)
-            .map(([bankLoanPublicId, value]) => ({ bankLoanPublicId, amount: Number(value) }))
-            .filter((item) => item.amount > 0);
+            .filter(([, value]) => value.trim() && isPositiveMoney(value))
+            .map(([bankLoanPublicId, value]) => ({ bankLoanPublicId, amount: normalizeMoney(value) }));
 
         if (entries.length === 0) {
             setErrorMessage(t("matching.errors.enterAllocation", "Enter at least one allocation amount."));
@@ -251,7 +261,7 @@ export default function MatchingWorkspace() {
             for (const entry of entries) {
                 await api.post(`/loans/${selectedLoan.id}/funding-allocations`, {
                     bankLoanPublicId: entry.bankLoanPublicId,
-                    allocatedAmount: entry.amount.toFixed(2),
+                    allocatedAmount: entry.amount,
                     allocationDate: new Date().toISOString().slice(0, 10),
                     allocationType: "initial",
                 });
@@ -268,18 +278,18 @@ export default function MatchingWorkspace() {
     };
 
     const currentAllocationByDrawdown = useMemo(() => {
-        const grouped = new Map<string, { bankLoanPublicId: string; bankProfileName: string; amount: number }>();
+        const grouped = new Map<string, { bankLoanPublicId: string; bankProfileName: string; amount: string }>();
         for (const row of allocationHistory) {
             if (!row.bankLoanPublicId) continue;
             const current = grouped.get(row.bankLoanPublicId) ?? {
                 bankLoanPublicId: row.bankLoanPublicId,
                 bankProfileName: row.bankProfileName ?? t("matching.unknownSource", "Unknown source"),
-                amount: 0,
+                amount: "0.00",
             };
-            current.amount += Number(row.allocatedAmount ?? 0);
+            current.amount = sumMoney([current.amount, row.allocatedAmount]);
             grouped.set(row.bankLoanPublicId, current);
         }
-        return Array.from(grouped.values()).filter((row) => Math.abs(row.amount) > 0.0001);
+        return Array.from(grouped.values()).filter((row) => isPositiveMoney(absoluteMoney(row.amount)));
     }, [allocationHistory, bankProfileNameById]);
 
     const handleReallocate = async () => {
@@ -300,7 +310,7 @@ export default function MatchingWorkspace() {
             await api.post(`/loans/${selectedLoanId}/funding-reallocations`, {
                 fromBankLoanPublicId: reallocationForm.fromBankLoanId,
                 toBankLoanPublicId: reallocationForm.toBankLoanId,
-                amount: Number(reallocationForm.amount).toFixed(2),
+                amount: normalizeMoney(reallocationForm.amount),
                 allocationDate: new Date().toISOString().slice(0, 10),
                 note: reallocationForm.note || undefined,
             });
@@ -359,9 +369,9 @@ export default function MatchingWorkspace() {
                             </div>
                         ) : (
                             needsFundingLoans.map((loan) => {
-                                const principal = Number(loan.principal);
-                                const fundedAmount = loan.fundedAmount ?? 0;
-                                const gap = loan.remainingGap ?? Math.max(0, principal - fundedAmount);
+                                const principal = loan.principal;
+                                const fundedAmount = loan.fundedAmount ?? "0.00";
+                                const gap = loan.remainingGap ?? remainingMoney(principal, [fundedAmount]);
                                 const state = loan.allocationState?.replaceAll("_", " ") ?? "unfunded";
                                 return (
                                     <button
@@ -424,7 +434,7 @@ export default function MatchingWorkspace() {
                                     </div>
                                     <div>
                                         <div className="text-xs text-muted-foreground">{t("loans.remainingGap", "Remaining gap")}</div>
-                                        <div className={`font-medium ${remainingFundingGap > 0 ? "text-destructive" : "text-emerald-600"}`}>{formatCurrency(remainingFundingGap, i18n.language)}</div>
+                                        <div className={`font-medium ${isPositiveMoney(remainingFundingGap) ? "text-destructive" : "text-emerald-600"}`}>{formatCurrency(remainingFundingGap, i18n.language)}</div>
                                     </div>
                                 </div>
                             )}
@@ -439,31 +449,31 @@ export default function MatchingWorkspace() {
                             <CardContent className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
                                 <div>
                                     <div className="text-xs text-muted-foreground">{t("dashboardPage.cards.borrowerRevenue", "Revenue collected")}</div>
-                                    <div className="font-medium">{formatCurrency(Number(selectedLoanProfitability?.borrowerRevenueCollected ?? 0), i18n.language)}</div>
+                                    <div className="font-medium">{formatCurrency(selectedLoanProfitability?.borrowerRevenueCollected ?? "0.00", i18n.language)}</div>
                                 </div>
                                 <div>
                                     <div className="text-xs text-muted-foreground">{t("dashboardPage.cards.fundCostPaid", "Fund cost paid")}</div>
-                                    <div className="font-medium">{formatCurrency(Number(selectedLoanProfitability?.fundCostPaid ?? 0), i18n.language)}</div>
+                                    <div className="font-medium">{formatCurrency(selectedLoanProfitability?.fundCostPaid ?? "0.00", i18n.language)}</div>
                                 </div>
                                 <div>
                                     <div className="text-xs text-muted-foreground">{t("funds.metrics.realizedSpread", "Realized spread")}</div>
-                                    <div className={`font-medium ${Number(selectedLoanProfitability?.realizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                                        {formatCurrency(Number(selectedLoanProfitability?.realizedSpread ?? 0), i18n.language)}
+                                    <div className={`font-medium ${!isNegativeMoney(selectedLoanProfitability?.realizedSpread ?? "0.00") ? "text-emerald-600" : "text-destructive"}`}>
+                                        {formatCurrency(selectedLoanProfitability?.realizedSpread ?? "0.00", i18n.language)}
                                     </div>
                                 </div>
                                 <div>
                                     <div className="text-xs text-muted-foreground">{t("loans.unrealizedSpread", "Unrealized spread")}</div>
-                                    <div className={`font-medium ${Number(selectedLoanProfitability?.unrealizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                                        {formatCurrency(Number(selectedLoanProfitability?.unrealizedSpread ?? 0), i18n.language)}
+                                    <div className={`font-medium ${!isNegativeMoney(selectedLoanProfitability?.unrealizedSpread ?? "0.00") ? "text-emerald-600" : "text-destructive"}`}>
+                                        {formatCurrency(selectedLoanProfitability?.unrealizedSpread ?? "0.00", i18n.language)}
                                     </div>
                                 </div>
                                 <div>
                                     <div className="text-xs text-muted-foreground">{t("loanDetail.fundedPrincipal", "Funded principal")}</div>
-                                    <div className="font-medium">{formatCurrency(Number(selectedLoanProfitability?.fundedPrincipal ?? 0), i18n.language)}</div>
+                                    <div className="font-medium">{formatCurrency(selectedLoanProfitability?.fundedPrincipal ?? "0.00", i18n.language)}</div>
                                 </div>
                                 <div>
                                     <div className="text-xs text-muted-foreground">{t("matching.gapAfterMatching", "Gap after matching")}</div>
-                                    <div className="font-medium">{formatCurrency(Number(selectedLoanProfitability?.unallocatedPrincipalGap ?? selectedLoan.remainingGap ?? 0), i18n.language)}</div>
+                                    <div className="font-medium">{formatCurrency(selectedLoanProfitability?.unallocatedPrincipalGap ?? selectedLoan.remainingGap ?? "0.00", i18n.language)}</div>
                                 </div>
                             </CardContent>
                         </Card>
@@ -579,11 +589,11 @@ export default function MatchingWorkspace() {
                                 </div>
                             ) : (
                                 drawdowns.map((drawdown) => {
-                                    const amount = Number(drawdown.amount);
-                                    const allocatedAmount = Number(drawdown.allocatedAmount ?? 0);
-                                    const draftAmount = Number(draftAllocations[drawdown.id] || 0);
-                                    const available = drawdown.remainingCapacity ?? Math.max(0, amount - allocatedAmount);
-                                    const availableAfterDraft = Math.max(0, available - draftAmount);
+                                    const amount = drawdown.amount;
+                                    const allocatedAmount = drawdown.allocatedAmount ?? "0.00";
+                                    const draftAmount = draftAllocations[drawdown.id] || "0";
+                                    const available = drawdown.remainingCapacity ?? remainingMoney(amount, [allocatedAmount]);
+                                    const availableAfterDraft = remainingMoney(available, [draftAmount]);
                                     return (
                                         <div key={drawdown.id} className="rounded-lg border p-4">
                                             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -592,7 +602,7 @@ export default function MatchingWorkspace() {
                                                         {t("dashboardPage.drawdownLabel", { defaultValue: "Drawdown #{{id}}", id: drawdown.id })} {drawdown.bankProfileId ? `• ${bankProfileNameById.get(drawdown.bankProfileId) ?? t("matching.unknownSource", "Unknown source")}` : ""}
                                                     </div>
                                                     <div className="text-xs text-muted-foreground">
-                                                        {t("loanWizard.outstandingPrincipal", "Outstanding principal")}: {formatCurrency(Number(drawdown.outstandingPrincipal ?? 0), i18n.language)} • {t("loanWizard.nextDue", "Next due")}: {drawdown.nextDueDate || t("matching.notScheduled", "Not scheduled")}
+                                                        {t("loanWizard.outstandingPrincipal", "Outstanding principal")}: {formatCurrency(drawdown.outstandingPrincipal ?? "0.00", i18n.language)} • {t("loanWizard.nextDue", "Next due")}: {drawdown.nextDueDate || t("matching.notScheduled", "Not scheduled")}
                                                     </div>
                                                     <div className="text-xs text-muted-foreground capitalize">
                                                         {t("matching.allocationState", "Allocation state")}: {(drawdown.allocationState ?? "unallocated").replaceAll("_", " ")}
@@ -613,7 +623,7 @@ export default function MatchingWorkspace() {
                                                     </div>
                                                     <div>
                                                         <div className="text-muted-foreground">{t("matching.afterDraft", "After draft")}</div>
-                                                        <div className={`font-medium ${availableAfterDraft === 0 && draftAmount > 0 ? "text-destructive" : ""}`}>{formatCurrency(availableAfterDraft, i18n.language)}</div>
+                                                        <div className={`font-medium ${!isPositiveMoney(availableAfterDraft) && isPositiveMoney(draftAmount) ? "text-destructive" : ""}`}>{formatCurrency(availableAfterDraft, i18n.language)}</div>
                                                     </div>
                                                 </div>
                                             </div>
@@ -663,8 +673,8 @@ export default function MatchingWorkspace() {
                                                             {row.bankProfileName ?? t("matching.noSource", "No source")} • {row.allocationDate || "-"}
                                                         </div>
                                                     </div>
-                                                    <div className={`font-medium ${Number(row.allocatedAmount) < 0 ? "text-destructive" : "text-emerald-600"}`}>
-                                                        {Number(row.allocatedAmount) < 0 ? "-" : "+"}{formatCurrency(Math.abs(Number(row.allocatedAmount)), i18n.language)}
+                                                    <div className={`font-medium ${isNegativeMoney(row.allocatedAmount) ? "text-destructive" : "text-emerald-600"}`}>
+                                                        {isNegativeMoney(row.allocatedAmount) ? "-" : "+"}{formatCurrency(absoluteMoney(row.allocatedAmount), i18n.language)}
                                                     </div>
                                                 </div>
                                                 {row.note && <div className="mt-1 text-xs text-muted-foreground">{row.note}</div>}

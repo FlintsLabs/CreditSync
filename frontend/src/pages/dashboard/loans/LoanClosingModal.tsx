@@ -4,6 +4,7 @@ import { Button } from "../../../components/ui/Button";
 import { api } from "../../../lib/api";
 import { Loader2, Copy } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { formatDecimalExact, formatMoneyExact } from "../../../lib/workflow-model";
 
 interface LoanClosingModalProps {
     loanId: string;
@@ -50,10 +51,7 @@ export function LoanClosingModal({ loanId, open, onOpenChange }: LoanClosingModa
 
     const handleCopyToClipboard = () => {
         if (summary) {
-            const amount = Number(summary.balance).toLocaleString(i18n.language, {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-            });
+            const amount = formatDecimalExact(summary.balance, i18n.language);
             const message = t("loanClosing.copyMessage", {
                 defaultValue: "Closing balance as of today is ฿{{amount}}.",
                 amount,
@@ -86,23 +84,23 @@ export function LoanClosingModal({ loanId, open, onOpenChange }: LoanClosingModa
                     <div className="space-y-4 py-4">
                         <div className="flex justify-between items-center">
                             <span className="text-muted-foreground">{t("loanWizard.columns.principal", "Principal")}</span>
-                            <span className="font-mono">฿{Number(summary.principal).toLocaleString(i18n.language)}</span>
+                            <span className="font-mono">{formatMoneyExact(summary.principal, i18n.language)}</span>
                         </div>
                         <div className="flex justify-between items-center">
                             <span className="text-muted-foreground">{t("loanClosing.totalInterestAccrued", { defaultValue: "Total Interest Accrued ({{days}} days)", days: summary.daysSinceStart })}</span>
-                            <span className="font-mono text-blue-500">+ ฿{Number(summary.totalInterest).toLocaleString(i18n.language)}</span>
+                            <span className="font-mono text-blue-500">+ {formatMoneyExact(summary.totalInterest, i18n.language)}</span>
                         </div>
                          <div className="flex justify-between items-center border-t pt-4">
                             <span className="text-muted-foreground">{t("loanClosing.totalAmountDue", "Total Amount Due")}</span>
-                            <span className="font-mono">฿{Number(summary.totalDue).toLocaleString(i18n.language)}</span>
+                            <span className="font-mono">{formatMoneyExact(summary.totalDue, i18n.language)}</span>
                         </div>
                         <div className="flex justify-between items-center">
                             <span className="text-muted-foreground">{t("loanClosing.totalRepaid", "Total Repaid")}</span>
-                            <span className="font-mono text-green-500">- ฿{Number(summary.totalPaid).toLocaleString(i18n.language)}</span>
+                            <span className="font-mono text-green-500">- {formatMoneyExact(summary.totalPaid, i18n.language)}</span>
                         </div>
                         <div className="flex justify-between items-center text-xl font-bold border-t pt-4">
                             <span>{t("loanClosing.finalBalance", "Final Closing Balance")}</span>
-                            <span className="font-mono text-primary">฿{Number(summary.balance).toLocaleString(i18n.language)}</span>
+                            <span className="font-mono text-primary">{formatMoneyExact(summary.balance, i18n.language)}</span>
                         </div>
                     </div>
                 )}

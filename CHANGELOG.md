@@ -7,6 +7,7 @@
 
 ### Fixed
 - Preserved exact loan-detail and settlement money strings beyond JavaScript's safe-integer range, labeled rate timelines by their locked daily/weekly contract, and attached stable idempotency keys to Web loan activation commands.
+- Removed native-number conversions from loan closing and funding matching so displayed balances, allocation arithmetic, profitability signs, and posted two-decimal strings stay exact beyond JavaScript's safe-integer range.
 - Refreshed authoritative loan and profitability state after Web settlement, hid stale accounting when that refresh fails, kept the post-write refresh warning accessible inside the open confirmation dialog, surfaced initial preview errors beside the action, localized loan statuses, scoped non-refundable warnings to advance deductions, and preserved command keys across safe retries while requiring a new key after stale re-preview.
 
 ### Infra

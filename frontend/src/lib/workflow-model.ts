@@ -94,6 +94,40 @@ export function moneyDifference(next: string, previous: string) {
     return centsToMoney(moneyParts(next) - moneyParts(previous));
 }
 
+export function remainingMoney(balance: string, deductions: string[]) {
+    const remaining = deductions.reduce((total, value) => total - moneyParts(value), moneyParts(balance));
+    return centsToMoney(remaining < 0n ? 0n : remaining);
+}
+
+export function absoluteMoney(value: string) {
+    const cents = moneyParts(value);
+    return centsToMoney(cents < 0n ? -cents : cents);
+}
+
+export function isNegativeMoney(value: string) {
+    return moneyParts(value) < 0n;
+}
+
+export function isPositiveMoney(value: string) {
+    return moneyParts(value) > 0n;
+}
+
+export function formatDecimalExact(value: string, locale: string) {
+    const cents = moneyParts(value);
+    const negative = cents < 0n;
+    const absolute = negative ? -cents : cents;
+    const whole = absolute / 100n;
+    const fraction = (absolute % 100n).toString().padStart(2, "0");
+    const parts = new Intl.NumberFormat(locale, {
+        minimumFractionDigits: 2, maximumFractionDigits: 2,
+    }).formatToParts(negative ? -0 : 0);
+    return parts.map((part) => {
+        if (part.type === "integer") return whole.toLocaleString(locale);
+        if (part.type === "fraction") return fraction;
+        return part.value;
+    }).join("");
+}
+
 export function formatMoneyExact(value: string, locale: string, currency = "THB") {
     const cents = moneyParts(value);
     const negative = cents < 0n;

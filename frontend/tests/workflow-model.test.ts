@@ -1,8 +1,13 @@
 import { describe, expect, test } from "vitest";
 import {
+    absoluteMoney,
     buildLoanTermsInput,
+    formatDecimalExact,
     formatMoneyExact,
+    isNegativeMoney,
+    isPositiveMoney,
     moneyDifference,
+    remainingMoney,
     sumMoney,
     toExplicitAllocations,
 } from "../src/lib/workflow-model";
@@ -63,6 +68,16 @@ describe("workflow view models", () => {
         expect(sumMoney(["9007199254740993.10", "0.20", "6.70"])).toBe("9007199254741000.00");
         expect(moneyDifference("9007199254741000.00", "9007199254740993.10")).toBe("6.90");
         expect(formatMoneyExact("9007199254741000.00", "en", "THB")).toContain("9,007,199,254,741,000.00");
+    });
+
+    test("derives funding balances and signs exactly beyond Number safe integer range", () => {
+        expect(remainingMoney("9007199254741000.00", ["9007199254740993.10", "0.20"])).toBe("6.70");
+        expect(remainingMoney("5.00", ["6.00"])).toBe("0.00");
+        expect(absoluteMoney("-9007199254740993.10")).toBe("9007199254740993.10");
+        expect(formatDecimalExact("9007199254740993.10", "en")).toBe("9,007,199,254,740,993.10");
+        expect(isNegativeMoney("-0.01")).toBe(true);
+        expect(isPositiveMoney("0.01")).toBe(true);
+        expect(isPositiveMoney("0.00")).toBe(false);
     });
 
     test("builds all explicit allocation rows and preserves their exact amounts", () => {
