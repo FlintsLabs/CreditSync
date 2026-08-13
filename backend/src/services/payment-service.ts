@@ -34,7 +34,7 @@ import {
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import { normalizeBorrowerText } from "./borrower-service";
-import { floatingInterestDue } from "./floating-interest-service";
+import { floatingPaymentObligations } from "./floating-interest-service";
 
 type Executor = any;
 type IntakeRow = typeof paymentIntakes.$inferSelect;
@@ -931,8 +931,8 @@ async function expandExplicit(
             eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.loanId, loan.id),
         )).orderBy(loanSchedules.installmentNo);
         if (loan.repaymentType === "floating" && !item.schedulePublicId) {
-            const dueInterest = await floatingInterestDue(executor, loan, intake.receivedAt, ctx.actorUserId);
-            const available = dueInterest.plus(loan.outstandingPrincipal ?? loan.principalAmount);
+            const obligations = await floatingPaymentObligations(executor, loan, intake.receivedAt, ctx.actorUserId);
+            const available = obligations.duePenalty.plus(obligations.dueInterest).plus(loan.outstandingPrincipal ?? loan.principalAmount);
             if (amount.gt(available)) warnings.push({ code: "ALLOCATION_EXCEEDS_OBLIGATION", loanPublicId: loan.publicId, unallocatedAmount: amount.minus(available).toFixed(2) });
             expanded.push({ borrowerId: borrower.id, borrowerPublicId: borrower.publicId, loanId: loan.id, loanPublicId: loan.publicId, scheduleId: null, schedulePublicId: null, amount: Decimal.min(amount, available).toFixed(2), matchReason: "explicit_floating" });
             continue;
@@ -1269,11 +1269,30 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
             const loan = await tx.query.loans.findFirst({ where: and(eq(loans.id, allocation.loanId), eq(loans.tenantId, ctx.tenantId)) });
             if (!loan) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Payment target no longer exists", 409);
             if (!allocation.scheduleId && loan.repaymentType === "floating") {
-                const dueInterest = await floatingInterestDue(tx, loan, intake.receivedAt, ctx.actorUserId);
-                const interest = Decimal.min(new Decimal(allocation.amount), dueInterest);
-                const principal = new Decimal(allocation.amount).minus(interest);
+                const obligations = await floatingPaymentObligations(tx, loan, intake.receivedAt, ctx.actorUserId);
+                let remaining = new Decimal(allocation.amount);
+                const penalty = Decimal.min(remaining, obligations.duePenalty);
+                remaining = remaining.minus(penalty);
+                const interest = Decimal.min(remaining, obligations.dueInterest);
+                const principal = remaining.minus(interest);
                 if (principal.gt(loan.outstandingPrincipal ?? loan.principalAmount)) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Allocation exceeds the latest floating balance", 409);
-                await tx.update(loans).set({ outstandingInterest: signed(dueInterest.minus(interest)), outstandingPrincipal: signed(new Decimal(loan.outstandingPrincipal ?? loan.principalAmount).minus(principal)), updatedAt: new Date() }).where(and(eq(loans.id, loan.id), eq(loans.tenantId, ctx.tenantId)));
+                await tx.update(loans).set({ outstandingInterest: signed(obligations.dueInterest.minus(interest)), outstandingPrincipal: signed(new Decimal(loan.outstandingPrincipal ?? loan.principalAmount).minus(principal)), updatedAt: new Date() }).where(and(eq(loans.id, loan.id), eq(loans.tenantId, ctx.tenantId)));
+                if (penalty.gt(0)) {
+                    let remainingPenalty = penalty;
+                    for (const group of obligations.penaltyGroups) {
+                        if (remainingPenalty.lte(0)) break;
+                        const applied = Decimal.min(remainingPenalty, group.penaltyDue);
+                        if (applied.lte(0)) continue;
+                        const snapshot = obligations.rows.find((row) => row.id === group.snapshotId);
+                        if (!snapshot) throw new DomainError("FLOATING_PENALTY_SNAPSHOT_MISSING", "Floating penalty group has no active snapshot", 409);
+                        const paidPenalty = new Decimal(snapshot.paidPenalty).plus(applied);
+                        await tx.update(loanInterestAccruals).set({ paidPenalty: signed(paidPenalty) })
+                            .where(and(eq(loanInterestAccruals.id, snapshot.id), eq(loanInterestAccruals.tenantId, ctx.tenantId)));
+                        snapshot.paidPenalty = signed(paidPenalty);
+                        remainingPenalty = remainingPenalty.minus(applied);
+                    }
+                    if (remainingPenalty.gt(0)) throw new DomainError("FLOATING_PENALTY_ALLOCATION_MISMATCH", "Floating penalty history cannot support this payment", 409);
+                }
                 if (interest.gt(0)) {
                     let remainingInterest = interest;
                     const accruals = await tx.select().from(loanInterestAccruals).where(and(
@@ -1293,9 +1312,9 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
                         remainingInterest = remainingInterest.minus(applied);
                     }
                 }
-                const transaction = await tx.insert(transactions).values({ tenantId: ctx.tenantId, ownerUserId: loan.ownerUserId ?? ctx.actorUserId, loanId: loan.id, amount: signed(allocation.amount), principalComponent: signed(principal), interestComponent: signed(interest), feeComponent: "0.00", penaltyComponent: "0.00", type: "repayment", transactionDate: intake.receivedAt, recordedByUserId: ctx.actorUserId, paymentIntakeId: intake.id, entryType: "repayment", idempotencyKey: `payment:${intake.publicId}:${allocation.publicId}`, postedAt: new Date() }).returning().then((rows: Array<typeof transactions.$inferSelect>) => rows[0]!);
+                const transaction = await tx.insert(transactions).values({ tenantId: ctx.tenantId, ownerUserId: loan.ownerUserId ?? ctx.actorUserId, loanId: loan.id, amount: signed(allocation.amount), principalComponent: signed(principal), interestComponent: signed(interest), feeComponent: "0.00", penaltyComponent: signed(penalty), type: "repayment", transactionDate: intake.receivedAt, recordedByUserId: ctx.actorUserId, paymentIntakeId: intake.id, entryType: "repayment", idempotencyKey: `payment:${intake.publicId}:${allocation.publicId}`, postedAt: new Date() }).returning().then((rows: Array<typeof transactions.$inferSelect>) => rows[0]!);
                 createdTransactions.push(transaction);
-                await writeFundEffects(tx, ctx, loan.id, transaction.id, intake.receivedAt, { fee: new Decimal(0), interest, principal, penalty: new Decimal(0) });
+                await writeFundEffects(tx, ctx, loan.id, transaction.id, intake.receivedAt, { fee: new Decimal(0), interest, principal, penalty });
                 continue;
             }
             if (!allocation.scheduleId) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Payment allocation has no schedule", 409);
@@ -1413,10 +1432,21 @@ export async function reversePayment(ctx: CommandContext, intakePublicId: string
                 const loan = await tx.query.loans.findFirst({ where: and(eq(loans.id, original.loanId), eq(loans.tenantId, ctx.tenantId)) });
                 if (!loan) throw new DomainError("REVERSAL_TARGET_MISSING", "Original loan no longer exists", 409);
                 if (loan.repaymentType === "floating") {
-                    let interestToRestore = new Decimal(original.interestComponent);
                     const accruals = await tx.select().from(loanInterestAccruals).where(and(
                         eq(loanInterestAccruals.tenantId, ctx.tenantId), eq(loanInterestAccruals.loanId, loan.id), sql`${loanInterestAccruals.status} <> 'reversed'`,
                     )).orderBy(desc(loanInterestAccruals.accrualDate), desc(loanInterestAccruals.id));
+                    let penaltyToRestore = new Decimal(original.penaltyComponent);
+                    for (const accrual of accruals) {
+                        if (penaltyToRestore.lte(0)) break;
+                        const restored = Decimal.min(penaltyToRestore, new Decimal(accrual.paidPenalty));
+                        if (restored.eq(0)) continue;
+                        await tx.update(loanInterestAccruals).set({
+                            paidPenalty: signed(new Decimal(accrual.paidPenalty).minus(restored)),
+                        }).where(and(eq(loanInterestAccruals.id, accrual.id), eq(loanInterestAccruals.tenantId, ctx.tenantId)));
+                        penaltyToRestore = penaltyToRestore.minus(restored);
+                    }
+                    if (penaltyToRestore.gt(0)) throw new DomainError("REVERSAL_PENALTY_MISMATCH", "Paid floating penalty history cannot support this reversal", 409);
+                    let interestToRestore = new Decimal(original.interestComponent);
                     for (const accrual of accruals) {
                         if (interestToRestore.lte(0)) break;
                         const restored = Decimal.min(interestToRestore, new Decimal(accrual.paidAmount));

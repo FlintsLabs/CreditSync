@@ -155,30 +155,38 @@ describe("loan application service", () => {
             mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "weekly",
         });
         expect(weekly).toMatchObject({
-            fullPeriodInterest: "50.00",
+            firstPeriodInterest: "50.00",
             advanceInterest: "0.00",
             netBorrowerPayout: "5000.00",
             coveredStartDate: null,
             coveredEndDate: null,
+            firstPeriodDueDate: "2026-08-17",
+            nextAccrualDate: "2026-08-17",
             periodDays: 7,
-            nonRefundable: false,
-            nextInterestDate: "2026-08-17",
+            advanceInterestRefundPolicy: "non_refundable",
         });
+        expect(weekly).not.toHaveProperty("fullPeriodInterest");
+        expect(weekly).not.toHaveProperty("nextInterestDate");
+        expect(weekly).not.toHaveProperty("nonRefundable");
         expect(weekly).not.toHaveProperty("dailyInterestAtCurrentPrincipal");
         const advance = previewLoan({
             ...base,
             floatingDailyInterest: { mode: "percent", rate: "12", firstDayTreatment: "deduct", accrualCycle: "weekly" },
         });
         expect(advance).toMatchObject({
-            fullPeriodInterest: "600.00",
+            firstPeriodInterest: "600.00",
             advanceInterest: "600.00",
             netBorrowerPayout: "4400.00",
             coveredStartDate: "2026-08-10",
-            coveredEndDate: "2026-08-17",
+            coveredEndDate: "2026-08-16",
+            firstPeriodDueDate: "2026-08-17",
+            nextAccrualDate: "2026-08-17",
             periodDays: 7,
-            nonRefundable: true,
-            nextInterestDate: "2026-08-17",
+            advanceInterestRefundPolicy: "non_refundable",
         });
+        expect(advance).not.toHaveProperty("fullPeriodInterest");
+        expect(advance).not.toHaveProperty("nextInterestDate");
+        expect(advance).not.toHaveProperty("nonRefundable");
         expect(advance).not.toHaveProperty("dailyInterestAtCurrentPrincipal");
     });
 

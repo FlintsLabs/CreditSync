@@ -140,3 +140,33 @@ Final verification: backend non-database `165 pass, 136 skip, 0 fail`; full disp
 The non-database RED showed weekly preview still returning `dailyInterestAtCurrentPrincipal` and the anchor date. The PostgreSQL RED reported four intended failures: correction reduced the paid advance total from `600.00` to `582.86`; closing after interest-only payment reported `5485.71` instead of `5620.71`; mixed payment reported `4300.00` instead of `4900.00`; and the new preview contract was absent. Reversal and covered-advance closing cases already passed and remain regression coverage.
 
 Final verification: backend non-database `165 pass, 141 skip, 0 fail`, `1107 expect()` calls and typecheck passed; full disposable PostgreSQL `305 pass, 1 skip, 0 fail`, `2040 expect()` calls; frontend Vitest `100 pass, 0 fail`, ESLint and production build passed with only the existing chunk-size advisory; CreditSync plugin `32 pass, 0 fail`, `697 expect()` calls, and its TypeScript validator passed for Plugin `2.4.0`, eight skills, and the frozen 41-tool contract; `git diff --check` passed.
+
+## Review Fix Round 4
+
+- Made weekly deduct preview boundaries explicit and non-ambiguous. The public preview now exposes exact `firstPeriodInterest`, `firstPeriodDueDate`, `nextAccrualDate`, inclusive `coveredStartDate`/`coveredEndDate`, and `advanceInterestRefundPolicy: "non_refundable"`. For a `2026-08-10` start, coverage is `2026-08-10` through `2026-08-16`, while both the first-period due date and next accrual boundary are `2026-08-17`.
+- Preserved the frozen MCP response by projecting the new REST/service fields back into its existing legacy field names and removing every new presenter-only field before MCP output validation.
+- Added migration `0029_floating_penalty_snapshots` and durable exact `accruedPenalty`/`paidPenalty` state to each floating weekly period snapshot. Penalty remains attached to its obligation group after interest becomes fully paid; payment in one group cannot globally offset another group's penalty.
+- Changed floating payment allocation to `penalty -> interest -> principal`, persisted paid penalty against the selected group, and made compensating reversal restore that group's paid penalty before restoring interest. Closing and payment health now include the remaining penalty even when the corresponding interest balance is zero.
+- Updated README behavior, the versioned changelog, migration contract tests, and database-backed regressions for partial/full penalty payment, post-interest durability, multiple groups, reversal, closing, and health.
+
+### Review Round 4 TDD Evidence
+
+The focused non-database RED command was:
+
+```text
+cd backend && bun test src/services/loan-application-service.test.ts src/modules/loans-route-composition.test.ts src/mcp/server.test.ts src/db/floating-weekly-period-migration.test.ts
+```
+
+It reported `20 pass, 20 skip, 3 fail`, `206 expect()` calls: service preview lacked the exact boundary/refund fields, REST still exposed the ambiguous exclusive `coveredEndDate`, and migration `0029_floating_penalty_snapshots` did not exist.
+
+The focused PostgreSQL RED command was:
+
+```text
+cd backend && ./scripts/test-disposable-postgres.sh src/modules/loan-closing-summary.test.ts
+```
+
+It reported `4 pass, 4 fail`, `22 expect()` calls. Payments allocated interest before penalty, fully paid interest made its penalty disappear from closing, a payment crossed from one group's interest/principal without first settling that group's penalty, and reversal had no durable paid-penalty state to restore.
+
+After implementation, the focused non-database suite reported `23 pass, 20 skip, 0 fail`, `223 expect()` calls. The focused PostgreSQL closing suite reported `8 pass, 0 fail`, `51 expect()` calls; the broader service/payment/health/MCP disposable suite reported `73 pass, 0 fail`, `558 expect()` calls.
+
+Final verification: backend non-database `166 pass, 145 skip, 0 fail`, `1121 expect()` calls and typecheck passed; full disposable PostgreSQL `310 pass, 1 skip, 0 fail`, `2094 expect()` calls; frontend Vitest `100 pass, 0 fail`, ESLint and production build passed with only the existing chunk-size advisory; CreditSync plugin `32 pass, 0 fail`, `697 expect()` calls, and both validators passed for Plugin `2.4.0`, eight skills, and the frozen 41-tool contract.

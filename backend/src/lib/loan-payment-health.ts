@@ -29,6 +29,7 @@ export interface LoanPaymentHealthInput {
         dueDate?: string | null;
         interestAmount: string;
         paidAmount: string;
+        penaltyDue?: string;
         status: string;
     }>;
 }
@@ -71,7 +72,8 @@ export function computeLoanPaymentHealth(input: LoanPaymentHealthInput): LoanPay
         for (const accrual of input.accruals) {
             if (accrual.status === "reversed") continue;
             const unpaid = Decimal.max(new Decimal(accrual.interestAmount).minus(accrual.paidAmount), 0);
-            if (unpaid.isZero() || accrual.accrualDate > input.businessDate) continue;
+            const penalty = Decimal.max(new Decimal(accrual.penaltyDue ?? "0"), 0);
+            if ((unpaid.isZero() && penalty.isZero()) || accrual.accrualDate > input.businessDate) continue;
             if (accrual.status === "accruing") {
                 accruingInterest = accruingInterest.plus(unpaid);
                 continue;
@@ -80,12 +82,12 @@ export function computeLoanPaymentHealth(input: LoanPaymentHealthInput): LoanPay
             const dueDate = accrual.dueDate ?? accrual.accrualDate;
 
             if (dueDate === input.businessDate) {
-                dueNow = dueNow.plus(unpaid);
+                dueNow = dueNow.plus(unpaid).plus(penalty);
                 continue;
             }
 
             const overdueDays = calendarDays(dueDate, input.businessDate);
-            overdue = overdue.plus(unpaid);
+            overdue = overdue.plus(unpaid).plus(penalty);
             overdueItemCount += 1;
             maxOverdueDays = Math.max(maxOverdueDays, overdueDays);
         }

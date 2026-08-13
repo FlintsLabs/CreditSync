@@ -231,9 +231,11 @@ export async function accrueFloatingInterestThrough(tx: Executor, loan: typeof l
     return await tx.select().from(loanInterestAccruals).where(and(eq(loanInterestAccruals.tenantId, loan.tenantId), eq(loanInterestAccruals.loanId, loan.id)));
 }
 
-export async function floatingInterestDue(tx: Executor, loan: typeof loans.$inferSelect, through: Date, actorUserId: number | null) {
-    const rows = await accrueFloatingInterestThrough(tx, loan, through, actorUserId);
-    const throughDate = bangkokDate(through);
+function assertFloatingAccrualHistory(
+    rows: Array<typeof loanInterestAccruals.$inferSelect>,
+    loan: typeof loans.$inferSelect,
+    throughDate: string,
+) {
     const corrupt = rows.find((row: typeof loanInterestAccruals.$inferSelect) =>
         row.status !== "reversed"
         && row.accrualDate <= throughDate
@@ -248,52 +250,107 @@ export async function floatingInterestDue(tx: Executor, loan: typeof loans.$infe
             accrualPublicId: corrupt.publicId,
         });
     }
-    return rows.filter((row: typeof loanInterestAccruals.$inferSelect) => row.status === "accrued" || row.status === "due" || row.status === "partially_paid")
-        .reduce((total: Decimal, row: typeof loanInterestAccruals.$inferSelect) => total.plus(new Decimal(row.interestAmount).minus(row.paidAmount)), new Decimal(0));
 }
 
-export async function floatingInterestBalances(tx: Executor, loan: typeof loans.$inferSelect, through: Date, actorUserId: number | null) {
-    const rows = await accrueFloatingInterestThrough(tx, loan, through, actorUserId);
-    let dueInterest = new Decimal(0);
-    let accruingInterest = new Decimal(0);
+export type FloatingPenaltyGroup = {
+    dueDate: string;
+    snapshotId: number;
+    accruedPenalty: Decimal;
+    paidPenalty: Decimal;
+    penaltyDue: Decimal;
+};
+
+async function materializeFloatingPenaltyGroups(
+    tx: Executor,
+    loan: typeof loans.$inferSelect,
+    rows: Array<typeof loanInterestAccruals.$inferSelect>,
+    throughDate: string,
+): Promise<FloatingPenaltyGroup[]> {
+    const grouped = new Map<string, Array<typeof loanInterestAccruals.$inferSelect>>();
     for (const row of rows as Array<typeof loanInterestAccruals.$inferSelect>) {
-        if (row.status === "reversed" || row.status === "paid") continue;
-        const unpaid = Decimal.max(new Decimal(row.interestAmount).minus(row.paidAmount), 0);
-        if (row.status === "accruing") accruingInterest = accruingInterest.plus(unpaid);
-        else dueInterest = dueInterest.plus(unpaid);
-    }
-    const throughDate = bangkokDate(through);
-    const payableGroups = new Map<string, Decimal>();
-    for (const row of rows as Array<typeof loanInterestAccruals.$inferSelect>) {
-        if (!["accrued", "due", "partially_paid"].includes(row.status)) continue;
+        if (row.status === "reversed") continue;
         const dueDate = row.periodEndDate ?? row.accrualDate;
-        const unpaid = Decimal.max(new Decimal(row.interestAmount).minus(row.paidAmount), 0);
-        if (unpaid.gt(0)) payableGroups.set(dueDate, (payableGroups.get(dueDate) ?? new Decimal(0)).plus(unpaid));
+        grouped.set(dueDate, [...(grouped.get(dueDate) ?? []), row]);
     }
     const feeValue = new Decimal(loan.lateFeeAmount ?? "0.00");
     const graceDays = Math.max(0, loan.gracePeriodDays ?? 0);
-    let calculatedPenalty = new Decimal(0);
-    for (const [dueDate, unpaid] of payableGroups) {
+    const groups: FloatingPenaltyGroup[] = [];
+    for (const [dueDate, groupRows] of [...grouped.entries()].sort(([left], [right]) => left.localeCompare(right))) {
         const overdueDays = Math.max(0, calendarDays(dueDate, throughDate) - graceDays);
-        if (overdueDays === 0) continue;
-        if (loan.lateFeeMode === "fixed" || loan.lateFeeMode === "fixed_plus_percent") {
-            calculatedPenalty = calculatedPenalty.plus(feeValue);
+        const unpaidInterest = groupRows.reduce(
+            (sum, row) => sum.plus(Decimal.max(new Decimal(row.interestAmount).minus(row.paidAmount), 0)),
+            new Decimal(0),
+        );
+        const storedAccrued = groupRows.reduce((sum, row) => sum.plus(row.accruedPenalty), new Decimal(0));
+        const paidPenalty = groupRows.reduce((sum, row) => sum.plus(row.paidPenalty), new Decimal(0));
+        let calculatedPenalty = new Decimal(0);
+        if (unpaidInterest.gt(0) && overdueDays > 0) {
+            if (loan.lateFeeMode === "fixed" || loan.lateFeeMode === "fixed_plus_percent") {
+                calculatedPenalty = calculatedPenalty.plus(feeValue);
+            }
+            if (loan.lateFeeMode === "daily_percent" || loan.lateFeeMode === "fixed_plus_percent") {
+                calculatedPenalty = calculatedPenalty.plus(unpaidInterest.times(feeValue).div(100).times(overdueDays));
+            }
         }
-        if (loan.lateFeeMode === "daily_percent" || loan.lateFeeMode === "fixed_plus_percent") {
-            calculatedPenalty = calculatedPenalty.plus(unpaid.times(feeValue).div(100).times(overdueDays));
+        const accruedPenalty = Decimal.max(
+            storedAccrued,
+            calculatedPenalty.toDecimalPlaces(2, Decimal.ROUND_HALF_UP),
+        );
+        const snapshot = [...groupRows].sort((left, right) =>
+            right.accrualDate.localeCompare(left.accrualDate) || right.id - left.id)[0]!;
+        const increase = accruedPenalty.minus(storedAccrued);
+        if (increase.gt(0)) {
+            const nextSnapshotAccrued = new Decimal(snapshot.accruedPenalty).plus(increase).toFixed(2);
+            await tx.update(loanInterestAccruals).set({ accruedPenalty: nextSnapshotAccrued })
+                .where(and(eq(loanInterestAccruals.tenantId, loan.tenantId), eq(loanInterestAccruals.id, snapshot.id)));
+            snapshot.accruedPenalty = nextSnapshotAccrued;
         }
+        groups.push({
+            dueDate,
+            snapshotId: snapshot.id,
+            accruedPenalty,
+            paidPenalty,
+            penaltyDue: overdueDays > 0 ? Decimal.max(accruedPenalty.minus(paidPenalty), 0) : new Decimal(0),
+        });
     }
-    calculatedPenalty = calculatedPenalty.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-    const transactionRows = await tx.select().from(transactions).where(and(
-        eq(transactions.tenantId, loan.tenantId),
-        eq(transactions.loanId, loan.id),
-    ));
-    const paidPenalty = transactionRows.reduce(
-        (sum: Decimal, transaction: typeof transactions.$inferSelect) => sum.plus(transaction.penaltyComponent),
-        new Decimal(0),
-    );
-    const applicablePenalty = Decimal.max(calculatedPenalty.minus(paidPenalty), 0);
-    return { rows, dueInterest, accruingInterest, applicablePenalty };
+    return groups;
+}
+
+export async function floatingPaymentObligations(
+    tx: Executor,
+    loan: typeof loans.$inferSelect,
+    through: Date,
+    actorUserId: number | null,
+) {
+    const rows = await accrueFloatingInterestThrough(tx, loan, through, actorUserId) as Array<typeof loanInterestAccruals.$inferSelect>;
+    const throughDate = bangkokDate(through);
+    assertFloatingAccrualHistory(rows, loan, throughDate);
+    const penaltyGroups = await materializeFloatingPenaltyGroups(tx, loan, rows, throughDate);
+    const dueInterest = rows
+        .filter((row) => ["accrued", "due", "partially_paid"].includes(row.status))
+        .reduce((total, row) => total.plus(Decimal.max(new Decimal(row.interestAmount).minus(row.paidAmount), 0)), new Decimal(0));
+    const duePenalty = penaltyGroups.reduce((total, group) => total.plus(group.penaltyDue), new Decimal(0));
+    return { rows, dueInterest, duePenalty, penaltyGroups };
+}
+
+export async function floatingInterestDue(tx: Executor, loan: typeof loans.$inferSelect, through: Date, actorUserId: number | null) {
+    return (await floatingPaymentObligations(tx, loan, through, actorUserId)).dueInterest;
+}
+
+export async function floatingInterestBalances(tx: Executor, loan: typeof loans.$inferSelect, through: Date, actorUserId: number | null) {
+    const obligations = await floatingPaymentObligations(tx, loan, through, actorUserId);
+    let accruingInterest = new Decimal(0);
+    for (const row of obligations.rows) {
+        if (row.status !== "accruing") continue;
+        accruingInterest = accruingInterest.plus(Decimal.max(new Decimal(row.interestAmount).minus(row.paidAmount), 0));
+    }
+    return {
+        rows: obligations.rows,
+        dueInterest: obligations.dueInterest,
+        accruingInterest,
+        applicablePenalty: obligations.duePenalty,
+        penaltyGroups: obligations.penaltyGroups,
+    };
 }
 
 export async function correctFloatingInterestAccruals(ctx: CommandContext, loanPublicId: string, dates: string[], reason: string) {
@@ -382,6 +439,8 @@ export async function correctFloatingInterestAccruals(ctx: CommandContext, loanP
                 periodDays: weekly?.periodDays ?? null,
                 cumulativeInterestAmount: weekly?.cumulativeInterestAmount ?? null,
                 interestAmount, paidAmount,
+                accruedPenalty: old.accruedPenalty,
+                paidPenalty: old.paidPenalty,
                 status: new Decimal(paidAmount).eq(interestAmount) ? "paid" : weekly?.status ?? "accrued",
                 reversedAccrualId: old.id, createdByUserId: ctx.actorUserId,
             }).returning().then((rows) => rows[0]!);

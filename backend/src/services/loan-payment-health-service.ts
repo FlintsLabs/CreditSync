@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "../db";
 import { loanSchedules, loans } from "../db/schema";
 import { computeLoanPaymentHealth, type LoanPaymentHealth } from "../lib/loan-payment-health";
-import { accrueFloatingInterestThrough } from "./floating-interest-service";
+import { floatingInterestBalances } from "./floating-interest-service";
 
 export function bangkokBusinessDate(value: Date) {
     const parts = new Intl.DateTimeFormat("en-CA", {
@@ -23,7 +23,8 @@ export async function getLoanPaymentHealth(
     const businessDate = bangkokBusinessDate(input.asOf);
 
     if (loan.repaymentType === "floating") {
-        const rows = await accrueFloatingInterestThrough(executor, loan, input.asOf, input.actorUserId);
+        const balances = await floatingInterestBalances(executor, loan, input.asOf, input.actorUserId);
+        const penaltyBySnapshot = new Map(balances.penaltyGroups.map((group) => [group.snapshotId, group.penaltyDue.toFixed(2)]));
         return computeLoanPaymentHealth({
             lifecycleStatus: loan.status ?? "draft",
             repaymentType: loan.repaymentType,
@@ -32,13 +33,14 @@ export async function getLoanPaymentHealth(
             lateFeeMode: loan.lateFeeMode,
             lateFeeAmount: loan.lateFeeAmount,
             schedules: [],
-            accruals: rows
+            accruals: balances.rows
                 .filter((row: { tenantId: string; loanId: number }) => row.tenantId === loan.tenantId && row.loanId === loan.id)
-                .map((row: { accrualDate: string; periodEndDate: string | null; interestAmount: string; paidAmount: string; status: string }) => ({
+                .map((row: { id: number; accrualDate: string; periodEndDate: string | null; interestAmount: string; paidAmount: string; status: string }) => ({
                     accrualDate: row.accrualDate,
                     dueDate: row.periodEndDate,
                     interestAmount: row.interestAmount,
                     paidAmount: row.paidAmount,
+                    penaltyDue: penaltyBySnapshot.get(row.id) ?? "0.00",
                     status: row.status,
                 })),
         });

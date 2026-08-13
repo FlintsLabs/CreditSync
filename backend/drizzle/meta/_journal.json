@@ -204,6 +204,13 @@
       "when": 1786698060000,
       "tag": "0028_floating_weekly_period_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1786698120000,
+      "tag": "0029_floating_penalty_snapshots",
+      "breakpoints": true
     }
   ]
 }

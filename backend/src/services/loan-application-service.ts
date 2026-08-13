@@ -293,14 +293,15 @@ export function previewLoan(input: PublicLoanCalculationParams) {
             const hasAdvance = policy.firstDayTreatment === "deduct";
             const periodEndDate = addBangkokCalendarDays(input.startDate, 7);
             const weeklyFields: PublicWeeklyFloatingInterestPreviewFields = {
-                fullPeriodInterest: dailyInterestAtCurrentPrincipal,
+                firstPeriodInterest: dailyInterestAtCurrentPrincipal,
                 advanceInterest: hasAdvance ? dailyInterestAtCurrentPrincipal : "0.00",
                 netBorrowerPayout: serializeMoney(new Decimal(terms.principal).minus(hasAdvance ? dailyInterestAtCurrentPrincipal : "0.00")),
                 coveredStartDate: hasAdvance ? input.startDate : null,
-                coveredEndDate: hasAdvance ? periodEndDate : null,
-                nextInterestDate: periodEndDate,
+                coveredEndDate: hasAdvance ? addBangkokCalendarDays(input.startDate, 6) : null,
+                firstPeriodDueDate: periodEndDate,
+                nextAccrualDate: periodEndDate,
                 periodDays: 7,
-                nonRefundable: hasAdvance,
+                advanceInterestRefundPolicy: "non_refundable",
             };
             return { terms, schedule, floatingDailyInterest: policy, ...weeklyFields };
         }

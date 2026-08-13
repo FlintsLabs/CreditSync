@@ -373,6 +373,8 @@ export const loanInterestAccruals = pgTable("loan_interest_accruals", {
     cumulativeInterestAmount: numeric("cumulative_interest_amount"),
     interestAmount: numeric("interest_amount").notNull(),
     paidAmount: numeric("paid_amount").default("0").notNull(),
+    accruedPenalty: numeric("accrued_penalty").default("0").notNull(),
+    paidPenalty: numeric("paid_penalty").default("0").notNull(),
     status: text("status").default("accrued").notNull(),
     sourceTransactionId: integer("source_transaction_id").references(() => transactions.id),
     reversedAccrualId: integer("reversed_accrual_id"),
@@ -387,6 +389,11 @@ export const loanInterestAccruals = pgTable("loan_interest_accruals", {
         foreignColumns: [loanInterestRatePeriods.tenantId, loanInterestRatePeriods.id],
     }),
     check("loan_interest_accruals_status_check", sql`${table.status} IN ('accrued', 'accruing', 'due', 'paid', 'partially_paid', 'reversed')`),
+    check("loan_interest_accruals_penalty_money_check", sql`
+        ${table.accruedPenalty} >= 0 AND scale(${table.accruedPenalty}) <= 2
+        AND ${table.paidPenalty} >= 0 AND scale(${table.paidPenalty}) <= 2
+        AND ${table.paidPenalty} <= ${table.accruedPenalty}
+    `),
     check("loan_interest_accruals_period_snapshot_check", sql`
         (${table.periodStartDate} IS NULL AND ${table.periodEndDate} IS NULL AND ${table.periodDayIndex} IS NULL
             AND ${table.periodDays} IS NULL AND ${table.cumulativeInterestAmount} IS NULL)

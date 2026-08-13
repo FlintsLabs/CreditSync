@@ -59,14 +59,15 @@ export interface PublicInstallmentSchedule {
 }
 
 export interface PublicWeeklyFloatingInterestPreviewFields {
-    fullPeriodInterest: string;
+    firstPeriodInterest: string;
     advanceInterest: string;
     netBorrowerPayout: string;
     coveredStartDate: string | null;
     coveredEndDate: string | null;
-    nextInterestDate: string;
+    firstPeriodDueDate: string;
+    nextAccrualDate: string;
     periodDays: 7;
-    nonRefundable: boolean;
+    advanceInterestRefundPolicy: "non_refundable";
 }
 
 export interface PublicLoanTerms {

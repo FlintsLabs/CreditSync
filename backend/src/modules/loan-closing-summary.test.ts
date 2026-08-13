@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, setSystemTime, test } from "bun:test";
-import { eq, sql } from "drizzle-orm";
+import Decimal from "decimal.js";
+import { and, eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { loans, users } from "../db/schema";
+import { loanInterestAccruals, loans, transactions, users } from "../db/schema";
 import { loansRoute } from "./loans";
 import type { CommandContext } from "../services/command-context";
 import { createBorrower } from "../services/borrower-service";
 import { activateLoan, createLoanDraft } from "../services/loan-application-service";
+import { getLoanPaymentHealth } from "../services/loan-payment-health-service";
 import { createPaymentIntake, postPayment, previewPaymentMatch, reversePayment } from "../services/payment-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
@@ -68,11 +70,12 @@ async function seedWeeklyLoan(input: { deduct?: boolean; fees?: string; fixedPen
 async function postFloatingPayment(
     seeded: Awaited<ReturnType<typeof seedWeeklyLoan>>,
     amount: string,
+    receivedAt = "2026-08-17T05:00:00.000Z",
 ) {
     const ctx = context(seeded.actor);
     const intake = await createPaymentIntake(ctx, {
         amount,
-        receivedAt: "2026-08-17T05:00:00.000Z",
+        receivedAt,
         payerName: seeded.borrower.name,
     });
     const preview = await previewPaymentMatch(ctx, intake.publicId, {
@@ -83,8 +86,8 @@ async function postFloatingPayment(
         }],
     });
     expect(preview.status).toBe("ready");
-    await postPayment(ctx, intake.publicId, { proposalPublicId: preview.publicId });
-    return { ctx, intake };
+    const posted = await postPayment(ctx, intake.publicId, { proposalPublicId: preview.publicId });
+    return { ctx, intake, posted };
 }
 
 async function closingSummary(seeded: Awaited<ReturnType<typeof seedWeeklyLoan>>) {
@@ -95,6 +98,22 @@ async function closingSummary(seeded: Awaited<ReturnType<typeof seedWeeklyLoan>>
     const body = await response.json() as Record<string, unknown>;
     expect(response.status, JSON.stringify(body)).toBe(200);
     return body;
+}
+
+async function paymentHealth(
+    seeded: Awaited<ReturnType<typeof seedWeeklyLoan>>,
+    asOf: Date,
+) {
+    const loan = await db.query.loans.findFirst({ where: eq(loans.publicId, seeded.draft.publicId) });
+    expect(loan).toBeDefined();
+    return getLoanPaymentHealth(db, loan!, { asOf, actorUserId: seeded.actor.id });
+}
+
+async function persistedFloatingPenalty(seeded: Awaited<ReturnType<typeof seedWeeklyLoan>>) {
+    const loan = await db.query.loans.findFirst({ where: eq(loans.publicId, seeded.draft.publicId) });
+    expect(loan).toBeDefined();
+    const rows = await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan!.id));
+    return rows.reduce((sum, row) => sum.plus(row.paidPenalty), new Decimal(0)).toFixed(2);
 }
 
 describe("floating loan closing summary", () => {
@@ -147,5 +166,111 @@ describe("floating loan closing summary", () => {
             principal: "5000.00", dueInterest: "0.00", accruingInterest: "0.00",
             totalInterest: "0.00", totalDue: "5000.00", balance: "5000.00", totalPaid: "0.00",
         });
+    });
+
+    // Break caught: a floating payment bypasses an overdue period penalty,
+    // pays interest first, and leaves no durable per-period paid-penalty state.
+    integrationTest("allocates partial and full floating penalties before interest", async () => {
+        const asOf = new Date("2026-08-18T12:00:00+07:00");
+        setSystemTime(asOf);
+        const seeded = await seedWeeklyLoan({ fixedPenalty: "10.00" });
+
+        const partial = await postFloatingPayment(seeded, "5.00", "2026-08-18T05:00:00.000Z");
+        expect(partial.posted.transactions).toEqual([expect.objectContaining({
+            penaltyComponent: "5.00", interestComponent: "0.00", principalComponent: "0.00",
+        })]);
+        expect(await persistedFloatingPenalty(seeded)).toBe("5.00");
+        expect(await closingSummary(seeded)).toMatchObject({
+            penalty: "5.00", dueInterest: "600.00", totalDue: "5690.71",
+        });
+        expect(await paymentHealth(seeded, asOf)).toMatchObject({ status: "overdue", overdueAmount: "605.00" });
+
+        const completed = await postFloatingPayment(seeded, "15.00", "2026-08-18T06:00:00.000Z");
+        expect(completed.posted.transactions).toEqual([expect.objectContaining({
+            penaltyComponent: "5.00", interestComponent: "10.00", principalComponent: "0.00",
+        })]);
+        expect(await persistedFloatingPenalty(seeded)).toBe("10.00");
+        expect(await closingSummary(seeded)).toMatchObject({
+            penalty: "0.00", dueInterest: "590.00", totalDue: "5675.71",
+        });
+        expect(await paymentHealth(seeded, asOf)).toMatchObject({ status: "overdue", overdueAmount: "590.00" });
+    });
+
+    // Break caught: paying all related interest erases an already incurred
+    // penalty from both settlement and payment-health projections.
+    integrationTest("retains an unpaid period penalty after its interest is fully paid", async () => {
+        const asOf = new Date("2026-08-18T12:00:00+07:00");
+        setSystemTime(asOf);
+        const seeded = await seedWeeklyLoan({ fixedPenalty: "10.00" });
+        expect(await closingSummary(seeded)).toMatchObject({ penalty: "10.00", dueInterest: "600.00" });
+        const loan = await db.query.loans.findFirst({ where: eq(loans.publicId, seeded.draft.publicId) });
+        expect(loan).toBeDefined();
+        await db.update(loanInterestAccruals).set({
+            paidAmount: sql`${loanInterestAccruals.interestAmount}`,
+            status: "paid",
+        }).where(and(eq(loanInterestAccruals.loanId, loan!.id), eq(loanInterestAccruals.periodEndDate, "2026-08-17")));
+        await db.update(loans).set({ outstandingInterest: "0.00" }).where(eq(loans.id, loan!.id));
+        await db.insert(transactions).values({
+            tenantId: seeded.actor.tenantId,
+            ownerUserId: seeded.actor.id,
+            loanId: loan!.id,
+            amount: "600.00",
+            principalComponent: "0.00",
+            interestComponent: "600.00",
+            feeComponent: "0.00",
+            penaltyComponent: "0.00",
+            type: "repayment",
+            transactionDate: asOf,
+            recordedByUserId: seeded.actor.id,
+            entryType: "repayment",
+            idempotencyKey: `legacy-interest-${crypto.randomUUID()}`,
+            postedAt: asOf,
+        });
+
+        expect(await closingSummary(seeded)).toMatchObject({
+            penalty: "10.00", dueInterest: "0.00", totalPaid: "600.00", totalDue: "5095.71",
+        });
+        expect(await paymentHealth(seeded, asOf)).toMatchObject({ status: "overdue", overdueAmount: "10.00" });
+    });
+
+    // Break caught: penalty paid against an older weekly group globally offsets
+    // the distinct penalty incurred by a later overdue weekly group.
+    integrationTest("keeps paid penalty scoped to its weekly due group", async () => {
+        setSystemTime(new Date("2026-08-18T12:00:00+07:00"));
+        const seeded = await seedWeeklyLoan({ fixedPenalty: "10.00" });
+        const firstPeriod = await postFloatingPayment(seeded, "610.00", "2026-08-18T05:00:00.000Z");
+        expect(firstPeriod.posted.transactions).toEqual([expect.objectContaining({
+            penaltyComponent: "10.00", interestComponent: "600.00", principalComponent: "0.00",
+        })]);
+
+        const later = new Date("2026-08-25T12:00:00+07:00");
+        setSystemTime(later);
+        expect(await closingSummary(seeded)).toMatchObject({
+            penalty: "10.00", dueInterest: "600.00", totalDue: "5695.71",
+        });
+        expect(await paymentHealth(seeded, later)).toMatchObject({ status: "overdue", overdueAmount: "610.00" });
+    });
+
+    // Break caught: reversing a penalty-first floating payment restores only
+    // interest/principal and leaves the due-group penalty marked as paid.
+    integrationTest("restores the exact weekly penalty group on reversal", async () => {
+        const asOf = new Date("2026-08-18T12:00:00+07:00");
+        setSystemTime(asOf);
+        const seeded = await seedWeeklyLoan({ fixedPenalty: "10.00" });
+        const payment = await postFloatingPayment(seeded, "10.00", "2026-08-18T05:00:00.000Z");
+        expect(payment.posted.transactions).toEqual([expect.objectContaining({
+            penaltyComponent: "10.00", interestComponent: "0.00", principalComponent: "0.00",
+        })]);
+        expect(await persistedFloatingPenalty(seeded)).toBe("10.00");
+
+        const reversed = await reversePayment(context(seeded.actor, "reverse-penalty"), payment.intake.publicId, {
+            reason: "Correct penalty allocation",
+        });
+        expect(reversed.transactions).toContainEqual(expect.objectContaining({
+            entryType: "reversal", penaltyComponent: "-10.00",
+        }));
+        expect(await persistedFloatingPenalty(seeded)).toBe("0.00");
+        expect(await closingSummary(seeded)).toMatchObject({ penalty: "10.00", dueInterest: "600.00" });
+        expect(await paymentHealth(seeded, asOf)).toMatchObject({ status: "overdue", overdueAmount: "610.00" });
     });
 });
