@@ -4,6 +4,7 @@ import { db } from "../db";
 import { loanAdjustments, loanInterestAccruals, loanInterestRatePeriods, loans, transactions } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import { calculateDailyInterest, interestDatesThrough, type FloatingAccrualCycle, type FloatingDailyInterest, type FloatingDailyInterestInput } from "../lib/floating-daily-interest";
+import { calculateWeeklyAccruedInterest, weeklySnapshotPeriod } from "../lib/floating-interest-period";
 import { resolveRatePeriod, type RatePeriodValue, type RateType } from "../lib/interest-rate-periods";
 import { DomainError } from "./domain-error";
 import type { CommandContext } from "./command-context";
@@ -16,11 +17,162 @@ function bangkokDate(value: Date) {
     return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
+type WeeklyExpectedAccrual = {
+    accrualDate: string;
+    interestRatePeriodId: number;
+    openingPrincipal: string;
+    rateMode: RateType;
+    rate: string;
+    periodStartDate: string;
+    periodEndDate: string;
+    periodDayIndex: number;
+    periodDays: number;
+    cumulativeInterestAmount: string;
+    interestAmount: string;
+    status: "accruing" | "due" | "paid";
+    paidAmount: string;
+};
+
+async function weeklyExpectedAccruals(
+    tx: Executor,
+    loan: typeof loans.$inferSelect,
+    throughDate: string,
+): Promise<WeeklyExpectedAccrual[]> {
+    if (!loan.interestStartDate || !loan.firstDayTreatment) return [];
+    const periodRows = await tx.select().from(loanInterestRatePeriods).where(and(
+        eq(loanInterestRatePeriods.tenantId, loan.tenantId),
+        eq(loanInterestRatePeriods.loanId, loan.id),
+    )).orderBy(asc(loanInterestRatePeriods.effectiveDate));
+    const periods: RatePeriodValue[] = periodRows.map((row: typeof loanInterestRatePeriods.$inferSelect) => ({
+        publicId: row.publicId,
+        effectiveDate: row.effectiveDate,
+        expiryDate: row.expiryDate,
+        rateType: row.rateType as RateType,
+        rate: row.rate,
+    }));
+    const rowByPublicId = new Map<string, typeof loanInterestRatePeriods.$inferSelect>(
+        periodRows.map((row: typeof loanInterestRatePeriods.$inferSelect) => [row.publicId, row]),
+    );
+    const allTransactions = await tx.select().from(transactions).where(and(
+        eq(transactions.tenantId, loan.tenantId),
+        eq(transactions.loanId, loan.id),
+    ));
+    const reversedTransactionIds = new Set<number>(allTransactions.flatMap((row: typeof transactions.$inferSelect) =>
+        row.reversedTransactionId === null ? [] : [row.reversedTransactionId]));
+    const dates = interestDatesThrough(
+        loan.interestStartDate,
+        throughDate,
+        loan.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"],
+        "weekly",
+    );
+
+    let segmentKey = "";
+    let segmentElapsed = 0;
+    let periodKey = "";
+    let periodCumulative = new Decimal(0);
+    return dates.map((accrualDate) => {
+        const snapshot = weeklySnapshotPeriod(loan.interestStartDate!, accrualDate);
+        const periodValue = resolveRatePeriod(periods, accrualDate);
+        const storedPeriod = periodValue ? rowByPublicId.get(periodValue.publicId) : undefined;
+        if (!periodValue || !storedPeriod) {
+            throw new DomainError("RATE_PERIOD_MISSING_COVERAGE", "Floating loan has no interest rate for an accrual date", 409, {
+                accrualDate,
+                loanPublicId: loan.publicId,
+            });
+        }
+        const principalAppliedBefore = allTransactions
+            .filter((row: typeof transactions.$inferSelect) => row.postedAt
+                && row.transactionDate
+                && row.reversedTransactionId === null
+                && !reversedTransactionIds.has(row.id)
+                && bangkokDate(row.transactionDate) < accrualDate)
+            .reduce((sum: Decimal, row: typeof transactions.$inferSelect) => sum.plus(row.principalComponent), new Decimal(0));
+        const openingPrincipal = Decimal.max(0, new Decimal(loan.principalAmount).minus(principalAppliedBefore)).toFixed(2);
+        const nextPeriodKey = `${snapshot.periodStartDate}:${snapshot.periodEndDate}`;
+        if (nextPeriodKey !== periodKey) {
+            periodKey = nextPeriodKey;
+            periodCumulative = new Decimal(0);
+            segmentKey = "";
+        }
+        const nextSegmentKey = `${nextPeriodKey}:${storedPeriod.id}:${openingPrincipal}:${periodValue.rateType}:${periodValue.rate}`;
+        segmentElapsed = nextSegmentKey === segmentKey ? segmentElapsed + 1 : 1;
+        segmentKey = nextSegmentKey;
+        const calculated = calculateWeeklyAccruedInterest(openingPrincipal, periodValue.rateType, periodValue.rate, segmentElapsed);
+        periodCumulative = periodCumulative.plus(calculated.incrementAmount);
+        const advancePaid = loan.firstDayTreatment === "deduct" && snapshot.periodStartDate === loan.interestStartDate;
+        const periodComplete = throughDate >= snapshot.periodEndDate;
+        return {
+            accrualDate,
+            interestRatePeriodId: storedPeriod.id,
+            openingPrincipal,
+            rateMode: periodValue.rateType,
+            rate: periodValue.rate,
+            periodStartDate: snapshot.periodStartDate,
+            periodEndDate: snapshot.periodEndDate,
+            periodDayIndex: snapshot.dayIndex,
+            periodDays: snapshot.periodDays,
+            cumulativeInterestAmount: periodCumulative.toFixed(2),
+            interestAmount: calculated.incrementAmount,
+            status: advancePaid ? "paid" : periodComplete ? "due" : "accruing",
+            paidAmount: advancePaid ? calculated.incrementAmount : "0.00",
+        };
+    });
+}
+
 export async function accrueFloatingInterestThrough(tx: Executor, loan: typeof loans.$inferSelect, through: Date, actorUserId: number | null) {
     if (loan.repaymentType !== "floating" || !loan.dailyInterestMode || !loan.dailyInterestRate || !loan.firstDayTreatment || !loan.interestStartDate) return [];
     const firstDayTreatment = loan.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"];
     const accrualCycle = (loan.floatingAccrualCycle ?? "daily") as FloatingAccrualCycle;
     const existing = await tx.select().from(loanInterestAccruals).where(and(eq(loanInterestAccruals.tenantId, loan.tenantId), eq(loanInterestAccruals.loanId, loan.id)));
+    if (accrualCycle === "weekly") {
+        const throughDate = bangkokDate(through);
+        const expected = await weeklyExpectedAccruals(tx, loan, throughDate);
+        const dates = new Set(existing.filter((row: typeof loanInterestAccruals.$inferSelect) => row.status !== "reversed").map((row: typeof loanInterestAccruals.$inferSelect) => row.accrualDate));
+        const legacyCoveredPeriods = new Set<string>();
+        for (const row of existing as Array<typeof loanInterestAccruals.$inferSelect>) {
+            if (row.status === "reversed" || row.periodStartDate !== null) continue;
+            if (row.accrualDate === loan.interestStartDate && firstDayTreatment === "deduct") {
+                legacyCoveredPeriods.add(loan.interestStartDate);
+                continue;
+            }
+            try {
+                legacyCoveredPeriods.add(weeklySnapshotPeriod(loan.interestStartDate, row.accrualDate).periodStartDate);
+            } catch {
+                // A legacy anchor-date advance row is handled above; malformed history remains visible for correction.
+            }
+        }
+        const missing = expected.filter((row) => !dates.has(row.accrualDate) && !legacyCoveredPeriods.has(row.periodStartDate));
+        if (missing.length) {
+            await tx.insert(loanInterestAccruals).values(missing.map((row) => ({
+                tenantId: loan.tenantId,
+                loanId: loan.id,
+                interestRatePeriodId: row.interestRatePeriodId,
+                accrualDate: row.accrualDate,
+                openingPrincipal: row.openingPrincipal,
+                rateMode: row.rateMode,
+                rate: row.rate,
+                periodStartDate: row.periodStartDate,
+                periodEndDate: row.periodEndDate,
+                periodDayIndex: row.periodDayIndex,
+                periodDays: row.periodDays,
+                cumulativeInterestAmount: row.cumulativeInterestAmount,
+                interestAmount: row.interestAmount,
+                paidAmount: row.paidAmount,
+                status: row.status,
+                createdByUserId: actorUserId,
+            }))).onConflictDoNothing();
+        }
+        const completedPeriodStarts = [...new Set(expected.filter((row) => row.status === "due").map((row) => row.periodStartDate))];
+        if (completedPeriodStarts.length) {
+            await tx.update(loanInterestAccruals).set({ status: "due" }).where(and(
+                eq(loanInterestAccruals.tenantId, loan.tenantId),
+                eq(loanInterestAccruals.loanId, loan.id),
+                inArray(loanInterestAccruals.periodStartDate, completedPeriodStarts),
+                eq(loanInterestAccruals.status, "accruing"),
+            ));
+        }
+        return await tx.select().from(loanInterestAccruals).where(and(eq(loanInterestAccruals.tenantId, loan.tenantId), eq(loanInterestAccruals.loanId, loan.id)));
+    }
     const dates = new Set(existing.map((row: typeof loanInterestAccruals.$inferSelect) => row.accrualDate));
     const dueDates = interestDatesThrough(loan.interestStartDate, bangkokDate(through), firstDayTreatment, accrualCycle).filter((date) => !dates.has(date));
     if (!dueDates.length) return existing;
@@ -89,8 +241,21 @@ export async function floatingInterestDue(tx: Executor, loan: typeof loans.$infe
             accrualPublicId: corrupt.publicId,
         });
     }
-    return rows.filter((row: typeof loanInterestAccruals.$inferSelect) => row.status === "accrued")
+    return rows.filter((row: typeof loanInterestAccruals.$inferSelect) => row.status === "accrued" || row.status === "due" || row.status === "partially_paid")
         .reduce((total: Decimal, row: typeof loanInterestAccruals.$inferSelect) => total.plus(new Decimal(row.interestAmount).minus(row.paidAmount)), new Decimal(0));
+}
+
+export async function floatingInterestBalances(tx: Executor, loan: typeof loans.$inferSelect, through: Date, actorUserId: number | null) {
+    const rows = await accrueFloatingInterestThrough(tx, loan, through, actorUserId);
+    let dueInterest = new Decimal(0);
+    let accruingInterest = new Decimal(0);
+    for (const row of rows as Array<typeof loanInterestAccruals.$inferSelect>) {
+        if (row.status === "reversed" || row.status === "paid") continue;
+        const unpaid = Decimal.max(new Decimal(row.interestAmount).minus(row.paidAmount), 0);
+        if (row.status === "accruing") accruingInterest = accruingInterest.plus(unpaid);
+        else dueInterest = dueInterest.plus(unpaid);
+    }
+    return { rows, dueInterest, accruingInterest };
 }
 
 export async function correctFloatingInterestAccruals(ctx: CommandContext, loanPublicId: string, dates: string[], reason: string) {
@@ -140,38 +305,55 @@ export async function correctFloatingInterestAccruals(ctx: CommandContext, loanP
         const periodValues: RatePeriodValue[] = periodRows.map((row) => ({ publicId: row.publicId, effectiveDate: row.effectiveDate, expiryDate: row.expiryDate, rateType: row.rateType as RateType, rate: row.rate }));
         const allTransactions = await tx.select().from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.loanId, loan.id)));
         const reversedTransactionIds = new Set(allTransactions.flatMap((row) => row.reversedTransactionId === null ? [] : [row.reversedTransactionId]));
+        const weeklyExpected = accrualCycle === "weekly"
+            ? new Map((await weeklyExpectedAccruals(tx, loan, uniqueDates.at(-1)!)).map((row) => [row.accrualDate, row]))
+            : null;
         let delta = new Decimal(0);
         const replacements = [] as Array<typeof loanInterestAccruals.$inferSelect>;
         for (const old of oldRows) {
+            const weekly = weeklyExpected?.get(old.accrualDate);
+            if (accrualCycle === "weekly" && !weekly) {
+                throw new DomainError("ACCRUAL_DATE_NOT_SCHEDULED", "Floating accrual date is outside the loan's accrual cycle", 409, { accrualDate: old.accrualDate });
+            }
             const periodValue = resolveRatePeriod(periodValues, old.accrualDate);
             const period = periodRows.find((row) => row.publicId === periodValue?.publicId);
             if (!periodValue || !period) throw new DomainError("RATE_PERIOD_MISSING_COVERAGE", "Floating loan has no interest rate for a correction date", 409, { accrualDate: old.accrualDate });
             const principalAppliedBefore = allTransactions
                 .filter((row) => row.postedAt && row.transactionDate && row.reversedTransactionId === null && !reversedTransactionIds.has(row.id) && bangkokDate(row.transactionDate) < old.accrualDate)
                 .reduce((sum, row) => sum.plus(row.principalComponent), new Decimal(0));
-            const openingPrincipal = Decimal.max(0, new Decimal(loan.principalAmount).minus(principalAppliedBefore));
+            const openingPrincipal = weekly
+                ? new Decimal(weekly.openingPrincipal)
+                : Decimal.max(0, new Decimal(loan.principalAmount).minus(principalAppliedBefore));
             const policy: FloatingDailyInterestInput = {
                 mode: periodValue.rateType,
                 rate: periodValue.rate,
                 firstDayTreatment,
                 accrualCycle,
             };
-            const interestAmount = calculateDailyInterest(openingPrincipal.toFixed(2), policy);
-            const paidAmount = old.accrualDate === loan.interestStartDate && loan.firstDayTreatment === "deduct"
+            const interestAmount = weekly?.interestAmount ?? calculateDailyInterest(openingPrincipal.toFixed(2), policy);
+            const paidAmount = weekly?.status === "paid" || (old.accrualDate === loan.interestStartDate && loan.firstDayTreatment === "deduct")
                 ? interestAmount
                 : Decimal.min(new Decimal(old.paidAmount), new Decimal(interestAmount)).toFixed(2);
             await tx.update(loanInterestAccruals).set({ status: "reversed" }).where(and(eq(loanInterestAccruals.tenantId, ctx.tenantId), eq(loanInterestAccruals.id, old.id)));
             const replacement = await tx.insert(loanInterestAccruals).values({
                 tenantId: ctx.tenantId, loanId: loan.id, interestRatePeriodId: period.id, accrualDate: old.accrualDate,
                 openingPrincipal: openingPrincipal.toFixed(2), rateMode: periodValue.rateType, rate: periodValue.rate,
-                interestAmount, paidAmount, status: new Decimal(paidAmount).eq(interestAmount) ? "paid" : "accrued",
+                periodStartDate: weekly?.periodStartDate ?? null,
+                periodEndDate: weekly?.periodEndDate ?? null,
+                periodDayIndex: weekly?.periodDayIndex ?? null,
+                periodDays: weekly?.periodDays ?? null,
+                cumulativeInterestAmount: weekly?.cumulativeInterestAmount ?? null,
+                interestAmount, paidAmount,
+                status: new Decimal(paidAmount).eq(interestAmount) ? "paid" : weekly?.status ?? "accrued",
                 reversedAccrualId: old.id, createdByUserId: ctx.actorUserId,
             }).returning().then((rows) => rows[0]!);
             replacements.push(replacement);
             delta = delta.plus(new Decimal(interestAmount).minus(old.interestAmount));
         }
         const active = await tx.select().from(loanInterestAccruals).where(and(eq(loanInterestAccruals.tenantId, ctx.tenantId), eq(loanInterestAccruals.loanId, loan.id), sql`${loanInterestAccruals.status} <> 'reversed'`));
-        const outstandingInterest = active.reduce((sum, row) => sum.plus(new Decimal(row.interestAmount).minus(row.paidAmount)), new Decimal(0));
+        const outstandingInterest = active
+            .filter((row) => row.status !== "accruing" && row.status !== "paid")
+            .reduce((sum, row) => sum.plus(new Decimal(row.interestAmount).minus(row.paidAmount)), new Decimal(0));
         await tx.update(loans).set({ outstandingInterest: outstandingInterest.toFixed(2), updatedAt: new Date() }).where(and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, loan.id)));
         const adjustment = await tx.insert(loanAdjustments).values({
             tenantId: ctx.tenantId, loanId: loan.id, adjustmentType: "floating_interest_accrual_correction", amount: delta.toFixed(2),

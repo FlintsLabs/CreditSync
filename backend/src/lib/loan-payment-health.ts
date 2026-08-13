@@ -8,6 +8,7 @@ export interface LoanPaymentHealth {
     overdueAmount: string;
     overdueItemCount: number;
     maxOverdueDays: number;
+    accruingInterestAmount?: string;
 }
 
 export interface LoanPaymentHealthInput {
@@ -25,6 +26,7 @@ export interface LoanPaymentHealthInput {
     }>;
     accruals: Array<{
         accrualDate: string;
+        dueDate?: string | null;
         interestAmount: string;
         paidAmount: string;
         status: string;
@@ -63,19 +65,26 @@ export function computeLoanPaymentHealth(input: LoanPaymentHealthInput): LoanPay
     let overdue = zero();
     let overdueItemCount = 0;
     let maxOverdueDays = 0;
+    let accruingInterest = zero();
 
     if (input.repaymentType === "floating") {
         for (const accrual of input.accruals) {
             if (accrual.status === "reversed") continue;
             const unpaid = Decimal.max(new Decimal(accrual.interestAmount).minus(accrual.paidAmount), 0);
             if (unpaid.isZero() || accrual.accrualDate > input.businessDate) continue;
+            if (accrual.status === "accruing") {
+                accruingInterest = accruingInterest.plus(unpaid);
+                continue;
+            }
 
-            if (accrual.accrualDate === input.businessDate) {
+            const dueDate = accrual.dueDate ?? accrual.accrualDate;
+
+            if (dueDate === input.businessDate) {
                 dueNow = dueNow.plus(unpaid);
                 continue;
             }
 
-            const overdueDays = calendarDays(accrual.accrualDate, input.businessDate);
+            const overdueDays = calendarDays(dueDate, input.businessDate);
             overdue = overdue.plus(unpaid);
             overdueItemCount += 1;
             maxOverdueDays = Math.max(maxOverdueDays, overdueDays);
@@ -107,11 +116,15 @@ export function computeLoanPaymentHealth(input: LoanPaymentHealthInput): LoanPay
                 ? "settled"
                 : "current";
 
-    return {
+    const health: LoanPaymentHealth = {
         status,
         dueTodayAmount: money(dueNow),
         overdueAmount: money(overdue),
         overdueItemCount,
         maxOverdueDays,
     };
+    if (input.repaymentType === "floating" && input.accruals.some((row) => ["accruing", "due", "partially_paid"].includes(row.status))) {
+        health.accruingInterestAmount = money(accruingInterest);
+    }
+    return health;
 }

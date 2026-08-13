@@ -293,6 +293,67 @@ describe("default MCP adapter integration", () => {
         await client.close();
     });
 
+    // Break caught: the adapter's unlocked preflight sees a monthly draft,
+    // then a winning REST transition changes it to single-payment before the
+    // financial activation lock and the MCP write still commits.
+    integrationTest("rechecks the MCP-supported repayment type after the activation row lock", async () => {
+        const actor = await db.insert(users).values({ tenantId: TENANT_ID, email: ACTOR_EMAIL, role: "owner" })
+            .returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({
+            tenantId: TENANT_ID, ownerUserId: actor.id, name: "MCP activation race borrower",
+        }).returning().then((rows) => rows[0]!);
+        const draft = await db.insert(loans).values({
+            tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id,
+            principalAmount: "5000.00", interestRate: "0.00", repaymentType: "monthly", termMonths: 1,
+            totalInstallments: 1, installmentAmount: "5000.00", startDate: "2026-08-10",
+            outstandingPrincipal: "0.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "draft",
+        }).returning().then((rows) => rows[0]!);
+        let releaseTransition!: () => void;
+        const transitionMayCommit = new Promise<void>((resolve) => { releaseTransition = resolve; });
+        let transitionLocked!: () => void;
+        const transitionHasLock = new Promise<void>((resolve) => { transitionLocked = resolve; });
+        const transition = db.transaction(async (tx) => {
+            await tx.execute(sql`SELECT id FROM loans WHERE id = ${draft.id} FOR UPDATE`);
+            await tx.update(loans).set({
+                repaymentType: "single_payment", termMonths: 1, totalInstallments: null, installmentAmount: null,
+                singlePaymentDueDate: "2026-08-19", singlePaymentFixedAgreedInterest: "500.00",
+                singlePaymentInterestPolicy: "fixed_only", singlePaymentLatePenaltyMode: "none",
+            }).where(eq(loans.id, draft.id));
+            transitionLocked();
+            await transitionMayCommit;
+        });
+        await transitionHasLock;
+        const { client } = await startDefaultServer();
+        const activation = client.callTool({ name: "loan.activate", arguments: { loanPublicId: draft.publicId } });
+
+        let activationWaitingOnLock = false;
+        for (let attempt = 0; attempt < 100 && !activationWaitingOnLock; attempt += 1) {
+            const waiting = await db.execute(sql<{ waiting: boolean }>`SELECT EXISTS (
+                SELECT 1 FROM pg_stat_activity
+                WHERE pid <> pg_backend_pid()
+                  AND wait_event_type = 'Lock'
+                  AND query LIKE 'SELECT id FROM loans WHERE id = %FOR UPDATE%'
+            ) AS waiting`);
+            activationWaitingOnLock = waiting[0]?.waiting === true;
+            if (!activationWaitingOnLock) await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(activationWaitingOnLock).toBe(true);
+        releaseTransition();
+        await transition;
+        const result = await activation;
+
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({ error: { code: "MCP_LOAN_TYPE_UNSUPPORTED" } });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, draft.id) })).toMatchObject({
+            repaymentType: "single_payment", status: "draft", outstandingPrincipal: "0.00", outstandingInterest: "0.00",
+        });
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, draft.id))).toHaveLength(0);
+        expect(await db.select().from(auditLogs).where(and(
+            eq(auditLogs.entityId, draft.publicId), eq(auditLogs.action, "activated"),
+        ))).toHaveLength(0);
+        await client.close();
+    });
+
     // Break caught: signed compensating ledger values are rejected after the reversal has already committed.
     integrationTest("returns a successful audited payment reversal and the same public result on retry", async () => {
         const actor = await db.insert(users).values({

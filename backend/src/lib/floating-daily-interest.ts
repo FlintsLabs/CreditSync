@@ -21,11 +21,18 @@ export function normalizeFloatingDailyInterest(input: FloatingDailyInterestInput
     if (input.accrualCycle !== undefined && input.accrualCycle !== "daily" && input.accrualCycle !== "weekly") {
         throw new Error("Floating accrual cycle is invalid");
     }
-    if (typeof input.rate !== "string" || !/^(?:0|[1-9]\d*)(?:\.\d{1,4})?$/.test(input.rate)) {
+    const decimalSyntax = /^[+-]?(?:\d+(?:\.(\d*))?|\.(\d+))(?:e[+-]?\d+)?$/iu.exec(input.rate);
+    const suppliedFraction = decimalSyntax?.[1] ?? decimalSyntax?.[2] ?? "";
+    if (!decimalSyntax || suppliedFraction.length > 4) {
         throw new Error("Daily interest rate must be a positive decimal with at most four places");
     }
-    const rate = new Decimal(input.rate);
-    if (!rate.isFinite() || rate.lte(0)) {
+    let rate: Decimal;
+    try {
+        rate = new Decimal(input.rate);
+    } catch {
+        throw new Error("Daily interest rate must be a positive decimal with at most four places");
+    }
+    if (!rate.isFinite() || rate.lte(0) || rate.decimalPlaces() > 4) {
         throw new Error("Daily interest rate must be a positive decimal with at most four places");
     }
     return { mode: input.mode, rate: rate.toFixed(4), firstDayTreatment: input.firstDayTreatment, accrualCycle: input.accrualCycle ?? "daily" };
@@ -64,11 +71,11 @@ export function interestDatesThrough(
     if (firstDayTreatment !== "deduct" && firstDayTreatment !== "start_next_day") throw new Error("First-day treatment is invalid");
     if (accrualCycle !== "daily" && accrualCycle !== "weekly") throw new Error("Floating accrual cycle is invalid");
     const periodDays = accrualCycle === "weekly" ? 7 : 1;
-    if (firstDayTreatment === "start_next_day") start.setUTCDate(start.getUTCDate() + periodDays);
+    if (accrualCycle === "weekly" || firstDayTreatment === "start_next_day") start.setUTCDate(start.getUTCDate() + 1);
     const dates: string[] = [];
     while (start <= through) {
         dates.push(formatDate(start));
-        start.setUTCDate(start.getUTCDate() + periodDays);
+        start.setUTCDate(start.getUTCDate() + (accrualCycle === "weekly" ? 1 : periodDays));
     }
     return dates;
 }

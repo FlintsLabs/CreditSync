@@ -42,7 +42,7 @@ describe("single-payment restructure schema contract", () => {
         expect(await file.exists()).toBe(true);
         const migration = await file.text();
 
-        expect(journal.entries.at(-1)).toMatchObject({ idx: 27, tag: migrationTag });
+        expect(journal.entries).toEqual(expect.arrayContaining([expect.objectContaining({ idx: 27, tag: migrationTag })]));
         expect(migration).toContain('ALTER TABLE "loans" ADD COLUMN "single_payment_due_date" date');
         expect(migration).toContain('ALTER TABLE "loans" ADD COLUMN "floating_accrual_cycle" text');
         expect(migration).toMatch(/UPDATE "loans"[\s\S]+SET "floating_accrual_cycle" = 'daily'[\s\S]+WHERE "repayment_type" = 'floating'/);

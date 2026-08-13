@@ -1,5 +1,6 @@
 import { Elysia, t } from "elysia";
 import { and, desc, eq } from "drizzle-orm";
+import Decimal from "decimal.js";
 import { db } from "../db";
 import { borrowers, loanSchedules, loans, transactions } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
@@ -11,7 +12,8 @@ import { serializeMoney } from "../lib/money";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
 import { findAccessibleBorrowerByPublicId, findAccessibleLoanByPublicId } from "../lib/public-id";
 import { activateLoan, createLoanDraft, getLoanApplication, presentLoan, previewLoan, updateLoanDraft } from "../services/loan-application-service";
-import { getLoanPaymentHealth } from "../services/loan-payment-health-service";
+import { bangkokBusinessDate, getLoanPaymentHealth } from "../services/loan-payment-health-service";
+import { floatingInterestBalances } from "../services/floating-interest-service";
 import { DomainError } from "../services/domain-error";
 import { loanCommandContext, loanDomainFailure, loanUnauthorized } from "./loan-http-support";
 import { loanDraftBody, loanDraftUpdateBody, loanTermsBody } from "./loan-route-schemas";
@@ -169,6 +171,29 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
         if (!loan) return loanDomainFailure(new DomainError("LOAN_NOT_FOUND", "Loan not found", 404), set);
         const loanTransactions = await db.select().from(transactions)
             .where(and(eq(transactions.loanId, loan.id), eq(transactions.tenantId, user.tenantId)));
+        if (loan.repaymentType === "floating") {
+            const now = new Date();
+            const balances = await floatingInterestBalances(db, loan, now, user.id);
+            const principal = new Decimal(loan.principalAmount);
+            const totalInterest = balances.dueInterest.plus(balances.accruingInterest);
+            const totalPaid = loanTransactions.reduce((sum, transaction) => sum.plus(transaction.amount), new Decimal(0));
+            const totalDue = principal.plus(totalInterest);
+            const balance = totalDue.minus(totalPaid);
+            const start = Date.parse(`${loan.startDate ?? now.toISOString().slice(0, 10)}T00:00:00Z`);
+            const end = Date.parse(`${bangkokBusinessDate(now)}T00:00:00Z`);
+            return {
+                loanId: loan.publicId,
+                loanPublicId: loan.publicId,
+                principal: principal.toFixed(2),
+                totalInterest: totalInterest.toFixed(2),
+                accruingInterest: balances.accruingInterest.toFixed(2),
+                dueInterest: balances.dueInterest.toFixed(2),
+                totalPaid: totalPaid.toFixed(2),
+                totalDue: totalDue.toFixed(2),
+                balance: balance.toFixed(2),
+                daysSinceStart: Math.max(0, Math.floor((end - start) / 86_400_000)),
+            };
+        }
         const summary = calculateLoanClosingSummary({ ...loan, startDate: loan.startDate ?? new Date() }, loanTransactions);
         return {
             loanId: loan.publicId,

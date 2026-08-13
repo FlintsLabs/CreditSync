@@ -72,7 +72,7 @@ Account identity and tenant role are read-only values supplied by the authorized
 - calculate repayment schedules before saving
 - support `single_payment`, `daily`, `weekly`, `monthly`, and `floating` repayment types
 - preview and persist exact single-payment due dates, agreed fixed-interest floors, optional greater-of retroactive interest, and contracted late penalties before activation creates one immutable maturity row
-- preserve legacy floating contracts as daily-accrual while allowing new floating terms to state an explicit `daily` or `weekly` accrual cycle; a weekly rate accrues once every seven calendar days anchored to `interestStartDate`, with `deduct` charging the first period on activation and `start_next_day` charging first at the seven-day boundary
+- preserve legacy floating contracts as daily-accrual while allowing new floating terms to state an explicit `daily` or `weekly` accrual cycle; a weekly rate accrues proportionally into immutable daily snapshots, becomes normally payable only at the seven-day boundary anchored to `interestStartDate`, and is charged as one paid, non-refundable first period when `deduct` is selected
 - manage effective-dated floating-interest periods from Loan Detail, including exact current daily interest, future scheduled changes, previewed automatic range splitting, and audited confirmation
 - create editable loan drafts, then activate them to lock terms and generate schedules exactly once
 - use separate preview, draft-save, and activation confirmations in the web wizard

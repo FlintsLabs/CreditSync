@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import Decimal from "decimal.js";
 import { and, eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
@@ -472,9 +472,20 @@ describe("loan application service", () => {
         await activateLoan(ctx, draft.publicId);
 
         const [period] = await db.select().from(loanInterestRatePeriods).where(eq(loanInterestRatePeriods.loanId, stored!.id));
-        const [accrual] = await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, stored!.id));
+        const accruals = await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, stored!.id))
+            .orderBy(loanInterestAccruals.accrualDate);
         expect(await db.query.loans.findFirst({ where: eq(loans.id, stored!.id) })).toMatchObject({ floatingAccrualCycle: "weekly" });
-        expect(accrual).toMatchObject({ interestRatePeriodId: period!.id, accrualDate: "2026-08-10", interestAmount: "15.00", paidAmount: "15.00" });
+        expect(accruals).toHaveLength(7);
+        expect(accruals.reduce((sum, row) => sum.plus(row.interestAmount), new Decimal(0)).toFixed(2)).toBe("15.00");
+        expect(accruals.every((row) => row.interestRatePeriodId === period!.id && row.status === "paid"
+            && row.interestAmount === row.paidAmount)).toBe(true);
+        expect(accruals[0]).toMatchObject({
+            accrualDate: "2026-08-11", periodStartDate: "2026-08-10", periodEndDate: "2026-08-17",
+            periodDayIndex: 1, periodDays: 7, openingPrincipal: "1000.00",
+        });
+        expect(accruals[6]).toMatchObject({
+            accrualDate: "2026-08-17", periodDayIndex: 7, cumulativeInterestAmount: "15.00",
+        });
     });
 
     // Break caught: scheduled activation loses huge Decimal principal/interest before persisting rows and rollups.
@@ -842,6 +853,39 @@ describe("loan application service", () => {
         expect(transitioned.body).toMatchObject({
             repaymentType: "single_payment", totalInstallments: null, installmentAmount: null,
         });
+    });
+
+    // Break caught: the legacy annual-rate closing calculator reports zero or
+    // native-number drift instead of the current weekly period projection.
+    integrationTest("includes exact interim weekly interest in the closing summary", async () => {
+        setSystemTime(new Date("2026-08-13T12:00:00+07:00"));
+        try {
+            const actor = await seedUser("tenant-weekly-closing", "weekly-closing@example.test", "owner");
+            const ctx = context(actor.tenantId, actor.id, "weekly-closing-create");
+            const borrower = await createBorrower(ctx, { name: "Weekly Closing Borrower" });
+            const draft = await createLoanDraft(ctx, {
+                borrowerPublicId: borrower.publicId,
+                principal: "5000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1,
+                startDate: "2026-08-10",
+                floatingDailyInterest: {
+                    mode: "percent", rate: "12.0000", firstDayTreatment: "start_next_day", accrualCycle: "weekly",
+                },
+            });
+            await activateLoan(ctx, draft.publicId);
+            const token = await authToken(actor);
+            const app = new Elysia().use(loansRoute);
+            const closing = await jsonRequest(app, `/loans/${draft.publicId}/closing-summary`, {
+                headers: { authorization: `Bearer ${token}` },
+            });
+
+            expect(closing.response.status, closing.text).toBe(200);
+            expect(closing.body).toMatchObject({
+                principal: "5000.00", totalInterest: "257.14", totalDue: "5257.14", balance: "5257.14",
+                accruingInterest: "257.14", dueInterest: "0.00", totalPaid: "0.00",
+            });
+        } finally {
+            setSystemTime();
+        }
     });
 
     // Break caught: core loan REST adapters expose numeric database keys or accept numeric public money/source identifiers.

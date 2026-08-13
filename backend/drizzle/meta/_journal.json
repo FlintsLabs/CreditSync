@@ -197,6 +197,13 @@
       "when": 1786698000000,
       "tag": "0027_single_payment_restructure",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1786698060000,
+      "tag": "0028_floating_weekly_period_snapshots",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Elysia } from "elysia";
 import { loansRoute } from "./loans";
+import { floatingDailyInterest } from "./loan-route-schemas";
 
 async function postPreview(body: unknown) {
     const app = new Elysia().use(loansRoute);
@@ -14,6 +15,12 @@ async function postPreview(body: unknown) {
 }
 
 describe("loans route composition", () => {
+    test("advertises a closed daily-or-weekly accrual-cycle enum", () => {
+        const schema = floatingDailyInterest as unknown as {
+            properties: { accrualCycle: { anyOf?: Array<{ const?: string }> } };
+        };
+        expect(schema.properties.accrualCycle.anyOf?.map((entry) => entry.const)).toEqual(["daily", "weekly"]);
+    });
     test("mounts the existing public contract, funding, and disbursement endpoints", () => {
         const endpoints = loansRoute.routes
             .map((route) => `${route.method} ${route.path}`)

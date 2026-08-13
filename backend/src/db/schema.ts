@@ -366,6 +366,11 @@ export const loanInterestAccruals = pgTable("loan_interest_accruals", {
     openingPrincipal: numeric("opening_principal").notNull(),
     rateMode: text("rate_mode").notNull(),
     rate: numeric("rate").notNull(),
+    periodStartDate: date("period_start_date"),
+    periodEndDate: date("period_end_date"),
+    periodDayIndex: integer("period_day_index"),
+    periodDays: integer("period_days"),
+    cumulativeInterestAmount: numeric("cumulative_interest_amount"),
     interestAmount: numeric("interest_amount").notNull(),
     paidAmount: numeric("paid_amount").default("0").notNull(),
     status: text("status").default("accrued").notNull(),
@@ -381,6 +386,15 @@ export const loanInterestAccruals = pgTable("loan_interest_accruals", {
         columns: [table.tenantId, table.interestRatePeriodId],
         foreignColumns: [loanInterestRatePeriods.tenantId, loanInterestRatePeriods.id],
     }),
+    check("loan_interest_accruals_status_check", sql`${table.status} IN ('accrued', 'accruing', 'due', 'paid', 'partially_paid', 'reversed')`),
+    check("loan_interest_accruals_period_snapshot_check", sql`
+        (${table.periodStartDate} IS NULL AND ${table.periodEndDate} IS NULL AND ${table.periodDayIndex} IS NULL
+            AND ${table.periodDays} IS NULL AND ${table.cumulativeInterestAmount} IS NULL)
+        OR
+        (${table.periodStartDate} IS NOT NULL AND ${table.periodEndDate} > ${table.periodStartDate}
+            AND ${table.periodDayIndex} BETWEEN 1 AND ${table.periodDays}
+            AND ${table.periodDays} = 7 AND ${table.cumulativeInterestAmount} >= 0)
+    `),
 ]);
 
 export const loanDisbursements = pgTable("loan_disbursements", {

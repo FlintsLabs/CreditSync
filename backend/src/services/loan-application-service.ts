@@ -16,6 +16,7 @@ import { serializeMoney } from "../lib/money";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import { calculateDailyInterest, nextInterestDate, normalizeFloatingDailyInterest, type FloatingDailyInterest, type FloatingDailyInterestInput } from "../lib/floating-daily-interest";
+import { addBangkokCalendarDays, calculateWeeklyAccruedInterest } from "../lib/floating-interest-period";
 import { normalizeDailyLoanEntry, type DailyLoanEntryInput, type NormalizedDailyLoanEntry } from "../lib/daily-loan-entry";
 import type { SinglePaymentTerms } from "../lib/single-payment";
 
@@ -474,7 +475,11 @@ export async function updateLoanDraft(ctx: CommandContext, publicId: string, inp
     });
 }
 
-export async function activateLoan(ctx: CommandContext, publicId: string) {
+export async function activateLoan(
+    ctx: CommandContext,
+    publicId: string,
+    options: { allowedRepaymentTypes?: readonly RepaymentType[] } = {},
+) {
     const accessible = await accessibleLoan(ctx, publicId);
     return db.transaction(async (tx) => {
         await tx.execute(sql`SELECT id FROM loans WHERE id = ${accessible.id} AND tenant_id = ${ctx.tenantId} FOR UPDATE`);
@@ -482,6 +487,11 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
             where: and(eq(loans.id, accessible.id), eq(loans.tenantId, ctx.tenantId)),
         });
         if (!current) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+        if (options.allowedRepaymentTypes && !options.allowedRepaymentTypes.includes(current.repaymentType as RepaymentType)) {
+            throw new DomainError("MCP_LOAN_TYPE_UNSUPPORTED", "This loan type cannot be activated through MCP", 409, {
+                repaymentType: current.repaymentType,
+            });
+        }
         if (current.status === "active") return presentLoan(current);
         if (current.status !== "draft") {
             throw new DomainError("LOAN_NOT_ACTIVATABLE", "Only draft loans can be activated", 409);
@@ -594,7 +604,31 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
             const firstDayInterest = policy.firstDayTreatment === "deduct" ? calculateDailyInterest(current.principalAmount, policy) : "0.00";
             await tx.insert(loanDisbursements).values({ tenantId: ctx.tenantId, loanId: current.id, grossPrincipal: serializeMoney(current.principalAmount), firstDayInterestDeducted: firstDayInterest, netDisbursement: serializeMoney(new Decimal(current.principalAmount).minus(firstDayInterest)), createdByUserId: ctx.actorUserId });
             if (policy.firstDayTreatment === "deduct") {
-                await tx.insert(loanInterestAccruals).values({ tenantId: ctx.tenantId, loanId: current.id, interestRatePeriodId: initialPeriod.id, accrualDate: current.interestStartDate, openingPrincipal: serializeMoney(current.principalAmount), rateMode: policy.mode, rate: policy.rate, interestAmount: firstDayInterest, paidAmount: firstDayInterest, status: "paid", createdByUserId: ctx.actorUserId }).onConflictDoNothing();
+                if (policy.accrualCycle === "weekly") {
+                    await tx.insert(loanInterestAccruals).values(Array.from({ length: 7 }, (_, index) => {
+                        const calculated = calculateWeeklyAccruedInterest(current.principalAmount, policy.mode, policy.rate, index + 1);
+                        return {
+                            tenantId: ctx.tenantId,
+                            loanId: current.id,
+                            interestRatePeriodId: initialPeriod.id,
+                            accrualDate: addBangkokCalendarDays(current.interestStartDate!, index + 1),
+                            openingPrincipal: serializeMoney(current.principalAmount),
+                            rateMode: policy.mode,
+                            rate: policy.rate,
+                            periodStartDate: current.interestStartDate,
+                            periodEndDate: addBangkokCalendarDays(current.interestStartDate!, 7),
+                            periodDayIndex: index + 1,
+                            periodDays: 7,
+                            cumulativeInterestAmount: calculated.cumulativeAmount,
+                            interestAmount: calculated.incrementAmount,
+                            paidAmount: calculated.incrementAmount,
+                            status: "paid",
+                            createdByUserId: ctx.actorUserId,
+                        };
+                    })).onConflictDoNothing();
+                } else {
+                    await tx.insert(loanInterestAccruals).values({ tenantId: ctx.tenantId, loanId: current.id, interestRatePeriodId: initialPeriod.id, accrualDate: current.interestStartDate, openingPrincipal: serializeMoney(current.principalAmount), rateMode: policy.mode, rate: policy.rate, interestAmount: firstDayInterest, paidAmount: firstDayInterest, status: "paid", createdByUserId: ctx.actorUserId }).onConflictDoNothing();
+                }
             }
         }
         if (fundingSource || ownCapitalProfile) {
