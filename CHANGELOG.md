@@ -3,6 +3,7 @@
 ## v0.3.11 - 2026-08-13
 
 ### Added
+- Added ordered TDD implementation plans for generalized floating weekly interest and exact settlement, followed by intermediary profiles, loan assignments, multi-leg disbursement reconciliation, and independently viewable transfer evidence.
 - Added the approved design for exact daily-prorated floating weekly interest, non-refundable one-period advance interest, intermediary profiles and loan assignments, and fully evidenced multi-leg disbursement reconciliation.
 - Added the approved design for borrower-scoped sequential daily-loan collection queues, independently priced follow-on advances, derived downstream collection dates, and previewed append-only payment holidays with optional charges.
 - Added a shared accessible Radix tooltip primitive with keyboard, pointer, and touch interaction support for concise contextual guidance.
