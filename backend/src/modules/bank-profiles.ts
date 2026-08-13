@@ -1,7 +1,7 @@
 import { Elysia, t } from "elysia";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
-import { bankLoans, bankProfiles, borrowers, loanFundingAllocations, loans } from "../db/schema";
+import { bankLoans, bankProfiles, borrowers, loanFundingAllocations, loans, transactions } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
 import { isTenantAdminUser } from "../lib/access";
 import { calculateOpportunityCost, deriveProfitabilityMetrics, getBankProfileSettlementSummary } from "../lib/fund-settlement";
@@ -105,6 +105,7 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
                 ]);
 
                 const byLoan = new Map<number, {
+                    loanId: number;
                     loanPublicId: string;
                     borrowerPublicId: string | null;
                     borrowerName: string | null;
@@ -118,6 +119,7 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
                 for (const row of allocationRows) {
                     if (!row.loanPublicId || !row.loanStatus || row.principalAmount === null || row.outstandingPrincipal === null) continue;
                     const current = byLoan.get(row.loanId) ?? {
+                        loanId: row.loanId,
                         loanPublicId: row.loanPublicId,
                         borrowerPublicId: row.borrowerPublicId,
                         borrowerName: row.borrowerName,
@@ -140,6 +142,27 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
                 }
 
                 const allocatedLoans = [...byLoan.values()].filter((row) => row.netAllocatedAmount.gt(0));
+                const allocatedLoanIds = allocatedLoans.map((row) => row.loanId);
+                const [totalAllocationRows, interestRows] = allocatedLoanIds.length > 0
+                    ? await Promise.all([
+                        db.select({
+                            loanId: loanFundingAllocations.loanId,
+                            total: sql<string>`coalesce(sum(${loanFundingAllocations.allocatedAmount}), 0)`,
+                        }).from(loanFundingAllocations).where(and(
+                            eq(loanFundingAllocations.tenantId, user.tenantId),
+                            inArray(loanFundingAllocations.loanId, allocatedLoanIds),
+                        )).groupBy(loanFundingAllocations.loanId),
+                        db.select({
+                            loanId: transactions.loanId,
+                            total: sql<string>`coalesce(sum(${transactions.interestComponent}), 0)`,
+                        }).from(transactions).where(and(
+                            eq(transactions.tenantId, user.tenantId),
+                            inArray(transactions.loanId, allocatedLoanIds),
+                        )).groupBy(transactions.loanId),
+                    ])
+                    : [[], []];
+                const totalAllocationByLoan = new Map(totalAllocationRows.map((row) => [row.loanId, new Decimal(row.total)]));
+                const netInterestByLoan = new Map(interestRows.map((row) => [row.loanId, new Decimal(row.total)]));
                 const netAllocatedPrincipal = allocatedLoans.reduce((total, row) => total.plus(row.netAllocatedAmount), new Decimal(0));
                 const drawdownTotal = drawdowns.reduce((total, row) => total.plus(row.amount), new Decimal(0));
                 const creditLimit = new Decimal(profile.creditLimit ?? 0);
@@ -152,7 +175,13 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
                 const allocations = allocatedLoans
                     .filter((row) => includeSettled || new Decimal(row.outstandingPrincipal).gt(0))
                     .sort((left, right) => right.latestAllocationDate.localeCompare(left.latestAllocationDate))
-                    .map((row) => ({
+                    .map((row) => {
+                        const totalAllocation = totalAllocationByLoan.get(row.loanId) ?? new Decimal(0);
+                        const netInterest = Decimal.max(netInterestByLoan.get(row.loanId) ?? 0, 0);
+                        const fundingShare = totalAllocation.gt(0)
+                            ? Decimal.max(row.netAllocatedAmount, 0).div(totalAllocation)
+                            : new Decimal(0);
+                        return {
                         loanPublicId: row.loanPublicId,
                         borrowerPublicId: row.borrowerPublicId,
                         borrowerName: row.borrowerName,
@@ -160,6 +189,7 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
                         principalAmount: serializeMoney(row.principalAmount),
                         outstandingPrincipal: serializeMoney(row.outstandingPrincipal),
                         netAllocatedAmount: serializeMoney(row.netAllocatedAmount),
+                        collectedInterest: serializeMoney(netInterest.times(fundingShare)),
                         latestAllocationDate: row.latestAllocationDate,
                         fundingRoutes: [...row.routes.values()]
                             .filter((route) => route.netAllocatedAmount.gt(0))
@@ -168,7 +198,8 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
                                 bankLoanPublicId: route.bankLoanPublicId,
                                 netAllocatedAmount: serializeMoney(route.netAllocatedAmount),
                             })),
-                    }));
+                        };
+                    });
 
                 return {
                     accountingMode: profile.accountingMode,

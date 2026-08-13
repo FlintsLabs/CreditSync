@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { Elysia } from "elysia";
 import { sql } from "drizzle-orm";
 import { db } from "../db";
-import { bankLoans, bankProfiles, borrowers, loanFundingAllocations, loans, users } from "../db/schema";
+import { bankLoans, bankProfiles, borrowers, loanFundingAllocations, loans, transactions, users } from "../db/schema";
 import { invalidateTenantCache } from "../lib/cache";
 import { bankProfilesRoute } from "./bank-profiles";
 
@@ -90,6 +90,38 @@ describe("bank profile funding usage", () => {
         const history = await request(`/bank-profiles/${profile.publicId}/funding-usage?includeSettled=true`, token);
         expect(history.response.status).toBe(200);
         expect(history.body.allocations).toHaveLength(1);
+    });
+
+    // Break caught: each source reports the loan's full interest, or reversals fail to reduce source-attributed returns.
+    integrationTest("attributes net collected interest by exact funding share", async () => {
+        const owner = await db.insert(users).values({ tenantId: "tenant-a", email: "owner@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const [firstProfile, secondProfile] = await db.insert(bankProfiles).values([
+            { tenantId: "tenant-a", name: "First capital", type: "personal", accountingMode: "capital_pool", creditLimit: "100.00" },
+            { tenantId: "tenant-a", name: "Second capital", type: "personal", accountingMode: "capital_pool", creditLimit: "100.00" },
+        ]).returning();
+        const borrower = await db.insert(borrowers).values({ tenantId: "tenant-a", name: "Shared borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await seedLoan({ tenantId: "tenant-a", borrowerId: borrower.id, outstandingPrincipal: "80.00" });
+        await db.insert(loanFundingAllocations).values([
+            { tenantId: "tenant-a", bankProfileId: firstProfile!.id, loanId: loan.id, allocatedAmount: "60.00", allocationDate: "2026-08-07", allocationType: "initial" },
+            { tenantId: "tenant-a", bankProfileId: secondProfile!.id, loanId: loan.id, allocatedAmount: "40.00", allocationDate: "2026-08-07", allocationType: "initial" },
+        ]);
+        const repayment = await db.insert(transactions).values({
+            tenantId: "tenant-a", ownerUserId: owner.id, loanId: loan.id, amount: "100.00", interestComponent: "100.00",
+            entryType: "repayment", idempotencyKey: "interest-in",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(transactions).values({
+            tenantId: "tenant-a", ownerUserId: owner.id, loanId: loan.id, amount: "-20.00", interestComponent: "-20.00",
+            entryType: "reversal", reversedTransactionId: repayment.id, idempotencyKey: "interest-out",
+        });
+
+        const token = await authToken(owner);
+        const first = await request(`/bank-profiles/${firstProfile!.publicId}/funding-usage`, token);
+        const second = await request(`/bank-profiles/${secondProfile!.publicId}/funding-usage`, token);
+
+        expect(first.response.status).toBe(200);
+        expect(first.body.allocations).toEqual([expect.objectContaining({ loanPublicId: loan.publicId, collectedInterest: "48.00" })]);
+        expect(second.response.status).toBe(200);
+        expect(second.body.allocations).toEqual([expect.objectContaining({ loanPublicId: loan.publicId, collectedInterest: "32.00" })]);
     });
 
     // Break caught: source usage leaks another tenant's profile or lets collectors inspect tenant-wide funding.
