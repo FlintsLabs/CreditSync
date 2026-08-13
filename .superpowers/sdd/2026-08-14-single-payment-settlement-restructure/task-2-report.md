@@ -96,3 +96,31 @@ cd backend && ./scripts/test-disposable-postgres.sh src/db/single-payment-restru
 ```
 
 Final results: focused static suite `11 pass, 1 skip, 0 fail`; TypeScript typecheck exited 0; disposable PostgreSQL migrations applied successfully and the database suite reported `6 pass, 0 fail` with `161 expect()` calls.
+
+## Review Fix Round 2
+
+- Made activation irreversible at the PostgreSQL boundary: any loan whose previous status is not `draft` now rejects a transition back to `draft`. Valid operational transitions such as `active -> paid` and `active -> restructured` remain allowed, while subsequent contractual mutation and loan/schedule deletion remain rejected.
+- Refined restructure and waiver lifecycle actor checks by source. `web` and `mcp` execution/reversal records still require their applicable user actor IDs; `system` records may omit user actors while retaining mandatory request keys/hashes, audit public IDs, correlation IDs, timestamps, snapshots, and tenant isolation.
+- Added behavioral database coverage for active/paid/restructured downgrade attempts, post-attempt contractual mutation/deletion guards, valid operational transitions, system execution/reversal without user actors, and continued rejection of web lifecycle records without user actors.
+
+### Review RED
+
+Command:
+
+```text
+cd backend && ./scripts/test-disposable-postgres.sh src/db/single-payment-restructure-migration.test.ts
+```
+
+Observed: `5 pass, 1 fail`. PostgreSQL accepted `active -> draft`, so the new assertion received `undefined` instead of the expected `cannot transition back to draft` error.
+
+### Review GREEN
+
+Commands:
+
+```text
+cd backend && bun test src/db/single-payment-restructure-migration.test.ts src/db/agent-workflow-schema.test.ts
+cd backend && bun run typecheck
+cd backend && ./scripts/test-disposable-postgres.sh src/db/single-payment-restructure-migration.test.ts
+```
+
+Final results: focused static suite `11 pass, 1 skip, 0 fail` with `485 expect()` calls; TypeScript typecheck exited 0; disposable PostgreSQL migrations applied successfully and the database suite reported `6 pass, 0 fail` with `167 expect()` calls.

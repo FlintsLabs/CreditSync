@@ -1099,7 +1099,8 @@ export const loanRestructures = pgTable("loan_restructures", {
             ${table.newLoanId} IS NOT NULL AND ${table.oldLoanId} <> ${table.newLoanId} AND
             ${table.executeIdempotencyKey} IS NOT NULL AND ${table.executeRequestHash} IS NOT NULL AND
             ${table.executedAuditPublicId} IS NOT NULL AND ${table.preExecutionOldLoanState} IS NOT NULL AND
-            ${table.executedAt} IS NOT NULL AND ${table.createdByUserId} IS NOT NULL AND ${table.executedByUserId} IS NOT NULL
+            ${table.executedAt} IS NOT NULL AND
+            (${table.actorSource} = 'system' OR (${table.createdByUserId} IS NOT NULL AND ${table.executedByUserId} IS NOT NULL))
         )) AND
         (${table.status} <> 'executed' OR (
             ${table.reversalIdempotencyKey} IS NULL AND ${table.reversalRequestHash} IS NULL AND
@@ -1108,7 +1109,7 @@ export const loanRestructures = pgTable("loan_restructures", {
         (${table.status} <> 'reversed' OR (
             ${table.reversalIdempotencyKey} IS NOT NULL AND
             ${table.reversalRequestHash} IS NOT NULL AND ${table.reversedAuditPublicId} IS NOT NULL AND
-            ${table.reversedAt} IS NOT NULL AND ${table.reversedByUserId} IS NOT NULL
+            ${table.reversedAt} IS NOT NULL AND (${table.actorSource} = 'system' OR ${table.reversedByUserId} IS NOT NULL)
         )) AND
         (${table.status} NOT IN ('preview', 'expired') OR (
             ${table.newLoanId} IS NULL AND ${table.executeIdempotencyKey} IS NULL AND ${table.executeRequestHash} IS NULL AND
@@ -1204,13 +1205,15 @@ export const loanRestructureWaivers = pgTable("loan_restructure_waivers", {
     check("loan_restructure_waivers_amount_check", sql`${table.amount} > 0 AND scale(${table.amount}) <= 2`),
     check("loan_restructure_waivers_actor_source_check", sql`${table.actorSource} IN ('web', 'mcp', 'system')`),
     check("loan_restructure_waivers_reversal_check", sql`
-        (${table.status} = 'executed' AND ${table.auditPublicId} IS NOT NULL AND ${table.createdByUserId} IS NOT NULL AND
+        (${table.status} = 'executed' AND ${table.auditPublicId} IS NOT NULL AND
+            (${table.actorSource} = 'system' OR ${table.createdByUserId} IS NOT NULL) AND
             ${table.reversedWaiverId} IS NULL AND ${table.reversalIdempotencyKey} IS NULL AND ${table.reversalRequestHash} IS NULL AND
             ${table.reversedByUserId} IS NULL AND ${table.reversedAt} IS NULL)
         OR
-        (${table.status} = 'reversed' AND ${table.auditPublicId} IS NOT NULL AND ${table.createdByUserId} IS NOT NULL AND
+        (${table.status} = 'reversed' AND ${table.auditPublicId} IS NOT NULL AND
+            (${table.actorSource} = 'system' OR ${table.createdByUserId} IS NOT NULL) AND
             ${table.reversedWaiverId} IS NOT NULL AND ${table.reversalIdempotencyKey} IS NOT NULL AND ${table.reversalRequestHash} IS NOT NULL AND
-            ${table.reversedByUserId} IS NOT NULL AND ${table.reversedAt} IS NOT NULL)
+            (${table.actorSource} = 'system' OR ${table.reversedByUserId} IS NOT NULL) AND ${table.reversedAt} IS NOT NULL)
     `),
     foreignKey({ name: "loan_restructure_waivers_tenant_restructure_fk", columns: [table.tenantId, table.restructureId], foreignColumns: [loanRestructures.tenantId, loanRestructures.id] }),
     foreignKey({ name: "loan_restructure_waivers_tenant_loan_fk", columns: [table.tenantId, table.loanId], foreignColumns: [loans.tenantId, loans.id] }),

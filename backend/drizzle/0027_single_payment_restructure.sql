@@ -138,7 +138,8 @@ CREATE TABLE "loan_restructures" (
             "new_loan_id" IS NOT NULL AND "old_loan_id" <> "new_loan_id" AND
             "execute_idempotency_key" IS NOT NULL AND "execute_request_hash" IS NOT NULL AND
             "executed_audit_public_id" IS NOT NULL AND "pre_execution_old_loan_state" IS NOT NULL AND
-            "executed_at" IS NOT NULL AND "created_by_user_id" IS NOT NULL AND "executed_by_user_id" IS NOT NULL
+            "executed_at" IS NOT NULL AND
+            ("actor_source" = 'system' OR ("created_by_user_id" IS NOT NULL AND "executed_by_user_id" IS NOT NULL))
         )) AND
         ("status" <> 'executed' OR (
             "reversal_idempotency_key" IS NULL AND "reversal_request_hash" IS NULL AND
@@ -147,7 +148,7 @@ CREATE TABLE "loan_restructures" (
         ("status" <> 'reversed' OR (
             "reversal_idempotency_key" IS NOT NULL AND
             "reversal_request_hash" IS NOT NULL AND "reversed_audit_public_id" IS NOT NULL AND
-            "reversed_at" IS NOT NULL AND "reversed_by_user_id" IS NOT NULL
+            "reversed_at" IS NOT NULL AND ("actor_source" = 'system' OR "reversed_by_user_id" IS NOT NULL)
         )) AND
         ("status" NOT IN ('preview', 'expired') OR (
             "new_loan_id" IS NULL AND "execute_idempotency_key" IS NULL AND "execute_request_hash" IS NULL AND
@@ -219,13 +220,15 @@ CREATE TABLE "loan_restructure_waivers" (
     CONSTRAINT "loan_restructure_waivers_amount_check" CHECK ("amount" > 0 AND scale("amount") <= 2),
     CONSTRAINT "loan_restructure_waivers_actor_source_check" CHECK ("actor_source" IN ('web', 'mcp', 'system')),
     CONSTRAINT "loan_restructure_waivers_reversal_check" CHECK (
-        ("status" = 'executed' AND "audit_public_id" IS NOT NULL AND "created_by_user_id" IS NOT NULL AND
+        ("status" = 'executed' AND "audit_public_id" IS NOT NULL AND
+            ("actor_source" = 'system' OR "created_by_user_id" IS NOT NULL) AND
             "reversed_waiver_id" IS NULL AND "reversal_idempotency_key" IS NULL AND "reversal_request_hash" IS NULL AND
             "reversed_by_user_id" IS NULL AND "reversed_at" IS NULL)
         OR
-        ("status" = 'reversed' AND "audit_public_id" IS NOT NULL AND "created_by_user_id" IS NOT NULL AND
+        ("status" = 'reversed' AND "audit_public_id" IS NOT NULL AND
+            ("actor_source" = 'system' OR "created_by_user_id" IS NOT NULL) AND
             "reversed_waiver_id" IS NOT NULL AND "reversal_idempotency_key" IS NOT NULL AND "reversal_request_hash" IS NOT NULL AND
-            "reversed_by_user_id" IS NOT NULL AND "reversed_at" IS NOT NULL)
+            ("actor_source" = 'system' OR "reversed_by_user_id" IS NOT NULL) AND "reversed_at" IS NOT NULL)
     )
 );--> statement-breakpoint
 
@@ -269,6 +272,9 @@ BEGIN
     IF OLD."status" IS DISTINCT FROM 'draft' THEN
         IF TG_OP = 'DELETE' THEN
             RAISE EXCEPTION 'activated loans are immutable; DELETE is not allowed';
+        END IF;
+        IF NEW."status" = 'draft' THEN
+            RAISE EXCEPTION 'activated loans cannot transition back to draft';
         END IF;
         IF ROW(
             OLD."borrower_id", OLD."bank_loan_id", OLD."funding_bank_profile_id",
