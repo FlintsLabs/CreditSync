@@ -904,6 +904,7 @@
             "fee": "Fee",
             "penalty": "Penalty",
             "continue": "Open payment review",
+            "viewDetails": "View details",
             "quickCaptureTitle": "Record repayment",
             "quickCaptureDescription": "Capture the incoming payment now, then review its allocation before posting.",
             "saveAndReview": "Continue to payment review",

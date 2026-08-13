@@ -36,6 +36,7 @@
 - Excluded append-only reversed floating-interest accruals from Dashboard payable totals so corrected source rows are not counted alongside their active replacements.
 
 ### Changed
+- Replaced nested mobile repayment-history cards and full-width review buttons with compact divider-separated transaction rows, non-zero exact allocation summaries, and full-row review navigation while retaining the desktop table.
 - Flattened both Dashboard repayment queues on mobile into full-width divider-separated rows, retained clear keyboard focus and exact amount/status alignment, and restored section containment at desktop widths without nested item cards.
 - Applied distinct accessible semantic colors to Payment Inbox status badges: green ready, gray draft, amber review, blue posted, red reversed, and orange duplicate.
 - Replaced nested Payment Inbox item cards with responsive divider-separated rows, localized payer/status/date filters, result counts, and retained-filter pagination at 25 records per page.

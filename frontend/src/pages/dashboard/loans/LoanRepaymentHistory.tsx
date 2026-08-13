@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Loader2 } from "lucide-react";
+import Decimal from "decimal.js";
+import { ChevronRight, Loader2 } from "lucide-react";
 import { api } from "../../../lib/api";
 import { createPaymentWorkflow, type HttpClient } from "../../../lib/workflow-api";
 import { formatMoneyExact } from "../../../lib/workflow-model";
@@ -132,6 +133,33 @@ export function LoanRepaymentHistory({ loanPublicId, borrowerName, borrowerPubli
         </div>
     );
 
+    const MobileAllocation = ({ item }: { item: PaymentIntakeHistoryItem }) => {
+        const components = item.postedComponents
+            ? [
+                ["principal", item.postedComponents.principal],
+                ["interest", item.postedComponents.interest],
+                ["fee", item.postedComponents.fee],
+                ["penalty", item.postedComponents.penalty],
+            ].filter(([, amount]) => !new Decimal(amount).isZero())
+            : [];
+
+        if (components.length > 0) {
+            return (
+                <div className="mt-2 flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                    {components.map(([key, amount]) => (
+                        <span key={key}>{t(`loanDetail.repaymentHistory.${key}`)} {formatMoneyExact(amount, i18n.language)}</span>
+                    ))}
+                </div>
+            );
+        }
+
+        return item.latestAllocation ? (
+            <div className="mt-2 text-xs text-muted-foreground">
+                {t("loanDetail.repaymentHistory.allocation", "Latest allocation")}: {formatMoneyExact(item.latestAllocation.amount, i18n.language)}
+            </div>
+        ) : null;
+    };
+
     return (
         <Card>
             <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -162,13 +190,33 @@ export function LoanRepaymentHistory({ loanPublicId, borrowerName, borrowerPubli
                                 </tbody>
                             </table>
                         </div>
-                        <div className="space-y-3 md:hidden">
-                            {items.map((item) => <div key={item.publicId} className="rounded border p-3 text-sm">
-                                <div className="flex items-start justify-between gap-3"><div><div className="font-medium">{formatMoneyExact(item.amount, i18n.language)}</div><div className="text-xs text-muted-foreground">{formatReceivedAt(item.receivedAt)}</div></div><Status status={item.status} /></div>
-                                {item.bankReference && <div className="mt-2 text-xs text-muted-foreground">{t("loanDetail.repaymentHistory.reference", "Bank reference")}: {item.bankReference}</div>}
-                                <div className="mt-2"><Allocation item={item} /></div>
-                                <Button className="mt-3 w-full" variant="outline" size="sm" onClick={() => openIntake(item.publicId)}>{t("loanDetail.repaymentHistory.continue", "Open payment review")}</Button>
-                            </div>)}
+                        <div className="divide-y divide-border/70 md:hidden">
+                            {items.map((item) => <button
+                                key={item.publicId}
+                                type="button"
+                                data-testid="mobile-repayment-row"
+                                onClick={() => openIntake(item.publicId)}
+                                className="group min-h-16 w-full min-w-0 py-4 text-left transition-colors hover:bg-muted/40 active:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                            >
+                                <span className="flex min-w-0 items-start justify-between gap-3">
+                                    <span className="min-w-0 flex-1">
+                                        <span className="block font-semibold tabular-nums">{formatMoneyExact(item.amount, i18n.language)}</span>
+                                        <span className="block text-xs text-muted-foreground">{formatReceivedAt(item.receivedAt)}</span>
+                                    </span>
+                                    <Status status={item.status} />
+                                </span>
+                                {item.bankReference && (
+                                    <span className="mt-2 flex min-w-0 gap-1 text-xs text-muted-foreground">
+                                        <span className="shrink-0">{t("loanDetail.repaymentHistory.reference", "Bank reference")}:</span>
+                                        <span className="truncate" title={item.bankReference}>{item.bankReference}</span>
+                                    </span>
+                                )}
+                                <MobileAllocation item={item} />
+                                <span className="mt-3 flex items-center justify-end gap-1 text-xs font-medium text-foreground">
+                                    {t("loanDetail.repaymentHistory.viewDetails", "View details")}
+                                    <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+                                </span>
+                            </button>)}
                         </div>
                     </>}
             </CardContent>
