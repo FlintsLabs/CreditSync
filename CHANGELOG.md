@@ -3,6 +3,7 @@
 ## v0.3.12 - 2026-08-14
 
 ### Added
+- Added an exact Decimal-only single-payment calculation kernel with mutually exclusive fixed/retroactive interest policies, maturity schedules, Bangkok-date exposure traces, late penalties, and component waivers.
 - Added the v0.3.12 TDD implementation plan for exact single-payment terms, append-only settlement and restructuring, component waivers, synchronized REST/MCP/plugin contracts, and localized Web workflows.
 - Added the approved design for exact single-payment maturity loans, greater-of fixed or retroactive contract interest, optional concurrent daily late penalties, component-level settlement waivers, and append-only restructuring into independently priced replacement contracts.
 

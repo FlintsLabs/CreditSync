@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { normalizePublicLoanTerms } from "./calculator";
+import { calculatePublicLoanSchedule } from "./calculator";
 
 describe("public loan create terms", () => {
     // Break caught: a preview's two-decimal money strings cannot be forwarded unchanged to loan creation.
@@ -58,5 +59,26 @@ describe("public loan create terms", () => {
             .toThrow("Total installments must be a positive integer");
         expect(() => normalizePublicLoanTerms({ ...validTerms, repaymentType: "unsupported" as any }))
             .toThrow("Repayment type is not supported");
+    });
+
+    // Break caught: a single-payment contract creates periodic installments instead of one exact maturity obligation.
+    it("creates a one-row maturity schedule for single-payment terms", () => {
+        expect(calculatePublicLoanSchedule({
+            principal: "5000.00", interestRate: "0.00", termMonths: 1,
+            repaymentType: "single_payment", startDate: "2026-08-10",
+            singlePayment: {
+                dueDate: "2026-08-19",
+                fixedAgreedInterest: "500.00",
+                interestPolicy: "fixed_only",
+                latePenalty: { mode: "none" },
+            },
+        })).toEqual([{
+            installmentNo: 1,
+            dueDate: "2026-08-19",
+            amount: "5500.00",
+            principalComponent: "5000.00",
+            interestComponent: "500.00",
+            remainingPrincipal: "0.00",
+        }]);
     });
 });

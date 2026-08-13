@@ -2,8 +2,9 @@ import dayjs from "dayjs";
 import Decimal from "decimal.js";
 import { parseMoney, serializeMoney } from "./money";
 import { normalizeDailyLoanEntry, type DailyLoanEntryInput } from "./daily-loan-entry";
+import { normalizeSinglePaymentTerms, type SinglePaymentTerms } from "./single-payment";
 
-export type RepaymentType = "daily" | "weekly" | "monthly" | "floating";
+export type RepaymentType = "single_payment" | "daily" | "weekly" | "monthly" | "floating";
 
 export interface LoanCalculationParams {
     principal: Decimal.Value;
@@ -13,6 +14,7 @@ export interface LoanCalculationParams {
     startDate: Date;
     totalInstallments?: number;
     installmentAmount?: Decimal.Value;
+    singlePayment?: SinglePaymentTerms;
 }
 
 export interface InstallmentSchedule {
@@ -38,6 +40,7 @@ export interface PublicLoanCalculationParams {
         rate: string;
         firstDayTreatment: "deduct" | "start_next_day";
     };
+    singlePayment?: SinglePaymentTerms;
 }
 
 export interface PublicInstallmentSchedule {
@@ -56,13 +59,14 @@ export interface PublicLoanTerms {
     repaymentType: RepaymentType;
     totalInstallments?: number;
     installmentAmount?: string;
+    singlePayment?: SinglePaymentTerms;
 }
 
 export function normalizePublicLoanTerms(input: PublicLoanTerms): PublicLoanTerms {
     if (!Number.isFinite(input.termMonths) || !Number.isInteger(input.termMonths) || input.termMonths <= 0) {
         throw new Error("Term months must be a positive whole number");
     }
-    if (!(["daily", "weekly", "monthly", "floating"] as const).includes(input.repaymentType)) {
+    if (!(["single_payment", "daily", "weekly", "monthly", "floating"] as const).includes(input.repaymentType)) {
         throw new Error("Repayment type is not supported");
     }
     if (input.totalInstallments !== undefined
@@ -72,6 +76,12 @@ export function normalizePublicLoanTerms(input: PublicLoanTerms): PublicLoanTerm
         throw new Error(input.repaymentType === "daily"
             ? "Daily total installments must be a positive integer"
             : "Total installments must be a positive integer");
+    }
+    if (input.repaymentType === "single_payment" && input.singlePayment === undefined) {
+        throw new Error("Single-payment terms are required");
+    }
+    if (input.repaymentType !== "single_payment" && input.singlePayment !== undefined) {
+        throw new Error("Single-payment terms require single-payment repayment");
     }
 
     return {
@@ -96,6 +106,19 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
     const interestRatePercent = new Decimal(interestRate);
     if (!principalMoney.isFinite() || !interestRatePercent.isFinite() || principalMoney.isNegative() || interestRatePercent.isNegative()) {
         throw new Error("Loan principal and interest rate must be non-negative finite values");
+    }
+    if (repaymentType === "single_payment") {
+        if (!params.singlePayment) throw new Error("Single-payment terms are required");
+        const singlePayment = normalizeSinglePaymentTerms(params.singlePayment, startDate.toISOString().slice(0, 10));
+        const interest = parseMoney(singlePayment.fixedAgreedInterest);
+        return [{
+            installmentNo: 1,
+            dueDate: singlePayment.dueDate,
+            amount: serializeMoney(principalMoney.plus(interest)),
+            principalComponent: serializeMoney(principalMoney),
+            interestComponent: serializeMoney(interest),
+            remainingPrincipal: "0.00",
+        }];
     }
     const totalInterest = principalMoney.times(interestRatePercent).div(100).times(termMonths).div(12)
         .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
@@ -194,6 +217,7 @@ export function calculatePublicLoanSchedule(params: PublicLoanCalculationParams)
         startDate: new Date(params.startDate),
         totalInstallments: terms.totalInstallments,
         installmentAmount: terms.installmentAmount === undefined ? undefined : parseMoney(terms.installmentAmount),
+        singlePayment: terms.singlePayment,
     });
 
     return schedule.map((row) => ({
