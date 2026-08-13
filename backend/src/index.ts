@@ -17,6 +17,7 @@ import { reconciliationRoute } from "./modules/reconciliation";
 import { paymentIntakesRoute } from "./modules/payment-intakes";
 import { intermediariesRoute } from "./modules/intermediaries";
 import { loanRenewalsRoute } from "./modules/loan-renewals";
+import { loanSettlementRoutes } from "./modules/loan-settlement-routes";
 import { createDefaultMcpHttpPlugin } from "./mcp/default";
 
 const isProd = process.env.NODE_ENV === "production";
@@ -56,6 +57,7 @@ const app = new Elysia()
             .use(paymentIntakesRoute)
             .use(intermediariesRoute)
             .use(loanRenewalsRoute)
+            .use(loanSettlementRoutes)
             .use(auditLogsRoute)
             .use(dashboardRoute)
             .use(reconciliationRoute)

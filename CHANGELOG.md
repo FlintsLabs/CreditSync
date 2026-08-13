@@ -3,6 +3,7 @@
 ## v0.3.11 - 2026-08-13
 
 ### Added
+- Added expiring, balance-versioned floating-loan settlement previews and explicitly confirmed idempotent close-out execution that collects exact due and accrued-not-due interest, preserves non-refundable advance history, serializes concurrent payments with row locks, and retains compensating reversal boundaries.
 - Added period-aware floating-interest accrual with exact weekly daily projections, immutable rate/principal segment snapshots, Bangkok boundary due promotion, due-only normal payment allocation, and period-grouped payment health.
 - Added strict generalized floating-interest origination with exact weekly previews, editable draft policy snapshots, idempotent activation, and atomic non-refundable advance-interest coverage across seven immutable paid daily snapshots.
 - Added additive floating period-policy persistence with legacy daily-policy backfill, immutable period/accrual snapshots, and tenant-safe expiring settlement previews.
