@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { normalizePublicLoanTerms } from "./calculator";
-import { calculatePublicLoanSchedule } from "./calculator";
+import { calculateLoanSchedule, calculatePublicLoanSchedule, normalizePublicLoanTerms } from "./calculator";
 
 describe("public loan create terms", () => {
     // Break caught: a preview's two-decimal money strings cannot be forwarded unchanged to loan creation.
@@ -80,5 +79,57 @@ describe("public loan create terms", () => {
             interestComponent: "500.00",
             remainingPrincipal: "0.00",
         }]);
+    });
+
+    // Break caught: unvalidated single-payment money or policy data escapes the public create-term boundary.
+    it("rejects malformed single-payment terms at public normalization", () => {
+        expect(() => normalizePublicLoanTerms({
+            principal: "5000.00", interestRate: "0.00", termMonths: 1,
+            repaymentType: "single_payment",
+            singlePayment: {
+                dueDate: "2026-08-19",
+                fixedAgreedInterest: "500",
+                interestPolicy: "fixed_only",
+                latePenalty: { mode: "none" },
+            },
+        })).toThrow("Single-payment start date is required");
+        expect(() => calculatePublicLoanSchedule({
+            principal: "5000.00", interestRate: "0.00", termMonths: 1,
+            repaymentType: "single_payment", startDate: "2026-08-10T00:00:00+07:00",
+            singlePayment: {
+                dueDate: "2026-08-19",
+                fixedAgreedInterest: "500.00",
+                interestPolicy: "fixed_only",
+                latePenalty: { mode: "none" },
+            },
+        })).toThrow("Business date must use YYYY-MM-DD");
+    });
+
+    // Break caught: a canonical public term object can retain invalid single-payment money after normalization.
+    it("rejects non-canonical single-payment money when a start date is supplied", () => {
+        expect(() => normalizePublicLoanTerms({
+            principal: "5000.00", interestRate: "0.00", termMonths: 1,
+            repaymentType: "single_payment", startDate: "2026-08-10",
+            singlePayment: {
+                dueDate: "2026-08-19",
+                fixedAgreedInterest: "500",
+                interestPolicy: "fixed_only",
+                latePenalty: { mode: "none" },
+            },
+        } as any)).toThrow("Money must be a non-negative string with exactly two decimals");
+    });
+
+    // Break caught: UTC conversion accepts a maturity date equal to the Bangkok business start date.
+    it("uses the Bangkok business date for direct single-payment schedule validation", () => {
+        expect(() => calculateLoanSchedule({
+            principal: "5000.00", interestRate: "0.00", termMonths: 1,
+            repaymentType: "single_payment", startDate: new Date("2026-08-10T00:00:00+07:00"),
+            singlePayment: {
+                dueDate: "2026-08-10",
+                fixedAgreedInterest: "500.00",
+                interestPolicy: "fixed_only",
+                latePenalty: { mode: "none" },
+            },
+        })).toThrow("Due date must be later than start date");
     });
 });

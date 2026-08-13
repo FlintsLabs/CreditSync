@@ -24,3 +24,26 @@
 - Exposure dates are validated `YYYY-MM-DD` calendar dates and arithmetic uses exact whole Bangkok business days. Penalties begin only after due date plus grace days.
 - The requested test cases cover fixed-only normalization, mutually exclusive policy rejection, due-date validation, both `max()` branches, equality, reduced principal exposure segments, penalty, waiver, and the exact one-row schedule.
 - Scope is limited to the five Task 1 library/test files plus the required changelog and this report. No production workflow, persistence, REST, MCP, or UI integration was changed; those remain follow-on tasks.
+
+## Fix Round 1: Review Corrections
+
+### Changes
+
+- Replaced the optional retroactive field on normalized terms with a discriminated `SinglePaymentTerms` union. Settlement now consumes `terms` from that normalized activated contract and derives both retroactive-interest and late-penalty policy exclusively from it.
+- Added an authoritative retroactive-exposure timeline guard: retroactive intervals must be positive-duration, contiguous, non-overlapping, and end exactly on the settlement date. A final explicit `0.00` interval is accepted to represent a fully repaid balance through settlement.
+- Closed `normalizePublicLoanTerms()` for single-payment inputs: it now requires and validates a `YYYY-MM-DD` start date and returns normalized fixed interest, retroactive rate, penalty, and policy data.
+- Validated public schedule start dates before constructing a `Date`, and formats direct `Date` inputs using `Asia/Bangkok` for maturity validation rather than UTC.
+
+### Test-first Evidence
+
+1. Added focused regressions in `backend/src/lib/single-payment.test.ts` and `backend/src/lib/public-loan-terms.test.ts` before the correction.
+2. Ran `cd backend && bun test src/lib/single-payment.test.ts src/lib/public-loan-terms.test.ts`.
+   - RED result: 9 pass, 4 fail. The kernel accepted a timeline ending `2026-08-20` for a `2026-08-24` settlement, selected `700.00` retroactive interest despite an injected `fixed_only` policy, returned unvalidated single-payment public terms, and accepted an equal Bangkok start/due date after UTC conversion. The positive-grace boundary itself already passed (`lateDays: 1`, `grossPenalty: "20.00"`).
+3. Ran `cd backend && bun test src/lib/single-payment.test.ts src/lib/public-loan-terms.test.ts && bun run typecheck` after the correction.
+   - GREEN result: 16 pass, 0 fail; `tsc --noEmit` passed.
+
+### Self-review
+
+- A fixed-only term cannot expose a retroactive policy through the normalized TypeScript union; the runtime calculation also ignores injected retroactive properties on that branch.
+- The retroactive branch fails closed without an authoritative exposure timeline and validates coverage to the settlement boundary, including gaps and overlaps.
+- Public term normalization no longer returns raw single-payment money/policy values. The public schedule accepts only date strings; direct schedule calculations derive their comparison date from Bangkok time.

@@ -10,13 +10,29 @@ export type LatePenalty =
     | { mode: "none" }
     | { mode: "fixed_amount_per_day"; amountPerDay: string; graceDays: number };
 
-export interface SinglePaymentTerms {
+export interface SinglePaymentTermsInput {
     dueDate: string;
     fixedAgreedInterest: string;
     interestPolicy: "fixed_only" | "greater_of_fixed_or_retroactive";
     retroactiveInterest?: RetroactiveInterest;
     latePenalty: LatePenalty;
 }
+
+export type SinglePaymentTerms =
+    | {
+        dueDate: string;
+        fixedAgreedInterest: string;
+        interestPolicy: "fixed_only";
+        retroactiveInterest?: never;
+        latePenalty: LatePenalty;
+    }
+    | {
+        dueDate: string;
+        fixedAgreedInterest: string;
+        interestPolicy: "greater_of_fixed_or_retroactive";
+        retroactiveInterest: RetroactiveInterest;
+        latePenalty: LatePenalty;
+    };
 
 export interface SinglePaymentExposure {
     amount: string;
@@ -26,22 +42,23 @@ export interface SinglePaymentExposure {
 
 export interface SinglePaymentSettlementInput {
     settlementDate: string;
-    dueDate: string;
-    fixedAgreedInterest: string;
-    retroactive?: RetroactiveInterest;
+    terms: SinglePaymentTerms;
     exposures: readonly SinglePaymentExposure[];
-    latePenalty: LatePenalty;
     waivers: { interest: string; fees: string; penalties: string };
     outstandingPrincipal?: string;
     outstandingFees?: string;
     externalSettlementCredits?: string;
 }
 
-function dateAtBangkokMidnight(value: string): Date {
+export function normalizeBangkokBusinessDate(value: string): string {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error("Business date must use YYYY-MM-DD");
     const date = new Date(`${value}T00:00:00Z`);
     if (Number.isNaN(date.valueOf()) || date.toISOString().slice(0, 10) !== value) throw new Error("Business date is invalid");
-    return date;
+    return value;
+}
+
+function dateAtBangkokMidnight(value: string): Date {
+    return new Date(`${normalizeBangkokBusinessDate(value)}T00:00:00Z`);
 }
 
 function calendarDays(fromDate: string, toDate: string): number {
@@ -62,7 +79,7 @@ function normalizeLatePenalty(input: LatePenalty): LatePenalty {
     return { mode: "fixed_amount_per_day", amountPerDay: serializeMoney(parseMoney(input.amountPerDay)), graceDays: input.graceDays };
 }
 
-export function normalizeSinglePaymentTerms(input: SinglePaymentTerms, startDate: string): SinglePaymentTerms {
+export function normalizeSinglePaymentTerms(input: SinglePaymentTermsInput, startDate: string): SinglePaymentTerms {
     if (calendarDays(startDate, input.dueDate) <= 0) throw new Error("Due date must be later than start date");
     const fixedAgreedInterest = serializeMoney(parseMoney(input.fixedAgreedInterest));
     const latePenalty = normalizeLatePenalty(input.latePenalty);
@@ -75,6 +92,22 @@ export function normalizeSinglePaymentTerms(input: SinglePaymentTerms, startDate
     return { dueDate: input.dueDate, fixedAgreedInterest, interestPolicy: "greater_of_fixed_or_retroactive", retroactiveInterest: normalizeRetroactiveInterest(input.retroactiveInterest), latePenalty };
 }
 
+function validateExposureTimeline(exposures: readonly SinglePaymentExposure[], settlementDate: string) {
+    if (exposures.length === 0) throw new Error("Retroactive interest requires an authoritative exposure timeline");
+    const ordered = [...exposures].sort((left, right) => left.fromDate.localeCompare(right.fromDate) || left.toDate.localeCompare(right.toDate));
+    for (let index = 0; index < ordered.length; index += 1) {
+        const current = ordered[index]!;
+        if (calendarDays(current.fromDate, current.toDate) <= 0) throw new Error("Exposure intervals must have a positive duration");
+        if (dateAtBangkokMidnight(current.toDate) > dateAtBangkokMidnight(settlementDate)) throw new Error("Exposure end date must not be after settlement date");
+        const previous = ordered[index - 1];
+        if (previous && previous.toDate !== current.fromDate) {
+            throw new Error("Exposure timeline must be contiguous without gaps or overlaps");
+        }
+    }
+    if (ordered.at(-1)!.toDate !== settlementDate) throw new Error("Exposure timeline must end on settlement date");
+    return ordered;
+}
+
 function normalizeWaiver(value: string, component: Decimal, componentName: string): Decimal {
     const waiver = parseMoney(value);
     if (waiver.gt(component)) throw new Error(`${componentName} waiver cannot exceed its component`);
@@ -83,14 +116,16 @@ function normalizeWaiver(value: string, component: Decimal, componentName: strin
 
 export function calculateSinglePaymentSettlement(input: SinglePaymentSettlementInput) {
     const settlementDate = dateAtBangkokMidnight(input.settlementDate);
-    const dueDate = dateAtBangkokMidnight(input.dueDate);
-    const fixedInterest = parseMoney(input.fixedAgreedInterest);
-    const retroactive = input.retroactive === undefined ? undefined : normalizeRetroactiveInterest(input.retroactive);
-    const exposureTrace = input.exposures.map((exposure) => {
+    const dueDate = dateAtBangkokMidnight(input.terms.dueDate);
+    const fixedInterest = parseMoney(input.terms.fixedAgreedInterest);
+    const retroactive = input.terms.interestPolicy === "greater_of_fixed_or_retroactive"
+        ? input.terms.retroactiveInterest
+        : undefined;
+    const exposures = retroactive === undefined ? input.exposures : validateExposureTimeline(input.exposures, input.settlementDate);
+    const exposureTrace = exposures.map((exposure) => {
         const amount = parseMoney(exposure.amount);
         const days = calendarDays(exposure.fromDate, exposure.toDate);
         if (days < 0) throw new Error("Exposure end date must not precede its start date");
-        if (dateAtBangkokMidnight(exposure.toDate) > settlementDate) throw new Error("Exposure end date must not be after settlement date");
         const dailyRate = retroactive === undefined ? new Decimal(0) : retroactive.rateType === "percent_per_day" ? new Decimal(retroactive.rate).div(100) : new Decimal(retroactive.rate).div(1000);
         const unroundedInterest = amount.times(dailyRate).times(days);
         return { amount: serializeMoney(amount), fromDate: exposure.fromDate, toDate: exposure.toDate, days, rateType: retroactive?.rateType, rate: retroactive?.rate, unroundedInterest: unroundedInterest.toFixed(), roundedInterest: serializeMoney(unroundedInterest), value: unroundedInterest };
@@ -99,7 +134,7 @@ export function calculateSinglePaymentSettlement(input: SinglePaymentSettlementI
     const roundedRetroactiveInterest = retroactiveInterest.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
     const selectedInterest = Decimal.max(fixedInterest, roundedRetroactiveInterest);
     const selectedInterestBranch = roundedRetroactiveInterest.gt(fixedInterest) ? "retroactive" : "fixed";
-    const latePenalty = normalizeLatePenalty(input.latePenalty);
+    const latePenalty = input.terms.latePenalty;
     const lateDays = Math.max(0, Math.round((settlementDate.valueOf() - dueDate.valueOf()) / 86_400_000) - (latePenalty.mode === "none" ? 0 : latePenalty.graceDays));
     const grossPenalty = latePenalty.mode === "none" ? new Decimal(0) : parseMoney(latePenalty.amountPerDay).times(lateDays);
     const outstandingPrincipal = input.outstandingPrincipal === undefined ? new Decimal(0) : parseMoney(input.outstandingPrincipal);

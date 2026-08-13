@@ -7,6 +7,9 @@
 - Added the v0.3.12 TDD implementation plan for exact single-payment terms, append-only settlement and restructuring, component waivers, synchronized REST/MCP/plugin contracts, and localized Web workflows.
 - Added the approved design for exact single-payment maturity loans, greater-of fixed or retroactive contract interest, optional concurrent daily late penalties, component-level settlement waivers, and append-only restructuring into independently priced replacement contracts.
 
+### Fixed
+- Enforced normalized activated single-payment policies, gap-free exposure timelines through settlement, Bangkok-date maturity validation, and public single-payment term normalization.
+
 ## v0.3.11 - 2026-08-13
 
 ### Added
