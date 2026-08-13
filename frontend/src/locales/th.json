@@ -177,6 +177,25 @@
         "firstDayTreatment": "ดอกเบี้ยวันแรก",
         "startNextDay": "เริ่มคิดดอกวันถัดไป",
         "deductFirstDay": "หักดอกวันแรกจากยอดจ่ายให้ลูกหนี้",
+        "floating": {
+            "periodUnit": "รอบดอกเบี้ย",
+            "periodOptions": {
+                "day": "รายวัน",
+                "week": "รายสัปดาห์"
+            },
+            "rateMode": "รูปแบบอัตรา",
+            "rateOptions": {
+                "percent": "เปอร์เซ็นต์ต่อรอบ",
+                "per_thousand": "บาทต่อทุก ฿1,000 ต่อรอบ"
+            },
+            "contractRate": "อัตราตามสัญญา",
+            "advanceInterest": "ดอกเบี้ยล่วงหน้า",
+            "advanceOptions": {
+                "0": "ไม่หักล่วงหน้า",
+                "1": "หักล่วงหน้าหนึ่งรอบ"
+            },
+            "nonRefundableWarning": "ไม่คืนดอกเบี้ยที่หักล่วงหน้าหลังเปิดใช้งาน แม้ปิดบัญชีก่อนกำหนด"
+        },
         "termMonths": "ระยะเวลา (เดือน)",
         "totalInstallments": "จำนวนงวด",
         "installmentAmount": "ยอดต่องวด (ไม่บังคับ)",
@@ -831,6 +850,8 @@
             "rate": "อัตราดอกเบี้ย",
             "percent": "% ต่อวัน",
             "perThousand": "ต่อพันต่อวัน",
+            "percentByPeriod": "% ต่อ{{period}}",
+            "perThousandByPeriod": "ต่อพันต่อ{{period}}",
             "earliestEditable": "แก้ไขได้เร็วที่สุดตั้งแต่วันที่ {{date}}",
             "preview": "ดูตัวอย่างการปรับอัตรา",
             "confirmTitle": "ยืนยันช่วงอัตราดอกเบี้ยนี้หรือไม่",
@@ -880,6 +901,58 @@
                 "duplicate": "ซ้ำ"
             }
         },
+        "floatingSummary": {
+            "title": "สรุปดอกเบี้ยลอยตัว",
+            "periodLabel": "รอบดอกเบี้ย",
+            "periodName": {
+                "day": "รายวัน",
+                "week": "รายสัปดาห์"
+            },
+            "period": {
+                "day": "วัน",
+                "week": "สัปดาห์"
+            },
+            "contractRate": "อัตราตามสัญญา",
+            "percentRate": "{{rate}}% ต่อ{{period}}",
+            "perThousandRate": "{{rate}} บาทต่อ ฿1,000 ต่อ{{period}}",
+            "dueInterest": "ดอกเบี้ยถึงกำหนด",
+            "accruingInterest": "ดอกเบี้ยกำลังสะสม",
+            "previewRequired": "ต้องพรีวิวก่อน",
+            "fullPeriodInterest": "ดอกเบี้ยเต็มรอบ",
+            "advanceInterest": "ดอกเบี้ยล่วงหน้า",
+            "netPayout": "ยอดสุทธิที่จ่ายให้ผู้กู้",
+            "periodDays": "จำนวนวันในรอบ",
+            "periodStart": "วันเริ่มรอบแรก",
+            "periodDue": "วันถึงกำหนดรอบแรก",
+            "nonRefundableWarning": "ดอกเบี้ยล่วงหน้าไม่สามารถขอคืนได้และแสดงเป็นประวัติ โดยจะไม่ถูกหักซ้ำจากยอดปิดบัญชี"
+        },
+        "settlement": {
+            "date": "วันที่ปิดบัญชี",
+            "preview": "พรีวิวยอดปิดบัญชี",
+            "previewing": "กำลังพรีวิว...",
+            "confirmTitle": "ยืนยันยอดปิดบัญชีที่แน่นอน",
+            "confirmDescription": "ตรวจสอบทุกองค์ประกอบที่ backend คำนวณให้ การดำเนินการจะลงบัญชีตามพรีวิวนี้และปิดสัญญาลอยตัว",
+            "outstandingPrincipal": "เงินต้นคงค้าง",
+            "dueInterest": "ดอกเบี้ยถึงกำหนด",
+            "accruedNotDueInterest": "ดอกเบี้ยกำลังสะสม (ยังไม่ถึงกำหนด)",
+            "outstandingFees": "ค่าธรรมเนียมคงค้าง",
+            "outstandingPenalties": "ค่าปรับคงค้าง",
+            "nonRefundableAdvanceInterest": "ประวัติดอกเบี้ยล่วงหน้าที่ไม่คืน",
+            "settlementTotal": "ยอดปิดบัญชีรวม",
+            "nonRefundableNote": "ประวัติดอกเบี้ยล่วงหน้าไม่สามารถขอคืนได้ และไม่ถูกนำมาหักออกจากยอดปิดบัญชีเพิ่มเติมนี้",
+            "reason": "เหตุผลการปิดบัญชี",
+            "confirmation": "ฉันยืนยันพรีวิวยอดปิดบัญชีนี้",
+            "execute": "ดำเนินการปิดบัญชี",
+            "executing": "กำลังดำเนินการ...",
+            "executed": "ปิดบัญชีสำเร็จ",
+            "expires": "พรีวิวหมดอายุ {{value}}",
+            "errors": {
+                "preview": "ไม่สามารถพรีวิวยอดปิดบัญชีได้",
+                "execute": "ไม่สามารถปิดบัญชีได้ และไม่มีรายการทางการเงินถูกเปลี่ยนแปลง",
+                "stale": "ยอดคงเหลือเปลี่ยนแล้ว โปรดตรวจสอบพรีวิวที่รีเฟรชและยืนยันอีกครั้ง",
+                "refresh": "พรีวิวเก่าแล้วและไม่สามารถโหลดพรีวิวใหม่ได้"
+            }
+        },
         "loanId": "รหัส",
         "copyLoanId": "คัดลอกรหัสสัญญา",
         "copied": "คัดลอกแล้ว",
@@ -903,6 +976,12 @@
         "shareOfDrawdownCost": "สัดส่วนต้นทุนของรายการเบิกใช้",
         "allocatedPrincipal": "เงินต้นที่จัดสรร",
         "estimatedCostPaid": "ต้นทุนที่คาดว่าจ่ายแล้ว",
+        "costComponents": {
+            "interest": "ดอกเบี้ย",
+            "fees": "ค่าธรรมเนียม",
+            "vat": "ภาษีมูลค่าเพิ่ม",
+            "penalties": "ค่าปรับ"
+        },
         "outstandingCostAllocated": "ต้นทุนคงค้างที่จัดสรร",
         "noFundingComposition": "สัญญานี้ยังไม่ได้จับคู่กับรายการเบิกใช้ใด",
         "repaymentSchedule": "ตารางผ่อน",

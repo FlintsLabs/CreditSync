@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, CalendarDays, CheckCircle, Copy, User2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import Decimal from "decimal.js";
 import { api } from "../../../lib/api";
 import { getStoredUser, isTenantAdminUser } from "../../../lib/session";
 import { Button } from "../../../components/ui/Button";
+import { Input } from "../../../components/ui/Input";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/Card";
 import { Badge } from "../../../components/ui/badge";
 import {
@@ -15,12 +17,12 @@ import {
     DialogHeader,
     DialogTitle,
 } from "../../../components/ui/dialog";
-import appI18n from "../../../lib/i18n";
 import { formatMoneyExact } from "../../../lib/workflow-model";
 import { LoanRenewalPanel } from "./LoanRenewalPanel";
 import { LoanDisbursements } from "./LoanDisbursements";
 import { LoanRepaymentHistory } from "./LoanRepaymentHistory";
 import { FloatingInterestRateCard } from "./FloatingInterestRateCard";
+import { FloatingInterestSummary, type FloatingInterestPolicyView } from "./FloatingInterestSummary";
 
 interface LoanDetailData {
     id: string;
@@ -40,6 +42,7 @@ interface LoanDetailData {
     status: string;
     bankProfilePublicId?: string | null;
     bankLoanPublicId?: string | null;
+    floatingInterestPolicy?: FloatingInterestPolicyView | null;
     dailyLoanCalculation?: {
         durationUnit: "days" | "weeks" | "months";
         durationValue: number;
@@ -110,10 +113,35 @@ interface LoanAllocationState {
     state: string;
 }
 
-function formatCurrency(value: number) {
-    return new Intl.NumberFormat(appI18n.language, {
-        style: "currency", currency: "THB", minimumFractionDigits: 2,
-    }).format(value);
+interface LoanSettlementPreview {
+    id: string;
+    publicId: string;
+    loanPublicId: string;
+    status: "ready" | "expired" | "executed";
+    asOfDate: string;
+    outstandingPrincipal: string;
+    dueInterest: string;
+    accruedNotDueInterest: string;
+    outstandingFees: string;
+    outstandingPenalties: string;
+    nonRefundableAdvanceInterest: string;
+    settlementTotal: string;
+    balanceVersion: string;
+    previewHash: string;
+    expiresAt: string;
+}
+
+function bangkokBusinessDate() {
+    return new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Bangkok",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).format(new Date());
+}
+
+function domainErrorCode(error: unknown) {
+    return (error as { response?: { data?: { code?: string } } }).response?.data?.code;
 }
 
 export default function LoanDetail() {
@@ -133,6 +161,19 @@ export default function LoanDetail() {
     const [allocationState, setAllocationState] = useState<LoanAllocationState | null>(null);
     const [activationOpen, setActivationOpen] = useState(false);
     const [activating, setActivating] = useState(false);
+    const activationIntentRef = useRef<{ loanPublicId: string; key: string } | null>(null);
+    const settlementIntentRef = useRef<{ fingerprint: string; key: string } | null>(null);
+    const [settlementDate, setSettlementDate] = useState(bangkokBusinessDate);
+    const [settlementPreview, setSettlementPreview] = useState<LoanSettlementPreview | null>(null);
+    const [settlementOpen, setSettlementOpen] = useState(false);
+    const [settlementReason, setSettlementReason] = useState("");
+    const [settlementConfirmed, setSettlementConfirmed] = useState(false);
+    const [settlementBusy, setSettlementBusy] = useState(false);
+    const [settlementError, setSettlementError] = useState("");
+    const [settlementExecuted, setSettlementExecuted] = useState(false);
+    const money = (value: string | null | undefined) => formatMoneyExact(value ?? "0.00", i18n.language);
+    const isPositiveMoney = (value: string | null | undefined) => new Decimal(value ?? "0").isPositive();
+    const isNegativeMoney = (value: string | null | undefined) => new Decimal(value ?? "0").isNegative();
 
     useEffect(() => {
         const run = async () => {
@@ -180,13 +221,18 @@ export default function LoanDetail() {
         run();
     }, [id, isTenantAdmin, t]);
 
-    const nextDueRow = schedule.find((row) => Number(row.remainingDue) > 0) ?? null;
+    const nextDueRow = schedule.find((row) => isPositiveMoney(row.remainingDue)) ?? null;
 
     const activateDraft = async () => {
         if (!loan || loan.status !== "draft" || activating) return;
         try {
             setActivating(true);
-            const response = await api.post(`/loans/${loan.publicId}/activate`);
+            if (activationIntentRef.current?.loanPublicId !== loan.publicId) {
+                activationIntentRef.current = { loanPublicId: loan.publicId, key: crypto.randomUUID() };
+            }
+            const response = await api.post(`/loans/${loan.publicId}/activate`, undefined, {
+                headers: { "Idempotency-Key": activationIntentRef.current.key },
+            });
             setLoan(response.data);
             setActivationOpen(false);
             setErrorMessage("");
@@ -195,6 +241,82 @@ export default function LoanDetail() {
             setErrorMessage(t("loanDetail.activation.error"));
         } finally {
             setActivating(false);
+        }
+    };
+
+    const requestSettlementPreview = async () => {
+        if (!loan) throw new Error("Loan is unavailable");
+        const response = await api.post("/loan-settlements/preview", {
+            loanPublicId: loan.publicId,
+            asOfDate: settlementDate,
+        });
+        return response.data as LoanSettlementPreview;
+    };
+
+    const previewSettlement = async () => {
+        if (!loan || settlementBusy) return;
+        try {
+            setSettlementBusy(true);
+            const preview = await requestSettlementPreview();
+            setSettlementPreview(preview);
+            setSettlementConfirmed(false);
+            setSettlementReason("");
+            setSettlementError("");
+            setSettlementExecuted(false);
+            setSettlementOpen(true);
+            settlementIntentRef.current = null;
+        } catch (error) {
+            console.error("Failed to preview floating-loan settlement", error);
+            setSettlementError(t("loanDetail.settlement.errors.preview"));
+        } finally {
+            setSettlementBusy(false);
+        }
+    };
+
+    const executeSettlement = async () => {
+        if (!settlementPreview || !settlementConfirmed || !settlementReason.trim() || settlementBusy) return;
+        const reason = settlementReason.trim();
+        const fingerprint = `${settlementPreview.publicId}:${settlementPreview.previewHash}:${reason}`;
+        if (settlementIntentRef.current?.fingerprint !== fingerprint) {
+            settlementIntentRef.current = { fingerprint, key: crypto.randomUUID() };
+        }
+        try {
+            setSettlementBusy(true);
+            const response = await api.post(`/loan-settlements/${settlementPreview.publicId}/execute`, {
+                previewHash: settlementPreview.previewHash,
+                confirmed: true,
+                reason,
+            }, { headers: { "Idempotency-Key": settlementIntentRef.current.key } });
+            setSettlementPreview(response.data as LoanSettlementPreview);
+            setSettlementConfirmed(false);
+            setSettlementError("");
+            setSettlementExecuted(true);
+            setLoan((current) => current ? {
+                ...current,
+                status: "paid",
+                outstandingPrincipal: "0.00",
+                outstandingInterest: "0.00",
+                outstandingFees: "0.00",
+                nextDueDate: null,
+            } : current);
+        } catch (error) {
+            if (domainErrorCode(error) === "STALE_SETTLEMENT_PREVIEW") {
+                setSettlementConfirmed(false);
+                settlementIntentRef.current = null;
+                setSettlementError(t("loanDetail.settlement.errors.stale"));
+                try {
+                    setSettlementPreview(await requestSettlementPreview());
+                } catch (refreshError) {
+                    console.error("Failed to refresh stale floating-loan settlement", refreshError);
+                    setSettlementPreview(null);
+                    setSettlementError(t("loanDetail.settlement.errors.refresh"));
+                }
+            } else {
+                console.error("Failed to execute floating-loan settlement", error);
+                setSettlementError(t("loanDetail.settlement.errors.execute"));
+            }
+        } finally {
+            setSettlementBusy(false);
         }
     };
 
@@ -238,6 +360,64 @@ export default function LoanDetail() {
                 </DialogContent>
             </Dialog>
 
+            <Dialog open={settlementOpen} onOpenChange={(open) => {
+                if (settlementBusy) return;
+                setSettlementOpen(open);
+                if (!open) {
+                    setSettlementConfirmed(false);
+                    setSettlementError("");
+                    setSettlementExecuted(false);
+                }
+            }}>
+                <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+                    <DialogHeader>
+                        <DialogTitle>{t("loanDetail.settlement.confirmTitle")}</DialogTitle>
+                        <DialogDescription>{t("loanDetail.settlement.confirmDescription")}</DialogDescription>
+                    </DialogHeader>
+                    {settlementError && <div role="alert" className="rounded border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200">{settlementError}</div>}
+                    {settlementExecuted ? (
+                        <div className="flex items-center gap-2 rounded border border-emerald-500/30 bg-emerald-500/10 p-4 font-medium text-emerald-700 dark:text-emerald-300">
+                            <CheckCircle className="h-5 w-5" />{t("loanDetail.settlement.executed")}
+                        </div>
+                    ) : settlementPreview ? (
+                        <>
+                            <dl className="grid gap-3 text-sm sm:grid-cols-2">
+                                {([
+                                    ["outstandingPrincipal", settlementPreview.outstandingPrincipal],
+                                    ["dueInterest", settlementPreview.dueInterest],
+                                    ["accruedNotDueInterest", settlementPreview.accruedNotDueInterest],
+                                    ["outstandingFees", settlementPreview.outstandingFees],
+                                    ["outstandingPenalties", settlementPreview.outstandingPenalties],
+                                    ["nonRefundableAdvanceInterest", settlementPreview.nonRefundableAdvanceInterest],
+                                    ["settlementTotal", settlementPreview.settlementTotal],
+                                ] as const).map(([label, value]) => (
+                                    <div key={label} className={label === "settlementTotal" ? "rounded border bg-muted/30 p-3 sm:col-span-2" : ""}>
+                                        <dt className="text-muted-foreground">{t(`loanDetail.settlement.${label}`)}</dt>
+                                        <dd className="font-medium tabular-nums">{money(value)}</dd>
+                                    </div>
+                                ))}
+                            </dl>
+                            <div className="rounded border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200">{t("loanDetail.settlement.nonRefundableNote")}</div>
+                            <div className="text-xs text-muted-foreground">{t("loanDetail.settlement.expires", { value: new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Bangkok" }).format(new Date(settlementPreview.expiresAt)) })}</div>
+                            <div className="grid gap-2">
+                                <label htmlFor="settlement-reason">{t("loanDetail.settlement.reason")}</label>
+                                <Input id="settlement-reason" value={settlementReason} onChange={(event) => { setSettlementReason(event.target.value); setSettlementConfirmed(false); settlementIntentRef.current = null; }} />
+                            </div>
+                            <label className="flex items-start gap-2 text-sm">
+                                <input type="checkbox" className="mt-1" checked={settlementConfirmed} onChange={(event) => setSettlementConfirmed(event.target.checked)} />
+                                <span>{t("loanDetail.settlement.confirmation")}</span>
+                            </label>
+                        </>
+                    ) : null}
+                    <DialogFooter>
+                        <Button variant="outline" disabled={settlementBusy} onClick={() => setSettlementOpen(false)}>{t("common.cancel")}</Button>
+                        {!settlementExecuted && <Button disabled={settlementBusy || !settlementPreview || !settlementConfirmed || !settlementReason.trim()} onClick={() => void executeSettlement()}>
+                            {settlementBusy ? t("loanDetail.settlement.executing") : t("loanDetail.settlement.execute")}
+                        </Button>}
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
             {errorMessage && (
                 <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
                     {errorMessage}
@@ -259,16 +439,33 @@ export default function LoanDetail() {
                             <CardHeader><CardTitle>{t("loanDetail.dailyTerms.title", "Daily repayment terms")}</CardTitle></CardHeader>
                             <CardContent className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-6">
                                 <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.duration", "Duration")}</div><div className="font-medium">{loan.dailyLoanCalculation.durationValue} {t(`loanDetail.dailyTerms.units.${loan.dailyLoanCalculation.durationUnit}`, loan.dailyLoanCalculation.durationUnit)}</div></div>
-                                <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.agreedInstallment", "Agreed instalment")}</div><div className="font-medium">{formatCurrency(Number(loan.dailyLoanCalculation.installmentAmount))}</div></div>
+                                <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.agreedInstallment", "Agreed instalment")}</div><div className="font-medium">{money(loan.dailyLoanCalculation.installmentAmount)}</div></div>
                                 <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.installments", "Total instalments")}</div><div className="font-medium">{loan.dailyLoanCalculation.totalInstallments}</div></div>
-                                <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.totalInterest", "Total interest")}</div><div className="font-medium">{formatCurrency(Number(loan.dailyLoanCalculation.totalInterest))}</div></div>
-                                <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.dailyInterest", "Daily interest")}</div><div className="font-medium">{formatCurrency(Number(loan.dailyLoanCalculation.dailyInterest))}</div></div>
-                                <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.flatRate", "Flat daily rate")}</div><div className="font-medium">{Number(loan.dailyLoanCalculation.flatDailyRatePercent).toFixed(4)}%</div></div>
+                                <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.totalInterest", "Total interest")}</div><div className="font-medium">{money(loan.dailyLoanCalculation.totalInterest)}</div></div>
+                                <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.dailyInterest", "Daily interest")}</div><div className="font-medium">{money(loan.dailyLoanCalculation.dailyInterest)}</div></div>
+                                <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.flatRate", "Flat daily rate")}</div><div className="font-medium">{loan.dailyLoanCalculation.flatDailyRatePercent}%</div></div>
                             </CardContent>
                             <CardContent className="pt-0 text-xs text-muted-foreground">{t("loanDetail.dailyTerms.notice", "The agreed instalment is fixed. A smaller payment leaves the scheduled remainder due; early settlement requires its own preview.")}</CardContent>
                         </Card>
                     )}
-                    {loan.repaymentType === "floating" && <FloatingInterestRateCard loanPublicId={loan.publicId ?? loan.id} />}
+                    {loan.repaymentType === "floating" && loan.floatingInterestPolicy && (
+                        <FloatingInterestSummary
+                            policy={loan.floatingInterestPolicy}
+                            dueInterest={settlementPreview?.dueInterest ?? loan.outstandingInterest}
+                            accruedNotDueInterest={settlementPreview?.accruedNotDueInterest}
+                        >
+                            {loan.status === "active" && (
+                                <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-end">
+                                    <div className="grid flex-1 gap-2">
+                                        <label htmlFor="settlement-date">{t("loanDetail.settlement.date")}</label>
+                                        <Input id="settlement-date" type="date" value={settlementDate} onChange={(event) => { setSettlementDate(event.target.value); setSettlementPreview(null); setSettlementConfirmed(false); setSettlementError(""); settlementIntentRef.current = null; }} />
+                                    </div>
+                                    <Button disabled={settlementBusy || !settlementDate} onClick={() => void previewSettlement()}>{settlementBusy ? t("loanDetail.settlement.previewing") : t("loanDetail.settlement.preview")}</Button>
+                                </div>
+                            )}
+                        </FloatingInterestSummary>
+                    )}
+                    {loan.repaymentType === "floating" && <FloatingInterestRateCard loanPublicId={loan.publicId ?? loan.id} periodUnit={loan.floatingInterestPolicy?.periodUnit ?? "day"} />}
                     <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                         <Card>
                             <CardHeader className="pb-2">
@@ -297,15 +494,15 @@ export default function LoanDetail() {
                                 {loan.bankLoanPublicId && <div className="rounded bg-muted p-2 text-xs"><span className="font-medium">{t("loanDetail.bankDrawdown.title", "Bank drawdown")}</span><span className="text-muted-foreground"> · {t("loanDetail.bankDrawdown.description", "Funding is allocated from a specific drawdown.")}</span></div>}
                                 <div className="flex justify-between">
                                     <span>{t("loanWizard.columns.principal", "Principal")}</span>
-                                    <span className="font-medium">{formatCurrency(Number(loan.principalAmount ?? 0))}</span>
+                                    <span className="font-medium">{money(loan.principalAmount)}</span>
                                 </div>
                                 <div className="flex justify-between">
                                     <span>{t("loanWizard.outstandingPrincipal", "Outstanding principal")}</span>
-                                    <span className="font-medium">{formatCurrency(Number(loan.outstandingPrincipal ?? 0))}</span>
+                                    <span className="font-medium">{money(loan.outstandingPrincipal)}</span>
                                 </div>
                                 <div className="flex justify-between">
                                     <span>{t("loanDetail.outstandingInterest", "Outstanding interest")}</span>
-                                    <span className="font-medium">{formatCurrency(Number(loan.outstandingInterest ?? 0))}</span>
+                                    <span className="font-medium">{money(loan.outstandingInterest)}</span>
                                 </div>
                                 <div className="flex justify-between">
                                     <span>{t("common.status", "Status")}</span>
@@ -325,17 +522,17 @@ export default function LoanDetail() {
                                 </div>
                                 <div className="flex justify-between">
                                     <span>{t("loanDetail.fundedPrincipal", "Funded principal")}</span>
-                                    <span className="font-medium">{formatCurrency(Number(allocationState?.netAllocatedPrincipal ?? 0))}</span>
+                                    <span className="font-medium">{money(allocationState?.netAllocatedPrincipal)}</span>
                                 </div>
                                 <div className="flex justify-between">
                                     <span>{t("loans.remainingGap", "Remaining gap")}</span>
-                                    <span className={`font-medium ${Number(allocationState?.remainingGap ?? 0) > 0 ? "text-destructive" : "text-emerald-600"}`}>
-                                        {formatCurrency(Number(allocationState?.remainingGap ?? 0))}
+                                    <span className={`font-medium ${isPositiveMoney(allocationState?.remainingGap) ? "text-destructive" : "text-emerald-600"}`}>
+                                        {money(allocationState?.remainingGap)}
                                     </span>
                                 </div>
                                 <div className="flex justify-between">
                                     <span>{t("loanDetail.overfunded", "Overfunded")}</span>
-                                    <span className="font-medium">{formatCurrency(Number(allocationState?.overfundedAmount ?? 0))}</span>
+                                    <span className="font-medium">{money(allocationState?.overfundedAmount)}</span>
                                 </div>
                             </CardContent>
                         </Card>
@@ -353,7 +550,7 @@ export default function LoanDetail() {
                                         </div>
                                         <div className="flex justify-between">
                                             <span>{t("loanDetail.remainingDue", "Remaining due")}</span>
-                                            <span className="font-medium">{formatCurrency(Number(nextDueRow.remainingDue ?? 0))}</span>
+                                            <span className="font-medium">{money(nextDueRow.remainingDue)}</span>
                                         </div>
                                         <Link to={`/transactions/new?loanId=${loan.publicId ?? loan.id}&scheduleId=${nextDueRow.publicId ?? nextDueRow.id}`} className="text-primary text-xs hover:underline">
                                             {t("dashboardPage.actions.recordThisPayment", "Record this payment")}
@@ -382,31 +579,31 @@ export default function LoanDetail() {
                             <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
                             <div>
                                 <div className="text-xs text-muted-foreground">{t("dashboardPage.cards.borrowerRevenue", "Revenue collected")}</div>
-                                <div className="font-medium">{formatCurrency(Number(profitability?.borrowerRevenueCollected ?? 0))}</div>
+                                <div className="font-medium">{money(profitability?.borrowerRevenueCollected)}</div>
                             </div>
                             <div>
                                 <div className="text-xs text-muted-foreground">{t("dashboardPage.cards.fundCostPaid", "Fund cost paid")}</div>
-                                <div className="font-medium">{formatCurrency(Number(profitability?.fundCostPaid ?? 0))}</div>
+                                <div className="font-medium">{money(profitability?.fundCostPaid)}</div>
                             </div>
                             <div>
                                 <div className="text-xs text-muted-foreground">{t("funds.metrics.realizedSpread", "Realized spread")}</div>
-                                <div className={`font-medium ${Number(profitability?.realizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                                    {formatCurrency(Number(profitability?.realizedSpread ?? 0))}
+                                <div className={`font-medium ${isNegativeMoney(profitability?.realizedSpread) ? "text-destructive" : "text-emerald-600"}`}>
+                                    {money(profitability?.realizedSpread)}
                                 </div>
                             </div>
                             <div>
                                 <div className="text-xs text-muted-foreground">{t("loans.unrealizedSpread", "Unrealized spread")}</div>
-                                <div className={`font-medium ${Number(profitability?.unrealizedSpread ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                                    {formatCurrency(Number(profitability?.unrealizedSpread ?? 0))}
+                                <div className={`font-medium ${isNegativeMoney(profitability?.unrealizedSpread) ? "text-destructive" : "text-emerald-600"}`}>
+                                    {money(profitability?.unrealizedSpread)}
                                 </div>
                             </div>
                             <div>
                                 <div className="text-xs text-muted-foreground">{t("loanDetail.fundingShare", "Funding share")}</div>
-                                <div className="font-medium">{((Number(profitability?.fundingShare ?? 0)) * 100).toFixed(1)}%</div>
+                                <div className="font-medium">{new Intl.NumberFormat(i18n.language, { style: "percent", minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(profitability?.fundingShare ?? 0)}</div>
                             </div>
                             <div>
                                 <div className="text-xs text-muted-foreground">{t("loanDetail.outstandingFundingCost", "Outstanding funding cost")}</div>
-                                <div className="font-medium">{formatCurrency(Number(profitability?.estimatedOutstandingFundingCost ?? 0))}</div>
+                                <div className="font-medium">{money(profitability?.estimatedOutstandingFundingCost)}</div>
                             </div>
                         </CardContent>
                     </Card>
@@ -435,22 +632,20 @@ export default function LoanDetail() {
                                                 <div className="mt-3 grid gap-3 md:grid-cols-3">
                                                     <div>
                                                         <div className="text-xs text-muted-foreground">{t("loanDetail.allocatedPrincipal", "Allocated principal")}</div>
-                                                        <div className="font-medium">{formatCurrency(Number(item.netAllocatedPrincipal))}</div>
+                                                        <div className="font-medium">{money(item.netAllocatedPrincipal)}</div>
                                                     </div>
                                                     <div>
                                                         <div className="text-xs text-muted-foreground">{t("loanDetail.estimatedCostPaid", "Estimated cost paid")}</div>
-                                                        <div className="font-medium">
-                                                            {formatCurrency(
-                                                                Number(item.estimatedBankInterestPaid) +
-                                                                Number(item.estimatedBankFeesPaid) +
-                                                                Number(item.estimatedBankVatPaid) +
-                                                                Number(item.estimatedBankPenaltiesPaid)
-                                                            )}
+                                                        <div className="space-y-0.5 text-xs font-medium">
+                                                            <div>{t("loanDetail.costComponents.interest")}: {money(item.estimatedBankInterestPaid)}</div>
+                                                            <div>{t("loanDetail.costComponents.fees")}: {money(item.estimatedBankFeesPaid)}</div>
+                                                            <div>{t("loanDetail.costComponents.vat")}: {money(item.estimatedBankVatPaid)}</div>
+                                                            <div>{t("loanDetail.costComponents.penalties")}: {money(item.estimatedBankPenaltiesPaid)}</div>
                                                         </div>
                                                     </div>
                                                     <div>
                                                         <div className="text-xs text-muted-foreground">{t("loanDetail.outstandingCostAllocated", "Outstanding cost allocated")}</div>
-                                                        <div className="font-medium">{formatCurrency(Number(item.outstandingCostAllocated))}</div>
+                                                        <div className="font-medium">{money(item.outstandingCostAllocated)}</div>
                                                     </div>
                                                 </div>
                                             </div>
@@ -487,7 +682,7 @@ export default function LoanDetail() {
                                                         <div className="text-xs text-muted-foreground">{row.dueDate}</div>
                                                     </div>
                                                     <div className="text-right">
-                                                        <div className="font-medium">{formatCurrency(Number(row.remainingDue ?? 0))}</div>
+                                                        <div className="font-medium">{money(row.remainingDue)}</div>
                                                         <Badge variant={row.status === "overdue" ? "destructive" : row.status === "paid" ? "secondary" : "outline"}>
                                                             {t(`loans.paymentHealth.scheduleStatus.${row.status}`, { defaultValue: row.status })}
                                                         </Badge>
@@ -523,8 +718,8 @@ export default function LoanDetail() {
                                                         {row.bankProfileName ?? t("matching.unknownSource", "Unknown source")} • {row.allocationDate ?? "-"}
                                                     </div>
                                                 </div>
-                                                <div className={`font-medium ${Number(row.allocatedAmount) < 0 ? "text-destructive" : "text-emerald-600"}`}>
-                                                    {Number(row.allocatedAmount) < 0 ? "-" : "+"}{formatCurrency(Math.abs(Number(row.allocatedAmount)))}
+                                                <div className={`font-medium ${isNegativeMoney(row.allocatedAmount) ? "text-destructive" : "text-emerald-600"}`}>
+                                                    {isNegativeMoney(row.allocatedAmount) ? "" : "+"}{money(row.allocatedAmount)}
                                                 </div>
                                             </div>
                                             {row.note && <div className="mt-1 text-xs text-muted-foreground">{row.note}</div>}

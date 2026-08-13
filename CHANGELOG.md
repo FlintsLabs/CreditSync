@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.3.12 - 2026-08-14
+
+### Added
+- Added localized Web controls and backend-owned previews for daily or weekly floating-interest policy origination, exact due-versus-accruing loan summaries, and explicitly confirmed settlement with automatic stale-preview refresh.
+
+### Fixed
+- Preserved exact loan-detail and settlement money strings beyond JavaScript's safe-integer range, labeled rate timelines by their locked daily/weekly contract, and attached stable idempotency keys to Web loan activation commands.
+
+### Infra
+- Kept the frontend TypeScript 6 build gate operational while the configured `baseUrl` compatibility alias remains in use.
+
 ## v0.3.11 - 2026-08-13
 
 ### Added

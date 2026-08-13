@@ -31,7 +31,7 @@ function rateLabel(period: Pick<RatePeriod, "rate" | "rateType">, percent: strin
     return `${period.rate} ${period.rateType === "percent" ? percent : perThousand}`;
 }
 
-export function FloatingInterestRateCard({ loanPublicId }: { loanPublicId: string }) {
+export function FloatingInterestRateCard({ loanPublicId, periodUnit = "day" }: { loanPublicId: string; periodUnit?: "day" | "week" }) {
     const { t, i18n } = useTranslation();
     const [timeline, setTimeline] = useState<Timeline | null>(null);
     const [loading, setLoading] = useState(true);
@@ -94,17 +94,18 @@ export function FloatingInterestRateCard({ loanPublicId }: { loanPublicId: strin
         }
     };
 
-    const percent = t("loanDetail.floatingRates.percent");
-    const perThousand = t("loanDetail.floatingRates.perThousand");
+    const period = t(`loanDetail.floatingSummary.period.${periodUnit}`);
+    const percent = t("loanDetail.floatingRates.percentByPeriod", { period });
+    const perThousand = t("loanDetail.floatingRates.perThousandByPeriod", { period });
     return (
         <Card data-testid="floating-interest-rate-card">
             <CardHeader><CardTitle>{t("loanDetail.floatingRates.title")}</CardTitle></CardHeader>
             <CardContent className="space-y-5">
                 {loading ? <div className="text-sm text-muted-foreground">{t("common.loading")}</div> : timeline && (
                     <>
-                        <div className="grid gap-3 sm:grid-cols-3">
+                        <div className={`grid gap-3 ${periodUnit === "day" ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
                             <div className="rounded border p-3"><div className="text-xs text-muted-foreground">{t("loanDetail.floatingRates.currentRate")}</div><div className="mt-1 font-semibold tabular-nums">{timeline.currentPeriod ? rateLabel(timeline.currentPeriod, percent, perThousand) : "-"}</div></div>
-                            <div className="rounded border p-3"><div className="text-xs text-muted-foreground">{t("loanDetail.floatingRates.dailyInterest")}</div><div className="mt-1 font-semibold tabular-nums">{timeline.dailyInterestAtCurrentPrincipal ? formatMoneyExact(timeline.dailyInterestAtCurrentPrincipal, i18n.language) : "-"}</div></div>
+                            {periodUnit === "day" && <div className="rounded border p-3"><div className="text-xs text-muted-foreground">{t("loanDetail.floatingRates.dailyInterest")}</div><div className="mt-1 font-semibold tabular-nums">{timeline.dailyInterestAtCurrentPrincipal ? formatMoneyExact(timeline.dailyInterestAtCurrentPrincipal, i18n.language) : "-"}</div></div>}
                             <div className="rounded border p-3"><div className="text-xs text-muted-foreground">{t("loanDetail.floatingRates.nextChange")}</div><div className="mt-1 font-semibold tabular-nums">{timeline.nextChange ? `${timeline.nextChange.effectiveDate} · ${rateLabel(timeline.nextChange, percent, perThousand)}` : t("loanDetail.floatingRates.none")}</div></div>
                         </div>
                         <div className="space-y-2">

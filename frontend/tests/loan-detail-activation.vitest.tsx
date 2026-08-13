@@ -63,7 +63,11 @@ describe("Loan Detail draft activation", () => {
         expect(screen.getByRole("dialog")).toHaveTextContent(/4,000\.00/);
 
         await user.click(screen.getByRole("button", { name: "ยืนยันเปิดใช้งาน" }));
-        await waitFor(() => expect(api.post).toHaveBeenCalledWith(`/loans/${LOAN_ID}/activate`));
+        await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+            `/loans/${LOAN_ID}/activate`,
+            undefined,
+            { headers: { "Idempotency-Key": expect.any(String) } },
+        ));
         await waitFor(() => expect(screen.queryByRole("button", { name: "เปิดใช้งานสัญญา" })).not.toBeInTheDocument());
         expect(screen.getByText(/^active$/i)).toBeInTheDocument();
     });

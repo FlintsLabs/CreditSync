@@ -177,6 +177,25 @@
         "firstDayTreatment": "First-day interest",
         "startNextDay": "Start charging on the next day",
         "deductFirstDay": "Deduct the first day's interest from payout",
+        "floating": {
+            "periodUnit": "Interest period",
+            "periodOptions": {
+                "day": "Daily",
+                "week": "Weekly"
+            },
+            "rateMode": "Rate expression",
+            "rateOptions": {
+                "percent": "Percent per period",
+                "per_thousand": "Baht per ฿1,000 per period"
+            },
+            "contractRate": "Contract rate",
+            "advanceInterest": "Advance interest",
+            "advanceOptions": {
+                "0": "No advance deduction",
+                "1": "Deduct one period in advance"
+            },
+            "nonRefundableWarning": "Advance interest is non-refundable after activation, including an early settlement."
+        },
         "termMonths": "Term (Months)",
         "totalInstallments": "Number of installments",
         "installmentAmount": "Amount per installment (optional)",
@@ -898,6 +917,8 @@
             "rate": "Rate",
             "percent": "% per day",
             "perThousand": "per thousand per day",
+            "percentByPeriod": "% per {{period}}",
+            "perThousandByPeriod": "per thousand per {{period}}",
             "earliestEditable": "Earliest editable date: {{date}}",
             "preview": "Preview rate change",
             "confirmTitle": "Confirm this interest timeline?",
@@ -947,6 +968,58 @@
                 "duplicate": "Duplicate"
             }
         },
+        "floatingSummary": {
+            "title": "Floating interest summary",
+            "periodLabel": "Interest period",
+            "periodName": {
+                "day": "Daily",
+                "week": "Weekly"
+            },
+            "period": {
+                "day": "day",
+                "week": "week"
+            },
+            "contractRate": "Contract rate",
+            "percentRate": "{{rate}}% per {{period}}",
+            "perThousandRate": "{{rate}} baht per ฿1,000 per {{period}}",
+            "dueInterest": "Due interest",
+            "accruingInterest": "Accruing interest",
+            "previewRequired": "Preview required",
+            "fullPeriodInterest": "Full-period interest",
+            "advanceInterest": "Advance interest",
+            "netPayout": "Net borrower payout",
+            "periodDays": "Days in period",
+            "periodStart": "First period starts",
+            "periodDue": "First period due",
+            "nonRefundableWarning": "Advance interest is non-refundable and is shown as history; it is not deducted again from settlement."
+        },
+        "settlement": {
+            "date": "Settlement date",
+            "preview": "Preview settlement",
+            "previewing": "Previewing...",
+            "confirmTitle": "Confirm exact settlement",
+            "confirmDescription": "Review every backend-produced component. Execution posts the exact preview and closes the floating loan.",
+            "outstandingPrincipal": "Outstanding principal",
+            "dueInterest": "Due interest",
+            "accruedNotDueInterest": "Accruing interest (not yet due)",
+            "outstandingFees": "Outstanding fees",
+            "outstandingPenalties": "Outstanding penalties",
+            "nonRefundableAdvanceInterest": "Non-refundable advance-interest history",
+            "settlementTotal": "Settlement total",
+            "nonRefundableNote": "The advance-interest history is non-refundable and is not subtracted from this additional settlement total.",
+            "reason": "Settlement reason",
+            "confirmation": "I confirm this exact settlement preview",
+            "execute": "Execute settlement",
+            "executing": "Executing...",
+            "executed": "Settlement executed",
+            "expires": "Preview expires {{value}}",
+            "errors": {
+                "preview": "Unable to preview settlement.",
+                "execute": "Unable to execute settlement. No financial record was changed.",
+                "stale": "Balances changed. Review the refreshed settlement preview and confirm it again.",
+                "refresh": "The preview became stale and a fresh settlement preview could not be loaded."
+            }
+        },
         "loanId": "ID",
         "copyLoanId": "Copy loan ID",
         "copied": "Copied",
@@ -970,6 +1043,12 @@
         "shareOfDrawdownCost": "Share of drawdown cost",
         "allocatedPrincipal": "Allocated principal",
         "estimatedCostPaid": "Estimated cost paid",
+        "costComponents": {
+            "interest": "Interest",
+            "fees": "Fees",
+            "vat": "VAT",
+            "penalties": "Penalties"
+        },
         "outstandingCostAllocated": "Outstanding cost allocated",
         "noFundingComposition": "This loan has not been matched to any funding drawdown yet.",
         "repaymentSchedule": "Repayment Schedule",

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../../../lib/api";
 import { getStoredUser, isTenantAdminUser } from "../../../lib/session";
 import { Button } from "../../../components/ui/Button";
@@ -7,6 +7,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui
 import { ChevronRight, ChevronLeft, CheckCircle, AlertCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { buildLoanTermsInput, formatMoneyExact } from "../../../lib/workflow-model";
+import { FloatingInterestSummary, type FloatingInterestPolicyView } from "./FloatingInterestSummary";
 
 interface Borrower {
     id: string;
@@ -55,6 +56,16 @@ interface DailyLoanCalculation {
     flatAnnualRatePercent: string;
 }
 
+interface FloatingLoanPreview {
+    floatingInterestPolicy: FloatingInterestPolicyView;
+    fullPeriodInterest: string;
+    advanceInterest: string;
+    netBorrowerPayout: string;
+    firstPeriodStartDate: string;
+    firstPeriodDueDate: string;
+    periodDays: number;
+}
+
 export default function LoanWizard() {
     const { t, i18n } = useTranslation();
     const currentUser = getStoredUser();
@@ -68,6 +79,8 @@ export default function LoanWizard() {
     const [errorMessage, setErrorMessage] = useState("");
     const [draftId, setDraftId] = useState("");
     const [dailyCalculation, setDailyCalculation] = useState<DailyLoanCalculation | null>(null);
+    const [floatingPreview, setFloatingPreview] = useState<FloatingLoanPreview | null>(null);
+    const activationIntentRef = useRef<{ draftId: string; key: string } | null>(null);
 
     const [formData, setFormData] = useState({
         borrowerId: "",
@@ -77,9 +90,10 @@ export default function LoanWizard() {
         interestRate: "15",
         termMonths: "12",
         repaymentType: "monthly",
-        dailyInterestMode: "per_thousand",
-        dailyInterestRate: "15",
-        firstDayTreatment: "start_next_day",
+        floatingPeriodUnit: "day" as "day" | "week",
+        floatingRateMode: "per_thousand" as "per_thousand" | "percent",
+        floatingRate: "15",
+        advanceInterestPeriods: 0 as 0 | 1,
         startDate: new Date().toISOString().split("T")[0],
         totalInstallments: "",
         installmentAmount: "",
@@ -126,21 +140,24 @@ export default function LoanWizard() {
     const ownCapitalProfiles = bankProfiles.filter((item) => item.accountingMode === "capital_pool" && item.status !== "inactive");
     const selectedOwnCapital = ownCapitalProfiles.find((item) => item.publicId === formData.bankProfileId);
     const bankProfileNameById = new Map(bankProfiles.map((item) => [item.id, item.name]));
+    const floatingInterestPolicy: FloatingInterestPolicyView = {
+        periodUnit: formData.floatingPeriodUnit,
+        periodLength: 1,
+        rateMode: formData.floatingRateMode,
+        rate: formData.floatingRate,
+        advanceInterestPeriods: formData.advanceInterestPeriods,
+        advanceInterestRefundPolicy: "non_refundable",
+    };
 
     const calculateSchedule = async () => {
         try {
             const res = await api.post("/loans/preview", {
                 ...buildLoanTermsInput({ ...formData, interestRate: ["floating", "daily"].includes(formData.repaymentType) ? "0" : formData.interestRate }),
-                ...(formData.repaymentType === "floating" ? {
-                    floatingDailyInterest: {
-                        mode: formData.dailyInterestMode,
-                        rate: formData.dailyInterestRate,
-                        firstDayTreatment: formData.firstDayTreatment,
-                    },
-                } : {}),
+                ...(formData.repaymentType === "floating" ? { floatingInterestPolicy } : {}),
             });
             setSchedule(res.data?.schedule ?? []);
             setDailyCalculation(res.data?.dailyLoanCalculation ?? null);
+            setFloatingPreview(formData.repaymentType === "floating" ? res.data as FloatingLoanPreview : null);
             return true;
         } catch (error) {
             console.error("Calculation failed", error);
@@ -168,14 +185,11 @@ export default function LoanWizard() {
                 borrowerPublicId: formData.borrowerId,
                 bankLoanPublicId: isTenantAdmin && formData.bankLoanId ? formData.bankLoanId : undefined,
                 bankProfilePublicId: isTenantAdmin && formData.bankProfileId ? formData.bankProfileId : undefined,
-                floatingDailyInterest: formData.repaymentType === "floating" ? {
-                    mode: formData.dailyInterestMode as "per_thousand" | "percent",
-                    rate: formData.dailyInterestRate,
-                    firstDayTreatment: formData.firstDayTreatment as "deduct" | "start_next_day",
-                } : undefined,
+                floatingInterestPolicy: formData.repaymentType === "floating" ? floatingInterestPolicy : undefined,
                 ...buildLoanTermsInput({ ...formData, interestRate: ["floating", "daily"].includes(formData.repaymentType) ? "0" : formData.interestRate }),
             });
             setDraftId(draft.data.publicId);
+            activationIntentRef.current = null;
             setStep(4);
         } catch (error: unknown) {
             console.error("Failed to create loan", error);
@@ -189,7 +203,12 @@ export default function LoanWizard() {
         try {
             setSubmitting(true);
             setErrorMessage("");
-            await api.post(`/loans/${draftId}/activate`);
+            if (activationIntentRef.current?.draftId !== draftId) {
+                activationIntentRef.current = { draftId, key: crypto.randomUUID() };
+            }
+            await api.post(`/loans/${draftId}/activate`, undefined, {
+                headers: { "Idempotency-Key": activationIntentRef.current.key },
+            });
             window.location.href = `/loans/${draftId}`;
         } catch (error: unknown) {
             setErrorMessage(localizedError(error, "loanWizard.errors.activate"));
@@ -315,8 +334,8 @@ export default function LoanWizard() {
                                 </div>
                             </div>
                             <div className="grid gap-2">
-                                <label>{t("loanWizard.principalAmount", "Principal Amount (฿)")}</label>
-                                <Input type="number" value={formData.principal} onChange={(e) => setFormData({ ...formData, principal: e.target.value })} />
+                                <label htmlFor="loan-principal">{t("loanWizard.principalAmount", "Principal Amount (฿)")}</label>
+                                <Input id="loan-principal" type="number" value={formData.principal} onChange={(e) => setFormData({ ...formData, principal: e.target.value })} />
                             </div>
                             {!["floating", "daily"].includes(formData.repaymentType) && (
                                 <div className="grid gap-2">
@@ -358,19 +377,28 @@ export default function LoanWizard() {
                             )}
                             {formData.repaymentType === "floating" && (
                                 <>
-                                    <div className="grid gap-2">
-                                        <label>{t("loanWizard.dailyInterestMode", "Daily interest method")}</label>
-                                        <div className="flex gap-2">
-                                            {(["per_thousand", "percent"] as const).map((mode) => <button key={mode} type="button" onClick={() => setFormData({ ...formData, dailyInterestMode: mode })} className={`rounded-full border px-3 py-2 text-sm ${formData.dailyInterestMode === mode ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}>{mode === "per_thousand" ? t("loanWizard.dailyInterestPerThousand") : t("loanWizard.dailyInterestPercent")}</button>)}
+                                    <div className="grid gap-2 md:col-span-2">
+                                        <label>{t("loanWizard.floating.periodUnit")}</label>
+                                        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={t("loanWizard.floating.periodUnit")}>
+                                            {(["day", "week"] as const).map((unit) => <button key={unit} type="button" role="radio" aria-checked={formData.floatingPeriodUnit === unit} onClick={() => setFormData({ ...formData, floatingPeriodUnit: unit })} className={`rounded-full border px-3 py-2 text-sm ${formData.floatingPeriodUnit === unit ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}>{t(`loanWizard.floating.periodOptions.${unit}`)}</button>)}
+                                        </div>
+                                    </div>
+                                    <div className="grid gap-2 md:col-span-2">
+                                        <label>{t("loanWizard.floating.rateMode")}</label>
+                                        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={t("loanWizard.floating.rateMode")}>
+                                            {(["per_thousand", "percent"] as const).map((mode) => <button key={mode} type="button" role="radio" aria-checked={formData.floatingRateMode === mode} onClick={() => setFormData({ ...formData, floatingRateMode: mode })} className={`rounded-full border px-3 py-2 text-sm ${formData.floatingRateMode === mode ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}>{t(`loanWizard.floating.rateOptions.${mode}`)}</button>)}
                                         </div>
                                     </div>
                                     <div className="grid gap-2">
-                                        <label>{formData.dailyInterestMode === "per_thousand" ? t("loanWizard.dailyInterestRatePerThousand") : t("loanWizard.dailyInterestRatePercent")}</label>
-                                        <Input type="number" min="0.0001" step="0.0001" value={formData.dailyInterestRate} onChange={(e) => setFormData({ ...formData, dailyInterestRate: e.target.value })} />
+                                        <label htmlFor="floating-contract-rate">{t("loanWizard.floating.contractRate")}</label>
+                                        <Input id="floating-contract-rate" type="number" min="0.0001" step="0.0001" value={formData.floatingRate} onChange={(e) => setFormData({ ...formData, floatingRate: e.target.value })} />
                                     </div>
                                     <div className="grid gap-2 md:col-span-2">
-                                        <label>{t("loanWizard.firstDayTreatment", "First-day interest")}</label>
-                                        <div className="flex flex-wrap gap-2"><button type="button" onClick={() => setFormData({ ...formData, firstDayTreatment: "start_next_day" })} className={`rounded-full border px-3 py-2 text-sm ${formData.firstDayTreatment === "start_next_day" ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}>{t("loanWizard.startNextDay")}</button><button type="button" onClick={() => setFormData({ ...formData, firstDayTreatment: "deduct" })} className={`rounded-full border px-3 py-2 text-sm ${formData.firstDayTreatment === "deduct" ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}>{t("loanWizard.deductFirstDay")}</button></div>
+                                        <label>{t("loanWizard.floating.advanceInterest")}</label>
+                                        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={t("loanWizard.floating.advanceInterest")}>
+                                            {([0, 1] as const).map((periods) => <button key={periods} type="button" role="radio" aria-checked={formData.advanceInterestPeriods === periods} onClick={() => setFormData({ ...formData, advanceInterestPeriods: periods })} className={`rounded-full border px-3 py-2 text-sm ${formData.advanceInterestPeriods === periods ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}>{t(`loanWizard.floating.advanceOptions.${periods}`)}</button>)}
+                                        </div>
+                                        <p className="text-xs text-amber-700 dark:text-amber-300">{t("loanWizard.floating.nonRefundableWarning")}</p>
                                     </div>
                                 </>
                             )}
@@ -379,6 +407,17 @@ export default function LoanWizard() {
 
                     {step === 3 && (
                         <div className="space-y-4">
+                            {formData.repaymentType === "floating" && floatingPreview && (
+                                <FloatingInterestSummary
+                                    policy={floatingPreview.floatingInterestPolicy}
+                                    fullPeriodInterest={floatingPreview.fullPeriodInterest}
+                                    advanceInterest={floatingPreview.advanceInterest}
+                                    netBorrowerPayout={floatingPreview.netBorrowerPayout}
+                                    firstPeriodStartDate={floatingPreview.firstPeriodStartDate}
+                                    firstPeriodDueDate={floatingPreview.firstPeriodDueDate}
+                                    periodDays={floatingPreview.periodDays}
+                                />
+                            )}
                             {dailyCalculation && <div className="rounded-md border bg-muted/30 p-4 text-sm"><div className="font-medium">{t("loanWizard.dailyCalculation")}</div><div className="mt-2 grid gap-1 sm:grid-cols-2"><div>{t("loanWizard.totalInstallments")}: {dailyCalculation.totalInstallments}</div><div>{t("loanWizard.dailyPayment")}: {money(dailyCalculation.installmentAmount)}</div><div>{t("loanWizard.totalRepayment")}: {money(dailyCalculation.totalRepayment)}</div><div>{t("loanWizard.totalInterest")}: {money(dailyCalculation.totalInterest)}</div><div>{t("loanWizard.dailyInterest")}: {money(dailyCalculation.dailyInterest)}</div><div>{t("loanWizard.flatDailyRate")}: {dailyCalculation.flatDailyRatePercent}%</div><div>{t("loanWizard.flatMonthlyRate")}: {dailyCalculation.flatMonthlyRatePercent}%</div><div>{t("loanWizard.flatAnnualRate")}: {dailyCalculation.flatAnnualRatePercent}%</div></div></div>}
                             <div className="rounded-md border p-4 text-sm">
                                 <div className="font-medium">{t("loanWizard.fundingSetup", "Funding setup")}</div>
