@@ -3,7 +3,7 @@ import Decimal from "decimal.js";
 import { db } from "../db";
 import { loanAdjustments, loanInterestAccruals, loanInterestRatePeriods, loans, transactions } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
-import { calculateDailyInterest, interestDatesThrough, type FloatingDailyInterest } from "../lib/floating-daily-interest";
+import { calculateDailyInterest, interestDatesThrough, type FloatingDailyInterest, type FloatingDailyInterestInput } from "../lib/floating-daily-interest";
 import { resolveRatePeriod, type RatePeriodValue, type RateType } from "../lib/interest-rate-periods";
 import { DomainError } from "./domain-error";
 import type { CommandContext } from "./command-context";
@@ -49,7 +49,7 @@ export async function accrueFloatingInterestThrough(tx: Executor, loan: typeof l
     await tx.insert(loanInterestAccruals).values(resolved.map(({ accrualDate, period }) => {
         const effectivePeriod = period!;
         const storedPeriod = rowByPublicId.get(effectivePeriod.publicId)!;
-        const policy: FloatingDailyInterest = {
+        const policy: FloatingDailyInterestInput = {
             mode: effectivePeriod.rateType,
             rate: effectivePeriod.rate,
             firstDayTreatment,
@@ -122,7 +122,7 @@ export async function correctFloatingInterestAccruals(ctx: CommandContext, loanP
                 .filter((row) => row.postedAt && row.transactionDate && row.reversedTransactionId === null && !reversedTransactionIds.has(row.id) && bangkokDate(row.transactionDate) < old.accrualDate)
                 .reduce((sum, row) => sum.plus(row.principalComponent), new Decimal(0));
             const openingPrincipal = Decimal.max(0, new Decimal(loan.principalAmount).minus(principalAppliedBefore));
-            const policy: FloatingDailyInterest = { mode: periodValue.rateType, rate: periodValue.rate, firstDayTreatment: loan.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"] };
+            const policy: FloatingDailyInterestInput = { mode: periodValue.rateType, rate: periodValue.rate, firstDayTreatment: loan.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"] };
             const interestAmount = calculateDailyInterest(openingPrincipal.toFixed(2), policy);
             const paidAmount = old.accrualDate === loan.interestStartDate && loan.firstDayTreatment === "deduct"
                 ? interestAmount

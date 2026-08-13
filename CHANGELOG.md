@@ -3,6 +3,7 @@
 ## v0.3.12 - 2026-08-14
 
 ### Added
+- Added exact single-payment preview, draft/update presentation, direct-capital activation, and one-row maturity schedules across the shared service and closed REST contract, plus explicit floating daily/weekly accrual-cycle round trips with legacy daily defaults.
 - Added tenant-safe single-payment and floating-accrual persistence plus append-only restructure, opening-balance component, waiver, public-lineage, and durable request-key records with database-enforced financial invariants.
 - Added an exact Decimal-only single-payment calculation kernel with mutually exclusive fixed/retroactive interest policies, maturity schedules, Bangkok-date exposure traces, late penalties, and component waivers.
 - Added the v0.3.12 TDD implementation plan for exact single-payment terms, append-only settlement and restructuring, component waivers, synchronized REST/MCP/plugin contracts, and localized Web workflows.

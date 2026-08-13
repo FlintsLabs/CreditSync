@@ -44,6 +44,7 @@ export interface PublicLoanCalculationParams {
         mode: "per_thousand" | "percent";
         rate: string;
         firstDayTreatment: "deduct" | "start_next_day";
+        accrualCycle?: "daily" | "weekly";
     };
     singlePayment?: SinglePaymentTermsInput;
 }

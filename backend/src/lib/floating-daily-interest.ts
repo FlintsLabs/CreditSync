@@ -1,24 +1,34 @@
 import Decimal from "decimal.js";
 
-export type FloatingDailyInterest = {
+export type FloatingAccrualCycle = "daily" | "weekly";
+
+export type FloatingDailyInterestInput = {
     mode: "per_thousand" | "percent";
     rate: string;
     firstDayTreatment: "deduct" | "start_next_day";
+    accrualCycle?: FloatingAccrualCycle;
 };
 
-export function normalizeFloatingDailyInterest(input: FloatingDailyInterest): FloatingDailyInterest {
+export type FloatingDailyInterest = Omit<FloatingDailyInterestInput, "accrualCycle"> & {
+    accrualCycle: FloatingAccrualCycle;
+};
+
+export function normalizeFloatingDailyInterest(input: FloatingDailyInterestInput): FloatingDailyInterest {
     if (input.mode !== "per_thousand" && input.mode !== "percent") throw new Error("Daily interest mode is invalid");
     if (input.firstDayTreatment !== "deduct" && input.firstDayTreatment !== "start_next_day") {
         throw new Error("First-day treatment is invalid");
+    }
+    if (input.accrualCycle !== undefined && input.accrualCycle !== "daily" && input.accrualCycle !== "weekly") {
+        throw new Error("Floating accrual cycle is invalid");
     }
     const rate = new Decimal(input.rate);
     if (!rate.isFinite() || rate.lte(0) || rate.decimalPlaces() > 4) {
         throw new Error("Daily interest rate must be a positive decimal with at most four places");
     }
-    return { mode: input.mode, rate: rate.toFixed(4), firstDayTreatment: input.firstDayTreatment };
+    return { mode: input.mode, rate: rate.toFixed(4), firstDayTreatment: input.firstDayTreatment, accrualCycle: input.accrualCycle ?? "daily" };
 }
 
-export function calculateDailyInterest(openingPrincipal: string, policy: FloatingDailyInterest) {
+export function calculateDailyInterest(openingPrincipal: string, policy: FloatingDailyInterestInput) {
     const normalized = normalizeFloatingDailyInterest(policy);
     const principal = new Decimal(openingPrincipal);
     if (!principal.isFinite() || principal.lt(0)) throw new Error("Opening principal is invalid");

@@ -10,7 +10,7 @@ describe("floating daily interest", () => {
 
     test("normalizes policy and chooses calendar dates based on first-day treatment", () => {
         expect(normalizeFloatingDailyInterest({ mode: "per_thousand", rate: "15", firstDayTreatment: "deduct" }))
-            .toEqual({ mode: "per_thousand", rate: "15.0000", firstDayTreatment: "deduct" });
+            .toEqual({ mode: "per_thousand", rate: "15.0000", firstDayTreatment: "deduct", accrualCycle: "daily" });
         expect(interestDatesThrough("2026-08-06", "2026-08-08", "deduct")).toEqual(["2026-08-06", "2026-08-07", "2026-08-08"]);
         expect(interestDatesThrough("2026-08-06", "2026-08-08", "start_next_day")).toEqual(["2026-08-07", "2026-08-08"]);
     });

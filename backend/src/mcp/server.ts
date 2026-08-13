@@ -801,6 +801,25 @@ function dataRecord(value: unknown): Record<string, unknown> {
     return { value: json };
 }
 
+function frozenToolData(toolName: McpToolName, value: unknown): Record<string, unknown> {
+    const data = dataRecord(value);
+    if (toolName !== "loan.preview" && toolName !== "loan.draft" && toolName !== "loan.activate") return data;
+    const projectLoanFields = (record: Record<string, unknown>) => {
+        const { singlePayment: _singlePayment, ...legacy } = record;
+        const floating = legacy.floatingDailyInterest;
+        if (floating && typeof floating === "object" && !Array.isArray(floating)) {
+            const { accrualCycle: _accrualCycle, ...legacyFloating } = floating as Record<string, unknown>;
+            legacy.floatingDailyInterest = legacyFloating;
+        }
+        return legacy;
+    };
+    const projected = projectLoanFields({ ...data });
+    if (projected.terms && typeof projected.terms === "object" && !Array.isArray(projected.terms)) {
+        projected.terms = projectLoanFields({ ...(projected.terms as Record<string, unknown>) });
+    }
+    return projected;
+}
+
 function createServer(input: CreateMcpHttpPluginInput, ctx: CommandContext) {
     const server = new McpServer({ name: "creditsync", version: "1.0.0" }, {
         capabilities: { tools: {} },
@@ -838,7 +857,7 @@ function createServer(input: CreateMcpHttpPluginInput, ctx: CommandContext) {
                 }
                 const structuredContent = successOutputSchema(toolName).safeParse({
                     schemaVersion: "1.0",
-                    data: dataRecord(result),
+                    data: frozenToolData(toolName, result),
                     ...(financialTools.has(toolName) ? {
                         correlationId: toolContext.correlationId,
                         auditPublicIds: auditPublicIds ?? [],

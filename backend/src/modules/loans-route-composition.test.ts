@@ -1,5 +1,17 @@
 import { describe, expect, test } from "bun:test";
+import { Elysia } from "elysia";
 import { loansRoute } from "./loans";
+
+async function postPreview(body: unknown) {
+    const app = new Elysia().use(loansRoute);
+    const response = await app.handle(new Request("http://localhost/loans/preview", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+    }));
+    const text = await response.text();
+    return { response, body: text ? JSON.parse(text) : null, text };
+}
 
 describe("loans route composition", () => {
     test("mounts the existing public contract, funding, and disbursement endpoints", () => {
@@ -35,5 +47,131 @@ describe("loans route composition", () => {
             "PUT /loans/:id",
             "PUT /loans/:id/disbursements/:disbursementId",
         ].sort());
+    });
+
+    // Break caught: the REST schema drops single-payment terms or allows numeric
+    // money to cross the public contract before the exact calculator runs.
+    test("previews exact string single-payment terms through the public route", async () => {
+        const result = await postPreview({
+            principal: "5000.00",
+            interestRate: "99.00",
+            termMonths: 1,
+            repaymentType: "single_payment",
+            startDate: "2026-08-10",
+            singlePayment: {
+                dueDate: "2026-08-19",
+                fixedAgreedInterest: "500.00",
+                interestPolicy: "fixed_only",
+                latePenalty: { mode: "none" },
+            },
+        });
+
+        expect(result.response.status, result.text).toBe(200);
+        expect(result.body).toMatchObject({
+            terms: {
+                principal: "5000.00",
+                interestRate: "99.00",
+                singlePayment: { fixedAgreedInterest: "500.00", dueDate: "2026-08-19" },
+            },
+            schedule: [{ amount: "5500.00", principalComponent: "5000.00", interestComponent: "500.00" }],
+        });
+
+        const numericMoney = await postPreview({
+            principal: 5000,
+            interestRate: "0.00",
+            termMonths: 1,
+            repaymentType: "single_payment",
+            startDate: "2026-08-10",
+            singlePayment: {
+                dueDate: "2026-08-19",
+                fixedAgreedInterest: "500.00",
+                interestPolicy: "fixed_only",
+                latePenalty: { mode: "none" },
+            },
+        });
+        expect(numericMoney.response.status).toBe(422);
+    });
+
+    // Break caught: closed public terms silently accept typos or contradictory
+    // fixed-only/retroactive policy objects.
+    test("rejects unknown fields and invalid single-payment policy combinations", async () => {
+        const validBase = {
+            principal: "5000.00",
+            interestRate: "0.00",
+            termMonths: 1,
+            repaymentType: "single_payment",
+            startDate: "2026-08-10",
+        };
+        const unknown = await postPreview({
+            ...validBase,
+            accidentalPayout: "5000.00",
+            singlePayment: {
+                dueDate: "2026-08-19",
+                fixedAgreedInterest: "500.00",
+                interestPolicy: "fixed_only",
+                latePenalty: { mode: "none", unexpectedGraceDays: 1 },
+            },
+        });
+        expect(unknown.response.status).toBe(422);
+
+        const contradictory = await postPreview({
+            ...validBase,
+            singlePayment: {
+                dueDate: "2026-08-19",
+                fixedAgreedInterest: "500.00",
+                interestPolicy: "fixed_only",
+                retroactiveInterest: { rateType: "percent_per_day", rate: "1.0000" },
+                latePenalty: { mode: "none" },
+            },
+        });
+        expect(contradictory.response.status, contradictory.text).toBe(400);
+        expect(contradictory.body).toMatchObject({
+            code: "INVALID_LOAN_TERMS",
+            error: "Fixed-only terms cannot include retroactive interest",
+        });
+
+        const missingRetroactive = await postPreview({
+            ...validBase,
+            singlePayment: {
+                dueDate: "2026-08-19",
+                fixedAgreedInterest: "500.00",
+                interestPolicy: "greater_of_fixed_or_retroactive",
+                latePenalty: { mode: "none" },
+            },
+        });
+        expect(missingRetroactive.response.status, missingRetroactive.text).toBe(400);
+        expect(missingRetroactive.body).toMatchObject({
+            code: "INVALID_LOAN_TERMS",
+            error: "Retroactive interest is required",
+        });
+    });
+
+    // Break caught: floating weekly terms are rejected as unknown or lose their
+    // explicit cycle while legacy daily requests stop working.
+    test("normalizes legacy and weekly floating accrual cycles through REST", async () => {
+        const base = {
+            principal: "5000.00",
+            interestRate: "0.00",
+            termMonths: 1,
+            repaymentType: "floating",
+            startDate: "2026-08-10",
+        };
+        const legacy = await postPreview({
+            ...base,
+            floatingDailyInterest: { mode: "percent", rate: "1", firstDayTreatment: "start_next_day" },
+        });
+        expect(legacy.response.status, legacy.text).toBe(200);
+        expect(legacy.body.floatingDailyInterest).toEqual({
+            mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "daily",
+        });
+
+        const weekly = await postPreview({
+            ...base,
+            floatingDailyInterest: { mode: "percent", rate: "1", firstDayTreatment: "start_next_day", accrualCycle: "weekly" },
+        });
+        expect(weekly.response.status, weekly.text).toBe(200);
+        expect(weekly.body.floatingDailyInterest).toEqual({
+            mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "weekly",
+        });
     });
 });

@@ -14,7 +14,7 @@ CreditSync is designed for workflows like:
 
 - Creating borrower profiles and storing their history
 - Uploading ID card images and extracting text with OCR
-- Creating loan agreements with daily, weekly, monthly, or floating interest logic
+- Creating loan agreements with single-payment, daily, weekly, monthly, or floating interest logic
 - Generating installment schedules before confirming a loan
 - Capturing data-only or image-first repayments, reviewing matches, posting allocations, and reversing corrections
 - Calculating closing balances for early payoff
@@ -70,7 +70,9 @@ Account identity and tenant role are read-only values supplied by the authorized
 ### 3. Loan Management
 
 - calculate repayment schedules before saving
-- support `daily`, `weekly`, `monthly`, and `floating` repayment types
+- support `single_payment`, `daily`, `weekly`, `monthly`, and `floating` repayment types
+- preview and persist exact single-payment due dates, agreed fixed-interest floors, optional greater-of retroactive interest, and contracted late penalties before activation creates one immutable maturity row
+- preserve legacy floating contracts as daily-accrual while allowing new floating terms to state an explicit `daily` or `weekly` accrual cycle
 - manage effective-dated floating-interest periods from Loan Detail, including exact current daily interest, future scheduled changes, previewed automatic range splitting, and audited confirmation
 - create editable loan drafts, then activate them to lock terms and generate schedules exactly once
 - use separate preview, draft-save, and activation confirmations in the web wizard
