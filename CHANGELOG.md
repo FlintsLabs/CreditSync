@@ -3,6 +3,7 @@
 ## v0.3.11 - 2026-08-13
 
 ### Added
+- Added the approved responsive fund-usage flat-list design with localized semantic statuses and exact source-attributed collected interest that remains correct across multi-source funding and compensating reversals.
 - Added a strict `loan.disbursement.update` MCP PATCH tool for audited, non-empty partial edits to draft-only payout metadata while preserving finalized evidence, with synchronized CreditSync Plugin 2.4.0 skills, contract, and eval stop gates.
 - Added the v0.3.11 TDD implementation plan for the strict MCP disbursement-draft PATCH tool, plugin 2.4.0 synchronization, and production deployment.
 - Added the approved design for a strict, audited MCP PATCH tool that updates only editable loan-disbursement draft fields, preserves evidence, and requires re-inspection plus fresh post confirmation.
