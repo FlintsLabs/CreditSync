@@ -74,6 +74,7 @@ type GroupRelations = {
 type EventRelations = {
     groupPublicId: string;
     intermediaryBankAccountPublicId: string | null;
+    reversedEventPublicId: string | null;
 };
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -99,6 +100,18 @@ function requirePublicId(value: string, field: string) {
 function commandKey(ctx: CommandContext) {
     const key = ctx.idempotencyKey?.trim();
     if (!key) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Idempotency key is required", 400);
+    return key;
+}
+
+function publicCommandKey(ctx: CommandContext) {
+    const key = commandKey(ctx);
+    if (key.startsWith("internal:")) {
+        throw new DomainError(
+            "RESERVED_IDEMPOTENCY_KEY",
+            "Idempotency keys beginning with internal: are reserved",
+            400,
+        );
+    }
     return key;
 }
 
@@ -236,6 +249,7 @@ function presentEvent(row: EventRow, related: EventRelations) {
         publicId: row.publicId,
         groupPublicId: related.groupPublicId,
         intermediaryBankAccountPublicId: related.intermediaryBankAccountPublicId,
+        reversedEventPublicId: related.reversedEventPublicId,
         role: row.role as TransferRole,
         channel: row.channel as TransferChannel,
         amount: serializeMoney(row.amount),
@@ -441,7 +455,7 @@ export async function createIntermediatedDisbursementGroup(
     ctx: CommandContext,
     input: CreateIntermediatedDisbursementGroupInput,
 ) {
-    const idempotencyKey = commandKey(ctx);
+    const idempotencyKey = publicCommandKey(ctx);
     const retained = money(input.retainedBalance, "retainedBalance");
     const note = normalizedText(input.note);
     const actor = await actorFor(ctx);
@@ -523,7 +537,7 @@ export async function createTransferEvent(
     groupPublicId: string,
     input: CreateTransferEventInput,
 ) {
-    const idempotencyKey = commandKey(ctx);
+    const idempotencyKey = publicCommandKey(ctx);
     requirePublicId(groupPublicId, "groupPublicId");
     if (!transferRoles.has(input.role)) {
         throw new DomainError("INVALID_TRANSFER_ROLE", "Unsupported intermediated transfer role", 400);
@@ -652,6 +666,7 @@ export async function createTransferEvent(
         const after = presentEvent(row, {
             groupPublicId,
             intermediaryBankAccountPublicId: account?.publicId ?? null,
+            reversedEventPublicId: null,
         });
         const audit = await createAuditLog(tx, {
             ...auditContext(ctx),
@@ -916,6 +931,53 @@ export async function postIntermediatedDisbursement(
         }
 
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${group.loanId} FOR UPDATE`);
+        const currentLoan = await tx.query.loans.findFirst({ where: and(
+            eq(loans.tenantId, ctx.tenantId),
+            eq(loans.id, group.loanId),
+        ) });
+        if (!currentLoan || currentLoan.status !== "active") {
+            throw new DomainError("LOAN_NOT_ACTIVE", "Only an active loan can be posted", 409);
+        }
+        const currentTargets = contractualTargets(
+            currentLoan,
+            new FinancialDecimal(group.retainedBalanceAmount),
+        );
+        if (!new FinancialDecimal(currentTargets.expectedFunding).eq(group.expectedFundingAmount)
+            || !new FinancialDecimal(currentTargets.expectedBorrowerPayout).eq(group.expectedBorrowerPayoutAmount)
+            || !new FinancialDecimal(currentTargets.expectedAdvanceInterestReturn).eq(group.expectedAdvanceInterestReturnAmount)) {
+            throw new DomainError(
+                "STALE_INTERMEDIATED_DISBURSEMENT_PROPOSAL",
+                "The loan activation no longer matches this intermediated disbursement proposal",
+                409,
+            );
+        }
+        const postedForLoan = await tx.select({
+            id: intermediatedDisbursementGroups.id,
+            publicId: intermediatedDisbursementGroups.publicId,
+        }).from(intermediatedDisbursementGroups).where(and(
+            eq(intermediatedDisbursementGroups.tenantId, ctx.tenantId),
+            eq(intermediatedDisbursementGroups.loanId, group.loanId),
+            eq(intermediatedDisbursementGroups.status, "posted"),
+        ));
+        if (postedForLoan.length) {
+            const compensations = await tx.select({
+                reversedGroupId: intermediatedDisbursementGroups.reversedGroupId,
+            }).from(intermediatedDisbursementGroups).where(and(
+                eq(intermediatedDisbursementGroups.tenantId, ctx.tenantId),
+                eq(intermediatedDisbursementGroups.status, "reversed"),
+                inArray(intermediatedDisbursementGroups.reversedGroupId, postedForLoan.map((candidate) => candidate.id)),
+            ));
+            const compensatedIds = new Set(compensations.map((candidate) => candidate.reversedGroupId));
+            const uncompensated = postedForLoan.find((candidate) => !compensatedIds.has(candidate.id));
+            if (uncompensated) {
+                throw new DomainError(
+                    "INTERMEDIATED_DISBURSEMENT_ALREADY_POSTED_FOR_LOAN",
+                    "This loan already has an uncompensated posted intermediary disbursement",
+                    409,
+                    { postedGroupPublicId: uncompensated.publicId },
+                );
+            }
+        }
         await tx.execute(sql`SELECT id FROM intermediated_transfer_events WHERE tenant_id = ${ctx.tenantId} AND group_id = ${group.id} ORDER BY id FOR UPDATE`);
         const events = await tx.select().from(intermediatedTransferEvents).where(and(
             eq(intermediatedTransferEvents.tenantId, ctx.tenantId),
@@ -1166,7 +1228,7 @@ export async function reverseIntermediatedDisbursement(
             expectedAdvanceInterestReturnAmount: original.expectedAdvanceInterestReturnAmount,
             retainedBalanceAmount: original.retainedBalanceAmount,
             status: "reversed",
-            idempotencyKey: `reversal:${original.publicId}`,
+            idempotencyKey: `internal:intermediated-group-reversal:${original.publicId}`,
             postIdempotencyKey: null,
             reversedGroupId: original.id,
             reversalIdempotencyKey,
@@ -1195,7 +1257,7 @@ export async function reverseIntermediatedDisbursement(
             bankReferenceHash: null,
             transferredAt: event.transferredAt,
             status: "reversed",
-            idempotencyKey: `reversal:${event.publicId}`,
+            idempotencyKey: `internal:intermediated-event-reversal:${event.publicId}`,
             reversedEventId: event.id,
             reversalReason: reason,
             note: reason,
@@ -1206,6 +1268,11 @@ export async function reverseIntermediatedDisbursement(
             createdAt: reversedAt,
             updatedAt: reversedAt,
         }))).returning();
+        const sourceEventPublicIds = new Map(events.map((event) => [event.id, event.publicId]));
+        const transferEvents = reversalEvents.map((event) => ({
+            publicId: event.publicId,
+            reversedEventPublicId: sourceEventPublicIds.get(event.reversedEventId!)!,
+        }));
         const held = await intermediaryHeldBalanceProjection(tx, ctx.tenantId, original.intermediaryId);
         const after = {
             ...presentGroup(reversalGroup, {
@@ -1221,6 +1288,7 @@ export async function reverseIntermediatedDisbursement(
             advanceInterestAmount: posted.advanceInterestAmount,
             intermediaryHeldBalance: serializeMoney(held.disbursementHeldBalance),
             transferEventPublicIds: reversalEvents.map((event) => event.publicId),
+            transferEvents,
             reversalReason: reason,
         };
         const audit = await createAuditLog(tx, {
@@ -1265,6 +1333,12 @@ export async function getIntermediatedDisbursementGroup(ctx: CommandContext, gro
     const presentedEvents = await Promise.all(events.map(async (event) => presentEvent(event, {
         groupPublicId,
         intermediaryBankAccountPublicId: await accountPublicId(ctx, event.intermediaryBankAccountId),
+        reversedEventPublicId: event.reversedEventId === null
+            ? null
+            : await db.query.intermediatedTransferEvents.findFirst({ where: and(
+                eq(intermediatedTransferEvents.tenantId, ctx.tenantId),
+                eq(intermediatedTransferEvents.id, event.reversedEventId),
+            ) }).then((source) => source?.publicId ?? null),
     })));
     return {
         ...presentGroup(group, { loanPublicId: loan.publicId, intermediaryPublicId: intermediary.publicId }),

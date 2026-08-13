@@ -20,6 +20,11 @@ import {
 import type { CommandContext } from "./command-context";
 import { getIntermediaryHeldBalance } from "./intermediary-service";
 import {
+    createDisbursementDraft,
+    postDisbursement,
+    reverseDisbursement,
+} from "./loan-disbursement-service";
+import {
     createIntermediatedDisbursementGroup,
     createTransferEvent,
     getIntermediatedDisbursementGroup,
@@ -31,6 +36,7 @@ import {
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
+const publicIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 async function resetTables() {
     await db.execute(sql`SET client_min_messages TO WARNING`);
@@ -641,6 +647,82 @@ describe("intermediated disbursement groups and exact preview", () => {
         ))).toHaveLength(1);
     });
 
+    // Break caught: the loan row lock serializes two exact groups, but the second
+    // transaction never checks the first group and pays the same activation twice.
+    integrationTest("allows only one uncompensated posted group per loan across sequential and concurrent posts", async () => {
+        const sequential = await seed("tenant-distinct-post-sequential", "distinct-post-sequential");
+        const firstGroup = await createGroup(sequential, "distinct-first");
+        const secondGroup = await createGroup(sequential, "distinct-second");
+        await addExactEvents(sequential, firstGroup.publicId, "distinct-first");
+        await addExactEvents(sequential, secondGroup.publicId, "distinct-second");
+        const firstPreview = await previewIntermediatedDisbursement(context(sequential.actor), firstGroup.publicId);
+        const secondPreview = await previewIntermediatedDisbursement(context(sequential.actor), secondGroup.publicId);
+        const firstPost = await postGroup(context(sequential.actor, "distinct-first-post"), firstGroup.publicId, firstPreview.publicId);
+
+        await expect(postGroup(
+            context(sequential.actor, "distinct-second-post"),
+            secondGroup.publicId,
+            secondPreview.publicId,
+        )).rejects.toMatchObject({ code: "INTERMEDIATED_DISBURSEMENT_ALREADY_POSTED_FOR_LOAN", status: 409 });
+        expect(await db.select().from(loanDisbursementEvents)).toHaveLength(1);
+
+        await reverseGroup(context(sequential.actor, "distinct-first-reverse"), firstGroup.publicId, "Transfer recalled");
+        await expect(postGroup(
+            context(sequential.actor, "distinct-second-replacement"),
+            secondGroup.publicId,
+            secondPreview.publicId,
+        )).resolves.toMatchObject({ status: "posted", borrowerPayoutAmount: "4400.00" });
+
+        const concurrent = await seed("tenant-distinct-post-concurrent", "distinct-post-concurrent");
+        const concurrentA = await createGroup(concurrent, "concurrent-a");
+        const concurrentB = await createGroup(concurrent, "concurrent-b");
+        await addExactEvents(concurrent, concurrentA.publicId, "concurrent-a");
+        await addExactEvents(concurrent, concurrentB.publicId, "concurrent-b");
+        const [previewA, previewB] = await Promise.all([
+            previewIntermediatedDisbursement(context(concurrent.actor), concurrentA.publicId),
+            previewIntermediatedDisbursement(context(concurrent.actor), concurrentB.publicId),
+        ]);
+        const results = await Promise.allSettled([
+            postGroup(context(concurrent.actor, "concurrent-a-post"), concurrentA.publicId, previewA.publicId),
+            postGroup(context(concurrent.actor, "concurrent-b-post"), concurrentB.publicId, previewB.publicId),
+        ]);
+        expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+        expect(results.filter((result) => result.status === "rejected").map((result) => (
+            result as PromiseRejectedResult
+        ).reason)).toEqual([expect.objectContaining({
+            code: "INTERMEDIATED_DISBURSEMENT_ALREADY_POSTED_FOR_LOAN",
+            status: 409,
+        })]);
+        expect(await db.select().from(intermediatedDisbursementGroups).where(and(
+            eq(intermediatedDisbursementGroups.tenantId, concurrent.actor.tenantId),
+            eq(intermediatedDisbursementGroups.status, "posted"),
+        ))).toHaveLength(1);
+        expect(await db.select().from(loanDisbursementEvents).where(
+            eq(loanDisbursementEvents.tenantId, concurrent.actor.tenantId),
+        )).toHaveLength(1);
+    });
+
+    // Break caught: post takes a loan lock but uses the stale pre-lock loan snapshot,
+    // allowing a payout after the loan has already become paid.
+    integrationTest("rejects a proposal when its loan is no longer active at post time", async () => {
+        const owner = await seed("tenant-post-paid-loan", "post-paid-loan");
+        const group = await createGroup(owner, "post-paid-loan");
+        await addExactEvents(owner, group.publicId, "post-paid-loan");
+        const preview = await previewIntermediatedDisbursement(context(owner.actor), group.publicId);
+        await db.update(loans).set({ status: "paid" }).where(eq(loans.id, owner.loan.id));
+
+        await expect(postGroup(
+            context(owner.actor, "post-paid-loan-key"),
+            group.publicId,
+            preview.publicId,
+        )).rejects.toMatchObject({ code: "LOAN_NOT_ACTIVE", status: 409 });
+        expect(await db.select().from(loanDisbursementEvents)).toHaveLength(0);
+        expect((await db.query.intermediatedDisbursementGroups.findFirst({ where: eq(
+            intermediatedDisbursementGroups.publicId,
+            group.publicId,
+        ) }))?.status).toBe("ready");
+    });
+
     // Break caught: a caller-controlled regular disbursement key that resembles the
     // internal group projection key is reused as if it proved group provenance.
     integrationTest("rejects a preexisting loan payout key collision instead of hijacking its provenance", async () => {
@@ -718,11 +800,22 @@ describe("intermediated disbursement groups and exact preview", () => {
         const preview = await previewIntermediatedDisbursement(context(owner.actor), group.publicId);
         const posted = await postGroup(context(owner.actor, "post-before-reversal"), group.publicId, preview.publicId);
 
+        await expect(reverseDisbursement(
+            context(owner.actor, "generic-reverse-intermediary-payout"),
+            posted.loanDisbursementPublicId,
+            "Wrong generic workflow",
+        )).rejects.toMatchObject({
+            code: "INTERMEDIATED_DISBURSEMENT_REVERSAL_REQUIRED",
+            status: 409,
+        });
+        expect(await db.select().from(loanDisbursementEvents)).toHaveLength(1);
+
         const reversalContext = context(owner.actor, "reverse-group-key");
         const reversed = await reverseGroup(reversalContext, group.publicId, "Operator confirmed the lender transfer was recalled");
+        expect(reversed.publicId).toMatch(publicIdPattern);
+        expect(reversed.publicId).not.toBe(group.publicId);
         expect(reversed).toMatchObject({
             status: "reversed",
-            publicId: expect.not.stringMatching(new RegExp(`^${group.publicId}$`, "i")),
             reversedGroupPublicId: group.publicId,
             reversedLoanDisbursementPublicId: posted.loanDisbursementPublicId,
             loanDisbursementPublicId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
@@ -732,6 +825,12 @@ describe("intermediated disbursement groups and exact preview", () => {
             advanceInterestAmount: "600.00",
             intermediaryHeldBalance: "0.00",
             reversalReason: "Operator confirmed the lender transfer was recalled",
+            transferEvents: expect.arrayContaining([
+                expect.objectContaining({
+                    publicId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+                    reversedEventPublicId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+                }),
+            ]),
             duplicate: false,
             auditPublicId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
             correlationId: "corr-reverse-group-key",
@@ -753,6 +852,12 @@ describe("intermediated disbursement groups and exact preview", () => {
             ["borrower_net_payout", "2400.00", "reversed", false],
             ["advance_interest_return", "600.00", "reversed", false],
         ]);
+        const reversalDetail = await getIntermediatedDisbursementGroup(context(owner.actor), reversed.publicId);
+        expect(reversalDetail.events).toHaveLength(4);
+        expect(reversalDetail.events.every((event) => (
+            typeof event.reversedEventPublicId === "string" && publicIdPattern.test(event.reversedEventPublicId)
+        ))).toBe(true);
+        expect(JSON.stringify(reversalDetail)).not.toContain(`"reversedEventId"`);
         expect((await db.select().from(loanDisbursementEvents).orderBy(loanDisbursementEvents.id))
             .map((row) => [row.publicId, row.status, row.grossAmount, row.loanAttributedAmount, row.reversedEventId === null])).toEqual([
             [posted.loanDisbursementPublicId, "posted", "4400.00", "4400.00", true],
@@ -779,6 +884,82 @@ describe("intermediated disbursement groups and exact preview", () => {
             .rejects.toMatchObject({ code: "INTERMEDIATED_DISBURSEMENT_REVERSAL_CONFLICT", status: 409 });
         await expect(reverseGroup(context(owner.actor, "reverse-other-key"), group.publicId, "Different reason"))
             .rejects.toMatchObject({ code: "INTERMEDIATED_DISBURSEMENT_REVERSAL_CONFLICT", status: 409 });
+    });
+
+    // Break caught: predictable internal compensating keys share the public command
+    // namespace, so ordinary drafts can permanently preoccupy a legitimate reversal.
+    integrationTest("keeps internal reversal keys isolated from public group, event, and payout commands", async () => {
+        const owner = await seed("tenant-reversal-key-isolation", "reversal-key-isolation");
+        const group = await createGroup(owner, "reversal-key-isolation");
+        await addExactEvents(owner, group.publicId, "reversal-key-isolation");
+        const preview = await previewIntermediatedDisbursement(context(owner.actor), group.publicId);
+        const posted = await postGroup(context(owner.actor, "reversal-key-isolation-post"), group.publicId, preview.publicId);
+        const sourceEvent = await db.query.intermediatedTransferEvents.findFirst({ where: and(
+            eq(intermediatedTransferEvents.tenantId, owner.actor.tenantId),
+            eq(intermediatedTransferEvents.role, "funding_to_intermediary"),
+        ) });
+
+        const blocker = await createIntermediatedDisbursementGroup(
+            context(owner.actor, `reversal:${group.publicId}`),
+            {
+                loanPublicId: owner.loan.publicId,
+                intermediaryPublicId: owner.intermediary.publicId,
+                retainedBalance: "0.00",
+            },
+        );
+        await createTransferEvent(context(owner.actor, `reversal:${sourceEvent!.publicId}`), blocker.publicId, {
+            role: "funding_to_intermediary",
+            channel: "cash",
+            amount: "1.00",
+            transferredAt: "2026-08-13T10:00:00.000Z",
+        });
+        const regularDraft = await createDisbursementDraft(context(owner.actor), owner.loan.publicId, {
+            grossAmount: "1.00",
+            loanAttributedAmount: "1.00",
+            channel: "cash",
+            disbursedAt: "2026-08-13T10:00:00.000Z",
+        });
+        const regularPosted = await postDisbursement(context(owner.actor, "regular-collision-post"), regularDraft.publicId);
+        await reverseDisbursement(
+            context(owner.actor, `intermediated-payout-reversal:${group.publicId}`),
+            regularPosted.publicId,
+            "Regular correction",
+        );
+        const reservedDraft = await createDisbursementDraft(context(owner.actor), owner.loan.publicId, {
+            grossAmount: "1.00",
+            loanAttributedAmount: "1.00",
+            channel: "cash",
+            disbursedAt: "2026-08-13T10:01:00.000Z",
+        });
+        const reservedPosted = await postDisbursement(
+            context(owner.actor, "reserved-reversal-post"),
+            reservedDraft.publicId,
+        );
+        await expect(reverseDisbursement(
+            context(owner.actor, "internal:reserved-payout-reversal"),
+            reservedPosted.publicId,
+            "Should reject reserved namespace",
+        )).rejects.toMatchObject({ code: "RESERVED_IDEMPOTENCY_KEY", status: 400 });
+
+        await expect(reverseGroup(
+            context(owner.actor, "isolated-group-reversal"),
+            group.publicId,
+            "Intermediary transfer recalled",
+        )).resolves.toMatchObject({
+            status: "reversed",
+            reversedLoanDisbursementPublicId: posted.loanDisbursementPublicId,
+        });
+        await expect(createIntermediatedDisbursementGroup(context(owner.actor, "internal:reserved-group"), {
+            loanPublicId: owner.loan.publicId,
+            intermediaryPublicId: owner.intermediary.publicId,
+            retainedBalance: "0.00",
+        })).rejects.toMatchObject({ code: "RESERVED_IDEMPOTENCY_KEY", status: 400 });
+        await expect(createTransferEvent(context(owner.actor, "internal:reserved-event"), blocker.publicId, {
+            role: "borrower_net_payout",
+            channel: "cash",
+            amount: "1.00",
+            transferredAt: "2026-08-13T10:00:00.000Z",
+        })).rejects.toMatchObject({ code: "RESERVED_IDEMPOTENCY_KEY", status: 400 });
     });
 
     // Break caught: list/get leaks another owner's groups or accepts an unrelated loan filter,

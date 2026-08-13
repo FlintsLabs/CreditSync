@@ -262,7 +262,7 @@ export async function reverseIntermediatedLoanPayout(
         );
     }
     await executor.execute(sql`SELECT id FROM loan_disbursement_events WHERE tenant_id = ${ctx.tenantId} AND id = ${original.id} FOR UPDATE`);
-    const reversalIdempotencyKey = `intermediated-payout-reversal:${input.groupPublicId}`;
+    const reversalIdempotencyKey = `internal:intermediated-payout-reversal:${input.groupPublicId}`;
     const reversalRequestHash = disbursementReversalRequestHash(original.publicId, reason);
     const existing = await executor.query.loanDisbursementEvents.findFirst({ where: and(
         eq(loanDisbursementEvents.tenantId, ctx.tenantId),
@@ -400,6 +400,13 @@ export async function postDisbursement(ctx: CommandContext, disbursementPublicId
 export async function reverseDisbursement(ctx: CommandContext, disbursementPublicId: string, reason: string) {
     const idempotencyKey = ctx.idempotencyKey?.trim();
     if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required to reverse a disbursement", 400);
+    if (idempotencyKey.startsWith("internal:")) {
+        throw new DomainError(
+            "RESERVED_IDEMPOTENCY_KEY",
+            "Idempotency keys beginning with internal: are reserved",
+            400,
+        );
+    }
     const note = reason.trim();
     if (!note) throw new DomainError("REVERSAL_REASON_REQUIRED", "A reversal reason is required", 400);
     const { event } = await accessibleEvent(ctx, disbursementPublicId);
@@ -414,6 +421,19 @@ export async function reverseDisbursement(ctx: CommandContext, disbursementPubli
         }
         const original = await lockEventAndLoan(tx, ctx, event.id);
         if (original.status !== "posted") throw new DomainError("DISBURSEMENT_NOT_POSTED", "Only posted disbursements can be reversed", 409);
+        const intermediaryProjectionAudit = await tx.query.auditLogs.findFirst({ where: and(
+            eq(auditLogs.tenantId, ctx.tenantId),
+            eq(auditLogs.entityType, "loan_disbursement"),
+            eq(auditLogs.entityId, original.publicId),
+            eq(auditLogs.action, "intermediated_posted"),
+        ) });
+        if (intermediaryProjectionAudit) {
+            throw new DomainError(
+                "INTERMEDIATED_DISBURSEMENT_REVERSAL_REQUIRED",
+                "Reverse this payout through its intermediary disbursement group",
+                409,
+            );
+        }
         const existing = await tx.query.loanDisbursementEvents.findFirst({ where: and(eq(loanDisbursementEvents.tenantId, ctx.tenantId), eq(loanDisbursementEvents.reversedEventId, original.id)) });
         if (existing) {
             if (existing.reversalIdempotencyKey === idempotencyKey && existing.reversalRequestHash === reversalRequestHash) {

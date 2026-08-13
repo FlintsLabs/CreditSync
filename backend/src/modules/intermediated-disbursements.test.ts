@@ -428,8 +428,19 @@ describe("intermediated disbursement REST contract", () => {
             reversedGroupPublicId: created.body.publicId,
             reversedLoanDisbursementPublicId: posted.body.loanDisbursementPublicId,
             intermediaryHeldBalance: "0.00",
+            transferEvents: expect.arrayContaining(createdEvents.map((event) => expect.objectContaining({
+                publicId: expect.any(String),
+                reversedEventPublicId: event.publicId,
+            }))),
             correlationId: "corr-route-reverse",
         });
-        expect(JSON.stringify({ posted: posted.body, reversed: reversed.body })).not.toMatch(/"(?:loanId|intermediaryId|groupId|reversedGroupId|reversedEventId)"/);
+        const reversalDetail = await jsonRequest(app, `/intermediated-disbursements/${reversed.body.publicId}`, token);
+        expect(reversalDetail.response.status).toBe(200);
+        expect(reversalDetail.body.events).toEqual(expect.arrayContaining(createdEvents.map((event) => expect.objectContaining({
+            publicId: expect.any(String),
+            reversedEventPublicId: event.publicId,
+        }))));
+        expect(JSON.stringify({ posted: posted.body, reversed: reversed.body, reversalDetail: reversalDetail.body }))
+            .not.toMatch(/"(?:loanId|intermediaryId|groupId|reversedGroupId|reversedEventId)"/);
     });
 });
