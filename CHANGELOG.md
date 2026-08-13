@@ -30,6 +30,9 @@
 - Added the v0.3.11 implementation plan for marketplace identity validation, Git installation and update documentation, and full plugin-package verification.
 - Added the Git-backed `creditsync-marketplace` catalog with exact source-path and package validation plus consistent install, refresh, reinstall, and new-task instructions.
 
+### Fixed
+- Prorated floating-interest accruals from the exact unrounded contractual period amount before cumulative cent rounding, preventing fractional-cent weekly overcharges.
+
 ## v0.3.10 - 2026-08-12
 
 ### Added

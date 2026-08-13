@@ -66,6 +66,13 @@ function roundMoney(value: Decimal) {
     return value.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
 }
 
+function periodInterestAmount(principal: string, policy: FloatingInterestPolicy) {
+    const value = decimalPrincipal(principal);
+    return policy.rateMode === "percent"
+        ? value.times(policy.rate).div(100)
+        : value.times(policy.rate).div(1000);
+}
+
 export function normalizeFloatingInterestPolicy(input: FloatingInterestPolicy): FloatingInterestPolicy {
     if (input.periodUnit !== "day" && input.periodUnit !== "week") {
         throw new Error("Floating interest period unit is invalid");
@@ -112,10 +119,7 @@ export function interestPeriodFor(anchorDate: string, businessDate: string, poli
 
 export function calculatePeriodInterest(principal: string, policy: FloatingInterestPolicy) {
     const normalized = normalizeFloatingInterestPolicy(policy);
-    const amount = normalized.rateMode === "percent"
-        ? decimalPrincipal(principal).times(normalized.rate).div(100)
-        : decimalPrincipal(principal).times(normalized.rate).div(1000);
-    return roundMoney(amount);
+    return roundMoney(periodInterestAmount(principal, normalized));
 }
 
 export function calculateAccruedInterest(principal: string, policy: FloatingInterestPolicy, elapsedDays: number) {
@@ -125,7 +129,7 @@ export function calculateAccruedInterest(principal: string, policy: FloatingInte
         throw new Error("Elapsed days must be within the interest period");
     }
 
-    const periodInterest = new Decimal(calculatePeriodInterest(principal, normalized));
+    const periodInterest = periodInterestAmount(principal, normalized);
     const cumulative = periodInterest.times(elapsedDays).div(periodDays);
     const previousCumulative = elapsedDays === 0
         ? new Decimal(0)

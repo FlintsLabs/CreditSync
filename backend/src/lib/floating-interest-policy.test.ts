@@ -29,6 +29,24 @@ describe("floating interest period policy", () => {
         expect(calculatePeriodInterest("5000.00", weeklyPolicy)).toBe("600.00");
     });
 
+    test("prorates from an unrounded fractional-cent weekly contractual amount", () => {
+        // Break caught: rounding the full-period amount before proration overcharges affected daily cumulative amounts.
+        const policy = normalizeFloatingInterestPolicy({ ...weeklyPolicy, rate: "1.0051" });
+
+        expect(calculateAccruedInterest("100.00", policy, 4)).toMatchObject({
+            cumulativeAmount: "0.57",
+            incrementAmount: "0.14",
+        });
+        expect(calculateAccruedInterest("100.00", policy, 6)).toMatchObject({
+            cumulativeAmount: "0.86",
+            incrementAmount: "0.14",
+        });
+        expect(calculateAccruedInterest("100.00", policy, 7)).toMatchObject({
+            cumulativeAmount: "1.01",
+            incrementAmount: "0.15",
+        });
+    });
+
     test("uses half-open Bangkok weekly periods", () => {
         // Break caught: treating the excluded weekly boundary as the seventh day of the previous period.
         expect(interestPeriodFor("2026-08-13", "2026-08-20", weeklyPolicy)).toEqual({
