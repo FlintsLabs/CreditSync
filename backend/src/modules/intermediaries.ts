@@ -37,10 +37,10 @@ const intermediaryProfileRoutes = new Elysia({ normalize: false })
     .put("/intermediaries/:id/bank-accounts", ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => saveIntermediaryBankAccount(ctx, params.id, body)), {
         ...uuidParam,
         body: t.Object({
-            bankCode: t.Optional(t.Nullable(t.String({ maxLength: 50 }))),
+            bankCode: t.String({ minLength: 2, maxLength: 20, pattern: "^[A-Z][A-Z0-9]{1,19}$" }),
             bankName: t.String({ minLength: 1, maxLength: 200 }),
             accountName: t.String({ minLength: 1, maxLength: 200 }),
-            accountNumber: t.String({ minLength: 4, maxLength: 64 }),
+            accountNumber: t.String({ minLength: 5, maxLength: 64 }),
             note: t.Optional(t.Nullable(t.String({ maxLength: 1000 }))),
         }, { additionalProperties: t.Never() }),
     })

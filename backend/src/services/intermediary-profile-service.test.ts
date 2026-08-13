@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
@@ -172,6 +173,153 @@ describe("intermediary profile, account, and assignment service", () => {
         expect(JSON.stringify(bankAudits)).not.toContain("1234567890");
     });
 
+    // Break caught: optional/free-text bank identity lets the same account evade tenant-wide reuse detection.
+    integrationTest("requires canonical bank codes and reuses identity across bank-name variants and profile owners", async () => {
+        const firstActor = await seedActor("tenant-bank-identity", "bank-identity-first", "collector");
+        const secondActor = await seedActor("tenant-bank-identity", "bank-identity-second", "collector");
+        const firstIntermediary = await createIntermediary(context(firstActor), { name: "First Account Owner" });
+        const secondIntermediary = await createIntermediary(context(secondActor), { name: "Second Account Owner" });
+
+        await expect(saveIntermediaryBankAccount(
+            context(firstActor, "bank-code-omitted"),
+            firstIntermediary.publicId,
+            // @ts-expect-error Runtime callers must still be rejected when bankCode is omitted.
+            { bankName: "Siam Commercial Bank", accountName: "First Account Owner", accountNumber: "1111222233" },
+        )).rejects.toMatchObject({ code: "INVALID_BANK_ACCOUNT", status: 400 });
+        await expect(saveIntermediaryBankAccount(
+            context(firstActor, "bank-code-malformed"),
+            firstIntermediary.publicId,
+            { bankCode: "scb free text", bankName: "Siam Commercial Bank", accountName: "First Account Owner", accountNumber: "1111222233" },
+        )).rejects.toMatchObject({ code: "INVALID_BANK_ACCOUNT", status: 400 });
+
+        const first = await saveIntermediaryBankAccount(
+            context(firstActor, "bank-canonical-first"),
+            firstIntermediary.publicId,
+            { bankCode: "SCB", bankName: "Siam Commercial Bank", accountName: "First Account Owner", accountNumber: "111-1-22223-3" },
+        );
+        const renamed = await saveIntermediaryBankAccount(
+            context(firstActor, "bank-canonical-renamed"),
+            firstIntermediary.publicId,
+            { bankCode: "SCB", bankName: "ธนาคารไทยพาณิชย์", accountName: "First Account Owner", accountNumber: "1111222233" },
+        );
+        expect(renamed.publicId).toBe(first.publicId);
+        expect(await db.select().from(intermediaryBankAccounts)).toHaveLength(1);
+
+        await expect(saveIntermediaryBankAccount(
+            context(secondActor, "bank-canonical-other-owner"),
+            secondIntermediary.publicId,
+            { bankCode: "SCB", bankName: "SCB", accountName: "Second Account Owner", accountNumber: "1111222233" },
+        )).rejects.toMatchObject({ code: "BANK_ACCOUNT_ALREADY_ASSIGNED", status: 409 });
+        expect(await db.select().from(intermediaryBankAccounts)).toHaveLength(1);
+    });
+
+    // Break caught: changing canonical code hashing from the previously persisted normalized form creates an upgrade duplicate.
+    integrationTest("reuses a pre-upgrade bank-code hash when saving under a new command key", async () => {
+        const actor = await seedActor("tenant-bank-upgrade", "bank-upgrade-owner");
+        const intermediary = await createIntermediary(context(actor), { name: "Upgrade Account Owner" });
+        const intermediaryRow = await db.query.intermediaries.findFirst({
+            where: eq(intermediaries.publicId, intermediary.publicId),
+        });
+        const legacyHash = createHash("sha256")
+            .update([actor.tenantId, "scb", "1111222233"].join("\0"))
+            .digest("hex");
+        const legacy = await db.insert(intermediaryBankAccounts).values({
+            tenantId: actor.tenantId,
+            intermediaryId: intermediaryRow!.id,
+            bankCode: "SCB",
+            bankName: "Siam Commercial Bank",
+            accountName: "Upgrade Account Owner",
+            accountNumberLast4: "2233",
+            accountNumberHash: legacyHash,
+            createdByUserId: actor.id,
+            updatedByUserId: actor.id,
+        }).returning().then((rows) => rows[0]!);
+        const legacyInput = {
+            bankCode: "SCB",
+            bankName: "Siam Commercial Bank",
+            accountName: "Upgrade Account Owner",
+            accountNumber: "111-1-22223-3",
+        };
+        const legacyResponse = {
+            publicId: legacy.publicId,
+            bankCode: "SCB",
+            bankName: "Siam Commercial Bank",
+            accountName: "Upgrade Account Owner",
+            maskedAccountNumber: "•••• 2233",
+            status: "active",
+            note: null,
+            createdAt: legacy.createdAt.toISOString(),
+            updatedAt: legacy.updatedAt.toISOString(),
+        };
+        const legacyFingerprint = createHash("sha256").update(JSON.stringify({
+            intermediaryPublicId: intermediary.publicId,
+            bankCode: "SCB",
+            bankName: "Siam Commercial Bank",
+            accountName: "Upgrade Account Owner",
+            accountNumberHash: legacyHash,
+            note: null,
+        })).digest("hex");
+        await db.insert(auditLogs).values({
+            tenantId: actor.tenantId,
+            entityType: "intermediary_bank_account",
+            entityId: legacy.publicId,
+            action: "created",
+            actorUserId: actor.id,
+            actorSource: "web",
+            requestId: "req-bank-upgrade-replay",
+            correlationId: "corr-bank-upgrade-replay",
+            payload: {
+                before: null,
+                after: legacyResponse,
+                intermediaryPublicId: intermediary.publicId,
+                idempotencyKey: "bank-upgrade-replay",
+                requestFingerprint: legacyFingerprint,
+            },
+        });
+
+        const replay = await saveIntermediaryBankAccount(
+            context(actor, "bank-upgrade-replay"), intermediary.publicId, legacyInput,
+        );
+        expect(replay).toEqual(legacyResponse);
+
+        const saved = await saveIntermediaryBankAccount(
+            context(actor, "bank-upgrade-save"),
+            intermediary.publicId,
+            { bankCode: "SCB", bankName: "SCB renamed", accountName: "Upgrade Account Owner", accountNumber: "111-1-22223-3" },
+        );
+
+        expect(saved.publicId).toBe(legacy.publicId);
+        expect(await db.select().from(intermediaryBankAccounts)).toHaveLength(1);
+    });
+
+    // Break caught: accepting four digits makes the masked value and audit snapshot reveal the complete account number.
+    integrationTest("requires a hidden account digit and never exposes the minimum accepted raw number", async () => {
+        const actor = await seedActor("tenant-bank-mask", "bank-mask-owner");
+        const intermediary = await createIntermediary(context(actor), { name: "Minimum Mask Owner" });
+
+        await expect(saveIntermediaryBankAccount(
+            context(actor, "bank-mask-four"),
+            intermediary.publicId,
+            { bankCode: "SCB", bankName: "SCB", accountName: "Minimum Mask Owner", accountNumber: "1234" },
+        )).rejects.toMatchObject({ code: "INVALID_BANK_ACCOUNT", status: 400 });
+
+        const rawAccountNumber = "91234";
+        const account = await saveIntermediaryBankAccount(
+            context(actor, "bank-mask-five"),
+            intermediary.publicId,
+            { bankCode: "SCB", bankName: "SCB", accountName: "Minimum Mask Owner", accountNumber: rawAccountNumber },
+        );
+        const profile = await getIntermediaryProfile(context(actor), intermediary.publicId);
+        const audits = await db.select().from(auditLogs)
+            .where(eq(auditLogs.entityType, "intermediary_bank_account"));
+
+        expect(account.maskedAccountNumber).toBe("•••• 1234");
+        expect(profile.bankAccounts[0]?.maskedAccountNumber).toBe("•••• 1234");
+        expect(JSON.stringify(account)).not.toContain(rawAccountNumber);
+        expect(JSON.stringify(profile)).not.toContain(rawAccountNumber);
+        expect(JSON.stringify(audits)).not.toContain(rawAccountNumber);
+    });
+
     // Break caught: different idempotency keys race the same reusable account hash into an unhandled unique violation.
     integrationTest("serializes concurrent reusable bank-account saves by account identity", async () => {
         const actor = await seedActor("tenant-account-race", "account-race-owner");
@@ -199,6 +347,7 @@ describe("intermediary profile, account, and assignment service", () => {
         const actor = await seedActor("tenant-account-replay", "account-replay-owner");
         const intermediary = await createIntermediary(context(actor), { name: "Replay Account" });
         const input = {
+            bankCode: "KTB",
             bankName: "Krungthai Bank",
             accountName: "Replay Account",
             accountNumber: "999-9-00001-1",
@@ -248,6 +397,12 @@ describe("intermediary profile, account, and assignment service", () => {
             { effectiveTo: "2026-02-01T00:00:00.000Z", reason: "Route changed" },
         );
         expect(endedReplay).toEqual(ended);
+        const assignedReplayAfterEnd = await assignIntermediaryToLoan(
+            context(actor, "assignment-history-1"),
+            first.loan.publicId,
+            { intermediaryPublicId: intermediary.publicId, role: "collection", effectiveFrom: "2026-01-01T00:00:00.000Z", note: "First period" },
+        );
+        expect(assignedReplayAfterEnd).toEqual(historical);
         await assignIntermediaryToLoan(
             context(actor, "assignment-history-2"),
             first.loan.publicId,
@@ -276,11 +431,12 @@ describe("intermediary profile, account, and assignment service", () => {
             borrowerName: "Borrower second",
             principalAmount: "5000.00",
             outstandingPrincipal: "4321.00",
-            assignment: expect.objectContaining({ publicId: currentDisbursement.publicId, role: "disbursement", status: "active" }),
+            roles: ["disbursement"],
+            assignments: [expect.objectContaining({ publicId: currentDisbursement.publicId, role: "disbursement", status: "active" })],
         })]);
         expect(disbursementLoans[0]).not.toHaveProperty("borrowerId");
-        expect(disbursementLoans[0].assignment).not.toHaveProperty("loanId");
-        expect(disbursementLoans[0].assignment).not.toHaveProperty("intermediaryId");
+        expect(disbursementLoans[0]?.assignments[0]).not.toHaveProperty("loanId");
+        expect(disbursementLoans[0]?.assignments[0]).not.toHaveProperty("intermediaryId");
 
         const profile = await getIntermediaryProfile(context(actor), intermediary.publicId);
         expect(profile.assignments).toHaveLength(5);
@@ -300,6 +456,43 @@ describe("intermediary profile, account, and assignment service", () => {
             requestId: "req-assignment-end-1",
             correlationId: "corr-assignment-end-1",
         });
+    });
+
+    // Break caught: role=all emits the same loan once per independent responsibility and double-counts the portfolio.
+    integrationTest("groups independent collection and disbursement assignments into one managed loan", async () => {
+        const actor = await seedActor("tenant-managed-group", "managed-group-owner");
+        const intermediary = await createIntermediary(context(actor), { name: "Dual Role Route" });
+        const managedLoan = await seedLoan(actor, "dual-role");
+        const disbursement = await assignIntermediaryToLoan(
+            context(actor, "managed-group-disbursement"),
+            managedLoan.loan.publicId,
+            { intermediaryPublicId: intermediary.publicId, role: "disbursement", effectiveFrom: "2026-01-01T00:00:00.000Z" },
+        );
+        const collection = await assignIntermediaryToLoan(
+            context(actor, "managed-group-collection"),
+            managedLoan.loan.publicId,
+            { intermediaryPublicId: intermediary.publicId, role: "collection", effectiveFrom: "2026-01-01T00:00:00.000Z" },
+        );
+
+        const allRoles = await listManagedLoans(context(actor), intermediary.publicId, { role: "all" });
+        expect(allRoles).toHaveLength(1);
+        expect(allRoles[0]).toMatchObject({
+            publicId: managedLoan.loan.publicId,
+            principalAmount: "5000.00",
+        });
+        expect(allRoles[0]?.roles).toEqual(["collection", "disbursement"]);
+        expect(allRoles[0]?.assignments).toHaveLength(2);
+        expect(allRoles[0]?.assignments).toEqual([
+            expect.objectContaining({ publicId: collection.publicId, role: "collection" }),
+            expect.objectContaining({ publicId: disbursement.publicId, role: "disbursement" }),
+        ]);
+
+        const collectionOnly = await listManagedLoans(context(actor), intermediary.publicId, { role: "collection" });
+        expect(collectionOnly).toHaveLength(1);
+        expect(collectionOnly[0]?.roles).toEqual(["collection"]);
+        expect(collectionOnly[0]?.assignments).toEqual([
+            expect.objectContaining({ publicId: collection.publicId, role: "collection" }),
+        ]);
     });
 
     // Break caught: role ranges overlap silently, inactive/cross-tenant profiles can be assigned, or idempotency can be omitted/reused.
@@ -350,7 +543,7 @@ describe("intermediary profile, account, and assignment service", () => {
         await expect(saveIntermediaryBankAccount(
             context(otherActor, "guard-cross-account"),
             collection.publicId,
-            { bankName: "SCB", accountName: "Cross Tenant", accountNumber: "1111222233" },
+            { bankCode: "SCB", bankName: "SCB", accountName: "Cross Tenant", accountNumber: "1111222233" },
         )).rejects.toMatchObject({ code: "INTERMEDIARY_NOT_FOUND", status: 404 });
         await expect(assignIntermediaryToLoan(
             context(actor, "guard-collection"),
@@ -410,7 +603,8 @@ describe("intermediary profile, account, and assignment service", () => {
         const managed = await listManagedLoans(context(actor), intermediary.publicId, { role: "collection" });
         expect(managed).toEqual([expect.objectContaining({
             publicId: managedLoan.loan.publicId,
-            assignment: expect.objectContaining({ status: "ended", effectiveTo: "2099-01-01T00:00:00.000Z" }),
+            roles: ["collection"],
+            assignments: [expect.objectContaining({ status: "ended", effectiveTo: "2099-01-01T00:00:00.000Z" })],
         })]);
     });
 

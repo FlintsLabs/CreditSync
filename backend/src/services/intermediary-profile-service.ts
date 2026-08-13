@@ -22,9 +22,10 @@ type Intermediary = typeof intermediaries.$inferSelect;
 type BankAccount = typeof intermediaryBankAccounts.$inferSelect;
 type Assignment = typeof loanIntermediaryAssignments.$inferSelect;
 type AssignmentRole = "disbursement" | "collection" | "both";
+const assignmentRoleOrder: Record<AssignmentRole, number> = { collection: 0, disbursement: 1, both: 2 };
 
 export interface SaveIntermediaryBankAccountInput {
-    bankCode?: string | null;
+    bankCode: string;
     bankName: string;
     accountName: string;
     accountNumber: string;
@@ -183,6 +184,25 @@ function priorBankAccountResult(entry: typeof auditLogs.$inferSelect): ReturnTyp
     return value as ReturnType<typeof presentBankAccount>;
 }
 
+function priorAssignmentResult(entry: typeof auditLogs.$inferSelect): ReturnType<typeof presentAssignment> | null {
+    const payload = entry.payload;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+    const after = (payload as Record<string, unknown>).after;
+    if (!after || typeof after !== "object" || Array.isArray(after)) return null;
+    const value = after as Record<string, unknown>;
+    if (value.publicId !== entry.entityId
+        || typeof value.loanPublicId !== "string"
+        || typeof value.intermediaryPublicId !== "string"
+        || !["disbursement", "collection", "both"].includes(String(value.role))
+        || typeof value.effectiveFrom !== "string"
+        || !(value.effectiveTo === null || typeof value.effectiveTo === "string")
+        || !["active", "ended"].includes(String(value.status))
+        || !(value.note === null || typeof value.note === "string")
+        || typeof value.createdAt !== "string"
+        || typeof value.updatedAt !== "string") return null;
+    return value as ReturnType<typeof presentAssignment>;
+}
+
 async function priorCommandAudit(executor: any, ctx: CommandContext, entityType: string, action: string, key: string) {
     return executor.select().from(auditLogs).where(and(
         eq(auditLogs.tenantId, ctx.tenantId),
@@ -240,18 +260,19 @@ export async function saveIntermediaryBankAccount(ctx: CommandContext, intermedi
     const actor = await actorFor(ctx);
     const bankName = input.bankName?.trim();
     const accountName = input.accountName?.trim();
-    const bankCode = input.bankCode?.trim() || null;
+    const bankCode = input.bankCode?.trim();
     const note = input.note?.trim() || null;
     const suppliedNumber = input.accountNumber?.trim();
-    if (!bankName || !accountName || !suppliedNumber || !/^[0-9\s-]+$/.test(suppliedNumber)) {
-        throw new DomainError("INVALID_BANK_ACCOUNT", "Bank name, account name, and a numeric account number are required", 400);
+    if (!bankCode || !/^[A-Z][A-Z0-9]{1,19}$/.test(bankCode)
+        || !bankName || !accountName || !suppliedNumber || !/^[0-9\s-]+$/.test(suppliedNumber)) {
+        throw new DomainError("INVALID_BANK_ACCOUNT", "Canonical bank code, bank name, account name, and a numeric account number are required", 400);
     }
     const accountDigits = suppliedNumber.replace(/[\s-]+/g, "");
-    if (accountDigits.length < 4 || accountDigits.length > 32) {
-        throw new DomainError("INVALID_BANK_ACCOUNT", "Account number must contain between 4 and 32 digits", 400);
+    if (accountDigits.length < 5 || accountDigits.length > 32) {
+        throw new DomainError("INVALID_BANK_ACCOUNT", "Account number must contain between 5 and 32 digits", 400);
     }
     await intermediaryFor(ctx, intermediaryPublicId, actor);
-    const bankIdentity = normalizeIntermediaryText(bankCode ?? bankName);
+    const bankIdentity = normalizeIntermediaryText(bankCode);
     const accountNumberHash = createHash("sha256")
         .update(`${ctx.tenantId}\0${bankIdentity}\0${accountDigits}`)
         .digest("hex");
@@ -365,9 +386,10 @@ export async function assignIntermediaryToLoan(ctx: CommandContext, loanPublicId
                 ),
             });
             if (existingKey) {
-                const [storedLoan, storedIntermediary] = await Promise.all([
+                const [storedLoan, storedIntermediary, prior] = await Promise.all([
                     tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, existingKey.loanId)) }),
                     tx.query.intermediaries.findFirst({ where: and(eq(intermediaries.tenantId, ctx.tenantId), eq(intermediaries.id, existingKey.intermediaryId)) }),
+                    priorCommandAudit(tx, ctx, "loan_intermediary_assignment", "assigned", idempotencyKey),
                 ]);
                 const sameCommand = storedLoan?.publicId === loanPublicId
                     && storedIntermediary?.publicId === input.intermediaryPublicId
@@ -377,10 +399,15 @@ export async function assignIntermediaryToLoan(ctx: CommandContext, loanPublicId
                 if (!sameCommand || !storedLoan || !storedIntermediary) {
                     throw new DomainError("IDEMPOTENCY_KEY_CONFLICT", "Idempotency key was already used for a different assignment", 409);
                 }
-                return presentAssignment(existingKey, {
-                    loanPublicId: storedLoan.publicId,
-                    intermediaryPublicId: storedIntermediary.publicId,
-                });
+                if (!prior || prior.entityId !== existingKey.publicId) {
+                    throw new DomainError("IDEMPOTENT_RESULT_NOT_FOUND", "Stored assignment result is unavailable", 409);
+                }
+                if (priorAuditFingerprint(prior) !== requestFingerprint) {
+                    throw new DomainError("IDEMPOTENCY_KEY_CONFLICT", "Idempotency key was already used for a different assignment", 409);
+                }
+                const replay = priorAssignmentResult(prior);
+                if (!replay) throw new DomainError("IDEMPOTENT_RESULT_NOT_FOUND", "Stored assignment result is unavailable", 409);
+                return replay;
             }
 
             const [loan, intermediary] = await Promise.all([
@@ -534,23 +561,54 @@ export async function listManagedLoans(
         ))
         .innerJoin(borrowers, and(eq(borrowers.tenantId, loans.tenantId), eq(borrowers.id, loans.borrowerId)))
         .where(and(...conditions))
-        .orderBy(loans.nextDueDate, loans.id);
+        .orderBy(loans.nextDueDate, loans.id, loanIntermediaryAssignments.id);
 
-    return rows.map((row) => ({
-        publicId: row.loan.publicId,
-        borrowerPublicId: row.borrowerPublicId,
-        borrowerName: row.borrowerName,
-        principalAmount: serializeMoney(row.loan.principalAmount),
-        outstandingPrincipal: serializeMoney(row.loan.outstandingPrincipal ?? "0"),
-        outstandingInterest: serializeMoney(row.loan.outstandingInterest ?? "0"),
-        outstandingFees: serializeMoney(row.loan.outstandingFees ?? "0"),
-        repaymentType: row.loan.repaymentType,
-        startDate: row.loan.startDate,
-        nextDueDate: row.loan.nextDueDate,
-        status: row.loan.status,
-        assignment: presentAssignment(row.assignment, {
+    const managedByLoan = new Map<string, {
+        publicId: string;
+        borrowerPublicId: string;
+        borrowerName: string;
+        principalAmount: string;
+        outstandingPrincipal: string;
+        outstandingInterest: string;
+        outstandingFees: string;
+        repaymentType: string;
+        startDate: string | null;
+        nextDueDate: string | null;
+        status: string | null;
+        roles: AssignmentRole[];
+        assignments: Array<ReturnType<typeof presentAssignment>>;
+    }>();
+    for (const row of rows) {
+        const assignment = presentAssignment(row.assignment, {
             loanPublicId: row.loan.publicId,
             intermediaryPublicId: intermediary.publicId,
-        }),
-    }));
+        });
+        const existing = managedByLoan.get(row.loan.publicId);
+        if (existing) {
+            if (!existing.roles.includes(assignment.role)) existing.roles.push(assignment.role);
+            existing.assignments.push(assignment);
+            continue;
+        }
+        managedByLoan.set(row.loan.publicId, {
+            publicId: row.loan.publicId,
+            borrowerPublicId: row.borrowerPublicId,
+            borrowerName: row.borrowerName,
+            principalAmount: serializeMoney(row.loan.principalAmount),
+            outstandingPrincipal: serializeMoney(row.loan.outstandingPrincipal ?? "0"),
+            outstandingInterest: serializeMoney(row.loan.outstandingInterest ?? "0"),
+            outstandingFees: serializeMoney(row.loan.outstandingFees ?? "0"),
+            repaymentType: row.loan.repaymentType,
+            startDate: row.loan.startDate,
+            nextDueDate: row.loan.nextDueDate,
+            status: row.loan.status,
+            roles: [assignment.role],
+            assignments: [assignment],
+        });
+    }
+    for (const managed of managedByLoan.values()) {
+        managed.roles.sort((left, right) => assignmentRoleOrder[left] - assignmentRoleOrder[right]);
+        managed.assignments.sort((left, right) => assignmentRoleOrder[left.role] - assignmentRoleOrder[right.role]
+            || left.publicId.localeCompare(right.publicId));
+    }
+    return [...managedByLoan.values()];
 }

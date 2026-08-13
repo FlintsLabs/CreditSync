@@ -83,9 +83,30 @@ describe("intermediary settlement REST contract", () => {
         });
         expect(invalidAccount.response.status).toBe(422);
 
+        const missingBankCode = await jsonRequest(app, `/intermediaries/${intermediary.publicId}/bank-accounts`, token, {
+            method: "PUT",
+            headers: { "idempotency-key": "route-bank-missing-code" },
+            body: JSON.stringify({ bankName: "SCB", accountName: "Route Intermediary", accountNumber: "1111222233" }),
+        });
+        expect(missingBankCode.response.status).toBe(422);
+
+        const malformedBankCode = await jsonRequest(app, `/intermediaries/${intermediary.publicId}/bank-accounts`, token, {
+            method: "PUT",
+            headers: { "idempotency-key": "route-bank-malformed-code" },
+            body: JSON.stringify({ bankCode: "scb free text", bankName: "SCB", accountName: "Route Intermediary", accountNumber: "1111222233" }),
+        });
+        expect(malformedBankCode.response.status).toBe(422);
+
+        const exposedFourDigitAccount = await jsonRequest(app, `/intermediaries/${intermediary.publicId}/bank-accounts`, token, {
+            method: "PUT",
+            headers: { "idempotency-key": "route-bank-four-digits" },
+            body: JSON.stringify({ bankCode: "SCB", bankName: "SCB", accountName: "Route Intermediary", accountNumber: "1234" }),
+        });
+        expect(exposedFourDigitAccount.response.status).toBe(422);
+
         const missingBankKey = await jsonRequest(app, `/intermediaries/${intermediary.publicId}/bank-accounts`, token, {
             method: "PUT",
-            body: JSON.stringify({ bankName: "SCB", accountName: "Route Intermediary", accountNumber: "1111222233" }),
+            body: JSON.stringify({ bankCode: "SCB", bankName: "SCB", accountName: "Route Intermediary", accountNumber: "1111222233" }),
         });
         expect(missingBankKey.response.status).toBe(400);
         expect(missingBankKey.body).toMatchObject({ code: "IDEMPOTENCY_KEY_REQUIRED" });
@@ -126,7 +147,12 @@ describe("intermediary settlement REST contract", () => {
 
         const managed = await jsonRequest(app, `/intermediaries/${intermediary.publicId}/managed-loans?role=collection`, token);
         expect(managed.response.status).toBe(200);
-        expect(managed.body).toEqual([expect.objectContaining({ publicId: loan.publicId, borrowerName: "Route Borrower" })]);
+        expect(managed.body).toEqual([expect.objectContaining({
+            publicId: loan.publicId,
+            borrowerName: "Route Borrower",
+            roles: ["both"],
+            assignments: [expect.objectContaining({ publicId: assigned.body.publicId, role: "both" })],
+        })]);
 
         const profile = await jsonRequest(app, `/intermediaries/${intermediary.publicId}`, token);
         expect(profile.response.status).toBe(200);
@@ -144,5 +170,13 @@ describe("intermediary settlement REST contract", () => {
         });
         expect(ended.response.status).toBe(200);
         expect(ended.body).toMatchObject({ publicId: assigned.body.publicId, status: "ended", effectiveTo: "2026-02-01T00:00:00.000Z" });
+
+        const assignedReplayAfterEnd = await jsonRequest(app, `/loans/${loan.publicId}/intermediary-assignments`, token, {
+            method: "POST",
+            headers: { "idempotency-key": "route-assignment-1" },
+            body: JSON.stringify({ intermediaryPublicId: intermediary.publicId, role: "both", effectiveFrom: "2026-01-01T00:00:00.000Z" }),
+        });
+        expect(assignedReplayAfterEnd.response.status).toBe(200);
+        expect(assignedReplayAfterEnd.body).toEqual(assigned.body);
     });
 });
