@@ -3,6 +3,7 @@
 ## v0.3.11 - 2026-08-13
 
 ### Added
+- Added the v0.3.11 TDD implementation plan for repairing and deploying the strict `intake.get` evidence contract with synchronized plugin validation.
 - Added the approved design for repairing the strict `intake.get` evidence contract, regression coverage, synchronized plugin validation, and read-only production verification.
 - Added the approved design and TDD implementation plan for a flat, divider-separated mobile repayment-history list with concise exact allocation summaries.
 - Added the v0.3.11 implementation plan for flat mobile Dashboard repayment queues with divider rows and responsive desktop section containment.
