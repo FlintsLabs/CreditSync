@@ -42,6 +42,7 @@
 - Added the implementation plan for shared authenticated mobile page edges and responsive flat Dashboard cash metrics.
 
 ### Fixed
+- Serialized every fund-source settlement, profitability, opportunity-cost, and reconciliation amount as an exact two-decimal public string.
 - Calculated fund-source settlement and profitability from direct profile allocations as well as drawdowns, attributed historical borrower cash and revenue exactly, and exposed the read-only difference from append-only ledger revenue.
 - Prevented evidence-bearing `intake.get` calls from failing strict MCP output validation by exposing the tenant-safe public file UUID through the synchronized evidence contract.
 - Prevented the Dashboard command-center and repayment-queue grids from expanding past narrow mobile viewports and clipping trailing actions, amounts, and statuses.

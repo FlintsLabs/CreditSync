@@ -125,6 +125,21 @@ describe("bank profile funding usage", () => {
                 status: "needs_reconciliation",
             },
         });
+        const exactMoneyFields = [
+            "borrowerPrincipalCollected", "borrowerInterestCollected", "borrowerFeesCollected",
+            "borrowerPenaltiesCollected", "borrowerCashCollected", "borrowerRevenueCollected",
+            "fundCostPaid", "realizedSpread", "unrealizedSpread", "surplusBalance",
+            "deficitBalance", "carryForwardAvailable", "deployedPrincipal", "netCashPosition",
+            "realizedRoiPercent", "opportunityCostAccrued", "economicSpread", "poolCurrentBalance",
+        ];
+        for (const field of exactMoneyFields) {
+            expect(typeof result.body[field], field).toBe("string");
+            expect(result.body[field], field).toMatch(/^-?\d+\.\d{2}$/);
+        }
+        for (const field of ["contractAttributedRevenue", "ledgerRecordedRevenue", "difference"]) {
+            expect(typeof result.body.reconciliation[field], field).toBe("string");
+            expect(result.body.reconciliation[field], field).toMatch(/^-?\d+\.\d{2}$/);
+        }
     });
 
     // Break caught: each source reports the loan's full interest, or reversals fail to reduce source-attributed returns.

@@ -274,7 +274,7 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
                 eq(loanFundingAllocations.tenantId, user.tenantId),
                 eq(loanFundingAllocations.bankProfileId, bankProfileId),
             )
-        ).then((rows) => Number(rows[0]?.totalAllocated ?? 0));
+        ).then((rows) => rows[0]?.totalAllocated ?? "0");
                 const allocations = profile.accountingMode === "capital_pool"
                     ? await db.select({ allocatedAmount: loanFundingAllocations.allocatedAmount, allocationDate: loanFundingAllocations.allocationDate })
                         .from(loanFundingAllocations).where(and(
@@ -292,14 +292,14 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
                         asOfDate,
                     }));
                 }, new Decimal(0)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-                const metrics = deriveProfitabilityMetrics(summary, Math.max(0, deployedPrincipal));
+                const metrics = deriveProfitabilityMetrics(summary, deployedPrincipal);
 
                 return {
                     ...summary,
                     bankProfileId,
                     ...metrics,
-                    opportunityCostAccrued: Number(opportunityCostAccrued.toFixed(2)),
-                    economicSpread: Number(new Decimal(metrics.realizedSpread).minus(opportunityCostAccrued).toFixed(2)),
+                    opportunityCostAccrued: opportunityCostAccrued.toFixed(2),
+                    economicSpread: new Decimal(metrics.realizedSpread).minus(opportunityCostAccrued).toFixed(2),
                 };
             },
         });
