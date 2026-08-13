@@ -476,6 +476,179 @@ describe("CreditSync stateless MCP contract", () => {
         await client.close();
     });
 
+    // Break caught: intermediary profile/assignment and exact multi-leg disbursement tools are
+    // absent, advertise open schemas, leak retrieval URLs through inspection, or allow posting
+    // without the literal human confirmation required by the frozen public contract.
+    test("advertises closed intermediary assignment and multi-leg disbursement contracts", async () => {
+        const groupPublicId = "0198c481-3e2b-7000-8000-000000000081";
+        const intermediaryPublicId = "0198c481-3e2b-7000-8000-000000000082";
+        const assignmentPublicId = "0198c481-3e2b-7000-8000-000000000083";
+        const eventPublicId = "0198c481-3e2b-7000-8000-000000000084";
+        const proposalPublicId = "0198c481-3e2b-7000-8000-000000000085";
+        const baseGroup = {
+            publicId: groupPublicId,
+            loanPublicId: BORROWER_ID,
+            intermediaryPublicId,
+            expectedFunding: "5000.00",
+            expectedBorrowerPayout: "4400.00",
+            expectedAdvanceInterestReturn: "600.00",
+            retainedBalance: "0.00",
+            status: "ready",
+            note: null,
+            createdAt: "2026-08-13T02:00:00.000Z",
+            updatedAt: "2026-08-13T02:05:00.000Z",
+        };
+        const baseUrl = await startServer({
+            toolHandlers: {
+                "intermediary.profile.get": async () => ({
+                    publicId: intermediaryPublicId,
+                    name: "Exact intermediary",
+                    aliases: ["Exact alias"],
+                    notes: null,
+                    status: "active",
+                    createdAt: "2026-08-01T00:00:00.000Z",
+                    updatedAt: "2026-08-01T00:00:00.000Z",
+                    bankAccounts: [],
+                    assignments: [{
+                        publicId: assignmentPublicId,
+                        loanPublicId: BORROWER_ID,
+                        intermediaryPublicId,
+                        borrowerPublicId: BORROWER_ID,
+                        borrowerName: "Exact borrower",
+                        loanStatus: "active",
+                        role: "disbursement",
+                        effectiveFrom: "2026-08-01T00:00:00.000Z",
+                        effectiveTo: null,
+                        status: "active",
+                        note: null,
+                        createdAt: "2026-08-01T00:00:00.000Z",
+                        updatedAt: "2026-08-01T00:00:00.000Z",
+                    }],
+                }),
+                "intermediary.disbursement.get": async () => ({
+                    ...baseGroup,
+                    events: [{
+                        publicId: eventPublicId,
+                        groupPublicId,
+                        intermediaryBankAccountPublicId: null,
+                        reversedEventPublicId: null,
+                        role: "funding_to_intermediary",
+                        channel: "bank_transfer",
+                        amount: "5000.00",
+                        senderHint: "Owner account",
+                        payeeHint: "Exact intermediary",
+                        bankReference: "SAFE-REFERENCE",
+                        transferredAt: "2026-08-13T02:00:00.000Z",
+                        status: "ready",
+                        note: null,
+                        createdAt: "2026-08-13T02:00:00.000Z",
+                        updatedAt: "2026-08-13T02:00:00.000Z",
+                    }],
+                    latestPreview: null,
+                }),
+                "intermediary.disbursement.post": async () => ({
+                    ...baseGroup,
+                    status: "posted",
+                    proposalPublicId,
+                    loanDisbursementPublicId: DISBURSEMENT_ID,
+                    advanceInterestProjectionPublicId: BORROWER_ID,
+                    fundingAmount: "5000.00",
+                    borrowerPayoutAmount: "4400.00",
+                    advanceInterestAmount: "600.00",
+                    intermediaryHeldBalance: "0.00",
+                    transferEventPublicIds: [eventPublicId],
+                    duplicate: false,
+                    auditPublicId: AUDIT_ID,
+                    correlationId: AUDIT_ID,
+                }),
+            } as any,
+        });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+
+        const listed = await client.listTools();
+        const expectedNewTools = [
+            "intermediary.profile.get",
+            "intermediary.bank-account.save",
+            "intermediary.managed-loan.list",
+            "intermediary.assignment.create",
+            "intermediary.assignment.end",
+            "intermediary.disbursement.list",
+            "intermediary.disbursement.get",
+            "intermediary.disbursement.create",
+            "intermediary.disbursement.event.create",
+            "intermediary.disbursement.evidence.prepare",
+            "intermediary.disbursement.evidence.finalize",
+            "intermediary.disbursement.preview",
+            "intermediary.disbursement.post",
+            "intermediary.disbursement.reverse",
+        ];
+        expect(listed.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(expectedNewTools));
+        for (const name of [
+            "intermediary.profile.get",
+            "intermediary.managed-loan.list",
+            "intermediary.disbursement.list",
+            "intermediary.disbursement.get",
+        ]) {
+            expect(listed.tools.find((tool) => tool.name === name)?.annotations).toMatchObject({
+                readOnlyHint: true,
+                destructiveHint: false,
+                idempotentHint: true,
+                openWorldHint: false,
+            });
+        }
+        for (const name of ["intermediary.disbursement.post", "intermediary.disbursement.reverse"]) {
+            expect(listed.tools.find((tool) => tool.name === name)?.annotations).toMatchObject({
+                readOnlyHint: false,
+                destructiveHint: true,
+                idempotentHint: true,
+                openWorldHint: false,
+            });
+        }
+        expect(listed.tools.find((tool) => tool.name === "intermediary.disbursement.create")?.inputSchema)
+            .toMatchObject({ additionalProperties: false });
+
+        const profile = await client.callTool({
+            name: "intermediary.profile.get",
+            arguments: { intermediaryPublicId },
+        });
+        expect(profile.isError).not.toBe(true);
+        expect(profile.structuredContent).toMatchObject({
+            schemaVersion: "1.0",
+            data: { publicId: intermediaryPublicId, assignments: [{ publicId: assignmentPublicId }] },
+        });
+
+        const inspected = await client.callTool({
+            name: "intermediary.disbursement.get",
+            arguments: { groupPublicId },
+        });
+        expect(inspected.isError).not.toBe(true);
+        expect(JSON.stringify(inspected.structuredContent)).not.toMatch(/uploadUrl|signedUrl|objectKey|bucket/u);
+
+        const unknownField = await client.callTool({
+            name: "intermediary.disbursement.get",
+            arguments: { groupPublicId, includeSignedEvidenceUrls: true },
+        });
+        expect(unknownField.isError).toBe(true);
+        const unconfirmed = await client.callTool({
+            name: "intermediary.disbursement.post",
+            arguments: { groupPublicId, proposalPublicId, confirmed: false, idempotencyKey: "group-post-1" },
+        });
+        expect(unconfirmed.isError).toBe(true);
+        const posted = await client.callTool({
+            name: "intermediary.disbursement.post",
+            arguments: { groupPublicId, proposalPublicId, confirmed: true, idempotencyKey: "group-post-1" },
+        });
+        expect(posted.isError).not.toBe(true);
+        expect(posted.structuredContent).toMatchObject({
+            schemaVersion: "1.0",
+            data: { publicId: groupPublicId, status: "posted", borrowerPayoutAmount: "4400.00" },
+            auditPublicIds: [AUDIT_ID],
+        });
+
+        await client.close();
+    });
+
     test("an actual MCP client initializes, lists every frozen tool, and calls shared handlers", async () => {
         let observedContext: CommandContext | undefined;
         const baseUrl = await startServer({
@@ -521,6 +694,12 @@ describe("CreditSync stateless MCP contract", () => {
             "loan.disbursement.update",
             "loan.disbursement.post",
             "loan.disbursement.reverse",
+            "intermediary.bank-account.save",
+            "intermediary.assignment.end",
+            "intermediary.disbursement.evidence.prepare",
+            "intermediary.disbursement.evidence.finalize",
+            "intermediary.disbursement.post",
+            "intermediary.disbursement.reverse",
             "intermediary.remittance.post",
             "renewal.preview",
             "renewal.execute",

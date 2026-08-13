@@ -1,5 +1,19 @@
 # CreditSync Plugin Changelog
 
+## 4.0.0 - 2026-08-14
+
+### Added
+
+- Added 14 closed-schema intermediary profile, masked-bank-account, assignment, managed-loan, and intermediated-disbursement MCP tools plus the `manage-intermediated-disbursements` skill and executable three-slip positive/negative orchestration evals.
+
+### Changed
+
+- Expanded the frozen contract to 57 tools and 10 skills, with exact assignment, per-event evidence, zero retained-balance/variance, fresh confirmation, stale-state, and compensating-reversal boundaries.
+
+### Compatibility
+
+- Released a new major plugin because the frozen tool catalogue grows from 43 to 57 tools. MCP payload schema version remains `1.0`.
+
 ## 3.0.0 - 2026-08-13
 
 ### Added

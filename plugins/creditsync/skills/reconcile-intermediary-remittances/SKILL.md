@@ -5,6 +5,8 @@ description: Use when recording borrower payments held by a collector or interme
 
 # Reconcile intermediary remittances
 
+This skill covers borrower collections returned by an intermediary. For outbound loan disbursement transfer legs routed through an intermediary, use `manage-intermediated-disbursements`.
+
 1. Search the intermediary by canonical name before creating one. Never infer identity from a bank name alone.
 2. Inspect the borrower and active loan. Create one collection for each borrower payment with its actual borrower-paid timestamp and amount. A collection is non-financial until remittance posting.
 3. If that borrower payment is already posted, pass its `paymentIntakePublicId`; CreditSync validates timestamp, loan, and exact amount and will not post it twice.

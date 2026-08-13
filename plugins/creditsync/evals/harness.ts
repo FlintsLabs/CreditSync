@@ -23,6 +23,21 @@ const DISBURSEMENT_FILE_HASH = "c".repeat(64);
 const SETTLEMENT_BALANCE_VERSION = `v1:${"c".repeat(64)}`;
 const SETTLEMENT_PREVIEW_HASH = `v1:${"d".repeat(64)}`;
 const SETTLEMENT_EXPIRES_AT = "2026-08-15T06:15:00.000Z";
+const INTERMEDIARY = "0198c481-3e2b-7000-8000-000000000081";
+const INTERMEDIARY_B = "0198c481-3e2b-7000-8000-000000000082";
+const INTERMEDIARY_ASSIGNMENT = "0198c481-3e2b-7000-8000-000000000083";
+const INTERMEDIATED_GROUP = "0198c481-3e2b-7000-8000-000000000084";
+const INTERMEDIATED_EVENTS = [
+    "0198c481-3e2b-7000-8000-000000000085",
+    "0198c481-3e2b-7000-8000-000000000086",
+    "0198c481-3e2b-7000-8000-000000000087",
+] as const;
+const INTERMEDIATED_EVIDENCE = [
+    "0198c481-3e2b-7000-8000-000000000088",
+    "0198c481-3e2b-7000-8000-000000000089",
+    "0198c481-3e2b-7000-8000-000000000090",
+] as const;
+const INTERMEDIATED_PREVIEW = "0198c481-3e2b-7000-8000-000000000091";
 
 export type ToolCall = { name: McpToolName; arguments: Record<string, unknown> };
 type ScriptedError = { code: string; message: string; details?: Record<string, unknown> };
@@ -30,7 +45,8 @@ type ScriptStep = ToolCall & { result?: Record<string, unknown>; error?: Scripte
 export type HarnessEvent =
     | { type: "tool"; name: McpToolName }
     | { type: "presentation"; name: "floating-settlement-preview"; data: Record<string, unknown> }
-    | { type: "confirmation"; name: "floating-settlement"; confirmed: boolean };
+    | { type: "presentation"; name: "intermediated-disbursement-preview"; data: Record<string, unknown> }
+    | { type: "confirmation"; name: "floating-settlement" | "intermediated-disbursement"; confirmed: boolean };
 
 export type SameTaskRenewalExecutionContext = {
     provenance: "same_task_renewal_execute_result";
@@ -83,6 +99,14 @@ class ScriptedMcp {
 
     recordFloatingSettlementConfirmation(confirmed: boolean) {
         this.events.push({ type: "confirmation", name: "floating-settlement", confirmed });
+    }
+
+    presentIntermediatedDisbursement(data: Record<string, unknown>) {
+        this.events.push({ type: "presentation", name: "intermediated-disbursement-preview", data });
+    }
+
+    recordIntermediatedDisbursementConfirmation(confirmed: boolean) {
+        this.events.push({ type: "confirmation", name: "intermediated-disbursement", confirmed });
     }
 
     async call(name: McpToolName, args: Record<string, unknown>) {
@@ -449,6 +473,346 @@ async function reverseRenewal(
     }
 }
 
+const intermediarySearchQuery = "MCP exact intermediary";
+const intermediatedGroupArgs = {
+    loanPublicId: LOAN_A,
+    intermediaryPublicId: INTERMEDIARY,
+    retainedBalance: "0.00",
+    note: "Exact three-leg disbursement",
+    idempotencyKey: "intermediated-group-20260813-1",
+};
+const intermediatedEventSpecs = [
+    {
+        publicId: INTERMEDIATED_EVENTS[0],
+        role: "funding_to_intermediary",
+        amount: "5000.00",
+        senderHint: "Owner funding account",
+        payeeHint: "MCP exact intermediary",
+        bankReference: "INTERMEDIATED-FUNDING-1",
+    },
+    {
+        publicId: INTERMEDIATED_EVENTS[1],
+        role: "borrower_net_payout",
+        amount: "4400.00",
+        senderHint: "MCP exact intermediary",
+        payeeHint: "Exact borrower account",
+        bankReference: "INTERMEDIATED-PAYOUT-1",
+    },
+    {
+        publicId: INTERMEDIATED_EVENTS[2],
+        role: "advance_interest_return",
+        amount: "600.00",
+        senderHint: "MCP exact intermediary",
+        payeeHint: "Owner interest account",
+        bankReference: "INTERMEDIATED-ADVANCE-1",
+    },
+] as const;
+
+function intermediatedIdentityScript(options: { ambiguous?: boolean; missingAssignment?: boolean } = {}): ScriptStep[] {
+    const script: ScriptStep[] = [
+        {
+            name: "borrower.search",
+            arguments: { query: "Exact borrower" },
+            result: { resolution: "unique", matchType: "canonical", candidates: [{ publicId: BORROWER_A, name: "Exact borrower" }] },
+        },
+        {
+            name: "borrower.portfolio",
+            arguments: { borrowerPublicId: BORROWER_A },
+            result: { borrower: { publicId: BORROWER_A }, loans: [{ publicId: LOAN_A, status: "active" }] },
+        },
+        {
+            name: "intermediary.search",
+            arguments: { query: intermediarySearchQuery },
+            result: options.ambiguous
+                ? { items: [{ publicId: INTERMEDIARY, name: intermediarySearchQuery, aliases: [] }, { publicId: INTERMEDIARY_B, name: intermediarySearchQuery, aliases: [] }] }
+                : { items: [{ publicId: INTERMEDIARY, name: intermediarySearchQuery, aliases: ["MCP transfer agent"] }] },
+        },
+    ];
+    if (options.ambiguous) return script;
+    script.push({
+        name: "intermediary.profile.get",
+        arguments: { intermediaryPublicId: INTERMEDIARY },
+        result: {
+            publicId: INTERMEDIARY,
+            assignments: options.missingAssignment ? [] : [{
+                publicId: INTERMEDIARY_ASSIGNMENT,
+                loanPublicId: LOAN_A,
+                intermediaryPublicId: INTERMEDIARY,
+                role: "disbursement",
+                status: "active",
+                effectiveFrom: "2026-08-01T00:00:00.000Z",
+                effectiveTo: null,
+            }],
+        },
+    });
+    return script;
+}
+
+function intermediatedGroupResult(retainedBalance = "0.00") {
+    return {
+        publicId: INTERMEDIATED_GROUP,
+        loanPublicId: LOAN_A,
+        intermediaryPublicId: INTERMEDIARY,
+        expectedFunding: "5000.00",
+        expectedBorrowerPayout: retainedBalance === "0.00" ? "4400.00" : "4300.00",
+        expectedAdvanceInterestReturn: "600.00",
+        retainedBalance,
+        status: "draft",
+    };
+}
+
+function intermediatedGroupCreateStep(retainedBalance = "0.00"): ScriptStep {
+    return {
+        name: "intermediary.disbursement.create",
+        arguments: intermediatedGroupArgs,
+        result: intermediatedGroupResult(retainedBalance),
+    };
+}
+
+function intermediatedEventArgs(index: number) {
+    const spec = intermediatedEventSpecs[index]!;
+    return {
+        groupPublicId: INTERMEDIATED_GROUP,
+        role: spec.role,
+        channel: "bank_transfer",
+        amount: spec.amount,
+        transferredAt: `2026-08-13T0${index + 2}:00:00.000Z`,
+        senderHint: spec.senderHint,
+        payeeHint: spec.payeeHint,
+        bankReference: spec.bankReference,
+        idempotencyKey: `intermediated-event-20260813-${index + 1}`,
+    };
+}
+
+function intermediatedEvidenceArgs(index: number) {
+    return {
+        groupPublicId: INTERMEDIATED_GROUP,
+        eventPublicId: INTERMEDIATED_EVENTS[index]!,
+        mimeType: "image/png",
+        size: 4096,
+        sha256: String(index + 1).repeat(64),
+        originalName: `intermediated-slip-${index + 1}.png`,
+    };
+}
+
+function intermediatedEventScript(index: number, options: { missingEvidence?: boolean; duplicate?: boolean } = {}): ScriptStep[] {
+    const spec = intermediatedEventSpecs[index]!;
+    if (options.duplicate) return [{
+        name: "intermediary.disbursement.event.create",
+        arguments: intermediatedEventArgs(index),
+        error: { code: "DUPLICATE_BANK_REFERENCE", message: "Bank reference is already attached to another transfer event" },
+    }];
+    return [
+        {
+            name: "intermediary.disbursement.event.create",
+            arguments: intermediatedEventArgs(index),
+            result: { ...spec, groupPublicId: INTERMEDIATED_GROUP, channel: "bank_transfer", status: "ready" },
+        },
+        {
+            name: "intermediary.disbursement.evidence.prepare",
+            arguments: intermediatedEvidenceArgs(index),
+            result: options.missingEvidence ? {
+                publicId: INTERMEDIATED_EVIDENCE[index],
+                status: "pending",
+            } : {
+                publicId: INTERMEDIATED_EVIDENCE[index],
+                status: "pending",
+                uploadUrl: `https://storage.example/intermediated-upload-${index + 1}`,
+                requiredHeaders: { "content-type": "image/png" },
+                expiresAt: "2099-01-01T00:00:00.000Z",
+            },
+        },
+        ...(options.missingEvidence ? [] : [{
+            name: "intermediary.disbursement.evidence.finalize" as const,
+            arguments: {
+                groupPublicId: INTERMEDIATED_GROUP,
+                eventPublicId: INTERMEDIATED_EVENTS[index]!,
+                evidencePublicId: INTERMEDIATED_EVIDENCE[index]!,
+            },
+            result: { publicId: INTERMEDIATED_EVIDENCE[index], status: "ready" },
+        }]),
+    ];
+}
+
+function intermediatedPresentedEvents(payeeMismatch = false) {
+    return intermediatedEventSpecs.map((spec, index) => ({
+        ...spec,
+        groupPublicId: INTERMEDIATED_GROUP,
+        channel: "bank_transfer",
+        status: "ready",
+        ...(payeeMismatch && index === 1 ? { payeeHint: "Different unconfirmed payee" } : {}),
+    }));
+}
+
+function intermediatedDetailStep(payeeMismatch = false): ScriptStep {
+    return {
+        name: "intermediary.disbursement.get",
+        arguments: { groupPublicId: INTERMEDIATED_GROUP },
+        result: { ...intermediatedGroupResult(), events: intermediatedPresentedEvents(payeeMismatch), latestPreview: null },
+    };
+}
+
+function intermediatedPreviewResult(publicId = INTERMEDIATED_PREVIEW) {
+    return {
+        publicId,
+        groupPublicId: INTERMEDIATED_GROUP,
+        version: 1,
+        status: "ready",
+        expectedFunding: "5000.00",
+        actualFunding: "5000.00",
+        expectedBorrowerPayout: "4400.00",
+        actualBorrowerPayout: "4400.00",
+        expectedAdvanceInterestReturn: "600.00",
+        actualAdvanceInterestReturn: "600.00",
+        retainedBalance: "0.00",
+        variance: "0.00",
+        evidenceReady: true,
+        warnings: [],
+        previewHash: "f".repeat(64),
+        expiresAt: "2099-01-01T00:15:00.000Z",
+    };
+}
+
+function intermediatedPreviewStep(publicId = INTERMEDIATED_PREVIEW): ScriptStep {
+    return {
+        name: "intermediary.disbursement.preview",
+        arguments: { groupPublicId: INTERMEDIATED_GROUP },
+        result: intermediatedPreviewResult(publicId),
+    };
+}
+
+function fullIntermediatedDraftScript(): ScriptStep[] {
+    return [
+        ...intermediatedIdentityScript(),
+        intermediatedGroupCreateStep(),
+        ...intermediatedEventScript(0),
+        ...intermediatedEventScript(1),
+        ...intermediatedEventScript(2),
+        intermediatedDetailStep(),
+        intermediatedPreviewStep(),
+    ];
+}
+
+function presentIntermediatedPreview(mcp: ScriptedMcp, preview: Record<string, unknown>) {
+    mcp.presentIntermediatedDisbursement({
+        publicId: preview.publicId,
+        groupPublicId: preview.groupPublicId,
+        expectedFunding: preview.expectedFunding,
+        actualFunding: preview.actualFunding,
+        expectedBorrowerPayout: preview.expectedBorrowerPayout,
+        actualBorrowerPayout: preview.actualBorrowerPayout,
+        expectedAdvanceInterestReturn: preview.expectedAdvanceInterestReturn,
+        actualAdvanceInterestReturn: preview.actualAdvanceInterestReturn,
+        retainedBalance: preview.retainedBalance,
+        variance: preview.variance,
+        evidenceReady: preview.evidenceReady,
+        warnings: preview.warnings,
+        expiresAt: preview.expiresAt,
+    });
+}
+
+async function intermediatedDisbursementFlow(mcp: ScriptedMcp, options: { confirmed?: boolean } = {}) {
+    const borrowerSearch = await mcp.call("borrower.search", { query: "Exact borrower" });
+    if (borrowerSearch.resolution !== "unique" || !Array.isArray(borrowerSearch.candidates) || borrowerSearch.candidates.length !== 1) {
+        return { outcome: "stopped", stopReason: "intermediated-identity-ambiguous" } as const;
+    }
+    const borrowerPublicId = (borrowerSearch.candidates as Array<{ publicId: string }>)[0]!.publicId;
+    const portfolio = await mcp.call("borrower.portfolio", { borrowerPublicId });
+    if (!(portfolio.loans as Array<{ publicId: string; status: string }>).some((loan) => loan.publicId === LOAN_A && loan.status === "active")) {
+        return { outcome: "stopped", stopReason: "intermediated-loan-not-active" } as const;
+    }
+    const intermediarySearch = await mcp.call("intermediary.search", { query: intermediarySearchQuery });
+    const intermediaryCandidates = intermediarySearch.items as Array<{ publicId: string; name: string; aliases: string[] }>;
+    const exactCandidates = intermediaryCandidates.filter((candidate) =>
+        candidate.name === intermediarySearchQuery || candidate.aliases?.includes(intermediarySearchQuery));
+    if (exactCandidates.length !== 1) {
+        return { outcome: "stopped", stopReason: "intermediated-identity-ambiguous" } as const;
+    }
+    const intermediaryPublicId = exactCandidates[0]!.publicId;
+    const profile = await mcp.call("intermediary.profile.get", { intermediaryPublicId });
+    const assignments = profile.assignments as Array<{ loanPublicId: string; role: string; status: string }>;
+    if (!assignments.some((assignment) => assignment.loanPublicId === LOAN_A
+        && assignment.status === "active"
+        && ["disbursement", "both"].includes(assignment.role))) {
+        return { outcome: "stopped", stopReason: "intermediated-assignment-required" } as const;
+    }
+    const group = await mcp.call("intermediary.disbursement.create", intermediatedGroupArgs);
+    if (group.retainedBalance !== "0.00") {
+        return { outcome: "stopped", stopReason: "intermediated-retained-balance-unexplained" } as const;
+    }
+
+    for (const [index, spec] of intermediatedEventSpecs.entries()) {
+        let event: Record<string, unknown>;
+        try {
+            event = await mcp.call("intermediary.disbursement.event.create", intermediatedEventArgs(index));
+        } catch (error) {
+            if (error instanceof ScriptedMcpError && ["DUPLICATE_BANK_REFERENCE", "IDEMPOTENCY_KEY_CONFLICT"].includes(error.code)) {
+                return { outcome: "stopped", stopReason: "intermediated-duplicate-transfer" } as const;
+            }
+            throw error;
+        }
+        if (event.publicId !== spec.publicId) return { outcome: "stopped", stopReason: "intermediated-transfer-mismatch" } as const;
+        let prepared: Record<string, unknown>;
+        try {
+            prepared = await mcp.call("intermediary.disbursement.evidence.prepare", intermediatedEvidenceArgs(index));
+        } catch (error) {
+            if (error instanceof ScriptedMcpError && error.code === "EVIDENCE_HASH_CONFLICT") {
+                return { outcome: "stopped", stopReason: "intermediated-duplicate-transfer" } as const;
+            }
+            throw error;
+        }
+        if (prepared.status === "ready") continue;
+        const expiresAt = typeof prepared.expiresAt === "string" ? Date.parse(prepared.expiresAt) : Number.NaN;
+        if (typeof prepared.uploadUrl !== "string" || !prepared.requiredHeaders || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+            return { outcome: "stopped", stopReason: "intermediated-evidence-required" } as const;
+        }
+        mcp.effect("intermediated-evidence.put");
+        const finalized = await mcp.call("intermediary.disbursement.evidence.finalize", {
+            groupPublicId: INTERMEDIATED_GROUP,
+            eventPublicId: spec.publicId,
+            evidencePublicId: prepared.publicId,
+        });
+        if (finalized.status !== "ready") return { outcome: "stopped", stopReason: "intermediated-evidence-required" } as const;
+    }
+
+    const detail = await mcp.call("intermediary.disbursement.get", { groupPublicId: INTERMEDIATED_GROUP });
+    const events = detail.events as Array<{ publicId: string; amount: string; payeeHint: string | null }>;
+    if (events.length !== intermediatedEventSpecs.length || intermediatedEventSpecs.some((spec) => {
+        const event = events.find((candidate) => candidate.publicId === spec.publicId);
+        return !event || event.amount !== spec.amount || event.payeeHint !== spec.payeeHint;
+    })) {
+        return { outcome: "stopped", stopReason: "intermediated-transfer-mismatch" } as const;
+    }
+    const preview = await mcp.call("intermediary.disbursement.preview", { groupPublicId: INTERMEDIATED_GROUP });
+    if (preview.status !== "ready"
+        || preview.variance !== "0.00"
+        || preview.retainedBalance !== "0.00"
+        || preview.evidenceReady !== true
+        || (preview.warnings as unknown[]).length !== 0) {
+        return { outcome: "stopped", stopReason: "intermediated-preview-needs-review" } as const;
+    }
+    presentIntermediatedPreview(mcp, preview);
+    const confirmed = options.confirmed !== false;
+    mcp.recordIntermediatedDisbursementConfirmation(confirmed);
+    if (!confirmed) return { outcome: "stopped", stopReason: "intermediated-confirmation-required" } as const;
+    try {
+        await mcp.call("intermediary.disbursement.post", {
+            groupPublicId: INTERMEDIATED_GROUP,
+            proposalPublicId: preview.publicId,
+            confirmed: true,
+            idempotencyKey: "intermediated-post-20260813-1",
+        });
+        return { outcome: "completed" } as const;
+    } catch (error) {
+        if (!(error instanceof ScriptedMcpError) || error.code !== "STALE_INTERMEDIATED_DISBURSEMENT_PROPOSAL") throw error;
+        await mcp.call("intermediary.disbursement.get", { groupPublicId: INTERMEDIATED_GROUP });
+        const fresh = await mcp.call("intermediary.disbursement.preview", { groupPublicId: INTERMEDIATED_GROUP });
+        presentIntermediatedPreview(mcp, fresh);
+        mcp.recordIntermediatedDisbursementConfirmation(false);
+        return { outcome: "stopped", stopReason: "fresh-intermediated-confirmation-required" } as const;
+    }
+}
+
 type Scenario = {
     script: ScriptStep[];
     authorized?: boolean;
@@ -800,6 +1164,91 @@ const SCENARIOS: Record<string, Scenario> = {
             },
         ],
         run: (mcp) => reverseRenewal(mcp, SAME_TASK_RENEWAL_CONTEXT),
+    },
+    "intermediated-disbursement-full-lifecycle": {
+        script: [
+            ...fullIntermediatedDraftScript(),
+            {
+                name: "intermediary.disbursement.post",
+                arguments: {
+                    groupPublicId: INTERMEDIATED_GROUP,
+                    proposalPublicId: INTERMEDIATED_PREVIEW,
+                    confirmed: true,
+                    idempotencyKey: "intermediated-post-20260813-1",
+                },
+                result: { publicId: INTERMEDIATED_GROUP, status: "posted", duplicate: false },
+            },
+        ],
+        run: (mcp) => intermediatedDisbursementFlow(mcp),
+    },
+    "intermediated-disbursement-ambiguous-identity": {
+        script: intermediatedIdentityScript({ ambiguous: true }),
+        run: (mcp) => intermediatedDisbursementFlow(mcp),
+    },
+    "intermediated-disbursement-missing-assignment": {
+        script: intermediatedIdentityScript({ missingAssignment: true }),
+        run: (mcp) => intermediatedDisbursementFlow(mcp),
+    },
+    "intermediated-disbursement-missing-evidence": {
+        script: [
+            ...intermediatedIdentityScript(),
+            intermediatedGroupCreateStep(),
+            ...intermediatedEventScript(0),
+            ...intermediatedEventScript(1),
+            ...intermediatedEventScript(2, { missingEvidence: true }),
+        ],
+        run: (mcp) => intermediatedDisbursementFlow(mcp),
+    },
+    "intermediated-disbursement-duplicate-transfer": {
+        script: [
+            ...intermediatedIdentityScript(),
+            intermediatedGroupCreateStep(),
+            ...intermediatedEventScript(0, { duplicate: true }),
+        ],
+        run: (mcp) => intermediatedDisbursementFlow(mcp),
+    },
+    "intermediated-disbursement-amount-payee-mismatch": {
+        script: [
+            ...intermediatedIdentityScript(),
+            intermediatedGroupCreateStep(),
+            ...intermediatedEventScript(0),
+            ...intermediatedEventScript(1),
+            ...intermediatedEventScript(2),
+            intermediatedDetailStep(true),
+        ],
+        run: (mcp) => intermediatedDisbursementFlow(mcp),
+    },
+    "intermediated-disbursement-unexplained-retained-balance": {
+        script: [
+            ...intermediatedIdentityScript(),
+            intermediatedGroupCreateStep("100.00"),
+        ],
+        run: (mcp) => intermediatedDisbursementFlow(mcp),
+    },
+    "intermediated-disbursement-stale-preview": {
+        script: [
+            ...fullIntermediatedDraftScript(),
+            {
+                name: "intermediary.disbursement.post",
+                arguments: {
+                    groupPublicId: INTERMEDIATED_GROUP,
+                    proposalPublicId: INTERMEDIATED_PREVIEW,
+                    confirmed: true,
+                    idempotencyKey: "intermediated-post-20260813-1",
+                },
+                error: {
+                    code: "STALE_INTERMEDIATED_DISBURSEMENT_PROPOSAL",
+                    message: "Intermediated disbursement proposal is stale",
+                },
+            },
+            intermediatedDetailStep(),
+            intermediatedPreviewStep("0198c481-3e2b-7000-8000-000000000092"),
+        ],
+        run: (mcp) => intermediatedDisbursementFlow(mcp),
+    },
+    "intermediated-disbursement-missing-confirmation": {
+        script: fullIntermediatedDraftScript(),
+        run: (mcp) => intermediatedDisbursementFlow(mcp, { confirmed: false }),
     },
     "unauthorized-access": {
         script: [],

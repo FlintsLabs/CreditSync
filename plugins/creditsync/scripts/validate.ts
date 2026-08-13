@@ -8,7 +8,7 @@ import { canonicalContractJson, captureAdvertisedMcpContract } from "./mcp-contr
 
 const pluginRoot = resolve(import.meta.dir, "..");
 const repositoryRoot = resolve(pluginRoot, "../..");
-const expectedSkills = ["creditsync", "manage-borrowers", "reconcile-payments", "reconcile-intermediary-remittances", "manage-loans", "manage-floating-interest-rates", "settle-floating-loans", "manage-disbursements", "renew-daily-loan"];
+const expectedSkills = ["creditsync", "manage-borrowers", "reconcile-payments", "reconcile-intermediary-remittances", "manage-loans", "manage-floating-interest-rates", "settle-floating-loans", "manage-disbursements", "manage-intermediated-disbursements", "renew-daily-loan"];
 const expectedReferences = ["matching-policy.md", "financial-rules.md", "error-recovery.md", "mcp-tool-contract.json"];
 const forbiddenEntries = [".mcp.json", "hooks.json", "hooks", "ui", "oauth.json"];
 export const PRIVATE_APP_ID_PLACEHOLDER = "plugin_asdk_app_REPLACE_AFTER_PRIVATE_REGISTRATION";
@@ -80,7 +80,7 @@ export async function validatePlugin() {
     const errors: string[] = [];
     const manifest = await parseJson(resolve(pluginRoot, ".codex-plugin/plugin.json"));
     if (manifest.name !== "creditsync") errors.push("manifest name must be creditsync");
-    if (manifest.version !== "3.0.0") errors.push("manifest version must be 3.0.0");
+    if (manifest.version !== "4.0.0") errors.push("manifest version must be 4.0.0");
     if (manifest.skills !== "./skills/") errors.push("manifest skills path must be ./skills/");
     if (manifest.apps !== "./.app.json") errors.push("manifest apps path must be ./.app.json");
     for (const field of ["mcpServers", "hooks", "ui", "oauth"]) {
@@ -95,7 +95,7 @@ export async function validatePlugin() {
     if (/https?:\/\//iu.test(appRaw) || /bearer|token|secret/iu.test(appRaw)) errors.push(".app.json must not contain connection data");
 
     for (const entry of forbiddenEntries) {
-        if (existsSync(resolve(pluginRoot, entry))) errors.push(`forbidden 3.0.0 capability exists: ${entry}`);
+        if (existsSync(resolve(pluginRoot, entry))) errors.push(`forbidden 4.0.0 capability exists: ${entry}`);
     }
     for (const skill of expectedSkills) {
         const skillPath = resolve(pluginRoot, "skills", skill, "SKILL.md");
@@ -193,5 +193,5 @@ if (import.meta.main) {
     }
     const app = await parseJson(resolve(pluginRoot, ".app.json")) as { apps?: Record<string, { id?: string }> };
     const registration = classifyPrivateAppId(app.apps?.creditsync?.id);
-    console.log(`CreditSync plugin validation passed (3.0.0, 9 skills, 43 tools, no bundled MCP/secrets; private app: ${registration}${registration === "placeholder" ? ", non-live" : ""}).`);
+    console.log(`CreditSync plugin validation passed (4.0.0, 10 skills, 57 tools, no bundled MCP/secrets; private app: ${registration}${registration === "placeholder" ? ", non-live" : ""}).`);
 }

@@ -23,6 +23,55 @@ async function fixtures() {
 }
 
 describe("CreditSync executable orchestration evals", () => {
+    test("intermediated disbursement posts only an exact assigned three-slip group after confirmation", async () => {
+        const result = await runEvalScenario("intermediated-disbursement-full-lifecycle");
+        expect(result).toMatchObject({ outcome: "completed" });
+        expect(result.calls.map((call) => call.name)).toEqual([
+            "borrower.search",
+            "borrower.portfolio",
+            "intermediary.search",
+            "intermediary.profile.get",
+            "intermediary.disbursement.create",
+            "intermediary.disbursement.event.create",
+            "intermediary.disbursement.evidence.prepare",
+            "intermediary.disbursement.evidence.finalize",
+            "intermediary.disbursement.event.create",
+            "intermediary.disbursement.evidence.prepare",
+            "intermediary.disbursement.evidence.finalize",
+            "intermediary.disbursement.event.create",
+            "intermediary.disbursement.evidence.prepare",
+            "intermediary.disbursement.evidence.finalize",
+            "intermediary.disbursement.get",
+            "intermediary.disbursement.preview",
+            "intermediary.disbursement.post",
+        ]);
+        expect(result.effects).toEqual([
+            "intermediated-evidence.put",
+            "intermediated-evidence.put",
+            "intermediated-evidence.put",
+        ]);
+        expect(result.calls.at(-1)?.arguments).toMatchObject({ confirmed: true });
+    });
+
+    test("intermediated disbursement stops on every required ambiguity and stale-state boundary", async () => {
+        const expectedStops = {
+            "intermediated-disbursement-ambiguous-identity": "intermediated-identity-ambiguous",
+            "intermediated-disbursement-missing-assignment": "intermediated-assignment-required",
+            "intermediated-disbursement-missing-evidence": "intermediated-evidence-required",
+            "intermediated-disbursement-duplicate-transfer": "intermediated-duplicate-transfer",
+            "intermediated-disbursement-amount-payee-mismatch": "intermediated-transfer-mismatch",
+            "intermediated-disbursement-unexplained-retained-balance": "intermediated-retained-balance-unexplained",
+            "intermediated-disbursement-stale-preview": "fresh-intermediated-confirmation-required",
+            "intermediated-disbursement-missing-confirmation": "intermediated-confirmation-required",
+        } as const;
+        for (const [id, stopReason] of Object.entries(expectedStops)) {
+            const result = await runEvalScenario(id);
+            expect(result).toMatchObject({ outcome: "stopped", stopReason });
+            const confirmedPosts = result.calls.filter((call) => call.name === "intermediary.disbursement.post" && call.arguments.confirmed === true);
+            expect(confirmedPosts).toHaveLength(id === "intermediated-disbursement-stale-preview" ? 1 : 0);
+        }
+    });
+
     test("floating interest execution requires the exact preview and explicit confirmation", async () => {
         const confirmed = await runEvalScenario("floating-rate-scheduled-change");
         expect(confirmed.calls.map((call) => call.name)).toEqual([

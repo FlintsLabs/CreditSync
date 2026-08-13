@@ -18,7 +18,7 @@ async function json(path: string) {
     return JSON.parse(await readFile(resolve(pluginRoot, path), "utf8")) as Record<string, unknown>;
 }
 
-describe("CreditSync plugin 3.0.0 contract", () => {
+describe("CreditSync plugin 4.0.0 contract", () => {
     test("exposes the documented local validation command", async () => {
         const packageManifest = await json("package.json");
         expect(packageManifest.private).toBe(true);
@@ -28,7 +28,7 @@ describe("CreditSync plugin 3.0.0 contract", () => {
     test("manifest exposes only the private app and orchestration skills", async () => {
         const manifest = await json(".codex-plugin/plugin.json");
         expect(manifest.name).toBe("creditsync");
-        expect(manifest.version).toBe("3.0.0");
+        expect(manifest.version).toBe("4.0.0");
         expect(manifest.skills).toBe("./skills/");
         expect(manifest.apps).toBe("./.app.json");
         expect(manifest).not.toHaveProperty("mcpServers");
@@ -49,7 +49,7 @@ describe("CreditSync plugin 3.0.0 contract", () => {
         expect(raw).not.toMatch(/bearer|token|secret/iu);
     });
 
-    test("all nine skills and their required references are discoverable", async () => {
+    test("all ten skills and their required references are discoverable", async () => {
         const skills = [
             "creditsync",
             "manage-borrowers",
@@ -59,6 +59,7 @@ describe("CreditSync plugin 3.0.0 contract", () => {
             "manage-floating-interest-rates",
             "settle-floating-loans",
             "manage-disbursements",
+            "manage-intermediated-disbursements",
             "renew-daily-loan",
         ];
         for (const skill of skills) {
@@ -90,9 +91,9 @@ describe("CreditSync plugin 3.0.0 contract", () => {
     test("frozen full MCP metadata matches an actual authenticated tools/list response", async () => {
         const contract = await json("references/mcp-tool-contract.json") as unknown as FrozenMcpContract;
         expect(contract.schemaVersion).toBe("1.0");
-        expect(contract.compatibility).toBe("Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 3.0.0; breaking changes require plugin 4.0.0.");
+        expect(contract.compatibility).toBe("Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 4.0.0; breaking changes require plugin 5.0.0.");
         expect(contract.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
-        expect(contract.tools).toHaveLength(43);
+        expect(contract.tools).toHaveLength(57);
         expect(contract.tools.every((tool) => tool.inputSchema && tool.outputSchema && tool.annotations)).toBe(true);
         const advertised = await captureAdvertisedMcpContract();
         expect(canonicalContractJson(contract)).toBe(canonicalContractJson(advertised));
@@ -138,6 +139,15 @@ describe("CreditSync plugin 3.0.0 contract", () => {
             "disbursement-schedule-mutation",
             "disbursement-update-locked",
             "disbursement-update-unsupported-fields",
+            "intermediated-disbursement-full-lifecycle",
+            "intermediated-disbursement-ambiguous-identity",
+            "intermediated-disbursement-missing-assignment",
+            "intermediated-disbursement-missing-evidence",
+            "intermediated-disbursement-duplicate-transfer",
+            "intermediated-disbursement-amount-payee-mismatch",
+            "intermediated-disbursement-unexplained-retained-balance",
+            "intermediated-disbursement-stale-preview",
+            "intermediated-disbursement-missing-confirmation",
             "renewal-unsettled-charges",
             "renewal-missing-confirmation",
             "renewal-reversal-without-result",
@@ -145,8 +155,8 @@ describe("CreditSync plugin 3.0.0 contract", () => {
             "renewal-reversal-blocked",
             "unauthorized-access",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
-        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(16);
-        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(25);
+        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(17);
+        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(33);
     });
 
     test("floating settlement skill preserves exact composition and all execution stop gates", async () => {
@@ -178,6 +188,35 @@ describe("CreditSync plugin 3.0.0 contract", () => {
         expect(skill).toContain("`status: ready`");
         expect(skill).toContain("exact event with `status: posted`");
         expect(skill).toContain("never changes approved principal, installment amounts, due dates, or the schedule");
+    });
+
+    test("intermediated disbursement skill preserves exact assignment, evidence, variance, and confirmation gates", async () => {
+        const skill = await readFile(resolve(pluginRoot, "skills/manage-intermediated-disbursements/SKILL.md"), "utf8");
+        for (const tool of [
+            "borrower.search",
+            "intermediary.search",
+            "intermediary.profile.get",
+            "intermediary.disbursement.create",
+            "intermediary.disbursement.event.create",
+            "intermediary.disbursement.evidence.prepare",
+            "intermediary.disbursement.evidence.finalize",
+            "intermediary.disbursement.get",
+            "intermediary.disbursement.preview",
+            "intermediary.disbursement.post",
+            "intermediary.disbursement.reverse",
+        ]) expect(skill).toContain(`\`${tool}\``);
+        for (const phrase of [
+            "exact canonical name or confirmed alias",
+            "active disbursement assignment",
+            "every supplied slip",
+            "unchanged bytes",
+            "retained balance",
+            "variance: 0.00",
+            "explicit confirmation",
+            "fresh preview",
+            "specific non-blank reason",
+        ]) expect(skill).toContain(phrase);
+        expect(skill).toContain("never expose or request an evidence access URL through MCP");
     });
 
     test("repo marketplace resolves the plugin from its declared local path", async () => {
@@ -231,7 +270,7 @@ describe("CreditSync plugin 3.0.0 contract", () => {
         expect(existsSync(resolve(pluginRoot, "scripts/validate.ts"))).toBe(true);
         expect(existsSync(resolve(pluginRoot, "assets/README.md"))).toBe(true);
         for (const forbidden of [".mcp.json", "hooks.json", "hooks", "ui", "oauth.json"]) {
-            expect(existsSync(resolve(pluginRoot, forbidden)), `${forbidden} must stay out of 3.0.0`).toBe(false);
+            expect(existsSync(resolve(pluginRoot, forbidden)), `${forbidden} must stay out of 4.0.0`).toBe(false);
         }
     });
 });

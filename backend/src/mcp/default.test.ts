@@ -12,9 +12,11 @@ import {
     borrowers,
     loanFundingAllocations,
     loanDisbursementEvents,
+    loanDisbursements,
     loanInterestRatePeriods,
     loanSchedules,
     loans,
+    intermediaries,
     paymentIntakes,
     transactions,
     users,
@@ -22,6 +24,7 @@ import {
 import type { EvidenceStorageGateway } from "../services/payment-service";
 import type { DisbursementEvidenceStorageGateway } from "../services/loan-disbursement-service";
 import type { IntermediaryRemittanceEvidenceGateway } from "../services/intermediary-service";
+import type { TransferEvidenceStorageGateway } from "../services/transfer-evidence-service";
 import { createDefaultMcpHttpPlugin } from "./default";
 import { MCP_TOOL_NAMES, type McpToolName } from "./server";
 
@@ -72,7 +75,7 @@ function runtimeEnv() {
     };
 }
 
-async function startDefaultServer(options?: { evidenceGateway?: EvidenceStorageGateway; disbursementEvidenceGateway?: DisbursementEvidenceStorageGateway; intermediaryRemittanceEvidenceGateway?: IntermediaryRemittanceEvidenceGateway }) {
+async function startDefaultServer(options?: { evidenceGateway?: EvidenceStorageGateway; disbursementEvidenceGateway?: DisbursementEvidenceStorageGateway; intermediaryRemittanceEvidenceGateway?: IntermediaryRemittanceEvidenceGateway; transferEvidenceGateway?: TransferEvidenceStorageGateway }) {
     const app = new Elysia().use(createDefaultMcpHttpPlugin(runtimeEnv(), options)).listen({ hostname: "127.0.0.1", port: 0 });
     runningApps.push(app);
     const client = new Client({ name: "creditsync-default-adapter-test", version: "1.0.0" });
@@ -96,6 +99,237 @@ function resultData(result: Awaited<ReturnType<Client["callTool"]>>) {
 }
 
 describe("default MCP adapter integration", () => {
+    // Break caught: the real MCP adapter cannot complete the inspect-first borrower/intermediary
+    // assignment -> exact group/events -> three finalized slips -> zero-variance preview ->
+    // explicitly confirmed atomic post workflow through direct application-service calls.
+    integrationTest("posts an exact three-slip intermediated disbursement through direct service handlers", async () => {
+        const actor = await db.insert(users).values({
+            tenantId: TENANT_ID,
+            email: ACTOR_EMAIL,
+            role: "owner",
+        }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({
+            tenantId: TENANT_ID,
+            ownerUserId: actor.id,
+            name: "MCP exact borrower",
+        }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({
+            tenantId: TENANT_ID,
+            ownerUserId: actor.id,
+            borrowerId: borrower.id,
+            principalAmount: "5000.00",
+            outstandingPrincipal: "5000.00",
+            outstandingInterest: "0.00",
+            outstandingFees: "0.00",
+            interestRate: "0.00",
+            repaymentType: "floating",
+            activationIdempotencyKey: "mcp-intermediated-activation",
+            activationResult: {
+                publicId: "00000000-0000-7000-8000-000000000001",
+                principal: "5000.00",
+                principalAmount: "5000.00",
+                interestRate: "0.00",
+                repaymentType: "floating",
+                floatingInterestPolicy: {
+                    periodUnit: "week",
+                    periodLength: 1,
+                    rateMode: "percent",
+                    rate: "12.0000",
+                    advanceInterestPeriods: 1,
+                    advanceInterestRefundPolicy: "non_refundable",
+                },
+                status: "active",
+            },
+            status: "active",
+        }).returning().then((rows) => rows[0]!);
+        const intermediary = await db.insert(intermediaries).values({
+            tenantId: TENANT_ID,
+            ownerUserId: actor.id,
+            name: "MCP exact intermediary",
+            normalizedName: "mcp exact intermediary",
+            aliases: ["MCP transfer agent"],
+            createdByUserId: actor.id,
+            updatedByUserId: actor.id,
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanDisbursements).values({
+            tenantId: TENANT_ID,
+            loanId: loan.id,
+            grossPrincipal: "5000.00",
+            firstDayInterestDeducted: "600.00",
+            netDisbursement: "4400.00",
+            disbursedAt: new Date("2026-08-13T02:00:00.000Z"),
+            createdByUserId: actor.id,
+        });
+        const preparedHeads = new Map<string, Awaited<ReturnType<TransferEvidenceStorageGateway["head"]>>>();
+        const transferEvidenceGateway: TransferEvidenceStorageGateway = {
+            preparePut: async (request) => {
+                preparedHeads.set(request.key, {
+                    exists: true,
+                    contentType: request.contentType,
+                    contentLength: request.contentLength,
+                    checksumSha256: request.checksumSha256,
+                    metadata: request.metadata,
+                });
+                return {
+                    uploadUrl: `https://upload.example.test/${encodeURIComponent(request.key)}`,
+                    expiresAt: new Date(Date.now() + 5 * 60_000),
+                    requiredHeaders: { "content-type": request.contentType },
+                };
+            },
+            head: async (key) => preparedHeads.get(key) ?? {
+                exists: false,
+                contentType: null,
+                contentLength: null,
+                checksumSha256: null,
+                metadata: {},
+            },
+            createAccess: async () => ({
+                url: "https://access.example.test/not-used-by-mcp",
+                expiresAt: new Date(Date.now() + 5 * 60_000),
+            }),
+        };
+        const { client } = await startDefaultServer({ transferEvidenceGateway });
+
+        const borrowerSearch = resultData(await client.callTool({
+            name: "borrower.search",
+            arguments: { query: "MCP exact borrower" },
+        })).data;
+        expect(borrowerSearch).toMatchObject({
+            resolution: "unique",
+            matchType: "canonical",
+            candidates: [{ publicId: borrower.publicId }],
+        });
+        const intermediarySearch = resultData(await client.callTool({
+            name: "intermediary.search",
+            arguments: { query: "MCP exact intermediary" },
+        })).data;
+        expect(intermediarySearch).toMatchObject({ items: [{ publicId: intermediary.publicId }] });
+
+        const assignment = resultData(await client.callTool({
+            name: "intermediary.assignment.create",
+            arguments: {
+                loanPublicId: loan.publicId,
+                intermediaryPublicId: intermediary.publicId,
+                role: "disbursement",
+                effectiveFrom: "2026-08-01T00:00:00.000Z",
+                idempotencyKey: "mcp-intermediated-assignment",
+            },
+        })).data;
+        const profile = resultData(await client.callTool({
+            name: "intermediary.profile.get",
+            arguments: { intermediaryPublicId: intermediary.publicId },
+        })).data;
+        expect(profile).toMatchObject({
+            publicId: intermediary.publicId,
+            assignments: [{ publicId: assignment.publicId, loanPublicId: loan.publicId, status: "active" }],
+        });
+
+        const group = resultData(await client.callTool({
+            name: "intermediary.disbursement.create",
+            arguments: {
+                loanPublicId: loan.publicId,
+                intermediaryPublicId: intermediary.publicId,
+                retainedBalance: "0.00",
+                idempotencyKey: "mcp-intermediated-group",
+            },
+        })).data;
+        const eventSpecs = [
+            ["funding_to_intermediary", "5000.00"],
+            ["borrower_net_payout", "4400.00"],
+            ["advance_interest_return", "600.00"],
+        ] as const;
+        for (const [index, [role, amount]] of eventSpecs.entries()) {
+            const event = resultData(await client.callTool({
+                name: "intermediary.disbursement.event.create",
+                arguments: {
+                    groupPublicId: group.publicId,
+                    role,
+                    channel: "bank_transfer",
+                    amount,
+                    transferredAt: `2026-08-13T0${index + 2}:00:00.000Z`,
+                    senderHint: index === 0 ? "Owner funding account" : "MCP exact intermediary",
+                    payeeHint: index === 1 ? "MCP exact borrower" : "MCP exact intermediary",
+                    bankReference: `MCP-INTERMEDIATED-${index + 1}`,
+                    idempotencyKey: `mcp-intermediated-event-${index + 1}`,
+                },
+            })).data;
+            const prepared = resultData(await client.callTool({
+                name: "intermediary.disbursement.evidence.prepare",
+                arguments: {
+                    groupPublicId: group.publicId,
+                    eventPublicId: event.publicId,
+                    mimeType: "image/png",
+                    size: 4,
+                    sha256: String(index + 1).repeat(64),
+                    originalName: `slip-${index + 1}.png`,
+                },
+            })).data;
+            expect(prepared.uploadUrl).toMatch(/^https:\/\/upload\.example\.test\//);
+            const finalized = resultData(await client.callTool({
+                name: "intermediary.disbursement.evidence.finalize",
+                arguments: {
+                    groupPublicId: group.publicId,
+                    eventPublicId: event.publicId,
+                    evidencePublicId: prepared.publicId,
+                },
+            })).data;
+            expect(finalized).toMatchObject({ publicId: prepared.publicId, status: "ready" });
+        }
+
+        const inspected = resultData(await client.callTool({
+            name: "intermediary.disbursement.get",
+            arguments: { groupPublicId: group.publicId },
+        })).data;
+        expect(inspected.events).toHaveLength(3);
+        expect(JSON.stringify(inspected)).not.toMatch(/uploadUrl|signedUrl|objectKey|bucket/u);
+        const preview = resultData(await client.callTool({
+            name: "intermediary.disbursement.preview",
+            arguments: { groupPublicId: group.publicId },
+        })).data;
+        expect(preview).toMatchObject({
+            status: "ready",
+            actualFunding: "5000.00",
+            actualBorrowerPayout: "4400.00",
+            actualAdvanceInterestReturn: "600.00",
+            retainedBalance: "0.00",
+            variance: "0.00",
+            evidenceReady: true,
+            warnings: [],
+        });
+        expect((await client.callTool({
+            name: "intermediary.disbursement.post",
+            arguments: {
+                groupPublicId: group.publicId,
+                proposalPublicId: preview.publicId,
+                confirmed: false,
+                idempotencyKey: "mcp-intermediated-post",
+            },
+        })).isError).toBe(true);
+        const posted = resultData(await client.callTool({
+            name: "intermediary.disbursement.post",
+            arguments: {
+                groupPublicId: group.publicId,
+                proposalPublicId: preview.publicId,
+                confirmed: true,
+                idempotencyKey: "mcp-intermediated-post",
+            },
+        }));
+        expect(posted).toMatchObject({
+            data: {
+                publicId: group.publicId,
+                status: "posted",
+                fundingAmount: "5000.00",
+                borrowerPayoutAmount: "4400.00",
+                advanceInterestAmount: "600.00",
+                intermediaryHeldBalance: "0.00",
+            },
+            auditPublicIds: [expect.stringMatching(UUID_PATTERN)],
+            correlationId: expect.stringMatching(UUID_PATTERN),
+        });
+
+        await client.close();
+    });
+
     // Break caught: the default adapter cannot originate a generalized weekly policy or close it through the settlement service.
     integrationTest("previews and executes an exact non-refundable weekly floating settlement idempotently", async () => {
         const actor = await db.insert(users).values({
@@ -451,7 +685,7 @@ describe("default MCP adapter integration", () => {
             status: "active",
         }).returning().then((rows) => rows[0]!);
         const preparedHeads = new Map<string, Awaited<ReturnType<EvidenceStorageGateway["head"]>>>();
-        const evidenceGateway: EvidenceStorageGateway = {
+        const evidenceGateway: EvidenceStorageGateway & TransferEvidenceStorageGateway = {
             preparePut: async (request) => {
                 preparedHeads.set(request.key, {
                     exists: true,
@@ -472,8 +706,17 @@ describe("default MCP adapter integration", () => {
                 checksumSha256: null,
                 metadata: {},
             },
+            createAccess: async () => ({
+                url: "https://access.example.test/not-used-by-mcp",
+                expiresAt: new Date(Date.now() + 5 * 60_000),
+            }),
         };
-        const { client, transport } = await startDefaultServer({ evidenceGateway, disbursementEvidenceGateway: evidenceGateway, intermediaryRemittanceEvidenceGateway: evidenceGateway });
+        const { client, transport } = await startDefaultServer({
+            evidenceGateway,
+            disbursementEvidenceGateway: evidenceGateway,
+            intermediaryRemittanceEvidenceGateway: evidenceGateway,
+            transferEvidenceGateway: evidenceGateway,
+        });
         const listed = await client.listTools();
         expect(listed.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
         const called: McpToolName[] = [];
@@ -548,6 +791,15 @@ describe("default MCP adapter integration", () => {
         })).data;
         const loanPublicId = String(drafted.publicId);
         await call("loan.activate", { loanPublicId, idempotencyKey: "mcp-all-tools-loan-activate" });
+        const activatedLoan = (await db.query.loans.findFirst({ where: eq(loans.publicId, loanPublicId) }))!;
+        await db.insert(loanDisbursements).values({
+            tenantId: TENANT_ID,
+            loanId: activatedLoan.id,
+            grossPrincipal: "100.00",
+            firstDayInterestDeducted: "0.00",
+            netDisbursement: "100.00",
+            createdByUserId: actor.id,
+        });
         const disbursement = (await call("loan.disbursement.draft", {
             loanPublicId,
             grossAmount: "100.00",
@@ -647,6 +899,85 @@ describe("default MCP adapter integration", () => {
 
         await call("intermediary.search", { query: "MCP all-tools collector" });
         const intermediary = (await call("intermediary.create", { name: "MCP all-tools collector" })).data;
+        await call("intermediary.bank-account.save", {
+            intermediaryPublicId: intermediary.publicId,
+            bankCode: "BBL",
+            bankName: "Bangkok Bank",
+            accountName: "MCP all-tools collector",
+            accountNumber: "1234567890",
+            idempotencyKey: "mcp-all-tools-intermediary-account",
+        });
+        const assignment = (await call("intermediary.assignment.create", {
+            loanPublicId,
+            intermediaryPublicId: intermediary.publicId,
+            role: "disbursement",
+            effectiveFrom: "2026-08-01T00:00:00.000Z",
+            idempotencyKey: "mcp-all-tools-intermediary-assignment",
+        })).data;
+        await call("intermediary.profile.get", { intermediaryPublicId: intermediary.publicId });
+        await call("intermediary.managed-loan.list", { intermediaryPublicId: intermediary.publicId, role: "disbursement" });
+        const group = (await call("intermediary.disbursement.create", {
+            loanPublicId,
+            intermediaryPublicId: intermediary.publicId,
+            retainedBalance: "0.00",
+            idempotencyKey: "mcp-all-tools-intermediated-group",
+        })).data;
+        expect(group).toMatchObject({
+            expectedFunding: "100.00",
+            expectedBorrowerPayout: "100.00",
+            expectedAdvanceInterestReturn: "0.00",
+        });
+        expect(await db.query.loanDisbursements.findFirst({ where: eq(loanDisbursements.loanId, activatedLoan.id) }))
+            .toMatchObject({ grossPrincipal: "100.00", firstDayInterestDeducted: "0.00", netDisbursement: "100.00" });
+        const groupEvents: Array<Record<string, unknown>> = [];
+        for (const [index, [role, amount]] of ([
+            ["funding_to_intermediary", "100.00"],
+            ["borrower_net_payout", "100.00"],
+        ] as const).entries()) {
+            groupEvents.push((await call("intermediary.disbursement.event.create", {
+                groupPublicId: group.publicId,
+                role,
+                channel: "bank_transfer",
+                amount,
+                transferredAt: `2026-08-10T0${index + 3}:00:00.000Z`,
+                bankReference: `MCP-ALL-TOOLS-GROUP-${index + 1}`,
+                idempotencyKey: `mcp-all-tools-intermediated-event-${index + 1}`,
+            })).data);
+        }
+        const transferEvidence = (await call("intermediary.disbursement.evidence.prepare", {
+            groupPublicId: group.publicId,
+            eventPublicId: groupEvents[0]!.publicId,
+            mimeType: "image/png",
+            size: 4,
+            sha256: "e".repeat(64),
+            originalName: "intermediated-funding.png",
+        })).data;
+        await call("intermediary.disbursement.evidence.finalize", {
+            groupPublicId: group.publicId,
+            eventPublicId: groupEvents[0]!.publicId,
+            evidencePublicId: transferEvidence.publicId,
+        });
+        await call("intermediary.disbursement.list", { loanPublicId, intermediaryPublicId: intermediary.publicId });
+        await call("intermediary.disbursement.get", { groupPublicId: group.publicId });
+        const groupPreview = (await call("intermediary.disbursement.preview", { groupPublicId: group.publicId })).data;
+        await call("intermediary.disbursement.post", {
+            groupPublicId: group.publicId,
+            proposalPublicId: groupPreview.publicId,
+            confirmed: true,
+            idempotencyKey: "mcp-all-tools-intermediated-post",
+        });
+        await call("intermediary.disbursement.reverse", {
+            groupPublicId: group.publicId,
+            reason: "MCP all-tools compensating group reversal",
+            confirmed: true,
+            idempotencyKey: "mcp-all-tools-intermediated-reverse",
+        });
+        await call("intermediary.assignment.end", {
+            assignmentPublicId: assignment.publicId,
+            effectiveTo: "2026-08-11T00:00:00.000Z",
+            reason: "MCP all-tools assignment complete",
+            idempotencyKey: "mcp-all-tools-intermediary-assignment-end",
+        });
         const collection = (await call("intermediary.collection.create", {
             intermediaryPublicId: intermediary.publicId, borrowerPublicId, loanPublicId, amount: "40.00",
             borrowerPaidAt: "2026-08-10T01:00:00.000Z", bankReference: "MCP-COLLECTION-1",
@@ -684,9 +1015,10 @@ describe("default MCP adapter integration", () => {
         });
         await call("funding-source.list", { status: "active" });
 
-        expect(called).toHaveLength(MCP_TOOL_NAMES.length);
-        expect([...called].sort()).toEqual([...MCP_TOOL_NAMES].sort());
+        expect([...new Set(called)].sort()).toEqual([...MCP_TOOL_NAMES].sort());
         expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length);
+        expect(called.filter((name) => name === "intermediary.disbursement.event.create")).toHaveLength(2);
+        expect(called).toHaveLength(MCP_TOOL_NAMES.length + 1);
 
         await client.close();
     });

@@ -5,6 +5,8 @@ description: Use when listing, drafting, editing, evidencing, posting, reviewing
 
 # Manage CreditSync Loan Disbursements
 
+For a payout routed through an intermediary with funding, borrower-payout, or advance-interest-return legs, use `manage-intermediated-disbursements` instead of this direct-loan event workflow.
+
 ## Overview
 
 An actual disbursement is an append-only funding-ledger event, separate from loan approval and its schedule. It never changes approved principal, installment amounts, due dates, or the schedule. CreditSync calculates and reports disbursement variance; do not calculate a replacement figure or silently make it fit.

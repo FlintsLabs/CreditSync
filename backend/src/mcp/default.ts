@@ -71,6 +71,34 @@ import {
     postIntermediaryRemittance, prepareIntermediaryRemittanceEvidence, previewIntermediaryRemittance,
     saveRemittanceAllocations, searchIntermediaries, type IntermediaryRemittanceEvidenceGateway,
 } from "../services/intermediary-service";
+import {
+    assignIntermediaryToLoan,
+    endIntermediaryAssignment,
+    getIntermediaryProfile,
+    listManagedLoans,
+    saveIntermediaryBankAccount,
+    type AssignIntermediaryInput,
+    type EndIntermediaryAssignmentInput,
+    type SaveIntermediaryBankAccountInput,
+} from "../services/intermediary-profile-service";
+import {
+    createIntermediatedDisbursementGroup,
+    createTransferEvent,
+    getIntermediatedDisbursementGroup,
+    listIntermediatedDisbursementGroups,
+    postIntermediatedDisbursement,
+    previewIntermediatedDisbursement,
+    reverseIntermediatedDisbursement,
+    type CreateIntermediatedDisbursementGroupInput,
+    type CreateTransferEventInput,
+    type ListIntermediatedDisbursementGroupsInput,
+} from "../services/intermediated-disbursement-service";
+import {
+    finalizeTransferEvidence,
+    prepareTransferEvidence,
+    type PrepareTransferEvidenceInput,
+    type TransferEvidenceStorageGateway,
+} from "../services/transfer-evidence-service";
 
 type ToolInput = Record<string, unknown>;
 
@@ -78,6 +106,7 @@ export interface DefaultMcpDependencies {
     evidenceGateway?: EvidenceStorageGateway;
     disbursementEvidenceGateway?: DisbursementEvidenceStorageGateway;
     intermediaryRemittanceEvidenceGateway?: IntermediaryRemittanceEvidenceGateway;
+    transferEvidenceGateway?: TransferEvidenceStorageGateway;
 }
 
 function asString(input: ToolInput, field: string) {
@@ -200,6 +229,58 @@ export function createDefaultMcpToolHandlers(
     "loan.disbursement.reverse": (ctx, input) => reverseDisbursement(ctx, asString(input, "disbursementPublicId"), asString(input, "reason")),
     "intermediary.search": async (ctx, input) => ({ items: await searchIntermediaries(ctx, asString(input, "query")) }),
     "intermediary.create": (ctx, input) => createIntermediary(ctx, input as { name: string; aliases?: string[]; notes?: string | null }),
+    "intermediary.profile.get": (ctx, input) => getIntermediaryProfile(ctx, asString(input, "intermediaryPublicId")),
+    "intermediary.bank-account.save": (ctx, input) => {
+        const { intermediaryPublicId, ...account } = input;
+        return saveIntermediaryBankAccount(ctx, String(intermediaryPublicId), account as unknown as SaveIntermediaryBankAccountInput);
+    },
+    "intermediary.managed-loan.list": async (ctx, input) => listManagedLoans(ctx, asString(input, "intermediaryPublicId"), {
+        role: input.role as "disbursement" | "collection" | "all" | undefined,
+    }),
+    "intermediary.assignment.create": (ctx, input) => {
+        const { loanPublicId, ...assignment } = input;
+        return assignIntermediaryToLoan(ctx, String(loanPublicId), assignment as unknown as AssignIntermediaryInput);
+    },
+    "intermediary.assignment.end": (ctx, input) => {
+        const { assignmentPublicId, ...assignmentEnd } = input;
+        return endIntermediaryAssignment(ctx, String(assignmentPublicId), assignmentEnd as unknown as EndIntermediaryAssignmentInput);
+    },
+    "intermediary.disbursement.list": async (ctx, input) => listIntermediatedDisbursementGroups(ctx, input as ListIntermediatedDisbursementGroupsInput),
+    "intermediary.disbursement.get": (ctx, input) => getIntermediatedDisbursementGroup(ctx, asString(input, "groupPublicId")),
+    "intermediary.disbursement.create": (ctx, input) => createIntermediatedDisbursementGroup(ctx, input as unknown as CreateIntermediatedDisbursementGroupInput),
+    "intermediary.disbursement.event.create": (ctx, input) => {
+        const { groupPublicId, ...event } = input;
+        return createTransferEvent(ctx, String(groupPublicId), event as unknown as CreateTransferEventInput);
+    },
+    "intermediary.disbursement.evidence.prepare": (ctx, input) => {
+        const { groupPublicId, eventPublicId, ...evidence } = input;
+        return prepareTransferEvidence(
+            ctx,
+            String(groupPublicId),
+            String(eventPublicId),
+            evidence as unknown as PrepareTransferEvidenceInput,
+            dependencies.transferEvidenceGateway,
+        );
+    },
+    "intermediary.disbursement.evidence.finalize": (ctx, input) => finalizeTransferEvidence(
+        ctx,
+        asString(input, "groupPublicId"),
+        asString(input, "eventPublicId"),
+        asString(input, "evidencePublicId"),
+        dependencies.transferEvidenceGateway,
+    ),
+    "intermediary.disbursement.preview": (ctx, input) => previewIntermediatedDisbursement(ctx, asString(input, "groupPublicId")),
+    "intermediary.disbursement.post": (ctx, input) => postIntermediatedDisbursement(
+        ctx,
+        asString(input, "groupPublicId"),
+        asString(input, "proposalPublicId"),
+        input.confirmed as boolean,
+    ),
+    "intermediary.disbursement.reverse": (ctx, input) => reverseIntermediatedDisbursement(
+        ctx,
+        asString(input, "groupPublicId"),
+        asString(input, "reason"),
+    ),
     "intermediary.collection.list": async (ctx, input) => ({ items: await listIntermediaryCollections(ctx, { intermediaryPublicId: input.intermediaryPublicId as string | undefined, status: input.status as string | undefined }) }),
     "intermediary.collection.create": (ctx, input) => createIntermediaryCollection(ctx, input as any),
     "intermediary.remittance.get": (ctx, input) => getIntermediaryRemittance(ctx, asString(input, "remittancePublicId")),
@@ -236,6 +317,8 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "loan.settlement.execute": { entityType: "loan_settlement", action: "executed" },
     "loan.disbursement.post": { entityType: "loan_disbursement", action: "posted" },
     "loan.disbursement.reverse": { entityType: "loan_disbursement", action: "reversed" },
+    "intermediary.disbursement.post": { entityType: "intermediated_disbursement_group", action: "posted" },
+    "intermediary.disbursement.reverse": { entityType: "intermediated_disbursement_group", action: "reversed" },
     "intermediary.remittance.post": { entityType: "intermediary_remittance", action: "posted" },
     "renewal.execute": { entityType: "loan_renewal", action: "executed" },
     "renewal.reverse": { entityType: "loan_renewal", action: "reversed" },
