@@ -379,6 +379,16 @@
         "realizedRoi": "Realized ROI",
         "opportunityCost": "Opportunity cost (non-cash)",
         "economicSpread": "Economic spread",
+        "reconciliation": {
+            "title": "Data reconciliation",
+            "description": "Comparison between contract-attributed revenue and the append-only source ledger.",
+            "contractRevenue": "Contract-attributed revenue",
+            "ledgerRevenue": "Ledger-recorded revenue",
+            "difference": "Difference",
+            "matched": "Matched",
+            "needsReconciliation": "Needs reconciliation",
+            "readOnlyNote": "This status does not alter financial records."
+        },
         "availableOwnCapital": "Available own capital",
         "allocatedToLoans": "Allocated to borrower loans",
         "fundingUsageTitle": "Loans using this funding source",

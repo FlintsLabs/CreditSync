@@ -55,8 +55,26 @@ describe("FundDetail funding usage", () => {
             if (url === `/bank-profiles/${FUND_ID}`) return { data: fund };
             if (url === "/bank-loans") return { data: [] };
             if (url === "/bank-profiles") return { data: [fund] };
-            if (url === `/bank-profiles/${FUND_ID}/settlement-summary`) return { data: { realizedSpread: 0, unrealizedSpread: 0, surplusBalance: 0, deficitBalance: 0, carryForwardAvailable: 0 } };
-            if (url === `/bank-profiles/${FUND_ID}/profitability`) return { data: { borrowerRevenueCollected: 0, fundCostPaid: 0, realizedSpread: 0, unrealizedSpread: 0, deployedPrincipal: 7000, netCashPosition: 0, realizedRoiPercent: 0, carryForwardAvailable: 0, opportunityCostAccrued: 0, economicSpread: 0 } };
+            if (url === `/bank-profiles/${FUND_ID}/settlement-summary`) return { data: { realizedSpread: "1466.67", unrealizedSpread: "0.00", surplusBalance: "3800.00", deficitBalance: "0.00", carryForwardAvailable: "3800.00" } };
+            if (url === `/bank-profiles/${FUND_ID}/profitability`) return { data: {
+                borrowerCashCollected: "3800.00",
+                borrowerRevenueCollected: "1466.67",
+                fundCostPaid: "0.00",
+                realizedSpread: "1466.67",
+                unrealizedSpread: "0.00",
+                deployedPrincipal: "21500.00",
+                netCashPosition: "3800.00",
+                realizedRoiPercent: "6.82",
+                carryForwardAvailable: "3800.00",
+                opportunityCostAccrued: "7.25",
+                economicSpread: "9007199254740993.01",
+                reconciliation: {
+                    contractAttributedRevenue: "1466.67",
+                    ledgerRecordedRevenue: "510.00",
+                    difference: "956.67",
+                    status: "needs_reconciliation",
+                },
+            } };
             if (url === "/fund-rollovers") return { data: [] };
             if (url === `/bank-profiles/${FUND_ID}/funding-usage`) {
                 return { data: config?.params?.includeSettled === "true" ? fundingUsage : fundingUsage };
@@ -108,5 +126,18 @@ describe("FundDetail funding usage", () => {
             `/bank-profiles/${FUND_ID}/funding-usage`,
             { params: { includeSettled: "true" } },
         ));
+    });
+
+    it("shows exact contract-to-ledger revenue reconciliation with semantic status", async () => {
+        renderDetail();
+
+        expect(await screen.findByText("Data reconciliation")).toBeInTheDocument();
+        expect(screen.getByText("Contract-attributed revenue").parentElement).toHaveTextContent(/1,466\.67/);
+        expect(screen.getByText("Ledger-recorded revenue").parentElement).toHaveTextContent(/510\.00/);
+        expect(screen.getByText("Difference").parentElement).toHaveTextContent(/956\.67/);
+        const status = screen.getByText("Needs reconciliation");
+        expect(status).toHaveClass("bg-amber-100", "text-amber-800");
+        expect(screen.getByText("This status does not alter financial records.")).toBeInTheDocument();
+        expect(screen.getByText(/9,007,199,254,740,993\.01/)).toBeInTheDocument();
     });
 });

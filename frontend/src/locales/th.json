@@ -379,6 +379,16 @@
         "realizedRoi": "ROI ที่รับรู้แล้ว",
         "opportunityCost": "ต้นทุนค่าเสียโอกาส (ไม่ใช่เงินสด)",
         "economicSpread": "ส่วนต่างเชิงเศรษฐกิจ",
+        "reconciliation": {
+            "title": "การกระทบยอดข้อมูล",
+            "description": "เปรียบเทียบรายรับที่รับรู้ตามสัญญากับบัญชีแหล่งทุนแบบเพิ่มรายการเท่านั้น",
+            "contractRevenue": "รายรับที่รับรู้ตามสัญญา",
+            "ledgerRevenue": "รายรับที่บันทึกในบัญชีแหล่งทุน",
+            "difference": "ส่วนต่าง",
+            "matched": "ตรงกัน",
+            "needsReconciliation": "ต้องกระทบยอด",
+            "readOnlyNote": "สถานะนี้ไม่มีการแก้ไขรายการทางการเงิน"
+        },
         "availableOwnCapital": "ทุนส่วนตัวคงเหลือ",
         "allocatedToLoans": "ยอดจัดสรรให้สัญญาลูกหนี้",
         "fundingUsageTitle": "สัญญาที่ใช้แหล่งเงินทุนนี้",

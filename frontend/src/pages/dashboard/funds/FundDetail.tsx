@@ -9,6 +9,7 @@ import { api } from "../../../lib/api";
 import { Input } from "../../../components/ui/Input";
 import { Badge } from "../../../components/ui/badge";
 import { formatMoneyExact } from "../../../lib/workflow-model";
+import Decimal from "decimal.js";
 
 interface BankProfile {
     id: number;
@@ -84,26 +85,35 @@ interface Allocation {
 }
 
 interface SettlementSummary {
-    realizedSpread: number;
-    unrealizedSpread: number;
-    surplusBalance: number;
-    deficitBalance: number;
-    carryForwardAvailable: number;
-    ownerSupportTotal?: number;
-    poolCurrentBalance?: number;
+    realizedSpread: string;
+    unrealizedSpread: string;
+    surplusBalance: string;
+    deficitBalance: string;
+    carryForwardAvailable: string;
+    ownerSupportTotal?: string;
+    poolCurrentBalance?: string;
 }
 
 interface SourceProfitability {
-    borrowerRevenueCollected: number;
-    fundCostPaid: number;
-    realizedSpread: number;
-    unrealizedSpread: number;
-    deployedPrincipal: number;
-    netCashPosition: number;
-    realizedRoiPercent: number;
-    carryForwardAvailable: number;
-    opportunityCostAccrued?: number;
-    economicSpread?: number;
+    borrowerCashCollected: string;
+    borrowerRevenueCollected: string;
+    fundCostPaid: string;
+    realizedSpread: string;
+    unrealizedSpread: string;
+    deployedPrincipal: string;
+    netCashPosition: string;
+    realizedRoiPercent: string;
+    carryForwardAvailable: string;
+    opportunityCostAccrued?: string;
+    economicSpread?: string;
+    reconciliation: FundRevenueReconciliation;
+}
+
+interface FundRevenueReconciliation {
+    contractAttributedRevenue: string;
+    ledgerRecordedRevenue: string;
+    difference: string;
+    status: "matched" | "needs_reconciliation";
 }
 
 interface DrawdownProfitability {
@@ -629,19 +639,19 @@ export default function FundDetail() {
                             <CardContent className="space-y-2 text-sm">
                                 <div className="flex justify-between">
                                     <span>{t("funds.metrics.realizedSpread", "Realized spread")}</span>
-                                    <span className="font-medium">฿{Number(settlementSummary?.realizedSpread ?? 0).toLocaleString(i18n.language)}</span>
+                                    <span className="font-medium">{formatMoneyExact(settlementSummary?.realizedSpread ?? "0.00", i18n.language)}</span>
                                 </div>
                                 <div className="flex justify-between">
                                     <span>{t("loans.unrealizedSpread", "Unrealized spread")}</span>
-                                    <span className="font-medium">฿{Number(settlementSummary?.unrealizedSpread ?? 0).toLocaleString(i18n.language)}</span>
+                                    <span className="font-medium">{formatMoneyExact(settlementSummary?.unrealizedSpread ?? "0.00", i18n.language)}</span>
                                 </div>
                                 <div className="flex justify-between">
                                     <span>{t("fundDetail.surplusBalance", "Surplus balance")}</span>
-                                    <span className="font-medium text-emerald-600">฿{Number(settlementSummary?.surplusBalance ?? 0).toLocaleString(i18n.language)}</span>
+                                    <span className="font-medium text-emerald-600">{formatMoneyExact(settlementSummary?.surplusBalance ?? "0.00", i18n.language)}</span>
                                 </div>
                                 <div className="flex justify-between">
                                     <span>{t("fundDetail.deficitBalance", "Deficit balance")}</span>
-                                    <span className="font-medium text-destructive">฿{Number(settlementSummary?.deficitBalance ?? 0).toLocaleString(i18n.language)}</span>
+                                    <span className="font-medium text-destructive">{formatMoneyExact(settlementSummary?.deficitBalance ?? "0.00", i18n.language)}</span>
                                 </div>
                             </CardContent>
                         </Card>
@@ -653,41 +663,69 @@ export default function FundDetail() {
                             <CardContent className="space-y-2 text-sm">
                                 <div className="flex justify-between">
                                     <span>{t("dashboardPage.cards.borrowerRevenue", "Revenue collected")}</span>
-                                    <span className="font-medium">฿{Number(sourceProfitability?.borrowerRevenueCollected ?? 0).toLocaleString(i18n.language)}</span>
+                                    <span className="font-medium">{formatMoneyExact(sourceProfitability?.borrowerCashCollected ?? "0.00", i18n.language)}</span>
                                 </div>
                                 <div className="flex justify-between">
                                     <span>{t("dashboardPage.cards.fundCostPaid", "Fund cost paid")}</span>
-                                    <span className="font-medium">฿{Number(sourceProfitability?.fundCostPaid ?? 0).toLocaleString(i18n.language)}</span>
+                                    <span className="font-medium">{formatMoneyExact(sourceProfitability?.fundCostPaid ?? "0.00", i18n.language)}</span>
                                 </div>
                                 <div className="flex justify-between">
                                     <span>{t("funds.metrics.deployed", "Deployed principal")}</span>
-                                    <span className="font-medium">฿{Number(sourceProfitability?.deployedPrincipal ?? 0).toLocaleString(i18n.language)}</span>
+                                    <span className="font-medium">{formatMoneyExact(sourceProfitability?.deployedPrincipal ?? "0.00", i18n.language)}</span>
                                 </div>
                                 <div className="flex justify-between">
                                     <span>{t("funds.metrics.netCash", "Net cash position")}</span>
-                                    <span className={`font-medium ${Number(sourceProfitability?.netCashPosition ?? 0) >= 0 ? "text-emerald-600" : "text-destructive"}`}>
-                                        ฿{Number(sourceProfitability?.netCashPosition ?? 0).toLocaleString(i18n.language)}
+                                    <span className={`font-medium ${new Decimal(sourceProfitability?.netCashPosition ?? 0).gte(0) ? "text-emerald-600" : "text-destructive"}`}>
+                                        {formatMoneyExact(sourceProfitability?.netCashPosition ?? "0.00", i18n.language)}
                                     </span>
                                 </div>
                                 <div className="flex justify-between">
                                     <span>{t("fundDetail.realizedRoi", "Realized ROI")}</span>
-                                    <span className="font-medium">{Number(sourceProfitability?.realizedRoiPercent ?? 0).toLocaleString()}%</span>
+                                    <span className="font-medium">{new Decimal(sourceProfitability?.realizedRoiPercent ?? 0).toFixed(2)}%</span>
                                 </div>
                                 {fund.accountingMode === "capital_pool" && (
                                     <>
                                         <div className="flex justify-between">
                                             <span>{t("fundDetail.opportunityCost", "Opportunity cost (non-cash)")}</span>
-                                            <span className="font-medium">฿{Number(sourceProfitability?.opportunityCostAccrued ?? 0).toLocaleString(i18n.language)}</span>
+                                            <span className="font-medium">{formatMoneyExact(sourceProfitability?.opportunityCostAccrued ?? "0.00", i18n.language)}</span>
                                         </div>
                                         <div className="flex justify-between">
                                             <span>{t("fundDetail.economicSpread", "Economic spread")}</span>
-                                            <span className="font-medium">฿{Number(sourceProfitability?.economicSpread ?? 0).toLocaleString(i18n.language)}</span>
+                                            <span className="font-medium">{formatMoneyExact(sourceProfitability?.economicSpread ?? "0.00", i18n.language)}</span>
                                         </div>
                                     </>
                                 )}
                             </CardContent>
                         </Card>
                     </div>
+
+                    {sourceProfitability?.reconciliation && (
+                        <Card>
+                            <CardHeader className="pb-2">
+                                <div className="flex flex-wrap items-center justify-between gap-3">
+                                    <div>
+                                        <CardTitle>{t("fundDetail.reconciliation.title", "Data reconciliation")}</CardTitle>
+                                        <p className="text-sm text-muted-foreground">{t("fundDetail.reconciliation.description", "Comparison between contract-attributed revenue and the append-only source ledger.")}</p>
+                                    </div>
+                                    <Badge variant="outline" className={sourceProfitability.reconciliation.status === "matched"
+                                        ? "border-emerald-200 bg-emerald-100 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
+                                        : "border-amber-200 bg-amber-100 text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"}>
+                                        {sourceProfitability.reconciliation.status === "matched"
+                                            ? t("fundDetail.reconciliation.matched", "Matched")
+                                            : t("fundDetail.reconciliation.needsReconciliation", "Needs reconciliation")}
+                                    </Badge>
+                                </div>
+                            </CardHeader>
+                            <CardContent>
+                                <dl className="grid gap-4 text-sm sm:grid-cols-3">
+                                    <div><dt className="text-muted-foreground">{t("fundDetail.reconciliation.contractRevenue", "Contract-attributed revenue")}</dt><dd className="mt-1 font-semibold tabular-nums">{formatMoneyExact(sourceProfitability.reconciliation.contractAttributedRevenue, i18n.language)}</dd></div>
+                                    <div><dt className="text-muted-foreground">{t("fundDetail.reconciliation.ledgerRevenue", "Ledger-recorded revenue")}</dt><dd className="mt-1 font-semibold tabular-nums">{formatMoneyExact(sourceProfitability.reconciliation.ledgerRecordedRevenue, i18n.language)}</dd></div>
+                                    <div><dt className="text-muted-foreground">{t("fundDetail.reconciliation.difference", "Difference")}</dt><dd className={`mt-1 font-semibold tabular-nums ${new Decimal(sourceProfitability.reconciliation.difference).isZero() ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300"}`}>{formatMoneyExact(sourceProfitability.reconciliation.difference, i18n.language)}</dd></div>
+                                </dl>
+                                <p className="mt-4 text-xs text-muted-foreground">{t("fundDetail.reconciliation.readOnlyNote", "This status does not alter financial records.")}</p>
+                            </CardContent>
+                        </Card>
+                    )}
 
                     <Card>
                         <CardHeader className="pb-2">
