@@ -59,9 +59,10 @@ export interface PublicInstallmentSchedule {
 }
 
 export interface PublicWeeklyFloatingInterestPreviewFields {
-    firstPeriodInterest: string;
-    advanceInterest: string;
-    netBorrowerPayout: string;
+    fullPeriodInterest: string;
+    firstPeriodStartDate: string;
+    advanceInterestAmount: string;
+    netDisbursement: string;
     coveredStartDate: string | null;
     coveredEndDate: string | null;
     firstPeriodDueDate: string;

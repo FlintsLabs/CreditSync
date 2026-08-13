@@ -187,12 +187,15 @@ describe("loans route composition", () => {
         });
         expect(advance.response.status, advance.text).toBe(200);
         expect(advance.body).toMatchObject({
-            firstPeriodInterest: "600.00", advanceInterest: "600.00", netBorrowerPayout: "4400.00",
+            fullPeriodInterest: "600.00", firstPeriodStartDate: "2026-08-10",
+            advanceInterestAmount: "600.00", netDisbursement: "4400.00",
             coveredStartDate: "2026-08-10", coveredEndDate: "2026-08-16",
             firstPeriodDueDate: "2026-08-17", nextAccrualDate: "2026-08-17",
             periodDays: 7, advanceInterestRefundPolicy: "non_refundable",
         });
-        expect(advance.body).not.toHaveProperty("fullPeriodInterest");
+        expect(advance.body).not.toHaveProperty("firstPeriodInterest");
+        expect(advance.body).not.toHaveProperty("advanceInterest");
+        expect(advance.body).not.toHaveProperty("netBorrowerPayout");
         expect(advance.body).not.toHaveProperty("nextInterestDate");
         expect(advance.body).not.toHaveProperty("nonRefundable");
         expect(advance.body).not.toHaveProperty("dailyInterestAtCurrentPrincipal");

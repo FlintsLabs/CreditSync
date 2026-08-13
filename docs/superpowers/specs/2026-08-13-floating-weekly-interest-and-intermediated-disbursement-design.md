@@ -210,8 +210,8 @@ Loan preview returns at least:
 ```ts
 {
   fullPeriodInterest: "600.00",
-  advanceInterest: "600.00",
-  netBorrowerPayout: "4400.00",
+  advanceInterestAmount: "600.00",
+  netDisbursement: "4400.00",
   firstPeriodStartDate: "2026-08-13",
   firstPeriodDueDate: "2026-08-20",
   nextAccrualDate: "2026-08-20",
@@ -287,7 +287,7 @@ Frontend tests cover localized wizard preview, exact weekly/accruing/due/overdue
 
 ## Rollout
 
-Use additive migrations and compatibility reads. Backfill daily policies, verify policy/accrual counts and exact sampled projections, then enable weekly origination behind an application feature gate if operational rollout requires it. Do not rewrite historical accruals. Production verification inspects expected columns/constraints, migration logs, MCP health inside the backend container, public frontend health, and read-only reconciliation projections without creating live financial records.
+Use additive migrations and compatibility reads. Backfill daily policies and one exact Bangkok penalty-ledger cutover per existing floating loan, verify policy/accrual counts, grouped legacy snapshots, exact payment-allocation replay, and sampled projections, then enable weekly origination behind an application feature gate if operational rollout requires it. Do not rewrite historical accruals. Backdated writes that would overlap later immutable allocation provenance stop for explicit reconciliation. Production verification inspects expected columns/constraints, migration logs, MCP health inside the backend container, public frontend health, and read-only reconciliation projections without creating live financial records.
 
 ## Out of Scope
 

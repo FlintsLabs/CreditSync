@@ -159,6 +159,12 @@ describe("CreditSync stateless MCP contract", () => {
                 schedule: [],
             },
         });
+        expect(weekly.structuredContent).not.toHaveProperty("data.fullPeriodInterest");
+        expect(weekly.structuredContent).not.toHaveProperty("data.firstPeriodStartDate");
+        expect(weekly.structuredContent).not.toHaveProperty("data.firstPeriodDueDate");
+        expect(weekly.structuredContent).not.toHaveProperty("data.advanceInterestAmount");
+        expect(weekly.structuredContent).not.toHaveProperty("data.nextAccrualDate");
+        expect(weekly.structuredContent).not.toHaveProperty("data.advanceInterestRefundPolicy");
         await client.close();
     });
 

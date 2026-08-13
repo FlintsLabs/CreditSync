@@ -1,7 +1,15 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import Decimal from "decimal.js";
 import { db } from "../db";
-import { loanAdjustments, loanInterestAccruals, loanInterestRatePeriods, loans, transactions } from "../db/schema";
+import {
+    floatingPenaltyLedgerEntries,
+    floatingTransactionAllocations,
+    loanAdjustments,
+    loanInterestAccruals,
+    loanInterestRatePeriods,
+    loans,
+    transactions,
+} from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import { calculateDailyInterest, interestDatesThrough, type FloatingAccrualCycle, type FloatingDailyInterest, type FloatingDailyInterestInput } from "../lib/floating-daily-interest";
 import { calculateWeeklyAccruedInterest, weeklySnapshotPeriod } from "../lib/floating-interest-period";
@@ -61,8 +69,6 @@ async function weeklyExpectedAccruals(
         eq(transactions.tenantId, loan.tenantId),
         eq(transactions.loanId, loan.id),
     ));
-    const reversedTransactionIds = new Set<number>(allTransactions.flatMap((row: typeof transactions.$inferSelect) =>
-        row.reversedTransactionId === null ? [] : [row.reversedTransactionId]));
     const dates = interestDatesThrough(
         loan.interestStartDate,
         throughDate,
@@ -88,8 +94,6 @@ async function weeklyExpectedAccruals(
         const principalAppliedBefore = allTransactions
             .filter((row: typeof transactions.$inferSelect) => row.postedAt
                 && row.transactionDate
-                && row.reversedTransactionId === null
-                && !reversedTransactionIds.has(row.id)
                 && bangkokDate(row.transactionDate) < accrualDate)
             .reduce((sum: Decimal, row: typeof transactions.$inferSelect) => sum.plus(row.principalComponent), new Decimal(0));
         const openingPrincipal = advanceCovered
@@ -205,16 +209,27 @@ export async function accrueFloatingInterestThrough(tx: Executor, loan: typeof l
             loanPublicId: loan.publicId,
         });
     }
-    const openingPrincipal = new Decimal(loan.outstandingPrincipal ?? loan.principalAmount);
+    const allTransactions = await tx.select().from(transactions).where(and(
+        eq(transactions.tenantId, loan.tenantId),
+        eq(transactions.loanId, loan.id),
+    ));
     await tx.insert(loanInterestAccruals).values(resolved.map(({ accrualDate, period }) => {
         const effectivePeriod = period!;
         const storedPeriod = rowByPublicId.get(effectivePeriod.publicId)!;
+        const principalAppliedBefore = allTransactions
+            .filter((row: typeof transactions.$inferSelect) => row.postedAt
+                && row.transactionDate
+                && bangkokDate(row.transactionDate) < accrualDate)
+            .reduce((sum: Decimal, row: typeof transactions.$inferSelect) => sum.plus(row.principalComponent), new Decimal(0));
+        const openingPrincipal = Decimal.max(0, new Decimal(loan.principalAmount).minus(principalAppliedBefore));
         const policy: FloatingDailyInterestInput = {
             mode: effectivePeriod.rateType,
             rate: effectivePeriod.rate,
             firstDayTreatment,
             accrualCycle,
         };
+        const interestAmount = calculateDailyInterest(openingPrincipal.toFixed(2), policy);
+        const advancePaid = firstDayTreatment === "deduct" && accrualDate === loan.interestStartDate;
         return {
             tenantId: loan.tenantId,
             loanId: loan.id,
@@ -223,8 +238,9 @@ export async function accrueFloatingInterestThrough(tx: Executor, loan: typeof l
             openingPrincipal: openingPrincipal.toFixed(2),
             rateMode: policy.mode,
             rate: policy.rate,
-            interestAmount: calculateDailyInterest(openingPrincipal.toFixed(2), policy),
-            status: "accrued",
+            interestAmount,
+            paidAmount: advancePaid ? interestAmount : "0.00",
+            status: advancePaid ? "paid" : "accrued",
             createdByUserId: actorUserId,
         };
     })).onConflictDoNothing();
@@ -254,66 +270,312 @@ function assertFloatingAccrualHistory(
 
 export type FloatingPenaltyGroup = {
     dueDate: string;
-    snapshotId: number;
     accruedPenalty: Decimal;
     paidPenalty: Decimal;
     penaltyDue: Decimal;
+    interestDue: Decimal;
 };
 
-async function materializeFloatingPenaltyGroups(
+type ProjectedAccrual = typeof loanInterestAccruals.$inferSelect;
+
+type ProjectedPenaltyAssessment = {
+    dueDate: string;
+    penaltyDate: string;
+    entryType: "fixed_assessment" | "daily_percent_accrual";
+    amount: Decimal;
+    openingInterestBasis: Decimal;
+};
+
+function datesBetweenInclusive(from: string, through: string) {
+    const dates: string[] = [];
+    const cursor = new Date(`${from}T00:00:00Z`);
+    const end = new Date(`${through}T00:00:00Z`);
+    while (cursor <= end) {
+        dates.push(cursor.toISOString().slice(0, 10));
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    return dates;
+}
+
+async function expectedDailyAccruals(
     tx: Executor,
     loan: typeof loans.$inferSelect,
-    rows: Array<typeof loanInterestAccruals.$inferSelect>,
     throughDate: string,
-): Promise<FloatingPenaltyGroup[]> {
-    const grouped = new Map<string, Array<typeof loanInterestAccruals.$inferSelect>>();
-    for (const row of rows as Array<typeof loanInterestAccruals.$inferSelect>) {
+): Promise<Array<Omit<ProjectedAccrual, "id" | "publicId" | "createdAt">>> {
+    if (!loan.interestStartDate || !loan.firstDayTreatment) return [];
+    const periodRows = await tx.select().from(loanInterestRatePeriods).where(and(
+        eq(loanInterestRatePeriods.tenantId, loan.tenantId),
+        eq(loanInterestRatePeriods.loanId, loan.id),
+    )).orderBy(asc(loanInterestRatePeriods.effectiveDate));
+    const periods: RatePeriodValue[] = periodRows.map((row: typeof loanInterestRatePeriods.$inferSelect) => ({
+        publicId: row.publicId,
+        effectiveDate: row.effectiveDate,
+        expiryDate: row.expiryDate,
+        rateType: row.rateType as RateType,
+        rate: row.rate,
+    }));
+    const rowByPublicId = new Map<string, typeof loanInterestRatePeriods.$inferSelect>(
+        periodRows.map((row: typeof loanInterestRatePeriods.$inferSelect) => [row.publicId, row]),
+    );
+    const allTransactions = await tx.select().from(transactions).where(and(
+        eq(transactions.tenantId, loan.tenantId), eq(transactions.loanId, loan.id),
+    ));
+    const dates = interestDatesThrough(
+        loan.interestStartDate,
+        throughDate,
+        loan.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"],
+        "daily",
+    );
+    return dates.map((accrualDate) => {
+        const period = resolveRatePeriod(periods, accrualDate);
+        const storedPeriod = period ? rowByPublicId.get(period.publicId) : undefined;
+        if (!period || !storedPeriod) {
+            throw new DomainError("RATE_PERIOD_MISSING_COVERAGE", "Floating loan has no interest rate for an accrual date", 409, {
+                accrualDate, loanPublicId: loan.publicId,
+            });
+        }
+        const principalAppliedBefore = allTransactions
+            .filter((row: typeof transactions.$inferSelect) => row.postedAt
+                && row.transactionDate
+                && bangkokDate(row.transactionDate) < accrualDate)
+            .reduce((sum: Decimal, row: typeof transactions.$inferSelect) => sum.plus(row.principalComponent), new Decimal(0));
+        const openingPrincipal = Decimal.max(0, new Decimal(loan.principalAmount).minus(principalAppliedBefore)).toFixed(2);
+        const interestAmount = calculateDailyInterest(openingPrincipal, {
+            mode: period.rateType,
+            rate: period.rate,
+            firstDayTreatment: loan.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"],
+            accrualCycle: "daily",
+        });
+        const advancePaid = loan.firstDayTreatment === "deduct" && accrualDate === loan.interestStartDate;
+        return {
+            tenantId: loan.tenantId,
+            loanId: loan.id,
+            interestRatePeriodId: storedPeriod.id,
+            accrualDate,
+            openingPrincipal,
+            rateMode: period.rateType,
+            rate: period.rate,
+            periodStartDate: null,
+            periodEndDate: null,
+            periodDayIndex: null,
+            periodDays: null,
+            cumulativeInterestAmount: null,
+            interestAmount,
+            paidAmount: advancePaid ? interestAmount : "0.00",
+            accruedPenalty: "0.00",
+            paidPenalty: "0.00",
+            status: advancePaid ? "paid" : "accrued",
+            sourceTransactionId: null,
+            reversedAccrualId: null,
+            createdByUserId: null,
+        };
+    });
+}
+
+async function projectFloatingAccrualRows(
+    tx: Executor,
+    loan: typeof loans.$inferSelect,
+    throughDate: string,
+): Promise<ProjectedAccrual[]> {
+    if (loan.repaymentType !== "floating" || !loan.dailyInterestMode || !loan.dailyInterestRate || !loan.firstDayTreatment || !loan.interestStartDate) return [];
+    const existing = await tx.select().from(loanInterestAccruals).where(and(
+        eq(loanInterestAccruals.tenantId, loan.tenantId),
+        eq(loanInterestAccruals.loanId, loan.id),
+    )) as ProjectedAccrual[];
+    const activeByDate = new Map<string, ProjectedAccrual>(existing
+        .filter((row: ProjectedAccrual) => row.status !== "reversed")
+        .map((row: ProjectedAccrual) => [row.accrualDate, row] as [string, ProjectedAccrual]));
+    const accrualCycle = (loan.floatingAccrualCycle ?? "daily") as FloatingAccrualCycle;
+    const expected = accrualCycle === "weekly"
+        ? await weeklyExpectedAccruals(tx, loan, throughDate)
+        : await expectedDailyAccruals(tx, loan, throughDate);
+    const legacyCoveredPeriods = new Set<string>();
+    if (accrualCycle === "weekly") {
+        for (const row of activeByDate.values()) {
+            if (row.periodStartDate !== null) continue;
+            if (row.accrualDate === loan.interestStartDate && loan.firstDayTreatment === "deduct") {
+                legacyCoveredPeriods.add(loan.interestStartDate);
+                continue;
+            }
+            try {
+                legacyCoveredPeriods.add(weeklySnapshotPeriod(loan.interestStartDate, row.accrualDate).periodStartDate);
+            } catch {
+                // Malformed legacy history stays visible below for explicit correction.
+            }
+        }
+    }
+    let virtualId = -1;
+    const expectedRows: ProjectedAccrual[] = expected
+        .filter((expectedRow) => !("periodStartDate" in expectedRow
+            && expectedRow.periodStartDate !== null
+            && legacyCoveredPeriods.has(expectedRow.periodStartDate)))
+        .map((expectedRow) => {
+        const row = expectedRow as WeeklyExpectedAccrual & Partial<ProjectedAccrual>;
+        return activeByDate.get(row.accrualDate) ?? {
+        ...(row as ProjectedAccrual),
+        id: virtualId--,
+        publicId: `projected:${loan.publicId}:${row.accrualDate}`,
+        tenantId: loan.tenantId,
+        loanId: loan.id,
+        accruedPenalty: "0.00",
+        paidPenalty: "0.00",
+        sourceTransactionId: null,
+        reversedAccrualId: null,
+        createdByUserId: null,
+        createdAt: null,
+    } as ProjectedAccrual;
+        });
+    const expectedDates = new Set(expectedRows.map((row) => row.accrualDate));
+    for (const row of activeByDate.values()) {
+        if (row.accrualDate <= throughDate && !expectedDates.has(row.accrualDate)) expectedRows.push(row);
+    }
+    const allocations = await tx.select().from(floatingTransactionAllocations).where(and(
+        eq(floatingTransactionAllocations.tenantId, loan.tenantId),
+        eq(floatingTransactionAllocations.loanId, loan.id),
+        eq(floatingTransactionAllocations.component, "interest"),
+    ));
+    const legacyCutovers = await tx.select().from(floatingPenaltyLedgerEntries).where(and(
+        eq(floatingPenaltyLedgerEntries.tenantId, loan.tenantId),
+        eq(floatingPenaltyLedgerEntries.loanId, loan.id),
+        eq(floatingPenaltyLedgerEntries.entryType, "legacy_cutover"),
+    ));
+    const legacyCutoverDate = (legacyCutovers as Array<typeof floatingPenaltyLedgerEntries.$inferSelect>)
+        .reduce((latest: string | null, entry: typeof floatingPenaltyLedgerEntries.$inferSelect) =>
+            !latest || entry.penaltyDate > latest ? entry.penaltyDate : latest, null);
+    if (legacyCutoverDate && throughDate < legacyCutoverDate) {
+        throw new DomainError(
+            "FLOATING_HISTORY_BEFORE_LEDGER_CUTOVER",
+            "Floating history before the exact ledger cutover requires manual reconciliation",
+            409,
+            { loanPublicId: loan.publicId, earliestSupportedDate: legacyCutoverDate },
+        );
+    }
+    const allByAccrual = new Map<number, Decimal>();
+    const asOfByAccrual = new Map<number, Decimal>();
+    for (const allocation of allocations as Array<typeof floatingTransactionAllocations.$inferSelect>) {
+        if (!allocation.interestAccrualId) continue;
+        allByAccrual.set(allocation.interestAccrualId, (allByAccrual.get(allocation.interestAccrualId) ?? new Decimal(0)).plus(allocation.amount));
+        if (allocation.effectiveDate <= throughDate) {
+            asOfByAccrual.set(allocation.interestAccrualId, (asOfByAccrual.get(allocation.interestAccrualId) ?? new Decimal(0)).plus(allocation.amount));
+        }
+    }
+    return expectedRows.sort((left, right) => left.accrualDate.localeCompare(right.accrualDate) || left.id - right.id).map((row) => {
+        const allAllocated = row.id > 0 ? allByAccrual.get(row.id) ?? new Decimal(0) : new Decimal(0);
+        const asOfAllocated = row.id > 0 ? asOfByAccrual.get(row.id) ?? new Decimal(0) : new Decimal(0);
+        const baselinePaid = Decimal.max(new Decimal(row.paidAmount).minus(allAllocated), 0);
+        const paidAmount = Decimal.min(new Decimal(row.interestAmount), Decimal.max(0, baselinePaid.plus(asOfAllocated)));
+        const dueDate = row.periodEndDate ?? row.accrualDate;
+        const status: ProjectedAccrual["status"] = paidAmount.eq(row.interestAmount)
+            ? "paid"
+            : paidAmount.gt(0) && row.periodEndDate
+                ? "partially_paid"
+                : row.periodEndDate && throughDate < row.periodEndDate
+                    ? "accruing"
+                    : row.periodEndDate
+                        ? "due"
+                        : "accrued";
+        return { ...row, paidAmount: paidAmount.toFixed(2), status, periodEndDate: row.periodEndDate ?? (dueDate === row.accrualDate ? null : dueDate) };
+    });
+}
+
+async function projectFloatingPenaltyGroups(
+    tx: Executor,
+    loan: typeof loans.$inferSelect,
+    rows: ProjectedAccrual[],
+    throughDate: string,
+) {
+    const grouped = new Map<string, ProjectedAccrual[]>();
+    for (const row of rows) {
         if (row.status === "reversed") continue;
         const dueDate = row.periodEndDate ?? row.accrualDate;
         grouped.set(dueDate, [...(grouped.get(dueDate) ?? []), row]);
     }
+    const allocations = await tx.select().from(floatingTransactionAllocations).where(and(
+        eq(floatingTransactionAllocations.tenantId, loan.tenantId),
+        eq(floatingTransactionAllocations.loanId, loan.id),
+    ));
+    const ledger = await tx.select().from(floatingPenaltyLedgerEntries).where(and(
+        eq(floatingPenaltyLedgerEntries.tenantId, loan.tenantId),
+        eq(floatingPenaltyLedgerEntries.loanId, loan.id),
+    ));
     const feeValue = new Decimal(loan.lateFeeAmount ?? "0.00");
     const graceDays = Math.max(0, loan.gracePeriodDays ?? 0);
+    const loanCutoverDate = ledger
+        .filter((entry: typeof floatingPenaltyLedgerEntries.$inferSelect) => entry.entryType === "legacy_cutover")
+        .reduce((latest: string | null, entry: typeof floatingPenaltyLedgerEntries.$inferSelect) =>
+            !latest || entry.penaltyDate > latest ? entry.penaltyDate : latest, null);
     const groups: FloatingPenaltyGroup[] = [];
+    const assessments: ProjectedPenaltyAssessment[] = [];
+    const effectiveAssessments: ProjectedPenaltyAssessment[] = [];
     for (const [dueDate, groupRows] of [...grouped.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-        const overdueDays = Math.max(0, calendarDays(dueDate, throughDate) - graceDays);
-        const unpaidInterest = groupRows.reduce(
-            (sum, row) => sum.plus(Decimal.max(new Decimal(row.interestAmount).minus(row.paidAmount), 0)),
-            new Decimal(0),
-        );
-        const storedAccrued = groupRows.reduce((sum, row) => sum.plus(row.accruedPenalty), new Decimal(0));
-        const paidPenalty = groupRows.reduce((sum, row) => sum.plus(row.paidPenalty), new Decimal(0));
-        let calculatedPenalty = new Decimal(0);
-        if (unpaidInterest.gt(0) && overdueDays > 0) {
-            if (loan.lateFeeMode === "fixed" || loan.lateFeeMode === "fixed_plus_percent") {
-                calculatedPenalty = calculatedPenalty.plus(feeValue);
-            }
-            if (loan.lateFeeMode === "daily_percent" || loan.lateFeeMode === "fixed_plus_percent") {
-                calculatedPenalty = calculatedPenalty.plus(unpaidInterest.times(feeValue).div(100).times(overdueDays));
+        const baseInterest = groupRows.reduce((sum, row) => sum.plus(row.interestAmount), new Decimal(0));
+        const currentInterest = groupRows.reduce((sum, row) => sum.plus(Decimal.max(new Decimal(row.interestAmount).minus(row.paidAmount), 0)), new Decimal(0));
+        const currentGroupAllocations = allocations.filter((row: typeof floatingTransactionAllocations.$inferSelect) =>
+            row.dueDate === dueDate && row.effectiveDate <= throughDate);
+        const interestAllocatedThrough = currentGroupAllocations
+            .filter((row: typeof floatingTransactionAllocations.$inferSelect) => row.component === "interest")
+            .reduce((sum: Decimal, row: typeof floatingTransactionAllocations.$inferSelect) => sum.plus(row.amount), new Decimal(0));
+        const baselinePaid = Decimal.max(baseInterest.minus(currentInterest).minus(interestAllocatedThrough), 0);
+        const firstPenaltyDate = new Date(`${dueDate}T00:00:00Z`);
+        firstPenaltyDate.setUTCDate(firstPenaltyDate.getUTCDate() + graceDays + 1);
+        const eligibleStart = firstPenaltyDate.toISOString().slice(0, 10);
+        let fixedAssessmentProjected = false;
+        if (eligibleStart <= throughDate) {
+            for (const penaltyDate of datesBetweenInclusive(eligibleStart, throughDate)) {
+                const paidBeforeDate = allocations
+                    .filter((row: typeof floatingTransactionAllocations.$inferSelect) =>
+                        row.dueDate === dueDate && row.component === "interest" && row.effectiveDate < penaltyDate)
+                    .reduce((sum: Decimal, row: typeof floatingTransactionAllocations.$inferSelect) => sum.plus(row.amount), new Decimal(0));
+                const openingInterestBasis = Decimal.max(baseInterest.minus(baselinePaid).minus(paidBeforeDate), 0);
+                if (openingInterestBasis.lte(0)) continue;
+                if (!fixedAssessmentProjected && (loan.lateFeeMode === "fixed" || loan.lateFeeMode === "fixed_plus_percent") && feeValue.gt(0)) {
+                    assessments.push({ dueDate, penaltyDate, entryType: "fixed_assessment", amount: feeValue.toDecimalPlaces(2, Decimal.ROUND_HALF_UP), openingInterestBasis });
+                    fixedAssessmentProjected = true;
+                }
+                if ((loan.lateFeeMode === "daily_percent" || loan.lateFeeMode === "fixed_plus_percent") && feeValue.gt(0)) {
+                    assessments.push({
+                        dueDate,
+                        penaltyDate,
+                        entryType: "daily_percent_accrual",
+                        amount: openingInterestBasis.times(feeValue).div(100).toDecimalPlaces(2, Decimal.ROUND_HALF_UP),
+                        openingInterestBasis,
+                    });
+                }
             }
         }
-        const accruedPenalty = Decimal.max(
-            storedAccrued,
-            calculatedPenalty.toDecimalPlaces(2, Decimal.ROUND_HALF_UP),
-        );
-        const snapshot = [...groupRows].sort((left, right) =>
-            right.accrualDate.localeCompare(left.accrualDate) || right.id - left.id)[0]!;
-        const increase = accruedPenalty.minus(storedAccrued);
-        if (increase.gt(0)) {
-            const nextSnapshotAccrued = new Decimal(snapshot.accruedPenalty).plus(increase).toFixed(2);
-            await tx.update(loanInterestAccruals).set({ accruedPenalty: nextSnapshotAccrued })
-                .where(and(eq(loanInterestAccruals.tenantId, loan.tenantId), eq(loanInterestAccruals.id, snapshot.id)));
-            snapshot.accruedPenalty = nextSnapshotAccrued;
+        const ledgerForGroupThrough = ledger.filter((entry: typeof floatingPenaltyLedgerEntries.$inferSelect) =>
+            entry.dueDate === dueDate && entry.penaltyDate <= throughDate);
+        const expectedForGroup = assessments.filter((entry) =>
+            entry.dueDate === dueDate && (!loanCutoverDate || entry.penaltyDate > loanCutoverDate));
+        effectiveAssessments.push(...expectedForGroup);
+        const baseEntries = ledgerForGroupThrough.filter((entry: typeof floatingPenaltyLedgerEntries.$inferSelect) =>
+            entry.entryType !== "adjustment" && entry.entryType !== "legacy_cutover");
+        let accruedPenalty = new Decimal(0);
+        for (const expected of expectedForGroup) {
+            const base = baseEntries.find((entry: typeof floatingPenaltyLedgerEntries.$inferSelect) =>
+                entry.penaltyDate === expected.penaltyDate && entry.entryType === expected.entryType);
+            if (!base) {
+                accruedPenalty = accruedPenalty.plus(expected.amount);
+                continue;
+            }
+            accruedPenalty = accruedPenalty.plus(ledgerForGroupThrough
+                .filter((entry: typeof floatingPenaltyLedgerEntries.$inferSelect) => entry.id === base.id || entry.adjustsEntryId === base.id)
+                .reduce((sum: Decimal, entry: typeof floatingPenaltyLedgerEntries.$inferSelect) => sum.plus(entry.amount), new Decimal(0)));
         }
-        groups.push({
-            dueDate,
-            snapshotId: snapshot.id,
-            accruedPenalty,
-            paidPenalty,
-            penaltyDue: overdueDays > 0 ? Decimal.max(accruedPenalty.minus(paidPenalty), 0) : new Decimal(0),
-        });
+        for (const base of baseEntries) {
+            const hasExpected = expectedForGroup.some((entry) =>
+                entry.penaltyDate === base.penaltyDate && entry.entryType === base.entryType);
+            if (hasExpected) continue;
+            accruedPenalty = accruedPenalty.plus(ledgerForGroupThrough
+                .filter((entry: typeof floatingPenaltyLedgerEntries.$inferSelect) => entry.id === base.id || entry.adjustsEntryId === base.id)
+                .reduce((sum: Decimal, entry: typeof floatingPenaltyLedgerEntries.$inferSelect) => sum.plus(entry.amount), new Decimal(0)));
+        }
+        const paidPenalty = currentGroupAllocations
+            .filter((row: typeof floatingTransactionAllocations.$inferSelect) => row.component === "penalty")
+            .reduce((sum: Decimal, row: typeof floatingTransactionAllocations.$inferSelect) => sum.plus(row.amount), new Decimal(0));
+        groups.push({ dueDate, accruedPenalty, paidPenalty, penaltyDue: Decimal.max(accruedPenalty.minus(paidPenalty), 0), interestDue: currentInterest });
     }
-    return groups;
+    return { groups, assessments: effectiveAssessments };
 }
 
 export async function floatingPaymentObligations(
@@ -322,15 +584,175 @@ export async function floatingPaymentObligations(
     through: Date,
     actorUserId: number | null,
 ) {
-    const rows = await accrueFloatingInterestThrough(tx, loan, through, actorUserId) as Array<typeof loanInterestAccruals.$inferSelect>;
     const throughDate = bangkokDate(through);
+    const rows = await projectFloatingAccrualRows(tx, loan, throughDate);
     assertFloatingAccrualHistory(rows, loan, throughDate);
-    const penaltyGroups = await materializeFloatingPenaltyGroups(tx, loan, rows, throughDate);
+    const projectedPenalty = await projectFloatingPenaltyGroups(tx, loan, rows, throughDate);
+    const penaltyGroups = projectedPenalty.groups;
     const dueInterest = rows
-        .filter((row) => ["accrued", "due", "partially_paid"].includes(row.status))
+        .filter((row) => ["accrued", "due", "partially_paid"].includes(row.status) && (row.periodEndDate ?? row.accrualDate) <= throughDate)
         .reduce((total, row) => total.plus(Decimal.max(new Decimal(row.interestAmount).minus(row.paidAmount), 0)), new Decimal(0));
     const duePenalty = penaltyGroups.reduce((total, group) => total.plus(group.penaltyDue), new Decimal(0));
-    return { rows, dueInterest, duePenalty, penaltyGroups };
+    return { rows, dueInterest, duePenalty, penaltyGroups, penaltyAssessments: projectedPenalty.assessments };
+}
+
+export async function materializeFloatingPenaltyAssessments(
+    tx: Executor,
+    ctx: CommandContext,
+    loan: typeof loans.$inferSelect,
+    through: Date,
+    auditPublicId: string,
+    sourceTransactionId: number,
+) {
+    if (!ctx.idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Penalty materialization requires an idempotency key", 400);
+    const obligations = await floatingPaymentObligations(tx, loan, through, ctx.actorUserId);
+    const existing = await tx.select().from(floatingPenaltyLedgerEntries).where(and(
+        eq(floatingPenaltyLedgerEntries.tenantId, ctx.tenantId),
+        eq(floatingPenaltyLedgerEntries.loanId, loan.id),
+    ));
+    const keys = new Set(existing.filter((row: typeof floatingPenaltyLedgerEntries.$inferSelect) => row.entryType !== "adjustment")
+        .map((row: typeof floatingPenaltyLedgerEntries.$inferSelect) => `${row.dueDate}:${row.penaltyDate}:${row.entryType}`));
+    const missing = obligations.penaltyAssessments.filter((entry) => !keys.has(`${entry.dueDate}:${entry.penaltyDate}:${entry.entryType}`) && entry.amount.gt(0));
+    if (missing.length) {
+        await tx.insert(floatingPenaltyLedgerEntries).values(missing.map((entry) => ({
+            tenantId: ctx.tenantId,
+            loanId: loan.id,
+            dueDate: entry.dueDate,
+            penaltyDate: entry.penaltyDate,
+            entryType: entry.entryType,
+            amount: entry.amount.toFixed(2),
+            openingInterestBasis: entry.openingInterestBasis.toFixed(2),
+            lateFeeMode: loan.lateFeeMode ?? "none",
+            lateFeeValue: new Decimal(loan.lateFeeAmount ?? 0).toFixed(2),
+            gracePeriodDays: Math.max(0, loan.gracePeriodDays ?? 0),
+            sourceTransactionId,
+            idempotencyKey: `floating-penalty:${loan.publicId}:${entry.dueDate}:${entry.penaltyDate}:${entry.entryType}`,
+            auditPublicId,
+            actorSource: ctx.actorSource,
+            requestId: ctx.requestId,
+            correlationId: ctx.correlationId,
+            createdByUserId: ctx.actorUserId,
+        }))).onConflictDoNothing();
+    }
+    return floatingPaymentObligations(tx, loan, through, ctx.actorUserId);
+}
+
+export async function reconcileFloatingPenaltyLedgerAfterInterestAllocation(
+    tx: Executor,
+    ctx: CommandContext,
+    loan: typeof loans.$inferSelect,
+    effectiveDate: string,
+    sourceTransaction: Pick<typeof transactions.$inferSelect, "id" | "publicId">,
+    input: { includeEffectiveDate?: boolean } = {},
+) {
+    if (!ctx.idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Penalty reconciliation requires an idempotency key", 400);
+    const ledger = await tx.select().from(floatingPenaltyLedgerEntries).where(and(
+        eq(floatingPenaltyLedgerEntries.tenantId, ctx.tenantId),
+        eq(floatingPenaltyLedgerEntries.loanId, loan.id),
+    ));
+    const futureBases = ledger.filter((entry: typeof floatingPenaltyLedgerEntries.$inferSelect) =>
+        entry.entryType !== "adjustment" && entry.entryType !== "legacy_snapshot" && entry.entryType !== "legacy_cutover"
+        && (input.includeEffectiveDate ? entry.penaltyDate >= effectiveDate : entry.penaltyDate > effectiveDate));
+    if (!futureBases.length) return [];
+
+    const throughDate = futureBases.reduce((latest: string, entry: typeof floatingPenaltyLedgerEntries.$inferSelect) =>
+        entry.penaltyDate > latest ? entry.penaltyDate : latest, effectiveDate);
+    const projectedRows = await projectFloatingAccrualRows(tx, loan, throughDate);
+    const projected = await projectFloatingPenaltyGroups(tx, loan, projectedRows, throughDate);
+    const allTimePaidPenaltyByDueDate = new Map<string, Decimal>();
+    const allPenaltyAllocations = await tx.select().from(floatingTransactionAllocations).where(and(
+        eq(floatingTransactionAllocations.tenantId, ctx.tenantId),
+        eq(floatingTransactionAllocations.loanId, loan.id),
+        eq(floatingTransactionAllocations.component, "penalty"),
+    ));
+    for (const allocation of allPenaltyAllocations as Array<typeof floatingTransactionAllocations.$inferSelect>) {
+        allTimePaidPenaltyByDueDate.set(
+            allocation.dueDate,
+            (allTimePaidPenaltyByDueDate.get(allocation.dueDate) ?? new Decimal(0)).plus(allocation.amount),
+        );
+    }
+    const expectedByKey = new Map(projected.assessments.map((entry) => [
+        `${entry.dueDate}:${entry.penaltyDate}:${entry.entryType}`,
+        entry,
+    ]));
+    const adjustments: Array<{
+        base: typeof floatingPenaltyLedgerEntries.$inferSelect;
+        expected: ProjectedPenaltyAssessment | undefined;
+        delta: Decimal;
+    }> = futureBases.flatMap((base: typeof floatingPenaltyLedgerEntries.$inferSelect) => {
+        const current = ledger
+            .filter((entry: typeof floatingPenaltyLedgerEntries.$inferSelect) => entry.id === base.id || entry.adjustsEntryId === base.id)
+            .reduce((sum: Decimal, entry: typeof floatingPenaltyLedgerEntries.$inferSelect) => sum.plus(entry.amount), new Decimal(0));
+        const expected = expectedByKey.get(`${base.dueDate}:${base.penaltyDate}:${base.entryType}`);
+        const expectedAmount = expected?.amount ?? new Decimal(0);
+        const delta = expectedAmount.minus(current).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+        return delta.eq(0) ? [] : [{ base, expected, delta }];
+    });
+    const plannedDeltaByDueDate = new Map<string, Decimal>();
+    for (const adjustment of adjustments) {
+        plannedDeltaByDueDate.set(
+            adjustment.base.dueDate,
+            (plannedDeltaByDueDate.get(adjustment.base.dueDate) ?? new Decimal(0)).plus(adjustment.delta),
+        );
+    }
+    for (const [dueDate, plannedDelta] of plannedDeltaByDueDate) {
+        if (plannedDelta.gte(0)) continue;
+        const group = projected.groups.find((candidate) => candidate.dueDate === dueDate);
+        const paidFloor = allTimePaidPenaltyByDueDate.get(dueDate) ?? group?.paidPenalty ?? new Decimal(0);
+        if (group && group.accruedPenalty.plus(plannedDelta).lt(paidFloor)) {
+            throw new DomainError(
+                "FLOATING_PENALTY_COMPENSATION_EXCEEDS_UNPAID",
+                "Penalty compensation would reduce assessed penalty below the amount already paid",
+                409,
+                { loanPublicId: loan.publicId, dueDate },
+            );
+        }
+    }
+    if (!adjustments.length) return [];
+
+    const audit = await createAuditLog(tx, {
+        tenantId: ctx.tenantId,
+        actorUserId: ctx.actorUserId,
+        actorSource: ctx.actorSource,
+        requestId: ctx.requestId,
+        correlationId: ctx.correlationId,
+        entityType: "transaction",
+        entityId: sourceTransaction.publicId,
+        action: "floating_penalty_ledger_compensated",
+        payload: {
+            loanPublicId: loan.publicId,
+            sourceTransactionPublicId: sourceTransaction.publicId,
+            effectiveDate,
+            adjustments: adjustments.map(({ base, expected, delta }) => ({
+                adjustedEntryPublicId: base.publicId,
+                dueDate: base.dueDate,
+                penaltyDate: base.penaltyDate,
+                amount: delta.toFixed(2),
+                openingInterestBasis: (expected?.openingInterestBasis ?? new Decimal(0)).toFixed(2),
+            })),
+        },
+    });
+    return tx.insert(floatingPenaltyLedgerEntries).values(adjustments.map(({ base, expected, delta }) => ({
+        tenantId: ctx.tenantId,
+        loanId: loan.id,
+        dueDate: base.dueDate,
+        penaltyDate: base.penaltyDate,
+        entryType: "adjustment",
+        amount: delta.toFixed(2),
+        openingInterestBasis: (expected?.openingInterestBasis ?? new Decimal(0)).toFixed(2),
+        lateFeeMode: base.lateFeeMode,
+        lateFeeValue: base.lateFeeValue,
+        gracePeriodDays: base.gracePeriodDays,
+        adjustsEntryId: base.id,
+        sourceTransactionId: sourceTransaction.id,
+        reason: "Backdated interest allocation changed a later daily penalty basis",
+        idempotencyKey: `floating-penalty-adjustment:${sourceTransaction.publicId}:${base.publicId}:${input.includeEffectiveDate ? "inclusive" : "future"}`,
+        auditPublicId: audit.publicId,
+        actorSource: ctx.actorSource,
+        requestId: ctx.requestId,
+        correlationId: ctx.correlationId,
+        createdByUserId: ctx.actorUserId,
+    }))).onConflictDoNothing().returning();
 }
 
 export async function floatingInterestDue(tx: Executor, loan: typeof loans.$inferSelect, through: Date, actorUserId: number | null) {
@@ -396,10 +818,43 @@ export async function correctFloatingInterestAccruals(ctx: CommandContext, loanP
             inArray(loanInterestAccruals.accrualDate, uniqueDates), sql`${loanInterestAccruals.status} <> 'reversed'`,
         )).orderBy(asc(loanInterestAccruals.accrualDate));
         if (oldRows.length !== uniqueDates.length) throw new DomainError("ACCRUAL_CORRECTION_TARGET_MISMATCH", "Every correction date must identify one active accrual", 409);
+        const allocatedTargets = oldRows.length ? await tx.select({
+            interestAccrualId: floatingTransactionAllocations.interestAccrualId,
+        }).from(floatingTransactionAllocations).where(and(
+            eq(floatingTransactionAllocations.tenantId, ctx.tenantId),
+            eq(floatingTransactionAllocations.loanId, loan.id),
+            eq(floatingTransactionAllocations.component, "interest"),
+            inArray(floatingTransactionAllocations.interestAccrualId, oldRows.map((row) => row.id)),
+        )) : [];
+        if (allocatedTargets.length) {
+            throw new DomainError(
+                "ACCRUAL_CORRECTION_HAS_ALLOCATIONS",
+                "Reverse payments allocated to an accrual before correcting it",
+                409,
+                { accrualPublicIds: oldRows.filter((row) => allocatedTargets.some((allocation) => allocation.interestAccrualId === row.id)).map((row) => row.publicId) },
+            );
+        }
+        const correctedDueDates = new Set(oldRows.map((row) => row.periodEndDate ?? row.accrualDate));
+        const dependentPenaltyHistory = await tx.select({
+            dueDate: floatingPenaltyLedgerEntries.dueDate,
+            entryType: floatingPenaltyLedgerEntries.entryType,
+        }).from(floatingPenaltyLedgerEntries).where(and(
+            eq(floatingPenaltyLedgerEntries.tenantId, ctx.tenantId),
+            eq(floatingPenaltyLedgerEntries.loanId, loan.id),
+            inArray(floatingPenaltyLedgerEntries.dueDate, [...correctedDueDates]),
+        ));
+        if (dependentPenaltyHistory.some((entry) => entry.entryType !== "legacy_cutover"
+            && entry.dueDate && correctedDueDates.has(entry.dueDate))) {
+            throw new DomainError(
+                "ACCRUAL_CORRECTION_HAS_PENALTY_HISTORY",
+                "Accruals with immutable penalty history require a compensating financial workflow",
+                409,
+                { dueDates: [...correctedDueDates] },
+            );
+        }
         const periodRows = await tx.select().from(loanInterestRatePeriods).where(and(eq(loanInterestRatePeriods.tenantId, ctx.tenantId), eq(loanInterestRatePeriods.loanId, loan.id))).orderBy(asc(loanInterestRatePeriods.effectiveDate));
         const periodValues: RatePeriodValue[] = periodRows.map((row) => ({ publicId: row.publicId, effectiveDate: row.effectiveDate, expiryDate: row.expiryDate, rateType: row.rateType as RateType, rate: row.rate }));
         const allTransactions = await tx.select().from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.loanId, loan.id)));
-        const reversedTransactionIds = new Set(allTransactions.flatMap((row) => row.reversedTransactionId === null ? [] : [row.reversedTransactionId]));
         const weeklyExpected = accrualCycle === "weekly"
             ? new Map((await weeklyExpectedAccruals(tx, loan, uniqueDates.at(-1)!)).map((row) => [row.accrualDate, row]))
             : null;
@@ -414,7 +869,7 @@ export async function correctFloatingInterestAccruals(ctx: CommandContext, loanP
             const period = periodRows.find((row) => row.publicId === periodValue?.publicId);
             if (!periodValue || !period) throw new DomainError("RATE_PERIOD_MISSING_COVERAGE", "Floating loan has no interest rate for a correction date", 409, { accrualDate: old.accrualDate });
             const principalAppliedBefore = allTransactions
-                .filter((row) => row.postedAt && row.transactionDate && row.reversedTransactionId === null && !reversedTransactionIds.has(row.id) && bangkokDate(row.transactionDate) < old.accrualDate)
+                .filter((row) => row.postedAt && row.transactionDate && bangkokDate(row.transactionDate) < old.accrualDate)
                 .reduce((sum, row) => sum.plus(row.principalComponent), new Decimal(0));
             const openingPrincipal = weekly
                 ? new Decimal(weekly.openingPrincipal)

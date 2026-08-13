@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented exact single-payment preview/draft/update/activation presentation and explicit floating accrual-cycle compatibility across the shared application service and REST loan contract.
+Implemented exact single-payment preview/draft/update/activation presentation, the exact weekly preview contract, and an append-only dated floating penalty ledger with exact allocation/reversal provenance across the shared application service, REST loan contract, database, and health projections.
 
 ## Changes
 
@@ -170,3 +170,52 @@ It reported `4 pass, 4 fail`, `22 expect()` calls. Payments allocated interest b
 After implementation, the focused non-database suite reported `23 pass, 20 skip, 0 fail`, `223 expect()` calls. The focused PostgreSQL closing suite reported `8 pass, 0 fail`, `51 expect()` calls; the broader service/payment/health/MCP disposable suite reported `73 pass, 0 fail`, `558 expect()` calls.
 
 Final verification: backend non-database `166 pass, 145 skip, 0 fail`, `1121 expect()` calls and typecheck passed; full disposable PostgreSQL `310 pass, 1 skip, 0 fail`, `2094 expect()` calls; frontend Vitest `100 pass, 0 fail`, ESLint and production build passed with only the existing chunk-size advisory; CreditSync plugin `32 pass, 0 fail`, `697 expect()` calls, and both validators passed for Plugin `2.4.0`, eight skills, and the frozen 41-tool contract.
+
+## Review Fix Round 5
+
+- Replaced the substitute weekly preview vocabulary with the approved public contract: `fullPeriodInterest`, `firstPeriodStartDate`, `firstPeriodDueDate`, `advanceInterestAmount`, `netDisbursement`, `nextAccrualDate`, `periodDays`, and `advanceInterestRefundPolicy: "non_refundable"`. The additive inclusive covered-date range remains 10–16 August for a 10 August anchor, with the excluded due/next-period boundary on 17 August. The frozen MCP adapter maps these values to its legacy names and strips every new-only key before strict validation.
+- Added migration `0030_floating_penalty_ledger`, defining tenant-safe append-only dated penalty assessments/adjustments and exact transaction-component allocations tied to a natural floating due group. Every row carries an idempotency key, public audit reference, actor/source, request ID, correlation ID, and optional source transaction; PostgreSQL rejects direct updates and deletes and freezes the obsolete penalty cache.
+- Made closing summaries, health projections, and payment previews pure as-of reads. Weekly snapshots aggregate into one natural due-group health item; future reads cannot materialize state into an earlier payment. A daily-percent penalty now uses each Bangkok day's opening unpaid group interest, so `600.00 @ 1%` accrues `6.00`, then `3.00` after a same-day `300.00` interest allocation.
+- Floating post now materializes exact assessment events only inside the confirmed command transaction, records penalty-before-interest allocation provenance down to the due group/accrual row, and includes ledger/allocation state in proposal staleness hashes. Reversal appends signed allocations referencing the exact original rows instead of scanning mutable snapshots.
+- Backdated interest allocations append audited compensating penalty entries for later affected dates. Compensation that would reduce accrued penalty below already-paid penalty fails with `FLOATING_PENALTY_COMPENSATION_EXCEEDS_UNPAID`; corrections targeting an accrual with immutable allocations fail with `ACCRUAL_CORRECTION_HAS_ALLOCATIONS`.
+- Backdated obligation payments stop with `FLOATING_BACKDATED_ALLOCATION_REQUIRES_RECONCILIATION` when a later exact interest or penalty allocation already exists. This prevents the new payment from overlapping immutable provenance; paid-penalty floor checks retain their more specific error. A fixed fee is assessed on the first overdue Bangkok date with a positive opening basis, including when a reversal first reopens that basis.
+- The migration records one Bangkok `legacy_cutover` for every existing floating loan and one exact grouped `legacy_snapshot` for every active due group, including zero-valued groups. It reconstructs the greater of the grouped legacy cache and the old runtime calculation, replays unreversed legacy payment components FIFO by effective timestamp plus ID, and aborts when cent-exact reconstruction is impossible. Historical reads before a checkpoint stop with `FLOATING_HISTORY_BEFORE_LEDGER_CUTOVER`; no undated cache is silently treated as exact dated history.
+- PostgreSQL enforces same-tenant/same-loan references, fixed-once and dated-daily uniqueness, exact reasoned reversal links, append-only ledger/allocation rows, immutable referenced transaction financial fields, a frozen legacy penalty cache, and a deferred equality check between each floating accrual's `paidAmount` cache and signed exact interest allocations plus any contractual advance-interest baseline.
+
+### Review Round 5 TDD Evidence
+
+The focused non-database RED command was:
+
+```text
+cd backend && bun test src/services/loan-application-service.test.ts src/modules/loans-route-composition.test.ts src/mcp/server.test.ts src/db/floating-weekly-period-migration.test.ts
+```
+
+It reported `21 pass, 20 skip, 3 fail`, `217 expect()` calls: the service and REST preview omitted the required field names, and migration `0030_floating_penalty_ledger` did not exist. After implementation the same command reported `24 pass, 20 skip, 0 fail`, `249 expect()` calls.
+
+The first payment-health RED command was:
+
+```text
+cd backend && ./scripts/test-disposable-postgres.sh src/services/loan-payment-health-service.test.ts
+```
+
+It reported `6 pass, 1 fail`, `16 expect()` calls because one overdue weekly group was exposed as seven overdue items. The expanded closing/health RED then reported `8 pass, 10 fail`, `23 expect()` calls: reads still mutated snapshot caches, daily percentage bases were not dated, allocation provenance was absent, reversal guessed the target group, and the new immutable boundary rejected the old materializer.
+
+A later targeted RED proved compensation was required: after three future `6.00` assessments, a backdated `300.00` interest payment left `11.00` penalty due instead of `5.00`. The append-only compensation implementation made that test pass when no later exact allocation exists. Additional targeted regressions proved paid-floor compensation and allocated-accrual correction fail closed.
+
+The authoritative pre-`0030` migration fixture initially reported `0 pass, 1 fail`: per-accrual snapshot insertion violated the due-group uniqueness constraint and could not preserve grouped legacy state. After the grouped cutover/replay implementation, the fixture reported `1 pass, 0 fail`, `52 expect()` calls and exercised zero-state checkpoints, runtime-vs-cache reconstruction, effective-time FIFO, tenant/loan isolation, reasoned exact reversals, append-only/freeze triggers, and deferred paid-cache consistency.
+
+The final three service RED regressions reported `0 pass, 3 fail`, `9 expect()` calls: backdated interest and penalty payments overlapped later exact allocations, and a reversal reopening overdue interest never assessed the fixed fee. After the guards, the same focused run reported `3 pass, 0 fail`, `9 expect()` calls.
+
+Focused GREEN before the final matrix: closing plus payment health `19 pass, 0 fail`, `117 expect()` calls; payment/closing/health/migration `49 pass, 0 fail`, `275 expect()` calls; backend typecheck and `git diff --check` passed. The first full disposable run exposed two compatibility regressions (`313 pass, 1 skip, 2 fail`): wall-clock reversal over-projected legacy daily interest, and an isolated Task 2 migration test applied later migrations around its intentionally skipped target. Both were corrected and targeted tests passed.
+
+The first full disposable run after database-boundary hardening reported `319 pass, 1 skip, 8 fail`, `2235 expect()` calls. It exposed stale deferred-trigger event images, legacy test fixtures without exact allocation provenance, first-day-deduction rows omitted by the daily materializer, and obsolete backdated-compensation expectations. The trigger now validates the final live tuple, fixtures use exact provenance, daily materialization retains the contractual paid advance baseline, and backdated overlap fails closed.
+
+Final verification:
+
+- Backend typecheck: `tsc --noEmit` passed.
+- Backend non-database suite: `167 pass, 161 skip, 0 fail`, `1152 expect()` calls. Database-only skips were exercised below.
+- Full serialized disposable PostgreSQL suite: `327 pass, 1 skip, 0 fail`, `2244 expect()` calls across 328 tests in 55 files. The sole skip is the existing cache-invalidation case that requires a configured cache service.
+- Drizzle schema check: `bun run generate` reported `No schema changes, nothing to migrate` after synchronizing migration `0030` and its snapshot.
+- Frontend: `bun run test` passed 100 tests in 27 files; `bun run lint` passed; `bun run build` passed after transforming 2,014 modules, with only the existing `568.41 kB` chunk-size advisory.
+- CreditSync private plugin: `bun test plugins/creditsync/tests` passed `32 pass, 0 fail`, `697 expect()` calls in three files; the package validator and generic plugin validator both passed for Plugin `2.4.0`, eight skills, the frozen 41-tool contract, no bundled MCP/secrets, and the documented non-live private-app placeholder.
+- `git diff --check` passed.

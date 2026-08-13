@@ -383,6 +383,7 @@ export const loanInterestAccruals = pgTable("loan_interest_accruals", {
 }, (table) => [
     uniqueIndex("loan_interest_accruals_tenant_loan_date_unique").on(table.tenantId, table.loanId, table.accrualDate).where(sql`${table.status} <> 'reversed'`),
     uniqueIndex("loan_interest_accruals_tenant_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("loan_interest_accruals_tenant_loan_id_unique").on(table.tenantId, table.loanId, table.id),
     foreignKey({
         name: "loan_interest_accruals_tenant_rate_period_fk",
         columns: [table.tenantId, table.interestRatePeriodId],
@@ -479,6 +480,7 @@ export const transactions = pgTable("transactions", {
     updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
     uniqueIndex("transactions_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("transactions_tenant_loan_id_unique").on(table.tenantId, table.loanId, table.id),
     uniqueIndex("transactions_tenant_idempotency_unique")
         .on(table.tenantId, table.idempotencyKey)
         .where(sql`${table.idempotencyKey} IS NOT NULL`),
@@ -591,6 +593,121 @@ export const auditLogs = pgTable("audit_logs", {
 }, (table) => [
     uniqueIndex("audit_logs_tenant_public_id_unique").on(table.tenantId, table.publicId),
     check("audit_logs_actor_source_check", sql`${table.actorSource} IN ('web', 'mcp', 'system')`),
+]);
+
+// Exact dated penalty assessments for floating-loan obligation groups. Rows are
+// append-only; corrections are signed entries that reference the entry they
+// compensate instead of rewriting financial history.
+export const floatingPenaltyLedgerEntries = pgTable("floating_penalty_ledger_entries", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId,
+    loanId: integer("loan_id").notNull(),
+    dueDate: date("due_date").notNull(),
+    penaltyDate: date("penalty_date").notNull(),
+    entryType: text("entry_type").notNull(), // fixed_assessment, daily_percent_accrual, legacy_cutover, legacy_snapshot, adjustment
+    amount: numeric("amount").notNull(),
+    openingInterestBasis: numeric("opening_interest_basis").notNull(),
+    lateFeeMode: text("late_fee_mode").notNull(),
+    lateFeeValue: numeric("late_fee_value").notNull(),
+    gracePeriodDays: integer("grace_period_days").notNull(),
+    adjustsEntryId: integer("adjusts_entry_id"),
+    sourceTransactionId: integer("source_transaction_id"),
+    reason: text("reason"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    auditPublicId: uuid("audit_public_id").notNull(),
+    actorSource: text("actor_source").notNull(),
+    requestId: text("request_id").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    createdByUserId: integer("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("floating_penalty_ledger_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("floating_penalty_ledger_tenant_loan_id_unique").on(table.tenantId, table.loanId, table.id),
+    uniqueIndex("floating_penalty_ledger_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
+    uniqueIndex("floating_penalty_ledger_daily_assessment_unique")
+        .on(table.tenantId, table.loanId, table.dueDate, table.penaltyDate, table.entryType)
+        .where(sql`${table.entryType} = 'daily_percent_accrual'`),
+    uniqueIndex("floating_penalty_ledger_fixed_assessment_unique")
+        .on(table.tenantId, table.loanId, table.dueDate)
+        .where(sql`${table.entryType} = 'fixed_assessment'`),
+    uniqueIndex("floating_penalty_ledger_legacy_snapshot_unique")
+        .on(table.tenantId, table.loanId, table.dueDate)
+        .where(sql`${table.entryType} = 'legacy_snapshot'`),
+    uniqueIndex("floating_penalty_ledger_legacy_cutover_unique")
+        .on(table.tenantId, table.loanId)
+        .where(sql`${table.entryType} = 'legacy_cutover'`),
+    index("floating_penalty_ledger_tenant_loan_due_date_idx").on(table.tenantId, table.loanId, table.dueDate, table.penaltyDate),
+    check("floating_penalty_ledger_entry_type_check", sql`${table.entryType} IN ('fixed_assessment', 'daily_percent_accrual', 'legacy_cutover', 'legacy_snapshot', 'adjustment')`),
+    check("floating_penalty_ledger_money_check", sql`
+        scale(${table.amount}) <= 2 AND ${table.openingInterestBasis} >= 0
+        AND scale(${table.openingInterestBasis}) <= 2 AND ${table.lateFeeValue} >= 0
+        AND ${table.gracePeriodDays} >= 0
+    `),
+    check("floating_penalty_ledger_adjustment_check", sql`
+        (${table.entryType} IN ('fixed_assessment', 'daily_percent_accrual') AND ${table.amount} > 0 AND ${table.adjustsEntryId} IS NULL AND ${table.reason} IS NULL)
+        OR (${table.entryType} = 'legacy_snapshot' AND ${table.amount} >= 0 AND ${table.adjustsEntryId} IS NULL AND ${table.reason} IS NOT NULL AND length(trim(${table.reason})) > 0)
+        OR (${table.entryType} = 'legacy_cutover' AND ${table.amount} = 0 AND ${table.openingInterestBasis} = 0 AND ${table.lateFeeMode} = 'none' AND ${table.lateFeeValue} = 0 AND ${table.gracePeriodDays} = 0 AND ${table.adjustsEntryId} IS NULL AND ${table.sourceTransactionId} IS NULL AND ${table.reason} IS NOT NULL AND length(trim(${table.reason})) > 0)
+        OR (${table.entryType} = 'adjustment' AND ${table.amount} <> 0 AND ${table.adjustsEntryId} IS NOT NULL AND ${table.reason} IS NOT NULL AND length(trim(${table.reason})) > 0)
+    `),
+    check("floating_penalty_ledger_actor_source_check", sql`${table.actorSource} IN ('web', 'mcp', 'system')`),
+    foreignKey({ name: "floating_penalty_ledger_tenant_loan_fk", columns: [table.tenantId, table.loanId], foreignColumns: [loans.tenantId, loans.id] }),
+    foreignKey({ name: "floating_penalty_ledger_tenant_loan_adjusts_entry_fk", columns: [table.tenantId, table.loanId, table.adjustsEntryId], foreignColumns: [table.tenantId, table.loanId, table.id] }),
+    foreignKey({ name: "floating_penalty_ledger_tenant_loan_source_transaction_fk", columns: [table.tenantId, table.loanId, table.sourceTransactionId], foreignColumns: [transactions.tenantId, transactions.loanId, transactions.id] }),
+    foreignKey({ name: "floating_penalty_ledger_tenant_audit_fk", columns: [table.tenantId, table.auditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
+    foreignKey({ name: "floating_penalty_ledger_tenant_actor_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
+
+// Exact transaction-component provenance. Interest allocations are retained
+// alongside penalties because they determine every later daily penalty basis.
+export const floatingTransactionAllocations = pgTable("floating_transaction_allocations", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId,
+    loanId: integer("loan_id").notNull(),
+    transactionId: integer("transaction_id").notNull(),
+    dueDate: date("due_date").notNull(),
+    component: text("component").notNull(), // interest, penalty
+    interestAccrualId: integer("interest_accrual_id"),
+    effectiveDate: date("effective_date").notNull(),
+    allocationOrder: integer("allocation_order").notNull(),
+    entryType: text("entry_type").notNull(), // payment, reversal
+    amount: numeric("amount").notNull(),
+    reversedAllocationId: integer("reversed_allocation_id"),
+    reason: text("reason"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    auditPublicId: uuid("audit_public_id").notNull(),
+    actorSource: text("actor_source").notNull(),
+    requestId: text("request_id").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    createdByUserId: integer("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("floating_transaction_allocations_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("floating_transaction_allocations_tenant_loan_id_unique").on(table.tenantId, table.loanId, table.id),
+    uniqueIndex("floating_transaction_allocations_tenant_transaction_order_unique").on(table.tenantId, table.transactionId, table.allocationOrder),
+    uniqueIndex("floating_transaction_allocations_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
+    uniqueIndex("floating_transaction_allocations_tenant_reversed_unique")
+        .on(table.tenantId, table.reversedAllocationId)
+        .where(sql`${table.reversedAllocationId} IS NOT NULL`),
+    index("floating_transaction_allocations_tenant_loan_due_idx").on(table.tenantId, table.loanId, table.dueDate, table.effectiveDate),
+    check("floating_transaction_allocations_component_check", sql`${table.component} IN ('interest', 'penalty')`),
+    check("floating_transaction_allocations_entry_type_check", sql`
+        (${table.entryType} = 'payment' AND ${table.amount} > 0 AND ${table.reversedAllocationId} IS NULL AND ${table.reason} IS NULL)
+        OR (${table.entryType} = 'reversal' AND ${table.amount} < 0 AND ${table.reversedAllocationId} IS NOT NULL AND ${table.reason} IS NOT NULL AND length(trim(${table.reason})) > 0)
+    `),
+    check("floating_transaction_allocations_money_order_check", sql`scale(${table.amount}) <= 2 AND ${table.allocationOrder} > 0`),
+    check("floating_transaction_allocations_interest_target_check", sql`
+        (${table.component} = 'interest' AND ${table.interestAccrualId} IS NOT NULL)
+        OR (${table.component} = 'penalty' AND ${table.interestAccrualId} IS NULL)
+    `),
+    check("floating_transaction_allocations_actor_source_check", sql`${table.actorSource} IN ('web', 'mcp', 'system')`),
+    foreignKey({ name: "floating_transaction_allocations_tenant_loan_fk", columns: [table.tenantId, table.loanId], foreignColumns: [loans.tenantId, loans.id] }),
+    foreignKey({ name: "floating_transaction_allocations_tenant_loan_transaction_fk", columns: [table.tenantId, table.loanId, table.transactionId], foreignColumns: [transactions.tenantId, transactions.loanId, transactions.id] }),
+    foreignKey({ name: "floating_transaction_allocations_tenant_loan_interest_accrual_fk", columns: [table.tenantId, table.loanId, table.interestAccrualId], foreignColumns: [loanInterestAccruals.tenantId, loanInterestAccruals.loanId, loanInterestAccruals.id] }),
+    foreignKey({ name: "floating_transaction_allocations_tenant_loan_reversed_fk", columns: [table.tenantId, table.loanId, table.reversedAllocationId], foreignColumns: [table.tenantId, table.loanId, table.id] }),
+    foreignKey({ name: "floating_transaction_allocations_tenant_audit_fk", columns: [table.tenantId, table.auditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
+    foreignKey({ name: "floating_transaction_allocations_tenant_actor_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
 ]);
 
 // Files (MinIO Objects)

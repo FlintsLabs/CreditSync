@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import Decimal from "decimal.js";
 import { db } from "../db";
 import { loanSchedules, loans } from "../db/schema";
 import { computeLoanPaymentHealth, type LoanPaymentHealth } from "../lib/loan-payment-health";
@@ -24,7 +25,32 @@ export async function getLoanPaymentHealth(
 
     if (loan.repaymentType === "floating") {
         const balances = await floatingInterestBalances(executor, loan, input.asOf, input.actorUserId);
-        const penaltyBySnapshot = new Map(balances.penaltyGroups.map((group) => [group.snapshotId, group.penaltyDue.toFixed(2)]));
+        const penaltyByDueDate = new Map(balances.penaltyGroups.map((group) => [group.dueDate, group.penaltyDue.toFixed(2)]));
+        const dueGroups = new Map<string, {
+            accrualDate: string;
+            dueDate: string;
+            interestAmount: Decimal;
+            paidAmount: Decimal;
+            status: string;
+        }>();
+        for (const row of balances.rows.filter((candidate: { tenantId: string; loanId: number }) =>
+            candidate.tenantId === loan.tenantId && candidate.loanId === loan.id)) {
+            const dueDate = row.periodEndDate ?? row.accrualDate;
+            const existing = dueGroups.get(dueDate);
+            if (!existing) {
+                dueGroups.set(dueDate, {
+                    accrualDate: row.periodStartDate ?? row.accrualDate,
+                    dueDate,
+                    interestAmount: new Decimal(row.interestAmount),
+                    paidAmount: new Decimal(row.paidAmount),
+                    status: row.status,
+                });
+                continue;
+            }
+            existing.interestAmount = existing.interestAmount.plus(row.interestAmount);
+            existing.paidAmount = existing.paidAmount.plus(row.paidAmount);
+            if (row.status !== "paid") existing.status = row.status === "accruing" && existing.status === "accruing" ? "accruing" : "due";
+        }
         return computeLoanPaymentHealth({
             lifecycleStatus: loan.status ?? "draft",
             repaymentType: loan.repaymentType,
@@ -33,15 +59,13 @@ export async function getLoanPaymentHealth(
             lateFeeMode: loan.lateFeeMode,
             lateFeeAmount: loan.lateFeeAmount,
             schedules: [],
-            accruals: balances.rows
-                .filter((row: { tenantId: string; loanId: number }) => row.tenantId === loan.tenantId && row.loanId === loan.id)
-                .map((row: { id: number; accrualDate: string; periodEndDate: string | null; interestAmount: string; paidAmount: string; status: string }) => ({
-                    accrualDate: row.accrualDate,
-                    dueDate: row.periodEndDate,
-                    interestAmount: row.interestAmount,
-                    paidAmount: row.paidAmount,
-                    penaltyDue: penaltyBySnapshot.get(row.id) ?? "0.00",
-                    status: row.status,
+            accruals: [...dueGroups.values()].map((group) => ({
+                    accrualDate: group.accrualDate,
+                    dueDate: group.dueDate,
+                    interestAmount: group.interestAmount.toFixed(2),
+                    paidAmount: group.paidAmount.toFixed(2),
+                    penaltyDue: penaltyByDueDate.get(group.dueDate) ?? "0.00",
+                    status: group.status,
                 })),
         });
     }

@@ -163,9 +163,11 @@ if (!testDatabaseUrl) {
             await sql.unsafe("DROP SCHEMA IF EXISTS drizzle CASCADE");
             await sql.unsafe("CREATE SCHEMA public");
             const journal = await Bun.file(`${backendRoot}drizzle/meta/_journal.json`).json() as {
-                entries: { tag: string }[];
+                entries: { idx: number; tag: string }[];
             };
-            for (const entry of journal.entries.filter((candidate) => candidate.tag !== migrationTag)) {
+            const targetIndex = journal.entries.find((candidate) => candidate.tag === migrationTag)?.idx;
+            expect(targetIndex).toBeDefined();
+            for (const entry of journal.entries.filter((candidate) => candidate.idx < targetIndex!)) {
                 await applySqlFile(`${backendRoot}drizzle/${entry.tag}.sql`);
             }
 

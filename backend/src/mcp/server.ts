@@ -815,14 +815,13 @@ function frozenToolData(toolName: McpToolName, value: unknown): Record<string, u
         return legacy;
     };
     const projected = projectLoanFields({ ...data });
-    if (toolName === "loan.preview" && typeof projected.firstPeriodInterest === "string") {
-        projected.firstDayInterest = projected.advanceInterest;
-        projected.dailyInterestAtCurrentPrincipal = projected.firstPeriodInterest;
-        projected.netDisbursement = projected.netBorrowerPayout;
+    if (toolName === "loan.preview" && typeof projected.fullPeriodInterest === "string") {
+        projected.firstDayInterest = projected.advanceInterestAmount;
+        projected.dailyInterestAtCurrentPrincipal = projected.fullPeriodInterest;
         projected.nextInterestDate = projected.nextAccrualDate;
-        delete projected.firstPeriodInterest;
-        delete projected.advanceInterest;
-        delete projected.netBorrowerPayout;
+        delete projected.fullPeriodInterest;
+        delete projected.firstPeriodStartDate;
+        delete projected.advanceInterestAmount;
         delete projected.coveredStartDate;
         delete projected.coveredEndDate;
         delete projected.firstPeriodDueDate;

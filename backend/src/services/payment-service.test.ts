@@ -7,6 +7,8 @@ import {
     bankProfiles,
     borrowers,
     files,
+    floatingPenaltyLedgerEntries,
+    floatingTransactionAllocations,
     fundLedgerEntries,
     loanFundingAllocations,
     loanAdjustments,
@@ -36,7 +38,7 @@ import {
     reviewPaymentIntake,
     type EvidenceStorageGateway,
 } from "./payment-service";
-import { correctFloatingInterestAccruals } from "./floating-interest-service";
+import { accrueFloatingInterestThrough, correctFloatingInterestAccruals } from "./floating-interest-service";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
@@ -304,6 +306,116 @@ describe("payment application service", () => {
 
         expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({ outstandingPrincipal: "4000.00", outstandingInterest: "60.00" });
         expect(await db.query.loanInterestAccruals.findFirst({ where: and(eq(loanInterestAccruals.loanId, seeded.loan.id), eq(loanInterestAccruals.accrualDate, "2026-08-07")) })).toMatchObject({ paidAmount: "0.00", status: "accrued" });
+    });
+
+    // Break caught: correcting an accrual already referenced by immutable
+    // payment provenance leaves reversal targeting the superseded row.
+    integrationTest("rejects correction of an accrual with exact payment allocations", async () => {
+        const actor = await seedUser("tenant-floating-correction-allocated");
+        const seeded = await seedFloatingLoan(actor);
+        await db.insert(loanInterestAccruals).values({
+            tenantId: actor.tenantId,
+            loanId: seeded.loan.id,
+            interestRatePeriodId: seeded.period.id,
+            accrualDate: "2026-08-07",
+            openingPrincipal: "4000.00",
+            rateMode: "per_thousand",
+            rate: "15.0000",
+            interestAmount: "60.00",
+            createdByUserId: actor.id,
+        });
+        const intake = await createPaymentIntake(context(actor), { amount: "60.00", receivedAt: "2026-08-07T06:46:00.000Z" });
+        const preview = await previewPaymentMatch(context(actor), intake.publicId, {
+            allocations: [{ borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "60.00" }],
+        });
+        await postPayment(context(actor), intake.publicId, { proposalPublicId: preview.publicId });
+        expect(await db.select().from(floatingTransactionAllocations)).toHaveLength(1);
+
+        await expect(correctFloatingInterestAccruals(
+            context(actor, "reject-allocated-correction"),
+            seeded.loan.publicId,
+            ["2026-08-07"],
+            "Try to rewrite allocated interest",
+        )).rejects.toMatchObject({ code: "ACCRUAL_CORRECTION_HAS_ALLOCATIONS", status: 409 });
+    });
+
+    // Break caught: correcting an unpaid accrual can orphan an immutable
+    // penalty assessment whose recorded interest basis depends on that row.
+    integrationTest("rejects correction of an accrual with dependent penalty history", async () => {
+        const actor = await seedUser("tenant-floating-correction-penalty");
+        const seeded = await seedFloatingLoan(actor);
+        await db.insert(loanInterestAccruals).values({
+            tenantId: actor.tenantId, loanId: seeded.loan.id, interestRatePeriodId: seeded.period.id,
+            accrualDate: "2026-08-07", openingPrincipal: "4000.00", rateMode: "per_thousand", rate: "15.0000",
+            interestAmount: "60.00", paidAmount: "0.00", status: "accrued", createdByUserId: actor.id,
+        });
+        const audit = await db.insert(auditLogs).values({
+            tenantId: actor.tenantId, entityType: "loan", entityId: seeded.loan.publicId,
+            action: "penalty_materialized", actorUserId: actor.id, actorSource: "web",
+            requestId: "req-penalty-history", correlationId: "corr-penalty-history",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(floatingPenaltyLedgerEntries).values({
+            tenantId: actor.tenantId, loanId: seeded.loan.id, dueDate: "2026-08-07", penaltyDate: "2026-08-08",
+            entryType: "fixed_assessment", amount: "10.00", openingInterestBasis: "60.00",
+            lateFeeMode: "fixed", lateFeeValue: "10.00", gracePeriodDays: 0,
+            idempotencyKey: "penalty-history", auditPublicId: audit.publicId, actorSource: "web",
+            requestId: "req-penalty-history", correlationId: "corr-penalty-history", createdByUserId: actor.id,
+        });
+
+        await expect(correctFloatingInterestAccruals(
+            context(actor, "reject-penalty-history-correction"),
+            seeded.loan.publicId,
+            ["2026-08-07"],
+            "Try to rewrite assessed interest",
+        )).rejects.toMatchObject({ code: "ACCRUAL_CORRECTION_HAS_PENALTY_HISTORY", status: 409 });
+    });
+
+    // Break caught: catch-up materialization applies the loan's current
+    // outstanding principal to every historical gap instead of dated payments.
+    integrationTest("materializes daily accrual gaps from dated principal history", async () => {
+        const actor = await seedUser("tenant-floating-dated-principal");
+        const seeded = await seedFloatingLoan(actor);
+        await db.insert(transactions).values({
+            tenantId: actor.tenantId, ownerUserId: actor.id, loanId: seeded.loan.id,
+            amount: "100.00", principalComponent: "100.00", interestComponent: "0.00",
+            feeComponent: "0.00", penaltyComponent: "0.00", type: "repayment", entryType: "repayment",
+            transactionDate: new Date("2026-08-08T05:00:00.000Z"), postedAt: new Date("2026-08-08T05:01:00.000Z"),
+            idempotencyKey: "dated-principal-history", recordedByUserId: actor.id,
+        });
+        await db.update(loans).set({ outstandingPrincipal: "3900.00" }).where(eq(loans.id, seeded.loan.id));
+        const loan = (await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) }))!;
+
+        await accrueFloatingInterestThrough(db, loan, new Date("2026-08-10T12:00:00+07:00"), actor.id);
+
+        expect(await db.select({
+            accrualDate: loanInterestAccruals.accrualDate,
+            openingPrincipal: loanInterestAccruals.openingPrincipal,
+            interestAmount: loanInterestAccruals.interestAmount,
+        }).from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, seeded.loan.id))
+            .orderBy(loanInterestAccruals.accrualDate)).toEqual([
+            { accrualDate: "2026-08-06", openingPrincipal: "4000.00", interestAmount: "60.00" },
+            { accrualDate: "2026-08-07", openingPrincipal: "4000.00", interestAmount: "60.00" },
+            { accrualDate: "2026-08-08", openingPrincipal: "4000.00", interestAmount: "60.00" },
+            { accrualDate: "2026-08-09", openingPrincipal: "3900.00", interestAmount: "58.50" },
+            { accrualDate: "2026-08-10", openingPrincipal: "3900.00", interestAmount: "58.50" },
+        ]);
+    });
+
+    // Break caught: a backdated principal component leaves later immutable
+    // accruals priced on the prior principal with no compensating mechanism.
+    integrationTest("rejects backdated principal when later accrual history already exists", async () => {
+        const actor = await seedUser("tenant-floating-backdated-principal");
+        const seeded = await seedFloatingLoan(actor);
+        await accrueFloatingInterestThrough(db, seeded.loan, new Date("2026-08-10T12:00:00+07:00"), actor.id);
+        const intake = await createPaymentIntake(context(actor), {
+            amount: "200.00", receivedAt: "2026-08-07T05:00:00.000Z",
+        });
+        const preview = await previewPaymentMatch(context(actor), intake.publicId, {
+            allocations: [{ borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "200.00" }],
+        });
+
+        await expect(postPayment(context(actor), intake.publicId, { proposalPublicId: preview.publicId }))
+            .rejects.toMatchObject({ code: "FLOATING_BACKDATED_PRINCIPAL_REQUIRES_RECONCILIATION", status: 409 });
     });
 
     // Break caught: data-only intake is rejected, money is coerced through Number, or a retry creates a second row.

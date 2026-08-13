@@ -2,7 +2,17 @@ import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bu
 import { and, eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { borrowers, loanInterestAccruals, loanInterestRatePeriods, loanSchedules, loans, users } from "../db/schema";
+import {
+    auditLogs,
+    borrowers,
+    floatingTransactionAllocations,
+    loanInterestAccruals,
+    loanInterestRatePeriods,
+    loanSchedules,
+    loans,
+    transactions,
+    users,
+} from "../db/schema";
 import { loansRoute } from "../modules/loans";
 import { getLoanPaymentHealth } from "./loan-payment-health-service";
 
@@ -63,8 +73,9 @@ describe("loan payment-health service", () => {
         });
     });
 
-    // Break caught: today's floating interest is overdue immediately, partial history uses gross, or retries duplicate dates.
-    integrationTest("materializes floating accruals idempotently and uses exact unpaid remainders", async () => {
+    // Break caught: today's floating interest is overdue immediately, partial history uses gross,
+    // or a health read writes missing financial snapshots.
+    integrationTest("projects floating accruals without mutation and uses exact unpaid remainders", async () => {
         const { actor, borrower } = await seedActorAndBorrower("tenant-a");
         const loan = await db.insert(loans).values({
             tenantId: "tenant-a", ownerUserId: actor.id, borrowerId: borrower.id,
@@ -78,10 +89,32 @@ describe("loan payment-health service", () => {
             tenantId: "tenant-a", loanId: loan.id, effectiveDate: "2026-08-09", expiryDate: null,
             rateType: "per_thousand", rate: "15.0000", createdByUserId: actor.id,
         }).returning().then((rows) => rows[0]!);
-        await db.insert(loanInterestAccruals).values({
-            tenantId: "tenant-a", loanId: loan.id, interestRatePeriodId: period.id, accrualDate: "2026-08-10",
-            openingPrincipal: "1000.00", rateMode: "per_thousand", rate: "15.0000",
-            interestAmount: "15.00", paidAmount: "7.50", status: "accrued", createdByUserId: actor.id,
+        await db.transaction(async (tx) => {
+            const accrual = await tx.insert(loanInterestAccruals).values({
+                tenantId: "tenant-a", loanId: loan.id, interestRatePeriodId: period.id, accrualDate: "2026-08-10",
+                openingPrincipal: "1000.00", rateMode: "per_thousand", rate: "15.0000",
+                interestAmount: "15.00", paidAmount: "7.50", status: "accrued", createdByUserId: actor.id,
+            }).returning().then((rows) => rows[0]!);
+            const payment = await tx.insert(transactions).values({
+                tenantId: "tenant-a", ownerUserId: actor.id, loanId: loan.id,
+                amount: "7.50", principalComponent: "0.00", interestComponent: "7.50",
+                feeComponent: "0.00", penaltyComponent: "0.00", type: "repayment",
+                transactionDate: new Date("2026-08-10T05:00:00.000Z"), entryType: "repayment",
+                idempotencyKey: "health-partial-payment", postedAt: new Date("2026-08-10T05:00:00.000Z"),
+            }).returning().then((rows) => rows[0]!);
+            const audit = await tx.insert(auditLogs).values({
+                tenantId: "tenant-a", entityType: "transaction", entityId: payment.publicId,
+                action: "floating_payment_allocations_recorded", actorUserId: actor.id, actorSource: "web",
+                requestId: "health-partial-payment", correlationId: "health-partial-payment",
+            }).returning().then((rows) => rows[0]!);
+            await tx.insert(floatingTransactionAllocations).values({
+                tenantId: "tenant-a", loanId: loan.id, transactionId: payment.id,
+                dueDate: "2026-08-10", component: "interest", interestAccrualId: accrual.id,
+                effectiveDate: "2026-08-10", allocationOrder: 1, entryType: "payment", amount: "7.50",
+                idempotencyKey: "health-partial-allocation", auditPublicId: audit.publicId,
+                actorSource: "web", requestId: "health-partial-payment",
+                correlationId: "health-partial-payment", createdByUserId: actor.id,
+            });
         });
 
         const input = { asOf: new Date("2026-08-11T12:00:00+07:00"), actorUserId: actor.id };
@@ -95,7 +128,7 @@ describe("loan payment-health service", () => {
         expect(second).toEqual(first);
         expect(await db.select().from(loanInterestAccruals).where(and(
             eq(loanInterestAccruals.tenantId, "tenant-a"), eq(loanInterestAccruals.loanId, loan.id),
-        ))).toHaveLength(2);
+        ))).toHaveLength(1);
     });
 
     // Break caught: weekly interest is absent between boundaries or becomes
@@ -121,12 +154,7 @@ describe("loan payment-health service", () => {
             status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00",
             accruingInterestAmount: "257.14", overdueItemCount: 0, maxOverdueDays: 0,
         });
-        expect(await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id))
-            .orderBy(loanInterestAccruals.accrualDate)).toMatchObject([
-            { accrualDate: "2026-08-11", periodStartDate: "2026-08-10", periodEndDate: "2026-08-17", periodDayIndex: 1, periodDays: 7, openingPrincipal: "5000.00", interestAmount: "85.71", cumulativeInterestAmount: "85.71", status: "accruing" },
-            { accrualDate: "2026-08-12", periodDayIndex: 2, interestAmount: "85.72", cumulativeInterestAmount: "171.43", status: "accruing" },
-            { accrualDate: "2026-08-13", periodDayIndex: 3, interestAmount: "85.71", cumulativeInterestAmount: "257.14", status: "accruing" },
-        ]);
+        expect(await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id))).toHaveLength(0);
 
         expect(await getLoanPaymentHealth(db, loan, {
             asOf: new Date("2026-08-17T12:00:00+07:00"), actorUserId: actor.id,
@@ -134,25 +162,44 @@ describe("loan payment-health service", () => {
             status: "due_today", dueTodayAmount: "600.00", overdueAmount: "0.00",
             accruingInterestAmount: "0.00", overdueItemCount: 0, maxOverdueDays: 0,
         });
-        expect(await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id)))
-            .toHaveLength(7);
+        expect(await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id))).toHaveLength(0);
 
         expect(await getLoanPaymentHealth(db, loan, {
             asOf: new Date("2026-08-18T12:00:00+07:00"), actorUserId: actor.id,
         })).toMatchObject({
             status: "overdue", dueTodayAmount: "0.00", overdueAmount: "600.00",
-            accruingInterestAmount: "85.71", overdueItemCount: 7, maxOverdueDays: 1,
+            accruingInterestAmount: "85.71", overdueItemCount: 1, maxOverdueDays: 1,
         });
-        expect(await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id))).toHaveLength(8);
+        expect(await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id))).toHaveLength(0);
+    });
 
-        const firstSnapshot = await db.query.loanInterestAccruals.findFirst({
-            where: eq(loanInterestAccruals.loanId, loan.id),
+    // Break caught: a pre-proration weekly aggregate is overlaid on only its
+    // anchor date while the other six projected increments remain payable.
+    integrationTest("does not double count a legacy weekly aggregate with projected period increments", async () => {
+        const { actor, borrower } = await seedActorAndBorrower("tenant-legacy-weekly-health");
+        const loan = await db.insert(loans).values({
+            tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id,
+            principalAmount: "5000.00", interestRate: "0.00", repaymentType: "floating",
+            dailyInterestMode: "percent", dailyInterestRate: "12.0000", floatingAccrualCycle: "weekly",
+            firstDayTreatment: "start_next_day", interestStartDate: "2026-08-10",
+            outstandingPrincipal: "5000.00", outstandingInterest: "600.00", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        const period = await db.insert(loanInterestRatePeriods).values({
+            tenantId: actor.tenantId, loanId: loan.id, effectiveDate: "2026-08-10", expiryDate: null,
+            rateType: "percent", rate: "12.0000", createdByUserId: actor.id,
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanInterestAccruals).values({
+            tenantId: actor.tenantId, loanId: loan.id, interestRatePeriodId: period.id,
+            accrualDate: "2026-08-17", openingPrincipal: "5000.00", rateMode: "percent", rate: "12.0000",
+            interestAmount: "600.00", paidAmount: "0.00", status: "due", createdByUserId: actor.id,
         });
-        expect(firstSnapshot).toBeDefined();
-        await expect(Promise.resolve(db.update(loanInterestAccruals).set({ openingPrincipal: "1.00" })
-            .where(eq(loanInterestAccruals.id, firstSnapshot!.id)))).rejects.toThrow();
-        await expect(Promise.resolve(db.delete(loanInterestAccruals)
-            .where(eq(loanInterestAccruals.id, firstSnapshot!.id)))).rejects.toThrow();
+
+        expect(await getLoanPaymentHealth(db, loan, {
+            asOf: new Date("2026-08-18T12:00:00+07:00"), actorUserId: actor.id,
+        })).toMatchObject({
+            status: "overdue", overdueAmount: "600.00", accruingInterestAmount: "85.71",
+            overdueItemCount: 1, maxOverdueDays: 1,
+        });
     });
 
     // Break caught: a mid-period contractual rate change reuses the old rate or
@@ -172,16 +219,10 @@ describe("loan payment-health service", () => {
         ]).returning();
 
         await getLoanPaymentHealth(db, loan, { asOf: new Date("2026-08-13T12:00:00+07:00"), actorUserId: actor.id });
-        expect(await db.select({
-            accrualDate: loanInterestAccruals.accrualDate,
-            interestRatePeriodId: loanInterestAccruals.interestRatePeriodId,
-            interestAmount: loanInterestAccruals.interestAmount,
-            cumulativeInterestAmount: loanInterestAccruals.cumulativeInterestAmount,
-        }).from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id)).orderBy(loanInterestAccruals.accrualDate)).toEqual([
-            { accrualDate: "2026-08-11", interestRatePeriodId: periods[0]!.id, interestAmount: "85.71", cumulativeInterestAmount: "85.71" },
-            { accrualDate: "2026-08-12", interestRatePeriodId: periods[0]!.id, interestAmount: "85.72", cumulativeInterestAmount: "171.43" },
-            { accrualDate: "2026-08-13", interestRatePeriodId: periods[1]!.id, interestAmount: "42.86", cumulativeInterestAmount: "214.29" },
-        ]);
+        expect(await getLoanPaymentHealth(db, loan, {
+            asOf: new Date("2026-08-13T12:00:00+07:00"), actorUserId: actor.id,
+        })).toMatchObject({ status: "current", accruingInterestAmount: "214.29" });
+        expect(await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id))).toHaveLength(0);
     });
 
     // Break caught: a catch-up accrual applies today's rate to every missing historical date.
@@ -200,18 +241,13 @@ describe("loan payment-health service", () => {
             { tenantId: "tenant-a", loanId: loan.id, effectiveDate: "2026-09-01", expiryDate: null, rateType: "per_thousand", rate: "18.0000", createdByUserId: actor.id },
         ]).returning();
 
-        await getLoanPaymentHealth(db, loan, { asOf: new Date("2026-09-02T12:00:00+07:00"), actorUserId: actor.id });
-
-        expect(await db.select({
-            accrualDate: loanInterestAccruals.accrualDate,
-            interestRatePeriodId: loanInterestAccruals.interestRatePeriodId,
-            rate: loanInterestAccruals.rate,
-            interestAmount: loanInterestAccruals.interestAmount,
-        }).from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id)).orderBy(loanInterestAccruals.accrualDate)).toEqual([
-            { accrualDate: "2026-08-31", interestRatePeriodId: periods[0]!.id, rate: "15.0000", interestAmount: "15.00" },
-            { accrualDate: "2026-09-01", interestRatePeriodId: periods[1]!.id, rate: "18.0000", interestAmount: "18.00" },
-            { accrualDate: "2026-09-02", interestRatePeriodId: periods[1]!.id, rate: "18.0000", interestAmount: "18.00" },
-        ]);
+        expect(await getLoanPaymentHealth(db, loan, {
+            asOf: new Date("2026-09-02T12:00:00+07:00"), actorUserId: actor.id,
+        })).toMatchObject({
+            status: "overdue", dueTodayAmount: "18.00", overdueAmount: "33.00",
+            overdueItemCount: 2, maxOverdueDays: 2,
+        });
+        expect(await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id))).toHaveLength(0);
     });
 
     // Break caught: legacy floating principal creates synthetic payable interest without a policy.

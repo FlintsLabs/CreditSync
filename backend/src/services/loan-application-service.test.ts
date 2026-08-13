@@ -155,17 +155,20 @@ describe("loan application service", () => {
             mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "weekly",
         });
         expect(weekly).toMatchObject({
-            firstPeriodInterest: "50.00",
-            advanceInterest: "0.00",
-            netBorrowerPayout: "5000.00",
+            fullPeriodInterest: "50.00",
+            firstPeriodStartDate: "2026-08-10",
             coveredStartDate: null,
             coveredEndDate: null,
             firstPeriodDueDate: "2026-08-17",
+            advanceInterestAmount: "0.00",
+            netDisbursement: "5000.00",
             nextAccrualDate: "2026-08-17",
             periodDays: 7,
             advanceInterestRefundPolicy: "non_refundable",
         });
-        expect(weekly).not.toHaveProperty("fullPeriodInterest");
+        expect(weekly).not.toHaveProperty("firstPeriodInterest");
+        expect(weekly).not.toHaveProperty("advanceInterest");
+        expect(weekly).not.toHaveProperty("netBorrowerPayout");
         expect(weekly).not.toHaveProperty("nextInterestDate");
         expect(weekly).not.toHaveProperty("nonRefundable");
         expect(weekly).not.toHaveProperty("dailyInterestAtCurrentPrincipal");
@@ -174,17 +177,20 @@ describe("loan application service", () => {
             floatingDailyInterest: { mode: "percent", rate: "12", firstDayTreatment: "deduct", accrualCycle: "weekly" },
         });
         expect(advance).toMatchObject({
-            firstPeriodInterest: "600.00",
-            advanceInterest: "600.00",
-            netBorrowerPayout: "4400.00",
+            fullPeriodInterest: "600.00",
+            firstPeriodStartDate: "2026-08-10",
             coveredStartDate: "2026-08-10",
             coveredEndDate: "2026-08-16",
             firstPeriodDueDate: "2026-08-17",
+            advanceInterestAmount: "600.00",
+            netDisbursement: "4400.00",
             nextAccrualDate: "2026-08-17",
             periodDays: 7,
             advanceInterestRefundPolicy: "non_refundable",
         });
-        expect(advance).not.toHaveProperty("fullPeriodInterest");
+        expect(advance).not.toHaveProperty("firstPeriodInterest");
+        expect(advance).not.toHaveProperty("advanceInterest");
+        expect(advance).not.toHaveProperty("netBorrowerPayout");
         expect(advance).not.toHaveProperty("nextInterestDate");
         expect(advance).not.toHaveProperty("nonRefundable");
         expect(advance).not.toHaveProperty("dailyInterestAtCurrentPrincipal");
