@@ -111,7 +111,7 @@ if (!testDatabaseUrl) {
             // The suite migrates its disposable database before running tests. Recreate
             // the schema here so this migration contract owns its required 0000 state.
             await sql.unsafe("DROP SCHEMA public CASCADE");
-            await sql.unsafe("DROP SCHEMA drizzle CASCADE");
+            await sql.unsafe("DROP SCHEMA IF EXISTS drizzle CASCADE");
             await sql.unsafe("CREATE SCHEMA public");
             const existingTables = await sql<{ count: string }[]>`
                 SELECT count(*)::text AS count
@@ -148,7 +148,7 @@ if (!testDatabaseUrl) {
             // Rebuild the disposable database at the 0007 boundary so the additive
             // migration can be exercised with legacy rows.
             await sql.unsafe("DROP SCHEMA public CASCADE");
-            await sql.unsafe("DROP SCHEMA drizzle CASCADE");
+            await sql.unsafe("DROP SCHEMA IF EXISTS drizzle CASCADE");
             await sql.unsafe("CREATE SCHEMA public");
             for (let migration = 0; migration <= 7; migration += 1) {
                 const prefix = migration.toString().padStart(4, "0");

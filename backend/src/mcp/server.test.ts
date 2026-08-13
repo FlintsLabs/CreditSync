@@ -6,7 +6,7 @@ import { Elysia } from "elysia";
 import { DomainError } from "../services/domain-error";
 import type { CommandContext } from "../services/command-context";
 import { previewLoan } from "../services/loan-application-service";
-import { createMcpHttpPlugin, MCP_TOOL_NAMES, type McpToolHandler } from "./server";
+import { createMcpHttpPlugin, MCP_TOOL_NAMES, type CreateMcpHttpPluginInput, type McpToolHandler } from "./server";
 import type { McpRuntimeConfig } from "./security";
 
 const TOKEN = "contract-secret";
@@ -56,13 +56,15 @@ function intakeFixture(status: "draft" | "posted" = "draft") {
 
 async function startServer(input: {
     toolHandlers?: Partial<Record<(typeof MCP_TOOL_NAMES)[number], McpToolHandler>>;
+    preflightHandlers?: Partial<Record<(typeof MCP_TOOL_NAMES)[number], McpToolHandler>>;
     runtimeConfig?: McpRuntimeConfig;
     logs?: Array<Record<string, unknown>>;
     auditPublicIds?: string[];
 }) {
-    const app = new Elysia().use(createMcpHttpPlugin({
+    const pluginInput: CreateMcpHttpPluginInput = {
         config: input.runtimeConfig ?? config(),
         handlers: handlers(input.toolHandlers ?? {}),
+        preflightHandlers: input.preflightHandlers,
         resolvePrincipal: async ({ tenantId, actorEmail }) => {
             expect(tenantId).toBe("tenant-fixed");
             expect(actorEmail).toBe("mcp-agent@example.test");
@@ -71,7 +73,8 @@ async function startServer(input: {
         consumeRateLimit: async () => ({ allowed: true, remaining: 99, retryAfterSeconds: 0 }),
         findAuditPublicIds: async () => input.auditPublicIds ?? [AUDIT_ID],
         logger: (entry) => input.logs?.push(entry),
-    })).listen({ hostname: "127.0.0.1", port: 0 });
+    };
+    const app = new Elysia().use(createMcpHttpPlugin(pluginInput)).listen({ hostname: "127.0.0.1", port: 0 });
     runningApps.push(app);
     return `http://127.0.0.1:${app.server!.port}`;
 }
@@ -123,6 +126,67 @@ describe("CreditSync stateless MCP contract", () => {
                 schedule: [],
             },
         });
+        await client.close();
+    });
+
+    // Break caught: a single-payment activation commits before the frozen MCP
+    // output contract rejects the new repayment type as INVALID_TOOL_OUTPUT.
+    test("rejects unsupported single-payment activation before invoking the financial handler", async () => {
+        const state = { status: "draft", repaymentType: "single_payment" };
+        let activationCalls = 0;
+        const baseUrl = await startServer({
+            preflightHandlers: {
+                "loan.activate": async () => {
+                    if (state.repaymentType === "single_payment") {
+                        throw new DomainError(
+                            "MCP_LOAN_TYPE_UNSUPPORTED",
+                            "Single-payment activation is not available through the frozen MCP contract",
+                            409,
+                        );
+                    }
+                },
+            },
+            toolHandlers: {
+                "loan.activate": async () => {
+                    activationCalls += 1;
+                    state.status = "active";
+                    return {
+                        id: BORROWER_ID,
+                        publicId: BORROWER_ID,
+                        borrowerPublicId: BORROWER_ID,
+                        bankLoanPublicId: null,
+                        bankProfilePublicId: null,
+                        principal: "5000.00",
+                        principalAmount: "5000.00",
+                        interestRate: "0.00",
+                        repaymentType: "single_payment",
+                        termMonths: 1,
+                        installmentAmount: null,
+                        totalInstallments: null,
+                        startDate: "2026-08-10",
+                        nextDueDate: "2026-08-19",
+                        outstandingPrincipal: "5000.00",
+                        outstandingInterest: "500.00",
+                        outstandingFees: "0.00",
+                        status: "active",
+                    };
+                },
+            },
+        });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+
+        const result = await client.callTool({ name: "loan.activate", arguments: { loanPublicId: BORROWER_ID } });
+
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({
+            error: {
+                code: "MCP_LOAN_TYPE_UNSUPPORTED",
+                message: "Single-payment activation is not available through the frozen MCP contract",
+            },
+        });
+        expect(activationCalls).toBe(0);
+        expect(state.status).toBe("draft");
         await client.close();
     });
 

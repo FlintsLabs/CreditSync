@@ -80,6 +80,10 @@ export function normalizePublicLoanTerms(input: PublicLoanTerms): NormalizedPubl
     if (!(["single_payment", "daily", "weekly", "monthly", "floating"] as const).includes(input.repaymentType)) {
         throw new Error("Repayment type is not supported");
     }
+    if (input.repaymentType === "single_payment"
+        && (input.totalInstallments !== undefined || input.installmentAmount !== undefined)) {
+        throw new Error("Single-payment terms cannot include installment metadata");
+    }
     if (input.totalInstallments !== undefined
         && (!Number.isFinite(input.totalInstallments)
             || !Number.isInteger(input.totalInstallments)

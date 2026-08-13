@@ -146,11 +146,27 @@ describe("loan application service", () => {
         }).floatingDailyInterest).toEqual({
             mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "daily",
         });
-        expect(previewLoan({
+        const weekly = previewLoan({
             ...base,
             floatingDailyInterest: { mode: "percent", rate: "1", firstDayTreatment: "start_next_day", accrualCycle: "weekly" },
-        }).floatingDailyInterest).toEqual({
+        });
+        expect(weekly.floatingDailyInterest).toEqual({
             mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "weekly",
+        });
+        expect(weekly).toMatchObject({
+            firstDayInterest: "0.00",
+            dailyInterestAtCurrentPrincipal: "50.00",
+            netDisbursement: "5000.00",
+            nextInterestDate: "2026-08-17",
+        });
+        expect(previewLoan({
+            ...base,
+            floatingDailyInterest: { mode: "percent", rate: "1", firstDayTreatment: "deduct", accrualCycle: "weekly" },
+        })).toMatchObject({
+            firstDayInterest: "50.00",
+            dailyInterestAtCurrentPrincipal: "50.00",
+            netDisbursement: "4950.00",
+            nextInterestDate: "2026-08-10",
         });
     });
 
@@ -328,6 +344,64 @@ describe("loan application service", () => {
         })).rejects.toMatchObject({ code: "LOAN_TERMS_LOCKED", status: 409 });
     });
 
+    // Break caught: draft updates silently discard explicit incompatible term
+    // objects and carry periodic installment metadata into a type transition.
+    integrationTest("rejects explicit incompatible terms and clears only inherited transition metadata", async () => {
+        const actor = await seedUser("tenant-a", "closed-update@example.test", "owner");
+        const ctx = context("tenant-a", actor.id, "closed-update-create");
+        const borrower = await createBorrower(ctx, { name: "Closed Update Borrower" });
+        const draft = await createLoanDraft(ctx, {
+            borrowerPublicId: borrower.publicId,
+            principal: "5000.00", interestRate: "12.00", repaymentType: "monthly", termMonths: 3,
+            totalInstallments: 3, installmentAmount: "1800.00", startDate: "2026-08-10",
+        });
+        const singlePayment = {
+            dueDate: "2026-08-19", fixedAgreedInterest: "500.00", interestPolicy: "fixed_only" as const,
+            latePenalty: { mode: "none" as const },
+        };
+
+        const sameType = await updateLoanDraft(context("tenant-a", actor.id, "closed-update-preserve-monthly"), draft.publicId, {
+            principal: "5100.00",
+        });
+        expect(sameType).toMatchObject({
+            repaymentType: "monthly", totalInstallments: 3, installmentAmount: "1800.00",
+        });
+
+        await expect(updateLoanDraft(context("tenant-a", actor.id, "closed-update-reject-single"), draft.publicId, {
+            singlePayment,
+        })).rejects.toMatchObject({ code: "INVALID_LOAN_TERMS", status: 400 });
+
+        const transitioned = await updateLoanDraft(context("tenant-a", actor.id, "closed-update-to-single"), draft.publicId, {
+            repaymentType: "single_payment",
+            termMonths: 1,
+            singlePayment,
+        });
+        expect(transitioned).toMatchObject({
+            repaymentType: "single_payment", totalInstallments: null, installmentAmount: null,
+            singlePayment,
+        });
+        expect(await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) })).toMatchObject({
+            repaymentType: "single_payment", totalInstallments: null, installmentAmount: null,
+        });
+
+        await expect(updateLoanDraft(context("tenant-a", actor.id, "closed-update-reject-floating"), draft.publicId, {
+            floatingDailyInterest: {
+                mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "weekly",
+            },
+        })).rejects.toMatchObject({ code: "INVALID_LOAN_TERMS", status: 400 });
+
+        const floating = await updateLoanDraft(context("tenant-a", actor.id, "closed-update-to-floating"), draft.publicId, {
+            repaymentType: "floating",
+            floatingDailyInterest: {
+                mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "weekly",
+            },
+        });
+        expect(floating).toMatchObject({
+            repaymentType: "floating", totalInstallments: null, installmentAmount: null, singlePayment: null,
+            floatingDailyInterest: { accrualCycle: "weekly" },
+        });
+    });
+
     // Break caught: activation stores 108.00 outstanding for a 100.00 zero-interest loan split over 12 months.
     integrationTest("activation conserves non-even schedule and rollup money exactly", async () => {
         const actor = await seedUser("tenant-a", "conservation@example.test", "collector");
@@ -383,7 +457,7 @@ describe("loan application service", () => {
     });
 
     // Break caught: a first-day paid accrual cannot prove which effective-dated rate produced it.
-    integrationTest("links a deducted first-day accrual to the initial rate period", async () => {
+    integrationTest("links a weekly deducted first-period accrual to the initial rate period", async () => {
         const actor = await seedUser("tenant-a", "floating-first-day@example.test", "collector");
         const ctx = context("tenant-a", actor.id);
         const borrower = await createBorrower(ctx, { name: "Floating First Day Borrower" });
@@ -391,7 +465,7 @@ describe("loan application service", () => {
             borrowerPublicId: borrower.publicId,
             principal: "1000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1,
             startDate: "2026-08-10",
-            floatingDailyInterest: { mode: "per_thousand", rate: "15", firstDayTreatment: "deduct" },
+            floatingDailyInterest: { mode: "per_thousand", rate: "15", firstDayTreatment: "deduct", accrualCycle: "weekly" },
         });
         const stored = await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) });
 
@@ -399,6 +473,7 @@ describe("loan application service", () => {
 
         const [period] = await db.select().from(loanInterestRatePeriods).where(eq(loanInterestRatePeriods.loanId, stored!.id));
         const [accrual] = await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, stored!.id));
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, stored!.id) })).toMatchObject({ floatingAccrualCycle: "weekly" });
         expect(accrual).toMatchObject({ interestRatePeriodId: period!.id, accrualDate: "2026-08-10", interestAmount: "15.00", paidAmount: "15.00" });
     });
 
@@ -708,6 +783,65 @@ describe("loan application service", () => {
         const compatible = await activateLoan(firstCtx, legacy.publicId);
         expect(compatible).toMatchObject({ publicId: legacy.publicId, status: "active", termMonths: null });
         expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, legacy.id))).toHaveLength(0);
+    });
+
+    // Break caught: create/update route variants leak raw floating normalization
+    // exceptions or silently accept incompatible financial term objects.
+    integrationTest("returns stable REST errors for invalid floating create/update and closed updates", async () => {
+        const owner = await seedUser("tenant-a", "rest-invalid-terms@example.test", "owner");
+        const ctx = context("tenant-a", owner.id);
+        const borrower = await createBorrower(ctx, { name: "Invalid Terms Borrower" });
+        const draft = await createLoanDraft(ctx, { borrowerPublicId: borrower.publicId, ...terms });
+        const token = await authToken(owner);
+        const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+        const app = new Elysia().use(loansRoute);
+        const floatingBase = {
+            principal: "5000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1,
+            startDate: "2026-08-10", borrowerPublicId: borrower.publicId,
+        };
+        const policies = [
+            { mode: "percent", rate: "0", firstDayTreatment: "start_next_day", accrualCycle: "daily" },
+            { mode: "percent", rate: "not-a-rate", firstDayTreatment: "start_next_day", accrualCycle: "daily" },
+            { mode: "percent", rate: "1.00000", firstDayTreatment: "start_next_day", accrualCycle: "daily" },
+            { mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "monthly" },
+        ];
+        for (const [index, floatingDailyInterest] of policies.entries()) {
+            const created = await jsonRequest(app, "/loans", {
+                method: "POST", headers, body: JSON.stringify({ ...floatingBase, floatingDailyInterest }),
+            });
+            expect(created.response.status, created.text).toBe(400);
+            expect(created.body).toEqual({ error: "Floating interest policy is invalid", code: "INVALID_LOAN_TERMS" });
+            expect(created.text).not.toContain("DecimalError");
+
+            const updated = await jsonRequest(app, `/loans/${draft.publicId}`, {
+                method: "PUT",
+                headers: { ...headers, "x-request-id": `invalid-floating-update-${index}` },
+                body: JSON.stringify({ repaymentType: "floating", floatingDailyInterest }),
+            });
+            expect(updated.response.status, updated.text).toBe(400);
+            expect(updated.body).toEqual({ error: "Floating interest policy is invalid", code: "INVALID_LOAN_TERMS" });
+            expect(updated.text).not.toContain("DecimalError");
+        }
+        expect(await db.select().from(loans)).toHaveLength(1);
+
+        const singlePayment = {
+            dueDate: "2026-08-19", fixedAgreedInterest: "500.00", interestPolicy: "fixed_only",
+            latePenalty: { mode: "none" },
+        };
+        const incompatible = await jsonRequest(app, `/loans/${draft.publicId}`, {
+            method: "PUT", headers, body: JSON.stringify({ singlePayment }),
+        });
+        expect(incompatible.response.status, incompatible.text).toBe(400);
+        expect(incompatible.body).toMatchObject({ code: "INVALID_LOAN_TERMS" });
+
+        const transitioned = await jsonRequest(app, `/loans/${draft.publicId}`, {
+            method: "PUT", headers,
+            body: JSON.stringify({ repaymentType: "single_payment", termMonths: 1, singlePayment }),
+        });
+        expect(transitioned.response.status, transitioned.text).toBe(200);
+        expect(transitioned.body).toMatchObject({
+            repaymentType: "single_payment", totalInstallments: null, installmentAmount: null,
+        });
     });
 
     // Break caught: core loan REST adapters expose numeric database keys or accept numeric public money/source identifiers.

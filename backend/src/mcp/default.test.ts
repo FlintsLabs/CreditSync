@@ -102,7 +102,7 @@ describe("default MCP adapter integration", () => {
         const loan = await db.insert(loans).values({
             tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id,
             principalAmount: "1000.00", outstandingPrincipal: "1000.00", interestRate: "0.00",
-            repaymentType: "floating", firstDayTreatment: "start_next_day", interestStartDate: "2026-08-01", status: "active",
+            repaymentType: "floating", floatingAccrualCycle: "daily", firstDayTreatment: "start_next_day", interestStartDate: "2026-08-01", status: "active",
         }).returning().then((rows) => rows[0]!);
         await db.insert(loanInterestRatePeriods).values({
             tenantId: TENANT_ID, loanId: loan.id, effectiveDate: "2026-08-01", expiryDate: null,
@@ -137,7 +137,7 @@ describe("default MCP adapter integration", () => {
     integrationTest("rejects evidence IDs on disbursement draft so callers use prepare then finalize", async () => {
         const actor = await db.insert(users).values({ tenantId: TENANT_ID, email: ACTOR_EMAIL, role: "owner" }).returning().then((rows) => rows[0]!);
         const borrower = await db.insert(borrowers).values({ tenantId: TENANT_ID, ownerUserId: actor.id, name: "MCP evidence boundary borrower" }).returning().then((rows) => rows[0]!);
-        const loan = await db.insert(loans).values({ tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "100.00", interestRate: "0.00", repaymentType: "floating", outstandingPrincipal: "100.00", status: "active" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({ tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "100.00", interestRate: "0.00", repaymentType: "floating", floatingAccrualCycle: "daily", outstandingPrincipal: "100.00", status: "active" }).returning().then((rows) => rows[0]!);
         const { client } = await startDefaultServer();
         const result = await client.callTool({
             name: "loan.disbursement.draft",
@@ -177,7 +177,7 @@ describe("default MCP adapter integration", () => {
         const [existingLoan, draft] = await db.insert(loans).values([
             {
                 tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id,
-                principalAmount: "120.00", interestRate: "0.00", repaymentType: "floating",
+                principalAmount: "120.00", interestRate: "0.00", repaymentType: "floating", floatingAccrualCycle: "daily",
                 outstandingPrincipal: "120.00", status: "active",
             },
             {
@@ -225,6 +225,68 @@ describe("default MCP adapter integration", () => {
         expect(await db.select().from(loanFundingAllocations).where(eq(loanFundingAllocations.loanId, draft!.id))).toHaveLength(0);
         expect(await db.select().from(auditLogs).where(and(
             eq(auditLogs.entityId, draft!.publicId),
+            eq(auditLogs.action, "activated"),
+        ))).toHaveLength(0);
+
+        await client.close();
+    });
+
+    integrationTest("rejects single-payment activation before changing the draft", async () => {
+        const actor = await db.insert(users).values({
+            tenantId: TENANT_ID,
+            email: ACTOR_EMAIL,
+            role: "owner",
+        }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({
+            tenantId: TENANT_ID,
+            ownerUserId: actor.id,
+            name: "MCP single-payment borrower",
+        }).returning().then((rows) => rows[0]!);
+        const draft = await db.insert(loans).values({
+            tenantId: TENANT_ID,
+            ownerUserId: actor.id,
+            borrowerId: borrower.id,
+            principalAmount: "5000.00",
+            interestRate: "0.00",
+            repaymentType: "single_payment",
+            termMonths: 1,
+            startDate: "2026-08-10",
+            singlePaymentDueDate: "2026-08-19",
+            singlePaymentFixedAgreedInterest: "500.00",
+            singlePaymentInterestPolicy: "fixed_only",
+            singlePaymentLatePenaltyMode: "none",
+            outstandingPrincipal: "0.00",
+            outstandingInterest: "0.00",
+            outstandingFees: "0.00",
+            status: "draft",
+        }).returning().then((rows) => rows[0]!);
+        const { client } = await startDefaultServer();
+
+        const result = await client.callTool({
+            name: "loan.activate",
+            arguments: { loanPublicId: draft.publicId },
+        });
+
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toEqual({
+            schemaVersion: "1.0",
+            error: {
+                code: "MCP_LOAN_TYPE_UNSUPPORTED",
+                message: "Single-payment activation is not available through the frozen MCP contract",
+                retryable: false,
+                reviewRequired: true,
+                details: {},
+            },
+        });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, draft.id) })).toMatchObject({
+            status: "draft",
+            outstandingPrincipal: "0.00",
+            outstandingInterest: "0.00",
+            nextDueDate: null,
+        });
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, draft.id))).toHaveLength(0);
+        expect(await db.select().from(auditLogs).where(and(
+            eq(auditLogs.entityId, draft.publicId),
             eq(auditLogs.action, "activated"),
         ))).toHaveLength(0);
 
@@ -407,7 +469,7 @@ describe("default MCP adapter integration", () => {
         const floatingLoan = await db.insert(loans).values({
             tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower!.id,
             principalAmount: "1000.00", outstandingPrincipal: "1000.00", interestRate: "0.00",
-            repaymentType: "floating", firstDayTreatment: "start_next_day", interestStartDate: "2026-08-01", status: "active",
+            repaymentType: "floating", floatingAccrualCycle: "daily", firstDayTreatment: "start_next_day", interestStartDate: "2026-08-01", status: "active",
         }).returning().then((rows) => rows[0]!);
         await db.insert(loanInterestRatePeriods).values({
             tenantId: TENANT_ID, loanId: floatingLoan.id, effectiveDate: "2026-08-01", expiryDate: null,

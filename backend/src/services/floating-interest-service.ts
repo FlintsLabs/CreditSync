@@ -3,7 +3,7 @@ import Decimal from "decimal.js";
 import { db } from "../db";
 import { loanAdjustments, loanInterestAccruals, loanInterestRatePeriods, loans, transactions } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
-import { calculateDailyInterest, interestDatesThrough, type FloatingDailyInterest, type FloatingDailyInterestInput } from "../lib/floating-daily-interest";
+import { calculateDailyInterest, interestDatesThrough, type FloatingAccrualCycle, type FloatingDailyInterest, type FloatingDailyInterestInput } from "../lib/floating-daily-interest";
 import { resolveRatePeriod, type RatePeriodValue, type RateType } from "../lib/interest-rate-periods";
 import { DomainError } from "./domain-error";
 import type { CommandContext } from "./command-context";
@@ -19,9 +19,10 @@ function bangkokDate(value: Date) {
 export async function accrueFloatingInterestThrough(tx: Executor, loan: typeof loans.$inferSelect, through: Date, actorUserId: number | null) {
     if (loan.repaymentType !== "floating" || !loan.dailyInterestMode || !loan.dailyInterestRate || !loan.firstDayTreatment || !loan.interestStartDate) return [];
     const firstDayTreatment = loan.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"];
+    const accrualCycle = (loan.floatingAccrualCycle ?? "daily") as FloatingAccrualCycle;
     const existing = await tx.select().from(loanInterestAccruals).where(and(eq(loanInterestAccruals.tenantId, loan.tenantId), eq(loanInterestAccruals.loanId, loan.id)));
     const dates = new Set(existing.map((row: typeof loanInterestAccruals.$inferSelect) => row.accrualDate));
-    const dueDates = interestDatesThrough(loan.interestStartDate, bangkokDate(through), firstDayTreatment).filter((date) => !dates.has(date));
+    const dueDates = interestDatesThrough(loan.interestStartDate, bangkokDate(through), firstDayTreatment, accrualCycle).filter((date) => !dates.has(date));
     if (!dueDates.length) return existing;
     const periodRows = await tx.select().from(loanInterestRatePeriods).where(and(
         eq(loanInterestRatePeriods.tenantId, loan.tenantId),
@@ -53,6 +54,7 @@ export async function accrueFloatingInterestThrough(tx: Executor, loan: typeof l
             mode: effectivePeriod.rateType,
             rate: effectivePeriod.rate,
             firstDayTreatment,
+            accrualCycle,
         };
         return {
             tenantId: loan.tenantId,
@@ -103,6 +105,32 @@ export async function correctFloatingInterestAccruals(ctx: CommandContext, loanP
         const loan = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.publicId, loanPublicId)) });
         if (!loan || loan.repaymentType !== "floating") throw new DomainError("FLOATING_LOAN_NOT_FOUND", "Floating loan not found", 404);
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${loan.id} FOR UPDATE`);
+        if (!loan.interestStartDate || !loan.firstDayTreatment) {
+            throw new DomainError("INVALID_LOAN_TERMS", "Floating interest policy is invalid", 409);
+        }
+        const firstDayTreatment = loan.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"];
+        const accrualCycle = (loan.floatingAccrualCycle ?? "daily") as FloatingAccrualCycle;
+        for (const accrualDate of uniqueDates) {
+            let scheduled = false;
+            try {
+                scheduled = interestDatesThrough(
+                    loan.interestStartDate,
+                    accrualDate,
+                    firstDayTreatment,
+                    accrualCycle,
+                ).includes(accrualDate);
+            } catch {
+                scheduled = false;
+            }
+            if (!scheduled) {
+                throw new DomainError(
+                    "ACCRUAL_DATE_NOT_SCHEDULED",
+                    "Floating accrual date is outside the loan's accrual cycle",
+                    409,
+                    { accrualDate },
+                );
+            }
+        }
         const oldRows = await tx.select().from(loanInterestAccruals).where(and(
             eq(loanInterestAccruals.tenantId, ctx.tenantId), eq(loanInterestAccruals.loanId, loan.id),
             inArray(loanInterestAccruals.accrualDate, uniqueDates), sql`${loanInterestAccruals.status} <> 'reversed'`,
@@ -122,7 +150,12 @@ export async function correctFloatingInterestAccruals(ctx: CommandContext, loanP
                 .filter((row) => row.postedAt && row.transactionDate && row.reversedTransactionId === null && !reversedTransactionIds.has(row.id) && bangkokDate(row.transactionDate) < old.accrualDate)
                 .reduce((sum, row) => sum.plus(row.principalComponent), new Decimal(0));
             const openingPrincipal = Decimal.max(0, new Decimal(loan.principalAmount).minus(principalAppliedBefore));
-            const policy: FloatingDailyInterestInput = { mode: periodValue.rateType, rate: periodValue.rate, firstDayTreatment: loan.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"] };
+            const policy: FloatingDailyInterestInput = {
+                mode: periodValue.rateType,
+                rate: periodValue.rate,
+                firstDayTreatment,
+                accrualCycle,
+            };
             const interestAmount = calculateDailyInterest(openingPrincipal.toFixed(2), policy);
             const paidAmount = old.accrualDate === loan.interestStartDate && loan.firstDayTreatment === "deduct"
                 ? interestAmount

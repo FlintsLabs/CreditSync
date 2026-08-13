@@ -72,6 +72,9 @@ async function seedLoan(input: {
     alias?: string;
     schedules: Array<{ total: string; principal?: string; interest?: string; fee?: string; dueDate?: string }>;
     funded?: boolean;
+    lateFeeMode?: "none" | "fixed";
+    lateFeeAmount?: string;
+    nextDueDate?: string;
 }) {
     const borrower = await db.insert(borrowers).values({
         tenantId: input.actor.tenantId,
@@ -94,6 +97,9 @@ async function seedLoan(input: {
         outstandingPrincipal: principal,
         outstandingInterest: "0.00",
         outstandingFees: "0.00",
+        lateFeeMode: input.lateFeeMode ?? "none",
+        lateFeeAmount: input.lateFeeAmount ?? "0.00",
+        nextDueDate: input.nextDueDate,
         status: "active",
     }).returning().then((rows) => rows[0]!);
     const schedules = await db.insert(loanSchedules).values(input.schedules.map((row, index) => ({
@@ -128,12 +134,13 @@ async function seedLoan(input: {
     return { borrower, loan, schedules };
 }
 
-async function seedFloatingLoan(actor: { id: number; tenantId: string }) {
+async function seedFloatingLoan(actor: { id: number; tenantId: string }, accrualCycle: "daily" | "weekly" = "daily") {
     const borrower = await db.insert(borrowers).values({ tenantId: actor.tenantId, ownerUserId: actor.id, name: "Floating borrower" }).returning().then((rows) => rows[0]!);
     const loan = await db.insert(loans).values({
         tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id,
         principalAmount: "4000.00", interestRate: "0.00", repaymentType: "floating",
         dailyInterestMode: "per_thousand", dailyInterestRate: "15.0000", firstDayTreatment: "deduct",
+        floatingAccrualCycle: accrualCycle,
         interestStartDate: "2026-08-06", outstandingPrincipal: "4000.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active",
     }).returning().then((rows) => rows[0]!);
     const period = await db.insert(loanInterestRatePeriods).values({
@@ -187,6 +194,39 @@ describe("payment application service", () => {
         expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({ outstandingInterest: "60.00" });
         expect(await db.select().from(loanAdjustments)).toEqual([expect.objectContaining({ adjustmentType: "floating_interest_accrual_correction", amount: "120.00", reason: "Repair activation accrual basis" })]);
         expect(await db.select().from(auditLogs).where(eq(auditLogs.action, "floating_interest_accruals_corrected"))).toHaveLength(1);
+    });
+
+    // Break caught: correction accepts off-cycle daily rows on a weekly contract
+    // or loses the exact weekly-period amount when replacing a valid boundary.
+    integrationTest("corrects weekly boundaries and rejects off-cycle floating accrual dates", async () => {
+        const actor = await seedUser("tenant-weekly-correction");
+        const seeded = await seedFloatingLoan(actor, "weekly");
+        await db.insert(loanInterestAccruals).values([
+            {
+                tenantId: actor.tenantId, loanId: seeded.loan.id, interestRatePeriodId: seeded.period.id,
+                accrualDate: "2026-08-07", openingPrincipal: "0.00", rateMode: "per_thousand", rate: "15.0000",
+                interestAmount: "0.00", createdByUserId: actor.id,
+            },
+            {
+                tenantId: actor.tenantId, loanId: seeded.loan.id, interestRatePeriodId: seeded.period.id,
+                accrualDate: "2026-08-13", openingPrincipal: "0.00", rateMode: "per_thousand", rate: "15.0000",
+                interestAmount: "0.00", createdByUserId: actor.id,
+            },
+        ]);
+
+        await expect(correctFloatingInterestAccruals(
+            context(actor, "repair-weekly-off-cycle"), seeded.loan.publicId, ["2026-08-07"], "Reject daily row",
+        )).rejects.toMatchObject({ code: "ACCRUAL_DATE_NOT_SCHEDULED", status: 409, details: { accrualDate: "2026-08-07" } });
+
+        await correctFloatingInterestAccruals(
+            context(actor, "repair-weekly-boundary"), seeded.loan.publicId, ["2026-08-13"], "Repair weekly boundary",
+        );
+        expect(await db.select().from(loanInterestAccruals).where(and(
+            eq(loanInterestAccruals.loanId, seeded.loan.id), eq(loanInterestAccruals.accrualDate, "2026-08-13"),
+        )).orderBy(loanInterestAccruals.id)).toEqual([
+            expect.objectContaining({ status: "reversed", interestAmount: "0.00" }),
+            expect.objectContaining({ status: "accrued", openingPrincipal: "4000.00", interestAmount: "60.00", paidAmount: "0.00" }),
+        ]);
     });
 
     // Break caught: reversing an unscheduled floating repayment leaves its principal and paid daily interest reduced.
@@ -626,8 +666,9 @@ describe("payment application service", () => {
             actor,
             borrowerName: "Late payer",
             schedules: [{ total: "100.00", principal: "70.00", interest: "20.00", fee: "10.00", dueDate: "2026-08-01" }],
+            lateFeeMode: "fixed",
+            lateFeeAmount: "15.00",
         });
-        await db.update(loans).set({ lateFeeMode: "fixed", lateFeeAmount: "15.00" }).where(eq(loans.id, seeded.loan.id));
         const intake = await createPaymentIntake(context(actor), {
             amount: "45.00", receivedAt: "2026-08-10T10:00:00.000Z",
         });
@@ -655,9 +696,10 @@ describe("payment application service", () => {
                 { total: "30.00", principal: "10.00", interest: "10.00", fee: "10.00", dueDate: "2026-08-01" },
                 { total: "70.00", principal: "70.00", dueDate: "2026-09-10" },
             ],
+            lateFeeMode: "fixed",
+            lateFeeAmount: "5.00",
+            nextDueDate: "2026-08-01",
         });
-        await db.update(loans).set({ lateFeeMode: "fixed", lateFeeAmount: "5.00", nextDueDate: "2026-08-01" })
-            .where(eq(loans.id, seeded.loan.id));
         const intake = await createPaymentIntake(context(actor), { amount: "45.00", receivedAt: "2026-08-10T10:00:00.000Z" });
         const preview = await previewPaymentMatch(context(actor), intake.publicId, { allocations: [{
             borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "45.00",

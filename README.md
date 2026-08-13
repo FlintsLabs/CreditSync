@@ -72,7 +72,7 @@ Account identity and tenant role are read-only values supplied by the authorized
 - calculate repayment schedules before saving
 - support `single_payment`, `daily`, `weekly`, `monthly`, and `floating` repayment types
 - preview and persist exact single-payment due dates, agreed fixed-interest floors, optional greater-of retroactive interest, and contracted late penalties before activation creates one immutable maturity row
-- preserve legacy floating contracts as daily-accrual while allowing new floating terms to state an explicit `daily` or `weekly` accrual cycle
+- preserve legacy floating contracts as daily-accrual while allowing new floating terms to state an explicit `daily` or `weekly` accrual cycle; a weekly rate accrues once every seven calendar days anchored to `interestStartDate`, with `deduct` charging the first period on activation and `start_next_day` charging first at the seven-day boundary
 - manage effective-dated floating-interest periods from Loan Detail, including exact current daily interest, future scheduled changes, previewed automatic range splitting, and audited confirmation
 - create editable loan drafts, then activate them to lock terms and generate schedules exactly once
 - use separate preview, draft-save, and activation confirmations in the web wizard
@@ -341,7 +341,7 @@ loan.disbursement.evidence.prepare  loan.disbursement.evidence.finalize
 loan.disbursement.post       loan.disbursement.reverse
 ```
 
-Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Disbursement drafts support strict non-empty PATCH updates to editable metadata; each update retains finalized evidence and requires a re-list plus fresh confirmation before posting. Payment posting/reversal, loan activation, floating-interest execution, renewal execution/reversal, disbursement post/reverse, and intermediary remittance posting follow explicit confirmation and audit boundaries. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces. The bundled Plugin `2.4.0` freezes the matching 41-tool backend contract.
+Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Disbursement drafts support strict non-empty PATCH updates to editable metadata; each update retains finalized evidence and requires a re-list plus fresh confirmation before posting. Payment posting/reversal, loan activation, floating-interest execution, renewal execution/reversal, disbursement post/reverse, and intermediary remittance posting follow explicit confirmation and audit boundaries. The frozen MCP schema does not yet expose single-payment terms; attempting to activate a single-payment draft is rejected before the financial handler can mutate it. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces. The bundled Plugin `2.4.0` freezes the matching 41-tool backend contract.
 
 ### Configure and rotate the bearer token
 

@@ -21,8 +21,11 @@ export function normalizeFloatingDailyInterest(input: FloatingDailyInterestInput
     if (input.accrualCycle !== undefined && input.accrualCycle !== "daily" && input.accrualCycle !== "weekly") {
         throw new Error("Floating accrual cycle is invalid");
     }
+    if (typeof input.rate !== "string" || !/^(?:0|[1-9]\d*)(?:\.\d{1,4})?$/.test(input.rate)) {
+        throw new Error("Daily interest rate must be a positive decimal with at most four places");
+    }
     const rate = new Decimal(input.rate);
-    if (!rate.isFinite() || rate.lte(0) || rate.decimalPlaces() > 4) {
+    if (!rate.isFinite() || rate.lte(0)) {
         throw new Error("Daily interest rate must be a positive decimal with at most four places");
     }
     return { mode: input.mode, rate: rate.toFixed(4), firstDayTreatment: input.firstDayTreatment, accrualCycle: input.accrualCycle ?? "daily" };
@@ -49,23 +52,36 @@ function formatDate(value: Date) {
     return value.toISOString().slice(0, 10);
 }
 
-export function interestDatesThrough(startDate: string, throughDate: string, firstDayTreatment: FloatingDailyInterest["firstDayTreatment"]) {
+export function interestDatesThrough(
+    startDate: string,
+    throughDate: string,
+    firstDayTreatment: FloatingDailyInterest["firstDayTreatment"],
+    accrualCycle: FloatingAccrualCycle = "daily",
+) {
     const start = dateAtMidnight(startDate);
     const through = dateAtMidnight(throughDate);
     if (through < start) return [];
     if (firstDayTreatment !== "deduct" && firstDayTreatment !== "start_next_day") throw new Error("First-day treatment is invalid");
-    if (firstDayTreatment === "start_next_day") start.setUTCDate(start.getUTCDate() + 1);
+    if (accrualCycle !== "daily" && accrualCycle !== "weekly") throw new Error("Floating accrual cycle is invalid");
+    const periodDays = accrualCycle === "weekly" ? 7 : 1;
+    if (firstDayTreatment === "start_next_day") start.setUTCDate(start.getUTCDate() + periodDays);
     const dates: string[] = [];
     while (start <= through) {
         dates.push(formatDate(start));
-        start.setUTCDate(start.getUTCDate() + 1);
+        start.setUTCDate(start.getUTCDate() + periodDays);
     }
     return dates;
 }
 
-export function nextInterestDate(startDate: string, firstDayTreatment: FloatingDailyInterest["firstDayTreatment"]) {
+export function nextInterestDate(
+    startDate: string,
+    firstDayTreatment: FloatingDailyInterest["firstDayTreatment"],
+    accrualCycle: FloatingAccrualCycle = "daily",
+) {
     const start = dateAtMidnight(startDate);
+    if (accrualCycle !== "daily" && accrualCycle !== "weekly") throw new Error("Floating accrual cycle is invalid");
     if (firstDayTreatment === "deduct") return formatDate(start);
-    start.setUTCDate(start.getUTCDate() + 1);
+    if (firstDayTreatment !== "start_next_day") throw new Error("First-day treatment is invalid");
+    start.setUTCDate(start.getUTCDate() + (accrualCycle === "weekly" ? 7 : 1));
     return formatDate(start);
 }

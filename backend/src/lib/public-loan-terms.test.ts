@@ -81,6 +81,29 @@ describe("public loan create terms", () => {
         }]);
     });
 
+    // Break caught: one immutable maturity row is presented alongside caller-
+    // supplied periodic installment metadata that activation silently ignores.
+    it("rejects installment metadata on single-payment terms", () => {
+        const singlePayment = {
+            dueDate: "2026-08-19",
+            fixedAgreedInterest: "500.00",
+            interestPolicy: "fixed_only" as const,
+            latePenalty: { mode: "none" as const },
+        };
+        expect(() => normalizePublicLoanTerms({
+            principal: "5000.00", interestRate: "0.00", termMonths: 1,
+            repaymentType: "single_payment", startDate: "2026-08-10",
+            totalInstallments: 12,
+            singlePayment,
+        })).toThrow("Single-payment terms cannot include installment metadata");
+        expect(() => normalizePublicLoanTerms({
+            principal: "5000.00", interestRate: "0.00", termMonths: 1,
+            repaymentType: "single_payment", startDate: "2026-08-10",
+            installmentAmount: "1.00",
+            singlePayment,
+        })).toThrow("Single-payment terms cannot include installment metadata");
+    });
+
     // Break caught: unvalidated single-payment money or policy data escapes the public create-term boundary.
     it("rejects malformed single-payment terms at public normalization", () => {
         expect(() => normalizePublicLoanTerms({

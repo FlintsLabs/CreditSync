@@ -17,6 +17,7 @@ import { listFundingSources } from "../services/funding-source-service";
 import {
     activateLoan,
     createLoanDraft,
+    getLoanApplication,
     previewLoan,
     type LoanDraftInput,
 } from "../services/loan-application-service";
@@ -248,6 +249,18 @@ export function createDefaultMcpHttpPlugin(
     return createMcpHttpPlugin({
         config,
         handlers: createDefaultMcpToolHandlers(dependencies),
+        preflightHandlers: {
+            "loan.activate": async (ctx, input) => {
+                const loan = await getLoanApplication(ctx, asString(input, "loanPublicId"));
+                if (loan.repaymentType === "single_payment") {
+                    throw new DomainError(
+                        "MCP_LOAN_TYPE_UNSUPPORTED",
+                        "Single-payment activation is not available through the frozen MCP contract",
+                        409,
+                    );
+                }
+            },
+        },
         consumeRateLimit: (input) => limiter.consume(input),
         logger: structuredLog,
         resolvePrincipal: async ({ tenantId, actorEmail }) => {

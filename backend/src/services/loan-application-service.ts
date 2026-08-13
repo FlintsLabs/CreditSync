@@ -15,7 +15,7 @@ import { computeLoanRollup } from "../lib/loan-rollup";
 import { serializeMoney } from "../lib/money";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
-import { calculateDailyInterest, nextInterestDate, normalizeFloatingDailyInterest, type FloatingDailyInterest } from "../lib/floating-daily-interest";
+import { calculateDailyInterest, nextInterestDate, normalizeFloatingDailyInterest, type FloatingDailyInterest, type FloatingDailyInterestInput } from "../lib/floating-daily-interest";
 import { normalizeDailyLoanEntry, type DailyLoanEntryInput, type NormalizedDailyLoanEntry } from "../lib/daily-loan-entry";
 import type { SinglePaymentTerms } from "../lib/single-payment";
 
@@ -269,10 +269,18 @@ function normalizeTerms(input: PublicLoanCalculationParams): { terms: ReturnType
     }
 }
 
+function normalizeFloatingPolicy(input: FloatingDailyInterestInput) {
+    try {
+        return normalizeFloatingDailyInterest(input);
+    } catch {
+        throw new DomainError("INVALID_LOAN_TERMS", "Floating interest policy is invalid", 400);
+    }
+}
+
 export function previewLoan(input: PublicLoanCalculationParams) {
     const { terms, dailyEntry } = normalizeTerms(input);
     const policy = input.repaymentType === "floating" && input.floatingDailyInterest
-        ? normalizeFloatingDailyInterest(input.floatingDailyInterest) : null;
+        ? normalizeFloatingPolicy(input.floatingDailyInterest) : null;
     if (input.repaymentType === "floating" && !policy) throw new DomainError("INVALID_LOAN_TERMS", "Floating loans require a daily interest policy", 400);
     if (input.repaymentType !== "floating" && input.floatingDailyInterest) throw new DomainError("INVALID_LOAN_TERMS", "Daily interest policy requires floating repayment", 400);
     try {
@@ -280,7 +288,7 @@ export function previewLoan(input: PublicLoanCalculationParams) {
         if (!policy) return { terms, schedule, dailyLoanCalculation: dailyEntry };
         const dailyInterestAtCurrentPrincipal = calculateDailyInterest(terms.principal, policy);
         const firstDayInterest = policy.firstDayTreatment === "deduct" ? dailyInterestAtCurrentPrincipal : "0.00";
-        return { terms, schedule, floatingDailyInterest: policy, firstDayInterest, dailyInterestAtCurrentPrincipal, netDisbursement: serializeMoney(new Decimal(terms.principal).minus(firstDayInterest)), nextInterestDate: nextInterestDate(input.startDate, policy.firstDayTreatment) };
+        return { terms, schedule, floatingDailyInterest: policy, firstDayInterest, dailyInterestAtCurrentPrincipal, netDisbursement: serializeMoney(new Decimal(terms.principal).minus(firstDayInterest)), nextInterestDate: nextInterestDate(input.startDate, policy.firstDayTreatment, policy.accrualCycle) };
     } catch (error) {
         throw new DomainError("INVALID_LOAN_TERMS", error instanceof Error ? error.message : "Invalid loan terms", 400);
     }
@@ -296,7 +304,7 @@ export async function createLoanDraft(ctx: CommandContext, input: LoanDraftInput
     }
     const { terms, dailyEntry } = normalizeTerms(input);
     const policy = input.repaymentType === "floating" && input.floatingDailyInterest
-        ? normalizeFloatingDailyInterest(input.floatingDailyInterest) : null;
+        ? normalizeFloatingPolicy(input.floatingDailyInterest) : null;
     if (input.repaymentType === "floating" && !policy) throw new DomainError("INVALID_LOAN_TERMS", "Floating loans require a daily interest policy", 400);
     if (input.repaymentType !== "floating" && input.floatingDailyInterest) throw new DomainError("INVALID_LOAN_TERMS", "Daily interest policy requires floating repayment", 400);
     const [borrower, bankLoan, fundingProfile] = await Promise.all([
@@ -327,8 +335,8 @@ export async function createLoanDraft(ctx: CommandContext, input: LoanDraftInput
             interestRate: terms.interestRate,
             repaymentType: terms.repaymentType,
             termMonths: terms.repaymentType === "floating" ? null : terms.termMonths,
-            totalInstallments: terms.totalInstallments,
-            installmentAmount: terms.installmentAmount,
+            totalInstallments: terms.totalInstallments ?? null,
+            installmentAmount: terms.installmentAmount ?? null,
             startDate: input.startDate,
             outstandingPrincipal: "0.00",
             outstandingInterest: "0.00",
@@ -381,26 +389,34 @@ export async function updateLoanDraft(ctx: CommandContext, publicId: string, inp
     if (bankLoan && fundingProfile) {
         throw new DomainError("FUNDING_SOURCE_CONFLICT", "Choose either a drawdown or an own-capital profile", 400);
     }
+    const repaymentType = (input.repaymentType ?? existing.repaymentType) as RepaymentType;
+    if (input.dailyEntry !== undefined && repaymentType !== "daily") {
+        throw new DomainError("INVALID_LOAN_TERMS", "Daily entry requires daily repayment", 400);
+    }
+    if (input.floatingDailyInterest !== undefined && repaymentType !== "floating") {
+        throw new DomainError("INVALID_LOAN_TERMS", "Daily interest policy requires floating repayment", 400);
+    }
+    if (input.singlePayment !== undefined && repaymentType !== "single_payment") {
+        throw new DomainError("INVALID_LOAN_TERMS", "Single-payment terms require single-payment repayment", 400);
+    }
+    const repaymentTypeChanged = repaymentType !== existing.repaymentType;
     const mergedInput: PublicLoanCalculationParams = {
         principal: input.principal ?? serializeMoney(existing.principalAmount),
         interestRate: input.interestRate ?? serializeMoney(existing.interestRate),
-        repaymentType: (input.repaymentType ?? existing.repaymentType) as RepaymentType,
+        repaymentType,
         termMonths: input.termMonths ?? existing.termMonths ?? 0,
-        totalInstallments: input.totalInstallments ?? existing.totalInstallments ?? undefined,
+        totalInstallments: input.totalInstallments ?? (repaymentTypeChanged ? undefined : existing.totalInstallments ?? undefined),
         installmentAmount: input.installmentAmount === undefined
-            ? existing.installmentAmount === null ? undefined : serializeMoney(existing.installmentAmount)
+            ? repaymentTypeChanged || existing.installmentAmount === null ? undefined : serializeMoney(existing.installmentAmount)
             : input.installmentAmount,
         startDate: input.startDate ?? existing.startDate ?? new Date().toISOString().slice(0, 10),
-        dailyEntry: input.dailyEntry ?? existingDailyEntry(existing),
-        floatingDailyInterest: input.floatingDailyInterest ?? existingFloatingPolicy(existing),
-        singlePayment: input.singlePayment ?? singlePaymentFor(existing) ?? undefined,
+        dailyEntry: input.dailyEntry ?? (repaymentTypeChanged ? undefined : existingDailyEntry(existing)),
+        floatingDailyInterest: input.floatingDailyInterest ?? (repaymentTypeChanged ? undefined : existingFloatingPolicy(existing)),
+        singlePayment: input.singlePayment ?? (repaymentTypeChanged ? undefined : singlePaymentFor(existing) ?? undefined),
     };
-    if (mergedInput.repaymentType !== "daily") delete mergedInput.dailyEntry;
-    if (mergedInput.repaymentType !== "floating") delete mergedInput.floatingDailyInterest;
-    if (mergedInput.repaymentType !== "single_payment") delete mergedInput.singlePayment;
     const { terms: merged, dailyEntry } = normalizeTerms(mergedInput);
     const policy = mergedInput.repaymentType === "floating" && mergedInput.floatingDailyInterest
-        ? normalizeFloatingDailyInterest(mergedInput.floatingDailyInterest) : null;
+        ? normalizeFloatingPolicy(mergedInput.floatingDailyInterest) : null;
     if (mergedInput.repaymentType === "floating" && !policy) throw new DomainError("INVALID_LOAN_TERMS", "Floating loans require a daily interest policy", 400);
     return db.transaction(async (tx) => {
         const row = await tx.update(loans).set({
@@ -411,8 +427,8 @@ export async function updateLoanDraft(ctx: CommandContext, publicId: string, inp
             interestRate: merged.interestRate,
             repaymentType: merged.repaymentType,
             termMonths: merged.repaymentType === "floating" ? null : merged.termMonths,
-            totalInstallments: merged.totalInstallments,
-            installmentAmount: merged.installmentAmount,
+            totalInstallments: merged.totalInstallments ?? null,
+            installmentAmount: merged.installmentAmount ?? null,
             dailyTermUnit: dailyEntry?.durationUnit ?? null,
             dailyTermValue: dailyEntry?.durationValue ?? null,
             dailyEntryMode: dailyEntry?.entryMode ?? null,

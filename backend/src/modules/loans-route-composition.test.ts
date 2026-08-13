@@ -174,4 +174,25 @@ describe("loans route composition", () => {
             mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "weekly",
         });
     });
+
+    // Break caught: malformed floating policies escape as HTTP 500/DecimalError,
+    // or an invalid cycle is reported through a different validation contract.
+    test("maps every malformed floating policy to stable INVALID_LOAN_TERMS", async () => {
+        const base = {
+            principal: "5000.00", interestRate: "0.00", termMonths: 1,
+            repaymentType: "floating", startDate: "2026-08-10",
+        };
+        const policies = [
+            { mode: "percent", rate: "0", firstDayTreatment: "start_next_day", accrualCycle: "daily" },
+            { mode: "percent", rate: "not-a-rate", firstDayTreatment: "start_next_day", accrualCycle: "daily" },
+            { mode: "percent", rate: "1.00000", firstDayTreatment: "start_next_day", accrualCycle: "daily" },
+            { mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "monthly" },
+        ];
+        for (const floatingDailyInterest of policies) {
+            const result = await postPreview({ ...base, floatingDailyInterest });
+            expect(result.response.status, result.text).toBe(400);
+            expect(result.body).toEqual({ error: "Floating interest policy is invalid", code: "INVALID_LOAN_TERMS" });
+            expect(result.text).not.toContain("DecimalError");
+        }
+    });
 });

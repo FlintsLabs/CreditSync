@@ -5,7 +5,9 @@ export const floatingDailyInterest = t.Object({
     mode: t.Union([t.Literal("per_thousand"), t.Literal("percent")]),
     rate: t.String(),
     firstDayTreatment: t.Union([t.Literal("deduct"), t.Literal("start_next_day")]),
-    accrualCycle: t.Optional(t.Union([t.Literal("daily"), t.Literal("weekly")])),
+    // Keep semantic validation in the loan service so every malformed policy
+    // receives the same stable INVALID_LOAN_TERMS response.
+    accrualCycle: t.Optional(t.String()),
 }, { additionalProperties: true });
 export const dailyEntry = t.Object({ durationUnit: t.Union([t.Literal("days"), t.Literal("months")]), durationValue: t.Integer({ minimum: 1, maximum: 100_000 }), entryMode: t.Union([t.Literal("daily_payment"), t.Literal("daily_interest")]), dailyPayment: t.Optional(t.String()), interestInput: t.Optional(t.Object({ mode: t.Union([t.Literal("percent"), t.Literal("fixed_amount"), t.Literal("per_thousand")]), value: t.String() }, { additionalProperties: true })) }, { additionalProperties: true });
 export const singlePayment = t.Object({

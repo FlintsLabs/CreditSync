@@ -213,14 +213,14 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
     .post("/calculate", ({ body, set }) => {
         try {
             assertClosedLoanTerms(body, false);
-            return previewLoan(body).schedule;
+            return previewLoan(body as unknown as Parameters<typeof previewLoan>[0]).schedule;
         }
         catch (error) { return loanDomainFailure(error, set); }
     }, { body: loanTermsBody })
     .post("/preview", ({ body, set }) => {
         try {
             assertClosedLoanTerms(body, false);
-            return previewLoan(body);
+            return previewLoan(body as unknown as Parameters<typeof previewLoan>[0]);
         }
         catch (error) { return loanDomainFailure(error, set); }
     }, { body: loanTermsBody })
@@ -228,7 +228,10 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
         if (!user) return loanUnauthorized(set);
         try {
             assertClosedLoanTerms(body, true);
-            const created = await createLoanDraft(loanCommandContext(user, request), body);
+            const created = await createLoanDraft(
+                loanCommandContext(user, request),
+                body as unknown as Parameters<typeof createLoanDraft>[1],
+            );
             await invalidateTenantCache(user.tenantId);
             return created;
         } catch (error) {
@@ -241,7 +244,11 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
         if (!user) return loanUnauthorized(set);
         try {
             assertClosedLoanTerms(body, true);
-            const updated = await updateLoanDraft(loanCommandContext(user, request), params.id, body);
+            const updated = await updateLoanDraft(
+                loanCommandContext(user, request),
+                params.id,
+                body as unknown as Parameters<typeof updateLoanDraft>[2],
+            );
             await invalidateTenantCache(user.tenantId);
             return updated;
         } catch (error) {

@@ -56,6 +56,7 @@ export type McpToolHandler = (ctx: CommandContext, input: Record<string, unknown
 export interface CreateMcpHttpPluginInput {
     config: McpRuntimeConfig;
     handlers: Record<McpToolName, McpToolHandler>;
+    preflightHandlers?: Partial<Record<McpToolName, McpToolHandler>>;
     resolvePrincipal: (input: { tenantId: string; actorEmail: string }) => Promise<{ tenantId: string; actorUserId: number }>;
     consumeRateLimit: (input: { key: string; max: number; windowSeconds: number }) => Promise<{
         allowed: boolean;
@@ -844,6 +845,7 @@ function createServer(input: CreateMcpHttpPluginInput, ctx: CommandContext) {
             const { idempotencyKey: _removed, ...handlerInput } = parsed;
             const toolContext: CommandContext = { ...ctx, idempotencyKey };
             try {
+                await input.preflightHandlers?.[toolName]?.(toolContext, handlerInput);
                 const result = await input.handlers[toolName](toolContext, handlerInput);
                 const auditPublicIds = financialTools.has(toolName)
                     ? await input.findAuditPublicIds({ ctx: toolContext, toolName, result })

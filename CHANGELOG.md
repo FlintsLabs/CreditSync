@@ -10,6 +10,7 @@
 - Added the approved design for exact single-payment maturity loans, greater-of fixed or retroactive contract interest, optional concurrent daily late penalties, component-level settlement waivers, and append-only restructuring into independently priced replacement contracts.
 
 ### Fixed
+- Applied floating weekly rates once per seven-day period anchored to the interest start date across preview, activation, accrual, payment health, and append-only correction; stabilized malformed-policy errors, rejected contradictory draft terms, cleared inherited installment metadata only on repayment-type transitions, and stopped frozen MCP single-payment activation before mutation.
 - Separated restructure creation, execution, and reversal actor sources so mixed-source reversals enforce the user actor belonging to each operation without permitting execution provenance to change.
 - Prevented activated and terminal loans from returning to draft, while allowing system-origin restructure and waiver execution/reversal records to omit user actors only when complete audit and correlation context remains present.
 - Enforced immutable activated loan terms and contractual schedules, complete restructure/waiver lifecycle audit state, tenant-valid public source lineage, distinct replacement-loan consistency, and non-contradictory cash direction at the PostgreSQL boundary.

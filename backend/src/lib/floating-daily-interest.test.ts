@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { calculateDailyInterest, interestDatesThrough, normalizeFloatingDailyInterest } from "./floating-daily-interest";
+import { calculateDailyInterest, interestDatesThrough, nextInterestDate, normalizeFloatingDailyInterest } from "./floating-daily-interest";
 
 describe("floating daily interest", () => {
     test("calculates fixed per-thousand and daily-percent rates in exact cents", () => {
@@ -13,5 +13,29 @@ describe("floating daily interest", () => {
             .toEqual({ mode: "per_thousand", rate: "15.0000", firstDayTreatment: "deduct", accrualCycle: "daily" });
         expect(interestDatesThrough("2026-08-06", "2026-08-08", "deduct")).toEqual(["2026-08-06", "2026-08-07", "2026-08-08"]);
         expect(interestDatesThrough("2026-08-06", "2026-08-08", "start_next_day")).toEqual(["2026-08-07", "2026-08-08"]);
+    });
+
+    // Break caught: a weekly rate is charged on every calendar day instead of
+    // once per seven-day accrual period anchored to interestStartDate.
+    test("generates weekly accrual dates and first-period dates from the contract anchor", () => {
+        expect(interestDatesThrough("2026-08-10", "2026-08-24", "deduct", "weekly"))
+            .toEqual(["2026-08-10", "2026-08-17", "2026-08-24"]);
+        expect(interestDatesThrough("2026-08-10", "2026-08-24", "start_next_day", "weekly"))
+            .toEqual(["2026-08-17", "2026-08-24"]);
+        expect(nextInterestDate("2026-08-10", "deduct", "weekly")).toBe("2026-08-10");
+        expect(nextInterestDate("2026-08-10", "start_next_day", "weekly")).toBe("2026-08-17");
+        expect(calculateDailyInterest("5000.00", {
+            mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "weekly",
+        })).toBe("50.00");
+    });
+
+    // Break caught: adding weekly support shifts omitted/explicit daily dates.
+    test("keeps omitted and explicit daily cycles byte-for-byte compatible", () => {
+        expect(interestDatesThrough("2026-08-10", "2026-08-12", "start_next_day"))
+            .toEqual(["2026-08-11", "2026-08-12"]);
+        expect(interestDatesThrough("2026-08-10", "2026-08-12", "start_next_day", "daily"))
+            .toEqual(["2026-08-11", "2026-08-12"]);
+        expect(nextInterestDate("2026-08-10", "start_next_day")).toBe("2026-08-11");
+        expect(nextInterestDate("2026-08-10", "start_next_day", "daily")).toBe("2026-08-11");
     });
 });
