@@ -190,6 +190,13 @@
       "when": 1786540800000,
       "tag": "0026_intermediary_remittance_evidence",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1786628767426,
+      "tag": "0027_floating_interest_period_policy",
+      "breakpoints": true
     }
   ]
 }

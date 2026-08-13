@@ -175,6 +175,11 @@ export const loans = pgTable("loans", {
     dailyInterestRate: numeric("daily_interest_rate"),
     firstDayTreatment: text("first_day_treatment"), // deduct, start_next_day
     interestStartDate: date("interest_start_date"),
+    interestPeriodUnit: text("interest_period_unit"), // day, week; floating loans only
+    interestPeriodLength: integer("interest_period_length"),
+    advanceInterestPeriods: integer("advance_interest_periods"),
+    advanceInterestRefundPolicy: text("advance_interest_refund_policy"),
+    interestPeriodAnchorDate: date("interest_period_anchor_date"),
     dailyTermUnit: text("daily_term_unit"), // days, months; scheduled daily loans only
     dailyTermValue: integer("daily_term_value"),
     dailyEntryMode: text("daily_entry_mode"), // daily_payment, daily_interest
@@ -203,6 +208,19 @@ export const loans = pgTable("loans", {
     uniqueIndex("loans_tenant_id_id_unique").on(table.tenantId, table.id),
     check("loans_term_months_check", sql`${table.termMonths} IS NULL OR ${table.termMonths} > 0`),
     check("loans_one_funding_source_check", sql`${table.bankLoanId} IS NULL OR ${table.fundingBankProfileId} IS NULL`),
+    check("loans_interest_period_unit_check", sql`${table.interestPeriodUnit} IS NULL OR ${table.interestPeriodUnit} IN ('day', 'week')`),
+    check("loans_interest_period_length_check", sql`${table.interestPeriodLength} IS NULL OR ${table.interestPeriodLength} = 1`),
+    check("loans_advance_interest_periods_check", sql`${table.advanceInterestPeriods} IS NULL OR ${table.advanceInterestPeriods} IN (0, 1)`),
+    check("loans_advance_interest_refund_policy_check", sql`${table.advanceInterestRefundPolicy} IS NULL OR ${table.advanceInterestRefundPolicy} = 'non_refundable'`),
+    check("loans_interest_period_policy_completeness_check", sql`
+        (${table.interestPeriodUnit} IS NULL AND ${table.interestPeriodLength} IS NULL
+            AND ${table.advanceInterestPeriods} IS NULL AND ${table.advanceInterestRefundPolicy} IS NULL
+            AND ${table.interestPeriodAnchorDate} IS NULL)
+        OR
+        (${table.interestPeriodUnit} IS NOT NULL AND ${table.interestPeriodLength} IS NOT NULL
+            AND ${table.advanceInterestPeriods} IS NOT NULL AND ${table.advanceInterestRefundPolicy} IS NOT NULL
+            AND ${table.interestPeriodAnchorDate} IS NOT NULL)
+    `),
 ]);
 
 export const loanSchedules = pgTable("loan_schedules", {
@@ -251,6 +269,8 @@ export const loanInterestRatePeriods = pgTable("loan_interest_rate_periods", {
     expiryDate: date("expiry_date"),
     rateType: text("rate_type").notNull(),
     rate: numeric("rate").notNull(),
+    periodUnit: text("period_unit").default("day").notNull(),
+    periodLength: integer("period_length").default(1).notNull(),
     createdByUserId: integer("created_by_user_id").references(() => users.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -265,6 +285,8 @@ export const loanInterestRatePeriods = pgTable("loan_interest_rate_periods", {
     check("loan_interest_rate_periods_rate_positive_check", sql`${table.rate} > 0`),
     check("loan_interest_rate_periods_rate_scale_check", sql`scale(${table.rate}) <= 4`),
     check("loan_interest_rate_periods_rate_type_check", sql`${table.rateType} IN ('percent', 'per_thousand')`),
+    check("loan_interest_rate_periods_period_unit_check", sql`${table.periodUnit} IN ('day', 'week')`),
+    check("loan_interest_rate_periods_period_length_check", sql`${table.periodLength} = 1`),
     check("loan_interest_rate_periods_date_order_check", sql`${table.expiryDate} IS NULL OR ${table.expiryDate} >= ${table.effectiveDate}`),
 ]);
 
@@ -312,6 +334,14 @@ export const loanInterestAccruals = pgTable("loan_interest_accruals", {
     rateMode: text("rate_mode").notNull(),
     rate: numeric("rate").notNull(),
     interestAmount: numeric("interest_amount").notNull(),
+    periodStartDate: date("period_start_date"),
+    periodEndDate: date("period_end_date"),
+    periodDayIndex: integer("period_day_index"),
+    periodUnit: text("period_unit"),
+    periodLength: integer("period_length"),
+    contractualInterestAmount: numeric("contractual_interest_amount"),
+    cumulativeInterestAmount: numeric("cumulative_interest_amount"),
+    dailyIncrementAmount: numeric("daily_increment_amount"),
     paidAmount: numeric("paid_amount").default("0").notNull(),
     status: text("status").default("accrued").notNull(),
     sourceTransactionId: integer("source_transaction_id").references(() => transactions.id),
@@ -326,6 +356,92 @@ export const loanInterestAccruals = pgTable("loan_interest_accruals", {
         columns: [table.tenantId, table.interestRatePeriodId],
         foreignColumns: [loanInterestRatePeriods.tenantId, loanInterestRatePeriods.id],
     }),
+    check("loan_interest_accruals_period_unit_check", sql`${table.periodUnit} IS NULL OR ${table.periodUnit} IN ('day', 'week')`),
+    check("loan_interest_accruals_period_length_check", sql`${table.periodLength} IS NULL OR ${table.periodLength} = 1`),
+    check("loan_interest_accruals_period_date_order_check", sql`${table.periodStartDate} IS NULL OR ${table.periodEndDate} IS NULL OR ${table.periodEndDate} > ${table.periodStartDate}`),
+    check("loan_interest_accruals_period_day_index_check", sql`
+        ${table.periodDayIndex} IS NULL OR (
+            ${table.periodDayIndex} >= 1
+            AND (${table.periodUnit} = 'day' AND ${table.periodDayIndex} <= 1
+                OR ${table.periodUnit} = 'week' AND ${table.periodDayIndex} <= 7)
+        )
+    `),
+    check("loan_interest_accruals_period_snapshot_completeness_check", sql`
+        (${table.periodStartDate} IS NULL AND ${table.periodEndDate} IS NULL AND ${table.periodDayIndex} IS NULL
+            AND ${table.periodUnit} IS NULL AND ${table.periodLength} IS NULL
+            AND ${table.contractualInterestAmount} IS NULL AND ${table.cumulativeInterestAmount} IS NULL
+            AND ${table.dailyIncrementAmount} IS NULL)
+        OR
+        (${table.periodStartDate} IS NOT NULL AND ${table.periodEndDate} IS NOT NULL AND ${table.periodDayIndex} IS NOT NULL
+            AND ${table.periodUnit} IS NOT NULL AND ${table.periodLength} IS NOT NULL
+            AND ${table.contractualInterestAmount} IS NOT NULL AND ${table.cumulativeInterestAmount} IS NOT NULL
+            AND ${table.dailyIncrementAmount} IS NOT NULL)
+    `),
+    check("loan_interest_accruals_period_amounts_check", sql`
+        (${table.contractualInterestAmount} IS NULL OR ${table.contractualInterestAmount} >= 0)
+        AND (${table.cumulativeInterestAmount} IS NULL OR ${table.cumulativeInterestAmount} >= 0)
+        AND (${table.dailyIncrementAmount} IS NULL OR ${table.dailyIncrementAmount} >= 0)
+    `),
+]);
+
+export const loanSettlementPreviews = pgTable("loan_settlement_previews", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    loanId: integer("loan_id").notNull(),
+    asOfDate: date("as_of_date").notNull(),
+    outstandingPrincipal: numeric("outstanding_principal").notNull(),
+    dueInterest: numeric("due_interest").notNull(),
+    accruedNotDueInterest: numeric("accrued_not_due_interest").notNull(),
+    outstandingFees: numeric("outstanding_fees").notNull(),
+    outstandingPenalties: numeric("outstanding_penalties").notNull(),
+    nonRefundableAdvanceInterest: numeric("non_refundable_advance_interest").notNull(),
+    settlementTotal: numeric("settlement_total").notNull(),
+    balanceVersion: text("balance_version").notNull(),
+    previewHash: text("preview_hash").notNull(),
+    status: text("status").default("ready").notNull(),
+    executeIdempotencyKey: text("execute_idempotency_key"),
+    executedAuditPublicId: uuid("executed_audit_public_id"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    executedAt: timestamp("executed_at", { withTimezone: true }),
+    createdByUserId: integer("created_by_user_id"),
+    executedByUserId: integer("executed_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("loan_settlement_previews_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("loan_settlement_previews_tenant_execute_idempotency_unique")
+        .on(table.tenantId, table.executeIdempotencyKey)
+        .where(sql`${table.executeIdempotencyKey} IS NOT NULL`),
+    index("loan_settlement_previews_tenant_loan_created_idx").on(table.tenantId, table.loanId, table.createdAt),
+    foreignKey({
+        name: "loan_settlement_previews_tenant_loan_fk",
+        columns: [table.tenantId, table.loanId],
+        foreignColumns: [loans.tenantId, loans.id],
+    }),
+    foreignKey({
+        name: "loan_settlement_previews_tenant_created_by_fk",
+        columns: [table.tenantId, table.createdByUserId],
+        foreignColumns: [users.tenantId, users.id],
+    }),
+    foreignKey({
+        name: "loan_settlement_previews_tenant_executed_by_fk",
+        columns: [table.tenantId, table.executedByUserId],
+        foreignColumns: [users.tenantId, users.id],
+    }),
+    check("loan_settlement_previews_status_check", sql`${table.status} IN ('ready', 'executed', 'expired')`),
+    check("loan_settlement_previews_hash_check", sql`length(${table.previewHash}) > 0 AND length(${table.balanceVersion}) > 0`),
+    check("loan_settlement_previews_expiry_check", sql`${table.expiresAt} > ${table.createdAt}`),
+    check("loan_settlement_previews_amounts_check", sql`
+        ${table.outstandingPrincipal} >= 0 AND ${table.dueInterest} >= 0
+        AND ${table.accruedNotDueInterest} >= 0 AND ${table.outstandingFees} >= 0
+        AND ${table.outstandingPenalties} >= 0 AND ${table.nonRefundableAdvanceInterest} >= 0
+        AND ${table.settlementTotal} >= 0
+    `),
+    check("loan_settlement_previews_total_check", sql`
+        ${table.settlementTotal} = ${table.outstandingPrincipal} + ${table.dueInterest}
+            + ${table.accruedNotDueInterest} + ${table.outstandingFees} + ${table.outstandingPenalties}
+    `),
 ]);
 
 export const loanDisbursements = pgTable("loan_disbursements", {
