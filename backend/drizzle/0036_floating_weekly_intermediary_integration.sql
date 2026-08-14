@@ -327,17 +327,19 @@ WHERE "repayment_type" = 'floating'
   AND "daily_interest_mode" IN ('percent', 'per_thousand')
   AND "daily_interest_rate" IS NOT NULL
   AND COALESCE("interest_start_date", "start_date") IS NOT NULL;--> statement-breakpoint
+UPDATE "loan_interest_rate_periods" AS "rate_period"
+SET "period_unit" = CASE
+        WHEN "loan"."floating_accrual_cycle" = 'weekly' THEN 'week'
+        ELSE 'day'
+    END,
+    "period_length" = 1
+FROM "loans" AS "loan"
+WHERE "rate_period"."tenant_id" = "loan"."tenant_id"
+  AND "rate_period"."loan_id" = "loan"."id";--> statement-breakpoint
 -- Existing main weekly snapshots and all financial amounts remain authoritative.
 -- Only absent legacy period metadata and the newly introduced policy projection
--- are derived. For a partial main weekly period, the largest stored cumulative
--- snapshot is the deterministic contractual amount known at the upgrade boundary.
-WITH "known_period_contracts" AS (
-    SELECT "id",
-        MAX("cumulative_interest_amount") OVER (
-            PARTITION BY "tenant_id", "loan_id", "period_start_date", "period_end_date"
-        ) AS "known_contractual_interest_amount"
-    FROM "loan_interest_accruals"
-)
+-- are derived. Each accrual row's immutable principal/rate snapshots are the
+-- authoritative inputs to the generalized daily/weekly contractual kernel.
 UPDATE "loan_interest_accruals" AS "accrual"
 SET "period_start_date" = COALESCE("accrual"."period_start_date", "accrual"."accrual_date"),
     "period_end_date" = COALESCE("accrual"."period_end_date", "accrual"."accrual_date" + 1),
@@ -345,15 +347,13 @@ SET "period_start_date" = COALESCE("accrual"."period_start_date", "accrual"."acc
     "period_days" = COALESCE("accrual"."period_days", 1),
     "period_unit" = CASE WHEN COALESCE("accrual"."period_days", 1) = 7 THEN 'week' ELSE 'day' END,
     "period_length" = 1,
-    "contractual_interest_amount" = COALESCE(
-        "known_period_contracts"."known_contractual_interest_amount",
-        "accrual"."cumulative_interest_amount",
-        "accrual"."interest_amount"
-    ),
+    "contractual_interest_amount" = CASE "accrual"."rate_mode"
+        WHEN 'percent' THEN round("accrual"."opening_principal" * "accrual"."rate" / 100, 2)
+        WHEN 'per_thousand' THEN round("accrual"."opening_principal" * "accrual"."rate" / 1000, 2)
+        ELSE COALESCE("accrual"."cumulative_interest_amount", "accrual"."interest_amount")
+    END,
     "cumulative_interest_amount" = COALESCE("accrual"."cumulative_interest_amount", "accrual"."interest_amount"),
-    "daily_increment_amount" = "accrual"."interest_amount"
-FROM "known_period_contracts"
-WHERE "known_period_contracts"."id" = "accrual"."id";--> statement-breakpoint
+    "daily_increment_amount" = "accrual"."interest_amount";--> statement-breakpoint
 CREATE UNIQUE INDEX "intermediary_bank_accounts_tenant_id_id_unique" ON "intermediary_bank_accounts" USING btree ("tenant_id","id");--> statement-breakpoint
 CREATE UNIQUE INDEX "intermediated_disbursement_groups_tenant_id_id_unique" ON "intermediated_disbursement_groups" USING btree ("tenant_id","id");--> statement-breakpoint
 CREATE UNIQUE INDEX "intermediated_transfer_events_tenant_id_id_unique" ON "intermediated_transfer_events" USING btree ("tenant_id","id");--> statement-breakpoint

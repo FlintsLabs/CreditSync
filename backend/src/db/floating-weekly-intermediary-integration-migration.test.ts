@@ -129,7 +129,7 @@ if (!testDatabaseUrl) {
                 INSERT INTO borrowers (tenant_id, owner_user_id, name)
                 SELECT tenant_id, id, 'Upgrade boundary borrower' FROM users WHERE email = 'owner@upgrade-0036.test'
             `;
-            const seededLoans = await sql<{ id: number; public_id: string; repayment_type: string }[]>`
+            const seededLoans = await sql<{ id: number; public_id: string; repayment_type: string; principal_amount: string }[]>`
                 INSERT INTO loans (
                     tenant_id, owner_user_id, borrower_id, principal_amount, interest_rate,
                     repayment_type, status, start_date, outstanding_principal, outstanding_interest,
@@ -148,14 +148,27 @@ if (!testDatabaseUrl) {
                 CROSS JOIN (VALUES
                     (1100.00::numeric, 'single_payment'::text, 100.00::numeric, 5.00::numeric, DATE '2026-09-01', 100.00::numeric, 'fixed_only'::text, 'none'::text, NULL::text, NULL::numeric, NULL::text, NULL::date, NULL::text),
                     (1200.00::numeric, 'single_payment'::text, 0.00::numeric, 0.00::numeric, DATE '2026-10-01', 120.00::numeric, 'fixed_only'::text, 'none'::text, NULL::text, NULL::numeric, NULL::text, NULL::date, NULL::text),
-                    (5000.00::numeric, 'floating'::text, 257.14::numeric, 0.00::numeric, NULL::date, NULL::numeric, NULL::text, NULL::text, 'percent'::text, 12.0000::numeric, 'none'::text, DATE '2026-08-13', 'weekly'::text)
+                    (5000.00::numeric, 'floating'::text, 325.71::numeric, 0.00::numeric, NULL::date, NULL::numeric, NULL::text, NULL::text, 'percent'::text, 12.0000::numeric, 'none'::text, DATE '2026-08-13', 'weekly'::text),
+                    (2000.00::numeric, 'floating'::text, 30.00::numeric, 0.00::numeric, NULL::date, NULL::numeric, NULL::text, NULL::text, 'per_thousand'::text, 15.0000::numeric, 'none'::text, DATE '2026-08-14', 'daily'::text)
                 ) AS fixture(principal, repayment_type, outstanding_interest, outstanding_fees, single_due_date, single_interest, single_policy, single_penalty_mode, daily_mode, daily_rate, first_day_treatment, interest_start_date, floating_cycle)
                 WHERE users.email = 'owner@upgrade-0036.test'
-                RETURNING id, public_id, repayment_type
+                RETURNING id, public_id, repayment_type, principal_amount
             `;
             const singleLoans = seededLoans.filter((loan) => loan.repayment_type === "single_payment");
-            const floatingLoan = seededLoans.find((loan) => loan.repayment_type === "floating")!;
+            const weeklyFloatingLoan = seededLoans.find((loan) => loan.principal_amount === "5000.00")!;
+            const dailyFloatingLoan = seededLoans.find((loan) => loan.principal_amount === "2000.00")!;
             const actor = (await sql<{ id: number }[]>`SELECT id FROM users WHERE email = 'owner@upgrade-0036.test'`)[0]!;
+
+            const ratePeriods = await sql<{ id: number; loan_id: number }[]>`
+                INSERT INTO loan_interest_rate_periods (
+                    tenant_id, loan_id, effective_date, rate_type, rate, created_by_user_id
+                ) VALUES
+                    ('tenant-upgrade-0036', ${weeklyFloatingLoan.id}, DATE '2026-08-13', 'percent', 12.0000, ${actor.id}),
+                    ('tenant-upgrade-0036', ${dailyFloatingLoan.id}, DATE '2026-08-14', 'per_thousand', 15.0000, ${actor.id})
+                RETURNING id, loan_id
+            `;
+            const weeklyRatePeriod = ratePeriods.find((period) => period.loan_id === weeklyFloatingLoan.id)!;
+            const dailyRatePeriod = ratePeriods.find((period) => period.loan_id === dailyFloatingLoan.id)!;
 
             await sql`
                 INSERT INTO loan_schedules (
@@ -174,12 +187,15 @@ if (!testDatabaseUrl) {
             `;
             await sql`
                 INSERT INTO loan_interest_accruals (
-                    tenant_id, loan_id, accrual_date, opening_principal, rate_mode, rate,
+                    tenant_id, loan_id, interest_rate_period_id, accrual_date, opening_principal, rate_mode, rate,
                     period_start_date, period_end_date, period_day_index, period_days,
                     cumulative_interest_amount, interest_amount, paid_amount,
                     accrued_penalty, paid_penalty, status, created_by_user_id
-                ) VALUES ('tenant-upgrade-0036', ${floatingLoan.id}, DATE '2026-08-15', 5000.00, 'percent', 12.0000,
-                    DATE '2026-08-13', DATE '2026-08-20', 3, 7, 257.14, 85.71, 0.00, 2.00, 0.00, 'accruing', ${actor.id})
+                ) VALUES
+                    ('tenant-upgrade-0036', ${weeklyFloatingLoan.id}, ${weeklyRatePeriod.id}, DATE '2026-08-15', 5000.00, 'percent', 12.0000,
+                        DATE '2026-08-13', DATE '2026-08-20', 3, 7, 257.14, 85.71, 0.00, 2.00, 0.00, 'accruing', ${actor.id}),
+                    ('tenant-upgrade-0036', ${weeklyFloatingLoan.id}, ${weeklyRatePeriod.id}, DATE '2026-08-16', 4000.00, 'percent', 12.0000,
+                        DATE '2026-08-13', DATE '2026-08-20', 4, 7, 325.71, 68.57, 0.00, 0.00, 0.00, 'accruing', ${actor.id})
             `;
             const audit = await sql<{ public_id: string }[]>`
                 INSERT INTO audit_logs (tenant_id, entity_type, entity_id, action, actor_user_id, actor_source, correlation_id)
@@ -215,7 +231,7 @@ if (!testDatabaseUrl) {
                 loanSchedules: await sql`SELECT id, public_id, tenant_id, loan_id, installment_no, due_date, scheduled_principal, scheduled_interest, scheduled_fee, scheduled_total, paid_total, paid_penalty, remaining_due, overdue_days, status FROM loan_schedules ORDER BY id`,
                 openingBalances: await sql`SELECT id, public_id, tenant_id, restructure_id, loan_id, component_kind, amount, source_type, source_public_id, status FROM loan_opening_balance_components ORDER BY id`,
                 restructures: await sql`SELECT id, public_id, status, gross_principal, gross_interest, gross_fees, gross_penalty, waived_interest, waived_fees, waived_penalty, net_principal, net_interest, net_fees, net_penalty, external_settlement_credits, additional_principal, cash_direction, cash_amount FROM loan_restructures ORDER BY id`,
-                floatingAccruals: await sql`SELECT id, public_id, tenant_id, loan_id, accrual_date, opening_principal, rate_mode, rate, period_start_date, period_end_date, period_day_index, period_days, cumulative_interest_amount, interest_amount, paid_amount, accrued_penalty, paid_penalty, status FROM loan_interest_accruals ORDER BY id`,
+                floatingAccruals: await sql`SELECT id, public_id, tenant_id, loan_id, interest_rate_period_id, accrual_date, opening_principal, rate_mode, rate, cumulative_interest_amount, interest_amount, paid_amount, accrued_penalty, paid_penalty, status FROM loan_interest_accruals ORDER BY id`,
             });
             const before = await capture();
 
@@ -236,18 +252,43 @@ if (!testDatabaseUrl) {
                 "loan_settlement_previews",
                 "intermediated_disbursement_groups",
             ]));
-            const backfill = await sql`
-                SELECT interest_period_unit, interest_period_length, advance_interest_periods,
+            const loanBackfill = await sql`
+                SELECT id, interest_period_unit, interest_period_length, advance_interest_periods,
                     advance_interest_refund_policy, interest_period_anchor_date::text AS interest_period_anchor_date
-                FROM loans WHERE id = ${floatingLoan.id}
+                FROM loans WHERE id IN (${weeklyFloatingLoan.id}, ${dailyFloatingLoan.id}) ORDER BY id
             `;
-            expect(backfill[0]).toMatchObject({
+            expect(loanBackfill.find((loan) => loan.id === weeklyFloatingLoan.id)).toMatchObject({
                 interest_period_unit: "week",
                 interest_period_length: 1,
                 advance_interest_periods: 0,
                 advance_interest_refund_policy: "non_refundable",
                 interest_period_anchor_date: "2026-08-13",
             });
+            expect(loanBackfill.find((loan) => loan.id === dailyFloatingLoan.id)).toMatchObject({
+                interest_period_unit: "day",
+                interest_period_length: 1,
+                advance_interest_periods: 0,
+                advance_interest_refund_policy: "non_refundable",
+                interest_period_anchor_date: "2026-08-14",
+            });
+            const ratePeriodBackfill = await sql`
+                SELECT loan_id, period_unit, period_length
+                FROM loan_interest_rate_periods
+                WHERE id IN (${weeklyRatePeriod.id}, ${dailyRatePeriod.id}) ORDER BY id
+            `;
+            expect(ratePeriodBackfill).toEqual([
+                { loan_id: weeklyFloatingLoan.id, period_unit: "week", period_length: 1 },
+                { loan_id: dailyFloatingLoan.id, period_unit: "day", period_length: 1 },
+            ]);
+            const accrualProjection = await sql`
+                SELECT accrual_date::text AS accrual_date, period_unit, period_length,
+                    contractual_interest_amount, cumulative_interest_amount, daily_increment_amount
+                FROM loan_interest_accruals ORDER BY accrual_date, id
+            `;
+            expect(accrualProjection).toEqual([
+                { accrual_date: "2026-08-15", period_unit: "week", period_length: 1, contractual_interest_amount: "600.00", cumulative_interest_amount: "257.14", daily_increment_amount: "85.71" },
+                { accrual_date: "2026-08-16", period_unit: "week", period_length: 1, contractual_interest_amount: "480.00", cumulative_interest_amount: "325.71", daily_increment_amount: "68.57" },
+            ]);
         } finally {
             await sql.end();
         }
