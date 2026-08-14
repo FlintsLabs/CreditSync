@@ -19,6 +19,7 @@ type EvidenceIntent = { publicId: string; status?: string; uploadUrl?: string; r
 const blankDraft = (): Draft => ({ grossAmount: "", loanAttributedAmount: "", channel: "bank_transfer", sourceBankProfilePublicId: "", payeeHint: "", disbursedAt: new Date().toISOString().slice(0, 16), note: "" });
 const validMoney = (value: string) => /^\d+(?:\.\d{1,2})?$/.test(value) && /[1-9]/.test(value);
 const hash = (bytes: ArrayBuffer) => Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
+class SupersededLedgerReadError extends Error { constructor() { super("Disbursement ledger read was superseded"); } }
 
 export type LoanDisbursementsHandle = { refresh: () => Promise<void> };
 
@@ -44,15 +45,22 @@ export const LoanDisbursements = forwardRef<LoanDisbursementsHandle, { loanPubli
     const readLedger = async () => {
         const generation = ++readGeneration.current;
         const scope = loanPublicId;
-        const response = await api.get(`/loans/${loanPublicId}/disbursements`);
+        let response;
+        try {
+            response = await api.get(`/loans/${loanPublicId}/disbursements`);
+        } catch (error) {
+            if (generation !== readGeneration.current) throw new SupersededLedgerReadError();
+            throw error;
+        }
         const next = response.data as Ledger;
-        if (generation !== readGeneration.current || next.loanPublicId !== scope) return;
+        if (generation !== readGeneration.current || next.loanPublicId !== scope) throw new SupersededLedgerReadError();
         setLedger(next);
+        setMessage("");
         setSelected((current) => current ? next.events.find((event) => event.publicId === current.publicId) ?? null : null);
     };
     useImperativeHandle(ref, () => ({ refresh: readLedger }));
     useEffect(() => {
-        void readLedger().catch(() => setMessage(t("loanDetail.disbursements.errors.load")));
+        void readLedger().catch((error) => { if (!(error instanceof SupersededLedgerReadError)) setMessage(t("loanDetail.disbursements.errors.load")); });
         return () => { readGeneration.current += 1; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [loanPublicId, t]);

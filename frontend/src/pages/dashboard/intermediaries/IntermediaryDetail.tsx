@@ -1,11 +1,11 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { AlertTriangle, ArrowLeft, Landmark } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../../lib/api";
 import { formatMoneyExact, sumMoney } from "../../../lib/workflow-model";
 import { IntermediaryTransferLedger } from "./IntermediaryTransferLedger";
-import { refreshForScope } from "./intermediary-scope";
+import { refreshForScope, useActiveScope } from "./intermediary-scope";
 
 type Assignment = {
     publicId: string; loanPublicId: string; loanStatus?: string; borrowerName?: string;
@@ -39,8 +39,7 @@ export default function IntermediaryDetail() {
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<"notFound" | "failed" | null>(null);
     const [reload, setReload] = useState(0);
-    const activeProfileId = useRef(id);
-    useLayoutEffect(() => { activeProfileId.current = id; }, [id]);
+    const activeProfileId = useActiveScope(id);
 
     useEffect(() => {
         let active = true;

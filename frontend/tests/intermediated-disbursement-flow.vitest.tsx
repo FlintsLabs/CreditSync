@@ -7,6 +7,7 @@ import { api } from "../src/lib/api";
 import { IntermediatedDisbursementPanel, TransferGroupView } from "../src/pages/dashboard/loans/IntermediatedDisbursementPanel";
 import { IntermediaryTransferLedger } from "../src/pages/dashboard/intermediaries/IntermediaryTransferLedger";
 import { LoanDisbursements, type LoanDisbursementsHandle } from "../src/pages/dashboard/loans/LoanDisbursements";
+import { refreshForScope, useActiveScope } from "../src/pages/dashboard/intermediaries/intermediary-scope";
 
 vi.mock("../src/lib/api", () => ({ api: { get: vi.fn(), post: vi.fn() } }));
 
@@ -251,6 +252,40 @@ describe("intermediated disbursement money paths", () => {
         expect(screen.getByText("Net disbursed").parentElement).toHaveTextContent(/4,400\.00/);
     });
 
+    it("rejects a superseded post refresh when its newer authoritative refresh fails", async () => {
+        const ref = createRef<LoanDisbursementsHandle>();
+        const initial = { loanPublicId: LOAN_ID, summary: { approvedPrincipal: "5000.00", netDisbursed: "0.00", variance: "-5000.00", status: "under_disbursed" }, events: [] };
+        let finishPost!: (value: { data: unknown }) => void;
+        let failNewest!: (error: Error) => void;
+        vi.mocked(api.get).mockResolvedValueOnce({ data: initial })
+            .mockImplementationOnce(() => new Promise((resolve) => { finishPost = resolve; }))
+            .mockImplementationOnce(() => new Promise((_resolve, reject) => { failNewest = reject; }));
+        render(<MemoryRouter><LoanDisbursements ref={ref} loanPublicId={LOAN_ID} /></MemoryRouter>);
+        await screen.findByText("Net disbursed");
+        const postRefresh = ref.current!.refresh();
+        const newestRefresh = ref.current!.refresh();
+        const postExpectation = expect(postRefresh).rejects.toThrow(/superseded/i);
+        const newestExpectation = expect(newestRefresh).rejects.toThrow("newest failed");
+        finishPost({ data: { ...initial, summary: { ...initial.summary, netDisbursed: "4400.00" } } });
+        failNewest(new Error("newest failed"));
+        await postExpectation;
+        await newestExpectation;
+        expect(screen.getByText("Net disbursed").parentElement).toHaveTextContent(/0\.00/);
+    });
+
+    it("ignores stale initial errors and clears an earlier current error after successful refresh", async () => {
+        const ref = createRef<LoanDisbursementsHandle>();
+        let failInitial!: (error: Error) => void;
+        const ledger = { loanPublicId: LOAN_ID, summary: { approvedPrincipal: "5000.00", netDisbursed: "4400.00", variance: "-600.00", status: "under_disbursed" }, events: [] };
+        vi.mocked(api.get).mockImplementationOnce(() => new Promise((_resolve, reject) => { failInitial = reject; })).mockResolvedValueOnce({ data: ledger });
+        render(<MemoryRouter><LoanDisbursements ref={ref} loanPublicId={LOAN_ID} /></MemoryRouter>);
+        await act(async () => { await ref.current!.refresh(); });
+        failInitial(new Error("stale initial failure"));
+        await act(async () => { await Promise.resolve(); });
+        expect(screen.queryByText(/unable to load disbursements/i)).not.toBeInTheDocument();
+        expect(screen.getByText("Net disbursed").parentElement).toHaveTextContent(/4,400\.00/);
+    });
+
     it("clears blocking refresh failure only after same-key retry fully refreshes", async () => {
         const postedDetail = { ...group, status: "posted", events: events.map((event) => ({ ...event, status: "posted" })) };
         vi.mocked(api.post).mockResolvedValue({ data: { status: "posted" } });
@@ -274,5 +309,30 @@ describe("intermediated disbursement money paths", () => {
         const ledger = await screen.findByRole("region", { name: /transfer ledger/i });
         expect(within(ledger).getByRole("link", { name: /open loan/i })).toHaveAttribute("href", `/loans/${LOAN_ID}`);
         expect(api.get).toHaveBeenCalledWith("/intermediated-disbursements", { params: { intermediaryPublicId: INTERMEDIARY_ID } });
+    });
+
+    it("invalidates a deferred post balance refresh when the routed scope unmounts", async () => {
+        let finishBalance!: (value: string) => void;
+        const install = vi.fn();
+        function Harness() {
+            const active = useActiveScope(INTERMEDIARY_ID);
+            return <IntermediaryTransferLedger intermediaryPublicId={INTERMEDIARY_ID} onPosted={() => refreshForScope(
+                INTERMEDIARY_ID,
+                active,
+                () => new Promise<string>((resolve) => { finishBalance = resolve; }),
+                install,
+            )} />;
+        }
+        vi.mocked(api.get).mockImplementation(async (url) => url === "/intermediated-disbursements" ? { data: [group] } : { data: group });
+        vi.mocked(api.post).mockResolvedValue({ data: { status: "posted" } });
+        const user = userEvent.setup();
+        const view = render(<MemoryRouter><Harness /></MemoryRouter>);
+        await user.click(await screen.findByRole("checkbox", { name: /confirm.*zero variance.*ready evidence/i }));
+        await user.click(screen.getByRole("button", { name: /post confirmed transfer/i }));
+        await waitFor(() => expect(finishBalance).toBeTypeOf("function"));
+        view.unmount();
+        finishBalance("999.00");
+        await act(async () => { await Promise.resolve(); });
+        expect(install).not.toHaveBeenCalled();
     });
 });
