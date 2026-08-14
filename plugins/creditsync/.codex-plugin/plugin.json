@@ -1,6 +1,6 @@
 {
   "name": "creditsync",
-  "version": "6.0.0",
+  "version": "7.0.0",
   "description": "Private CreditSync borrower, payment, intermediary-remittance and disbursement, floating-interest settlement, renewal, and reversal workflows for Codex.",
   "author": {
     "name": "CreditSync"
@@ -36,7 +36,8 @@
       "Record a loan disbursement with evidence.",
       "Record an assigned intermediary three-leg disbursement with evidence.",
       "Schedule a future floating-loan interest rate.",
-      "Preview an exact floating-loan settlement."
+      "Preview an exact floating-loan settlement.",
+      "Reverse an exact executed floating-loan settlement after confirmation."
     ],
     "brandColor": "#075985"
   }

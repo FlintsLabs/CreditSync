@@ -189,6 +189,7 @@ export default function LoanDetail() {
     const [activating, setActivating] = useState(false);
     const activationIntentRef = useRef<{ loanPublicId: string; key: string } | null>(null);
     const settlementIntentRef = useRef<{ fingerprint: string; key: string } | null>(null);
+    const settlementReversalIntentRef = useRef<{ fingerprint: string; key: string } | null>(null);
     const [settlementDate, setSettlementDate] = useState(bangkokBusinessDate);
     const [settlementPreview, setSettlementPreview] = useState<LoanSettlementPreview | null>(null);
     const [settlementOpen, setSettlementOpen] = useState(false);
@@ -197,6 +198,9 @@ export default function LoanDetail() {
     const [settlementBusy, setSettlementBusy] = useState(false);
     const [settlementError, setSettlementError] = useState("");
     const [settlementExecuted, setSettlementExecuted] = useState(false);
+    const [executedSettlementPublicId, setExecutedSettlementPublicId] = useState<string | null>(null);
+    const [settlementReversalReason, setSettlementReversalReason] = useState("");
+    const [settlementReversalConfirmed, setSettlementReversalConfirmed] = useState(false);
     const [postSettlementRefreshStatus, setPostSettlementRefreshStatus] = useState<"idle" | "refreshing" | "failed">("idle");
     const disbursementsRef = useRef<LoanDisbursementsHandle>(null);
     const money = (value: string | null | undefined) => formatMoneyExact(value ?? "0.00", i18n.language);
@@ -323,7 +327,8 @@ export default function LoanDetail() {
         }
         try {
             setSettlementBusy(true);
-            await api.post<LoanSettlementExecution>(`/loan-settlements/${settlementPreview.publicId}/execute`, {
+            const executedPublicId = settlementPreview.publicId;
+            await api.post<LoanSettlementExecution>(`/loan-settlements/${executedPublicId}/execute`, {
                 previewHash: settlementPreview.previewHash,
                 confirmed: true,
                 reason,
@@ -332,6 +337,7 @@ export default function LoanDetail() {
             setSettlementConfirmed(false);
             setSettlementError("");
             setSettlementExecuted(true);
+            setExecutedSettlementPublicId(executedPublicId);
             setPostSettlementRefreshStatus("refreshing");
             try {
                 await refreshSettlementDependents();
@@ -358,6 +364,34 @@ export default function LoanDetail() {
                 console.error("Failed to execute floating-loan settlement", error);
                 setSettlementError(t("loanDetail.settlement.errors.execute"));
             }
+        } finally {
+            setSettlementBusy(false);
+        }
+    };
+
+    const reverseSettlement = async () => {
+        if (!executedSettlementPublicId || !settlementReversalConfirmed || !settlementReversalReason.trim() || settlementBusy) return;
+        const reason = settlementReversalReason.trim();
+        const fingerprint = `${executedSettlementPublicId}:${reason}`;
+        if (settlementReversalIntentRef.current?.fingerprint !== fingerprint) {
+            settlementReversalIntentRef.current = { fingerprint, key: crypto.randomUUID() };
+        }
+        try {
+            setSettlementBusy(true);
+            setSettlementError("");
+            await api.post(`/loan-settlements/${executedSettlementPublicId}/reverse`, { reason }, {
+                headers: { "Idempotency-Key": settlementReversalIntentRef.current.key },
+            });
+            await refreshSettlementDependents();
+            setSettlementOpen(false);
+            setSettlementExecuted(false);
+            setExecutedSettlementPublicId(null);
+            setSettlementReversalReason("");
+            setSettlementReversalConfirmed(false);
+            setErrorMessage("");
+        } catch (error) {
+            console.error("Failed to reverse floating-loan settlement", error);
+            setSettlementError(t("loanDetail.settlement.errors.reverse"));
         } finally {
             setSettlementBusy(false);
         }
@@ -428,6 +462,18 @@ export default function LoanDetail() {
                                     {t("loanDetail.settlement.errors.refreshAfterExecution")}
                                 </div>
                             )}
+                            <div className="grid gap-2">
+                                <label htmlFor="settlement-reversal-reason">{t("loanDetail.settlement.reversalReason")}</label>
+                                <Input id="settlement-reversal-reason" value={settlementReversalReason} onChange={(event) => {
+                                    setSettlementReversalReason(event.target.value);
+                                    setSettlementReversalConfirmed(false);
+                                    settlementReversalIntentRef.current = null;
+                                }} />
+                            </div>
+                            <label className="flex items-start gap-2 text-sm">
+                                <input type="checkbox" className="mt-1" checked={settlementReversalConfirmed} onChange={(event) => setSettlementReversalConfirmed(event.target.checked)} />
+                                <span>{t("loanDetail.settlement.reversalConfirmation")}</span>
+                            </label>
                         </>
                     ) : settlementPreview ? (
                         <>
@@ -463,6 +509,9 @@ export default function LoanDetail() {
                         <Button variant="outline" disabled={settlementBusy} onClick={() => setSettlementOpen(false)}>{t("common.cancel")}</Button>
                         {!settlementExecuted && <Button disabled={settlementBusy || !settlementPreview || !settlementConfirmed || !settlementReason.trim()} onClick={() => void executeSettlement()}>
                             {settlementBusy ? t("loanDetail.settlement.executing") : t("loanDetail.settlement.execute")}
+                        </Button>}
+                        {settlementExecuted && <Button variant="destructive" disabled={settlementBusy || !settlementReversalConfirmed || !settlementReversalReason.trim()} onClick={() => void reverseSettlement()}>
+                            {settlementBusy ? t("loanDetail.settlement.reversing") : t("loanDetail.settlement.reverse")}
                         </Button>}
                     </DialogFooter>
                 </DialogContent>

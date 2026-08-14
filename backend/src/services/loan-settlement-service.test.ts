@@ -26,6 +26,7 @@ import {
 import {
     executeLoanSettlement,
     previewLoanSettlement,
+    reverseLoanSettlement,
 } from "./loan-settlement-service";
 import { accrueFloatingInterestThrough } from "./floating-interest-service";
 
@@ -83,6 +84,8 @@ async function seedWeeklyLoan(input: {
     advancePeriods?: 0 | 1;
     principal?: string;
     rate?: string;
+    lateFeeMode?: "fixed" | "daily_percent";
+    lateFeeAmount?: string;
 }) {
     const actor = await seedUser(input.tenantId);
     const borrower = await db.insert(borrowers).values({
@@ -113,6 +116,9 @@ async function seedWeeklyLoan(input: {
         outstandingPrincipal: principal,
         outstandingInterest: "0.00",
         outstandingFees: "0.00",
+        lateFeeMode: input.lateFeeMode ?? "none",
+        lateFeeAmount: input.lateFeeAmount ?? "0.00",
+        gracePeriodDays: 0,
         status: "active",
     }).returning().then((rows) => rows[0]!);
     const ratePeriod = await db.insert(loanInterestRatePeriods).values({
@@ -183,6 +189,189 @@ async function postFloatingPrincipalPayment(
 describe("loan settlement service", () => {
     if (integrationEnabled) beforeEach(resetApplicationTables);
     afterEach(() => setSystemTime());
+
+    integrationTest("settles an overdue weekly fixed penalty with immutable allocation provenance", async () => {
+        setSystemTime(new Date("2026-08-21T12:00:00+07:00"));
+        const seeded = await seedWeeklyLoan({
+            tenantId: "tenant-settlement-fixed-penalty",
+            lateFeeMode: "fixed",
+            lateFeeAmount: "50.00",
+        });
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-21");
+        expect(preview).toMatchObject({
+            dueInterest: "600.00",
+            accruedNotDueInterest: "171.43",
+            outstandingPenalties: "50.00",
+            settlementTotal: "5821.43",
+        });
+
+        const executed = await executeLoanSettlement(context(seeded.actor, "settle-fixed-penalty"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "Collect the exact overdue fixed penalty settlement",
+        });
+        expect(executed.transaction).toMatchObject({
+            amount: "5821.43",
+            penaltyComponent: "50.00",
+        });
+        const settlementTransaction = await db.query.transactions.findFirst({
+            where: eq(transactions.publicId, executed.transaction.publicId),
+        });
+        expect(settlementTransaction).toBeDefined();
+        expect(await db.select().from(floatingTransactionAllocations).where(and(
+            eq(floatingTransactionAllocations.transactionId, settlementTransaction!.id),
+            eq(floatingTransactionAllocations.component, "penalty"),
+        ))).toEqual([expect.objectContaining({
+            amount: "50.00",
+            dueDate: "2026-08-20",
+            entryType: "payment",
+        })]);
+    });
+
+    integrationTest("settles daily-percent penalty as of the preview date and rejects a stale penalty balance", async () => {
+        setSystemTime(new Date("2026-08-22T12:00:00+07:00"));
+        const seeded = await seedWeeklyLoan({
+            tenantId: "tenant-settlement-daily-penalty",
+            lateFeeMode: "daily_percent",
+            lateFeeAmount: "1.00",
+        });
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-22");
+        expect(preview).toMatchObject({ outstandingPenalties: "12.00", settlementTotal: "5869.14" });
+
+        await postFloatingPrincipalPayment(seeded, "12.00", "2026-08-22T05:00:00.000Z", "pay-previewed-penalty");
+        await expect(executeLoanSettlement(context(seeded.actor, "stale-daily-penalty"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "This reviewed penalty was paid after preview",
+        })).rejects.toMatchObject({ code: "STALE_SETTLEMENT_PREVIEW", status: 409 });
+
+        const fresh = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-22");
+        expect(fresh.outstandingPenalties).toBe("0.00");
+    });
+
+    integrationTest("reverses a settlement through exact append-only transaction, allocation, and fund provenance", async () => {
+        setSystemTime(new Date("2026-08-21T12:00:00+07:00"));
+        const seeded = await seedWeeklyLoan({
+            tenantId: "tenant-settlement-reversal",
+            lateFeeMode: "fixed",
+            lateFeeAmount: "50.00",
+        });
+        const profile = await db.insert(bankProfiles).values({
+            tenantId: seeded.actor.tenantId,
+            name: "Settlement reversal fund",
+            type: "personal_savings",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanFundingAllocations).values({
+            tenantId: seeded.actor.tenantId,
+            loanId: seeded.loan.id,
+            bankProfileId: profile.id,
+            allocatedAmount: "5000.00",
+            allocationDate: "2026-08-13",
+            createdByUserId: seeded.actor.id,
+        });
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-21");
+        const executed = await executeLoanSettlement(context(seeded.actor, "execute-before-reversal"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "Execute before testing exact compensation",
+        });
+        const original = await db.query.transactions.findFirst({
+            where: eq(transactions.publicId, executed.transaction.publicId),
+        });
+        expect(original).toBeDefined();
+        const originalAllocations = await db.select().from(floatingTransactionAllocations)
+            .where(eq(floatingTransactionAllocations.transactionId, original!.id))
+            .orderBy(floatingTransactionAllocations.allocationOrder);
+        const originalFundEffects = await db.select().from(fundLedgerEntries)
+            .where(eq(fundLedgerEntries.transactionId, original!.id))
+            .orderBy(fundLedgerEntries.id);
+
+        const reversal = await reverseLoanSettlement(context(seeded.actor, "reverse-settlement-exact"), {
+            settlementPublicId: preview.publicId,
+            reason: "Bank returned the settlement transfer",
+        });
+        expect(reversal).toMatchObject({
+            settlementPublicId: preview.publicId,
+            status: "reversed",
+            transaction: {
+                amount: "-5821.43",
+                principalComponent: "-5000.00",
+                interestComponent: "-771.43",
+                penaltyComponent: "-50.00",
+                entryType: "reversal",
+            },
+        });
+        const reversalRow = await db.query.transactions.findFirst({
+            where: eq(transactions.publicId, reversal.transaction.publicId),
+        });
+        expect(reversalRow).toMatchObject({ reversedTransactionId: original!.id });
+        expect(await db.select().from(floatingTransactionAllocations)
+            .where(eq(floatingTransactionAllocations.transactionId, reversalRow!.id))
+            .orderBy(floatingTransactionAllocations.allocationOrder)).toEqual(
+            originalAllocations.map((row, index) => expect.objectContaining({
+                component: row.component,
+                dueDate: row.dueDate,
+                interestAccrualId: row.interestAccrualId,
+                amount: `-${row.amount}`,
+                reversedAllocationId: row.id,
+                allocationOrder: index + 1,
+                entryType: "reversal",
+            })),
+        );
+        expect(await db.select().from(fundLedgerEntries)
+            .where(eq(fundLedgerEntries.transactionId, reversalRow!.id))
+            .orderBy(fundLedgerEntries.id)).toEqual(originalFundEffects.map((row) => expect.objectContaining({
+            bankProfileId: row.bankProfileId,
+            entryType: row.entryType,
+            amount: `-${row.amount}`,
+        })));
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({
+            status: "active",
+            outstandingPrincipal: "5000.00",
+            outstandingInterest: "771.43",
+        });
+        expect(await db.query.transactions.findFirst({ where: eq(transactions.id, original!.id) })).toEqual(original);
+
+        const replay = await reverseLoanSettlement(context(seeded.actor, "reverse-settlement-exact"), {
+            settlementPublicId: preview.publicId,
+            reason: "Bank returned the settlement transfer",
+        });
+        expect(replay.transaction.publicId).toBe(reversal.transaction.publicId);
+    });
+
+    integrationTest("blocks settlement reversal after downstream loan activity", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-reversal-blocker" });
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-19");
+        const executed = await executeLoanSettlement(context(seeded.actor, "execute-before-blocker"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "Execute before downstream blocker",
+        });
+        const original = await db.query.transactions.findFirst({ where: eq(transactions.publicId, executed.transaction.publicId) });
+        await db.insert(transactions).values({
+            tenantId: seeded.actor.tenantId,
+            ownerUserId: seeded.actor.id,
+            loanId: seeded.loan.id,
+            amount: "1.00",
+            principalComponent: "1.00",
+            entryType: "repayment",
+            idempotencyKey: "downstream-after-settlement",
+            transactionDate: new Date("2026-08-20T12:00:00+07:00"),
+            postedAt: new Date("2026-08-20T12:00:00+07:00"),
+        });
+        await expect(reverseLoanSettlement(context(seeded.actor, "blocked-settlement-reversal"), {
+            settlementPublicId: preview.publicId,
+            reason: "Must not bypass later activity",
+        })).rejects.toMatchObject({
+            code: "SETTLEMENT_REVERSAL_BLOCKED",
+            status: 409,
+            details: { transactionPublicId: original!.publicId },
+        });
+    });
 
     // Break caught: settlement arithmetic or stale/zero comparisons use Decimal's default
     // 20-digit precision and erase low-order cents from a valid 29-digit public balance.

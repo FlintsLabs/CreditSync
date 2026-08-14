@@ -246,11 +246,11 @@ describe("weekly floating allocation, penalty, reversal, and projection invarian
             interestComponent: "100.00",
             principalComponent: "1000.00",
         })]);
-        const components = posted.transactions.reduce((sum, row) => sum
-            .plus(row.penaltyComponent)
-            .plus(row.interestComponent)
-            .plus(row.feeComponent)
-            .plus(row.principalComponent), new Decimal(0));
+        const postedRow = posted.transactions[0]!;
+        const components = new Decimal(postedRow.penaltyComponent)
+            .plus(postedRow.interestComponent)
+            .plus(postedRow.feeComponent)
+            .plus(postedRow.principalComponent);
         expect(components.toFixed(2)).toBe("1150.00");
     });
 

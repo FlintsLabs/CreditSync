@@ -129,11 +129,11 @@ describe("floating-loan detail and exact settlement", () => {
         vi.mocked(api.get).mockImplementation(async (url) => {
             if (url === `/loans/${LOAN_ID}`) {
                 loanReadCount += 1;
-                return { data: loanReadCount === 1 ? loan : paidLoan };
+                return { data: loanReadCount === 2 ? paidLoan : loan };
             }
             if (url === `/loans/${LOAN_ID}/profitability`) {
                 profitabilityReadCount += 1;
-                return { data: profitabilityReadCount === 1 ? initialProfitability : paidProfitability };
+                return { data: profitabilityReadCount === 2 ? paidProfitability : initialProfitability };
             }
             if (url === `/borrowers/${BORROWER_ID}`) return { data: { id: BORROWER_ID, publicId: BORROWER_ID, name: "Exact Borrower" } };
             if (url.endsWith("/schedule") || url.endsWith("/funding-allocations")) return { data: [] };
@@ -152,6 +152,10 @@ describe("floating-loan detail and exact settlement", () => {
                     throw { response: { status: 409, data: { code: "STALE_SETTLEMENT_PREVIEW" } } };
                 }
                 return { data: { ...refreshed, status: "executed", auditPublicId: BORROWER_ID, correlationId: "settlement-correlation" } };
+            }
+            if (url === `/loan-settlements/${PREVIEW_2}/reverse`) {
+                expect(body).toEqual({ reason: "Correct duplicate close-out" });
+                return { data: { publicId: PREVIEW_2, status: "reversed", auditPublicId: BORROWER_ID, correlationId: "settlement-reversal-correlation" } };
             }
             throw new Error(`Unexpected POST ${url}`);
         });
@@ -213,6 +217,17 @@ describe("floating-loan detail and exact settlement", () => {
         expect(screen.getByText("Borrower Revenue Collected").parentElement).toHaveTextContent(/857\.14/);
         expect(within(summary).queryByText("Due interest")).not.toBeInTheDocument();
         expect(within(summary).queryByText("Accruing interest")).not.toBeInTheDocument();
+
+        await user.type(within(dialog).getByLabelText("Settlement reversal reason"), "Correct duplicate close-out");
+        const reverse = within(dialog).getByRole("button", { name: "Reverse settlement" });
+        expect(reverse).toBeDisabled();
+        await user.click(within(dialog).getByRole("checkbox", { name: "I confirm this compensating settlement reversal" }));
+        await user.click(reverse);
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: "Confirm exact settlement" })).not.toBeInTheDocument());
+        const reverseCall = vi.mocked(api.post).mock.calls.find(([url]) => String(url).endsWith("/reverse"));
+        expect(reverseCall?.[2]).toEqual({ headers: { "Idempotency-Key": expect.any(String) } });
+        expect(await screen.findByText(/^active$/i)).toBeInTheDocument();
+        expect(loanReadCount).toBe(3);
     }, 10_000);
 
     // Break caught: an initial preview failure is invisible because its message exists only in a dialog that never opened.

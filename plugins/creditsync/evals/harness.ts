@@ -1288,6 +1288,15 @@ const SCENARIOS: Record<string, Scenario> = {
         ],
         run: (mcp) => floatingSettlement(mcp, { refundRequested: true }),
     },
+    "floating-settlement-reverse": {
+        script: [
+            { name: "loan.settlement.reverse", arguments: { settlementPublicId: SETTLEMENT, reason: "Owner confirmed correction of duplicate close-out", idempotencyKey: "floating-settlement-reversal-20260815-1" }, result: { publicId: SETTLEMENT, status: "reversed", transaction: { publicId: "0198c481-3e2b-7000-8000-000000000073", entryType: "reversal", amount: "-5057.14", principalAmount: "-5000.00", interestAmount: "-42.14", feeAmount: "-10.00", penaltyAmount: "-5.00" }, reason: "Owner confirmed correction of duplicate close-out", auditPublicId: "0198c481-3e2b-7000-8000-000000000074", correlationId: "0198c481-3e2b-7000-8000-000000000075" } },
+        ],
+        run: async (mcp) => {
+            await mcp.call("loan.settlement.reverse", { settlementPublicId: SETTLEMENT, reason: "Owner confirmed correction of duplicate close-out", idempotencyKey: "floating-settlement-reversal-20260815-1" });
+            return { outcome: "completed" } as const;
+        },
+    },
     "disbursement-full-lifecycle": {
         script: [
             { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [] } },

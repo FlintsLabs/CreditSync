@@ -1,10 +1,10 @@
-# CreditSync Plugin 6.0.0
+# CreditSync Plugin 7.0.0
 
 This private Codex plugin orchestrates the CreditSync MCP app for borrower and intermediary identity, payments, intermediary remittances and multi-leg disbursements, generalized floating-interest origination and settlement, effective-dated rate changes, direct loan disbursements, renewals, and append-only reversal.
 
 ## Package contract
 
-- Plugin version: `6.0.0`
+- Plugin version: `7.0.0`
 - MCP schema version: `1.0`
 - 11 orchestration skills: `creditsync`, `manage-borrowers`, `reconcile-payments`, `reconcile-intermediary-remittances`, `manage-loans`, `manage-floating-interest-rates`, `settle-floating-loans`, `manage-disbursements`, `manage-intermediated-disbursements`, `renew-daily-loan`, `restructure-loan`
 - App manifest: `.app.json`
@@ -18,7 +18,7 @@ For an actual loan disbursement, first inspect `loan.disbursement.list` and pres
 
 For an actual payout routed through an intermediary, resolve exact borrower and intermediary identities, verify an active disbursement assignment, then create the group and its exact funding, borrower-payout, and advance-interest-return transfer events. Every supplied slip follows prepare → unchanged-byte PUT → finalize against its exact event, retaining and comparing the evidence/file UUID plus MIME, size, and SHA-256 at every boundary; an already-ready retry must match the same immutable metadata. Bank-account save, assignment create/end, and transfer-evidence prepare/finalize results each include the exact audit public UUID and correlation UUID; retain and report those identifiers without adding them to the corresponding REST response DTOs. Re-inspect the group and post only when every event role/reference/amount/payee and safe evidence identity matches, followed by a fresh `ready` preview with no warnings, evidence ready, retained balance `0.00`, and variance `0.00`, after explicit confirmation. Stale state, duplicate transfer, binding mismatch, missing evidence/assignment/confirmation, or unexplained retained balance stops the flow. General MCP group/list inspection returns normalized reference displays and safe per-event evidence status/count/public IDs/MIME types only; signed evidence access URLs, storage keys, and checksums remain excluded, while the prepare tool may return its short-lived upload URL.
 
-For floating-loan settlement, inspect the portfolio and call `loan.settlement.preview` with the operator's Bangkok as-of date. Show every exact backend component, including accrued-not-due interest and already-paid `nonRefundableAdvanceInterest`, before asking for confirmation. Execute only the same settlement ID and preview hash with a reason and stable idempotency key. Stale state requires re-inspection, a fresh preview, and fresh confirmation; already-paid advance interest is never refunded or credited through settlement.
+For floating-loan settlement, inspect the portfolio and call `loan.settlement.preview` with the operator's Bangkok as-of date. Show every exact backend component, including accrued-not-due interest and already-paid `nonRefundableAdvanceInterest`, before asking for confirmation. Execute only the same settlement ID and preview hash with a reason and stable idempotency key. Stale state requires re-inspection, a fresh preview, and fresh confirmation; already-paid advance interest is never refunded or credited through settlement. Reversal requires the exact executed settlement ID, a separate reason and confirmation, and a new stable key; `loan.settlement.reverse` appends compensating negative history and stops on downstream activity.
 
 ## Register before installation
 
@@ -65,12 +65,12 @@ Publishing to Git does not hot-reload an installed copy. Start a new Codex task 
 - Loan activation sends a stable idempotency key, and activation and every renewal show the backend result before explicit confirmation.
 - Floating origination preserves the backend's explicit day-or-week policy, including rate mode, rate, advance periods, and non-refundable treatment.
 - Floating-interest changes follow list → preview → exact confirmation → idempotent execute; accrued dates and stale previews always stop the workflow.
-- Floating-loan settlement follows portfolio inspect → preview → exact component display → explicit confirmation → idempotent execute; stale or non-refundable-refund requests stop without a write.
+- Floating-loan settlement follows portfolio inspect → preview → exact component display → explicit confirmation → idempotent execute. Its compensating reversal requires the exact retained settlement ID, reason, confirmation, and a separate idempotency key; stale, downstream-blocked, or non-refundable-refund requests stop without an unsafe write.
 - Disbursement drafts support strict partial updates of editable metadata. Every update is followed by a re-list and fresh post confirmation; finalized evidence remains attached. Posting still shows the exact draft, evidence status, current variance, and idempotency boundary, while reversal additionally requires a reason.
 - Intermediated disbursement follows exact identity and active-assignment checks → group and transfer events → per-event evidence → group inspection → zero-variance preview → explicit confirmation → idempotent post. Reversal first re-lists and inspects the exact posted group, then requires a separate reason and confirmation.
 - Reversals require a reason and create compensating history rather than deletion. Renewal reversal uses same-task execute IDs plus the borrower ID retained before execution; `renewal.reverse`, not the limited portfolio view, performs the authoritative atomic downstream-activity check and may return only the backend message plus aggregate `downstreamEntryCount`.
 
-See `references/` for matching, accounting invariants, error recovery, and the frozen full 63-tool metadata snapshot. The snapshot is generated through an authenticated local MCP SDK Client `tools/list` call. `evals/evals.json` and `evals/harness.ts` execute exact ordered/repeated tool calls, supported arguments, injected workflow states, external upload effects, and forbidden-write boundaries while remaining honest that no live private app was used.
+See `references/` for matching, accounting invariants, error recovery, and the frozen full 64-tool metadata snapshot. The snapshot is generated through an authenticated local MCP SDK Client `tools/list` call. `evals/evals.json` and `evals/harness.ts` execute exact ordered/repeated tool calls, supported arguments, injected workflow states, external upload effects, and forbidden-write boundaries while remaining honest that no live private app was used.
 
 Deployment, credential rotation, MinIO evidence, and recovery procedures are maintained in the root repository documentation:
 

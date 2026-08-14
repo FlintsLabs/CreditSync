@@ -929,6 +929,11 @@ describe("default MCP adapter integration", () => {
             reason: "MCP all-tools floating settlement",
             idempotencyKey: "mcp-all-tools-settlement-execute",
         });
+        await call("loan.settlement.reverse", {
+            settlementPublicId: settlementPreview.publicId,
+            reason: "MCP all-tools settlement reversal",
+            idempotencyKey: "mcp-all-tools-settlement-reverse",
+        });
 
         const loanTerms = {
             principal: "100.00",

@@ -311,6 +311,30 @@ describe("CreditSync stateless MCP contract", () => {
                         correlationId: AUDIT_ID,
                     };
                 },
+                "loan.settlement.reverse": async (ctx, input) => {
+                    observedContext = ctx;
+                    observedInput = input;
+                    return {
+                        settlementPublicId: SETTLEMENT_ID,
+                        status: "reversed",
+                        transaction: {
+                            id: TRANSACTION_ID,
+                            publicId: TRANSACTION_ID,
+                            amount: "-5000.00",
+                            principalComponent: "-5000.00",
+                            interestComponent: "0.00",
+                            feeComponent: "0.00",
+                            penaltyComponent: "0.00",
+                            type: "close_account",
+                            entryType: "reversal",
+                            transactionDate: "2026-08-15T07:00:00.000Z",
+                            postedAt: "2026-08-15T07:00:00.000Z",
+                        },
+                        reason: "Bank returned settlement",
+                        auditPublicId: AUDIT_ID,
+                        correlationId: AUDIT_ID,
+                    };
+                },
             },
         });
         const { client, transport } = clientFor(baseUrl);
@@ -323,6 +347,12 @@ describe("CreditSync stateless MCP contract", () => {
             openWorldHint: false,
         });
         expect(listed.tools.find((tool) => tool.name === "loan.settlement.execute")?.annotations).toMatchObject({
+            readOnlyHint: false,
+            destructiveHint: true,
+            idempotentHint: true,
+            openWorldHint: false,
+        });
+        expect(listed.tools.find((tool) => tool.name === "loan.settlement.reverse")?.annotations).toMatchObject({
             readOnlyHint: false,
             destructiveHint: true,
             idempotentHint: true,
@@ -392,6 +422,21 @@ describe("CreditSync stateless MCP contract", () => {
             reason: "Borrower confirmed exact close-out",
         });
         expect(observedContext?.idempotencyKey).toBe("settlement-execute-1");
+        const reversed = await client.callTool({
+            name: "loan.settlement.reverse",
+            arguments: {
+                settlementPublicId: SETTLEMENT_ID,
+                reason: "Bank returned settlement",
+                idempotencyKey: "settlement-reverse-1",
+            },
+        });
+        expect(reversed.isError).not.toBe(true);
+        expect(reversed.structuredContent).toMatchObject({
+            data: { status: "reversed", transaction: { amount: "-5000.00", entryType: "reversal" } },
+            auditPublicIds: [AUDIT_ID],
+        });
+        expect(observedInput).toEqual({ settlementPublicId: SETTLEMENT_ID, reason: "Bank returned settlement" });
+        expect(observedContext?.idempotencyKey).toBe("settlement-reverse-1");
         await client.close();
     });
 
@@ -767,6 +812,7 @@ describe("CreditSync stateless MCP contract", () => {
             "loan.activate",
             "loan.interest-rate.execute",
             "loan.settlement.execute",
+            "loan.settlement.reverse",
             "loan.disbursement.update",
             "loan.disbursement.post",
             "loan.disbursement.reverse",

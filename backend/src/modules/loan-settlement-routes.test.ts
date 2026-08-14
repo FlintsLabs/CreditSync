@@ -182,6 +182,32 @@ describe("loan settlement REST adapter", () => {
             requestId: "route-settlement-request",
             correlationId: "route-settlement-correlation",
         })]);
+
+        const reversed = await jsonRequest(
+            app,
+            `/loan-settlements/${preview.body.publicId}/reverse`,
+            token,
+            {
+                method: "POST",
+                headers: {
+                    "idempotency-key": "route-settlement-reverse",
+                    "x-correlation-id": "route-settlement-reversal-correlation",
+                },
+                body: JSON.stringify({ reason: "REST confirmed bank-return compensation" }),
+            },
+        );
+        expect(reversed.response.status, reversed.text).toBe(200);
+        expect(reversed.body).toMatchObject({
+            settlementPublicId: preview.body.publicId,
+            status: "reversed",
+            correlationId: "route-settlement-reversal-correlation",
+            transaction: {
+                amount: "-5257.14",
+                principalComponent: "-5000.00",
+                interestComponent: "-257.14",
+                entryType: "reversal",
+            },
+        });
     });
 
     // Break caught: listing a paid floating loan tries to materialize more interest and fails the entire read.

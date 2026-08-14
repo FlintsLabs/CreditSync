@@ -80,7 +80,7 @@ export async function validatePlugin() {
     const errors: string[] = [];
     const manifest = await parseJson(resolve(pluginRoot, ".codex-plugin/plugin.json"));
     if (manifest.name !== "creditsync") errors.push("manifest name must be creditsync");
-    if (manifest.version !== "6.0.0") errors.push("manifest version must be 6.0.0");
+    if (manifest.version !== "7.0.0") errors.push("manifest version must be 7.0.0");
     if (manifest.skills !== "./skills/") errors.push("manifest skills path must be ./skills/");
     if (manifest.apps !== "./.app.json") errors.push("manifest apps path must be ./.app.json");
     for (const field of ["mcpServers", "hooks", "ui", "oauth"]) {
@@ -194,5 +194,5 @@ if (import.meta.main) {
     }
     const app = await parseJson(resolve(pluginRoot, ".app.json")) as { apps?: Record<string, { id?: string }> };
     const registration = classifyPrivateAppId(app.apps?.creditsync?.id);
-    console.log(`CreditSync plugin validation passed (6.0.0, 11 skills, 63 tools, no bundled MCP/secrets; private app: ${registration}${registration === "placeholder" ? ", non-live" : ""}).`);
+    console.log(`CreditSync plugin validation passed (7.0.0, 11 skills, 64 tools, no bundled MCP/secrets; private app: ${registration}${registration === "placeholder" ? ", non-live" : ""}).`);
 }

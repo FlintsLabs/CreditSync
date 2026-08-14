@@ -3,6 +3,7 @@
 ## v0.3.12 - 2026-08-14
 
 ### Added
+- Added exact compensating floating-settlement reversal across REST, MCP Plugin `7.0.0`'s 64-tool frozen contract, and localized Web confirmation, preserving negative transaction/allocation/fund provenance and restoring loan/accrual state only when no downstream activity exists.
 - Added localized Loan Detail and intermediary-profile transfer ledgers for all three intermediary money paths, exact split payouts, sender/payee/date/reference/status inspection, every finalized slip, zero-variance/evidence-ready confirmation, and idempotent posting.
 - Added a localized responsive intermediary directory and profile workspace with canonical-name/alias search, profile creation, exact managed-loan portfolio totals, Loan Detail links, historical assignments, masked payment destinations, unreconciled-group warnings, and retained collection/remittance access.
 - Added 14 closed-schema intermediary profile, masked-bank-account, assignment, managed-loan, and multi-leg disbursement MCP tools plus CreditSync Plugin `6.0.0` orchestration for the complete 63-tool union contract: exact three-slip evidence, weekly settlement, main-authoritative restructure/waiver flows, zero-variance confirmation, stale-state stops, and compensating reversal.
@@ -14,6 +15,7 @@
 - Added explicitly confirmed atomic posting and compensating reversal for zero-variance intermediary disbursement groups, linking exact borrower payout and activation-time advance-interest projections by public provenance IDs while preserving optional evidence, collection/remittance ledgers, and Decimal-only held balances.
 
 ### Fixed
+- Included authoritative due floating penalties in settlement previews, stale balance versions, execution allocations, materialized penalty provenance, and exact close-zero checks.
 - Included authoritative due floating penalties in payment-preview availability so an exact penalty-plus-interest-plus-principal receipt previews and posts with full Decimal conservation without making accruing-not-due interest normally payable.
 - Made public schedule due dates follow normalized Bangkok business dates independently of the runtime timezone, aligned settled floating-loan REST coverage with its exact informational accruing-interest projection, restored real time after frozen-clock floating regressions, and restored the fully migrated disposable schema after isolated historical-migration tests without masking their original failures.
 - Made main-compatible MCP loan activation retries derive a stable per-loan fallback idempotency key across requests, restored all 18 weekly floating allocation/penalty/reversal/immutability regressions on current service projections while retaining the legacy-close rejection, and synchronized the private plugin catalogue and validator to all 11 shipped skills.

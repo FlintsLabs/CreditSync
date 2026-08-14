@@ -1127,12 +1127,17 @@
             "execute": "Execute settlement",
             "executing": "Executing...",
             "executed": "Settlement executed",
+            "reversalReason": "Settlement reversal reason",
+            "reversalConfirmation": "I confirm this compensating settlement reversal",
+            "reverse": "Reverse settlement",
+            "reversing": "Reversing...",
             "refreshingAfterExecution": "Refreshing authoritative loan details...",
             "latestDetailUnavailable": "Latest loan accounting is hidden until this page is refreshed.",
             "expires": "Preview expires {{value}}",
             "errors": {
                 "preview": "Unable to preview settlement.",
                 "execute": "Unable to execute settlement. No financial record was changed.",
+                "reverse": "Unable to reverse settlement. No compensating financial record was posted.",
                 "stale": "Balances changed. Review the refreshed settlement preview and confirm it again.",
                 "refresh": "The preview became stale and a fresh settlement preview could not be loaded.",
                 "refreshAfterExecution": "Settlement was executed, but the latest loan detail could not be loaded. Refresh this page before relying on displayed balances."

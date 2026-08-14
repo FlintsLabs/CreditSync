@@ -44,6 +44,7 @@ import {
 import {
     executeLoanSettlement,
     previewLoanSettlement,
+    reverseLoanSettlement,
 } from "../services/loan-settlement-service";
 import {
     createPaymentIntake,
@@ -220,6 +221,10 @@ export function createDefaultMcpToolHandlers(
         confirmed: input.confirmed as boolean,
         reason: asString(input, "reason"),
     }),
+    "loan.settlement.reverse": (ctx, input) => reverseLoanSettlement(ctx, {
+        settlementPublicId: asString(input, "settlementPublicId"),
+        reason: asString(input, "reason"),
+    }),
     "loan.disbursement.list": (ctx, input) => listLoanDisbursements(ctx, asString(input, "loanPublicId")),
     "loan.disbursement.draft": (ctx, input) => {
         const { loanPublicId, ...draft } = input;
@@ -353,6 +358,7 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "loan.activate": { entityType: "loan", action: "activated" },
     "loan.interest-rate.execute": { entityType: "loan_interest_rate_timeline", action: "interest_rate_timeline_changed" },
     "loan.settlement.execute": { entityType: "loan_settlement", action: "executed" },
+    "loan.settlement.reverse": { entityType: "loan_settlement", action: "reversed" },
     "loan.disbursement.post": { entityType: "loan_disbursement", action: "posted" },
     "loan.disbursement.reverse": { entityType: "loan_disbursement", action: "reversed" },
     "intermediary.disbursement.post": { entityType: "intermediated_disbursement_group", action: "posted" },
@@ -369,7 +375,7 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
 function resultPublicId(result: unknown) {
     if (!result || typeof result !== "object") return null;
     const record = result as Record<string, unknown>;
-    const value = record.publicId ?? record.id ?? record.loanPublicId;
+    const value = record.publicId ?? record.id ?? record.loanPublicId ?? record.settlementPublicId;
     return typeof value === "string" ? value : null;
 }
 
