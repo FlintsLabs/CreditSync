@@ -1,6 +1,6 @@
 ---
 name: creditsync
-description: Use when managing CreditSync borrowers, payment reconciliation, intermediary remittances, loans, floating-interest timelines, disbursements, renewals, or financial reversals through the private CreditSync app.
+description: Use when managing CreditSync borrowers, payments, loans, settlement/restructure, waivers, disbursements, renewals, or financial reversals through the private CreditSync app.
 ---
 
 # CreditSync
@@ -13,7 +13,7 @@ Use CreditSync as an orchestration surface over its private MCP app. The backend
 
 1. Confirm that the CreditSync app exposes the required named tools before promising an action. If a tool is unavailable or authorization fails, stop and report the missing connection or permission.
 2. Inspect before every write. Search and retrieve the current borrower, intake, loan, proposal, or renewal by public UUID; never invent IDs or select a tenant/actor.
-3. Use `payment.preview`, `loan.preview`, `loan.interest-rate.preview`, `renewal.preview`, or `loan.disbursement.list` for accounting outcomes. Never replace backend results with agent arithmetic.
+3. Use `payment.preview`, `loan.preview`, `loan.restructure.preview`, `loan.waiver.preview`, `loan.interest-rate.preview`, `renewal.preview`, or `loan.disbursement.list` for accounting outcomes. Never replace backend results with agent arithmetic.
 4. Present exact money strings, targets, warnings, expiry, cash direction, and proposal/preview identity before a financial write.
 5. Re-read or re-preview after state changes. After a disbursement draft update, re-list it and obtain fresh confirmation because any earlier confirmation is invalid. Post only the latest inspected backend result.
 
@@ -38,6 +38,7 @@ Every activation, post, reversal, and renewal uses explicit public IDs. Supply c
 - Actual loan disbursement draft creation/editing, optional payout evidence, variance review, posting, or reversal: use `manage-disbursements`.
 - Borrower payments held by a collector, remittance slips, exact allocation, and posting: use `reconcile-intermediary-remittances`.
 - Daily-loan reset/renewal and reversal: use `renew-daily-loan`.
+- Single-payment settlement/restructure, component waiver, additional principal, and their reversals: use `restructure-loan`.
 
 Use the plugin references for the frozen tool contract, matching policy, financial rules, and error recovery. Do not use generic HTTP, SQL, or web requests as a substitute for a missing CreditSync tool.
 

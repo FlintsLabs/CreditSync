@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import { auditLogs, users } from "../db/schema";
 import {
@@ -17,7 +17,6 @@ import { listFundingSources } from "../services/funding-source-service";
 import {
     activateLoan,
     createLoanDraft,
-    getLoanApplication,
     previewLoan,
     type LoanDraftInput,
 } from "../services/loan-application-service";
@@ -26,6 +25,17 @@ import {
     previewLoanRenewal,
     reverseLoanRenewal,
 } from "../services/loan-renewal-service";
+import {
+    executeLoanRestructure,
+    previewLoanRestructure,
+    reverseLoanRestructure,
+    type PreviewLoanRestructureInput,
+} from "../services/loan-restructure-service";
+import {
+    executeLoanWaiver,
+    previewLoanWaiver,
+    reverseLoanWaiver,
+} from "../services/loan-waiver-service";
 import {
     executeLoanInterestRateChange,
     listLoanInterestRates,
@@ -154,7 +164,7 @@ export function createDefaultMcpToolHandlers(
     },
     "loan.draft": (ctx, input) => createLoanDraft(ctx, input as unknown as LoanDraftInput),
     "loan.activate": (ctx, input) => activateLoan(ctx, asString(input, "loanPublicId"), {
-        allowedRepaymentTypes: ["daily", "weekly", "monthly", "floating"],
+        allowedRepaymentTypes: ["daily", "weekly", "monthly", "floating", "single_payment"],
     }),
     "loan.interest-rate.list": (ctx, input) => listLoanInterestRates(ctx, asString(input, "loanPublicId")),
     "loan.interest-rate.preview": (ctx, input) => previewLoanInterestRateChange(ctx, asString(input, "loanPublicId"), {
@@ -210,6 +220,33 @@ export function createDefaultMcpToolHandlers(
     "renewal.reverse": (ctx, input) => reverseLoanRenewal(ctx, asString(input, "renewalPublicId"), {
         reason: asString(input, "reason"),
     }),
+    "loan.restructure.preview": (ctx, input) => {
+        const { oldLoanPublicId, ...request } = input;
+        return previewLoanRestructure(ctx, String(oldLoanPublicId), request as unknown as PreviewLoanRestructureInput);
+    },
+    "loan.restructure.execute": (ctx, input) => executeLoanRestructure(ctx, asString(input, "restructurePublicId"), {
+        previewHash: asString(input, "previewHash"),
+        expectedBalanceVersion: asString(input, "expectedBalanceVersion"),
+        confirmed: input.confirmed as boolean,
+        reason: asString(input, "reason"),
+    }),
+    "loan.restructure.reverse": (ctx, input) => reverseLoanRestructure(ctx, asString(input, "restructurePublicId"), {
+        reason: asString(input, "reason"),
+    }),
+    "loan.waiver.preview": (ctx, input) => previewLoanWaiver(ctx, asString(input, "loanPublicId"), {
+        component: input.component as "interest" | "fee" | "penalty",
+        amount: asString(input, "amount"),
+        reason: asString(input, "reason"),
+    }),
+    "loan.waiver.execute": (ctx, input) => executeLoanWaiver(ctx, asString(input, "previewPublicId"), {
+        previewHash: asString(input, "previewHash"),
+        expectedBalanceVersion: asString(input, "expectedBalanceVersion"),
+        confirmed: input.confirmed as boolean,
+        reason: asString(input, "reason"),
+    }),
+    "loan.waiver.reverse": (ctx, input) => reverseLoanWaiver(ctx, asString(input, "waiverPublicId"), {
+        reason: asString(input, "reason"),
+    }),
     "funding-source.list": (ctx, input) => listFundingSources(ctx, {
         status: input.status as "active" | "closed" | "all" | undefined,
     }),
@@ -226,6 +263,10 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "intermediary.remittance.post": { entityType: "intermediary_remittance", action: "posted" },
     "renewal.execute": { entityType: "loan_renewal", action: "executed" },
     "renewal.reverse": { entityType: "loan_renewal", action: "reversed" },
+    "loan.restructure.execute": { entityType: "loan_restructure", action: "executed" },
+    "loan.restructure.reverse": { entityType: "loan_restructure", action: "reversed" },
+    "loan.waiver.execute": { entityType: "loan_restructure_waiver", action: "executed" },
+    "loan.waiver.reverse": { entityType: "loan_restructure_waiver", action: "reversed" },
 };
 
 function resultPublicId(result: unknown) {
@@ -251,18 +292,6 @@ export function createDefaultMcpHttpPlugin(
     return createMcpHttpPlugin({
         config,
         handlers: createDefaultMcpToolHandlers(dependencies),
-        preflightHandlers: {
-            "loan.activate": async (ctx, input) => {
-                const loan = await getLoanApplication(ctx, asString(input, "loanPublicId"));
-                if (loan.repaymentType === "single_payment") {
-                    throw new DomainError(
-                        "MCP_LOAN_TYPE_UNSUPPORTED",
-                        "Single-payment activation is not available through the frozen MCP contract",
-                        409,
-                    );
-                }
-            },
-        },
         consumeRateLimit: (input) => limiter.consume(input),
         logger: structuredLog,
         resolvePrincipal: async ({ tenantId, actorEmail }) => {
@@ -277,6 +306,22 @@ export function createDefaultMcpHttpPlugin(
             const target = auditTarget[toolName];
             const entityId = resultPublicId(result);
             if (!target || !entityId) return [];
+            if (result && typeof result === "object") {
+                const record = result as Record<string, unknown>;
+                const advertised = [
+                    ...(Array.isArray(record.auditPublicIds) ? record.auditPublicIds : []),
+                    record.auditPublicId,
+                ].filter((value): value is string => typeof value === "string");
+                if (advertised.length) {
+                    const rows = await db.select({ publicId: auditLogs.publicId }).from(auditLogs).where(and(
+                        eq(auditLogs.tenantId, ctx.tenantId),
+                        inArray(auditLogs.publicId, advertised),
+                        eq(auditLogs.entityType, target.entityType),
+                        eq(auditLogs.action, target.action),
+                    ));
+                    if (rows.length) return rows.map((row) => row.publicId);
+                }
+            }
             const rows = await db.select({ publicId: auditLogs.publicId }).from(auditLogs).where(and(
                 eq(auditLogs.tenantId, ctx.tenantId),
                 eq(auditLogs.entityType, target.entityType),

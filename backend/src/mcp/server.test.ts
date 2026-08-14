@@ -366,6 +366,12 @@ describe("CreditSync stateless MCP contract", () => {
             "renewal.preview",
             "renewal.execute",
             "renewal.reverse",
+            "loan.restructure.preview",
+            "loan.restructure.execute",
+            "loan.restructure.reverse",
+            "loan.waiver.preview",
+            "loan.waiver.execute",
+            "loan.waiver.reverse",
         ]);
         expect(listed.tools.filter((tool) => tool.annotations?.destructiveHint).map((tool) => tool.name)).toEqual(
             MCP_TOOL_NAMES.filter((name) => destructive.has(name)),
@@ -386,6 +392,45 @@ describe("CreditSync stateless MCP contract", () => {
         expect(observedContext?.requestId).toMatch(/^[0-9a-f-]{36}$/);
         expect(observedContext?.correlationId).toMatch(/^[0-9a-f-]{36}$/);
 
+        await client.close();
+    });
+
+    // Break caught: restructure/waiver tools are absent, loosely shaped, or advertise
+    // financial writes as safe reads.
+    test("advertises closed restructure and waiver confirmation contracts", async () => {
+        const baseUrl = await startServer({});
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const listed = await client.listTools();
+        const tools = new Map(listed.tools.map((tool) => [tool.name, tool]));
+
+        for (const name of ["loan.restructure.preview", "loan.waiver.preview"]) {
+            expect(tools.get(name)?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false });
+        }
+        for (const name of ["loan.restructure.execute", "loan.restructure.reverse", "loan.waiver.execute", "loan.waiver.reverse"]) {
+            expect(tools.get(name)?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false });
+        }
+
+        const execute = tools.get("loan.restructure.execute")?.inputSchema as { required?: string[]; additionalProperties?: boolean };
+        expect(execute.required?.sort()).toEqual([
+            "confirmed", "expectedBalanceVersion", "idempotencyKey", "previewHash", "reason", "restructurePublicId",
+        ]);
+        expect(execute.additionalProperties).toBe(false);
+
+        const unknown = await client.callTool({
+            name: "loan.waiver.execute",
+            arguments: {
+                previewPublicId: BORROWER_ID,
+                previewHash: `v1:${"a".repeat(64)}`,
+                expectedBalanceVersion: `v1:${"b".repeat(64)}`,
+                confirmed: true,
+                reason: "Owner confirmed exact waiver",
+                idempotencyKey: "waiver-execute-1",
+                tenantId: "must-not-be-accepted",
+            },
+        });
+        expect(unknown.isError).toBe(true);
+        expect(unknown.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: "text" })]));
         await client.close();
     });
 

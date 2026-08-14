@@ -47,6 +47,12 @@ export const MCP_TOOL_NAMES = [
     "renewal.preview",
     "renewal.execute",
     "renewal.reverse",
+    "loan.restructure.preview",
+    "loan.restructure.execute",
+    "loan.restructure.reverse",
+    "loan.waiver.preview",
+    "loan.waiver.execute",
+    "loan.waiver.reverse",
     "funding-source.list",
 ] as const;
 
@@ -95,14 +101,36 @@ const loanTerms = {
     principal: money,
     interestRate: money,
     termMonths: z.number().int().positive().max(1_200),
-    repaymentType: z.enum(["daily", "weekly", "monthly", "floating"]),
+    repaymentType: z.enum(["daily", "weekly", "monthly", "floating", "single_payment"]),
     startDate: date,
     totalInstallments: z.number().int().positive().max(100_000).optional(),
     installmentAmount: money.optional(),
     floatingDailyInterest: z.object({
         mode: z.enum(["per_thousand", "percent"]), rate: z.string().regex(/^\d+(?:\.\d{1,4})?$/),
         firstDayTreatment: z.enum(["deduct", "start_next_day"]),
+        accrualCycle: z.enum(["daily", "weekly"]).optional(),
     }).optional(),
+    singlePayment: z.union([
+        z.object({
+            dueDate: date,
+            fixedAgreedInterest: money,
+            interestPolicy: z.literal("fixed_only"),
+            latePenalty: z.union([
+                z.object({ mode: z.literal("none") }).strict(),
+                z.object({ mode: z.literal("fixed_amount_per_day"), amountPerDay: money, graceDays: z.number().int().min(0).max(100_000) }).strict(),
+            ]),
+        }).strict(),
+        z.object({
+            dueDate: date,
+            fixedAgreedInterest: money,
+            interestPolicy: z.literal("greater_of_fixed_or_retroactive"),
+            retroactiveInterest: z.object({ rateType: z.enum(["percent_per_day", "per_thousand_per_day"]), rate: z.string().regex(/^\d+(?:\.\d{1,4})?$/) }).strict(),
+            latePenalty: z.union([
+                z.object({ mode: z.literal("none") }).strict(),
+                z.object({ mode: z.literal("fixed_amount_per_day"), amountPerDay: money, graceDays: z.number().int().min(0).max(100_000) }).strict(),
+            ]),
+        }).strict(),
+    ]).optional(),
     dailyEntry: z.object({
         durationUnit: z.enum(["days", "months"]),
         durationValue: z.number().int().positive().max(100_000),
@@ -114,6 +142,7 @@ const loanTerms = {
         }).optional(),
     }).optional(),
 };
+const { principal: _replacementPrincipalIsBackendOwned, ...replacementLoanTerms } = loanTerms;
 
 const explicitAllocation = z.object({
     borrowerPublicId: uuid,
@@ -200,6 +229,10 @@ const loanOutput = z.object({
     principal: money,
     principalAmount: money,
     interestRate: money,
+    singlePayment: z.union([
+        z.object({ dueDate: date, fixedAgreedInterest: money, interestPolicy: z.literal("fixed_only"), latePenalty: z.union([z.object({ mode: z.literal("none") }).strict(), z.object({ mode: z.literal("fixed_amount_per_day"), amountPerDay: money, graceDays: z.number().int().min(0) }).strict()]) }).strict(),
+        z.object({ dueDate: date, fixedAgreedInterest: money, interestPolicy: z.literal("greater_of_fixed_or_retroactive"), retroactiveInterest: z.object({ rateType: z.enum(["percent_per_day", "per_thousand_per_day"]), rate: z.string() }).strict(), latePenalty: z.union([z.object({ mode: z.literal("none") }).strict(), z.object({ mode: z.literal("fixed_amount_per_day"), amountPerDay: money, graceDays: z.number().int().min(0) }).strict()]) }).strict(),
+    ]).nullable().optional(),
     floatingDailyInterest: z.object({ mode: z.enum(["per_thousand", "percent"]), rate: z.string(), firstDayTreatment: z.enum(["deduct", "start_next_day"]) }).nullable().optional(),
     dailyEntry: z.object({
         durationUnit: z.enum(["days", "months"]), durationValue: z.number().int().positive(), entryMode: z.enum(["daily_payment", "daily_interest"]),
@@ -209,7 +242,7 @@ const loanOutput = z.object({
         totalInstallments: z.number().int().positive(), installmentAmount: money, totalRepayment: money, totalInterest: money, dailyInterest: money,
         flatDailyRatePercent: z.string(), flatMonthlyRatePercent: z.string(), flatAnnualRatePercent: z.string(),
     }).nullable().optional(),
-    repaymentType: z.enum(["daily", "weekly", "monthly", "floating"]),
+    repaymentType: z.enum(["daily", "weekly", "monthly", "floating", "single_payment"]),
     termMonths: z.number().int().nullable(),
     installmentAmount: money.nullable(),
     totalInstallments: z.number().int().nullable(),
@@ -329,6 +362,52 @@ const fundingProfileOutput = z.object({
     drawdowns: z.array(fundingDrawdownOutput),
 }).strict();
 const interestRateValue = z.string().regex(/^\d+(?:\.\d{1,4})?$/).max(32);
+const versionHash = z.string().regex(/^v1:[0-9a-f]{64}$/i);
+const settlementBalanceOutput = z.object({
+    fixedInterestCandidate: money,
+    retroactiveInterestCandidate: money,
+    selectedInterest: money,
+    selectedInterestBranch: z.enum(["fixed", "retroactive"]),
+    interestDifference: money,
+    exposureTrace: z.array(z.object({
+        amount: money, fromDate: date, toDate: date, days: z.number().int().min(0),
+        rateType: z.enum(["percent_per_day", "per_thousand_per_day"]).optional(),
+        rate: z.string().optional(), unroundedInterest: z.string(), roundedInterest: money,
+    }).strict()),
+    lateDays: z.number().int().min(0),
+    grossPrincipal: money, grossInterest: money, grossFees: money, grossPenalty: money, grossSettlement: money,
+    waivedInterest: money, waivedFees: money, waivedPenalty: money,
+    netInterest: money, netFees: money, netPenalty: money, externalSettlementCredits: money, netSettlement: signedMoney,
+}).strict();
+const restructurePreviewOutput = z.object({
+    publicId: uuid, oldLoanPublicId: uuid, status: z.string(), settlementDate: date,
+    oldBalanceVersion: versionHash, previewHash: versionHash, expiresAt: isoDateTime,
+    balance: settlementBalanceOutput, replacementPrincipal: money,
+    externalCreditAllocation: z.object({ penalty: money, fee: money, interest: money, principal: money, unallocated: money }).strict(),
+    replacementTerms: z.record(z.string(), z.unknown()),
+    schedule: z.array(z.object({
+        installmentNo: z.number().int().positive(), dueDate: date,
+        scheduledPrincipal: money, scheduledInterest: money, scheduledFee: money,
+        scheduledTotal: money, remainingDue: money,
+    }).strict()),
+    cash: z.object({ direction: z.enum(["payout", "collection", "none"]), amount: money }).strict(),
+    reason: z.string(),
+}).strict();
+const restructureExecutionOutput = z.object({
+    publicId: uuid, status: z.string(), oldLoanPublicId: uuid, newLoanPublicId: uuid.nullable(),
+    disbursementDraftPublicId: uuid.nullable(), auditPublicIds: z.array(uuid), correlationId: uuid,
+}).strict();
+const waiverPreviewOutput = z.object({
+    publicId: uuid, loanPublicId: uuid, restructurePublicId: uuid,
+    component: z.enum(["interest", "fee", "penalty"]), amount: money,
+    availableAmount: money, remainingAmount: money, reason: z.string(),
+    previewHash: versionHash, balanceVersion: versionHash, expiresAt: isoDateTime,
+}).strict();
+const waiverExecutionOutput = z.object({
+    publicId: uuid, status: z.enum(["executed", "reversed"]),
+    component: z.enum(["interest", "fee", "penalty"]), amount: money, reason: z.string(),
+    auditPublicId: uuid, correlationId: uuid, executedAt: isoDateTime, reversedAt: nullableIsoDateTime,
+}).strict();
 const interestRatePeriodOutput = z.object({
     publicId: uuid,
     effectiveDate: date,
@@ -467,6 +546,12 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "renewal.preview": renewalOutput,
     "renewal.execute": renewalOutput,
     "renewal.reverse": renewalOutput,
+    "loan.restructure.preview": restructurePreviewOutput,
+    "loan.restructure.execute": restructureExecutionOutput,
+    "loan.restructure.reverse": restructureExecutionOutput,
+    "loan.waiver.preview": waiverPreviewOutput,
+    "loan.waiver.execute": waiverExecutionOutput,
+    "loan.waiver.reverse": waiverExecutionOutput,
     "funding-source.list": z.object({ profiles: z.array(fundingProfileOutput) }).strict(),
 };
 
@@ -609,6 +694,51 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
         reason: shortText,
         idempotencyKey: z.string().trim().min(1).max(200),
     }).strict(),
+    "loan.restructure.preview": z.object({
+        oldLoanPublicId: uuid,
+        settlementDate: date,
+        replacementTerms: z.object(replacementLoanTerms).strict(),
+        waivers: z.object({
+            interest: z.object({ amount: money, reason: shortText }).strict().optional(),
+            fees: z.object({ amount: money, reason: shortText }).strict().optional(),
+            penalty: z.object({ amount: money, reason: shortText }).strict().optional(),
+        }).strict().optional(),
+        externalSettlementCredit: z.object({ amount: money, payer: shortText, source: shortText }).strict().optional(),
+        additionalPrincipal: money,
+        reason: shortText,
+    }).strict(),
+    "loan.restructure.execute": z.object({
+        restructurePublicId: uuid,
+        previewHash: versionHash,
+        expectedBalanceVersion: versionHash,
+        confirmed: z.literal(true),
+        reason: shortText,
+        idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict(),
+    "loan.restructure.reverse": z.object({
+        restructurePublicId: uuid,
+        reason: shortText,
+        idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict(),
+    "loan.waiver.preview": z.object({
+        loanPublicId: uuid,
+        component: z.enum(["interest", "fee", "penalty"]),
+        amount: money,
+        reason: shortText,
+    }).strict(),
+    "loan.waiver.execute": z.object({
+        previewPublicId: uuid,
+        previewHash: versionHash,
+        expectedBalanceVersion: versionHash,
+        confirmed: z.literal(true),
+        reason: shortText,
+        idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict(),
+    "loan.waiver.reverse": z.object({
+        waiverPublicId: uuid,
+        reason: shortText,
+        idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict(),
     "funding-source.list": z.object({ status: z.enum(["active", "closed", "all"]).optional() }).strict(),
 };
 
@@ -674,6 +804,12 @@ const destructiveTools = new Set<McpToolName>([
     "renewal.preview",
     "renewal.execute",
     "renewal.reverse",
+    "loan.restructure.preview",
+    "loan.restructure.execute",
+    "loan.restructure.reverse",
+    "loan.waiver.preview",
+    "loan.waiver.execute",
+    "loan.waiver.reverse",
 ]);
 const financialTools = new Set<McpToolName>([
     "payment.post",
@@ -685,6 +821,10 @@ const financialTools = new Set<McpToolName>([
     "intermediary.remittance.post",
     "renewal.execute",
     "renewal.reverse",
+    "loan.restructure.execute",
+    "loan.restructure.reverse",
+    "loan.waiver.execute",
+    "loan.waiver.reverse",
 ]);
 const idempotentTools = new Set<McpToolName>([
     ...readOnlyTools,
@@ -700,6 +840,10 @@ const idempotentTools = new Set<McpToolName>([
     "intermediary.remittance.post",
     "renewal.execute",
     "renewal.reverse",
+    "loan.restructure.execute",
+    "loan.restructure.reverse",
+    "loan.waiver.execute",
+    "loan.waiver.reverse",
 ]);
 
 const toolDescriptions: Record<McpToolName, string> = {
@@ -743,6 +887,12 @@ const toolDescriptions: Record<McpToolName, string> = {
     "renewal.preview": "Preview a daily-loan renewal from current balances.",
     "renewal.execute": "Execute a confirmed renewal idempotently.",
     "renewal.reverse": "Reverse an executed renewal with compensating records.",
+    "loan.restructure.preview": "Preview an exact single-payment settlement and replacement contract from current balances.",
+    "loan.restructure.execute": "Execute an explicitly confirmed restructure preview idempotently.",
+    "loan.restructure.reverse": "Reverse an executed restructure when the authoritative downstream checks allow it.",
+    "loan.waiver.preview": "Preview an interest, fee, or penalty waiver against the current replacement-loan balance.",
+    "loan.waiver.execute": "Execute an explicitly confirmed component waiver preview idempotently.",
+    "loan.waiver.reverse": "Reverse an executed component waiver with a compensating record.",
     "funding-source.list": "List tenant funding profiles and drawdowns read-only.",
 };
 
@@ -806,7 +956,7 @@ function frozenToolData(toolName: McpToolName, value: unknown): Record<string, u
     const data = dataRecord(value);
     if (toolName !== "loan.preview" && toolName !== "loan.draft" && toolName !== "loan.activate") return data;
     const projectLoanFields = (record: Record<string, unknown>) => {
-        const { singlePayment: _singlePayment, ...legacy } = record;
+        const legacy = record;
         const floating = legacy.floatingDailyInterest;
         if (floating && typeof floating === "object" && !Array.isArray(floating)) {
             const { accrualCycle: _accrualCycle, ...legacyFloating } = floating as Record<string, unknown>;

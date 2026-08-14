@@ -231,7 +231,7 @@ describe("default MCP adapter integration", () => {
         await client.close();
     });
 
-    integrationTest("rejects single-payment activation before changing the draft", async () => {
+    integrationTest("activates a single-payment draft through the synchronized MCP contract", async () => {
         const actor = await db.insert(users).values({
             tenantId: TENANT_ID,
             email: ACTOR_EMAIL,
@@ -267,28 +267,19 @@ describe("default MCP adapter integration", () => {
             arguments: { loanPublicId: draft.publicId },
         });
 
-        expect(result.isError).toBe(true);
-        expect(result.structuredContent).toEqual({
-            schemaVersion: "1.0",
-            error: {
-                code: "MCP_LOAN_TYPE_UNSUPPORTED",
-                message: "Single-payment activation is not available through the frozen MCP contract",
-                retryable: false,
-                reviewRequired: true,
-                details: {},
-            },
-        });
+        expect(result.isError).not.toBe(true);
+        expect(result.structuredContent).toMatchObject({ schemaVersion: "1.0", data: { publicId: draft.publicId, repaymentType: "single_payment", status: "active", singlePayment: { dueDate: "2026-08-19", fixedAgreedInterest: "500.00" } } });
         expect(await db.query.loans.findFirst({ where: eq(loans.id, draft.id) })).toMatchObject({
-            status: "draft",
-            outstandingPrincipal: "0.00",
-            outstandingInterest: "0.00",
-            nextDueDate: null,
+            status: "active",
+            outstandingPrincipal: "5000.00",
+            outstandingInterest: "500.00",
+            nextDueDate: "2026-08-19",
         });
-        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, draft.id))).toHaveLength(0);
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, draft.id))).toHaveLength(1);
         expect(await db.select().from(auditLogs).where(and(
             eq(auditLogs.entityId, draft.publicId),
             eq(auditLogs.action, "activated"),
-        ))).toHaveLength(0);
+        ))).toHaveLength(1);
 
         await client.close();
     });
@@ -296,7 +287,7 @@ describe("default MCP adapter integration", () => {
     // Break caught: the adapter's unlocked preflight sees a monthly draft,
     // then a winning REST transition changes it to single-payment before the
     // financial activation lock and the MCP write still commits.
-    integrationTest("rechecks the MCP-supported repayment type after the activation row lock", async () => {
+    integrationTest("rechecks and activates a newly committed single-payment type after the row lock", async () => {
         const actor = await db.insert(users).values({ tenantId: TENANT_ID, email: ACTOR_EMAIL, role: "owner" })
             .returning().then((rows) => rows[0]!);
         const borrower = await db.insert(borrowers).values({
@@ -342,15 +333,15 @@ describe("default MCP adapter integration", () => {
         await transition;
         const result = await activation;
 
-        expect(result.isError).toBe(true);
-        expect(result.structuredContent).toMatchObject({ error: { code: "MCP_LOAN_TYPE_UNSUPPORTED" } });
+        expect(result.isError).not.toBe(true);
+        expect(result.structuredContent).toMatchObject({ data: { publicId: draft.publicId, repaymentType: "single_payment", status: "active" } });
         expect(await db.query.loans.findFirst({ where: eq(loans.id, draft.id) })).toMatchObject({
-            repaymentType: "single_payment", status: "draft", outstandingPrincipal: "0.00", outstandingInterest: "0.00",
+            repaymentType: "single_payment", status: "active", outstandingPrincipal: "5000.00", outstandingInterest: "500.00",
         });
-        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, draft.id))).toHaveLength(0);
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, draft.id))).toHaveLength(1);
         expect(await db.select().from(auditLogs).where(and(
             eq(auditLogs.entityId, draft.publicId), eq(auditLogs.action, "activated"),
-        ))).toHaveLength(0);
+        ))).toHaveLength(1);
         await client.close();
     });
 
@@ -698,11 +689,64 @@ describe("default MCP adapter integration", () => {
             reason: "MCP all-tools contract reversal",
             idempotencyKey: "mcp-all-tools-renewal-reverse",
         });
+
+        const seedSinglePayment = async (suffix: string) => {
+            const oldLoan = await db.insert(loans).values({
+                tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower!.id,
+                principalAmount: "1000.00", interestRate: "0.00", repaymentType: "single_payment", termMonths: 1,
+                startDate: "2026-08-01", singlePaymentDueDate: "2026-08-19",
+                singlePaymentFixedAgreedInterest: "100.00", singlePaymentInterestPolicy: "fixed_only",
+                singlePaymentLatePenaltyMode: "none", outstandingPrincipal: "1000.00",
+                outstandingInterest: "100.00", outstandingFees: "0.00", status: "active",
+            }).returning().then((rows) => rows[0]!);
+            await db.insert(loanDisbursementEvents).values({
+                tenantId: TENANT_ID, loanId: oldLoan.id, grossAmount: "1000.00", loanAttributedAmount: "1000.00",
+                channel: "cash", status: "posted", disbursedAt: new Date("2026-08-01T03:00:00Z"),
+                postedAt: new Date("2026-08-01T03:01:00Z"), postIdempotencyKey: `mcp-restructure-seed-${suffix}`,
+                createdByUserId: actor.id,
+            });
+            return oldLoan;
+        };
+        const previewRestructure = async (oldLoanPublicId: string, suffix: string) => (await call("loan.restructure.preview", {
+            oldLoanPublicId, settlementDate: "2026-08-19",
+            replacementTerms: { interestRate: "0.00", termMonths: 1, repaymentType: "monthly", startDate: "2026-08-19", totalInstallments: 1, installmentAmount: "1000.00" },
+            additionalPrincipal: "0.00", reason: `MCP restructure ${suffix}`,
+        })).data;
+
+        const reversibleOld = await seedSinglePayment("reverse");
+        const reversible = await previewRestructure(reversibleOld.publicId, "reverse");
+        await call("loan.restructure.execute", {
+            restructurePublicId: reversible.publicId, previewHash: reversible.previewHash,
+            expectedBalanceVersion: reversible.oldBalanceVersion, confirmed: true,
+            reason: "MCP restructure reverse", idempotencyKey: "mcp-restructure-execute-reverse",
+        });
+        await call("loan.restructure.reverse", {
+            restructurePublicId: reversible.publicId, reason: "MCP safe restructure reversal",
+            idempotencyKey: "mcp-restructure-reverse",
+        });
+
+        const waiverOld = await seedSinglePayment("waiver");
+        const waiverRestructure = await previewRestructure(waiverOld.publicId, "waiver");
+        const waiverExecution = (await call("loan.restructure.execute", {
+            restructurePublicId: waiverRestructure.publicId, previewHash: waiverRestructure.previewHash,
+            expectedBalanceVersion: waiverRestructure.oldBalanceVersion, confirmed: true,
+            reason: "MCP restructure waiver", idempotencyKey: "mcp-restructure-execute-waiver",
+        })).data;
+        const waiverPreview = (await call("loan.waiver.preview", {
+            loanPublicId: waiverExecution.newLoanPublicId, component: "interest", amount: "50.00", reason: "MCP hardship relief",
+        })).data;
+        const waiverExecutionResult = (await call("loan.waiver.execute", {
+            previewPublicId: waiverPreview.publicId, previewHash: waiverPreview.previewHash,
+            expectedBalanceVersion: waiverPreview.balanceVersion, confirmed: true, reason: "MCP hardship relief",
+            idempotencyKey: "mcp-waiver-execute",
+        })).data;
+        await call("loan.waiver.reverse", {
+            waiverPublicId: waiverExecutionResult.publicId, reason: "MCP waiver reversal",
+            idempotencyKey: "mcp-waiver-reverse",
+        });
         await call("funding-source.list", { status: "active" });
 
-        expect(called).toHaveLength(MCP_TOOL_NAMES.length);
-        expect([...called].sort()).toEqual([...MCP_TOOL_NAMES].sort());
-        expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length);
+        expect([...new Set(called)].sort()).toEqual([...MCP_TOOL_NAMES].sort());
 
         await client.close();
     });

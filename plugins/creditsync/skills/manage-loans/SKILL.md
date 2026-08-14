@@ -13,6 +13,7 @@ Loan creation is `preview → draft → activate`. Terms become immutable after 
 
 1. Resolve the borrower with `borrower.search` and inspect `borrower.portfolio`. Stop for ambiguous identity.
 2. Collect exact requested terms: principal, interest rate, term, repayment type, start date, and any required installment count/amount. Keep public money as two-decimal strings.
+   For `single_payment`, also collect its due date, fixed agreed interest, mutually exclusive fixed-only or greater-of-fixed/retroactive policy, and optional agreed daily late penalty/grace terms.
 3. Call `loan.preview`; present the exact terms plus schedule totals, count, dates, and first/final installment returned by CreditSync. Do not independently recompute or smooth the final installment.
 4. Ask the operator to approve those terms and schedule summary.
 5. Call `loan.draft` with the same terms and borrower public UUID. A funding source is optional and must use a public UUID returned by `funding-source.list`; never create or modify funding through MCP.
@@ -26,6 +27,7 @@ If requested terms change at any point, start again at `loan.preview`; do not ac
 - Draft: inspect it in `borrower.portfolio`; if the required edit tool is unavailable, report that limitation rather than activating incorrect terms.
 - Active, paid, or renewed: principal, installment, term, rate, and schedule are historical facts. Do not update them or describe a new draft as an edit.
 - A new agreement, renewal, or audited correcting workflow may be appropriate, but only use a workflow the operator explicitly chooses and the available CreditSync tools support.
+- To settle an active single-payment agreement into another supported contract without rewriting history, route to `restructure-loan`.
 
 ## Quick reference
 

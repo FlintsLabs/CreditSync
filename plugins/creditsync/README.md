@@ -1,16 +1,18 @@
-# CreditSync Plugin 2.4.0
+# CreditSync Plugin 2.5.0
 
-This private Codex plugin orchestrates the CreditSync MCP app for borrower identity, payments, intermediary remittances, effective-dated floating-interest changes, loan disbursements, renewals, and append-only reversal.
+This private Codex plugin orchestrates the CreditSync MCP app for borrower identity, payments, single-payment settlement/restructure and component waivers, intermediary remittances, floating-interest changes, loan disbursements, renewals, and append-only reversal.
 
 ## Package contract
 
-- Plugin version: `2.4.0`
+- Plugin version: `2.5.0`
 - MCP schema version: `1.0`
-- Skills: `creditsync`, `manage-borrowers`, `reconcile-payments`, `reconcile-intermediary-remittances`, `manage-loans`, `manage-floating-interest-rates`, `manage-disbursements`, `renew-daily-loan`
+- Skills: `creditsync`, `manage-borrowers`, `reconcile-payments`, `reconcile-intermediary-remittances`, `manage-loans`, `manage-floating-interest-rates`, `manage-disbursements`, `renew-daily-loan`, `restructure-loan`
 - App manifest: `.app.json`
 - Remote endpoint: registered private app pointing to `https://<creditsync-host>/mcp`
 
 The package does not contain an MCP URL, bearer token, `.mcp.json`, OAuth configuration, hooks, plugin UI, or funding mutation capability. It references a private registered app so credentials remain in Codex/server secret storage.
+
+For settlement/restructure, resolve and inspect the borrower, call `loan.restructure.preview`, display every gross/waived/external-credit/net component plus replacement terms and cash, and execute only the exact hash/balance version after confirmation. Additional principal is not a posted payout; any returned disbursement draft follows the separate disbursement lifecycle. Later interest/fee/penalty waivers use their own preview/confirmation flow and reason. Principal cannot be waived.
 
 For an actual loan disbursement, first inspect `loan.disbursement.list` and present its approved principal, net disbursed amount, and signed variance. The safe lifecycle is `loan.disbursement.draft` → optional `loan.disbursement.evidence.prepare` → unchanged-byte PUT with returned headers → `loan.disbursement.evidence.finalize` → explicit human confirmation → `loan.disbursement.post` → re-list/select the exact posted event before reversal. A prepare result with `status: ready` is already finalized and must not be PUT/finalized again; missing/expired upload data, checksum conflict, or finalize mismatch stops without posting. Keep the returned stable idempotency key for a retry of that same post only. A variance is a warning that must be shown, never conversation arithmetic or permission to alter the loan schedule. Disbursement posting records an append-only ledger event; it never mutates the approved schedule. Reversal requires a specific non-blank human reason and a different stable idempotency key, and creates a compensating ledger event rather than deleting history. Draft input deliberately rejects `evidenceFilePublicIds`; only finalized evidence can be linked to a draft.
 
