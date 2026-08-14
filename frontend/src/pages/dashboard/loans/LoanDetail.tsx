@@ -73,6 +73,7 @@ interface BorrowerData {
     publicId?: string;
     name: string;
     phone?: string | null;
+    tags?: string[] | null;
 }
 
 interface LoanScheduleRow {
@@ -594,6 +595,16 @@ export default function LoanDetail() {
                                     <User2 className="h-4 w-4 text-muted-foreground" />
                                     {borrower?.name ?? t("loanDetail.unknownBorrower", "Unknown borrower")}
                                 </div>
+                                {borrower?.tags && borrower.tags.length > 0 && (
+                                    <div data-testid="loan-borrower-tags" className="flex flex-wrap gap-1">
+                                        {borrower.tags.slice(0, 3).map((tag) => (
+                                            <Badge key={tag} variant="secondary" className="h-5 px-1.5 py-0 text-[10px]">
+                                                {tag}
+                                            </Badge>
+                                        ))}
+                                        {borrower.tags.length > 3 && <span className="self-center text-[10px] text-muted-foreground">+{borrower.tags.length - 3}</span>}
+                                    </div>
+                                )}
                                 {borrower?.phone && <div className="text-muted-foreground">{borrower.phone}</div>}
                                 {borrower && (
                                     <Link to={`/borrowers/${borrower.publicId ?? borrower.id}`} className="text-primary text-xs hover:underline">

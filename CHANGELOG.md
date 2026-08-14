@@ -21,6 +21,7 @@
 ### Changed
 - Routed substantial approved implementation work through supervised tmux Codex sessions using `gpt-5.3-codex-spark`, with current-model fallback, isolated worktree handoff, explicit authority boundaries, progress supervision, and independent completion/integration verification.
 - Replaced nested repayment-schedule cards on loan details with a compact responsive table and localized column headers.
+- Surfaced up to three borrower tags with an overflow count in the Loan Detail borrower summary.
 
 ### Fixed
 - Kept Payment Inbox filters within the narrow review panel at tablet widths and explained pending evidence uploads inline instead of presenting an unusable slip-preview action.
