@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { api } from "../../../lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/Card";
@@ -11,8 +12,9 @@ type Remittance = { publicId: string; grossAmount: string; selectedTotal: string
 
 export default function IntermediaryRemittances() {
   const { t, i18n } = useTranslation();
+  const [searchParams] = useSearchParams();
   const [intermediaries, setIntermediaries] = useState<Intermediary[]>([]);
-  const [selected, setSelected] = useState("");
+  const [selected, setSelected] = useState(searchParams.get("intermediaryPublicId") ?? "");
   const [collections, setCollections] = useState<Collection[]>([]);
   const [remittances, setRemittances] = useState<Remittance[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,7 +37,7 @@ export default function IntermediaryRemittances() {
 
   return <div className="space-y-6">
     <div className="flex flex-wrap items-end justify-between gap-3">
-      <div><h1 className="text-2xl font-bold">{t("intermediary.title", "Intermediary remittances")}</h1><p className="text-sm text-muted-foreground">{t("intermediary.subtitle", "Track money collected from borrowers separately from money remitted to the lender.")}</p></div>
+      <div><Link className="text-sm text-muted-foreground hover:text-foreground" to="/intermediaries">← {t("intermediary.directory.title")}</Link><h1 className="text-2xl font-bold">{t("intermediary.title", "Intermediary remittances")}</h1><p className="text-sm text-muted-foreground">{t("intermediary.subtitle", "Track money collected from borrowers separately from money remitted to the lender.")}</p></div>
       <div className="flex gap-2"><select className="rounded-md border bg-background px-3 py-2 text-sm" value={selected} onChange={(event) => { setLoading(true); setSelected(event.target.value); }}><option value="">{t("intermediary.all", "All intermediaries")}</option>{intermediaries.map((person) => <option key={person.publicId} value={person.publicId}>{person.name}</option>)}</select><Button variant="outline" onClick={() => { setLoading(true); void load(selected || undefined); }}>{t("common.refresh", "Refresh")}</Button></div>
     </div>
     {loading ? <p>{t("common.loading", "Loading...")}</p> : <div className="grid gap-6 xl:grid-cols-2">

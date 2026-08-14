@@ -3,6 +3,7 @@
 ## v0.3.12 - 2026-08-14
 
 ### Added
+- Added a localized responsive intermediary directory and profile workspace with canonical-name/alias search, profile creation, exact managed-loan portfolio totals, Loan Detail links, historical assignments, masked payment destinations, unreconciled-group warnings, and retained collection/remittance access.
 - Added 14 closed-schema intermediary profile, masked-bank-account, assignment, managed-loan, and multi-leg disbursement MCP tools plus CreditSync Plugin `4.0.0` orchestration for exact three-slip evidence, zero-variance confirmation, stale-state stops, and compensating reversal.
 - Added localized Web controls and backend-owned previews for daily or weekly floating-interest policy origination, exact due-versus-accruing loan summaries, and explicitly confirmed settlement with automatic stale-preview refresh.
 - Added tenant-safe intermediary bank accounts and effective-dated loan assignments, plus exact intermediated disbursement groups, split transfer events, multi-evidence persistence, and expiring reconciliation previews with overlap, idempotency, uniqueness, and immutability protections.

@@ -39,7 +39,7 @@ export default function DashboardLayout() {
                 <div className="flex flex-1 flex-col gap-1 p-4">
                     {navigation.map((item) => {
                         const Icon = item.icon;
-                        const isActive = location.pathname === item.href;
+                        const isActive = location.pathname === item.href || (item.href === "/intermediaries" && location.pathname.startsWith("/intermediaries/"));
                         return (
                             <Link
                                 key={item.href}
@@ -102,7 +102,7 @@ export default function DashboardLayout() {
                                 <nav className="flex flex-col gap-1">
                                     {navigation.map((item) => {
                                         const Icon = item.icon;
-                                        const isActive = location.pathname === item.href;
+                                        const isActive = location.pathname === item.href || (item.href === "/intermediaries" && location.pathname.startsWith("/intermediaries/"));
                                         return (
                                             <Link
                                                 key={item.href}

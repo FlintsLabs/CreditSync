@@ -884,7 +884,37 @@
         "unposted": "awaiting remittance posting",
         "remitted": "Remittances received",
         "noRemittances": "No remittances",
-        "balance": "Remaining balance"
+        "balance": "Remaining balance",
+        "directory": {
+            "title": "Intermediaries",
+            "subtitle": "Search profiles and review the loans each intermediary manages.",
+            "new": "New intermediary",
+            "name": "Name",
+            "create": "Create profile",
+            "searchLabel": "Search intermediaries",
+            "searchPlaceholder": "Search canonical name or confirmed alias",
+            "search": "Search",
+            "empty": "No intermediary profiles found."
+        },
+        "profile": {
+            "back": "Back to intermediaries",
+            "notFound": "Intermediary profile not found.",
+            "remittances": "Collections and remittances",
+            "overview": "Portfolio overview",
+            "unreconciled_one": "{{count}} disbursement group needs review.",
+            "unreconciled_other": "{{count}} disbursement groups need review.",
+            "totals": { "principal": "Outstanding principal", "interest": "Outstanding interest", "fees": "Outstanding fees", "retained": "Retained balance" },
+            "managedLoans": "Active managed loans",
+            "borrower": "Borrower",
+            "role": "Role",
+            "nextDue": "Next due date",
+            "noDueDate": "No due date",
+            "roles": { "disbursement": "Disbursement", "collection": "Collection", "both": "Disbursement and collection" },
+            "assignmentHistory": "Assignment history",
+            "current": "Current",
+            "status": { "active": "Active", "ended": "Ended" },
+            "bankAccounts": "Payment destinations"
+        }
     },
     "loanDetail": {
         "title": "Loan agreement",
