@@ -14,6 +14,7 @@
 - Added explicitly confirmed atomic posting and compensating reversal for zero-variance intermediary disbursement groups, linking exact borrower payout and activation-time advance-interest projections by public provenance IDs while preserving optional evidence, collection/remittance ledgers, and Decimal-only held balances.
 
 ### Fixed
+- Accepted generalized floating-interest policies on loan-restructure REST previews while retaining strict nested-key rejection, and preserved legacy daily `start_next_day` boundaries across projected and materialized accruals without changing deducted-first-day or generalized weekly behavior.
 - Semantically composed main's single-payment and restructure contracts with the generalized weekly-floating lifecycle, preserving legacy floating-policy compatibility, immutable advance-period correction bases, exact audited settlement/accrual allocation provenance, pure payment-health reads, and carried-balance and compensating-reversal guards.
 - Corrected additive `0036` upgrade projection to derive each floating accrual's contractual period amount from its immutable principal/rate snapshots with exact two-decimal half-up rounding, covered for both percentage and per-thousand rates, and to retain weekly versus daily units on existing rate periods.
 - Preserved exact per-source multi-fund payment and settlement attribution at the 29-integer-digit public-money boundary by applying the shared high-precision Decimal context across allocation aggregation, ratio calculation, cent rounding, and final-source remainder conservation.

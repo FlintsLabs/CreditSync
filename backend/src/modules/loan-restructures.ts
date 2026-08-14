@@ -4,15 +4,10 @@ import { authPlugin } from "../middleware/auth";
 import { DomainError } from "../services/domain-error";
 import { executeLoanRestructure, getLoanRestructure, listLoanRestructures, previewLoanRestructure, reverseLoanRestructure, type PreviewLoanRestructureInput } from "../services/loan-restructure-service";
 import { loanCommandContext, loanDomainFailure, loanUnauthorized } from "./loan-http-support";
-import { repaymentType } from "./loan-route-schemas";
+import { floatingDailyInterest, floatingInterestPolicy, repaymentType } from "./loan-route-schemas";
 
 const strict = { additionalProperties: false } as const;
 const preserveUnknown = { additionalProperties: true } as const;
-const floatingDailyInterest = t.Object({
-    mode: t.Union([t.Literal("per_thousand"), t.Literal("percent")]), rate: t.String(),
-    firstDayTreatment: t.Union([t.Literal("deduct"), t.Literal("start_next_day")]),
-    accrualCycle: t.Optional(t.Union([t.Literal("daily"), t.Literal("weekly")])),
-}, preserveUnknown);
 const dailyEntry = t.Object({
     durationUnit: t.Union([t.Literal("days"), t.Literal("months")]), durationValue: t.Integer({ minimum: 1, maximum: 100_000 }),
     entryMode: t.Union([t.Literal("daily_payment"), t.Literal("daily_interest")]), dailyPayment: t.Optional(t.String()),
@@ -30,7 +25,8 @@ const singlePayment = t.Object({
 const replacementTerms = t.Object({
     interestRate: t.String(), termMonths: t.Number(), repaymentType, startDate: t.String(),
     totalInstallments: t.Optional(t.Number()), installmentAmount: t.Optional(t.String()),
-    floatingDailyInterest: t.Optional(floatingDailyInterest), dailyEntry: t.Optional(dailyEntry), singlePayment: t.Optional(singlePayment),
+    floatingInterestPolicy: t.Optional(floatingInterestPolicy), floatingDailyInterest: t.Optional(floatingDailyInterest),
+    dailyEntry: t.Optional(dailyEntry), singlePayment: t.Optional(singlePayment),
 }, preserveUnknown);
 const waiver = t.Object({ amount: t.String(), reason: t.String() }, preserveUnknown);
 
@@ -46,7 +42,9 @@ function assertKnownKeys(value: Record<string, unknown>, allowed: readonly strin
 function assertClosedReplacementInput(body: Record<string, unknown>) {
     assertKnownKeys(body, ["settlementDate", "replacementTerms", "waivers", "externalSettlementCredit", "additionalPrincipal", "reason"], "body");
     const terms = body.replacementTerms as Record<string, unknown>;
-    assertKnownKeys(terms, ["interestRate", "termMonths", "repaymentType", "startDate", "totalInstallments", "installmentAmount", "floatingDailyInterest", "dailyEntry", "singlePayment"], "body.replacementTerms");
+    assertKnownKeys(terms, ["interestRate", "termMonths", "repaymentType", "startDate", "totalInstallments", "installmentAmount", "floatingInterestPolicy", "floatingDailyInterest", "dailyEntry", "singlePayment"], "body.replacementTerms");
+    const policy = terms.floatingInterestPolicy as Record<string, unknown> | undefined;
+    if (policy) assertKnownKeys(policy, ["periodUnit", "periodLength", "rateMode", "rate", "advanceInterestPeriods", "advanceInterestRefundPolicy"], "body.replacementTerms.floatingInterestPolicy");
     const floating = terms.floatingDailyInterest as Record<string, unknown> | undefined;
     if (floating) assertKnownKeys(floating, ["mode", "rate", "firstDayTreatment", "accrualCycle"], "body.replacementTerms.floatingDailyInterest");
     const daily = terms.dailyEntry as Record<string, unknown> | undefined;

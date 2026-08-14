@@ -56,6 +56,11 @@ function hasPeriodPolicy(loan: typeof loans.$inferSelect) {
         && loan.interestPeriodAnchorDate !== null;
 }
 
+function accrualDateFirstDayTreatment(loan: typeof loans.$inferSelect): FloatingDailyInterest["firstDayTreatment"] {
+    if (hasPeriodPolicy(loan) && loan.interestPeriodUnit === "week") return "deduct";
+    return loan.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"];
+}
+
 function periodPolicy(
     loan: typeof loans.$inferSelect,
     period: typeof loanInterestRatePeriods.$inferSelect,
@@ -210,7 +215,7 @@ async function accrueFloatingInterestThroughInTransaction(tx: Executor, loan: ty
     const accrualDates = interestDatesThrough(
         anchorDate,
         throughDate,
-        "deduct",
+        accrualDateFirstDayTreatment(loan),
         "daily",
     );
     const periodRows = await tx.select().from(loanInterestRatePeriods).where(and(
@@ -514,7 +519,7 @@ async function expectedFloatingAccruals(
     const dates = interestDatesThrough(
         anchorDate,
         throughDate,
-        generalizedPolicy ? "deduct" : loan.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"],
+        accrualDateFirstDayTreatment(loan),
         generalizedPolicy ? "daily" : accrualCycle,
     );
     let virtualId = -1;
@@ -1201,7 +1206,6 @@ export async function correctFloatingInterestAccruals(ctx: CommandContext, loanP
         if (!loan.interestStartDate || !loan.firstDayTreatment) {
             throw new DomainError("INVALID_LOAN_TERMS", "Floating interest policy is invalid", 409);
         }
-        const firstDayTreatment = loan.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"];
         const accrualCycle = (loan.floatingAccrualCycle ?? "daily") as FloatingAccrualCycle;
         for (const accrualDate of uniqueDates) {
             let scheduled = false;
@@ -1209,7 +1213,7 @@ export async function correctFloatingInterestAccruals(ctx: CommandContext, loanP
                 scheduled = interestDatesThrough(
                     hasPeriodPolicy(loan) ? loan.interestPeriodAnchorDate! : loan.interestStartDate,
                     accrualDate,
-                    hasPeriodPolicy(loan) ? "deduct" : firstDayTreatment,
+                    accrualDateFirstDayTreatment(loan),
                     hasPeriodPolicy(loan) ? "daily" : accrualCycle,
                 ).includes(accrualDate);
             } catch {

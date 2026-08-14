@@ -14,7 +14,8 @@ import {
     previewLoan,
     updateLoanDraft,
 } from "./loan-application-service";
-import { correctFloatingInterestAccruals } from "./floating-interest-service";
+import { accrueFloatingInterestThrough, correctFloatingInterestAccruals } from "./floating-interest-service";
+import { getLoanPaymentHealth } from "./loan-payment-health-service";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
@@ -617,6 +618,62 @@ describe("loan application service", () => {
         expect(await db.select().from(loanInterestRatePeriods).where(eq(loanInterestRatePeriods.loanId, stored!.id))).toMatchObject([{
             effectiveDate: "2026-08-10", expiryDate: null, rateType: "per_thousand", rate: "1.0000",
         }]);
+    });
+
+    // Break caught: normalizing the legacy daily adapter into generalized
+    // columns makes start-next-day loans accrue on their anchor date.
+    integrationTest("preserves the legacy start-next-day boundary in projection and materialization", async () => {
+        const actor = await seedUser("tenant-legacy-start-next", "legacy-start-next@example.test", "collector");
+        const createContext = context(actor.tenantId, actor.id, "legacy-start-next-create");
+        const borrower = await createBorrower(createContext, { name: "Legacy Start Next Borrower" });
+        const draft = await createLoanDraft(createContext, {
+            borrowerPublicId: borrower.publicId,
+            principal: "1000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1,
+            startDate: "2026-08-10",
+            floatingDailyInterest: {
+                mode: "per_thousand", rate: "15", firstDayTreatment: "start_next_day", accrualCycle: "daily",
+            },
+        });
+        await activateLoan(createContext, draft.publicId);
+        const stored = (await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) }))!;
+        expect(stored).toMatchObject({
+            interestPeriodUnit: "day", interestPeriodLength: 1, advanceInterestPeriods: 0,
+            interestPeriodAnchorDate: "2026-08-10", firstDayTreatment: "start_next_day",
+        });
+
+        expect(await getLoanPaymentHealth(db, stored, {
+            asOf: new Date("2026-08-10T12:00:00+07:00"),
+            context: context(actor.tenantId, actor.id, "legacy-start-next-health-anchor"),
+        })).toMatchObject({
+            status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00",
+            overdueItemCount: 0, maxOverdueDays: 0,
+        });
+        expect(await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, stored.id))).toHaveLength(0);
+
+        expect(await accrueFloatingInterestThrough(
+            db,
+            stored,
+            new Date("2026-08-10T12:00:00+07:00"),
+            context(actor.tenantId, actor.id, "legacy-start-next-materialize-anchor"),
+        )).toHaveLength(0);
+
+        expect(await getLoanPaymentHealth(db, stored, {
+            asOf: new Date("2026-08-11T12:00:00+07:00"),
+            context: context(actor.tenantId, actor.id, "legacy-start-next-health-first-day"),
+        })).toMatchObject({
+            status: "due_today", dueTodayAmount: "15.00", overdueAmount: "0.00",
+            overdueItemCount: 0, maxOverdueDays: 0,
+        });
+        const materialized = await accrueFloatingInterestThrough(
+            db,
+            stored,
+            new Date("2026-08-11T12:00:00+07:00"),
+            context(actor.tenantId, actor.id, "legacy-start-next-materialize-first-day"),
+        );
+        expect(materialized).toHaveLength(1);
+        expect(materialized[0]).toMatchObject({
+            accrualDate: "2026-08-11", interestAmount: "15.00", status: "accrued",
+        });
     });
 
     // Break caught: the legacy scheduled-loan close endpoints bypass floating accrual,

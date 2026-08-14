@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
 import { auditLogs, borrowers, loanDisbursementEvents, loanOpeningBalanceComponents, loanRestructures, loanRestructureWaivers, loans, users } from "../db/schema";
@@ -107,6 +107,77 @@ describe("loan restructure REST contract", () => {
         }));
         expect(nested.status, await nested.clone().text()).toBe(422);
         expect(await nested.json()).toMatchObject({ code: "VALIDATION_ERROR" });
+
+        const generalizedNested = await new Elysia().use(loansRoute).handle(new Request(`http://localhost/loans/${crypto.randomUUID()}/restructures/preview`, {
+            method: "POST",
+            headers: { authorization: `Bearer ${unsigned}.${signature}`, "content-type": "application/json" },
+            body: JSON.stringify({
+                settlementDate: "2026-08-15", additionalPrincipal: "0.00", reason: "generalized closed schema proof",
+                replacementTerms: {
+                    repaymentType: "floating", startDate: "2026-08-15", termMonths: 1, interestRate: "0.00",
+                    floatingInterestPolicy: {
+                        periodUnit: "week", periodLength: 1, rateMode: "percent", rate: "12.0000",
+                        advanceInterestPeriods: 0, advanceInterestRefundPolicy: "non_refundable", surprise: true,
+                    },
+                },
+            }),
+        }));
+        expect(generalizedNested.status, await generalizedNested.clone().text()).toBe(422);
+        expect(await generalizedNested.json()).toMatchObject({ code: "VALIDATION_ERROR" });
+    });
+
+    // Break caught: the restructure service accepts a generalized weekly policy,
+    // but the REST route rejects the additive field before it reaches the service.
+    integrationTest("previews a generalized weekly floating replacement through the REST contract", async () => {
+        const seeded = await seedRouteLoan();
+        const result = await call(
+            new Elysia().use(loansRoute),
+            `/loans/${seeded.loan.publicId}/restructures/preview`,
+            await tokenFor(seeded.user),
+            {
+                method: "POST",
+                body: JSON.stringify({
+                    settlementDate: "2026-08-15",
+                    additionalPrincipal: "0.00",
+                    reason: "replace with weekly floating terms",
+                    replacementTerms: {
+                        repaymentType: "floating",
+                        startDate: "2026-08-15",
+                        termMonths: 1,
+                        interestRate: "0.00",
+                        floatingInterestPolicy: {
+                            periodUnit: "week",
+                            periodLength: 1,
+                            rateMode: "percent",
+                            rate: "12.0000",
+                            advanceInterestPeriods: 0,
+                            advanceInterestRefundPolicy: "non_refundable",
+                        },
+                    },
+                }),
+            },
+        );
+
+        expect(result.response.status, JSON.stringify(result.body)).toBe(200);
+        expect(result.body).toMatchObject({
+            oldLoanPublicId: seeded.loan.publicId,
+            replacementPrincipal: "5000.00",
+        });
+        const stored = await db.query.loanRestructures.findFirst({
+            where: eq(loanRestructures.publicId, result.body.publicId),
+        });
+        expect(stored?.requestedReplacementTerms).toMatchObject({
+            replacementTerms: {
+                floatingInterestPolicy: {
+                    periodUnit: "week",
+                    periodLength: 1,
+                    rateMode: "percent",
+                    rate: "12.0000",
+                    advanceInterestPeriods: 0,
+                    advanceInterestRefundPolicy: "non_refundable",
+                },
+            },
+        });
     });
 
     integrationTest("preserves exact DTOs, confirmation, idempotency, read models, lineage, and tenant hiding", async () => {
