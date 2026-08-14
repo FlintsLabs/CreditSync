@@ -45,18 +45,35 @@ async function accessibleReplacement(ctx: CommandContext, loanPublicId: string, 
     return { loan, restructure };
 }
 async function componentState(executor: Executor, ctx: CommandContext, loanId: number, restructureId: number, component: WaiverComponent) {
-    const kinds = component === "interest" ? ["carried_interest", "new_contract_interest"] : component === "new_interest" ? ["new_contract_interest"] : component === "fee" ? ["carried_fee"] : ["carried_penalty"];
+    const interestScope = component === "interest" || component === "new_interest";
+    const kinds = interestScope ? ["carried_interest", "new_contract_interest"] : component === "fee" ? ["carried_fee"] : ["carried_penalty"];
     const opening = await executor.select().from(loanOpeningBalanceComponents).where(and(eq(loanOpeningBalanceComponents.tenantId, ctx.tenantId), eq(loanOpeningBalanceComponents.loanId, loanId), eq(loanOpeningBalanceComponents.restructureId, restructureId))) as Array<typeof loanOpeningBalanceComponents.$inferSelect>;
-    const waivers = await executor.select().from(loanRestructureWaivers).where(and(eq(loanRestructureWaivers.tenantId, ctx.tenantId), eq(loanRestructureWaivers.loanId, loanId), eq(loanRestructureWaivers.restructureId, restructureId), eq(loanRestructureWaivers.componentKind, component))) as WaiverRow[];
+    const waivers = await executor.select().from(loanRestructureWaivers).where(and(eq(loanRestructureWaivers.tenantId, ctx.tenantId), eq(loanRestructureWaivers.loanId, loanId), eq(loanRestructureWaivers.restructureId, restructureId), interestScope ? sql`${loanRestructureWaivers.componentKind} IN ('interest', 'new_interest')` : eq(loanRestructureWaivers.componentKind, component))) as WaiverRow[];
     const posted = await executor.select().from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.loanId, loanId))).orderBy(transactions.id) as Array<typeof transactions.$inferSelect>;
     const reversed = new Set(posted.filter(row => row.entryType === "reversal" && row.reversedTransactionId !== null).map(row => row.reversedTransactionId!));
     const active = posted.filter(row => row.entryType === "repayment" && !reversed.has(row.id));
-    const paid = component === "new_interest" ? new Decimal(0) : active.reduce((sum, row) => sum.plus(component === "interest" ? row.interestComponent : component === "fee" ? row.feeComponent : row.penaltyComponent), new Decimal(0));
+    const paid = active.reduce((sum, row) => sum.plus(interestScope ? row.interestComponent : component === "fee" ? row.feeComponent : row.penaltyComponent), new Decimal(0));
     const openingAmount = opening.filter(row => kinds.includes(row.componentKind)).reduce((sum, row) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
     const waived = waivers.reduce((sum, row) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
-    const available = Decimal.max(0, openingAmount.minus(waived).minus(paid));
+    const carriedGross = opening.filter(row => row.componentKind === "carried_interest").reduce((sum, row) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
+    const newGross = opening.filter(row => row.componentKind === "new_contract_interest").reduce((sum, row) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
+    const generalWaived = waivers.filter(row => row.componentKind === "interest").reduce((sum, row) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
+    const explicitNewWaived = waivers.filter(row => row.componentKind === "new_interest").reduce((sum, row) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
+    const carriedAfterWaiver = Decimal.max(0, carriedGross.minus(Decimal.min(carriedGross, generalWaived)));
+    const generalNewWaiver = Decimal.max(0, generalWaived.minus(carriedGross));
+    const paidCarried = Decimal.min(paid, carriedAfterWaiver);
+    const paidNew = Decimal.max(0, paid.minus(paidCarried));
+    const available = component === "new_interest"
+        ? Decimal.max(0, newGross.minus(generalNewWaiver).minus(explicitNewWaived).minus(paidNew))
+        : Decimal.max(0, openingAmount.minus(waived).minus(paid));
     const version = hash({ loanId, restructureId, component, opening: opening.map(row => [row.publicId, row.componentKind, row.amount, row.status]), waivers: waivers.map(row => [row.publicId, row.amount, row.status, row.reversedWaiverId]), payments: posted.map(row => [row.publicId, row.entryType, row.reversedTransactionId, row.interestComponent, row.feeComponent, row.penaltyComponent]) });
     return { openingAmount, waived, paid, available, version };
+}
+
+export async function getLoanWaiverAvailability(ctx: CommandContext, loanPublicId: string, component: WaiverComponent) {
+    const resolved = await accessibleReplacement(ctx, loanPublicId);
+    const state = await componentState(db, ctx, resolved.loan.id, resolved.restructure.id, component);
+    return { availableAmount: serializeMoney(state.available), balanceVersion: state.version };
 }
 
 export async function previewLoanWaiver(ctx: CommandContext, loanPublicId: string, input: { component: "interest" | "fee" | "penalty" | "new_interest"; amount: string; reason: string }, options: { allowInternalNewInterest?: boolean } = {}) {
@@ -130,8 +147,10 @@ export async function reverseLoanWaiver(ctx: CommandContext, waiverPublicId: str
         const original = await tx.query.loanRestructureWaivers.findFirst({ where: and(eq(loanRestructureWaivers.tenantId, ctx.tenantId), eq(loanRestructureWaivers.publicId, waiverPublicId)) });
         if (!original || original.status !== "executed") throw new DomainError("WAIVER_NOT_REVERSIBLE", "Only an active executed waiver can be reversed", 409);
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id=${ctx.tenantId} AND id=${original.loanId} FOR UPDATE`);
-        const downstreamPayment = await tx.query.transactions.findFirst({ where: and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.loanId, original.loanId), gt(transactions.createdAt, original.executedAt)) });
-        if (downstreamPayment) throw new DomainError("WAIVER_REVERSAL_BLOCKED", "Payments posted after this waiver must be reversed first", 409);
+        const downstreamRows = await tx.select().from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.loanId, original.loanId), gt(transactions.createdAt, original.executedAt))).orderBy(transactions.id);
+        const reversedDownstreamIds = new Set(downstreamRows.filter((row: typeof transactions.$inferSelect) => row.entryType === "reversal" && row.reversedTransactionId !== null).map((row: typeof transactions.$inferSelect) => row.reversedTransactionId!));
+        const downstreamPayment = downstreamRows.find((row: typeof transactions.$inferSelect) => row.entryType === "repayment" && !reversedDownstreamIds.has(row.id));
+        if (downstreamPayment) throw new DomainError("WAIVER_REVERSAL_BLOCKED", "Active payments posted after this waiver must be reversed first", 409);
         const later = await tx.query.loanRestructureWaivers.findFirst({ where: and(eq(loanRestructureWaivers.tenantId, ctx.tenantId), eq(loanRestructureWaivers.loanId, original.loanId), eq(loanRestructureWaivers.componentKind, original.componentKind), sql`${loanRestructureWaivers.id} > ${original.id}`) });
         if (later) throw new DomainError("WAIVER_REVERSAL_BLOCKED", "Later waiver activity must be reversed first", 409);
         const audit = await createAuditLog(tx, { tenantId: ctx.tenantId, actorUserId: ctx.actorUserId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, entityType: "loan_restructure_waiver", entityId: waiverPublicId, action: "reversed", payload: { reason, originalAmount: serializeMoney(original.amount) } });

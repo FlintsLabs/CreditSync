@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import Decimal from "decimal.js";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
-    auditLogs, borrowers, loanDisbursementEvents, loanOpeningBalanceComponents,
-    loanRenewals, loanRestructures, loanSchedules, loans, transactions, users,
+    auditLogs, bankProfiles, borrowers, fundLedgerEntries, loanDisbursementEvents, loanFundingAllocations, loanOpeningBalanceComponents,
+    loanRenewals, loanRestructures, loanSchedules, loans, paymentIntakes, paymentMatchAllocations, paymentMatchProposals, transactions, users,
 } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import { executeLoanRestructure, previewLoanRestructure, reverseLoanRestructure } from "./loan-restructure-service";
@@ -71,6 +72,8 @@ describe("loan restructure service", () => {
 
     integrationTest("executes atomically, replays same key, persists opening components, and creates only an additional-principal draft", async () => {
         const { tenantId, loan, ctx } = await seed();
+        const profile = await db.insert(bankProfiles).values({ tenantId, name: "Settlement source", type: "personal_savings" }).returning().then(rows => rows[0]!);
+        await db.insert(loanFundingAllocations).values({ tenantId, loanId: loan.id, bankProfileId: profile.id, allocatedAmount: "5000.00", allocationDate: "2026-08-01", createdByUserId: ctx().actorUserId });
         const preview = await previewLoanRestructure(ctx(), loan.publicId, {
             settlementDate: "2026-08-15", replacementTerms, additionalPrincipal: "1000.00",
             waivers: { interest: { amount: "100.00", reason: "hardship" } }, reason: "replace contract",
@@ -101,6 +104,13 @@ describe("loan restructure service", () => {
         expect(drafts.map(d => [d.status, d.grossAmount, d.loanAttributedAmount])).toEqual([["draft", "1000.00", "1000.00"]]);
         expect((await db.select().from(transactions).where(eq(transactions.loanId, loan.id))).map(row => [row.amount, row.principalComponent, row.interestComponent, row.feeComponent, row.penaltyComponent, row.entryType]))
             .toEqual([["200.00", "0.00", "135.00", "25.00", "40.00", "repayment"]]);
+        const creditTransaction = await db.query.transactions.findFirst({ where: and(eq(transactions.loanId, loan.id), eq(transactions.entryType, "repayment")) });
+        const intake = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.id, creditTransaction!.paymentIntakeId!) });
+        const proposal = await db.query.paymentMatchProposals.findFirst({ where: eq(paymentMatchProposals.paymentIntakeId, intake!.id) });
+        const allocation = await db.query.paymentMatchAllocations.findFirst({ where: eq(paymentMatchAllocations.proposalId, proposal!.id) });
+        expect([intake?.status, proposal?.status, allocation?.status, allocation?.matchReason]).toEqual(["posted", "posted", "posted", "external_settlement_credit"]);
+        const fundEffects = await db.select().from(fundLedgerEntries).where(eq(fundLedgerEntries.transactionId, creditTransaction!.id));
+        expect(fundEffects.reduce((sum, row) => sum.plus(row.amount), new Decimal(0)).toFixed(2)).toBe("200.00");
         await reverseLoanRestructure(ctx("reverse-full"), preview.publicId, { reason: "undo complete restructure" });
         expect((await db.select().from(loanOpeningBalanceComponents).where(eq(loanOpeningBalanceComponents.loanId, newLoan!.id))).some(row => row.status === "reversed")).toBe(true);
         expect((await db.select().from(loanDisbursementEvents).where(eq(loanDisbursementEvents.loanId, newLoan!.id)))[0]?.status).toBe("reversed");
@@ -162,5 +172,14 @@ describe("loan restructure service", () => {
         const replacement = await db.query.loans.findFirst({ where: eq(loans.publicId, executed.newLoanPublicId!) });
         await db.insert(loanRenewals).values({ tenantId: ctx().tenantId, oldLoanId: replacement!.id, newLoanId: replacement!.id, status: "executed", previewHash: "v1:" + "a".repeat(64), requestedPrincipal: replacement!.principalAmount, outstandingPrincipal: replacement!.principalAmount, dueCharges: "0.00", waivedCharges: "0.00", cashDirection: "none", cashAmount: "0.00", reason: "downstream", idempotencyKey: crypto.randomUUID(), expiresAt: new Date(Date.now() + 60_000), executedAt: new Date(), createdByUserId: ctx().actorUserId, executedByUserId: ctx().actorUserId });
         await expect(reverseLoanRestructure(ctx("reverse-blocked-renewal"), preview.publicId, { reason: "try undo" })).rejects.toMatchObject({ code: "RESTRUCTURE_REVERSAL_BLOCKED", details: { blockers: { laterRenewals: 1 } } });
+    });
+
+    integrationTest("serializes different execution keys so exactly one wins", async () => {
+        const { loan, ctx } = await seed();
+        const preview = await previewLoanRestructure(ctx(), loan.publicId, { settlementDate: "2026-08-15", replacementTerms, additionalPrincipal: "0.00", reason: "replace" });
+        const input = { confirmed: true as const, previewHash: preview.previewHash, expectedBalanceVersion: preview.oldBalanceVersion, reason: "approved" };
+        const settled = await Promise.allSettled([executeLoanRestructure(ctx("different-a"), preview.publicId, input), executeLoanRestructure(ctx("different-b"), preview.publicId, input)]);
+        expect(settled.filter(item => item.status === "fulfilled")).toHaveLength(1);
+        expect(settled.filter(item => item.status === "rejected")).toHaveLength(1);
     });
 });

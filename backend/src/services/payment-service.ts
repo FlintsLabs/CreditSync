@@ -39,7 +39,7 @@ import {
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import { normalizeBorrowerText } from "./borrower-service";
-import { executeLoanWaiver, previewLoanWaiver } from "./loan-waiver-service";
+import { executeLoanWaiver, getLoanWaiverAvailability, previewLoanWaiver } from "./loan-waiver-service";
 import {
     accrueFloatingInterestThrough,
     floatingPaymentObligations,
@@ -1168,16 +1168,25 @@ export async function previewEarlyLoanSettlement(ctx: CommandContext, loanPublic
     if (!loan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
     const restructure = await db.query.loanRestructures.findFirst({ where: and(eq(loanRestructures.tenantId, ctx.tenantId), eq(loanRestructures.newLoanId, loan.id), eq(loanRestructures.status, "executed")) });
     if (!restructure) throw new DomainError("LOAN_NOT_RESTRUCTURED", "Early settlement waiver requires a restructured replacement loan", 409);
-    const [opening, schedules] = await Promise.all([
-        db.select().from(loanOpeningBalanceComponents).where(and(eq(loanOpeningBalanceComponents.tenantId, ctx.tenantId), eq(loanOpeningBalanceComponents.loanId, loan.id), eq(loanOpeningBalanceComponents.restructureId, restructure.id), eq(loanOpeningBalanceComponents.componentKind, "new_contract_interest"))),
+    if (loan.repaymentType === "floating") throw new DomainError("EARLY_SETTLEMENT_UNSUPPORTED_FOR_FLOATING", "Floating replacements accrue interest without contractual unearned interest", 409);
+    const [opening, schedules, posted] = await Promise.all([
+        db.select().from(loanOpeningBalanceComponents).where(and(eq(loanOpeningBalanceComponents.tenantId, ctx.tenantId), eq(loanOpeningBalanceComponents.loanId, loan.id), eq(loanOpeningBalanceComponents.restructureId, restructure.id))),
         db.select().from(loanSchedules).where(and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.loanId, loan.id))).orderBy(loanSchedules.installmentNo),
+        db.select().from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.loanId, loan.id))).orderBy(transactions.id),
     ]);
-    const contractual = opening.reduce((sum, row) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
+    const openingAmount = (kind: string) => opening.filter(row => row.componentKind === kind).reduce((sum, row) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
+    const contractual = openingAmount("new_contract_interest");
     const earned = schedules.filter(row => row.dueDate <= input.settlementDate).reduce((sum, row) => sum.plus(row.scheduledInterest), new Decimal(0));
+    const reversed = new Set(posted.filter(row => row.entryType === "reversal" && row.reversedTransactionId !== null).map(row => row.reversedTransactionId!));
+    const active = posted.filter(row => row.entryType === "repayment" && !reversed.has(row.id));
+    const paidPrincipal = active.reduce((sum, row) => sum.plus(row.principalComponent), new Decimal(0));
+    const outstandingPrincipal = Decimal.max(0, openingAmount("carried_principal").plus(openingAmount("additional_principal")).minus(paidPrincipal));
     const calculation = calculateEarlySettlementUnearnedInterest({ contractualNewInterest: serializeMoney(contractual), earnedNewInterest: serializeMoney(Decimal.min(contractual, earned)) });
-    if (new Decimal(calculation.proposedWaiver).isZero()) throw new DomainError("NO_UNEARNED_INTEREST", "No unearned new-contract interest is available to waive", 409);
-    const waiver = await previewLoanWaiver(ctx, loanPublicId, { component: "new_interest", amount: calculation.proposedWaiver, reason: calculation.reason }, { allowInternalNewInterest: true });
-    return { ...waiver, settlementDate: input.settlementDate, ...calculation };
+    const currentNewInterest = await getLoanWaiverAvailability(ctx, loanPublicId, "new_interest");
+    const proposedWaiver = serializeMoney(Decimal.min(calculation.proposedWaiver, currentNewInterest.availableAmount));
+    if (new Decimal(proposedWaiver).isZero()) throw new DomainError("NO_UNEARNED_INTEREST", "No unearned new-contract interest is available to waive", 409);
+    const waiver = await previewLoanWaiver(ctx, loanPublicId, { component: "new_interest", amount: proposedWaiver, reason: calculation.reason }, { allowInternalNewInterest: true });
+    return { ...waiver, settlementDate: input.settlementDate, outstandingPrincipal: serializeMoney(outstandingPrincipal), carriedBalances: { interest: serializeMoney(openingAmount("carried_interest")), fee: serializeMoney(openingAmount("carried_fee")), penalty: serializeMoney(openingAmount("carried_penalty")) }, ...calculation, proposedWaiver };
 }
 
 export async function executeEarlyLoanSettlement(ctx: CommandContext, previewPublicId: string, input: { confirmed: boolean; previewHash: string; expectedBalanceVersion: string }) {
@@ -1323,6 +1332,27 @@ async function writeFundEffects(tx: Executor, ctx: CommandContext, loanId: numbe
             });
         }
     }
+}
+
+export async function postExternalSettlementCreditInTransaction(tx: Executor, ctx: CommandContext, input: {
+    loan: typeof loans.$inferSelect;
+    amount: string;
+    receivedAt: Date;
+    payer: string;
+    source: string;
+    idempotencyKey: string;
+    components: { principal: string; interest: string; fee: string; penalty: string };
+}) {
+    const amount = parseMoney(input.amount);
+    const components = { principal: parseMoney(input.components.principal), interest: parseMoney(input.components.interest), fee: parseMoney(input.components.fee), penalty: parseMoney(input.components.penalty) };
+    if (!Object.values(components).reduce((sum, value) => sum.plus(value), new Decimal(0)).eq(amount)) throw new DomainError("PAYMENT_COMPONENT_MISMATCH", "External settlement credit components must conserve the payment amount", 409);
+    const intake = await tx.insert(paymentIntakes).values({ tenantId: ctx.tenantId, ownerUserId: input.loan.ownerUserId, source: ctx.actorSource === "mcp" ? "mcp" : "web", status: "posted", amount: serializeMoney(amount), receivedAt: input.receivedAt, payerName: input.payer, idempotencyKey: input.idempotencyKey, originLoanId: input.loan.id, warnings: [], notes: `External settlement credit: ${input.source}`, postedAt: new Date(), createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId, postedByUserId: ctx.actorUserId }).returning().then((rows: IntakeRow[]) => rows[0]!);
+    const proposal = await tx.insert(paymentMatchProposals).values({ tenantId: ctx.tenantId, paymentIntakeId: intake.id, version: 1, proposalHash: hash(JSON.stringify({ intake: intake.publicId, loan: input.loan.publicId, amount: serializeMoney(amount), components: input.components })), status: "posted", warnings: [], createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((rows: ProposalRow[]) => rows[0]!);
+    const allocation = await tx.insert(paymentMatchAllocations).values({ tenantId: ctx.tenantId, proposalId: proposal.id, allocationOrder: 1, borrowerId: input.loan.borrowerId, loanId: input.loan.id, scheduleId: null, amount: serializeMoney(amount), status: "posted", matchReason: "external_settlement_credit", createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((rows: AllocationRow[]) => rows[0]!);
+    const transaction = await tx.insert(transactions).values({ tenantId: ctx.tenantId, ownerUserId: input.loan.ownerUserId, loanId: input.loan.id, amount: serializeMoney(amount), principalComponent: serializeMoney(components.principal), interestComponent: serializeMoney(components.interest), feeComponent: serializeMoney(components.fee), penaltyComponent: serializeMoney(components.penalty), type: "close_account", entryType: "repayment", transactionDate: input.receivedAt, paymentIntakeId: intake.id, idempotencyKey: `payment:${intake.publicId}:${allocation.publicId}`, notes: `External settlement credit — ${input.payer}: ${input.source}`, recordedByUserId: ctx.actorUserId }).returning().then((rows: Array<typeof transactions.$inferSelect>) => rows[0]!);
+    await writeFundEffects(tx, ctx, input.loan.id, transaction.id, input.receivedAt, components);
+    const audit = await createAuditLog(tx, { ...auditContext(ctx), entityType: "payment_intake", entityId: intake.publicId, action: "external_settlement_credit_posted", payload: { proposalPublicId: proposal.publicId, allocationPublicId: allocation.publicId, transactionPublicId: transaction.publicId, loanPublicId: input.loan.publicId, components: input.components } });
+    return { intake, proposal, allocation, transaction, audit };
 }
 
 function presentTransaction(row: typeof transactions.$inferSelect) {

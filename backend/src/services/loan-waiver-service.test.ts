@@ -60,7 +60,7 @@ describe("later restructure waiver service", () => {
         const { newLoan, restructure, ctx } = await seed();
         await db.insert(loanOpeningBalanceComponents).values({ tenantId: ctx().tenantId, restructureId: restructure.id, loanId: newLoan.id, componentKind: "new_contract_interest", amount: "200.00", sourceType: "loan_restructure", sourcePublicId: restructure.publicId, createdByUserId: ctx().actorUserId });
         const preview = await previewEarlyLoanSettlement(ctx(), newLoan.publicId, { settlementDate: "2026-08-10" });
-        expect(preview).toMatchObject({ earnedNewInterest: "0.00", unearnedNewInterest: "200.00", proposedWaiver: "200.00", reason: "early_settlement_unearned_interest" });
+        expect(preview).toMatchObject({ earnedNewInterest: "0.00", unearnedNewInterest: "200.00", proposedWaiver: "200.00", outstandingPrincipal: "5000.00", carriedBalances: { interest: "500.00", fee: "50.00", penalty: "25.00" }, reason: "early_settlement_unearned_interest" });
         const executed = await executeEarlyLoanSettlement(ctx("early-close"), preview.publicId, { confirmed: true, previewHash: preview.previewHash, expectedBalanceVersion: preview.balanceVersion });
         expect(executed).toMatchObject({ status: "executed", component: "new_interest", amount: "200.00", reason: "early_settlement_unearned_interest" });
     });
@@ -79,5 +79,26 @@ describe("later restructure waiver service", () => {
         const asActor = (id: number): CommandContext => ({ ...ctx(), actorUserId: id });
         await expect(previewLoanWaiver(asActor(manager.id), newLoan.publicId, { component: "fee", amount: "1.00", reason: "manager approval" })).resolves.toMatchObject({ availableAmount: "50.00" });
         await expect(previewLoanWaiver(asActor(collector.id), newLoan.publicId, { component: "fee", amount: "1.00", reason: "not assigned" })).rejects.toMatchObject({ code: "LOAN_NOT_FOUND" });
+    });
+
+    integrationTest("shares one deterministic cap between general and new-interest waivers", async () => {
+        const { newLoan, restructure, ctx } = await seed();
+        await db.insert(loanOpeningBalanceComponents).values({ tenantId: ctx().tenantId, restructureId: restructure.id, loanId: newLoan.id, componentKind: "new_contract_interest", amount: "200.00", sourceType: "loan_restructure", sourcePublicId: restructure.publicId, createdByUserId: ctx().actorUserId });
+        const general = await previewLoanWaiver(ctx(), newLoan.publicId, { component: "interest", amount: "600.00", reason: "combined help" });
+        await executeLoanWaiver(ctx("general-600"), general.publicId, { confirmed: true, previewHash: general.previewHash, expectedBalanceVersion: general.balanceVersion, reason: "combined help" });
+        const early = await previewEarlyLoanSettlement(ctx(), newLoan.publicId, { settlementDate: "2026-08-10" });
+        expect(early.proposedWaiver).toBe("100.00");
+        expect(early.availableAmount).toBe("100.00");
+        await expect(previewLoanWaiver(ctx(), newLoan.publicId, { component: "interest", amount: "101.00", reason: "overlap" })).rejects.toMatchObject({ code: "WAIVER_EXCEEDS_COMPONENT" });
+    });
+
+    integrationTest("allows waiver reversal after a downstream payment has an exact compensating reversal", async () => {
+        const { newLoan, ctx } = await seed();
+        const preview = await previewLoanWaiver(ctx(), newLoan.publicId, { component: "fee", amount: "10.00", reason: "help" });
+        const waiver = await executeLoanWaiver(ctx("waive-before-payment"), preview.publicId, { confirmed: true, previewHash: preview.previewHash, expectedBalanceVersion: preview.balanceVersion, reason: "help" });
+        const payment = await db.insert(transactions).values({ tenantId: ctx().tenantId, ownerUserId: ctx().actorUserId, loanId: newLoan.id, amount: "5.00", principalComponent: "0.00", interestComponent: "0.00", feeComponent: "5.00", penaltyComponent: "0.00", entryType: "repayment", idempotencyKey: crypto.randomUUID(), recordedByUserId: ctx().actorUserId, createdAt: new Date(Date.now() + 1000) }).returning().then(rows => rows[0]!);
+        await expect(reverseLoanWaiver(ctx("blocked-by-payment"), waiver.publicId, { reason: "undo" })).rejects.toMatchObject({ code: "WAIVER_REVERSAL_BLOCKED" });
+        await db.insert(transactions).values({ tenantId: ctx().tenantId, ownerUserId: ctx().actorUserId, loanId: newLoan.id, amount: "-5.00", principalComponent: "0.00", interestComponent: "0.00", feeComponent: "-5.00", penaltyComponent: "0.00", entryType: "reversal", reversedTransactionId: payment.id, idempotencyKey: crypto.randomUUID(), recordedByUserId: ctx().actorUserId, createdAt: new Date(Date.now() + 2000) });
+        await expect(reverseLoanWaiver(ctx("unblocked-after-reversal"), waiver.publicId, { reason: "undo" })).resolves.toMatchObject({ status: "reversed" });
     });
 });
