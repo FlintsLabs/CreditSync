@@ -142,7 +142,10 @@ if (!testDatabaseUrl) {
 } else {
     test("PostgreSQL enforces backfill, term combinations, tenant isolation, request keys, waivers, and immutability", async () => {
         const postgres = (await import("postgres")).default;
+        const { drizzle } = await import("drizzle-orm/postgres-js");
+        const { migrate } = await import("drizzle-orm/postgres-js/migrator");
         const sql = postgres(testDatabaseUrl, { max: 1 });
+        let primaryError: unknown;
         const postgresError = async (query: PromiseLike<unknown>): Promise<unknown> => {
             try {
                 await query;
@@ -627,8 +630,19 @@ if (!testDatabaseUrl) {
             `;
             expect(String(await postgresError(sql`UPDATE loan_restructure_waivers SET reason = 'changed' WHERE id = ${reversedWaiver[0]!.id}`))).toMatch(/immutable/);
             expect(String(await postgresError(sql`DELETE FROM loan_restructure_waivers WHERE id = ${reversedWaiver[0]!.id}`))).toMatch(/immutable/);
+        } catch (error) {
+            primaryError = error;
         } finally {
+            try {
+                await sql.unsafe("DROP SCHEMA public CASCADE");
+                await sql.unsafe("DROP SCHEMA IF EXISTS drizzle CASCADE");
+                await sql.unsafe("CREATE SCHEMA public");
+                await migrate(drizzle(sql), { migrationsFolder: `${backendRoot}drizzle` });
+            } catch (cleanupError) {
+                if (primaryError === undefined) primaryError = cleanupError;
+            }
             await sql.end();
         }
+        if (primaryError !== undefined) throw primaryError;
     }, 60_000);
 }

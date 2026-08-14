@@ -256,7 +256,10 @@ export function calculatePublicLoanSchedule(params: PublicLoanCalculationParams)
         interestRate: parseMoney(terms.interestRate),
         termMonths: terms.termMonths,
         repaymentType: terms.repaymentType,
-        startDate: new Date(`${startDate}T00:00:00+07:00`),
+        // The value is already a normalized Bangkok business date. Keep calendar
+        // arithmetic independent of the host process timezone by representing that
+        // date at UTC midnight; calculateLoanSchedule only reads/adds calendar units.
+        startDate: new Date(`${startDate}T00:00:00Z`),
         totalInstallments: terms.totalInstallments,
         installmentAmount: terms.installmentAmount === undefined ? undefined : parseMoney(terms.installmentAmount),
         singlePayment: terms.singlePayment,

@@ -11,7 +11,10 @@ if (!testDatabaseUrl) {
 } else {
     test("cuts legacy floating state over exactly and enforces append-only provenance", async () => {
         const postgres = (await import("postgres")).default;
+        const { drizzle } = await import("drizzle-orm/postgres-js");
+        const { migrate } = await import("drizzle-orm/postgres-js/migrator");
         const sql = postgres(testDatabaseUrl, { max: 1 });
+        let primaryError: unknown;
         const postgresError = async (query: PromiseLike<unknown>): Promise<unknown> => {
             try {
                 await query;
@@ -602,8 +605,19 @@ if (!testDatabaseUrl) {
                     4000, 'percent', 1, 10, 10, 0, 0, 'paid'
                 )
             `)).toBeUndefined();
+        } catch (error) {
+            primaryError = error;
         } finally {
+            try {
+                await sql.unsafe("DROP SCHEMA public CASCADE");
+                await sql.unsafe("DROP SCHEMA IF EXISTS drizzle CASCADE");
+                await sql.unsafe("CREATE SCHEMA public");
+                await migrate(drizzle(sql), { migrationsFolder: `${backendRoot}drizzle` });
+            } catch (cleanupError) {
+                if (primaryError === undefined) primaryError = cleanupError;
+            }
             await sql.end({ timeout: 5 });
         }
+        if (primaryError !== undefined) throw primaryError;
     });
 }
