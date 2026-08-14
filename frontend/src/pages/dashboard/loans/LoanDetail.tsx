@@ -371,7 +371,7 @@ export default function LoanDetail() {
                         </Card>
                     </div>
 
-                    <LoanOpeningBalances lineage={loan.restructureLineage} components={loan.openingBalanceComponents} waivers={loan.restructureWaivers} />
+                    <LoanOpeningBalances loanPublicId={loan.publicId} lineage={loan.restructureLineage} components={loan.openingBalanceComponents} waivers={loan.restructureWaivers} />
                     <LoanRestructurePanel loan={loan} onExecuted={() => window.location.reload()} />
                     <LoanDisbursements loanPublicId={loan.publicId ?? loan.id} />
 
