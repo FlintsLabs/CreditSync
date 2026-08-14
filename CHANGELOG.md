@@ -14,6 +14,7 @@
 - Added explicitly confirmed atomic posting and compensating reversal for zero-variance intermediary disbursement groups, linking exact borrower payout and activation-time advance-interest projections by public provenance IDs while preserving optional evidence, collection/remittance ledgers, and Decimal-only held balances.
 
 ### Fixed
+- Made the literal Bun frontend test gate preload a Bun-compatible DOM and Testing Library matcher setup, and aborted/rejected superseded actual-disbursement ledger reads so a failed newer refresh cannot leave an intermediary post pending.
 - Made superseded actual-disbursement reads reject instead of falsely completing, generation-guarded stale read errors while clearing current errors on success, and invalidated deferred post-balance scope controllers on navigation or unmount.
 - Unified initial and imperative actual-disbursement reads behind scope/generation ordering, moved intermediary navigation scope updates before passive effects, and made profile transfer tests deterministic with real group-detail fixtures and scoped warning assertions.
 - Made intermediary post completion await installation of the refreshed Loan Detail disbursement ledger, guarded deferred profile-balance refreshes against navigation scope changes, cleared blocking refresh warnings only after complete same-key retry success, and aligned Web preview-warning types with backend objects.

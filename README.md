@@ -501,6 +501,18 @@ cd backend
 bun test
 ```
 
+Frontend verification uses both its Bun-native discovery gate and the configured Vitest suite:
+
+```bash
+cd frontend
+bun test
+bun run test
+bun run lint
+bun run build
+```
+
+`frontend/bunfig.toml` preloads the local Happy DOM and Testing Library matcher setup for Bun-native DOM tests; Vitest continues to use its separate jsdom configuration for the full frontend suite.
+
 Database-backed service tests are opt-in and require `TEST_DATABASE_URL` to point to a disposable database. To create an isolated ephemeral PostgreSQL 18 container with a dynamically assigned host port, migrate it, run a focused test, and remove it automatically:
 
 ```bash

@@ -20,6 +20,7 @@ const blankDraft = (): Draft => ({ grossAmount: "", loanAttributedAmount: "", ch
 const validMoney = (value: string) => /^\d+(?:\.\d{1,2})?$/.test(value) && /[1-9]/.test(value);
 const hash = (bytes: ArrayBuffer) => Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
 class SupersededLedgerReadError extends Error { constructor() { super("Disbursement ledger read was superseded"); } }
+type ActiveLedgerRead = { controller: AbortController; supersede: () => void };
 
 export type LoanDisbursementsHandle = { refresh: () => Promise<void> };
 
@@ -33,6 +34,7 @@ export const LoanDisbursements = forwardRef<LoanDisbursementsHandle, { loanPubli
     const [message, setMessage] = useState("");
     const [busy, setBusy] = useState(false);
     const readGeneration = useRef(0);
+    const activeRead = useRef<ActiveLedgerRead | null>(null);
     const operationKeys = useRef(new Map<string, string>());
     const actionKey = (action: string, eventId: string) => {
         const key = `${action}:${eventId}`;
@@ -43,25 +45,41 @@ export const LoanDisbursements = forwardRef<LoanDisbursementsHandle, { loanPubli
         return created;
     };
     const readLedger = async () => {
+        activeRead.current?.supersede();
         const generation = ++readGeneration.current;
         const scope = loanPublicId;
-        let response;
+        const controller = new AbortController();
+        let rejectSuperseded!: (error: SupersededLedgerReadError) => void;
+        const superseded = new Promise<never>((_resolve, reject) => { rejectSuperseded = reject; });
+        const current: ActiveLedgerRead = {
+            controller,
+            supersede: () => {
+                controller.abort();
+                rejectSuperseded(new SupersededLedgerReadError());
+            },
+        };
+        activeRead.current = current;
         try {
-            response = await api.get(`/loans/${loanPublicId}/disbursements`);
+            const response = await Promise.race([
+                api.get(`/loans/${loanPublicId}/disbursements`, { signal: controller.signal }),
+                superseded,
+            ]);
+            const next = response.data as Ledger;
+            if (generation !== readGeneration.current || activeRead.current !== current || next.loanPublicId !== scope) throw new SupersededLedgerReadError();
+            setLedger(next);
+            setMessage("");
+            setSelected((selectedEvent) => selectedEvent ? next.events.find((event) => event.publicId === selectedEvent.publicId) ?? null : null);
         } catch (error) {
-            if (generation !== readGeneration.current) throw new SupersededLedgerReadError();
+            if (generation !== readGeneration.current || activeRead.current !== current) throw new SupersededLedgerReadError();
             throw error;
+        } finally {
+            if (activeRead.current === current) activeRead.current = null;
         }
-        const next = response.data as Ledger;
-        if (generation !== readGeneration.current || next.loanPublicId !== scope) throw new SupersededLedgerReadError();
-        setLedger(next);
-        setMessage("");
-        setSelected((current) => current ? next.events.find((event) => event.publicId === current.publicId) ?? null : null);
     };
     useImperativeHandle(ref, () => ({ refresh: readLedger }));
     useEffect(() => {
         void readLedger().catch((error) => { if (!(error instanceof SupersededLedgerReadError)) setMessage(t("loanDetail.disbursements.errors.load")); });
-        return () => { readGeneration.current += 1; };
+        return () => { readGeneration.current += 1; activeRead.current?.supersede(); activeRead.current = null; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [loanPublicId, t]);
 

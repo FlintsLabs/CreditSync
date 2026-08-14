@@ -273,6 +273,32 @@ describe("intermediated disbursement money paths", () => {
         expect(screen.getByText("Net disbursed").parentElement).toHaveTextContent(/0\.00/);
     });
 
+    it("settles a post refresh when an older ledger request never resolves and the newer refresh fails", async () => {
+        const ref = createRef<LoanDisbursementsHandle>();
+        const initial = { loanPublicId: LOAN_ID, summary: { approvedPrincipal: "5000.00", netDisbursed: "0.00", variance: "-5000.00", status: "under_disbursed" }, events: [] };
+        let ledgerReads = 0;
+        vi.mocked(api.post).mockResolvedValue({ data: { status: "posted" } });
+        vi.mocked(api.get).mockImplementation(async (url) => {
+            if (url === `/loans/${LOAN_ID}/disbursements`) {
+                ledgerReads += 1;
+                if (ledgerReads === 1) return { data: initial };
+                if (ledgerReads === 2) return new Promise<never>(() => {});
+                throw new Error("newer refresh failed");
+            }
+            if (url === `/intermediated-disbursements/${GROUP_ID}`) return { data: { ...group, status: "posted" } };
+            throw new Error(`Unexpected GET ${url}`);
+        });
+        const user = userEvent.setup();
+        render(<MemoryRouter><LoanDisbursements ref={ref} loanPublicId={LOAN_ID} /><TransferGroupView group={group} onPosted={() => ref.current!.refresh()} /></MemoryRouter>);
+        await screen.findByText("Net disbursed");
+        await user.click(screen.getByRole("checkbox", { name: /confirm.*zero variance.*ready evidence/i }));
+        await user.click(screen.getByRole("button", { name: /post confirmed transfer/i }));
+        await waitFor(() => expect(ledgerReads).toBe(2));
+        await expect(ref.current!.refresh()).rejects.toThrow("newer refresh failed");
+        expect(await screen.findByRole("alert")).toHaveTextContent(/posted.*refresh.*do not rely/i);
+        expect(screen.getByRole("button", { name: /post confirmed transfer/i })).toBeEnabled();
+    });
+
     it("ignores stale initial errors and clears an earlier current error after successful refresh", async () => {
         const ref = createRef<LoanDisbursementsHandle>();
         let failInitial!: (error: Error) => void;
