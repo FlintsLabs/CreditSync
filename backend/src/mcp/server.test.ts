@@ -491,6 +491,44 @@ describe("CreditSync stateless MCP contract", () => {
         await client.close();
     });
 
+    test("enforces repayment-type-specific replacement term inputs before the handler", async () => {
+        let handlerCalls = 0;
+        const baseUrl = await startServer({ toolHandlers: {
+            "loan.restructure.preview": async () => {
+                handlerCalls += 1;
+                throw new DomainError("REACHED_HANDLER", "valid replacement terms reached handler", 409);
+            },
+        } });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const request = (replacementTerms: Record<string, unknown>) => client.callTool({
+            name: "loan.restructure.preview",
+            arguments: { oldLoanPublicId: BORROWER_ID, settlementDate: "2026-08-19", replacementTerms, additionalPrincipal: "0.00", reason: "replace" },
+        });
+        const base = { interestRate: "0.00", termMonths: 1, startDate: "2026-08-19" };
+        for (const invalid of [
+            { ...base, repaymentType: "monthly", floatingDailyInterest: { mode: "percent", rate: "1", firstDayTreatment: "start_next_day" } },
+            { ...base, repaymentType: "floating", floatingDailyInterest: { mode: "percent", rate: "1", firstDayTreatment: "start_next_day" }, singlePayment: { dueDate: "2026-09-19", fixedAgreedInterest: "100.00", interestPolicy: "fixed_only", latePenalty: { mode: "none" } } },
+            { ...base, repaymentType: "single_payment", totalInstallments: 1, installmentAmount: "1100.00", singlePayment: { dueDate: "2026-09-19", fixedAgreedInterest: "100.00", interestPolicy: "fixed_only", latePenalty: { mode: "none" } } },
+        ]) expect((await request(invalid)).isError).toBe(true);
+        expect(handlerCalls).toBe(0);
+
+        const dailyEntry = { durationUnit: "days", durationValue: 10, entryMode: "daily_payment", dailyPayment: "110.00" };
+        const valid = [
+            { ...base, repaymentType: "daily", dailyEntry, totalInstallments: 10, installmentAmount: "110.00" },
+            { ...base, repaymentType: "weekly", totalInstallments: 4, installmentAmount: "275.00" },
+            { ...base, repaymentType: "monthly", totalInstallments: 1, installmentAmount: "1100.00" },
+            { ...base, repaymentType: "floating", floatingDailyInterest: { mode: "percent", rate: "1", firstDayTreatment: "start_next_day" } },
+            { ...base, repaymentType: "single_payment", singlePayment: { dueDate: "2026-09-19", fixedAgreedInterest: "100.00", interestPolicy: "fixed_only", latePenalty: { mode: "none" } } },
+        ];
+        for (const terms of valid) {
+            const result = await request(terms);
+            expect(result.structuredContent).toMatchObject({ error: { code: "REACHED_HANDLER" } });
+        }
+        expect(handlerCalls).toBe(5);
+        await client.close();
+    });
+
     test("requires bearer authentication and an allowlisted Host before parsing MCP payloads", async () => {
         const baseUrl = await startServer({});
         const initialize = {

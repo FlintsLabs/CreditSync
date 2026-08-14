@@ -142,18 +142,37 @@ const loanTerms = {
         }).optional(),
     }).optional(),
 };
-const { principal: _replacementPrincipalIsBackendOwned, ...replacementLoanTerms } = loanTerms;
-const publicReplacementBase = {
-    principal: money,
+const replacementBase = {
     interestRate: money,
     termMonths: z.number().int().positive().max(1_200),
     startDate: date,
 };
+const publicReplacementTermsInput = z.discriminatedUnion("repaymentType", [
+    z.object({
+        ...replacementBase, repaymentType: z.literal("daily"), dailyEntry: loanTerms.dailyEntry.unwrap(),
+        totalInstallments: z.number().int().positive().max(100_000).optional(), installmentAmount: money.optional(),
+    }).strict(),
+    z.object({
+        ...replacementBase, repaymentType: z.literal("weekly"),
+        totalInstallments: z.number().int().positive().max(100_000).optional(), installmentAmount: money.optional(),
+    }).strict(),
+    z.object({
+        ...replacementBase, repaymentType: z.literal("monthly"),
+        totalInstallments: z.number().int().positive().max(100_000).optional(), installmentAmount: money.optional(),
+    }).strict(),
+    z.object({
+        ...replacementBase, repaymentType: z.literal("floating"), floatingDailyInterest: loanTerms.floatingDailyInterest.unwrap(),
+    }).strict(),
+    z.object({
+        ...replacementBase, repaymentType: z.literal("single_payment"), singlePayment: loanTerms.singlePayment.unwrap(),
+    }).strict(),
+]);
+const publicReplacementBase = { principal: money, ...replacementBase };
 const publicReplacementTermsOutput = z.discriminatedUnion("repaymentType", [
     z.object({
         ...publicReplacementBase, repaymentType: z.literal("daily"),
         totalInstallments: z.number().int().positive().max(100_000).optional(),
-        installmentAmount: money.optional(), dailyEntry: loanTerms.dailyEntry.optional(),
+        installmentAmount: money.optional(), dailyEntry: loanTerms.dailyEntry.unwrap(),
     }).strict(),
     z.object({
         ...publicReplacementBase, repaymentType: z.literal("weekly"),
@@ -165,11 +184,11 @@ const publicReplacementTermsOutput = z.discriminatedUnion("repaymentType", [
     }).strict(),
     z.object({
         ...publicReplacementBase, repaymentType: z.literal("floating"),
-        floatingDailyInterest: loanTerms.floatingDailyInterest,
+        floatingDailyInterest: loanTerms.floatingDailyInterest.unwrap(),
     }).strict(),
     z.object({
         ...publicReplacementBase, repaymentType: z.literal("single_payment"),
-        singlePayment: loanTerms.singlePayment,
+        singlePayment: loanTerms.singlePayment.unwrap(),
     }).strict(),
 ]);
 
@@ -726,7 +745,7 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
     "loan.restructure.preview": z.object({
         oldLoanPublicId: uuid,
         settlementDate: date,
-        replacementTerms: z.object(replacementLoanTerms).strict(),
+        replacementTerms: publicReplacementTermsInput,
         waivers: z.object({
             interest: z.object({ amount: money, reason: shortText }).strict().optional(),
             fees: z.object({ amount: money, reason: shortText }).strict().optional(),

@@ -98,6 +98,10 @@ describe("CreditSync plugin 2.5.0 contract", () => {
         const replacementTerms = restructureOutput.properties.data.properties.replacementTerms;
         expect(replacementTerms.oneOf).toHaveLength(5);
         expect(replacementTerms.oneOf.every((variant: { additionalProperties?: boolean }) => variant.additionalProperties === false)).toBe(true);
+        const restructureInput = contract.tools.find((tool) => tool.name === "loan.restructure.preview")?.inputSchema as any;
+        const replacementInput = restructureInput.properties.replacementTerms;
+        expect(replacementInput.oneOf).toHaveLength(5);
+        expect(replacementInput.oneOf.every((variant: { additionalProperties?: boolean }) => variant.additionalProperties === false)).toBe(true);
     });
 
     test("eval catalog covers every required positive and negative workflow", async () => {
