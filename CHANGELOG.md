@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.13 - 2026-08-15
+
+### Added
+- Added the approved app-wide table pagination design, standardizing server-side pagination for persistent collections, client-side pagination for authoritative previews, localized shared controls, URL-restorable state, and exact financial-value preservation.
+
 ## v0.3.12 - 2026-08-14
 
 ### Added
