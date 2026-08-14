@@ -31,7 +31,7 @@ function context(actor: { id: number; tenantId: string }, idempotencyKey: string
     };
 }
 
-async function seedWeeklyLoan(input: { deduct?: boolean; fees?: string; fixedPenalty?: string; dailyPenalty?: string } = {}) {
+async function seedWeeklyLoan(input: { deduct?: boolean; fees?: string; fixedPenalty?: string; dailyPenalty?: string; principal?: string; rate?: string } = {}) {
     const tenantId = `tenant-closing-${crypto.randomUUID()}`;
     const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" })
         .returning().then((rows) => rows[0]!);
@@ -39,10 +39,10 @@ async function seedWeeklyLoan(input: { deduct?: boolean; fees?: string; fixedPen
     const borrower = await createBorrower(ctx, { name: "Closing Borrower" });
     const draft = await createLoanDraft(ctx, {
         borrowerPublicId: borrower.publicId,
-        principal: "5000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1,
+        principal: input.principal ?? "5000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1,
         startDate: "2026-08-10",
         floatingDailyInterest: {
-            mode: "percent", rate: "12.0000",
+            mode: "percent", rate: input.rate ?? "12.0000",
             firstDayTreatment: input.deduct ? "deduct" : "start_next_day",
             accrualCycle: "weekly",
         },
@@ -212,6 +212,46 @@ describe("weekly floating allocation, penalty, reversal, and projection invarian
             penalty: "0.00", dueInterest: "590.00", totalDue: "5761.43",
         });
         expect(await paymentHealth(seeded, asOf)).toMatchObject({ status: "overdue", overdueAmount: "590.00" });
+    });
+
+    integrationTest("conserves a payment that exactly covers penalty, due interest, and principal", async () => {
+        setSystemTime(new Date("2026-08-18T12:00:00+07:00"));
+        const seeded = await seedWeeklyLoan({ principal: "1000.00", rate: "10.0000", fixedPenalty: "50.00" });
+        const intake = await createPaymentIntake(context(seeded.actor), {
+            amount: "1150.00",
+            receivedAt: "2026-08-18T05:00:00.000Z",
+            payerName: seeded.borrower.name,
+        });
+
+        const preview = await previewPaymentMatch(context(seeded.actor), intake.publicId, {
+            allocations: [{
+                borrowerPublicId: seeded.borrower.publicId,
+                loanPublicId: seeded.draft.publicId,
+                amount: "1150.00",
+            }],
+        });
+        expect(preview).toMatchObject({
+            status: "ready",
+            totalAllocated: "1150.00",
+            allocations: [expect.objectContaining({ amount: "1150.00" })],
+            warnings: [],
+        });
+
+        const posted = await postPayment(context(seeded.actor), intake.publicId, {
+            proposalPublicId: preview.publicId,
+        });
+        expect(posted.transactions).toEqual([expect.objectContaining({
+            amount: "1150.00",
+            penaltyComponent: "50.00",
+            interestComponent: "100.00",
+            principalComponent: "1000.00",
+        })]);
+        const components = posted.transactions.reduce((sum, row) => sum
+            .plus(row.penaltyComponent)
+            .plus(row.interestComponent)
+            .plus(row.feeComponent)
+            .plus(row.principalComponent), new Decimal(0));
+        expect(components.toFixed(2)).toBe("1150.00");
     });
 
     // Break caught: paying all related interest erases an already incurred

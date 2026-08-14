@@ -975,8 +975,10 @@ async function expandExplicit(
             eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.loanId, loan.id),
         )).orderBy(loanSchedules.installmentNo);
         if (loan.repaymentType === "floating" && !item.schedulePublicId) {
-            const dueInterest = await floatingInterestDue(executor, loan, intake.receivedAt, ctx);
-            const available = dueInterest.plus(loan.outstandingPrincipal ?? loan.principalAmount);
+            const obligations = await floatingPaymentObligations(executor, loan, intake.receivedAt, ctx);
+            const available = obligations.duePenalty
+                .plus(obligations.dueInterest)
+                .plus(loan.outstandingPrincipal ?? loan.principalAmount);
             if (amount.gt(available)) warnings.push({ code: "ALLOCATION_EXCEEDS_OBLIGATION", loanPublicId: loan.publicId, unallocatedAmount: amount.minus(available).toFixed(2) });
             expanded.push({ borrowerId: borrower.id, borrowerPublicId: borrower.publicId, loanId: loan.id, loanPublicId: loan.publicId, scheduleId: null, schedulePublicId: null, amount: Decimal.min(amount, available).toFixed(2), matchReason: "explicit_floating" });
             continue;
