@@ -64,7 +64,7 @@ async function resetApplicationTables() {
 describe("loan list borrower labels", () => {
     if (process.env.TEST_DATABASE_URL) beforeEach(resetApplicationTables);
 
-    integrationTest("returns confirmed aliases and confirmed tags for visible borrowers only", async () => {
+    integrationTest("returns confirmed aliases in creation order and tags for visible borrowers only", async () => {
         const owner = await db.insert(users).values({
             tenantId: "tenant-owner",
             email: "owner@example.test",
@@ -141,6 +141,8 @@ describe("loan list borrower labels", () => {
         const ownerInactiveAlias = await addBorrowerAlias(commandContext("tenant-owner", owner.id), ownerBorrower.publicId, { alias: "ชื่อเก่า" });
         const ownerConfirmedAlias = await addBorrowerAlias(commandContext("tenant-owner", owner.id), ownerBorrower.publicId, { alias: "นก" });
         await confirmBorrowerAlias(commandContext("tenant-owner", owner.id), ownerConfirmedAlias.publicId);
+        const ownerSecondConfirmedAlias = await addBorrowerAlias(commandContext("tenant-owner", owner.id), ownerBorrower.publicId, { alias: "คุณสมชาย" });
+        await confirmBorrowerAlias(commandContext("tenant-owner", owner.id), ownerSecondConfirmedAlias.publicId);
         await deactivateBorrowerAlias(commandContext("tenant-owner", owner.id), ownerInactiveAlias.publicId);
 
         const foreignAlias = await addBorrowerAlias(commandContext("tenant-other", otherTenant.id), hiddenBorrower.publicId, { alias: "hidden-alias" });
@@ -152,7 +154,7 @@ describe("loan list borrower labels", () => {
         expect(ownerRows.body).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 publicId: ownerLoan.publicId,
-                borrowerAliases: ["นก"],
+                borrowerAliases: ["นก", "คุณสมชาย"],
                 borrowerTags: ["VIP", "ตลาดเช้า"],
             }),
             expect.objectContaining({
@@ -216,6 +218,5 @@ describe("loan list borrower labels", () => {
         expect(deactivated.response.status).toBe(200);
         const deactivatedRow = deactivated.body.find((row: { publicId: string }) => row.publicId === cacheLoan.publicId);
         expect(deactivatedRow?.borrowerAliases).toEqual([]);
-
     });
 });

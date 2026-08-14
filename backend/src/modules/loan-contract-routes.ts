@@ -115,7 +115,7 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                     eq(borrowerAliases.tenantId, user.tenantId),
                     eq(borrowerAliases.status, "confirmed"),
                     inArray(borrowerAliases.borrowerId, visibleBorrowerIds),
-                ));
+                )).orderBy(borrowerAliases.id);
 
                 const aliasesByBorrower = new Map<number, string[]>();
                 for (const aliasRow of aliasRows) {

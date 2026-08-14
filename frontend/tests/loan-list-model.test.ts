@@ -36,4 +36,3 @@ describe("loan list label model", () => {
         expect(getBorrowerLabels({ ...loan, borrowerAliases: [" ｎｋ "], borrowerTags: ["ＮＫ"] })).toEqual(["ｎｋ"]);
     });
 });
-

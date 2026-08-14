@@ -11,6 +11,9 @@
 - Added confirmed borrower aliases and borrower tags to loan-list DTOs and a locale-aware model for label normalization, deduplication, overflow, and search matching.
 - Added loan card borrower-label rendering with up to three visible badges and a localized overflow count, with search matching across hidden labels.
 
+### Fixed
+- Made confirmed borrower aliases deterministic in creation order and kept the new borrower-label regression files whitespace-clean.
+
 ## v0.3.12 - 2026-08-14
 
 ### Added
