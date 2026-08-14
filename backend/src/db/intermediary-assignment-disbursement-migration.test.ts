@@ -143,16 +143,16 @@ test("exports and journals the additive intermediary assignment and disbursement
         if (table) expect(typeof getTableConfig(table as never).name).toBe("string");
     }
 
-    expect(await Bun.file(`${backendRoot}drizzle/0028_intermediary_assignments_disbursement_groups.sql`).exists()).toBe(true);
+    expect(await Bun.file(`${backendRoot}drizzle/0036_floating_weekly_intermediary_integration.sql`).exists()).toBe(true);
     const journal = await Bun.file(`${backendRoot}drizzle/meta/_journal.json`).json();
     const migrationIndex = journal.entries.findIndex((entry: { tag?: string }) =>
-        entry.tag === "0028_intermediary_assignments_disbursement_groups");
-    expect(journal.entries[migrationIndex - 1]?.tag).toBe("0027_floating_interest_period_policy");
+        entry.tag === "0036_floating_weekly_intermediary_integration");
+    expect(journal.entries[migrationIndex - 1]?.tag).toBe("0035_disbursement_restructure_relation");
 });
 
 test("keeps migration 0028 additive and declares tenant, lifecycle, money, and immutability protections", async () => {
     // Break caught: source migration drift can drop a database protection even when TypeScript still compiles.
-    const migration = await Bun.file(`${backendRoot}drizzle/0028_intermediary_assignments_disbursement_groups.sql`).text();
+    const migration = await Bun.file(`${backendRoot}drizzle/0036_floating_weekly_intermediary_integration.sql`).text();
     for (const table of [
         "intermediary_bank_accounts",
         "loan_intermediary_assignments",

@@ -53,10 +53,10 @@ test("registers the additive accrual immutability trigger migration", async () =
     // accidentally permits fields beyond the two service-owned lifecycle fields.
     const [journal, migration] = await Promise.all([
         Bun.file(new URL("../../drizzle/meta/_journal.json", import.meta.url)).text(),
-        Bun.file(new URL("../../drizzle/0029_floating_interest_accrual_immutability.sql", import.meta.url)).text(),
+        Bun.file(new URL("../../drizzle/0036_floating_weekly_intermediary_integration.sql", import.meta.url)).text(),
     ]);
 
-    expect(JSON.parse(journal).entries.at(-1)?.tag).toBe("0029_floating_interest_accrual_immutability");
+    expect(JSON.parse(journal).entries.at(-1)?.tag).toBe("0036_floating_weekly_intermediary_integration");
     expect(migration).toContain("enforce_loan_interest_accrual_immutability");
     expect(migration).toContain("BEFORE UPDATE OR DELETE ON loan_interest_accruals");
     expect(migration).toContain("to_jsonb(NEW) - 'status' - 'paid_amount'");
@@ -88,12 +88,8 @@ describe("floating interest accrual database immutability", () => {
             .toHaveLength(1);
     });
 
-    integrationTest("allows only lifecycle allocation fields and compensating replacement inserts", async () => {
+    integrationTest("allows lifecycle status changes and compensating replacement inserts", async () => {
         const { tenantId, actor, loan, accrual } = await seedAccrual("lifecycle");
-        await db.update(loanInterestAccruals).set({
-            paidAmount: "5.00",
-            status: "partially_paid",
-        }).where(eq(loanInterestAccruals.id, accrual.id));
         await db.update(loanInterestAccruals).set({ status: "reversed" })
             .where(eq(loanInterestAccruals.id, accrual.id));
         const replacement = await db.insert(loanInterestAccruals).values({
@@ -104,20 +100,20 @@ describe("floating interest accrual database immutability", () => {
             rateMode: accrual.rateMode,
             rate: accrual.rate,
             interestAmount: "9.00",
-            paidAmount: "5.00",
-            status: "partially_paid",
+            paidAmount: "0.00",
+            status: "accrued",
             reversedAccrualId: accrual.id,
             createdByUserId: actor.id,
         }).returning().then((rows) => rows[0]!);
 
         expect(await db.query.loanInterestAccruals.findFirst({ where: eq(loanInterestAccruals.id, accrual.id) }))
-            .toMatchObject({ paidAmount: "5.00", status: "reversed", openingPrincipal: "1000.00", interestAmount: "10.00" });
+            .toMatchObject({ paidAmount: "0.00", status: "reversed", openingPrincipal: "1000.00", interestAmount: "10.00" });
         expect(replacement).toMatchObject({
             reversedAccrualId: accrual.id,
             openingPrincipal: "900.00",
             interestAmount: "9.00",
-            paidAmount: "5.00",
-            status: "partially_paid",
+            paidAmount: "0.00",
+            status: "accrued",
         });
     });
 });

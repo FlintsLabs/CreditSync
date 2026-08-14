@@ -50,11 +50,11 @@ test("migration journals the additive policy schema and backfills legacy daily p
     // Break caught: a deploy can omit the migration, legacy policy projection, or mutate authoritative posted interest.
     const [journal, migration] = await Promise.all([
         readFile(new URL("../../drizzle/meta/_journal.json", import.meta.url), "utf8"),
-        readFile(new URL("../../drizzle/0027_floating_interest_period_policy.sql", import.meta.url), "utf8"),
+        readFile(new URL("../../drizzle/0036_floating_weekly_intermediary_integration.sql", import.meta.url), "utf8"),
     ]);
 
-    expect(journal).toContain('"tag": "0027_floating_interest_period_policy"');
-    expect(migration).toMatch(/UPDATE "loans"[\s\S]*"interest_period_unit" = 'day'/);
+    expect(journal).toContain('"tag": "0036_floating_weekly_intermediary_integration"');
+    expect(migration).toMatch(/UPDATE "loans"[\s\S]*"interest_period_unit" = CASE "floating_accrual_cycle"[\s\S]*WHEN 'weekly' THEN 'week'[\s\S]*ELSE 'day'/);
     expect(migration).toMatch(/"interest_period_length" = 1/);
     expect(migration).toMatch(/"advance_interest_periods" = CASE[\s\S]*"first_day_treatment" = 'deduct' THEN 1[\s\S]*ELSE 0/);
     expect(migration).toMatch(/"advance_interest_refund_policy" = 'non_refundable'/);
