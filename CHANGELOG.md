@@ -18,6 +18,9 @@
 - Added tenant-scoped multi-slip evidence for every intermediary transfer event with signed PUT preparation, exact MinIO ownership and checksum finalization, immutable finalized links, redacted audit provenance, and short-lived on-demand access descriptors.
 - Added explicitly confirmed atomic posting and compensating reversal for zero-variance intermediary disbursement groups, linking exact borrower payout and activation-time advance-interest projections by public provenance IDs while preserving optional evidence, collection/remittance ledgers, and Decimal-only held balances.
 
+### Changed
+- Routed substantial approved implementation work through supervised tmux Codex sessions using `gpt-5.3-codex-spark`, with current-model fallback, isolated worktree handoff, explicit authority boundaries, progress supervision, and independent completion/integration verification.
+
 ### Fixed
 - Kept Payment Inbox filters within the narrow review panel at tablet widths and explained pending evidence uploads inline instead of presenting an unusable slip-preview action.
 - Synchronized the generated `0036` Drizzle snapshot with the settlement reversal's immutable original-interest and next-due-date columns, with a static lineage regression that prevents future add-column drift.

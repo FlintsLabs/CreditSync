@@ -9,6 +9,18 @@ This project is optimized for **Bun**. Agents should prefer using Bun for all de
 - Use `bun test` for running the test suite.
 - Use `bun x` (equivalent to `npx`) for one-off CLI tools.
 
+## Tmux Delegation and Model Routing
+
+- The current task agent owns discovery, clarification, design, specification, and the detailed implementation plan using the model selected by the user for the current task.
+- If the user explicitly requests tmux, delegate implementation through tmux whenever Codex CLI and tmux are available. Without an explicit request, use tmux automatically only for substantial implementation work such as multi-subsystem or multi-file changes, migrations, long verification suites, repeated implementation/review cycles, or work that should survive client disconnection. Keep short read-only checks, explanations, reviews, status requests, and narrow edits in the current task.
+- Before delegation, obtain approval for the spec and detailed implementation plan. Start the worker from an appropriate isolated worktree and pass the repository/worktree path, branch and integration target, spec/plan paths, acceptance criteria, ordered steps, required verification gates, relevant financial/data-safety rules, dirty-file ownership, and explicit scope exclusions.
+- Start implementation workers with Codex CLI model `gpt-5.3-codex-spark` using `--model`/`-m`. If Spark is unavailable, rejected, or exhausted, fall back to the model selected for the current task and report the fallback and reason to the user; do not silently choose an unrelated model.
+- Name tmux sessions descriptively as `<project>-<short-task-name>`. Reuse a session only when its repository, worktree, branch, and objective match exactly. Report the session name, worktree, branch, active implementation model, fallback state, and whether it is safe for the client to disconnect.
+- Delegation does not broaden authority. Production, destructive, external-write, credential, approval-gated, and other sensitive actions retain their existing authorization requirements. Never embed secrets in tmux commands, prompts, logs, specs, or plans.
+- Supervise tmux work instead of treating it as fire-and-forget: inspect session output, Git state, commits, tests, and approval prompts; relay blockers with context; diagnose repeated unchanged waits; and forward additive scope updates or interrupt superseded objectives.
+- Treat worker completion as untrusted until independently verified. Before reporting success, confirm the expected commits, no unexplained tracked changes, all required gates at the reported HEAD, preserved user changes, and requested target integration. When merge was requested, run `git merge-base --is-ancestor <feature> <target>` and do not say merged unless it succeeds. Distinguish branch completion, integration, push, and deployment in status reports.
+- If tmux or Codex CLI is unavailable, report that limitation and continue locally only when consistent with the user's request. If the worker conflicts with unrelated state, stop it and preserve recoverable evidence before repair.
+
 ## Docker Compose Layout
 - `docker-compose.yml` is the local development infra file.
 - `docker-compose.infra.yml` is the production-style infra file for `postgres`, `minio`, and `dragonfly`.
