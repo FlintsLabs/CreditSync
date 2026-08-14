@@ -23,7 +23,7 @@ The Loan List loader will retain its existing loan and borrower access filters. 
 
 Pending and inactive aliases must not be returned. Label lookup must not expand the set of visible loans or expose labels for a borrower outside the authenticated loan portfolio. The response preserves the current money-string fields and adds only `borrowerAliases: string[]` and `borrowerTags: string[]`.
 
-The cached Loan List response includes these fields. Existing tenant cache invalidation after borrower or alias mutations remains authoritative; tests will verify that label changes do not remain stale. No schema or migration is required.
+The cached Loan List response includes these fields. Borrower updates already invalidate tenant caches; alias add/confirm/deactivate operations will gain the same post-transaction invalidation so label changes do not remain stale for the 30-second Loan List TTL. Tests will verify both paths. No schema or migration is required.
 
 ## Frontend Design
 
