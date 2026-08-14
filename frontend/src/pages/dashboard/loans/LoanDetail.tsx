@@ -23,6 +23,7 @@ import { LoanDisbursements } from "./LoanDisbursements";
 import { LoanRepaymentHistory } from "./LoanRepaymentHistory";
 import { FloatingInterestRateCard } from "./FloatingInterestRateCard";
 import { FloatingInterestSummary, type FloatingInterestPolicyView } from "./FloatingInterestSummary";
+import { IntermediatedDisbursementPanel } from "./IntermediatedDisbursementPanel";
 
 interface LoanDetailData {
     id: string;
@@ -618,6 +619,8 @@ export default function LoanDetail() {
                     </div>
 
                     <LoanDisbursements loanPublicId={loan.publicId ?? loan.id} />
+
+                    <IntermediatedDisbursementPanel loanPublicId={loan.publicId ?? loan.id} />
 
                     <LoanRepaymentHistory
                         key={loan.publicId ?? loan.id}

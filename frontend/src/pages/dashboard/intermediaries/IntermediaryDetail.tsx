@@ -4,6 +4,7 @@ import { AlertTriangle, ArrowLeft, Landmark } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../../lib/api";
 import { formatMoneyExact, sumMoney } from "../../../lib/workflow-model";
+import { IntermediaryTransferLedger } from "./IntermediaryTransferLedger";
 
 type Assignment = {
     publicId: string; loanPublicId: string; loanStatus?: string; borrowerName?: string;
@@ -97,5 +98,7 @@ export default function IntermediaryDetail() {
         <section className="space-y-3"><h2 className="text-lg font-semibold">{t("intermediary.profile.assignmentHistory")}</h2><div className="divide-y rounded-lg border bg-card">{profile.assignments.map((assignment) => <div className="grid gap-1 p-4 md:grid-cols-[1fr_auto_auto] md:items-center" key={assignment.publicId}><div><p className="font-medium">{assignment.borrowerName ?? assignment.loanPublicId}</p><p className="text-sm text-muted-foreground">{t(`intermediary.profile.roles.${assignment.role}`)}</p></div><p className="text-sm text-muted-foreground">{date(assignment.effectiveFrom)} – {assignment.effectiveTo ? date(assignment.effectiveTo) : t("intermediary.profile.current")}</p><span className="text-sm font-medium">{t(`intermediary.profile.status.${assignment.status}`)}</span></div>)}</div></section>
 
         <section className="space-y-3"><h2 className="text-lg font-semibold">{t("intermediary.profile.bankAccounts")}</h2><div className="divide-y rounded-lg border bg-card">{profile.bankAccounts.map((account) => <div className="flex items-center gap-3 p-4" key={account.publicId}><Landmark className="h-5 w-5 text-muted-foreground" /><div><p className="font-medium">{account.bankName} · {account.maskedAccountNumber}</p><p className="text-sm text-muted-foreground">{account.accountName}</p></div></div>)}</div></section>
+
+        <IntermediaryTransferLedger intermediaryPublicId={profile.publicId} />
     </div>;
 }

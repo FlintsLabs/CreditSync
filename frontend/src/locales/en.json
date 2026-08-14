@@ -934,6 +934,31 @@
             "bankAccounts": "Payment destinations"
         }
     },
+    "intermediatedDisbursement": {
+        "panelTitle": "Intermediary money path",
+        "ledgerTitle": "Transfer ledger",
+        "group": "Intermediated disbursement",
+        "empty": "No intermediary-routed transfers have been recorded.",
+        "loadError": "Unable to load intermediary transfers.",
+        "openLoan": "Open loan",
+        "sender": "Sender",
+        "payee": "Payee",
+        "date": "Transfer date",
+        "reference": "Reference",
+        "viewSlip": "View slip {{number}}",
+        "confirmReady": "Confirm zero variance and ready evidence",
+        "confirmBlocked": "Cannot confirm while variance is non-zero or supplied evidence is not ready.",
+        "postConfirmed": "Post confirmed transfer",
+        "posted": "Transfer posted",
+        "postError": "Unable to post the confirmed transfer. No financial record was changed.",
+        "roles": {
+            "fundingToIntermediary": "Funding to intermediary",
+            "borrowerNetPayout": "Borrower net payout",
+            "advanceInterestReturn": "Advance interest return"
+        },
+        "channel": { "bank_transfer": "Bank transfer", "cash": "Cash", "adjustment": "Adjustment" },
+        "status": { "draft": "Draft", "needs_review": "Needs review", "ready": "Ready", "posted": "Posted", "reversed": "Reversed" }
+    },
     "loanDetail": {
         "title": "Loan agreement",
         "activation": {

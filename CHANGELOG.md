@@ -3,6 +3,7 @@
 ## v0.3.12 - 2026-08-14
 
 ### Added
+- Added localized Loan Detail and intermediary-profile transfer ledgers for all three intermediary money paths, exact split payouts, sender/payee/date/reference/status inspection, every finalized slip, zero-variance/evidence-ready confirmation, and idempotent posting.
 - Added a localized responsive intermediary directory and profile workspace with canonical-name/alias search, profile creation, exact managed-loan portfolio totals, Loan Detail links, historical assignments, masked payment destinations, unreconciled-group warnings, and retained collection/remittance access.
 - Added 14 closed-schema intermediary profile, masked-bank-account, assignment, managed-loan, and multi-leg disbursement MCP tools plus CreditSync Plugin `4.0.0` orchestration for exact three-slip evidence, zero-variance confirmation, stale-state stops, and compensating reversal.
 - Added localized Web controls and backend-owned previews for daily or weekly floating-interest policy origination, exact due-versus-accruing loan summaries, and explicitly confirmed settlement with automatic stale-preview refresh.
@@ -13,6 +14,7 @@
 - Added explicitly confirmed atomic posting and compensating reversal for zero-variance intermediary disbursement groups, linking exact borrower payout and activation-time advance-interest projections by public provenance IDs while preserving optional evidence, collection/remittance ledgers, and Decimal-only held balances.
 
 ### Fixed
+- Discarded signed transfer-evidence descriptors when their preview closes, including in-flight resolutions, so reopening always requests a fresh short-lived URL.
 - Included inactive exact canonical-name and confirmed-alias matches in intermediary search-before-create candidate review, with localized lifecycle status and automatic invalidation of reviewed candidates after any proposed identity edit.
 - Preserved 29-digit intermediary portfolio totals with the shared high-precision financial decimal path, replaced declared group-retained summaries with the authenticated authoritative held-balance projection, required exact canonical-name/alias candidate review before profile creation, localized directory statuses and retryable failures, and distinguished missing profiles from service outages.
 - Required literal confirmation in the intermediated-disbursement eval harness, validated retained-balance calls and every intermediary-flow input/output against the full frozen JSON schemas, bound each supplied slip's evidence/file UUID and immutable MIME/size/SHA-256 across prepare, ready retry, finalize, and safe inspection, verified signed-upload descriptors against unchanged fixture bytes, and stopped before preview/post on any event or evidence binding mismatch.

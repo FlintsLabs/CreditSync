@@ -37,4 +37,25 @@ describe("EvidencePreviewButton", () => {
         expect(container).toBeEmptyDOMElement();
         await waitFor(() => expect(resolve).not.toHaveBeenCalled());
     });
+
+    test("discards an in-flight signed descriptor after the preview closes", async () => {
+        const user = userEvent.setup();
+        let finish!: (value: { url: string; mimeType: string }) => void;
+        let finishFresh!: (value: { url: string; mimeType: string }) => void;
+        const resolve = vi.fn()
+            .mockImplementationOnce(() => new Promise((done) => { finish = done; }))
+            .mockImplementationOnce(() => new Promise((done) => { finishFresh = done; }));
+        render(<EvidencePreviewButton available label="View slip" resolve={resolve} />);
+
+        await user.click(screen.getByRole("button", { name: "View slip" }));
+        await user.click(screen.getByRole("button", { name: /close/i }));
+        finish({ url: "https://signed.example/expired.jpg", mimeType: "image/jpeg" });
+        await waitFor(() => expect(screen.queryByRole("img")).not.toBeInTheDocument());
+
+        await user.click(screen.getByRole("button", { name: "View slip" }));
+        expect(screen.queryByRole("img")).not.toBeInTheDocument();
+        finishFresh({ url: "https://signed.example/fresh.jpg", mimeType: "image/jpeg" });
+        expect(await screen.findByRole("img", { name: "View slip" })).toHaveAttribute("src", "https://signed.example/fresh.jpg");
+        expect(resolve).toHaveBeenCalledTimes(2);
+    });
 });

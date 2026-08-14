@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { ExternalLink, Eye, Loader2, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../ui/Button";
@@ -19,18 +19,23 @@ export function EvidencePreviewButton({ available, label, mimeType, resolve }: E
     const [loading, setLoading] = useState(false);
     const [descriptor, setDescriptor] = useState<EvidenceDescriptor | null>(null);
     const [failed, setFailed] = useState(false);
+    const requestGeneration = useRef(0);
 
     const load = useCallback(async () => {
+        const generation = ++requestGeneration.current;
         setLoading(true);
         setFailed(false);
+        setDescriptor(null);
         try {
             const next = await resolve();
+            if (generation !== requestGeneration.current) return;
             setDescriptor({ ...next, mimeType: next.mimeType ?? mimeType ?? null });
         } catch {
+            if (generation !== requestGeneration.current) return;
             setDescriptor(null);
             setFailed(true);
         } finally {
-            setLoading(false);
+            if (generation === requestGeneration.current) setLoading(false);
         }
     }, [mimeType, resolve]);
 
@@ -45,7 +50,7 @@ export function EvidencePreviewButton({ available, label, mimeType, resolve }: E
         </Button>
         <Dialog open={open} onOpenChange={(next) => {
             setOpen(next);
-            if (!next) { setDescriptor(null); setFailed(false); setLoading(false); }
+            if (!next) { requestGeneration.current += 1; setDescriptor(null); setFailed(false); setLoading(false); }
         }}>
             <DialogContent className="max-h-[92vh] max-w-4xl overflow-hidden">
                 <DialogHeader><DialogTitle>{label}</DialogTitle><DialogDescription>{t("evidence.description")}</DialogDescription></DialogHeader>
