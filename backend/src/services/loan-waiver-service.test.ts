@@ -98,6 +98,14 @@ describe("later restructure waiver service", () => {
         const asActor = (id: number): CommandContext => ({ ...ctx(), actorUserId: id });
         await expect(previewLoanWaiver(asActor(manager.id), newLoan.publicId, { component: "fee", amount: "1.00", reason: "manager approval" })).resolves.toMatchObject({ availableAmount: "50.00" });
         await expect(previewLoanWaiver(asActor(collector.id), newLoan.publicId, { component: "fee", amount: "1.00", reason: "not assigned" })).rejects.toMatchObject({ code: "LOAN_NOT_FOUND" });
+
+        const ownerPreview = await previewLoanWaiver(ctx(), newLoan.publicId, { component: "fee", amount: "1.00", reason: "owner only" });
+        await expect(executeLoanWaiver({ ...asActor(collector.id), idempotencyKey: "collector-cross-owner-execute" }, ownerPreview.publicId, { confirmed: true, previewHash: ownerPreview.previewHash, expectedBalanceVersion: ownerPreview.balanceVersion, reason: "owner only" })).rejects.toMatchObject({ code: "LOAN_NOT_FOUND" });
+        const ownerWaiver = await executeLoanWaiver({ ...ctx(), idempotencyKey: "owner-waiver-for-reverse" }, ownerPreview.publicId, { confirmed: true, previewHash: ownerPreview.previewHash, expectedBalanceVersion: ownerPreview.balanceVersion, reason: "owner only" });
+        await expect(reverseLoanWaiver({ ...asActor(collector.id), idempotencyKey: "collector-cross-owner-reverse" }, ownerWaiver.publicId, { reason: "unauthorized" })).rejects.toMatchObject({ code: "LOAN_NOT_FOUND" });
+
+        const managerPreview = await previewLoanWaiver(asActor(manager.id), newLoan.publicId, { component: "fee", amount: "1.00", reason: "manager approval" });
+        await expect(executeLoanWaiver({ ...asActor(manager.id), idempotencyKey: "manager-tenant-wide-execute" }, managerPreview.publicId, { confirmed: true, previewHash: managerPreview.previewHash, expectedBalanceVersion: managerPreview.balanceVersion, reason: "manager approval" })).resolves.toMatchObject({ status: "executed" });
     });
 
     integrationTest("shares one deterministic cap between general and new-interest waivers", async () => {

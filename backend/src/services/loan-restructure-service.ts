@@ -111,8 +111,13 @@ async function snapshot(executor: Executor, ctx: CommandContext, loan: Loan, set
         executor.select().from(loanDisbursementEvents).where(and(eq(loanDisbursementEvents.tenantId, ctx.tenantId), eq(loanDisbursementEvents.loanId, loan.id))).orderBy(loanDisbursementEvents.disbursedAt, loanDisbursementEvents.id),
         executor.select().from(loanSchedules).where(and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.loanId, loan.id))).orderBy(loanSchedules.installmentNo),
     ]);
-    const activeTransactions = activeTransactionRows(allTransactions).filter(row => bangkokDate(row.transactionDate ?? row.postedAt) <= settlementDate);
-    const activeDisbursements = activeDisbursementRows(allDisbursements).filter(row => bangkokDate(row.disbursedAt ?? row.postedAt ?? row.createdAt!) <= settlementDate);
+    const allActiveTransactions = activeTransactionRows(allTransactions);
+    const allActiveDisbursements = activeDisbursementRows(allDisbursements);
+    const laterTransaction = allActiveTransactions.find(row => bangkokDate(row.transactionDate ?? row.postedAt) > settlementDate);
+    const laterDisbursement = allActiveDisbursements.find(row => bangkokDate(row.disbursedAt ?? row.postedAt ?? row.createdAt!) > settlementDate);
+    if (laterTransaction || laterDisbursement) throw new DomainError("RESTRUCTURE_SETTLEMENT_PRECEDES_ACTIVE_ACTIVITY", "Settlement date cannot precede active posted loan activity", 409, { settlementDate, laterActivityType: laterTransaction ? "transaction" : "disbursement" });
+    const activeTransactions = allActiveTransactions.filter(row => bangkokDate(row.transactionDate ?? row.postedAt) <= settlementDate);
+    const activeDisbursements = allActiveDisbursements.filter(row => bangkokDate(row.disbursedAt ?? row.postedAt ?? row.createdAt!) <= settlementDate);
     const totalDisbursed = activeDisbursements.reduce((sum, row) => sum.plus(row.loanAttributedAmount), new Decimal(0));
     const principalPaid = activeTransactions.reduce((sum, row) => sum.plus(row.principalComponent), new Decimal(0));
     const outstandingPrincipal = Decimal.max(0, totalDisbursed.minus(principalPaid));
@@ -216,6 +221,7 @@ async function computePreview(executor: Executor, ctx: CommandContext, loan: Loa
     const replacementPrincipal = netPrincipal.plus(additionalPrincipal);
     if (replacementPrincipal.lte(0)) throw new DomainError("INVALID_REPLACEMENT_PRINCIPAL", "Replacement principal must be greater than zero", 400);
     const replacement = normalizeReplacement(input.replacementTerms, replacementPrincipal);
+    if (replacement.terms.startDate !== settlementDate) throw new DomainError("REPLACEMENT_START_DATE_MISMATCH", "Replacement loan startDate must equal settlementDate", 400, { settlementDate, replacementStartDate: replacement.terms.startDate });
     const cash = additionalPrincipal.gt(0) ? { direction: "payout" as const, amount: serializeMoney(additionalPrincipal) } : { direction: "none" as const, amount: "0.00" };
     const request = { ...input, reason, additionalPrincipal: serializeMoney(additionalPrincipal), currentVersion: current.version, replacementTerms: replacement.terms };
     const requestHash = sha(request);

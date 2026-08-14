@@ -15,6 +15,7 @@
 - Added the approved design for exact single-payment maturity loans, greater-of fixed or retroactive contract interest, optional concurrent daily late penalties, component-level settlement waivers, and append-only restructuring into independently priced replacement contracts.
 
 ### Fixed
+- Re-authorized waiver execution and reversal against the locked replacement-loan portfolio, blocked settlement dates that exclude later active source-loan payments or posted payouts, and required every replacement contract to start exactly on its settlement date during preview and execution revalidation.
 - Aligned the Thai restructure opening-balance translations with the shared Loan Detail locale path and added full English/Thai leaf-key parity coverage.
 - Kept the floating penalty migration contract additive after later migrations and synchronized the final Drizzle snapshot so schema generation does not propose duplicate columns from handcrafted migrations 0034–0035.
 - Replaced note-based additional-principal payout matching with an immutable tenant-safe restructure relation preserved through draft edits, posting, and reversal; exposed it consistently through REST/MCP, added explicit payout loading/error/empty states, and completed settlement review with unallocated external-credit reconciliation plus localized percent/per-thousand exposure-rate labels.

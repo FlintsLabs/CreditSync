@@ -130,6 +130,36 @@ describe("loan restructure service", () => {
         await expect(executeLoanRestructure(ctx("execute-stale"), preview.publicId, { confirmed: true, previewHash: preview.previewHash, expectedBalanceVersion: preview.oldBalanceVersion, reason: "approved" })).rejects.toMatchObject({ code: "STALE_RESTRUCTURE_PREVIEW" });
     });
 
+    integrationTest("rejects settlement before later active payment or posted disbursement activity", async () => {
+        const paymentCase = await seed();
+        await db.insert(transactions).values({ tenantId: paymentCase.tenantId, ownerUserId: paymentCase.actor.id, loanId: paymentCase.loan.id, amount: "100.00", principalComponent: "100.00", interestComponent: "0.00", feeComponent: "0.00", penaltyComponent: "0.00", entryType: "repayment", transactionDate: new Date("2026-08-16T03:00:00Z"), idempotencyKey: crypto.randomUUID(), recordedByUserId: paymentCase.actor.id });
+        await expect(previewLoanRestructure(paymentCase.ctx(), paymentCase.loan.publicId, { settlementDate: "2026-08-15", replacementTerms, additionalPrincipal: "0.00", reason: "backdated" })).rejects.toMatchObject({ code: "RESTRUCTURE_SETTLEMENT_PRECEDES_ACTIVE_ACTIVITY" });
+
+        const disbursementCase = await seed();
+        await db.insert(loanDisbursementEvents).values({ tenantId: disbursementCase.tenantId, loanId: disbursementCase.loan.id, grossAmount: "100.00", loanAttributedAmount: "100.00", channel: "bank_transfer", status: "posted", disbursedAt: new Date("2026-08-16T03:00:00Z"), postedAt: new Date("2026-08-16T03:01:00Z"), postIdempotencyKey: crypto.randomUUID(), createdByUserId: disbursementCase.actor.id });
+        await expect(previewLoanRestructure(disbursementCase.ctx(), disbursementCase.loan.publicId, { settlementDate: "2026-08-15", replacementTerms, additionalPrincipal: "0.00", reason: "backdated" })).rejects.toMatchObject({ code: "RESTRUCTURE_SETTLEMENT_PRECEDES_ACTIVE_ACTIVITY" });
+    });
+
+    integrationTest("requires every replacement start date to equal the settlement date", async () => {
+        const { loan, ctx } = await seed();
+        await expect(previewLoanRestructure(ctx(), loan.publicId, { settlementDate: "2026-08-15", replacementTerms: { ...replacementTerms, startDate: "2026-08-16" }, additionalPrincipal: "0.00", reason: "overlap guard" })).rejects.toMatchObject({ code: "REPLACEMENT_START_DATE_MISMATCH" });
+
+        const preview = await previewLoanRestructure(ctx(), loan.publicId, { settlementDate: "2026-08-15", replacementTerms, additionalPrincipal: "0.00", reason: "execute overlap guard" });
+        const row = await db.query.loanRestructures.findFirst({ where: eq(loanRestructures.publicId, preview.publicId) });
+        const stored = row!.requestedReplacementTerms as unknown as Record<string, unknown> & { replacementTerms: typeof replacementTerms };
+        await db.update(loanRestructures).set({ requestedReplacementTerms: { ...stored, replacementTerms: { ...stored.replacementTerms, startDate: "2026-08-16" } } }).where(eq(loanRestructures.id, row!.id));
+        await expect(executeLoanRestructure(ctx("execute-start-date-revalidation"), preview.publicId, { confirmed: true, previewHash: preview.previewHash, expectedBalanceVersion: preview.oldBalanceVersion, reason: "approved replacement" })).rejects.toMatchObject({ code: "REPLACEMENT_START_DATE_MISMATCH" });
+    });
+
+    integrationTest("revalidates later active source activity while executing a preview", async () => {
+        const { tenantId, actor, loan, ctx } = await seed();
+        const preview = await previewLoanRestructure(ctx(), loan.publicId, { settlementDate: "2026-08-15", replacementTerms, additionalPrincipal: "0.00", reason: "execute activity guard" });
+        await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan.id, amount: "100.00", principalComponent: "100.00", interestComponent: "0.00", feeComponent: "0.00", penaltyComponent: "0.00", entryType: "repayment", transactionDate: new Date("2026-08-16T03:00:00Z"), idempotencyKey: crypto.randomUUID(), recordedByUserId: actor.id });
+        await expect(executeLoanRestructure(ctx("execute-later-activity"), preview.publicId, { confirmed: true, previewHash: preview.previewHash, expectedBalanceVersion: preview.oldBalanceVersion, reason: "approved replacement" })).rejects.toMatchObject({ code: "RESTRUCTURE_SETTLEMENT_PRECEDES_ACTIVE_ACTIVITY" });
+        expect(await db.select().from(loans).where(eq(loans.clonedFromLoanId, loan.id))).toHaveLength(0);
+        expect((await db.query.loans.findFirst({ where: eq(loans.id, loan.id) }))?.status).toBe("active");
+    });
+
     integrationTest("reverses safely but blocks reversal after downstream replacement activity", async () => {
         const { loan, ctx } = await seed();
         const preview = await previewLoanRestructure(ctx(), loan.publicId, { settlementDate: "2026-08-15", replacementTerms, additionalPrincipal: "0.00", reason: "replace" });

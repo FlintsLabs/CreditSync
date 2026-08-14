@@ -99,17 +99,16 @@ export async function executeLoanWaiver(ctx: CommandContext, previewPublicId: st
     const reason = requireText(input.reason, "WAIVER_REASON_REQUIRED", "A waiver reason is required");
     const idempotencyKey = requireText(ctx.idempotencyKey, "IDEMPOTENCY_KEY_REQUIRED", "Waiver execution requires an idempotency key");
     const requestHash = sha({ contract: "loan-waiver-execute", version: "v1", previewPublicId, previewHash: input.previewHash, expectedBalanceVersion: input.expectedBalanceVersion, reason });
-    const replayBeforePreviewLookup = await db.query.loanRestructureWaivers.findFirst({ where: and(eq(loanRestructureWaivers.tenantId, ctx.tenantId), eq(loanRestructureWaivers.executeIdempotencyKey, idempotencyKey)) });
-    if (replayBeforePreviewLookup) {
-        if (replayBeforePreviewLookup.executeRequestHash === requestHash) return present(replayBeforePreviewLookup);
-        throw new DomainError("IDEMPOTENCY_KEY_CONFLICT", "Idempotency key was used with another waiver payload", 409);
-    }
     const preview = await db.query.loanWaiverPreviews.findFirst({ where: and(eq(loanWaiverPreviews.tenantId, ctx.tenantId), eq(loanWaiverPreviews.publicId, previewPublicId)) });
     if (!preview) throw new DomainError("WAIVER_PREVIEW_NOT_FOUND", "Waiver preview not found", 404);
     return db.transaction(async tx => {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`loan-waiver-execute:${ctx.tenantId}:${idempotencyKey}`}, 0))`);
         const existing = await tx.query.loanRestructureWaivers.findFirst({ where: and(eq(loanRestructureWaivers.tenantId, ctx.tenantId), eq(loanRestructureWaivers.executeIdempotencyKey, idempotencyKey)) });
         if (existing) {
+            await tx.execute(sql`SELECT id FROM loans WHERE tenant_id=${ctx.tenantId} AND id=${existing.loanId} FOR UPDATE`);
+            const existingLoan = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, existing.loanId)) });
+            if (!existingLoan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+            await accessibleReplacement(ctx, existingLoan.publicId, tx);
             if (existing.executeRequestHash === requestHash) return present(existing);
             throw new DomainError("IDEMPOTENCY_KEY_CONFLICT", "Idempotency key was used with another waiver payload", 409);
         }
@@ -117,6 +116,9 @@ export async function executeLoanWaiver(ctx: CommandContext, previewPublicId: st
         const lockedPreview = await tx.query.loanWaiverPreviews.findFirst({ where: and(eq(loanWaiverPreviews.tenantId, ctx.tenantId), eq(loanWaiverPreviews.id, preview.id)) });
         if (!lockedPreview || lockedPreview.status !== "preview") throw new DomainError("STALE_WAIVER_PREVIEW", "Waiver preview is no longer executable", 409);
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id=${ctx.tenantId} AND id=${preview.loanId} FOR UPDATE`);
+        const lockedLoan = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, preview.loanId)) });
+        if (!lockedLoan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+        await accessibleReplacement(ctx, lockedLoan.publicId, tx);
         const component = componentKind(preview.componentKind, true);
         const state = await componentState(tx, ctx, preview.loanId, preview.restructureId, component);
         if (lockedPreview.expiresAt.getTime() <= Date.now() || lockedPreview.previewHash !== input.previewHash || lockedPreview.balanceVersion !== input.expectedBalanceVersion || state.version !== lockedPreview.balanceVersion || reason !== lockedPreview.reason) {
@@ -159,12 +161,19 @@ export async function reverseLoanWaiver(ctx: CommandContext, waiverPublicId: str
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`loan-waiver-reverse:${ctx.tenantId}:${idempotencyKey}`}, 0))`);
         const replay = await tx.query.loanRestructureWaivers.findFirst({ where: and(eq(loanRestructureWaivers.tenantId, ctx.tenantId), eq(loanRestructureWaivers.reversalIdempotencyKey, idempotencyKey)) });
         if (replay) {
+            await tx.execute(sql`SELECT id FROM loans WHERE tenant_id=${ctx.tenantId} AND id=${replay.loanId} FOR UPDATE`);
+            const replayLoan = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, replay.loanId)) });
+            if (!replayLoan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+            await accessibleReplacement(ctx, replayLoan.publicId, tx);
             if (replay.reversalRequestHash === requestHash) return present(replay);
             throw new DomainError("REVERSAL_IDEMPOTENCY_CONFLICT", "Idempotency key was used with another waiver reversal", 409);
         }
         const original = await tx.query.loanRestructureWaivers.findFirst({ where: and(eq(loanRestructureWaivers.tenantId, ctx.tenantId), eq(loanRestructureWaivers.publicId, waiverPublicId)) });
         if (!original || original.status !== "executed") throw new DomainError("WAIVER_NOT_REVERSIBLE", "Only an active executed waiver can be reversed", 409);
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id=${ctx.tenantId} AND id=${original.loanId} FOR UPDATE`);
+        const lockedLoan = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, original.loanId)) });
+        if (!lockedLoan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+        await accessibleReplacement(ctx, lockedLoan.publicId, tx);
         const downstreamRows = await tx.select().from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.loanId, original.loanId), gt(transactions.createdAt, original.executedAt))).orderBy(transactions.id);
         const reversedDownstreamIds = new Set(downstreamRows.filter((row: typeof transactions.$inferSelect) => row.entryType === "reversal" && row.reversedTransactionId !== null).map((row: typeof transactions.$inferSelect) => row.reversedTransactionId!));
         const downstreamPayment = downstreamRows.find((row: typeof transactions.$inferSelect) => row.entryType === "repayment" && !reversedDownstreamIds.has(row.id));
