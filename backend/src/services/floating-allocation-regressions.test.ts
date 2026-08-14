@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, setSystemTime, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import Decimal from "decimal.js";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
@@ -133,6 +133,8 @@ async function persistedFloatingPenalty(seeded: Awaited<ReturnType<typeof seedWe
 }
 
 describe("weekly floating allocation, penalty, reversal, and projection invariants", () => {
+    afterEach(() => setSystemTime());
+
     if (process.env.TEST_DATABASE_URL) beforeEach(async () => {
         setSystemTime();
         await db.execute(sql`SET client_min_messages TO WARNING`);
