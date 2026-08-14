@@ -8,7 +8,11 @@
 
 ### Changed
 
-- Expanded the frozen contract to 57 tools and 10 skills, with exact assignment, per-event evidence, zero retained-balance/variance, fresh confirmation, stale-state, and compensating-reversal boundaries.
+- Expanded the frozen contract to 57 tools and 10 skills, with exact assignment, safe per-event evidence inspection metadata, zero retained-balance/variance, fresh confirmation, stale-state, and compensating-reversal boundaries.
+
+### Fixed
+
+- Required literal intermediated-disbursement confirmation, validated its complete scripted inputs and outputs with a full JSON Schema parser, sent the declared retained balance, compared exact roles/references/amounts/payees/evidence before preview, and verified upload descriptors against unchanged fixture bytes and SHA-256.
 
 ### Compatibility
 

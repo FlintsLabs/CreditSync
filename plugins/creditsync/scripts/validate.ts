@@ -150,11 +150,12 @@ export async function validatePlugin() {
             for (const name of entry.forbiddenCalls ?? []) {
                 if (result.calls.some((call) => call.name === name)) errors.push(`eval ${entry.id} executed forbidden tool ${name}`);
             }
-            if (!equalStrings(result.effects, entry.expectedEffects ?? [])) {
+            const effectNames = result.effects.map((effect) => typeof effect === "string" ? effect : effect.name);
+            if (!equalStrings(effectNames, entry.expectedEffects ?? [])) {
                 errors.push(`eval ${entry.id} executable side effects differ from its catalog contract`);
             }
             for (const effect of entry.forbiddenEffects ?? []) {
-                if (result.effects.includes(effect)) errors.push(`eval ${entry.id} executed forbidden side effect ${effect}`);
+                if (effectNames.includes(effect)) errors.push(`eval ${entry.id} executed forbidden side effect ${effect}`);
             }
         } catch (error) {
             errors.push(`eval ${entry.id} harness failed: ${error instanceof Error ? error.message : String(error)}`);

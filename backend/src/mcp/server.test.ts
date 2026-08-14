@@ -485,6 +485,8 @@ describe("CreditSync stateless MCP contract", () => {
         const assignmentPublicId = "0198c481-3e2b-7000-8000-000000000083";
         const eventPublicId = "0198c481-3e2b-7000-8000-000000000084";
         const proposalPublicId = "0198c481-3e2b-7000-8000-000000000085";
+        const evidencePublicId = "0198c481-3e2b-7000-8000-000000000086";
+        const evidenceFilePublicId = "0198c481-3e2b-7000-8000-000000000087";
         const baseGroup = {
             publicId: groupPublicId,
             loanPublicId: BORROWER_ID,
@@ -497,6 +499,33 @@ describe("CreditSync stateless MCP contract", () => {
             note: null,
             createdAt: "2026-08-13T02:00:00.000Z",
             updatedAt: "2026-08-13T02:05:00.000Z",
+        };
+        const safeEvent = {
+            publicId: eventPublicId,
+            groupPublicId,
+            intermediaryBankAccountPublicId: null,
+            reversedEventPublicId: null,
+            role: "funding_to_intermediary",
+            channel: "bank_transfer",
+            amount: "5000.00",
+            senderHint: "Owner account",
+            payeeHint: "Exact intermediary",
+            bankReference: "SAFE REFERENCE",
+            transferredAt: "2026-08-13T02:00:00.000Z",
+            status: "ready",
+            note: null,
+            createdAt: "2026-08-13T02:00:00.000Z",
+            updatedAt: "2026-08-13T02:00:00.000Z",
+            evidence: {
+                status: "ready",
+                count: 1,
+                items: [{
+                    publicId: evidencePublicId,
+                    filePublicId: evidenceFilePublicId,
+                    status: "ready",
+                    mimeType: "image/png",
+                }],
+            },
         };
         const baseUrl = await startServer({
             toolHandlers: {
@@ -525,25 +554,12 @@ describe("CreditSync stateless MCP contract", () => {
                         updatedAt: "2026-08-01T00:00:00.000Z",
                     }],
                 }),
+                "intermediary.disbursement.list": async () => ({
+                    items: [{ ...baseGroup, events: [safeEvent] }],
+                }),
                 "intermediary.disbursement.get": async () => ({
                     ...baseGroup,
-                    events: [{
-                        publicId: eventPublicId,
-                        groupPublicId,
-                        intermediaryBankAccountPublicId: null,
-                        reversedEventPublicId: null,
-                        role: "funding_to_intermediary",
-                        channel: "bank_transfer",
-                        amount: "5000.00",
-                        senderHint: "Owner account",
-                        payeeHint: "Exact intermediary",
-                        bankReference: "SAFE-REFERENCE",
-                        transferredAt: "2026-08-13T02:00:00.000Z",
-                        status: "ready",
-                        note: null,
-                        createdAt: "2026-08-13T02:00:00.000Z",
-                        updatedAt: "2026-08-13T02:00:00.000Z",
-                    }],
+                    events: [safeEvent],
                     latestPreview: null,
                 }),
                 "intermediary.disbursement.post": async () => ({
@@ -618,12 +634,45 @@ describe("CreditSync stateless MCP contract", () => {
             data: { publicId: intermediaryPublicId, assignments: [{ publicId: assignmentPublicId }] },
         });
 
+        const groupList = await client.callTool({
+            name: "intermediary.disbursement.list",
+            arguments: { loanPublicId: BORROWER_ID },
+        });
+        expect(groupList.isError).not.toBe(true);
+        expect(groupList.structuredContent).toMatchObject({
+            schemaVersion: "1.0",
+            data: {
+                items: [{
+                    publicId: groupPublicId,
+                    events: [{
+                        role: "funding_to_intermediary",
+                        bankReference: "SAFE REFERENCE",
+                        evidence: {
+                            status: "ready",
+                            count: 1,
+                            items: [{ publicId: evidencePublicId, filePublicId: evidenceFilePublicId, mimeType: "image/png" }],
+                        },
+                    }],
+                }],
+            },
+        });
+
         const inspected = await client.callTool({
             name: "intermediary.disbursement.get",
             arguments: { groupPublicId },
         });
         expect(inspected.isError).not.toBe(true);
+        expect(inspected.structuredContent).toMatchObject({
+            data: {
+                events: [{
+                    role: "funding_to_intermediary",
+                    bankReference: "SAFE REFERENCE",
+                    evidence: { status: "ready", count: 1 },
+                }],
+            },
+        });
         expect(JSON.stringify(inspected.structuredContent)).not.toMatch(/uploadUrl|signedUrl|objectKey|bucket/u);
+        expect(JSON.stringify(inspected.structuredContent)).not.toMatch(/sha256|checksum|storage/u);
 
         const unknownField = await client.callTool({
             name: "intermediary.disbursement.get",

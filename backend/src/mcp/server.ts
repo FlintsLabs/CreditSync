@@ -484,6 +484,22 @@ const intermediatedEventOutput = z.object({
     createdAt: isoDateTime,
     updatedAt: isoDateTime,
 }).strict();
+const intermediatedEventEvidenceOutput = z.object({
+    status: z.enum(["none", "pending", "ready", "mixed"]),
+    count: z.number().int().nonnegative(),
+    items: z.array(z.object({
+        publicId: uuid,
+        filePublicId: uuid,
+        status: z.enum(["pending", "ready"]),
+        mimeType: z.enum(["image/jpeg", "image/png", "application/pdf"]),
+    }).strict()),
+}).strict();
+const intermediatedInspectionEventOutput = intermediatedEventOutput.extend({
+    evidence: intermediatedEventEvidenceOutput,
+}).strict();
+const intermediatedGroupInspectionOutput = intermediatedGroupOutput.extend({
+    events: z.array(intermediatedInspectionEventOutput),
+}).strict();
 const intermediatedPreviewWarningOutput = z.object({
     code: z.string(),
     amount: money.optional(),
@@ -685,9 +701,8 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "intermediary.managed-loan.list": z.object({ items: z.array(intermediaryManagedLoanOutput) }).strict(),
     "intermediary.assignment.create": intermediaryAssignmentOutput,
     "intermediary.assignment.end": intermediaryAssignmentOutput,
-    "intermediary.disbursement.list": z.object({ items: z.array(intermediatedGroupOutput) }).strict(),
-    "intermediary.disbursement.get": intermediatedGroupOutput.extend({
-        events: z.array(intermediatedEventOutput),
+    "intermediary.disbursement.list": z.object({ items: z.array(intermediatedGroupInspectionOutput) }).strict(),
+    "intermediary.disbursement.get": intermediatedGroupInspectionOutput.extend({
         latestPreview: intermediatedPreviewOutput.nullable(),
     }).strict(),
     "intermediary.disbursement.create": intermediatedCreateResultOutput,

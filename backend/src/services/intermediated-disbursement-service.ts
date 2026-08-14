@@ -3,6 +3,7 @@ import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
     auditLogs,
+    files,
     intermediaries,
     intermediaryBankAccounts,
     intermediatedDisbursementGroupPreviews,
@@ -77,6 +78,13 @@ type EventRelations = {
     reversedEventPublicId: string | null;
 };
 
+type EventEvidenceItem = {
+    publicId: string;
+    filePublicId: string;
+    status: "pending" | "ready";
+    mimeType: string;
+};
+
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const transferRoles = new Set<TransferRole>(["funding_to_intermediary", "borrower_net_payout", "advance_interest_return"]);
 const transferChannels = new Set<TransferChannel>(["bank_transfer", "cash", "adjustment"]);
@@ -141,9 +149,10 @@ function normalizedText(value: string | null | undefined) {
 }
 
 function normalizedReference(value: string | null | undefined) {
-    const display = normalizedText(value);
-    if (!display) return { display: null, hash: null };
-    const identity = display.normalize("NFKC").replace(/\s+/g, " ").toLocaleLowerCase("en-US");
+    const raw = normalizedText(value);
+    if (!raw) return { display: null, hashIdentity: null };
+    const display = raw.normalize("NFKC").replace(/\s+/g, " ");
+    const identity = display.toLocaleLowerCase("en-US");
     return { display, hashIdentity: identity };
 }
 
@@ -244,6 +253,19 @@ function presentGroup(row: GroupRow, related: GroupRelations) {
     };
 }
 
+function presentEvidence(items: EventEvidenceItem[]) {
+    const statuses = new Set(items.map((item) => item.status));
+    return {
+        status: items.length === 0
+            ? "none" as const
+            : statuses.size > 1
+                ? "mixed" as const
+                : items[0]!.status,
+        count: items.length,
+        items,
+    };
+}
+
 function presentEvent(row: EventRow, related: EventRelations) {
     return {
         publicId: row.publicId,
@@ -255,12 +277,19 @@ function presentEvent(row: EventRow, related: EventRelations) {
         amount: serializeMoney(row.amount),
         senderHint: row.senderHint,
         payeeHint: row.payeeHint,
-        bankReference: row.bankReference,
+        bankReference: normalizedReference(row.bankReference).display,
         transferredAt: row.transferredAt.toISOString(),
         status: row.status,
         note: row.note,
         createdAt: row.createdAt.toISOString(),
         updatedAt: row.updatedAt.toISOString(),
+    };
+}
+
+function presentInspectionEvent(row: EventRow, related: EventRelations, evidenceItems: EventEvidenceItem[]) {
+    return {
+        ...presentEvent(row, related),
+        evidence: presentEvidence(evidenceItems),
     };
 }
 
@@ -1317,11 +1346,8 @@ export async function reverseIntermediatedDisbursement(
 
 export async function getIntermediatedDisbursementGroup(ctx: CommandContext, groupPublicId: string) {
     const { group, loan, intermediary } = await accessibleGroup(ctx, groupPublicId);
-    const [events, latestPreview] = await Promise.all([
-        db.select().from(intermediatedTransferEvents).where(and(
-            eq(intermediatedTransferEvents.tenantId, ctx.tenantId),
-            eq(intermediatedTransferEvents.groupId, group.id),
-        )).orderBy(asc(intermediatedTransferEvents.id)),
+    const [eventsByGroup, latestPreview] = await Promise.all([
+        inspectionEventsByGroup(ctx, [{ id: group.id, publicId: groupPublicId }]),
         db.query.intermediatedDisbursementGroupPreviews.findFirst({
             where: and(
                 eq(intermediatedDisbursementGroupPreviews.tenantId, ctx.tenantId),
@@ -1330,21 +1356,76 @@ export async function getIntermediatedDisbursementGroup(ctx: CommandContext, gro
             orderBy: desc(intermediatedDisbursementGroupPreviews.version),
         }),
     ]);
-    const presentedEvents = await Promise.all(events.map(async (event) => presentEvent(event, {
-        groupPublicId,
-        intermediaryBankAccountPublicId: await accountPublicId(ctx, event.intermediaryBankAccountId),
-        reversedEventPublicId: event.reversedEventId === null
-            ? null
-            : await db.query.intermediatedTransferEvents.findFirst({ where: and(
-                eq(intermediatedTransferEvents.tenantId, ctx.tenantId),
-                eq(intermediatedTransferEvents.id, event.reversedEventId),
-            ) }).then((source) => source?.publicId ?? null),
-    })));
     return {
         ...presentGroup(group, { loanPublicId: loan.publicId, intermediaryPublicId: intermediary.publicId }),
-        events: presentedEvents,
+        events: eventsByGroup.get(group.id) ?? [],
         latestPreview: latestPreview ? { ...presentPreview(latestPreview), groupPublicId } : null,
     };
+}
+
+async function inspectionEventsByGroup(
+    ctx: CommandContext,
+    groups: Array<{ id: number; publicId: string }>,
+) {
+    const result = new Map<number, Array<ReturnType<typeof presentInspectionEvent>>>();
+    for (const group of groups) result.set(group.id, []);
+    if (groups.length === 0) return result;
+
+    const groupPublicIds = new Map(groups.map((group) => [group.id, group.publicId]));
+    const events = await db.select().from(intermediatedTransferEvents).where(and(
+        eq(intermediatedTransferEvents.tenantId, ctx.tenantId),
+        inArray(intermediatedTransferEvents.groupId, groups.map((group) => group.id)),
+    )).orderBy(asc(intermediatedTransferEvents.id));
+    if (events.length === 0) return result;
+
+    const evidenceRows = await db.select({
+        eventId: intermediatedTransferEvidenceIntents.eventId,
+        publicId: intermediatedTransferEvidenceIntents.publicId,
+        filePublicId: files.publicId,
+        status: intermediatedTransferEvidenceIntents.status,
+        mimeType: intermediatedTransferEvidenceIntents.mimeType,
+    }).from(intermediatedTransferEvidenceIntents)
+        .innerJoin(files, and(
+            eq(files.tenantId, intermediatedTransferEvidenceIntents.tenantId),
+            eq(files.id, intermediatedTransferEvidenceIntents.fileId),
+        ))
+        .where(and(
+            eq(intermediatedTransferEvidenceIntents.tenantId, ctx.tenantId),
+            inArray(intermediatedTransferEvidenceIntents.eventId, events.map((event) => event.id)),
+        ))
+        .orderBy(asc(intermediatedTransferEvidenceIntents.id));
+    const evidenceByEvent = new Map<number, EventEvidenceItem[]>();
+    for (const row of evidenceRows) {
+        const items = evidenceByEvent.get(row.eventId) ?? [];
+        items.push({
+            publicId: row.publicId,
+            filePublicId: row.filePublicId,
+            status: row.status as EventEvidenceItem["status"],
+            mimeType: row.mimeType,
+        });
+        evidenceByEvent.set(row.eventId, items);
+    }
+
+    const presentedEvents = await Promise.all(events.map(async (event) => {
+        const [intermediaryBankAccountPublicId, reversedEventPublicId] = await Promise.all([
+            accountPublicId(ctx, event.intermediaryBankAccountId),
+            event.reversedEventId === null
+                ? Promise.resolve(null)
+                : db.query.intermediatedTransferEvents.findFirst({ where: and(
+                    eq(intermediatedTransferEvents.tenantId, ctx.tenantId),
+                    eq(intermediatedTransferEvents.id, event.reversedEventId),
+                ) }).then((source) => source?.publicId ?? null),
+        ]);
+        return presentInspectionEvent(event, {
+            groupPublicId: groupPublicIds.get(event.groupId)!,
+            intermediaryBankAccountPublicId,
+            reversedEventPublicId,
+        }, evidenceByEvent.get(event.id) ?? []);
+    }));
+    for (const [index, presented] of presentedEvents.entries()) {
+        result.get(events[index]!.groupId)!.push(presented);
+    }
+    return result;
 }
 
 export async function listIntermediatedDisbursementGroups(
@@ -1380,8 +1461,15 @@ export async function listIntermediatedDisbursementGroups(
         ))
         .where(and(...conditions))
         .orderBy(desc(intermediatedDisbursementGroups.createdAt), desc(intermediatedDisbursementGroups.id));
-    return rows.map((row) => presentGroup(row.group, {
-        loanPublicId: row.loanPublicId,
-        intermediaryPublicId: row.intermediaryPublicId,
+    const eventsByGroup = await inspectionEventsByGroup(ctx, rows.map((row) => ({
+        id: row.group.id,
+        publicId: row.group.publicId,
+    })));
+    return rows.map((row) => ({
+        ...presentGroup(row.group, {
+            loanPublicId: row.loanPublicId,
+            intermediaryPublicId: row.intermediaryPublicId,
+        }),
+        events: eventsByGroup.get(row.group.id) ?? [],
     }));
 }

@@ -238,6 +238,7 @@ describe("default MCP adapter integration", () => {
             ["borrower_net_payout", "4400.00"],
             ["advance_interest_return", "600.00"],
         ] as const;
+        const evidenceSpecs: Array<{ publicId: string; filePublicId: string }> = [];
         for (const [index, [role, amount]] of eventSpecs.entries()) {
             const event = resultData(await client.callTool({
                 name: "intermediary.disbursement.event.create",
@@ -265,6 +266,10 @@ describe("default MCP adapter integration", () => {
                 },
             })).data;
             expect(prepared.uploadUrl).toMatch(/^https:\/\/upload\.example\.test\//);
+            evidenceSpecs.push({
+                publicId: String(prepared.publicId),
+                filePublicId: String(prepared.filePublicId),
+            });
             const finalized = resultData(await client.callTool({
                 name: "intermediary.disbursement.evidence.finalize",
                 arguments: {
@@ -276,12 +281,39 @@ describe("default MCP adapter integration", () => {
             expect(finalized).toMatchObject({ publicId: prepared.publicId, status: "ready" });
         }
 
+        const listed = resultData(await client.callTool({
+            name: "intermediary.disbursement.list",
+            arguments: { loanPublicId: loan.publicId, intermediaryPublicId: intermediary.publicId },
+        })).data;
         const inspected = resultData(await client.callTool({
             name: "intermediary.disbursement.get",
             arguments: { groupPublicId: group.publicId },
         })).data;
         expect(inspected.events).toHaveLength(3);
+        const expectedEvents = eventSpecs.map(([role, amount], index) => ({
+            role,
+            amount,
+            payeeHint: index === 1 ? "MCP exact borrower" : "MCP exact intermediary",
+            bankReference: `MCP-INTERMEDIATED-${index + 1}`,
+            evidence: {
+                status: "ready",
+                count: 1,
+                items: [{
+                    ...evidenceSpecs[index]!,
+                    status: "ready",
+                    mimeType: "image/png",
+                }],
+            },
+        }));
+        expect(inspected.events).toEqual(expectedEvents.map((expected) => expect.objectContaining(expected)));
+        expect(listed.items).toEqual([
+            expect.objectContaining({
+                publicId: group.publicId,
+                events: expectedEvents.map((expected) => expect.objectContaining(expected)),
+            }),
+        ]);
         expect(JSON.stringify(inspected)).not.toMatch(/uploadUrl|signedUrl|objectKey|bucket/u);
+        expect(JSON.stringify(inspected)).not.toMatch(/sha256|checksum|storage/u);
         const preview = resultData(await client.callTool({
             name: "intermediary.disbursement.preview",
             arguments: { groupPublicId: group.publicId },

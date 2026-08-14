@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import Ajv from "ajv";
+import addFormats from "ajv-formats";
 import { EVAL_SCENARIO_IDS, runEvalScenario } from "../evals/harness";
 
 const pluginRoot = resolve(import.meta.dir, "..");
@@ -17,9 +20,25 @@ type CatalogCase = {
 async function fixtures() {
     const catalog = JSON.parse(await readFile(resolve(pluginRoot, "evals/evals.json"), "utf8")) as { cases: CatalogCase[] };
     const contract = JSON.parse(await readFile(resolve(pluginRoot, "references/mcp-tool-contract.json"), "utf8")) as {
-        tools: Array<{ name: string; inputSchema: { required?: string[]; properties?: Record<string, unknown> } }>;
+        tools: Array<{
+            name: string;
+            inputSchema: Record<string, unknown>;
+            outputSchema?: Record<string, unknown>;
+        }>;
     };
     return { catalog, contract };
+}
+
+function sha256(bytes: Uint8Array) {
+    return createHash("sha256").update(bytes).digest("hex");
+}
+
+function effectNames(effects: Array<string | { name: string }>) {
+    return effects.map((effect) => typeof effect === "string" ? effect : effect.name);
+}
+
+function conciseSchemaErrors(errors: null | undefined | Array<{ instancePath?: string; keyword?: string }>) {
+    return (errors ?? []).map((error) => `${error.instancePath || "/"}:${error.keyword}`).join(", ");
 }
 
 describe("CreditSync executable orchestration evals", () => {
@@ -45,12 +64,28 @@ describe("CreditSync executable orchestration evals", () => {
             "intermediary.disbursement.preview",
             "intermediary.disbursement.post",
         ]);
-        expect(result.effects).toEqual([
-            "intermediated-evidence.put",
-            "intermediated-evidence.put",
-            "intermediated-evidence.put",
-        ]);
+        expect(result.effects).toEqual([0, 1, 2].map((index) => {
+            const bytes = Buffer.from(`intermediated-slip-${index + 1}-fixture-bytes`, "utf8");
+            return {
+                name: "intermediated-evidence.put",
+                uploadUrl: `https://storage.example/intermediated-upload-${index + 1}`,
+                requiredHeaders: { "content-type": "image/png" },
+                byteLength: bytes.byteLength,
+                sha256: sha256(bytes),
+                bytesUnchanged: true,
+            };
+        }));
         expect(result.calls.at(-1)?.arguments).toMatchObject({ confirmed: true });
+        expect(result.events.slice(-3).map((event) => event.type === "tool" ? event.name : `${event.type}:${event.name}`)).toEqual([
+            "presentation:intermediated-disbursement-preview",
+            "confirmation:intermediated-disbursement",
+            "intermediary.disbursement.post",
+        ]);
+        expect(result.events.at(-2)).toEqual({
+            type: "confirmation",
+            name: "intermediated-disbursement",
+            confirmed: true,
+        });
     });
 
     test("intermediated disbursement stops on every required ambiguity and stale-state boundary", async () => {
@@ -70,6 +105,25 @@ describe("CreditSync executable orchestration evals", () => {
             const confirmedPosts = result.calls.filter((call) => call.name === "intermediary.disbursement.post" && call.arguments.confirmed === true);
             expect(confirmedPosts).toHaveLength(id === "intermediated-disbursement-stale-preview" ? 1 : 0);
         }
+    });
+
+    test("intermediated disbursement sends the declared retained balance and stops before transfer events", async () => {
+        const result = await runEvalScenario("intermediated-disbursement-unexplained-retained-balance");
+        expect(result).toMatchObject({
+            outcome: "stopped",
+            stopReason: "intermediated-retained-balance-unexplained",
+        });
+        expect(result.calls.at(-1)).toEqual({
+            name: "intermediary.disbursement.create",
+            arguments: {
+                loanPublicId: "0198c481-3e2b-7000-8000-000000000031",
+                intermediaryPublicId: "0198c481-3e2b-7000-8000-000000000081",
+                retainedBalance: "100.00",
+                note: "Exact three-leg disbursement",
+                idempotencyKey: "intermediated-group-20260813-1",
+            },
+        });
+        expect(result.calls.some((call) => call.name === "intermediary.disbursement.event.create")).toBe(false);
     });
 
     test("floating interest execution requires the exact preview and explicit confirmation", async () => {
@@ -160,27 +214,55 @@ describe("CreditSync executable orchestration evals", () => {
             for (const forbidden of entry.forbiddenCalls) {
                 expect(result.calls.some((call) => call.name === forbidden), `${entry.id} called forbidden ${forbidden}`).toBe(false);
             }
-            expect(result.effects, `${entry.id} external side effects`).toEqual(entry.expectedEffects ?? []);
+            expect(effectNames(result.effects), `${entry.id} external side effects`).toEqual(entry.expectedEffects ?? []);
             for (const forbidden of entry.forbiddenEffects ?? []) {
-                expect(result.effects.includes(forbidden), `${entry.id} executed forbidden ${forbidden}`).toBe(false);
+                expect(effectNames(result.effects).includes(forbidden), `${entry.id} executed forbidden ${forbidden}`).toBe(false);
             }
         }
     });
 
-    test("every scripted call uses only advertised fields and supplies advertised required fields", async () => {
+    test("every scripted call and every intermediary-flow output passes the full frozen JSON schemas", async () => {
         const { catalog, contract } = await fixtures();
         const tools = new Map(contract.tools.map((tool) => [tool.name, tool]));
+        const ajv = new Ajv({ allErrors: true, strict: false });
+        addFormats(ajv);
+        const inputValidators = new Map(contract.tools.map((tool) => [tool.name, ajv.compile(tool.inputSchema)]));
+        const outputValidators = new Map(contract.tools.flatMap((tool) => tool.outputSchema
+            ? [[tool.name, ajv.compile(tool.outputSchema)] as const]
+            : []));
+        let validatedCalls = 0;
+        let validatedOutputs = 0;
+        const validationErrors: string[] = [];
         for (const entry of catalog.cases) {
-            const result = await runEvalScenario(entry.id);
-            for (const call of result.calls) {
-                const schema = tools.get(call.name)?.inputSchema;
-                expect(schema, `${entry.id}/${call.name} missing frozen input schema`).toBeDefined();
-                const supplied = Object.keys(call.arguments).sort();
-                const supported = Object.keys(schema?.properties ?? {});
-                expect(supplied.filter((key) => !supported.includes(key)), `${entry.id}/${call.name} unsupported args`).toEqual([]);
-                expect((schema?.required ?? []).filter((key) => !(key in call.arguments)), `${entry.id}/${call.name} missing required args`).toEqual([]);
-            }
+            await runEvalScenario(entry.id, {
+                validateCall(name, args) {
+                    const validate = inputValidators.get(name);
+                    expect(validate, `${entry.id}/${name} missing frozen input schema`).toBeDefined();
+                    if (!validate!(args)) validationErrors.push(`${entry.id}/${name} input ${conciseSchemaErrors(validate!.errors)}`);
+                    validatedCalls += 1;
+                },
+                validateOutput(name, data) {
+                    if (!entry.id.startsWith("intermediated-disbursement-")) return;
+                    const tool = tools.get(name);
+                    const validate = outputValidators.get(name);
+                    expect(validate, `${entry.id}/${name} missing frozen output schema`).toBeDefined();
+                    const required = (tool?.outputSchema?.required as string[] | undefined) ?? [];
+                    const envelope = required.includes("correlationId")
+                        ? {
+                            schemaVersion: "1.0",
+                            data,
+                            correlationId: "0198c481-3e2b-7000-8000-000000000099",
+                            auditPublicIds: ["0198c481-3e2b-7000-8000-000000000098"],
+                        }
+                        : { schemaVersion: "1.0", data };
+                    if (!validate!(envelope)) validationErrors.push(`${entry.id}/${name} output ${conciseSchemaErrors(validate!.errors)}`);
+                    validatedOutputs += 1;
+                },
+            });
         }
+        expect(validationErrors).toEqual([]);
+        expect(validatedCalls).toBeGreaterThan(0);
+        expect(validatedOutputs).toBeGreaterThan(0);
     });
 
     test("alias add and confirmation are separate calls with the returned alias UUID", async () => {
@@ -217,7 +299,15 @@ describe("CreditSync executable orchestration evals", () => {
     test("disbursement lifecycle preserves the evidence order, idempotency boundaries, and compensating reversal", async () => {
         const result = await runEvalScenario("disbursement-full-lifecycle");
         expect(result.outcome).toBe("completed");
-        expect(result.effects).toEqual(["disbursement-evidence.put"]);
+        const bytes = Buffer.from("disbursement-slip-fixture-bytes", "utf8");
+        expect(result.effects).toEqual([{
+            name: "disbursement-evidence.put",
+            uploadUrl: "https://storage.example/upload",
+            requiredHeaders: { "content-type": "image/jpeg" },
+            byteLength: bytes.byteLength,
+            sha256: sha256(bytes),
+            bytesUnchanged: true,
+        }]);
         expect(result.calls.map((call) => call.name)).toEqual([
             "loan.disbursement.list",
             "loan.disbursement.draft",

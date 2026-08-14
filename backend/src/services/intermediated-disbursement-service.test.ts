@@ -1062,7 +1062,41 @@ describe("intermediated disbursement groups and exact preview", () => {
             role: "collector",
         }).returning().then((rows) => rows[0]!);
         const group = await createGroup(owner, "read");
-        await addEvent(owner, group.publicId, "read-event", "funding_to_intermediary", "5000.00", "2026-08-13T09:00:00.000Z", "PRIVATE-REF");
+        const createdEvent = await addEvent(
+            owner,
+            group.publicId,
+            "read-event",
+            "funding_to_intermediary",
+            "5000.00",
+            "2026-08-13T09:00:00.000Z",
+            "  ＰＲＩＶＡＴＥ   ＲＥＦ  ",
+        );
+        const storedEvent = await db.query.intermediatedTransferEvents.findFirst({
+            where: eq(intermediatedTransferEvents.publicId, createdEvent.publicId),
+        });
+        const evidenceFile = await db.insert(files).values({
+            tenantId: owner.actor.tenantId,
+            ownerUserId: owner.actor.id,
+            bucket: "private-evidence",
+            key: "private/read-slip.png",
+            url: "https://storage.invalid/private-signed-url",
+            originalName: "read-slip.png",
+            mimeType: "image/png",
+            size: 128,
+        }).returning().then((rows) => rows[0]!);
+        const evidenceIntent = await db.insert(intermediatedTransferEvidenceIntents).values({
+            tenantId: owner.actor.tenantId,
+            eventId: storedEvent!.id,
+            fileId: evidenceFile.id,
+            status: "ready",
+            evidenceHash: "read-scope-private-checksum",
+            mimeType: "image/png",
+            declaredSize: 128,
+            uploadExpiresAt: new Date("2026-08-13T10:00:00.000Z"),
+            finalizedAt: new Date("2026-08-13T09:05:00.000Z"),
+            createdByUserId: owner.actor.id,
+            updatedByUserId: owner.actor.id,
+        }).returning().then((rows) => rows[0]!);
 
         const listed = await listIntermediatedDisbursementGroups(context(owner.actor), {
             loanPublicId: owner.loan.publicId,
@@ -1070,8 +1104,42 @@ describe("intermediated disbursement groups and exact preview", () => {
             status: "draft",
         });
         expect(listed).toHaveLength(1);
-        expect(listed[0]).toMatchObject({ publicId: group.publicId, loanPublicId: owner.loan.publicId });
+        expect(listed[0]).toMatchObject({
+            publicId: group.publicId,
+            loanPublicId: owner.loan.publicId,
+            events: [{
+                publicId: createdEvent.publicId,
+                role: "funding_to_intermediary",
+                amount: "5000.00",
+                payeeHint: "Payee",
+                bankReference: "PRIVATE REF",
+                evidence: {
+                    status: "ready",
+                    count: 1,
+                    items: [{
+                        publicId: evidenceIntent.publicId,
+                        filePublicId: evidenceFile.publicId,
+                        status: "ready",
+                        mimeType: "image/png",
+                    }],
+                },
+            }],
+        });
+        const detail = await getIntermediatedDisbursementGroup(context(owner.actor), group.publicId);
+        expect(detail.events[0]?.evidence).toEqual({
+            status: "ready",
+            count: 1,
+            items: [{
+                publicId: evidenceIntent.publicId,
+                filePublicId: evidenceFile.publicId,
+                status: "ready",
+                mimeType: "image/png",
+            }],
+        });
         expect(JSON.stringify(listed)).not.toContain("bankReferenceHash");
+        expect(JSON.stringify(listed)).not.toContain("read-scope-private-checksum");
+        expect(JSON.stringify(listed)).not.toContain("private-signed-url");
+        expect(JSON.stringify(listed)).not.toContain("private/read-slip.png");
         expect(JSON.stringify(listed)).not.toContain(`\"id\":`);
 
         await expect(getIntermediatedDisbursementGroup(context(otherActor), group.publicId))
