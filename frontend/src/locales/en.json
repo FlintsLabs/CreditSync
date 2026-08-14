@@ -1065,6 +1065,7 @@
             "amount": "Received amount",
             "reference": "Bank reference",
             "allocation": "Latest allocation",
+            "statusColumn": "Status",
             "postedComponents": "Posted allocation",
             "principal": "Principal",
             "interest": "Interest",

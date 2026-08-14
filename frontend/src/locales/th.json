@@ -998,6 +998,7 @@
             "amount": "ยอดรับชำระ",
             "reference": "เลขอ้างอิงธนาคาร",
             "allocation": "การจัดสรรล่าสุด",
+            "statusColumn": "สถานะ",
             "postedComponents": "การจัดสรรที่ลงบัญชีแล้ว",
             "principal": "เงินต้น",
             "interest": "ดอกเบี้ย",

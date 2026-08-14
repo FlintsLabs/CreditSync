@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import Decimal from "decimal.js";
-import { ChevronRight, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { api } from "../../../lib/api";
 import { createPaymentWorkflow, type HttpClient } from "../../../lib/workflow-api";
 import { formatMoneyExact } from "../../../lib/workflow-model";
@@ -11,6 +11,7 @@ import { Button } from "../../../components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/Card";
 import { Input } from "../../../components/ui/Input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../../../components/ui/dialog";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../../components/ui/table";
 
 interface PostedComponents {
     principal: string;
@@ -45,6 +46,32 @@ function statusVariant(status: string): "default" | "secondary" | "destructive" 
     if (status === "ready") return "secondary";
     return "outline";
 }
+
+const postedComponentEntries = (item: PaymentIntakeHistoryItem) => item.postedComponents
+    ? ([
+        ["principal", item.postedComponents.principal],
+        ["interest", item.postedComponents.interest],
+        ["fee", item.postedComponents.fee],
+        ["penalty", item.postedComponents.penalty],
+    ] as const).filter(([, amount]) => !new Decimal(amount).isZero())
+    : [];
+
+const Allocation = ({ item, t, i18n }: { item: PaymentIntakeHistoryItem; t: (key: string, options?: Record<string, string>) => string; i18n: { language: string } }) => {
+    const components = postedComponentEntries(item);
+    if (components.length > 0) {
+        return (
+            <div className="flex min-w-64 flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                {components.map(([key, amount]) => (
+                    <span key={key}>{t(`loanDetail.repaymentHistory.${key}`)} {formatMoneyExact(amount, i18n.language)}</span>
+                ))}
+            </div>
+        );
+    }
+
+    return item.latestAllocation
+        ? <span className="whitespace-nowrap text-xs text-muted-foreground">{formatMoneyExact(item.latestAllocation.amount, i18n.language)}</span>
+        : <span className="text-muted-foreground">—</span>;
+};
 
 export function LoanRepaymentHistory({ loanPublicId, borrowerName, borrowerPublicId }: LoanRepaymentHistoryProps) {
     const { t, i18n } = useTranslation();
@@ -119,47 +146,6 @@ export function LoanRepaymentHistory({ loanPublicId, borrowerName, borrowerPubli
         <Badge variant={statusVariant(status)}>{t(`loanDetail.repaymentHistory.status.${status}`, { defaultValue: status })}</Badge>
     );
 
-    const Allocation = ({ item }: { item: PaymentIntakeHistoryItem }) => (
-        <div className="space-y-1 text-xs text-muted-foreground">
-            {item.latestAllocation && <div>{t("loanDetail.repaymentHistory.allocation", "Latest allocation")}: {formatMoneyExact(item.latestAllocation.amount, i18n.language)}</div>}
-            {item.postedComponents && (
-                <div>{t("loanDetail.repaymentHistory.postedComponents", "Posted allocation")}: {[
-                    ["principal", item.postedComponents.principal],
-                    ["interest", item.postedComponents.interest],
-                    ["fee", item.postedComponents.fee],
-                    ["penalty", item.postedComponents.penalty],
-                ].map(([key, amount]) => `${t(`loanDetail.repaymentHistory.${key}`)} ${formatMoneyExact(amount, i18n.language)}`).join(" • ")}</div>
-            )}
-        </div>
-    );
-
-    const MobileAllocation = ({ item }: { item: PaymentIntakeHistoryItem }) => {
-        const components = item.postedComponents
-            ? [
-                ["principal", item.postedComponents.principal],
-                ["interest", item.postedComponents.interest],
-                ["fee", item.postedComponents.fee],
-                ["penalty", item.postedComponents.penalty],
-            ].filter(([, amount]) => !new Decimal(amount).isZero())
-            : [];
-
-        if (components.length > 0) {
-            return (
-                <div className="mt-2 flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                    {components.map(([key, amount]) => (
-                        <span key={key}>{t(`loanDetail.repaymentHistory.${key}`)} {formatMoneyExact(amount, i18n.language)}</span>
-                    ))}
-                </div>
-            );
-        }
-
-        return item.latestAllocation ? (
-            <div className="mt-2 text-xs text-muted-foreground">
-                {t("loanDetail.repaymentHistory.allocation", "Latest allocation")}: {formatMoneyExact(item.latestAllocation.amount, i18n.language)}
-            </div>
-        ) : null;
-    };
-
     return (
         <Card>
             <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -174,49 +160,35 @@ export function LoanRepaymentHistory({ loanPublicId, borrowerName, borrowerPubli
                 {loading ? <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />{t("common.loading", "Loading...")}</div>
                     : items.length === 0 ? <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">{t("loanDetail.repaymentHistory.empty", "No repayment intakes have been recorded for this agreement.")}</div>
                     : <>
-                        <div className="hidden overflow-x-auto md:block">
-                            <table className="w-full text-sm">
-                                <thead className="border-b text-left text-muted-foreground">
-                                    <tr><th className="p-2">{t("loanDetail.repaymentHistory.receivedAt", "Received at")}</th><th className="p-2">{t("loanDetail.repaymentHistory.amount", "Received amount")}</th><th className="p-2">{t("loanDetail.repaymentHistory.reference", "Bank reference")}</th><th className="p-2">{t("loanDetail.repaymentHistory.allocation", "Latest allocation")}</th><th className="p-2" /></tr>
-                                </thead>
-                                <tbody>
-                                    {items.map((item) => <tr key={item.publicId} className="border-b last:border-0">
-                                        <td className="p-2"><div>{formatReceivedAt(item.receivedAt)}</div><Status status={item.status} /></td>
-                                        <td className="p-2 font-medium">{formatMoneyExact(item.amount, i18n.language)}</td>
-                                        <td className="p-2">{item.bankReference ?? "—"}</td>
-                                        <td className="p-2"><Allocation item={item} /></td>
-                                        <td className="p-2 text-right"><Button variant="outline" size="sm" onClick={() => openIntake(item.publicId)}>{t("loanDetail.repaymentHistory.continue", "Open payment review")}</Button></td>
-                                    </tr>)}
-                                </tbody>
-                            </table>
-                        </div>
-                        <div className="divide-y divide-border/70 md:hidden">
-                            {items.map((item) => <button
-                                key={item.publicId}
-                                type="button"
-                                data-testid="mobile-repayment-row"
-                                onClick={() => openIntake(item.publicId)}
-                                className="group min-h-16 w-full min-w-0 py-4 text-left transition-colors hover:bg-muted/40 active:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                            >
-                                <span className="flex min-w-0 items-start justify-between gap-3">
-                                    <span className="min-w-0 flex-1">
-                                        <span className="block font-semibold tabular-nums">{formatMoneyExact(item.amount, i18n.language)}</span>
-                                        <span className="block text-xs text-muted-foreground">{formatReceivedAt(item.receivedAt)}</span>
-                                    </span>
-                                    <Status status={item.status} />
-                                </span>
-                                {item.bankReference && (
-                                    <span className="mt-2 flex min-w-0 gap-1 text-xs text-muted-foreground">
-                                        <span className="shrink-0">{t("loanDetail.repaymentHistory.reference", "Bank reference")}:</span>
-                                        <span className="truncate" title={item.bankReference}>{item.bankReference}</span>
-                                    </span>
-                                )}
-                                <MobileAllocation item={item} />
-                                <span className="mt-3 flex items-center justify-end gap-1 text-xs font-medium text-foreground">
-                                    {t("loanDetail.repaymentHistory.viewDetails", "View details")}
-                                    <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
-                                </span>
-                            </button>)}
+                        <div className="overflow-x-auto">
+                            <Table className="min-w-[64rem]">
+                                <TableHeader>
+                                    <TableRow className="hover:bg-transparent">
+                                        <TableHead>{t("loanDetail.repaymentHistory.receivedAt")}</TableHead>
+                                        <TableHead className="text-right">{t("loanDetail.repaymentHistory.amount")}</TableHead>
+                                        <TableHead>{t("loanDetail.repaymentHistory.reference")}</TableHead>
+                                        <TableHead>{t("loanDetail.repaymentHistory.allocation")}</TableHead>
+                                        <TableHead>{t("loanDetail.repaymentHistory.statusColumn")}</TableHead>
+                                        <TableHead><span className="sr-only">{t("loanDetail.repaymentHistory.continue")}</span></TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {items.map((item) => (
+                                        <TableRow key={item.publicId}>
+                                            <TableCell className="whitespace-nowrap text-muted-foreground">{formatReceivedAt(item.receivedAt)}</TableCell>
+                                            <TableCell className="whitespace-nowrap text-right font-medium tabular-nums">{formatMoneyExact(item.amount, i18n.language)}</TableCell>
+                                            <TableCell className="max-w-56 truncate" title={item.bankReference ?? undefined}>{item.bankReference ?? "—"}</TableCell>
+                                            <TableCell><Allocation item={item} t={t} i18n={i18n} /></TableCell>
+                                            <TableCell className="whitespace-nowrap"><Status status={item.status} /></TableCell>
+                                            <TableCell className="text-right">
+                                                <Button variant="outline" size="sm" onClick={() => openIntake(item.publicId)}>
+                                                    {t("loanDetail.repaymentHistory.continue")}
+                                                </Button>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
                         </div>
                     </>}
             </CardContent>

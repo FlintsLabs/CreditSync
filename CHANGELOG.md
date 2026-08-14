@@ -21,6 +21,7 @@
 ### Changed
 - Routed substantial approved implementation work through supervised tmux Codex sessions using `gpt-5.3-codex-spark`, with current-model fallback, isolated worktree handoff, explicit authority boundaries, progress supervision, and independent completion/integration verification.
 - Replaced nested repayment-schedule cards on loan details with a compact responsive table and localized column headers.
+- Unified Loan Detail repayment history into the same compact responsive table style as the repayment schedule, with exact non-zero allocation summaries.
 - Surfaced up to three borrower tags with an overflow count in the Loan Detail borrower summary.
 
 ### Fixed

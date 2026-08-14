@@ -46,7 +46,7 @@ describe("LoanRepaymentHistory", () => {
         expect(screen.getByRole("button", { name: "Record repayment" })).toBeInTheDocument();
     });
 
-    test("renders a flat mobile row with only non-zero posted components and full-row navigation", async () => {
+    test("renders one responsive repayment table with exact allocation details and review navigation", async () => {
         const user = userEvent.setup();
         render(
             <MemoryRouter initialEntries={[`/loans/${LOAN_ID}`]}>
@@ -55,16 +55,21 @@ describe("LoanRepaymentHistory", () => {
             </MemoryRouter>
         );
 
-        const row = await screen.findByTestId("mobile-repayment-row");
-        expect(row.tagName).toBe("BUTTON");
-        expect(within(row).getByText(/Principal.*100\.00/)).toBeInTheDocument();
-        expect(within(row).getByText(/Interest.*25\.00/)).toBeInTheDocument();
-        expect(within(row).queryByText(/Fee.*0\.00/)).not.toBeInTheDocument();
-        expect(within(row).queryByText(/Penalty.*0\.00/)).not.toBeInTheDocument();
-        expect(within(row).getByText("TRANSFER-001")).toBeInTheDocument();
-        expect(within(row).queryByRole("button", { name: "Open payment review" })).not.toBeInTheDocument();
+        const table = await screen.findByRole("table");
+        expect(within(table).getByRole("columnheader", { name: "Received at" })).toBeInTheDocument();
+        expect(within(table).getByRole("columnheader", { name: "Received amount" })).toBeInTheDocument();
+        expect(within(table).getByRole("columnheader", { name: "Bank reference" })).toBeInTheDocument();
+        expect(within(table).getByRole("columnheader", { name: "Latest allocation" })).toBeInTheDocument();
+        expect(within(table).getByRole("columnheader", { name: "Status" })).toBeInTheDocument();
+        expect(within(table).getByRole("button", { name: "Open payment review" })).toBeInTheDocument();
+        expect(within(table).getByText("TRANSFER-001")).toBeInTheDocument();
+        expect(within(table).getByText(/Principal.*100\.00/)).toBeInTheDocument();
+        expect(within(table).getByText(/Interest.*25\.00/)).toBeInTheDocument();
+        expect(within(table).queryByText(/Fee.*0\.00/)).not.toBeInTheDocument();
+        expect(within(table).queryByText(/Penalty.*0\.00/)).not.toBeInTheDocument();
+        expect(screen.queryByTestId("mobile-repayment-row")).not.toBeInTheDocument();
 
-        await user.click(row);
+        await user.click(within(table).getByRole("button", { name: "Open payment review" }));
         expect(screen.getByText(`/payments?intake=019c3a5a-94ce-7f2c-8b08-f56852dca7a6&loanId=${LOAN_ID}`)).toBeInTheDocument();
     });
 
