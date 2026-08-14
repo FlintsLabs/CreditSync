@@ -1484,7 +1484,9 @@ function createServer(input: CreateMcpHttpPluginInput, ctx: CommandContext) {
             const { idempotencyKey: _removed, ...handlerInput } = parsed;
             const toolContext: CommandContext = {
                 ...ctx,
-                idempotencyKey: idempotencyKey ?? (toolName === "loan.activate" ? ctx.requestId : undefined),
+                idempotencyKey: idempotencyKey ?? (toolName === "loan.activate"
+                    ? `mcp:loan.activate:${String(handlerInput.loanPublicId)}`
+                    : undefined),
             };
             try {
                 await input.preflightHandlers?.[toolName]?.(toolContext, handlerInput);

@@ -8,7 +8,7 @@
 
 ### Changed
 
-- Froze the actual authenticated 63-tool union contract and retained all ten orchestration skills, including exact floating settlement and intermediary multi-leg evidence workflows.
+- Froze the actual authenticated 63-tool union contract and retained all 11 orchestration skills, including exact floating settlement, intermediary multi-leg evidence, and main-authoritative restructure/waiver workflows.
 
 ### Compatibility
 

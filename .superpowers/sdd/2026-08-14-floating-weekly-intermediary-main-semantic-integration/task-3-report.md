@@ -4,7 +4,7 @@
 
 Task 3 synchronizes the public union contract while keeping merge parent `5268363` authoritative for single-payment and restructure behavior and retaining generalized weekly-floating, settlement, intermediary assignment, and multi-leg disbursement behavior additively. No production system was accessed or deployed.
 
-The authenticated MCP surface now advertises 63 exact frozen tools. Because this adds the main restructure and waiver tools to the feature branch contract and the plugin compatibility policy reserves additions for a new major, the private plugin is synchronized at `6.0.0` with ten skills, 19 positive eval cases, and 43 negative eval cases.
+The authenticated MCP surface now advertises 63 exact frozen tools. Because this adds the main restructure and waiver tools to the feature branch contract and the plugin compatibility policy reserves additions for a new major, the private plugin is synchronized at `6.0.0` with 11 skills, 19 positive eval cases, and 43 negative eval cases.
 
 ## RED evidence
 
@@ -61,10 +61,18 @@ bun test
 bun run validate
 ```
 
-Result: exit `0`; `43 pass`, `0 fail`, 1,020 assertions. Validator confirmed plugin `6.0.0`, ten skills, 63 tools, no bundled MCP or secrets, and a non-live private-app placeholder.
+Result: exit `0`; `43 pass`, `0 fail`, 1,023 assertions. Validator confirmed plugin `6.0.0`, 11 skills, 63 tools, no bundled MCP or secrets, and a non-live private-app placeholder.
 
 Final hygiene: `git diff --check` passed.
 
 ## Remaining concerns
 
 The serialized database gate retains one existing skipped cache-invalidation test. All financial and public-contract tests selected by Task 3 ran against disposable PostgreSQL; no newly changed financial invariant relies on the skipped case. The Vite chunk-size message is advisory and unrelated to this semantic integration.
+
+## Review fix round 1
+
+Three review defects were reproduced and corrected without production access:
+
+- A main-compatible `loan.activate` call without an explicit key previously used the request UUID, so an identical retry on another request reached the active-loan conflict path. The new cross-request MCP regression failed with two distinct fallback UUIDs, then passed after deriving `mcp:loan.activate:<loanPublicId>`. A caller-supplied key remains authoritative, and request/correlation/audit context remains unchanged.
+- The prior Task 3 commit replaced 18 weekly floating allocation, penalty, reversal, projection-purity, backdated-write, and append-only provenance regressions with only the route rejection. Those 18 tests now live in `src/services/floating-allocation-regressions.test.ts`, call current floating projection/payment/payment-health services directly, and retain generalized weekly expectations. The separate route test still requires exact `409 FLOATING_SETTLEMENT_REQUIRED`. Focused disposable PostgreSQL result: `19 pass`, `0 fail`, 114 assertions across the 18 service invariants and one route contract.
+- The package contained 11 skill directories but documentation and the validator omitted `restructure-loan`. A focused plugin regression failed against the stale README/validator, then passed after synchronizing the expected skill list, package/root docs, validator output, and current plugin changelog. Plugin `6.0.0` and its authenticated 63-tool frozen contract are unchanged.

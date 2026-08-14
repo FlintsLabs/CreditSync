@@ -1065,6 +1065,36 @@ describe("CreditSync stateless MCP contract", () => {
         await client.close();
     });
 
+    test("derives the same activation idempotency key for main-compatible retries across requests", async () => {
+        const observed: Array<{ key: string | undefined; requestId: string }> = [];
+        const baseUrl = await startServer({
+            toolHandlers: {
+                "loan.activate": async (ctx, input) => {
+                    observed.push({ key: ctx.idempotencyKey, requestId: ctx.requestId });
+                    return { publicId: input.loanPublicId };
+                },
+            },
+        });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+
+        const argumentsWithoutKey = { loanPublicId: BORROWER_ID };
+        await client.callTool({ name: "loan.activate", arguments: argumentsWithoutKey });
+        await client.callTool({ name: "loan.activate", arguments: argumentsWithoutKey });
+        await client.callTool({
+            name: "loan.activate",
+            arguments: { ...argumentsWithoutKey, idempotencyKey: "operator-activation-key" },
+        });
+
+        expect(observed).toHaveLength(3);
+        expect(observed[0]!.requestId).not.toBe(observed[1]!.requestId);
+        expect(observed[0]!.key).toBe(observed[1]!.key);
+        expect(observed[0]!.key).not.toBe(observed[0]!.requestId);
+        expect(observed[2]!.key).toBe("operator-activation-key");
+
+        await client.close();
+    });
+
     test("financial writes include public audit and correlation IDs and sanitize service failures", async () => {
         const logs: Array<Record<string, unknown>> = [];
         const baseUrl = await startServer({

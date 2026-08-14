@@ -398,7 +398,7 @@ For rotation, put the old and new hashes in `MCP_API_TOKEN_HASHES` separated by 
 
 ## Private CreditSync Plugin
 
-The repository includes CreditSync Plugin `6.0.0` under [`plugins/creditsync`](./plugins/creditsync). It combines ten orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
+The repository includes CreditSync Plugin `6.0.0` under [`plugins/creditsync`](./plugins/creditsync). It combines 11 orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
 
 Before installation, register the deployed MCP endpoint as a private Codex app and replace the conspicuous `plugin_asdk_app_REPLACE_AFTER_PRIVATE_REGISTRATION` value in `plugins/creditsync/.app.json` with the returned `plugin_asdk_app...` technical ID. Then validate the package, add this Git repository as the marketplace that tracks `main`, and install the plugin:
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { MCP_TOOL_NAMES } from "../../../backend/src/mcp/server";
 import type { FrozenMcpContract } from "../../../backend/src/mcp/contract-snapshot";
@@ -49,7 +49,7 @@ describe("CreditSync plugin 6.0.0 contract", () => {
         expect(raw).not.toMatch(/bearer|token|secret/iu);
     });
 
-    test("all ten skills and their required references are discoverable", async () => {
+    test("all eleven skills and their required references are discoverable and documented", async () => {
         const skills = [
             "creditsync",
             "manage-borrowers",
@@ -63,6 +63,7 @@ describe("CreditSync plugin 6.0.0 contract", () => {
             "renew-daily-loan",
             "restructure-loan",
         ];
+        expect((await readdir(resolve(pluginRoot, "skills"))).sort()).toEqual([...skills].sort());
         for (const skill of skills) {
             const path = resolve(pluginRoot, "skills", skill, "SKILL.md");
             expect(existsSync(path), `${skill} should have SKILL.md`).toBe(true);
@@ -73,6 +74,8 @@ describe("CreditSync plugin 6.0.0 contract", () => {
         for (const reference of ["matching-policy.md", "financial-rules.md", "error-recovery.md", "mcp-tool-contract.json"]) {
             expect(existsSync(resolve(pluginRoot, "references", reference)), `${reference} should exist`).toBe(true);
         }
+        expect(await readFile(resolve(pluginRoot, "README.md"), "utf8")).toContain("11 orchestration skills");
+        expect(await readFile(resolve(pluginRoot, "scripts/validate.ts"), "utf8")).toContain('"restructure-loan"');
     });
 
     test("renewal reversal skill states only capabilities exposed by MCP 1.0", async () => {

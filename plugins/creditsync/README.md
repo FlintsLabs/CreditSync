@@ -6,7 +6,7 @@ This private Codex plugin orchestrates the CreditSync MCP app for borrower and i
 
 - Plugin version: `6.0.0`
 - MCP schema version: `1.0`
-- Skills: `creditsync`, `manage-borrowers`, `reconcile-payments`, `reconcile-intermediary-remittances`, `manage-loans`, `manage-floating-interest-rates`, `settle-floating-loans`, `manage-disbursements`, `manage-intermediated-disbursements`, `renew-daily-loan`
+- 11 orchestration skills: `creditsync`, `manage-borrowers`, `reconcile-payments`, `reconcile-intermediary-remittances`, `manage-loans`, `manage-floating-interest-rates`, `settle-floating-loans`, `manage-disbursements`, `manage-intermediated-disbursements`, `renew-daily-loan`, `restructure-loan`
 - App manifest: `.app.json`
 - Remote endpoint: registered private app pointing to `https://<creditsync-host>/mcp`
 
