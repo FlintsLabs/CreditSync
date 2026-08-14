@@ -10,6 +10,14 @@ import { Input } from "../../../components/ui/Input";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/Card";
 import { Badge } from "../../../components/ui/badge";
 import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+} from "../../../components/ui/table";
+import {
     Dialog,
     DialogContent,
     DialogDescription,
@@ -791,24 +799,32 @@ export default function LoanDetail() {
                                         {t("loanDetail.noRepaymentSchedule", "No repayment schedule available for this loan.")}
                                     </div>
                                 ) : (
-                                    <div className="space-y-2">
-                                        {schedule.slice(0, 8).map((row) => (
-                                            <div key={row.id} className="rounded border p-3 text-sm">
-                                                <div className="flex items-center justify-between gap-3">
-                                                    <div>
-                                                        <div className="font-medium">{t("loanDetail.installmentLabel", { defaultValue: "Installment #{{id}}", id: row.installmentNo })}</div>
-                                                        <div className="text-xs text-muted-foreground">{row.dueDate}</div>
-                                                    </div>
-                                                    <div className="text-right">
-                                                        <div className="font-medium">{money(row.remainingDue)}</div>
+                                    <Table className="min-w-[32rem]">
+                                        <TableHeader>
+                                            <TableRow className="hover:bg-transparent">
+                                                <TableHead>{t("loanDetail.scheduleColumns.installment")}</TableHead>
+                                                <TableHead>{t("loanDetail.scheduleColumns.dueDate")}</TableHead>
+                                                <TableHead className="text-right">{t("loanDetail.scheduleColumns.remainingDue")}</TableHead>
+                                                <TableHead className="text-right">{t("loanDetail.scheduleColumns.status")}</TableHead>
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            {schedule.slice(0, 8).map((row) => (
+                                                <TableRow key={row.id}>
+                                                    <TableCell className="font-medium">
+                                                        {t("loanDetail.installmentLabel", { defaultValue: "Installment #{{id}}", id: row.installmentNo })}
+                                                    </TableCell>
+                                                    <TableCell className="whitespace-nowrap text-muted-foreground">{row.dueDate}</TableCell>
+                                                    <TableCell className="whitespace-nowrap text-right font-medium tabular-nums">{money(row.remainingDue)}</TableCell>
+                                                    <TableCell className="text-right">
                                                         <Badge variant={row.status === "overdue" ? "destructive" : row.status === "paid" ? "secondary" : "outline"}>
                                                             {t(`loans.paymentHealth.scheduleStatus.${row.status}`, { defaultValue: row.status })}
                                                         </Badge>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
+                                                    </TableCell>
+                                                </TableRow>
+                                            ))}
+                                        </TableBody>
+                                    </Table>
                                 )}
                             </CardContent>
                         </Card>

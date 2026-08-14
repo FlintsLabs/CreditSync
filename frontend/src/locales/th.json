@@ -1109,6 +1109,12 @@
         "outstandingCostAllocated": "ต้นทุนคงค้างที่จัดสรร",
         "noFundingComposition": "สัญญานี้ยังไม่ได้จับคู่กับรายการเบิกใช้ใด",
         "repaymentSchedule": "ตารางผ่อน",
+        "scheduleColumns": {
+            "installment": "งวด",
+            "dueDate": "วันครบกำหนด",
+            "remainingDue": "ยอดคงค้าง",
+            "status": "สถานะ"
+        },
         "noRepaymentSchedule": "ยังไม่มีตารางผ่อนสำหรับสัญญานี้",
         "installmentLabel": "งวด #{{id}}",
         "allocationHistory": "ประวัติการจัดสรร",

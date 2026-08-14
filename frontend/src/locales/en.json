@@ -1176,6 +1176,12 @@
         "outstandingCostAllocated": "Outstanding cost allocated",
         "noFundingComposition": "This loan has not been matched to any funding drawdown yet.",
         "repaymentSchedule": "Repayment Schedule",
+        "scheduleColumns": {
+            "installment": "Installment",
+            "dueDate": "Due date",
+            "remainingDue": "Remaining due",
+            "status": "Status"
+        },
         "noRepaymentSchedule": "No repayment schedule available for this loan.",
         "installmentLabel": "Installment #{{id}}",
         "allocationHistory": "Allocation History",
