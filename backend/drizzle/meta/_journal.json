@@ -218,6 +218,13 @@
       "when": 1786698180000,
       "tag": "0030_floating_penalty_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1786666687343,
+      "tag": "0031_loan_waiver_previews",
+      "breakpoints": true
     }
   ]
 }

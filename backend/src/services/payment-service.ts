@@ -11,6 +11,9 @@ import {
     fundLedgerEntries,
     loanFundingAllocations,
     loanInterestAccruals,
+    loanOpeningBalanceComponents,
+    loanRestructureWaivers,
+    loanRestructures,
     loanSchedules,
     loans,
     paymentEvidence,
@@ -1122,6 +1125,40 @@ function signed(value: Decimal.Value) {
     return new Decimal(value).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
 }
 
+export interface RestructuredPaymentBuckets {
+    penalty: string;
+    fee: string;
+    carriedInterest: string;
+    dueNewInterest: string;
+    principal: string;
+}
+
+/** Exact, policy-ordered allocation kernel shared by posting and close-out flows. */
+export function allocateRestructuredPayment(amount: string, buckets: RestructuredPaymentBuckets) {
+    let remaining = parseMoney(amount);
+    const values = (Object.keys(buckets) as Array<keyof RestructuredPaymentBuckets>).reduce((result, key) => {
+        const available = parseMoney(buckets[key]);
+        const allocated = Decimal.min(remaining, available);
+        remaining = remaining.minus(allocated);
+        result[key] = serializeMoney(allocated);
+        return result;
+    }, {} as Record<keyof RestructuredPaymentBuckets, string>);
+    return { ...values, unallocated: serializeMoney(remaining) };
+}
+
+export function calculateEarlySettlementUnearnedInterest(input: { contractualNewInterest: string; earnedNewInterest: string }) {
+    const contractual = parseMoney(input.contractualNewInterest);
+    const earned = parseMoney(input.earnedNewInterest);
+    if (earned.gt(contractual)) throw new DomainError("INVALID_EARNED_INTEREST", "Earned interest cannot exceed contractual interest", 400);
+    const unearned = contractual.minus(earned);
+    return {
+        earnedNewInterest: serializeMoney(earned),
+        unearnedNewInterest: serializeMoney(unearned),
+        proposedWaiver: serializeMoney(unearned),
+        reason: "early_settlement_unearned_interest" as const,
+    };
+}
+
 function paymentBusinessDate(value: Date) {
     const parts = new Intl.DateTimeFormat("en-CA", {
         timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit",
@@ -1153,6 +1190,58 @@ function allocateScheduleComponents(
     remaining = remaining.minus(principal);
     if (!remaining.isZero()) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Allocation exceeds the latest schedule obligation", 409);
     return { fee, interest, principal, penalty };
+}
+
+async function restructuredPaymentBuckets(
+    executor: Executor,
+    tenantId: string,
+    loanId: number,
+    schedule: typeof loanSchedules.$inferSelect,
+    loan: typeof loans.$inferSelect,
+    receivedAt: Date,
+) {
+    const restructure = await executor.query.loanRestructures.findFirst({ where: and(
+        eq(loanRestructures.tenantId, tenantId), eq(loanRestructures.newLoanId, loanId), eq(loanRestructures.status, "executed"),
+    ) });
+    if (!restructure) return null;
+    const [opening, waivers, posted] = await Promise.all([
+        executor.select().from(loanOpeningBalanceComponents).where(and(eq(loanOpeningBalanceComponents.tenantId, tenantId), eq(loanOpeningBalanceComponents.loanId, loanId), eq(loanOpeningBalanceComponents.restructureId, restructure.id))),
+        executor.select().from(loanRestructureWaivers).where(and(eq(loanRestructureWaivers.tenantId, tenantId), eq(loanRestructureWaivers.loanId, loanId), eq(loanRestructureWaivers.restructureId, restructure.id))),
+        executor.select().from(transactions).where(and(eq(transactions.tenantId, tenantId), eq(transactions.loanId, loanId))).orderBy(transactions.id),
+    ]);
+    const netOpening = (kind: string) => opening.filter((row: typeof loanOpeningBalanceComponents.$inferSelect) => row.componentKind === kind)
+        .reduce((sum: Decimal, row: typeof loanOpeningBalanceComponents.$inferSelect) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
+    const netWaived = (kind: string) => waivers.filter((row: typeof loanRestructureWaivers.$inferSelect) => row.componentKind === kind)
+        .reduce((sum: Decimal, row: typeof loanRestructureWaivers.$inferSelect) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
+    const reversedIds = new Set((posted as Array<typeof transactions.$inferSelect>).filter(row => row.entryType === "reversal" && row.reversedTransactionId !== null).map(row => row.reversedTransactionId!));
+    const active = (posted as Array<typeof transactions.$inferSelect>).filter(row => row.entryType === "repayment" && !reversedIds.has(row.id));
+    const paidPenalty = active.reduce((sum, row) => sum.plus(row.penaltyComponent), new Decimal(0));
+    const paidFee = active.reduce((sum, row) => sum.plus(row.feeComponent), new Decimal(0));
+    const paidInterest = active.reduce((sum, row) => sum.plus(row.interestComponent), new Decimal(0));
+    const carriedPenalty = Decimal.max(0, netOpening("carried_penalty").minus(netWaived("penalty")).minus(paidPenalty));
+    const carriedFee = Decimal.max(0, netOpening("carried_fee").minus(netWaived("fee")).minus(paidFee));
+    const carriedInterestGross = netOpening("carried_interest");
+    const carriedInterestAfterWaiver = Decimal.max(0, carriedInterestGross.minus(Decimal.min(carriedInterestGross, netWaived("interest"))));
+    const carriedInterest = Decimal.max(0, carriedInterestAfterWaiver.minus(paidInterest));
+    const paidNewInterest = Decimal.max(0, paidInterest.minus(carriedInterestAfterWaiver));
+    const dueNewInterest = Decimal.max(0, new Decimal(schedule.scheduledInterest).minus(paidNewInterest));
+    const scheduleAlreadyPaid = new Decimal(schedule.paidTotal);
+    const scheduleFeePaid = Decimal.min(scheduleAlreadyPaid, schedule.scheduledFee);
+    const scheduleInterestPaid = Decimal.min(Decimal.max(0, scheduleAlreadyPaid.minus(scheduleFeePaid)), schedule.scheduledInterest);
+    const schedulePrincipalPaid = Decimal.max(0, scheduleAlreadyPaid.minus(scheduleFeePaid).minus(scheduleInterestPaid));
+    const dueScheduleFee = Decimal.max(0, new Decimal(schedule.scheduledFee).minus(scheduleFeePaid));
+    const duePrincipal = Decimal.max(0, new Decimal(schedule.scheduledPrincipal).minus(schedulePrincipalPaid));
+    const schedulePenalty = schedulePenaltyDue(loan, schedule, receivedAt);
+    return {
+        penalty: serializeMoney(carriedPenalty.plus(schedulePenalty)),
+        fee: serializeMoney(carriedFee.plus(dueScheduleFee)),
+        carriedInterest: serializeMoney(carriedInterest),
+        dueNewInterest: serializeMoney(dueNewInterest),
+        principal: serializeMoney(duePrincipal),
+        carriedPenalty,
+        schedulePenalty,
+        carriedFee,
+    };
 }
 
 async function writeFundEffects(tx: Executor, ctx: CommandContext, loanId: number, transactionId: number, entryDate: Date, components: Record<string, Decimal>) {
@@ -1436,10 +1525,21 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
             if (!allocation.scheduleId) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Payment allocation has no schedule", 409);
             const schedule = await tx.query.loanSchedules.findFirst({ where: and(eq(loanSchedules.id, allocation.scheduleId), eq(loanSchedules.tenantId, ctx.tenantId)) });
             if (!schedule || !loan || schedule.loanId !== loan.id) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Payment target no longer exists", 409);
-            const components = allocateScheduleComponents(schedule, loan, allocation.amount, intake.receivedAt);
-            const nonPenalty = components.fee.plus(components.interest).plus(components.principal);
+            const restructureBuckets = await restructuredPaymentBuckets(tx, ctx.tenantId, loan.id, schedule, loan, intake.receivedAt);
+            const restructured = restructureBuckets ? allocateRestructuredPayment(allocation.amount, restructureBuckets) : null;
+            if (restructured && new Decimal(restructured.unallocated).gt(0)) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Allocation exceeds the latest restructured-loan obligation", 409);
+            const components = restructured ? {
+                penalty: new Decimal(restructured.penalty), fee: new Decimal(restructured.fee),
+                interest: new Decimal(restructured.carriedInterest).plus(restructured.dueNewInterest), principal: new Decimal(restructured.principal),
+            } : allocateScheduleComponents(schedule, loan, allocation.amount, intake.receivedAt);
+            // Carried balances predate this schedule and must not make its immutable
+            // contractual row appear paid. Only current-contract components advance it.
+            const scheduleFee = restructureBuckets ? Decimal.max(0, components.fee.minus(restructureBuckets.carriedFee)) : components.fee;
+            const scheduleInterest = restructured ? new Decimal(restructured.dueNewInterest) : components.interest;
+            const schedulePenalty = restructureBuckets ? Decimal.max(0, components.penalty.minus(restructureBuckets.carriedPenalty)) : components.penalty;
+            const nonPenalty = scheduleFee.plus(scheduleInterest).plus(components.principal);
             const newPaid = new Decimal(schedule.paidTotal).plus(nonPenalty);
-            const newPaidPenalty = new Decimal(schedule.paidPenalty).plus(components.penalty);
+            const newPaidPenalty = new Decimal(schedule.paidPenalty).plus(schedulePenalty);
             const newRemaining = Decimal.max(0, new Decimal(schedule.remainingDue).minus(nonPenalty));
             const lifecycle = scheduleLifecycle(loan, schedule, {
                 paidTotal: newPaid,

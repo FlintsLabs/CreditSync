@@ -1314,6 +1314,42 @@ export const loanOpeningBalanceComponents = pgTable("loan_opening_balance_compon
     foreignKey({ name: "loan_opening_balance_components_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
 ]);
 
+export const loanWaiverPreviews = pgTable("loan_waiver_previews", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId,
+    restructureId: integer("restructure_id").notNull(),
+    loanId: integer("loan_id").notNull(),
+    componentKind: text("component_kind").notNull(),
+    amount: numeric("amount").notNull(),
+    reason: text("reason").notNull(),
+    balanceVersion: text("balance_version").notNull(),
+    previewHash: text("preview_hash").notNull(),
+    status: text("status").default("preview").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    actorSource: text("actor_source").notNull(),
+    requestId: text("request_id").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    createdByUserId: integer("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("loan_waiver_previews_tenant_id_id_unique").on(table.tenantId, table.id),
+    index("loan_waiver_previews_tenant_loan_status_idx").on(table.tenantId, table.loanId, table.status),
+    check("loan_waiver_previews_kind_check", sql`${table.componentKind} IN ('interest', 'fee', 'penalty')`),
+    check("loan_waiver_previews_amount_check", sql`${table.amount} > 0 AND scale(${table.amount}) <= 2`),
+    check("loan_waiver_previews_status_check", sql`${table.status} IN ('preview', 'consumed', 'expired')`),
+    check("loan_waiver_previews_lifecycle_check", sql`
+        (${table.status} IN ('preview', 'expired') AND ${table.consumedAt} IS NULL)
+        OR (${table.status} = 'consumed' AND ${table.consumedAt} IS NOT NULL)
+    `),
+    check("loan_waiver_previews_actor_source_check", sql`${table.actorSource} IN ('web', 'mcp', 'system')`),
+    foreignKey({ name: "loan_waiver_previews_tenant_restructure_fk", columns: [table.tenantId, table.restructureId], foreignColumns: [loanRestructures.tenantId, loanRestructures.id] }),
+    foreignKey({ name: "loan_waiver_previews_tenant_loan_fk", columns: [table.tenantId, table.loanId], foreignColumns: [loans.tenantId, loans.id] }),
+    foreignKey({ name: "loan_waiver_previews_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
+
 export const loanRestructureWaivers = pgTable("loan_restructure_waivers", {
     id: serial("id").primaryKey(),
     publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),

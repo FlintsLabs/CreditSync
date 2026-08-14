@@ -3,6 +3,7 @@
 ## v0.3.12 - 2026-08-14
 
 ### Added
+- Added atomic preview-confirm-execute and compensating-reversal services for exact single-payment settlement into independently priced replacement loans, including durable later-waiver previews, component opening balances, external credits, additional-principal payout drafts, strict idempotency and balance-version guards, and ordered replacement-loan payment allocation.
 - Added exact single-payment preview, draft/update presentation, direct-capital activation, and one-row maturity schedules across the shared service and closed REST contract, plus explicit floating daily/weekly accrual-cycle round trips with legacy daily defaults.
 - Added tenant-safe single-payment and floating-accrual persistence plus append-only restructure, opening-balance component, waiver, public-lineage, and durable request-key records with database-enforced financial invariants.
 - Added an exact Decimal-only single-payment calculation kernel with mutually exclusive fixed/retroactive interest policies, maturity schedules, Bangkok-date exposure traces, late penalties, and component waivers.

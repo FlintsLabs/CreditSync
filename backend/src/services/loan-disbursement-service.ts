@@ -192,6 +192,33 @@ export async function createDisbursementDraft(ctx: CommandContext, loanPublicId:
     });
 }
 
+/** Internal atomic-workflow adapter. The caller must already hold/validate the
+ * parent-loan lock and own the surrounding transaction. */
+export async function createDisbursementDraftInTransaction(
+    tx: Executor,
+    ctx: CommandContext,
+    loan: typeof loans.$inferSelect,
+    input: CreateDisbursementDraftInput,
+) {
+    const draft = validateDraft(input);
+    const sourceProfile = await sourceProfileFor(ctx, input.sourceBankProfilePublicId, tx);
+    const created = await tx.insert(loanDisbursementEvents).values({
+        tenantId: ctx.tenantId,
+        loanId: loan.id,
+        ...draft,
+        sourceBankProfileId: sourceProfile?.id ?? null,
+        payeeHint: normalizedText(input.payeeHint),
+        createdByUserId: ctx.actorUserId,
+    }).returning().then((rows: EventRow[]) => rows[0]!);
+    await writeAudit(tx, ctx, created, "draft_created", {
+        loanPublicId: loan.publicId,
+        grossAmount: draft.grossAmount,
+        loanAttributedAmount: draft.loanAttributedAmount,
+        workflow: "loan_restructure_additional_principal",
+    });
+    return created;
+}
+
 export async function updateDisbursementDraft(ctx: CommandContext, disbursementPublicId: string, input: UpdateDisbursementDraftInput) {
     const { event } = await accessibleEvent(ctx, disbursementPublicId);
     return db.transaction(async (tx) => {

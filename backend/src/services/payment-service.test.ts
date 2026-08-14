@@ -36,12 +36,32 @@ import {
     previewPaymentMatch,
     reversePayment,
     reviewPaymentIntake,
+    allocateRestructuredPayment,
+    calculateEarlySettlementUnearnedInterest,
     type EvidenceStorageGateway,
 } from "./payment-service";
 import { accrueFloatingInterestThrough, correctFloatingInterestAccruals } from "./floating-interest-service";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
+
+describe("restructured-loan payment allocation", () => {
+    test("allocates penalty, fee, carried interest, due new interest, then principal with exact conservation", () => {
+        expect(allocateRestructuredPayment("1000.00", {
+            penalty: "100.00", fee: "50.00", carriedInterest: "300.00", dueNewInterest: "200.00", principal: "5000.00",
+        })).toEqual({ penalty: "100.00", fee: "50.00", carriedInterest: "300.00", dueNewInterest: "200.00", principal: "350.00", unallocated: "0.00" });
+        expect(allocateRestructuredPayment("75.00", {
+            penalty: "100.00", fee: "50.00", carriedInterest: "300.00", dueNewInterest: "200.00", principal: "5000.00",
+        })).toEqual({ penalty: "75.00", fee: "0.00", carriedInterest: "0.00", dueNewInterest: "0.00", principal: "0.00", unallocated: "0.00" });
+    });
+
+    test("early settlement waives only unearned new-contract interest", () => {
+        expect(calculateEarlySettlementUnearnedInterest({ contractualNewInterest: "600.00", earnedNewInterest: "225.00" })).toEqual({
+            earnedNewInterest: "225.00", unearnedNewInterest: "375.00", proposedWaiver: "375.00", reason: "early_settlement_unearned_interest",
+        });
+        expect(() => calculateEarlySettlementUnearnedInterest({ contractualNewInterest: "100.00", earnedNewInterest: "100.01" })).toThrow("Earned interest cannot exceed contractual interest");
+    });
+});
 
 async function resetApplicationTables() {
     await db.execute(sql`TRUNCATE TABLE
