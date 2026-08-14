@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import {
     buildLoanTermsInput,
     formatMoneyExact,
@@ -6,6 +6,37 @@ import {
     sumMoney,
     toExplicitAllocations,
 } from "../src/lib/workflow-model";
+
+describe("single-payment loan terms", () => {
+    it("builds an exact closed single-payment request without calculating interest", () => {
+        expect(buildLoanTermsInput({
+            principal: "5000", interestRate: "0", termMonths: "1", repaymentType: "single_payment",
+            startDate: "2026-08-10", singlePaymentDueDate: "2026-08-19",
+            singlePaymentFixedAgreedInterest: "500", singlePaymentInterestPolicy: "greater_of_fixed_or_retroactive",
+            singlePaymentRetroactiveRateType: "percent_per_day", singlePaymentRetroactiveRate: "1.0000",
+            singlePaymentLatePenaltyMode: "fixed_amount_per_day", singlePaymentLatePenaltyAmountPerDay: "20",
+            singlePaymentLatePenaltyGraceDays: "2",
+        })).toEqual({
+            principal: "5000.00", interestRate: "0.00", termMonths: 1, repaymentType: "single_payment", startDate: "2026-08-10",
+            singlePayment: {
+                dueDate: "2026-08-19", fixedAgreedInterest: "500.00", interestPolicy: "greater_of_fixed_or_retroactive",
+                retroactiveInterest: { rateType: "percent_per_day", rate: "1.0000" },
+                latePenalty: { mode: "fixed_amount_per_day", amountPerDay: "20.00", graceDays: 2 },
+            },
+        });
+    });
+
+    it("omits mutually exclusive retroactive and penalty fields for fixed-only terms", () => {
+        expect(buildLoanTermsInput({
+            principal: "5000", interestRate: "0", termMonths: "1", repaymentType: "single_payment",
+            startDate: "2026-08-10", singlePaymentDueDate: "2026-08-19",
+            singlePaymentFixedAgreedInterest: "500", singlePaymentInterestPolicy: "fixed_only",
+            singlePaymentLatePenaltyMode: "none",
+        }).singlePayment).toEqual({
+            dueDate: "2026-08-19", fixedAgreedInterest: "500.00", interestPolicy: "fixed_only", latePenalty: { mode: "none" },
+        });
+    });
+});
 
 const BORROWER_A = "019c3a5a-94ce-7f2c-8b08-f56852dca7a1";
 const BORROWER_B = "019c3a5a-94ce-7f2c-8b08-f56852dca7a2";

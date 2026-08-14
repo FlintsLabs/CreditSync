@@ -21,6 +21,8 @@ import { LoanRenewalPanel } from "./LoanRenewalPanel";
 import { LoanDisbursements } from "./LoanDisbursements";
 import { LoanRepaymentHistory } from "./LoanRepaymentHistory";
 import { FloatingInterestRateCard } from "./FloatingInterestRateCard";
+import { LoanRestructurePanel } from "./LoanRestructurePanel";
+import { LoanOpeningBalances, type OpeningBalanceComponent, type RestructureLineage, type RestructureWaiver } from "./LoanOpeningBalances";
 
 interface LoanDetailData {
     id: string;
@@ -49,6 +51,9 @@ interface LoanDetailData {
         dailyInterest: string;
         flatDailyRatePercent: string;
     } | null;
+    restructureLineage?: RestructureLineage | null;
+    openingBalanceComponents?: OpeningBalanceComponent[];
+    restructureWaivers?: RestructureWaiver[];
 }
 
 interface BorrowerData {
@@ -366,6 +371,8 @@ export default function LoanDetail() {
                         </Card>
                     </div>
 
+                    <LoanOpeningBalances lineage={loan.restructureLineage} components={loan.openingBalanceComponents} waivers={loan.restructureWaivers} />
+                    <LoanRestructurePanel loan={loan} onExecuted={() => window.location.reload()} />
                     <LoanDisbursements loanPublicId={loan.publicId ?? loan.id} />
 
                     <LoanRepaymentHistory

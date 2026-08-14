@@ -11,6 +11,7 @@ vi.mock("../src/lib/session", () => ({ getStoredUser: () => null, isTenantAdminU
 vi.mock("../src/pages/dashboard/loans/LoanRenewalPanel", () => ({ LoanRenewalPanel: () => null }));
 vi.mock("../src/pages/dashboard/loans/LoanDisbursements", () => ({ LoanDisbursements: () => null }));
 vi.mock("../src/pages/dashboard/loans/LoanRepaymentHistory", () => ({ LoanRepaymentHistory: () => null }));
+vi.mock("../src/pages/dashboard/loans/LoanRestructurePanel", () => ({ LoanRestructurePanel: () => <div data-testid="restructure-panel" /> }));
 
 const LOAN_ID = "019ff023-fd64-7d41-9aae-723d2a458a8a";
 const BORROWER_ID = "019fea17-6068-7ccb-b267-9f39880bb762";
@@ -89,5 +90,24 @@ describe("Loan Detail draft activation", () => {
         expect(screen.getByRole("button", { name: "ยืนยันเปิดใช้งาน" })).toBeEnabled();
         expect(consoleError).toHaveBeenCalledWith("Failed to activate loan draft", expect.any(Error));
         consoleError.mockRestore();
+    });
+
+    it("shows restructure lineage, exact opening balances, waivers, and payout status", async () => {
+        await appI18n.changeLanguage("en");
+        renderLoanDetail({
+            ...draftLoan, status: "active", repaymentType: "monthly", outstandingPrincipal: "6000.00",
+            restructureLineage: { restructuredFromPublicId: "019ff023-fd64-7d41-9aae-723d2a458a80", restructuredToPublicId: null },
+            openingBalanceComponents: [
+                { publicId: "c1", kind: "carried_principal", amount: "5000.00", status: "executed", sourceType: "loan_restructure", sourcePublicId: "r1" },
+                { publicId: "c2", kind: "additional_principal", amount: "1000.00", status: "executed", sourceType: "loan_restructure", sourcePublicId: "r1" },
+                { publicId: "c3", kind: "carried_interest", amount: "400.00", status: "executed", sourceType: "loan_restructure", sourcePublicId: "r1" },
+            ],
+            restructureWaivers: [{ publicId: "w1", component: "interest", amount: "100.00", reason: "assistance", status: "executed" }],
+        } as typeof draftLoan);
+        expect(await screen.findByText(/restructured from/i)).toBeInTheDocument();
+        expect(screen.getByText(/carried principal/i)).toBeInTheDocument();
+        expect(screen.getByText(/1,000\.00/)).toBeInTheDocument();
+        expect(screen.getByText(/assistance/)).toBeInTheDocument();
+        expect(screen.getByText(/payout status/i)).toBeInTheDocument();
     });
 });

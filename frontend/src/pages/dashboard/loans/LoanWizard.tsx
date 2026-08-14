@@ -89,6 +89,15 @@ export default function LoanWizard() {
         dailyPayment: "",
         dailyInterestInputMode: "percent" as "percent" | "fixed_amount" | "per_thousand",
         dailyInterestInputValue: "",
+        floatingAccrualCycle: "daily" as "daily" | "weekly",
+        singlePaymentDueDate: "",
+        singlePaymentFixedAgreedInterest: "",
+        singlePaymentInterestPolicy: "fixed_only" as "fixed_only" | "greater_of_fixed_or_retroactive",
+        singlePaymentRetroactiveRateType: "percent_per_day" as "percent_per_day" | "per_thousand_per_day",
+        singlePaymentRetroactiveRate: "",
+        singlePaymentLatePenaltyMode: "none" as "none" | "fixed_amount_per_day",
+        singlePaymentLatePenaltyAmountPerDay: "",
+        singlePaymentLatePenaltyGraceDays: "0",
     });
 
     const [schedule, setSchedule] = useState<LoanSchedulePreview[]>([]);
@@ -136,6 +145,7 @@ export default function LoanWizard() {
                         mode: formData.dailyInterestMode,
                         rate: formData.dailyInterestRate,
                         firstDayTreatment: formData.firstDayTreatment,
+                        accrualCycle: formData.floatingAccrualCycle,
                     },
                 } : {}),
             });
@@ -172,6 +182,7 @@ export default function LoanWizard() {
                     mode: formData.dailyInterestMode as "per_thousand" | "percent",
                     rate: formData.dailyInterestRate,
                     firstDayTreatment: formData.firstDayTreatment as "deduct" | "start_next_day",
+                    accrualCycle: formData.floatingAccrualCycle,
                 } : undefined,
                 ...buildLoanTermsInput({ ...formData, interestRate: ["floating", "daily"].includes(formData.repaymentType) ? "0" : formData.interestRate }),
             });
@@ -307,7 +318,7 @@ export default function LoanWizard() {
                             <div className="grid gap-2 md:col-span-2">
                                 <label>{t("loanWizard.repaymentType", "Repayment Type")}</label>
                                 <div className="flex flex-wrap gap-2" role="radiogroup">
-                                    {(["monthly", "daily", "weekly", "floating"] as const).map((type) => (
+                                    {(["single_payment", "monthly", "daily", "weekly", "floating"] as const).map((type) => (
                                         <button key={type} type="button" role="radio" aria-checked={formData.repaymentType === type} onClick={() => setFormData({ ...formData, repaymentType: type })} className={`rounded-full border px-3 py-2 text-sm transition-colors ${formData.repaymentType === type ? "border-primary bg-primary text-primary-foreground" : "border-input bg-background hover:bg-muted"}`}>
                                             {t(`loanWizard.repaymentOptions.${type}`)}
                                         </button>
@@ -315,8 +326,8 @@ export default function LoanWizard() {
                                 </div>
                             </div>
                             <div className="grid gap-2">
-                                <label>{t("loanWizard.principalAmount", "Principal Amount (฿)")}</label>
-                                <Input type="number" value={formData.principal} onChange={(e) => setFormData({ ...formData, principal: e.target.value })} />
+                                <label htmlFor="loan-principal">{t("loanWizard.principalAmount", "Principal Amount (฿)")}</label>
+                                <Input id="loan-principal" type="number" value={formData.principal} onChange={(e) => setFormData({ ...formData, principal: e.target.value })} />
                             </div>
                             {!["floating", "daily"].includes(formData.repaymentType) && (
                                 <div className="grid gap-2">
@@ -339,6 +350,20 @@ export default function LoanWizard() {
                                     onClick={(event) => event.currentTarget.showPicker?.()}
                                 />
                             </div>
+                            {formData.repaymentType === "single_payment" && (
+                                <fieldset className="grid gap-4 rounded border p-4 md:col-span-2">
+                                    <legend className="px-1 font-medium">{t("loanWizard.singlePayment.title")}</legend>
+                                    <div className="grid gap-4 sm:grid-cols-2">
+                                        <label className="grid gap-2" htmlFor="single-payment-due">{t("loanWizard.singlePayment.dueDate")}<Input id="single-payment-due" type="date" value={formData.singlePaymentDueDate} onChange={e => setFormData({ ...formData, singlePaymentDueDate: e.target.value })} /></label>
+                                        <label className="grid gap-2" htmlFor="single-payment-interest">{t("loanWizard.singlePayment.fixedInterest")}<Input id="single-payment-interest" type="number" min="0" step="0.01" value={formData.singlePaymentFixedAgreedInterest} onChange={e => setFormData({ ...formData, singlePaymentFixedAgreedInterest: e.target.value })} /></label>
+                                    </div>
+                                    <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={formData.singlePaymentInterestPolicy === "greater_of_fixed_or_retroactive"} onChange={e => setFormData({ ...formData, singlePaymentInterestPolicy: e.target.checked ? "greater_of_fixed_or_retroactive" : "fixed_only" })} /><span>{t("loanWizard.singlePayment.compareRetroactive")}</span></label>
+                                    {formData.singlePaymentInterestPolicy === "greater_of_fixed_or_retroactive" && <div className="grid gap-4 sm:grid-cols-2"><label className="grid gap-2">{t("loanWizard.singlePayment.retroactiveRateType")}<select className="flex h-10 rounded-md border bg-background px-3" value={formData.singlePaymentRetroactiveRateType} onChange={e => setFormData({ ...formData, singlePaymentRetroactiveRateType: e.target.value as typeof formData.singlePaymentRetroactiveRateType })}><option value="percent_per_day">{t("loanWizard.singlePayment.percentPerDay")}</option><option value="per_thousand_per_day">{t("loanWizard.singlePayment.perThousandPerDay")}</option></select></label><label className="grid gap-2" htmlFor="single-payment-retro-rate">{t("loanWizard.singlePayment.retroactiveRate")}<Input id="single-payment-retro-rate" type="number" min="0" step="0.0001" value={formData.singlePaymentRetroactiveRate} onChange={e => setFormData({ ...formData, singlePaymentRetroactiveRate: e.target.value })} /></label></div>}
+                                    <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={formData.singlePaymentLatePenaltyMode === "fixed_amount_per_day"} onChange={e => setFormData({ ...formData, singlePaymentLatePenaltyMode: e.target.checked ? "fixed_amount_per_day" : "none" })} /><span>{t("loanWizard.singlePayment.chargePenalty")}</span></label>
+                                    {formData.singlePaymentLatePenaltyMode === "fixed_amount_per_day" && <div className="grid gap-4 sm:grid-cols-2"><label className="grid gap-2" htmlFor="single-payment-penalty">{t("loanWizard.singlePayment.penaltyPerDay")}<Input id="single-payment-penalty" type="number" min="0" step="0.01" value={formData.singlePaymentLatePenaltyAmountPerDay} onChange={e => setFormData({ ...formData, singlePaymentLatePenaltyAmountPerDay: e.target.value })} /></label><label className="grid gap-2" htmlFor="single-payment-grace">{t("loanWizard.singlePayment.graceDays")}<Input id="single-payment-grace" type="number" min="0" step="1" value={formData.singlePaymentLatePenaltyGraceDays} onChange={e => setFormData({ ...formData, singlePaymentLatePenaltyGraceDays: e.target.value })} /></label></div>}
+                                    <p className="text-xs text-muted-foreground">{t("loanWizard.singlePayment.backendValidation")}</p>
+                                </fieldset>
+                            )}
                             {formData.repaymentType === "daily" && (
                                 <>
                                     <div className="grid gap-2">
@@ -372,6 +397,7 @@ export default function LoanWizard() {
                                         <label>{t("loanWizard.firstDayTreatment", "First-day interest")}</label>
                                         <div className="flex flex-wrap gap-2"><button type="button" onClick={() => setFormData({ ...formData, firstDayTreatment: "start_next_day" })} className={`rounded-full border px-3 py-2 text-sm ${formData.firstDayTreatment === "start_next_day" ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}>{t("loanWizard.startNextDay")}</button><button type="button" onClick={() => setFormData({ ...formData, firstDayTreatment: "deduct" })} className={`rounded-full border px-3 py-2 text-sm ${formData.firstDayTreatment === "deduct" ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}>{t("loanWizard.deductFirstDay")}</button></div>
                                     </div>
+                                    <div className="grid gap-2 md:col-span-2"><label>{t("loanWizard.floatingAccrualCycle")}</label><div className="flex gap-2">{(["daily", "weekly"] as const).map(cycle => <button key={cycle} type="button" onClick={() => setFormData({ ...formData, floatingAccrualCycle: cycle })} className={`rounded-full border px-3 py-2 text-sm ${formData.floatingAccrualCycle === cycle ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}>{t(`loanWizard.floatingAccrualOptions.${cycle}`)}</button>)}</div></div>
                                 </>
                             )}
                         </div>
@@ -379,6 +405,7 @@ export default function LoanWizard() {
 
                     {step === 3 && (
                         <div className="space-y-4">
+                            {formData.repaymentType === "single_payment" && <div role="note" className="rounded border border-blue-500/30 bg-blue-500/10 p-4 text-sm"><div className="font-medium">{t("loanWizard.singlePayment.reviewTitle")}</div><p className="mt-1 text-muted-foreground">{t("loanWizard.singlePayment.alternativeNotice")}</p></div>}
                             {dailyCalculation && <div className="rounded-md border bg-muted/30 p-4 text-sm"><div className="font-medium">{t("loanWizard.dailyCalculation")}</div><div className="mt-2 grid gap-1 sm:grid-cols-2"><div>{t("loanWizard.totalInstallments")}: {dailyCalculation.totalInstallments}</div><div>{t("loanWizard.dailyPayment")}: {money(dailyCalculation.installmentAmount)}</div><div>{t("loanWizard.totalRepayment")}: {money(dailyCalculation.totalRepayment)}</div><div>{t("loanWizard.totalInterest")}: {money(dailyCalculation.totalInterest)}</div><div>{t("loanWizard.dailyInterest")}: {money(dailyCalculation.dailyInterest)}</div><div>{t("loanWizard.flatDailyRate")}: {dailyCalculation.flatDailyRatePercent}%</div><div>{t("loanWizard.flatMonthlyRate")}: {dailyCalculation.flatMonthlyRatePercent}%</div><div>{t("loanWizard.flatAnnualRate")}: {dailyCalculation.flatAnnualRatePercent}%</div></div></div>}
                             <div className="rounded-md border p-4 text-sm">
                                 <div className="font-medium">{t("loanWizard.fundingSetup", "Funding setup")}</div>
