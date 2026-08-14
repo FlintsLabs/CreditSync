@@ -1169,24 +1169,21 @@ export async function previewEarlyLoanSettlement(ctx: CommandContext, loanPublic
     const restructure = await db.query.loanRestructures.findFirst({ where: and(eq(loanRestructures.tenantId, ctx.tenantId), eq(loanRestructures.newLoanId, loan.id), eq(loanRestructures.status, "executed")) });
     if (!restructure) throw new DomainError("LOAN_NOT_RESTRUCTURED", "Early settlement waiver requires a restructured replacement loan", 409);
     if (loan.repaymentType === "floating") throw new DomainError("EARLY_SETTLEMENT_UNSUPPORTED_FOR_FLOATING", "Floating replacements accrue interest without contractual unearned interest", 409);
-    const [opening, schedules, posted] = await Promise.all([
+    const [opening, schedules, current] = await Promise.all([
         db.select().from(loanOpeningBalanceComponents).where(and(eq(loanOpeningBalanceComponents.tenantId, ctx.tenantId), eq(loanOpeningBalanceComponents.loanId, loan.id), eq(loanOpeningBalanceComponents.restructureId, restructure.id))),
         db.select().from(loanSchedules).where(and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.loanId, loan.id))).orderBy(loanSchedules.installmentNo),
-        db.select().from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.loanId, loan.id))).orderBy(transactions.id),
+        currentRestructureBuckets(db, ctx.tenantId, loan.id),
     ]);
     const openingAmount = (kind: string) => opening.filter(row => row.componentKind === kind).reduce((sum, row) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
     const contractual = openingAmount("new_contract_interest");
     const earned = schedules.filter(row => row.dueDate <= input.settlementDate).reduce((sum, row) => sum.plus(row.scheduledInterest), new Decimal(0));
-    const reversed = new Set(posted.filter(row => row.entryType === "reversal" && row.reversedTransactionId !== null).map(row => row.reversedTransactionId!));
-    const active = posted.filter(row => row.entryType === "repayment" && !reversed.has(row.id));
-    const paidPrincipal = active.reduce((sum, row) => sum.plus(row.principalComponent), new Decimal(0));
-    const outstandingPrincipal = Decimal.max(0, openingAmount("carried_principal").plus(openingAmount("additional_principal")).minus(paidPrincipal));
+    if (!current) throw new DomainError("LOAN_NOT_RESTRUCTURED", "Early settlement waiver requires a restructured replacement loan", 409);
     const calculation = calculateEarlySettlementUnearnedInterest({ contractualNewInterest: serializeMoney(contractual), earnedNewInterest: serializeMoney(Decimal.min(contractual, earned)) });
     const currentNewInterest = await getLoanWaiverAvailability(ctx, loanPublicId, "new_interest");
     const proposedWaiver = serializeMoney(Decimal.min(calculation.proposedWaiver, currentNewInterest.availableAmount));
     if (new Decimal(proposedWaiver).isZero()) throw new DomainError("NO_UNEARNED_INTEREST", "No unearned new-contract interest is available to waive", 409);
     const waiver = await previewLoanWaiver(ctx, loanPublicId, { component: "new_interest", amount: proposedWaiver, reason: calculation.reason }, { allowInternalNewInterest: true });
-    return { ...waiver, settlementDate: input.settlementDate, outstandingPrincipal: serializeMoney(outstandingPrincipal), carriedBalances: { interest: serializeMoney(openingAmount("carried_interest")), fee: serializeMoney(openingAmount("carried_fee")), penalty: serializeMoney(openingAmount("carried_penalty")) }, ...calculation, proposedWaiver };
+    return { ...waiver, settlementDate: input.settlementDate, outstandingPrincipal: serializeMoney(current.principal), carriedBalances: { interest: serializeMoney(current.carriedInterest), fee: serializeMoney(current.carriedFee), penalty: serializeMoney(current.carriedPenalty) }, ...calculation, proposedWaiver };
 }
 
 export async function executeEarlyLoanSettlement(ctx: CommandContext, previewPublicId: string, input: { confirmed: boolean; previewHash: string; expectedBalanceVersion: string }) {
@@ -1226,6 +1223,62 @@ function allocateScheduleComponents(
     return { fee, interest, principal, penalty };
 }
 
+async function currentRestructureBuckets(executor: Executor, tenantId: string, loanId: number) {
+    const restructure = await executor.query.loanRestructures.findFirst({ where: and(
+        eq(loanRestructures.tenantId, tenantId), eq(loanRestructures.newLoanId, loanId), eq(loanRestructures.status, "executed"),
+    ) });
+    if (!restructure) return null;
+    const [opening, waivers, posted, schedules] = await Promise.all([
+        executor.select().from(loanOpeningBalanceComponents).where(and(eq(loanOpeningBalanceComponents.tenantId, tenantId), eq(loanOpeningBalanceComponents.loanId, loanId), eq(loanOpeningBalanceComponents.restructureId, restructure.id))),
+        executor.select().from(loanRestructureWaivers).where(and(eq(loanRestructureWaivers.tenantId, tenantId), eq(loanRestructureWaivers.loanId, loanId), eq(loanRestructureWaivers.restructureId, restructure.id))),
+        executor.select().from(transactions).where(and(eq(transactions.tenantId, tenantId), eq(transactions.loanId, loanId))).orderBy(transactions.id),
+        executor.select().from(loanSchedules).where(and(eq(loanSchedules.tenantId, tenantId), eq(loanSchedules.loanId, loanId))).orderBy(loanSchedules.installmentNo),
+    ]);
+    const netOpening = (kind: string) => opening.filter((row: typeof loanOpeningBalanceComponents.$inferSelect) => row.componentKind === kind)
+        .reduce((sum: Decimal, row: typeof loanOpeningBalanceComponents.$inferSelect) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
+    const netWaived = (kind: string) => waivers.filter((row: typeof loanRestructureWaivers.$inferSelect) => row.componentKind === kind)
+        .reduce((sum: Decimal, row: typeof loanRestructureWaivers.$inferSelect) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
+    const reversedIds = new Set((posted as Array<typeof transactions.$inferSelect>).filter(row => row.entryType === "reversal" && row.reversedTransactionId !== null).map(row => row.reversedTransactionId!));
+    const active = (posted as Array<typeof transactions.$inferSelect>).filter(row => row.entryType === "repayment" && !reversedIds.has(row.id));
+    let carriedPenalty = Decimal.max(0, netOpening("carried_penalty").minus(netWaived("penalty")));
+    let carriedFee = Decimal.max(0, netOpening("carried_fee").minus(netWaived("fee")));
+    const carriedInterestGross = netOpening("carried_interest");
+    const totalInterestWaiver = netWaived("interest");
+    const carriedWaiver = Decimal.min(carriedInterestGross, totalInterestWaiver);
+    const newInterestWaiver = Decimal.max(0, totalInterestWaiver.minus(carriedWaiver)).plus(netWaived("new_interest"));
+    let carriedInterest = Decimal.max(0, carriedInterestGross.minus(carriedWaiver));
+    const paidNewInterestBySchedule = new Map<number, Decimal>();
+    const paidPrincipalBySchedule = new Map<number, Decimal>();
+    const paidFeeBySchedule = new Map<number, Decimal>();
+    for (const row of active) {
+        carriedPenalty = Decimal.max(0, carriedPenalty.minus(row.penaltyComponent));
+        const paidCarriedFee = Decimal.min(carriedFee, row.feeComponent);
+        carriedFee = carriedFee.minus(paidCarriedFee);
+        const paidCarried = Decimal.min(carriedInterest, row.interestComponent);
+        carriedInterest = carriedInterest.minus(paidCarried);
+        const paidNew = new Decimal(row.interestComponent).minus(paidCarried);
+        if (row.scheduleId) {
+            if (paidNew.gt(0)) paidNewInterestBySchedule.set(row.scheduleId, (paidNewInterestBySchedule.get(row.scheduleId) ?? new Decimal(0)).plus(paidNew));
+            paidPrincipalBySchedule.set(row.scheduleId, (paidPrincipalBySchedule.get(row.scheduleId) ?? new Decimal(0)).plus(row.principalComponent));
+            const paidScheduleFee = new Decimal(row.feeComponent).minus(paidCarriedFee);
+            if (paidScheduleFee.gt(0)) paidFeeBySchedule.set(row.scheduleId, (paidFeeBySchedule.get(row.scheduleId) ?? new Decimal(0)).plus(paidScheduleFee));
+        }
+    }
+    const waivedNewInterestBySchedule = new Map<number, Decimal>();
+    let remainingNewWaiver = newInterestWaiver;
+    for (const item of schedules) {
+        const applied = Decimal.min(remainingNewWaiver, item.scheduledInterest);
+        waivedNewInterestBySchedule.set(item.id, applied);
+        remainingNewWaiver = remainingNewWaiver.minus(applied);
+    }
+    const paidPrincipal = active.reduce((sum, row) => sum.plus(row.principalComponent), new Decimal(0));
+    const principal = Decimal.max(0, netOpening("carried_principal").plus(netOpening("additional_principal")).minus(paidPrincipal));
+    const newInterest = schedules.reduce((sum: Decimal, item: typeof loanSchedules.$inferSelect) => sum.plus(Decimal.max(0, new Decimal(item.scheduledInterest)
+        .minus(waivedNewInterestBySchedule.get(item.id) ?? 0)
+        .minus(paidNewInterestBySchedule.get(item.id) ?? 0))), new Decimal(0));
+    return { carriedPenalty, carriedFee, carriedInterest, newInterest, paidNewInterestBySchedule, paidPrincipalBySchedule, paidFeeBySchedule, waivedNewInterestBySchedule, principal };
+}
+
 async function restructuredPaymentBuckets(
     executor: Executor,
     tenantId: string,
@@ -1234,50 +1287,23 @@ async function restructuredPaymentBuckets(
     loan: typeof loans.$inferSelect,
     receivedAt: Date,
 ) {
-    const restructure = await executor.query.loanRestructures.findFirst({ where: and(
-        eq(loanRestructures.tenantId, tenantId), eq(loanRestructures.newLoanId, loanId), eq(loanRestructures.status, "executed"),
-    ) });
-    if (!restructure) return null;
-    const [opening, waivers, posted] = await Promise.all([
-        executor.select().from(loanOpeningBalanceComponents).where(and(eq(loanOpeningBalanceComponents.tenantId, tenantId), eq(loanOpeningBalanceComponents.loanId, loanId), eq(loanOpeningBalanceComponents.restructureId, restructure.id))),
-        executor.select().from(loanRestructureWaivers).where(and(eq(loanRestructureWaivers.tenantId, tenantId), eq(loanRestructureWaivers.loanId, loanId), eq(loanRestructureWaivers.restructureId, restructure.id))),
-        executor.select().from(transactions).where(and(eq(transactions.tenantId, tenantId), eq(transactions.loanId, loanId))).orderBy(transactions.id),
-    ]);
-    const netOpening = (kind: string) => opening.filter((row: typeof loanOpeningBalanceComponents.$inferSelect) => row.componentKind === kind)
-        .reduce((sum: Decimal, row: typeof loanOpeningBalanceComponents.$inferSelect) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
-    const netWaived = (kind: string) => waivers.filter((row: typeof loanRestructureWaivers.$inferSelect) => row.componentKind === kind)
-        .reduce((sum: Decimal, row: typeof loanRestructureWaivers.$inferSelect) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
-    const reversedIds = new Set((posted as Array<typeof transactions.$inferSelect>).filter(row => row.entryType === "reversal" && row.reversedTransactionId !== null).map(row => row.reversedTransactionId!));
-    const active = (posted as Array<typeof transactions.$inferSelect>).filter(row => row.entryType === "repayment" && !reversedIds.has(row.id));
-    const paidPenalty = active.reduce((sum, row) => sum.plus(row.penaltyComponent), new Decimal(0));
-    const paidFee = active.reduce((sum, row) => sum.plus(row.feeComponent), new Decimal(0));
-    const paidInterest = active.reduce((sum, row) => sum.plus(row.interestComponent), new Decimal(0));
-    const carriedPenalty = Decimal.max(0, netOpening("carried_penalty").minus(netWaived("penalty")).minus(paidPenalty));
-    const carriedFee = Decimal.max(0, netOpening("carried_fee").minus(netWaived("fee")).minus(paidFee));
-    const carriedInterestGross = netOpening("carried_interest");
-    const totalInterestWaiver = netWaived("interest");
-    const carriedWaiver = Decimal.min(carriedInterestGross, totalInterestWaiver);
-    const newInterestWaiver = Decimal.max(0, totalInterestWaiver.minus(carriedWaiver)).plus(netWaived("new_interest"));
-    const carriedInterestAfterWaiver = Decimal.max(0, carriedInterestGross.minus(carriedWaiver));
-    const carriedInterest = Decimal.max(0, carriedInterestAfterWaiver.minus(paidInterest));
-    const paidNewInterest = Decimal.max(0, paidInterest.minus(carriedInterestAfterWaiver));
-    const dueNewInterest = Decimal.max(0, new Decimal(schedule.scheduledInterest).minus(newInterestWaiver).minus(paidNewInterest));
-    const scheduleAlreadyPaid = new Decimal(schedule.paidTotal);
-    const scheduleFeePaid = Decimal.min(scheduleAlreadyPaid, schedule.scheduledFee);
-    const scheduleInterestPaid = Decimal.min(Decimal.max(0, scheduleAlreadyPaid.minus(scheduleFeePaid)), schedule.scheduledInterest);
-    const schedulePrincipalPaid = Decimal.max(0, scheduleAlreadyPaid.minus(scheduleFeePaid).minus(scheduleInterestPaid));
-    const dueScheduleFee = Decimal.max(0, new Decimal(schedule.scheduledFee).minus(scheduleFeePaid));
-    const duePrincipal = Decimal.max(0, new Decimal(schedule.scheduledPrincipal).minus(schedulePrincipalPaid));
+    const current = await currentRestructureBuckets(executor, tenantId, loanId);
+    if (!current) return null;
+    const dueNewInterest = Decimal.max(0, new Decimal(schedule.scheduledInterest)
+        .minus(current.waivedNewInterestBySchedule.get(schedule.id) ?? 0)
+        .minus(current.paidNewInterestBySchedule.get(schedule.id) ?? 0));
+    const dueScheduleFee = Decimal.max(0, new Decimal(schedule.scheduledFee).minus(current.paidFeeBySchedule.get(schedule.id) ?? 0));
+    const duePrincipal = Decimal.max(0, new Decimal(schedule.scheduledPrincipal).minus(current.paidPrincipalBySchedule.get(schedule.id) ?? 0));
     const schedulePenalty = schedulePenaltyDue(loan, schedule, receivedAt);
     return {
-        penalty: serializeMoney(carriedPenalty.plus(schedulePenalty)),
-        fee: serializeMoney(carriedFee.plus(dueScheduleFee)),
-        carriedInterest: serializeMoney(carriedInterest),
+        penalty: serializeMoney(current.carriedPenalty.plus(schedulePenalty)),
+        fee: serializeMoney(current.carriedFee.plus(dueScheduleFee)),
+        carriedInterest: serializeMoney(current.carriedInterest),
         dueNewInterest: serializeMoney(dueNewInterest),
         principal: serializeMoney(duePrincipal),
-        carriedPenalty,
+        carriedPenalty: current.carriedPenalty,
         schedulePenalty,
-        carriedFee,
+        carriedFee: current.carriedFee,
     };
 }
 
@@ -1384,10 +1410,11 @@ async function refreshLoanRollups(tx: Executor, tenantId: string, loanIds: numbe
             eq(loanSchedules.tenantId, tenantId), eq(loanSchedules.loanId, loanId),
         )).orderBy(loanSchedules.installmentNo);
         const rollup = computeLoanRollup(schedules);
+        const restructure = await currentRestructureBuckets(tx, tenantId, loanId);
         await tx.update(loans).set({
-            outstandingPrincipal: serializeMoney(rollup.outstandingPrincipal),
-            outstandingInterest: serializeMoney(rollup.outstandingInterest),
-            outstandingFees: serializeMoney(rollup.outstandingFees),
+            outstandingPrincipal: serializeMoney(restructure?.principal ?? rollup.outstandingPrincipal),
+            outstandingInterest: serializeMoney(restructure ? restructure.carriedInterest.plus(restructure.newInterest) : rollup.outstandingInterest),
+            outstandingFees: serializeMoney(rollup.outstandingFees.plus(restructure?.carriedFee ?? 0).plus(restructure?.carriedPenalty ?? 0)),
             nextDueDate: rollup.nextDueDate,
             status: rollup.status,
             updatedAt: new Date(),
