@@ -3,6 +3,7 @@
 ## v0.3.12 - 2026-08-14
 
 ### Added
+- Added the approved design for tenant-bound borrower identity-card uploads through MCP, using signed prepare/finalize storage verification followed by idempotent application of Codex-extracted identity fields with Thai checksum validation and masked audit provenance.
 - Added exact compensating floating-settlement reversal across REST, MCP Plugin `7.0.0`'s 64-tool frozen contract, and localized Web confirmation, preserving negative transaction/allocation/fund provenance and restoring loan/accrual state only when no downstream activity exists.
 - Added localized Loan Detail and intermediary-profile transfer ledgers for all three intermediary money paths, exact split payouts, sender/payee/date/reference/status inspection, every finalized slip, zero-variance/evidence-ready confirmation, and idempotent posting.
 - Added a localized responsive intermediary directory and profile workspace with canonical-name/alias search, profile creation, exact managed-loan portfolio totals, Loan Detail links, historical assignments, masked payment destinations, unreconciled-group warnings, and retained collection/remittance access.
