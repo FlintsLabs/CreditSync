@@ -1164,6 +1164,10 @@ export const loanRestructures = pgTable("loan_restructures", {
     netFees: numeric("net_fees").notNull(),
     netPenalty: numeric("net_penalty").notNull(),
     externalSettlementCredits: numeric("external_settlement_credits").default("0").notNull(),
+    externalCreditPrincipal: numeric("external_credit_principal").default("0").notNull(),
+    externalCreditInterest: numeric("external_credit_interest").default("0").notNull(),
+    externalCreditFees: numeric("external_credit_fees").default("0").notNull(),
+    externalCreditPenalty: numeric("external_credit_penalty").default("0").notNull(),
     additionalPrincipal: numeric("additional_principal").default("0").notNull(),
     cashDirection: text("cash_direction").notNull(),
     cashAmount: numeric("cash_amount").default("0").notNull(),
@@ -1221,10 +1225,12 @@ export const loanRestructures = pgTable("loan_restructures", {
         ${table.netPrincipal} >= 0 AND ${table.netInterest} >= 0 AND ${table.netFees} >= 0 AND ${table.netPenalty} >= 0 AND
         ${table.externalSettlementCredits} >= 0 AND ${table.additionalPrincipal} >= 0 AND ${table.cashAmount} >= 0 AND
         ${table.waivedInterest} <= ${table.grossInterest} AND ${table.waivedFees} <= ${table.grossFees} AND ${table.waivedPenalty} <= ${table.grossPenalty} AND
-        ${table.netPrincipal} = ${table.grossPrincipal} AND
-        ${table.netInterest} = ${table.grossInterest} - ${table.waivedInterest} AND
-        ${table.netFees} = ${table.grossFees} - ${table.waivedFees} AND
-        ${table.netPenalty} = ${table.grossPenalty} - ${table.waivedPenalty}
+        ${table.externalCreditPrincipal} >= 0 AND ${table.externalCreditInterest} >= 0 AND ${table.externalCreditFees} >= 0 AND ${table.externalCreditPenalty} >= 0 AND
+        ${table.externalSettlementCredits} = ${table.externalCreditPrincipal} + ${table.externalCreditInterest} + ${table.externalCreditFees} + ${table.externalCreditPenalty} AND
+        ${table.netPrincipal} = ${table.grossPrincipal} - ${table.externalCreditPrincipal} AND
+        ${table.netInterest} = ${table.grossInterest} - ${table.waivedInterest} - ${table.externalCreditInterest} AND
+        ${table.netFees} = ${table.grossFees} - ${table.waivedFees} - ${table.externalCreditFees} AND
+        ${table.netPenalty} = ${table.grossPenalty} - ${table.waivedPenalty} - ${table.externalCreditPenalty}
     `),
     check("loan_restructures_amount_scale_check", sql`
         scale(${table.grossPrincipal}) <= 2 AND scale(${table.grossInterest}) <= 2 AND
@@ -1232,7 +1238,8 @@ export const loanRestructures = pgTable("loan_restructures", {
         scale(${table.waivedInterest}) <= 2 AND scale(${table.waivedFees}) <= 2 AND scale(${table.waivedPenalty}) <= 2 AND
         scale(${table.netPrincipal}) <= 2 AND scale(${table.netInterest}) <= 2 AND
         scale(${table.netFees}) <= 2 AND scale(${table.netPenalty}) <= 2 AND
-        scale(${table.externalSettlementCredits}) <= 2 AND scale(${table.additionalPrincipal}) <= 2 AND scale(${table.cashAmount}) <= 2
+        scale(${table.externalSettlementCredits}) <= 2 AND scale(${table.externalCreditPrincipal}) <= 2 AND scale(${table.externalCreditInterest}) <= 2 AND
+        scale(${table.externalCreditFees}) <= 2 AND scale(${table.externalCreditPenalty}) <= 2 AND scale(${table.additionalPrincipal}) <= 2 AND scale(${table.cashAmount}) <= 2
     `),
     check("loan_restructures_request_key_hash_check", sql`
         (${table.executeIdempotencyKey} IS NULL) = (${table.executeRequestHash} IS NULL) AND
@@ -1337,7 +1344,7 @@ export const loanWaiverPreviews = pgTable("loan_waiver_previews", {
 }, (table) => [
     uniqueIndex("loan_waiver_previews_tenant_id_id_unique").on(table.tenantId, table.id),
     index("loan_waiver_previews_tenant_loan_status_idx").on(table.tenantId, table.loanId, table.status),
-    check("loan_waiver_previews_kind_check", sql`${table.componentKind} IN ('interest', 'fee', 'penalty')`),
+    check("loan_waiver_previews_kind_check", sql`${table.componentKind} IN ('interest', 'fee', 'penalty', 'new_interest')`),
     check("loan_waiver_previews_amount_check", sql`${table.amount} > 0 AND scale(${table.amount}) <= 2`),
     check("loan_waiver_previews_status_check", sql`${table.status} IN ('preview', 'consumed', 'expired')`),
     check("loan_waiver_previews_lifecycle_check", sql`
@@ -1386,7 +1393,7 @@ export const loanRestructureWaivers = pgTable("loan_restructure_waivers", {
         .where(sql`${table.reversedWaiverId} IS NOT NULL`),
     index("loan_restructure_waivers_tenant_loan_idx").on(table.tenantId, table.loanId),
     check("loan_restructure_waivers_status_check", sql`${table.status} IN ('executed', 'reversed')`),
-    check("loan_restructure_waivers_kind_check", sql`${table.componentKind} IN ('interest', 'fee', 'penalty')`),
+    check("loan_restructure_waivers_kind_check", sql`${table.componentKind} IN ('interest', 'fee', 'penalty', 'new_interest')`),
     check("loan_restructure_waivers_amount_check", sql`${table.amount} > 0 AND scale(${table.amount}) <= 2`),
     check("loan_restructure_waivers_actor_source_check", sql`${table.actorSource} IN ('web', 'mcp', 'system')`),
     check("loan_restructure_waivers_reversal_check", sql`

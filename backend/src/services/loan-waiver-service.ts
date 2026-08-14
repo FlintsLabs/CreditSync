@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, gt, sql } from "drizzle-orm";
 import { db } from "../db";
-import { loanOpeningBalanceComponents, loanRestructures, loanRestructureWaivers, loanWaiverPreviews, loans } from "../db/schema";
+import { loanOpeningBalanceComponents, loanRestructures, loanRestructureWaivers, loanWaiverPreviews, loans, transactions, users } from "../db/schema";
+import { canAccessTenantWideData } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
 import { parseMoney, serializeMoney } from "../lib/money";
 import type { CommandContext } from "./command-context";
@@ -27,31 +28,39 @@ function waiverMoney(value: string) {
         return amount;
     } catch { throw new DomainError("INVALID_WAIVER_AMOUNT", "Waiver amount must be a positive two-decimal string", 400); }
 }
-function componentKind(component: string) {
-    if (!(["interest", "fee", "penalty"] as const).includes(component as never)) throw new DomainError("WAIVER_COMPONENT_NOT_ALLOWED", "Only interest, fee, and penalty may be waived", 400);
-    return component as "interest" | "fee" | "penalty";
+type WaiverComponent = "interest" | "fee" | "penalty" | "new_interest";
+function componentKind(component: string, allowInternalNewInterest = false) {
+    const allowed = allowInternalNewInterest ? ["interest", "fee", "penalty", "new_interest"] : ["interest", "fee", "penalty"];
+    if (!allowed.includes(component)) throw new DomainError("WAIVER_COMPONENT_NOT_ALLOWED", "Only interest, fee, and penalty may be waived", 400);
+    return component as WaiverComponent;
 }
 async function accessibleReplacement(ctx: CommandContext, loanPublicId: string, executor: Executor = db) {
     if (!uuidPattern.test(loanPublicId)) throw new DomainError("INVALID_PUBLIC_ID", "loanPublicId must be a UUID", 400);
     const loan = await executor.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.publicId, loanPublicId)) });
-    if (!loan || (ctx.actorUserId !== null && loan.ownerUserId !== ctx.actorUserId)) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+    const actor = ctx.actorUserId === null ? null : await executor.query.users.findFirst({ where: and(eq(users.tenantId, ctx.tenantId), eq(users.id, ctx.actorUserId)) });
+    if (ctx.actorUserId !== null && !actor) throw new DomainError("ACTOR_NOT_FOUND", "Actor is not available in this tenant", 403);
+    if (!loan || (actor && !canAccessTenantWideData({ role: actor.role ?? "viewer" }) && loan.ownerUserId !== actor.id)) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
     const restructure = await executor.query.loanRestructures.findFirst({ where: and(eq(loanRestructures.tenantId, ctx.tenantId), eq(loanRestructures.newLoanId, loan.id), eq(loanRestructures.status, "executed")) });
     if (!restructure) throw new DomainError("LOAN_NOT_RESTRUCTURED", "Loan has no executed restructure opening balance", 409);
     return { loan, restructure };
 }
-async function componentState(executor: Executor, ctx: CommandContext, loanId: number, restructureId: number, component: "interest" | "fee" | "penalty") {
-    const kinds = component === "interest" ? ["carried_interest", "new_contract_interest"] : component === "fee" ? ["carried_fee"] : ["carried_penalty"];
+async function componentState(executor: Executor, ctx: CommandContext, loanId: number, restructureId: number, component: WaiverComponent) {
+    const kinds = component === "interest" ? ["carried_interest", "new_contract_interest"] : component === "new_interest" ? ["new_contract_interest"] : component === "fee" ? ["carried_fee"] : ["carried_penalty"];
     const opening = await executor.select().from(loanOpeningBalanceComponents).where(and(eq(loanOpeningBalanceComponents.tenantId, ctx.tenantId), eq(loanOpeningBalanceComponents.loanId, loanId), eq(loanOpeningBalanceComponents.restructureId, restructureId))) as Array<typeof loanOpeningBalanceComponents.$inferSelect>;
     const waivers = await executor.select().from(loanRestructureWaivers).where(and(eq(loanRestructureWaivers.tenantId, ctx.tenantId), eq(loanRestructureWaivers.loanId, loanId), eq(loanRestructureWaivers.restructureId, restructureId), eq(loanRestructureWaivers.componentKind, component))) as WaiverRow[];
+    const posted = await executor.select().from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.loanId, loanId))).orderBy(transactions.id) as Array<typeof transactions.$inferSelect>;
+    const reversed = new Set(posted.filter(row => row.entryType === "reversal" && row.reversedTransactionId !== null).map(row => row.reversedTransactionId!));
+    const active = posted.filter(row => row.entryType === "repayment" && !reversed.has(row.id));
+    const paid = component === "new_interest" ? new Decimal(0) : active.reduce((sum, row) => sum.plus(component === "interest" ? row.interestComponent : component === "fee" ? row.feeComponent : row.penaltyComponent), new Decimal(0));
     const openingAmount = opening.filter(row => kinds.includes(row.componentKind)).reduce((sum, row) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
     const waived = waivers.reduce((sum, row) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
-    const available = Decimal.max(0, openingAmount.minus(waived));
-    const version = hash({ loanId, restructureId, component, opening: opening.map(row => [row.publicId, row.componentKind, row.amount, row.status]), waivers: waivers.map(row => [row.publicId, row.amount, row.status, row.reversedWaiverId]) });
-    return { openingAmount, waived, available, version };
+    const available = Decimal.max(0, openingAmount.minus(waived).minus(paid));
+    const version = hash({ loanId, restructureId, component, opening: opening.map(row => [row.publicId, row.componentKind, row.amount, row.status]), waivers: waivers.map(row => [row.publicId, row.amount, row.status, row.reversedWaiverId]), payments: posted.map(row => [row.publicId, row.entryType, row.reversedTransactionId, row.interestComponent, row.feeComponent, row.penaltyComponent]) });
+    return { openingAmount, waived, paid, available, version };
 }
 
-export async function previewLoanWaiver(ctx: CommandContext, loanPublicId: string, input: { component: "interest" | "fee" | "penalty"; amount: string; reason: string }) {
-    const component = componentKind(input.component);
+export async function previewLoanWaiver(ctx: CommandContext, loanPublicId: string, input: { component: "interest" | "fee" | "penalty" | "new_interest"; amount: string; reason: string }, options: { allowInternalNewInterest?: boolean } = {}) {
+    const component = componentKind(input.component, options.allowInternalNewInterest);
     const amount = waiverMoney(input.amount);
     const reason = requireText(input.reason, "WAIVER_REASON_REQUIRED", "A waiver reason is required");
     const { loan, restructure } = await accessibleReplacement(ctx, loanPublicId);
@@ -91,7 +100,7 @@ export async function executeLoanWaiver(ctx: CommandContext, previewPublicId: st
         const lockedPreview = await tx.query.loanWaiverPreviews.findFirst({ where: and(eq(loanWaiverPreviews.tenantId, ctx.tenantId), eq(loanWaiverPreviews.id, preview.id)) });
         if (!lockedPreview || lockedPreview.status !== "preview") throw new DomainError("STALE_WAIVER_PREVIEW", "Waiver preview is no longer executable", 409);
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id=${ctx.tenantId} AND id=${preview.loanId} FOR UPDATE`);
-        const component = componentKind(preview.componentKind);
+        const component = componentKind(preview.componentKind, true);
         const state = await componentState(tx, ctx, preview.loanId, preview.restructureId, component);
         if (lockedPreview.expiresAt.getTime() <= Date.now() || lockedPreview.previewHash !== input.previewHash || lockedPreview.balanceVersion !== input.expectedBalanceVersion || state.version !== lockedPreview.balanceVersion || reason !== lockedPreview.reason) {
             throw new DomainError("STALE_WAIVER_PREVIEW", "Waiver preview expired or component balances changed", 409);
@@ -121,6 +130,8 @@ export async function reverseLoanWaiver(ctx: CommandContext, waiverPublicId: str
         const original = await tx.query.loanRestructureWaivers.findFirst({ where: and(eq(loanRestructureWaivers.tenantId, ctx.tenantId), eq(loanRestructureWaivers.publicId, waiverPublicId)) });
         if (!original || original.status !== "executed") throw new DomainError("WAIVER_NOT_REVERSIBLE", "Only an active executed waiver can be reversed", 409);
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id=${ctx.tenantId} AND id=${original.loanId} FOR UPDATE`);
+        const downstreamPayment = await tx.query.transactions.findFirst({ where: and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.loanId, original.loanId), gt(transactions.createdAt, original.executedAt)) });
+        if (downstreamPayment) throw new DomainError("WAIVER_REVERSAL_BLOCKED", "Payments posted after this waiver must be reversed first", 409);
         const later = await tx.query.loanRestructureWaivers.findFirst({ where: and(eq(loanRestructureWaivers.tenantId, ctx.tenantId), eq(loanRestructureWaivers.loanId, original.loanId), eq(loanRestructureWaivers.componentKind, original.componentKind), sql`${loanRestructureWaivers.id} > ${original.id}`) });
         if (later) throw new DomainError("WAIVER_REVERSAL_BLOCKED", "Later waiver activity must be reversed first", 409);
         const audit = await createAuditLog(tx, { tenantId: ctx.tenantId, actorUserId: ctx.actorUserId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, entityType: "loan_restructure_waiver", entityId: waiverPublicId, action: "reversed", payload: { reason, originalAmount: serializeMoney(original.amount) } });

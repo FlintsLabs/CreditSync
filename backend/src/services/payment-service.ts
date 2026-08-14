@@ -39,6 +39,7 @@ import {
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import { normalizeBorrowerText } from "./borrower-service";
+import { executeLoanWaiver, previewLoanWaiver } from "./loan-waiver-service";
 import {
     accrueFloatingInterestThrough,
     floatingPaymentObligations,
@@ -977,8 +978,10 @@ async function expandExplicit(
         let remaining = amount;
         for (const schedule of schedules) {
             if (remaining.isZero()) break;
+            const restructureBuckets = await restructuredPaymentBuckets(executor, ctx.tenantId, loan.id, schedule, loan, intake.receivedAt);
+            const restructuredAvailable = restructureBuckets ? new Decimal(restructureBuckets.penalty).plus(restructureBuckets.fee).plus(restructureBuckets.carriedInterest).plus(restructureBuckets.dueNewInterest).plus(restructureBuckets.principal) : null;
             const available = availableBySchedule.get(schedule.id)
-                ?? new Decimal(schedule.remainingDue).plus(schedulePenaltyDue(loan, schedule, intake.receivedAt));
+                ?? restructuredAvailable ?? new Decimal(schedule.remainingDue).plus(schedulePenaltyDue(loan, schedule, intake.receivedAt));
             if (available.lte(0)) continue;
             const allocated = Decimal.min(remaining, available).toDecimalPlaces(2);
             expanded.push({
@@ -1159,6 +1162,28 @@ export function calculateEarlySettlementUnearnedInterest(input: { contractualNew
     };
 }
 
+export async function previewEarlyLoanSettlement(ctx: CommandContext, loanPublicId: string, input: { settlementDate: string }) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.settlementDate)) throw new DomainError("INVALID_SETTLEMENT_DATE", "settlementDate must be YYYY-MM-DD", 400);
+    const loan = await db.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.publicId, loanPublicId)) });
+    if (!loan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+    const restructure = await db.query.loanRestructures.findFirst({ where: and(eq(loanRestructures.tenantId, ctx.tenantId), eq(loanRestructures.newLoanId, loan.id), eq(loanRestructures.status, "executed")) });
+    if (!restructure) throw new DomainError("LOAN_NOT_RESTRUCTURED", "Early settlement waiver requires a restructured replacement loan", 409);
+    const [opening, schedules] = await Promise.all([
+        db.select().from(loanOpeningBalanceComponents).where(and(eq(loanOpeningBalanceComponents.tenantId, ctx.tenantId), eq(loanOpeningBalanceComponents.loanId, loan.id), eq(loanOpeningBalanceComponents.restructureId, restructure.id), eq(loanOpeningBalanceComponents.componentKind, "new_contract_interest"))),
+        db.select().from(loanSchedules).where(and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.loanId, loan.id))).orderBy(loanSchedules.installmentNo),
+    ]);
+    const contractual = opening.reduce((sum, row) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
+    const earned = schedules.filter(row => row.dueDate <= input.settlementDate).reduce((sum, row) => sum.plus(row.scheduledInterest), new Decimal(0));
+    const calculation = calculateEarlySettlementUnearnedInterest({ contractualNewInterest: serializeMoney(contractual), earnedNewInterest: serializeMoney(Decimal.min(contractual, earned)) });
+    if (new Decimal(calculation.proposedWaiver).isZero()) throw new DomainError("NO_UNEARNED_INTEREST", "No unearned new-contract interest is available to waive", 409);
+    const waiver = await previewLoanWaiver(ctx, loanPublicId, { component: "new_interest", amount: calculation.proposedWaiver, reason: calculation.reason }, { allowInternalNewInterest: true });
+    return { ...waiver, settlementDate: input.settlementDate, ...calculation };
+}
+
+export async function executeEarlyLoanSettlement(ctx: CommandContext, previewPublicId: string, input: { confirmed: boolean; previewHash: string; expectedBalanceVersion: string }) {
+    return executeLoanWaiver(ctx, previewPublicId, { ...input, reason: "early_settlement_unearned_interest" });
+}
+
 function paymentBusinessDate(value: Date) {
     const parts = new Intl.DateTimeFormat("en-CA", {
         timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit",
@@ -1221,10 +1246,13 @@ async function restructuredPaymentBuckets(
     const carriedPenalty = Decimal.max(0, netOpening("carried_penalty").minus(netWaived("penalty")).minus(paidPenalty));
     const carriedFee = Decimal.max(0, netOpening("carried_fee").minus(netWaived("fee")).minus(paidFee));
     const carriedInterestGross = netOpening("carried_interest");
-    const carriedInterestAfterWaiver = Decimal.max(0, carriedInterestGross.minus(Decimal.min(carriedInterestGross, netWaived("interest"))));
+    const totalInterestWaiver = netWaived("interest");
+    const carriedWaiver = Decimal.min(carriedInterestGross, totalInterestWaiver);
+    const newInterestWaiver = Decimal.max(0, totalInterestWaiver.minus(carriedWaiver)).plus(netWaived("new_interest"));
+    const carriedInterestAfterWaiver = Decimal.max(0, carriedInterestGross.minus(carriedWaiver));
     const carriedInterest = Decimal.max(0, carriedInterestAfterWaiver.minus(paidInterest));
     const paidNewInterest = Decimal.max(0, paidInterest.minus(carriedInterestAfterWaiver));
-    const dueNewInterest = Decimal.max(0, new Decimal(schedule.scheduledInterest).minus(paidNewInterest));
+    const dueNewInterest = Decimal.max(0, new Decimal(schedule.scheduledInterest).minus(newInterestWaiver).minus(paidNewInterest));
     const scheduleAlreadyPaid = new Decimal(schedule.paidTotal);
     const scheduleFeePaid = Decimal.min(scheduleAlreadyPaid, schedule.scheduledFee);
     const scheduleInterestPaid = Decimal.min(Decimal.max(0, scheduleAlreadyPaid.minus(scheduleFeePaid)), schedule.scheduledInterest);
@@ -1526,7 +1554,10 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
             const schedule = await tx.query.loanSchedules.findFirst({ where: and(eq(loanSchedules.id, allocation.scheduleId), eq(loanSchedules.tenantId, ctx.tenantId)) });
             if (!schedule || !loan || schedule.loanId !== loan.id) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Payment target no longer exists", 409);
             const restructureBuckets = await restructuredPaymentBuckets(tx, ctx.tenantId, loan.id, schedule, loan, intake.receivedAt);
-            const restructured = restructureBuckets ? allocateRestructuredPayment(allocation.amount, restructureBuckets) : null;
+            const restructured = restructureBuckets ? allocateRestructuredPayment(allocation.amount, {
+                penalty: restructureBuckets.penalty, fee: restructureBuckets.fee, carriedInterest: restructureBuckets.carriedInterest,
+                dueNewInterest: restructureBuckets.dueNewInterest, principal: restructureBuckets.principal,
+            }) : null;
             if (restructured && new Decimal(restructured.unallocated).gt(0)) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Allocation exceeds the latest restructured-loan obligation", 409);
             const components = restructured ? {
                 penalty: new Decimal(restructured.penalty), fee: new Decimal(restructured.fee),

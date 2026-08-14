@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { auditLogs, borrowers, loanOpeningBalanceComponents, loanRestructures, loanRestructureWaivers, loans, users } from "../db/schema";
+import { auditLogs, borrowers, loanOpeningBalanceComponents, loanRestructures, loanRestructureWaivers, loanWaiverPreviews, loans, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import { executeLoanWaiver, previewLoanWaiver, reverseLoanWaiver } from "./loan-waiver-service";
+import { executeEarlyLoanSettlement, previewEarlyLoanSettlement } from "./payment-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
 async function reset() { await db.execute(sql`TRUNCATE TABLE audit_logs, loan_restructure_waivers, loan_waiver_previews, loan_opening_balance_components, loan_restructures, loans, borrowers, users RESTART IDENTITY CASCADE`); }
@@ -45,5 +46,38 @@ describe("later restructure waiver service", () => {
         await expect(previewLoanWaiver(ctx(), newLoan.publicId, { component: "principal" as never, amount: "1.00", reason: "no" })).rejects.toMatchObject({ code: "WAIVER_COMPONENT_NOT_ALLOWED" });
         await expect(previewLoanWaiver(ctx(), newLoan.publicId, { component: "fee", amount: "51.00", reason: "too much" })).rejects.toMatchObject({ code: "WAIVER_EXCEEDS_COMPONENT" });
         await expect(previewLoanWaiver(ctx(), newLoan.publicId, { component: "penalty", amount: "1.00", reason: "" })).rejects.toMatchObject({ code: "WAIVER_REASON_REQUIRED" });
+    });
+
+    integrationTest("subtracts posted payments and stales a preview when payment state changes", async () => {
+        const { newLoan, ctx } = await seed();
+        const preview = await previewLoanWaiver(ctx(), newLoan.publicId, { component: "interest", amount: "400.00", reason: "help" });
+        await db.insert(transactions).values({ tenantId: ctx().tenantId, ownerUserId: ctx().actorUserId, loanId: newLoan.id, amount: "200.00", principalComponent: "0.00", interestComponent: "200.00", feeComponent: "0.00", penaltyComponent: "0.00", entryType: "repayment", idempotencyKey: crypto.randomUUID(), recordedByUserId: ctx().actorUserId });
+        await expect(executeLoanWaiver(ctx("stale-after-payment"), preview.publicId, { confirmed: true, previewHash: preview.previewHash, expectedBalanceVersion: preview.balanceVersion, reason: "help" })).rejects.toMatchObject({ code: "STALE_WAIVER_PREVIEW" });
+        await expect(previewLoanWaiver(ctx(), newLoan.publicId, { component: "interest", amount: "301.00", reason: "too much" })).rejects.toMatchObject({ code: "WAIVER_EXCEEDS_COMPONENT" });
+    });
+
+    integrationTest("persists and executes an early-settlement waiver against unearned new interest only", async () => {
+        const { newLoan, restructure, ctx } = await seed();
+        await db.insert(loanOpeningBalanceComponents).values({ tenantId: ctx().tenantId, restructureId: restructure.id, loanId: newLoan.id, componentKind: "new_contract_interest", amount: "200.00", sourceType: "loan_restructure", sourcePublicId: restructure.publicId, createdByUserId: ctx().actorUserId });
+        const preview = await previewEarlyLoanSettlement(ctx(), newLoan.publicId, { settlementDate: "2026-08-10" });
+        expect(preview).toMatchObject({ earnedNewInterest: "0.00", unearnedNewInterest: "200.00", proposedWaiver: "200.00", reason: "early_settlement_unearned_interest" });
+        const executed = await executeEarlyLoanSettlement(ctx("early-close"), preview.publicId, { confirmed: true, previewHash: preview.previewHash, expectedBalanceVersion: preview.balanceVersion });
+        expect(executed).toMatchObject({ status: "executed", component: "new_interest", amount: "200.00", reason: "early_settlement_unearned_interest" });
+    });
+
+    integrationTest("rejects expired persisted waiver previews", async () => {
+        const { newLoan, ctx } = await seed();
+        const preview = await previewLoanWaiver(ctx(), newLoan.publicId, { component: "fee", amount: "1.00", reason: "help" });
+        await db.update(loanWaiverPreviews).set({ expiresAt: new Date(Date.now() - 1) }).where(eq(loanWaiverPreviews.publicId, preview.publicId));
+        await expect(executeLoanWaiver(ctx("expired-waiver"), preview.publicId, { confirmed: true, previewHash: preview.previewHash, expectedBalanceVersion: preview.balanceVersion, reason: "help" })).rejects.toMatchObject({ code: "STALE_WAIVER_PREVIEW" });
+    });
+
+    integrationTest("honors tenant-wide manager access and hides another owner's loan from collectors", async () => {
+        const { newLoan, ctx } = await seed();
+        const manager = await db.insert(users).values({ tenantId: ctx().tenantId, email: `${crypto.randomUUID()}@example.test`, role: "manager" }).returning().then(rows => rows[0]!);
+        const collector = await db.insert(users).values({ tenantId: ctx().tenantId, email: `${crypto.randomUUID()}@example.test`, role: "collector" }).returning().then(rows => rows[0]!);
+        const asActor = (id: number): CommandContext => ({ ...ctx(), actorUserId: id });
+        await expect(previewLoanWaiver(asActor(manager.id), newLoan.publicId, { component: "fee", amount: "1.00", reason: "manager approval" })).resolves.toMatchObject({ availableAmount: "50.00" });
+        await expect(previewLoanWaiver(asActor(collector.id), newLoan.publicId, { component: "fee", amount: "1.00", reason: "not assigned" })).rejects.toMatchObject({ code: "LOAN_NOT_FOUND" });
     });
 });

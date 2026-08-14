@@ -225,6 +225,20 @@
       "when": 1786666687343,
       "tag": "0031_loan_waiver_previews",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1786667618275,
+      "tag": "0032_restructure_external_credit_allocation",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1786667764416,
+      "tag": "0033_early_settlement_waiver_scope",
+      "breakpoints": true
     }
   ]
 }
