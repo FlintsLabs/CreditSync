@@ -58,7 +58,7 @@ const INTERMEDIATED_LOAN_DISBURSEMENT = "0198c481-3e2b-7000-8000-000000000098";
 const INTERMEDIATED_ADVANCE_PROJECTION = "0198c481-3e2b-7000-8000-000000000099";
 
 export type ToolCall = { name: McpToolName; arguments: Record<string, unknown> };
-type ScriptedError = { code: string; message: string; details?: Record<string, unknown> };
+type ScriptedError = { code: string; message: string; retryable: boolean; reviewRequired: boolean; details: Record<string, unknown> };
 type ScriptStep = ToolCall & { result?: Record<string, unknown>; error?: ScriptedError };
 export type HarnessUploadEffect = {
     name: "evidence.put" | "disbursement-evidence.put" | "intermediated-evidence.put";
@@ -71,6 +71,7 @@ export type HarnessUploadEffect = {
 export type HarnessSchemaValidators = {
     validateCall(name: McpToolName, args: Record<string, unknown>): void;
     validateOutput(name: McpToolName, data: Record<string, unknown>): void;
+    validateError?(name: McpToolName, error: ScriptedError): void;
 };
 export type HarnessEvent =
     | { type: "tool"; name: McpToolName }
@@ -179,7 +180,10 @@ class ScriptedMcp {
         }
         this.calls.push({ name, arguments: args });
         this.events.push({ type: "tool", name });
-        if (step.error) throw new ScriptedMcpError(step.error.code, step.error.message, step.error.details ?? {});
+        if (step.error) {
+            this.validators?.validateError?.(name, step.error);
+            throw new ScriptedMcpError(step.error.code, step.error.message, step.error.details);
+        }
         const result = step.result ?? {};
         this.validators?.validateOutput(name, result);
         return result;
@@ -359,12 +363,12 @@ const SAME_TASK_RENEWAL_CONTEXT: SameTaskRenewalExecutionContext = {
 };
 
 const RENEWAL_PORTFOLIO = {
-    borrower: { publicId: BORROWER_A },
+    borrower: { publicId: BORROWER_A, name: "fixture" },
     aliases: [],
     loans: [
         { publicId: LOAN_A, principal: "2500.00", interestRate: "14.00", repaymentType: "daily", status: "renewed", startDate: "2026-07-01" },
-        { publicId: LOAN_B, principal: "2500.00", interestRate: "14.00", repaymentType: "daily", status: "active", startDate: "2026-08-11" },
-    ],
+        { publicId: LOAN_B, principal: "2500.00", interestRate: "14.00", repaymentType: "daily", status: "active", startDate: "2026-08-11" }
+    ]
 };
 
 async function loanActivation(mcp: ScriptedMcp) {
@@ -585,10 +589,12 @@ async function reverseRenewal(
                 outcome: "stopped",
                 stopReason: "renewal-reverse-blocked",
                 error: {
-                    code: error.code,
-                    message: error.message,
-                    details: { downstreamEntryCount },
-                },
+    code: error.code,
+    message: error.message,
+    details: { downstreamEntryCount },
+    retryable: false,
+    reviewRequired: false
+},
                 renewalContext,
                 inspectedLoanStates,
             } as const;
@@ -645,24 +651,24 @@ function intermediatedIdentityScript(options: { ambiguous?: boolean; missingAssi
             name: "borrower.portfolio",
             arguments: { borrowerPublicId: BORROWER_A },
             result: {
-                borrower: { publicId: BORROWER_A, name: "Exact borrower" },
-                aliases: [],
-                loans: [{
-                    publicId: LOAN_A,
-                    principal: "5000.00",
-                    interestRate: "0.00",
-                    repaymentType: "floating",
-                    status: "active",
-                    startDate: "2026-08-01",
-                }],
-            },
+    borrower: { publicId: BORROWER_A, name: "Exact borrower" },
+    aliases: [],
+    loans: [{
+            publicId: LOAN_A,
+            principal: "5000.00",
+            interestRate: "0.00",
+            repaymentType: "floating",
+            status: "active",
+            startDate: "2026-08-01"
+        }]
+},
         },
         {
             name: "intermediary.search",
             arguments: { query: intermediarySearchQuery },
             result: options.ambiguous
-                ? { items: [intermediaryBaseResult(INTERMEDIARY, []), intermediaryBaseResult(INTERMEDIARY_B, [])] }
-                : { items: [intermediaryBaseResult(INTERMEDIARY, ["MCP transfer agent"])] },
+    ? { items: [intermediaryBaseResult(INTERMEDIARY, []), intermediaryBaseResult(INTERMEDIARY_B, [])] }
+    : { items: [intermediaryBaseResult(INTERMEDIARY, ["MCP transfer agent"])] },
         },
     ];
     if (options.ambiguous) return script;
@@ -670,21 +676,21 @@ function intermediatedIdentityScript(options: { ambiguous?: boolean; missingAssi
         name: "intermediary.profile.get",
         arguments: { intermediaryPublicId: INTERMEDIARY },
         result: {
-            ...intermediaryBaseResult(INTERMEDIARY, ["MCP transfer agent"]),
-            bankAccounts: [],
-            assignments: options.missingAssignment ? [] : [{
-                publicId: INTERMEDIARY_ASSIGNMENT,
-                loanPublicId: LOAN_A,
-                intermediaryPublicId: INTERMEDIARY,
-                role: "disbursement",
-                status: "active",
-                effectiveFrom: "2026-08-01T00:00:00.000Z",
-                effectiveTo: null,
-                note: null,
-                createdAt: "2026-08-01T00:00:00.000Z",
-                updatedAt: "2026-08-01T00:00:00.000Z",
-            }],
-        },
+    ...intermediaryBaseResult(INTERMEDIARY, ["MCP transfer agent"]),
+    bankAccounts: [],
+    assignments: options.missingAssignment ? [] : [{
+            publicId: INTERMEDIARY_ASSIGNMENT,
+            loanPublicId: LOAN_A,
+            intermediaryPublicId: INTERMEDIARY,
+            role: "disbursement",
+            status: "active",
+            effectiveFrom: "2026-08-01T00:00:00.000Z",
+            effectiveTo: null,
+            note: null,
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z",
+        }],
+},
     });
     return script;
 }
@@ -722,10 +728,10 @@ function intermediatedGroupCreateStep(retainedBalance = "0.00"): ScriptStep {
         name: "intermediary.disbursement.create",
         arguments: { ...intermediatedGroupArgs, retainedBalance },
         result: {
-            ...intermediatedGroupResult(retainedBalance),
-            auditPublicId: INTERMEDIATED_AUDIT,
-            correlationId: INTERMEDIATED_CORRELATION,
-        },
+    ...intermediatedGroupResult(retainedBalance),
+    auditPublicId: INTERMEDIATED_AUDIT,
+    correlationId: INTERMEDIATED_CORRELATION,
+},
     };
 }
 
@@ -794,27 +800,27 @@ function intermediatedEventScript(index: number, options: { missingEvidence?: bo
     if (options.duplicate) return [{
         name: "intermediary.disbursement.event.create",
         arguments: intermediatedEventArgs(index),
-        error: { code: "DUPLICATE_BANK_REFERENCE", message: "Bank reference is already attached to another transfer event" },
+        error: { code: "DUPLICATE_BANK_REFERENCE", message: "Bank reference is already attached to another transfer event", retryable: false, reviewRequired: false, details: {} },
     }];
     return [
         {
             name: "intermediary.disbursement.event.create",
             arguments: intermediatedEventArgs(index),
             result: {
-                ...intermediatedEventResult(index),
-                auditPublicId: INTERMEDIATED_AUDIT,
-                correlationId: INTERMEDIATED_CORRELATION,
-            },
+    ...intermediatedEventResult(index),
+    auditPublicId: INTERMEDIATED_AUDIT,
+    correlationId: INTERMEDIATED_CORRELATION,
+},
         },
         {
             name: "intermediary.disbursement.evidence.prepare",
             arguments: intermediatedEvidenceArgs(index),
             result: options.missingEvidence ? intermediatedEvidenceResult(index, "pending") : {
-                ...intermediatedEvidenceResult(index, "pending"),
-                uploadUrl: `https://storage.example/intermediated-upload-${index + 1}`,
-                requiredHeaders: { "content-type": "image/png" },
-                expiresAt: "2099-01-01T00:00:00.000Z",
-            },
+    ...intermediatedEvidenceResult(index, "pending"),
+    uploadUrl: `https://storage.example/intermediated-upload-${index + 1}`,
+    requiredHeaders: { "content-type": "image/png" },
+    expiresAt: "2099-01-01T00:00:00.000Z",
+},
         },
         ...(options.missingEvidence ? [] : [{
             name: "intermediary.disbursement.evidence.finalize" as const,
@@ -902,26 +908,26 @@ function intermediatedReadyMetadataMismatchScript(): ScriptStep[] {
 
 function intermediatedPreviewResult(publicId = INTERMEDIATED_PREVIEW) {
     return {
-        publicId,
-        groupPublicId: INTERMEDIATED_GROUP,
-        version: 1,
-        status: "ready",
-        expectedFunding: "5000.00",
-        actualFunding: "5000.00",
-        expectedBorrowerPayout: "4400.00",
-        actualBorrowerPayout: "4400.00",
-        expectedAdvanceInterestReturn: "600.00",
-        actualAdvanceInterestReturn: "600.00",
-        retainedBalance: "0.00",
-        variance: "0.00",
-        evidenceReady: true,
-        warnings: [],
-        previewHash: "f".repeat(64),
-        expiresAt: "2099-01-01T00:15:00.000Z",
-        createdAt: "2026-08-13T05:00:00.000Z",
-        auditPublicId: INTERMEDIATED_AUDIT,
-        correlationId: INTERMEDIATED_CORRELATION,
-    };
+    publicId,
+    groupPublicId: INTERMEDIATED_GROUP,
+    version: 1,
+    status: "ready",
+    expectedFunding: "5000.00",
+    actualFunding: "5000.00",
+    expectedBorrowerPayout: "4400.00",
+    actualBorrowerPayout: "4400.00",
+    expectedAdvanceInterestReturn: "600.00",
+    actualAdvanceInterestReturn: "600.00",
+    retainedBalance: "0.00",
+    variance: "0.00",
+    evidenceReady: true,
+    warnings: [],
+    previewHash: "f".repeat(64),
+    expiresAt: "2099-01-01T00:15:00.000Z",
+    createdAt: "2026-08-13T05:00:00.000Z",
+    auditPublicId: INTERMEDIATED_AUDIT,
+    correlationId: INTERMEDIATED_CORRELATION
+};
 }
 
 function intermediatedPreviewStep(publicId = INTERMEDIATED_PREVIEW): ScriptStep {
@@ -1151,59 +1157,59 @@ type Scenario = {
 const SCENARIOS: Record<string, Scenario> = {
     "borrower-create-alias": {
         script: [
-            { name: "borrower.search", arguments: { query: "นก (Nok)" }, result: { resolution: "none" } },
-            { name: "borrower.create", arguments: { name: "กนกพิชญ์ เลิศพรหมมกุล", phone: "0812345678" }, result: { publicId: BORROWER_A } },
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
-            { name: "borrower.alias", arguments: { action: "add", borrowerPublicId: BORROWER_A, alias: "นก", source: "manual" }, result: { publicId: ALIAS } },
-            { name: "borrower.alias", arguments: { action: "confirm", aliasPublicId: ALIAS } },
+            { name: "borrower.search", arguments: { query: "นก (Nok)" }, result: { resolution: "none", candidates: [] } },
+            { name: "borrower.create", arguments: { name: "กนกพิชญ์ เลิศพรหมมกุล", phone: "0812345678" }, result: { publicId: BORROWER_A, name: "fixture" } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000200", name: "fixture" }, aliases: [], loans: [] } },
+            { name: "borrower.alias", arguments: { action: "add", borrowerPublicId: BORROWER_A, alias: "นก", source: "manual" }, result: { publicId: ALIAS, alias: "fixture", normalizedAlias: "fixture", source: "fixture", status: "fixture" } },
+            { name: "borrower.alias", arguments: { action: "confirm", aliasPublicId: ALIAS }, result: { publicId: "0198c481-3e2b-7000-8000-000000000201", alias: "fixture", normalizedAlias: "fixture", source: "fixture", status: "fixture" } },
         ],
         run: createBorrowerAlias,
     },
     "payment-data-only": {
         script: [
-            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false } },
-            { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: PROPOSAL, status: "ready" } },
-            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL } },
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null } },
+            { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: PROPOSAL, status: "ready", version: -9007199254740991, warnings: [], totalAllocated: "0.00", allocations: [] } },
+            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, result: { publicId: "0198c481-3e2b-7000-8000-000000000202", status: "fixture", transactions: [] } },
         ],
         run: (mcp) => paymentFlow(mcp, {}),
     },
     "payment-slip": {
         script: [
-            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false } },
-            { name: "evidence.prepare", arguments: { paymentIntakePublicId: INTAKE, mimeType: "image/jpeg", size: PAYMENT_EVIDENCE_BYTES.byteLength, sha256: FILE_HASH, evidenceType: "slip" }, result: { publicId: EVIDENCE, duplicate: false, uploadUrl: "https://storage.example/payment-upload", requiredHeaders: { "content-type": "image/jpeg" } } },
-            { name: "evidence.finalize", arguments: { paymentIntakePublicId: INTAKE, evidencePublicId: EVIDENCE } },
-            { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: PROPOSAL, status: "ready" } },
-            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL } },
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null } },
+            { name: "evidence.prepare", arguments: { paymentIntakePublicId: INTAKE, mimeType: "image/jpeg", size: PAYMENT_EVIDENCE_BYTES.byteLength, sha256: FILE_HASH, evidenceType: "slip" }, result: { publicId: EVIDENCE, duplicate: false, uploadUrl: "https://storage.example/payment-upload", requiredHeaders: {} } },
+            { name: "evidence.finalize", arguments: { paymentIntakePublicId: INTAKE, evidencePublicId: EVIDENCE }, result: { publicId: "0198c481-3e2b-7000-8000-000000000203", status: "fixture", sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", filePublicId: "0198c481-3e2b-7000-8000-000000000204" } },
+            { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: PROPOSAL, status: "ready", version: -9007199254740991, warnings: [], totalAllocated: "0.00", allocations: [] } },
+            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, result: { publicId: "0198c481-3e2b-7000-8000-000000000205", status: "fixture", transactions: [] } },
         ],
         run: (mcp) => paymentFlow(mcp, { evidence: true }),
     },
     "payment-stale-repreview": {
         script: [
-            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false } },
-            { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE }, result: { status: "stale" } },
-            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE } },
-            { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: PROPOSAL, status: "ready" } },
-            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL } },
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null } },
+            { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE }, result: { status: "stale", publicId: "0198c481-3e2b-7000-8000-000000000206", version: -9007199254740991, warnings: [], totalAllocated: "0.00", allocations: [] } },
+            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: "0198c481-3e2b-7000-8000-000000000207", status: "fixture", evidence: [], latestProposal: { publicId: "0198c481-3e2b-7000-8000-000000000208", version: -9007199254740991, status: "fixture", warnings: [], totalAllocated: "0.00", allocations: [] } } },
+            { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: PROPOSAL, status: "ready", version: -9007199254740991, warnings: [], totalAllocated: "0.00", allocations: [] } },
+            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, result: { publicId: "0198c481-3e2b-7000-8000-000000000209", status: "fixture", transactions: [] } },
         ],
         run: (mcp) => paymentFlow(mcp, {}),
     },
     "payment-split-loans": {
         script: [
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
-            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false } },
-            { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE, allocations }, result: { publicId: PROPOSAL, status: "ready" } },
-            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000210", name: "fixture" }, aliases: [], loans: [] } },
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null } },
+            { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE, allocations }, result: { publicId: PROPOSAL, status: "ready", version: -9007199254740991, warnings: [], totalAllocated: "0.00", allocations: [] } },
+            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, result: { publicId: "0198c481-3e2b-7000-8000-000000000211", status: "fixture", transactions: [] } },
         ],
         run: async (mcp) => { await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A }); return paymentFlow(mcp, { explicitAllocations: allocations }); },
     },
     "payment-split-borrowers-intermediary": {
         script: [
-            { name: "borrower.search", arguments: { query: "พล" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_A }] } },
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
-            { name: "borrower.search", arguments: { query: "ลอย" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_B }] } },
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_B } },
-            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false } },
-            { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE, allocations: [allocations[0], { borrowerPublicId: BORROWER_B, loanPublicId: LOAN_B, amount: "300.00" }] }, result: { publicId: PROPOSAL, status: "needs_review" } },
+            { name: "borrower.search", arguments: { query: "พล" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_A, name: "fixture" }] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000212", name: "fixture" }, aliases: [], loans: [] } },
+            { name: "borrower.search", arguments: { query: "ลอย" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_B, name: "fixture" }] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_B }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000213", name: "fixture" }, aliases: [], loans: [] } },
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null } },
+            { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE, allocations: [allocations[0], { borrowerPublicId: BORROWER_B, loanPublicId: LOAN_B, amount: "300.00" }] }, result: { publicId: PROPOSAL, status: "needs_review", version: -9007199254740991, warnings: [], totalAllocated: "0.00", allocations: [] } },
         ],
         run: async (mcp) => {
             for (const query of ["พล", "ลอย"]) {
@@ -1215,28 +1221,28 @@ const SCENARIOS: Record<string, Scenario> = {
     },
     "payment-partial": {
         script: [
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
-            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false } },
-            { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE, allocations: partialAllocation }, result: { publicId: PROPOSAL, status: "ready" } },
-            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000214", name: "fixture" }, aliases: [], loans: [] } },
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null } },
+            { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE, allocations: partialAllocation }, result: { publicId: PROPOSAL, status: "ready", version: -9007199254740991, warnings: [], totalAllocated: "0.00", allocations: [] } },
+            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, result: { publicId: "0198c481-3e2b-7000-8000-000000000215", status: "fixture", transactions: [] } },
         ],
         run: async (mcp) => { await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A }); return paymentFlow(mcp, { explicitAllocations: partialAllocation }); },
     },
     "loan-draft-activation": {
         script: [
-            { name: "borrower.search", arguments: { query: "กนกพิชญ์" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_A }] } },
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
-            { name: "loan.preview", arguments: loanTerms },
-            { name: "loan.draft", arguments: { borrowerPublicId: BORROWER_A, ...loanTerms }, result: { publicId: DRAFT } },
-            { name: "loan.activate", arguments: { loanPublicId: DRAFT, idempotencyKey: "loan-activation-20260811-1" } },
+            { name: "borrower.search", arguments: { query: "กนกพิชญ์" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_A, name: "fixture" }] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000216", name: "fixture" }, aliases: [], loans: [] } },
+            { name: "loan.preview", arguments: loanTerms, result: { terms: { principal: "0.00", interestRate: "0.00", termMonths: 1, repaymentType: "daily", startDate: "2026-08-15" }, schedule: [], floatingDailyInterest: { mode: "per_thousand", rate: "0.00", firstDayTreatment: "deduct" }, firstDayInterest: "0.00", dailyInterestAtCurrentPrincipal: "0.00", netDisbursement: "0.00", nextInterestDate: "2026-08-15" } },
+            { name: "loan.draft", arguments: { borrowerPublicId: BORROWER_A, ...loanTerms }, result: { publicId: DRAFT, principal: "0.00", principalAmount: "0.00", interestRate: "0.00", repaymentType: "daily", termMonths: -9007199254740991, installmentAmount: "0.00", totalInstallments: -9007199254740991, startDate: "2026-08-15", nextDueDate: "2026-08-15", outstandingPrincipal: "0.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "fixture" } },
+            { name: "loan.activate", arguments: { loanPublicId: DRAFT, idempotencyKey: "loan-activation-20260811-1" }, result: { publicId: "0198c481-3e2b-7000-8000-000000000217", principal: "0.00", principalAmount: "0.00", interestRate: "0.00", repaymentType: "daily", termMonths: -9007199254740991, installmentAmount: "0.00", totalInstallments: -9007199254740991, startDate: "2026-08-15", nextDueDate: "2026-08-15", outstandingPrincipal: "0.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "fixture" } },
         ],
         run: loanActivation,
     },
     "floating-rate-scheduled-change": {
         script: [
-            { name: "loan.interest-rate.list", arguments: { loanPublicId: LOAN_A }, result: { earliestEditableDate: "2026-08-12" } },
-            { name: "loan.interest-rate.preview", arguments: { loanPublicId: LOAN_A, effectiveDate: "2026-09-01", expiryDate: null, rateType: "percent", rate: "1" }, result: { publicId: RATE_PREVIEW, previewHash: PREVIEW_HASH, expiresAt: "2026-08-11T10:15:00+07:00" } },
-            { name: "loan.interest-rate.execute", arguments: { loanPublicId: LOAN_A, previewPublicId: RATE_PREVIEW, previewHash: PREVIEW_HASH, confirmed: true, reason: "Owner confirmed scheduled September rate", idempotencyKey: "rate-change-20260901-1" } },
+            { name: "loan.interest-rate.list", arguments: { loanPublicId: LOAN_A }, result: { earliestEditableDate: "2026-08-12", loanPublicId: "0198c481-3e2b-7000-8000-000000000218", asOfDate: "2026-08-15", currentPeriod: { publicId: "0198c481-3e2b-7000-8000-000000000219", effectiveDate: "2026-08-15", expiryDate: "2026-08-15", rateType: "percent", rate: "0.00" }, dailyInterestAtCurrentPrincipal: "0.00", nextChange: { publicId: "0198c481-3e2b-7000-8000-000000000220", effectiveDate: "2026-08-15", expiryDate: "2026-08-15", rateType: "percent", rate: "0.00" }, timeline: [], timelineVersion: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } },
+            { name: "loan.interest-rate.preview", arguments: { loanPublicId: LOAN_A, effectiveDate: "2026-09-01", expiryDate: null, rateType: "percent", rate: "1" }, result: { publicId: RATE_PREVIEW, previewHash: PREVIEW_HASH, expiresAt: "2026-08-11T10:15:00+07:00", id: "0198c481-3e2b-7000-8000-000000000221", loanPublicId: "0198c481-3e2b-7000-8000-000000000222", request: { effectiveDate: "2026-08-15", expiryDate: "2026-08-15", rateType: "percent", rate: "0.00" }, beforeTimeline: [], afterTimeline: [], supersededPeriodPublicIds: [], warnings: [], timelineVersion: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } },
+            { name: "loan.interest-rate.execute", arguments: { loanPublicId: LOAN_A, previewPublicId: RATE_PREVIEW, previewHash: PREVIEW_HASH, confirmed: true, reason: "Owner confirmed scheduled September rate", idempotencyKey: "rate-change-20260901-1" }, result: { loanPublicId: "0198c481-3e2b-7000-8000-000000000223", asOfDate: "2026-08-15", currentPeriod: { publicId: "0198c481-3e2b-7000-8000-000000000224", effectiveDate: "2026-08-15", expiryDate: "2026-08-15", rateType: "percent", rate: "0.00" }, dailyInterestAtCurrentPrincipal: "0.00", nextChange: { publicId: "0198c481-3e2b-7000-8000-000000000225", effectiveDate: "2026-08-15", expiryDate: "2026-08-15", rateType: "percent", rate: "0.00" }, earliestEditableDate: "2026-08-15", timeline: [], timelineVersion: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", auditPublicId: "0198c481-3e2b-7000-8000-000000000226", correlationId: "0198c481-3e2b-7000-8000-000000000227" } },
         ],
         run: async (mcp) => {
             await mcp.call("loan.interest-rate.list", { loanPublicId: LOAN_A });
@@ -1247,8 +1253,8 @@ const SCENARIOS: Record<string, Scenario> = {
     },
     "floating-rate-missing-confirmation": {
         script: [
-            { name: "loan.interest-rate.list", arguments: { loanPublicId: LOAN_A }, result: { earliestEditableDate: "2026-08-12" } },
-            { name: "loan.interest-rate.preview", arguments: { loanPublicId: LOAN_A, effectiveDate: "2026-09-01", expiryDate: null, rateType: "percent", rate: "1" }, result: { publicId: RATE_PREVIEW, previewHash: PREVIEW_HASH } },
+            { name: "loan.interest-rate.list", arguments: { loanPublicId: LOAN_A }, result: { earliestEditableDate: "2026-08-12", loanPublicId: "0198c481-3e2b-7000-8000-000000000228", asOfDate: "2026-08-15", currentPeriod: { publicId: "0198c481-3e2b-7000-8000-000000000229", effectiveDate: "2026-08-15", expiryDate: "2026-08-15", rateType: "percent", rate: "0.00" }, dailyInterestAtCurrentPrincipal: "0.00", nextChange: { publicId: "0198c481-3e2b-7000-8000-000000000230", effectiveDate: "2026-08-15", expiryDate: "2026-08-15", rateType: "percent", rate: "0.00" }, timeline: [], timelineVersion: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } },
+            { name: "loan.interest-rate.preview", arguments: { loanPublicId: LOAN_A, effectiveDate: "2026-09-01", expiryDate: null, rateType: "percent", rate: "1" }, result: { publicId: RATE_PREVIEW, previewHash: PREVIEW_HASH, id: "0198c481-3e2b-7000-8000-000000000231", loanPublicId: "0198c481-3e2b-7000-8000-000000000232", request: { effectiveDate: "2026-08-15", expiryDate: "2026-08-15", rateType: "percent", rate: "0.00" }, beforeTimeline: [], afterTimeline: [], supersededPeriodPublicIds: [], warnings: [], timelineVersion: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", expiresAt: "2026-08-15T06:30:00.000Z" } },
         ],
         run: async (mcp) => {
             await mcp.call("loan.interest-rate.list", { loanPublicId: LOAN_A });
@@ -1258,33 +1264,33 @@ const SCENARIOS: Record<string, Scenario> = {
     },
     "floating-settlement-execute": {
         script: [
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active" }] } },
-            { name: "loan.settlement.preview", arguments: { loanPublicId: LOAN_A, asOfDate: "2026-08-15" }, result: { publicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, status: "ready", outstandingPrincipal: "5000.00", dueInterest: "25.00", accruedNotDueInterest: "17.14", outstandingFees: "10.00", outstandingPenalties: "5.00", nonRefundableAdvanceInterest: "600.00", settlementTotal: "5057.14", expiresAt: SETTLEMENT_EXPIRES_AT, balanceVersion: SETTLEMENT_BALANCE_VERSION } },
-            { name: "loan.settlement.execute", arguments: { settlementPublicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, confirmed: true, reason: "Borrower confirmed the exact displayed close-out", idempotencyKey: "floating-settlement-20260815-1" }, result: { publicId: SETTLEMENT, status: "executed", settlementTotal: "5057.14" } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active", principal: "0.00", interestRate: "0.00", startDate: "2026-08-15" }], borrower: { publicId: "0198c481-3e2b-7000-8000-000000000233", name: "fixture" }, aliases: [] } },
+            { name: "loan.settlement.preview", arguments: { loanPublicId: LOAN_A, asOfDate: "2026-08-15" }, result: { publicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, status: "ready", outstandingPrincipal: "5000.00", dueInterest: "25.00", accruedNotDueInterest: "17.14", outstandingFees: "10.00", outstandingPenalties: "5.00", nonRefundableAdvanceInterest: "600.00", settlementTotal: "5057.14", expiresAt: SETTLEMENT_EXPIRES_AT, balanceVersion: SETTLEMENT_BALANCE_VERSION, id: "0198c481-3e2b-7000-8000-000000000234", loanPublicId: "0198c481-3e2b-7000-8000-000000000235", asOfDate: "2026-08-15", hashVersion: "v1", executedAt: "2026-08-15T06:30:00.000Z", createdAt: "2026-08-15T06:30:00.000Z", updatedAt: "2026-08-15T06:30:00.000Z" } },
+            { name: "loan.settlement.execute", arguments: { settlementPublicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, confirmed: true, reason: "Borrower confirmed the exact displayed close-out", idempotencyKey: "floating-settlement-20260815-1" }, result: { publicId: SETTLEMENT, status: "executed", settlementTotal: "5057.14", id: "0198c481-3e2b-7000-8000-000000000236", loanPublicId: "0198c481-3e2b-7000-8000-000000000237", asOfDate: "2026-08-15", outstandingPrincipal: "0.00", dueInterest: "0.00", accruedNotDueInterest: "0.00", outstandingFees: "0.00", outstandingPenalties: "0.00", nonRefundableAdvanceInterest: "0.00", balanceVersion: "v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", previewHash: "v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", hashVersion: "v1", expiresAt: "2026-08-15T06:30:00.000Z", executedAt: "2026-08-15T06:30:00.000Z", createdAt: "2026-08-15T06:30:00.000Z", updatedAt: "2026-08-15T06:30:00.000Z", transaction: { id: "0198c481-3e2b-7000-8000-000000000238", publicId: "0198c481-3e2b-7000-8000-000000000239", amount: "0.00", principalComponent: "0.00", interestComponent: "0.00", feeComponent: "0.00", penaltyComponent: "0.00", type: "close_account", entryType: "repayment", transactionDate: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z" }, reason: "fixture", auditPublicId: "0198c481-3e2b-7000-8000-000000000240", correlationId: "0198c481-3e2b-7000-8000-000000000241" } },
         ],
         run: (mcp) => floatingSettlement(mcp, { confirmed: true }),
     },
     "floating-settlement-missing-confirmation": {
         script: [
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active" }] } },
-            { name: "loan.settlement.preview", arguments: { loanPublicId: LOAN_A, asOfDate: "2026-08-15" }, result: { publicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, status: "ready", outstandingPrincipal: "5000.00", dueInterest: "25.00", accruedNotDueInterest: "17.14", outstandingFees: "10.00", outstandingPenalties: "5.00", nonRefundableAdvanceInterest: "600.00", settlementTotal: "5057.14", expiresAt: SETTLEMENT_EXPIRES_AT, balanceVersion: SETTLEMENT_BALANCE_VERSION } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active", principal: "0.00", interestRate: "0.00", startDate: "2026-08-15" }], borrower: { publicId: "0198c481-3e2b-7000-8000-000000000242", name: "fixture" }, aliases: [] } },
+            { name: "loan.settlement.preview", arguments: { loanPublicId: LOAN_A, asOfDate: "2026-08-15" }, result: { publicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, status: "ready", outstandingPrincipal: "5000.00", dueInterest: "25.00", accruedNotDueInterest: "17.14", outstandingFees: "10.00", outstandingPenalties: "5.00", nonRefundableAdvanceInterest: "600.00", settlementTotal: "5057.14", expiresAt: SETTLEMENT_EXPIRES_AT, balanceVersion: SETTLEMENT_BALANCE_VERSION, id: "0198c481-3e2b-7000-8000-000000000243", loanPublicId: "0198c481-3e2b-7000-8000-000000000244", asOfDate: "2026-08-15", hashVersion: "v1", executedAt: "2026-08-15T06:30:00.000Z", createdAt: "2026-08-15T06:30:00.000Z", updatedAt: "2026-08-15T06:30:00.000Z" } },
         ],
         run: (mcp) => floatingSettlement(mcp),
     },
     "floating-settlement-stale-preview": {
         script: [
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active" }] } },
-            { name: "loan.settlement.preview", arguments: { loanPublicId: LOAN_A, asOfDate: "2026-08-15" }, result: { publicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, status: "ready", outstandingPrincipal: "5000.00", dueInterest: "25.00", accruedNotDueInterest: "17.14", outstandingFees: "10.00", outstandingPenalties: "5.00", nonRefundableAdvanceInterest: "600.00", settlementTotal: "5057.14", expiresAt: SETTLEMENT_EXPIRES_AT, balanceVersion: SETTLEMENT_BALANCE_VERSION } },
-            { name: "loan.settlement.execute", arguments: { settlementPublicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, confirmed: true, reason: "Borrower confirmed the exact displayed close-out", idempotencyKey: "floating-settlement-20260815-1" }, error: { code: "STALE_SETTLEMENT_PREVIEW", message: "Loan settlement preview is stale" } },
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active" }] } },
-            { name: "loan.settlement.preview", arguments: { loanPublicId: LOAN_A, asOfDate: "2026-08-15" }, result: { publicId: "0198c481-3e2b-7000-8000-000000000072", previewHash: `v1:${"e".repeat(64)}`, status: "ready", outstandingPrincipal: "4900.00", dueInterest: "25.00", accruedNotDueInterest: "17.14", outstandingFees: "10.00", outstandingPenalties: "5.00", nonRefundableAdvanceInterest: "600.00", settlementTotal: "4957.14", expiresAt: "2026-08-15T06:20:00.000Z", balanceVersion: `v1:${"f".repeat(64)}` } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active", principal: "0.00", interestRate: "0.00", startDate: "2026-08-15" }], borrower: { publicId: "0198c481-3e2b-7000-8000-000000000245", name: "fixture" }, aliases: [] } },
+            { name: "loan.settlement.preview", arguments: { loanPublicId: LOAN_A, asOfDate: "2026-08-15" }, result: { publicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, status: "ready", outstandingPrincipal: "5000.00", dueInterest: "25.00", accruedNotDueInterest: "17.14", outstandingFees: "10.00", outstandingPenalties: "5.00", nonRefundableAdvanceInterest: "600.00", settlementTotal: "5057.14", expiresAt: SETTLEMENT_EXPIRES_AT, balanceVersion: SETTLEMENT_BALANCE_VERSION, id: "0198c481-3e2b-7000-8000-000000000246", loanPublicId: "0198c481-3e2b-7000-8000-000000000247", asOfDate: "2026-08-15", hashVersion: "v1", executedAt: "2026-08-15T06:30:00.000Z", createdAt: "2026-08-15T06:30:00.000Z", updatedAt: "2026-08-15T06:30:00.000Z" } },
+            { name: "loan.settlement.execute", arguments: { settlementPublicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, confirmed: true, reason: "Borrower confirmed the exact displayed close-out", idempotencyKey: "floating-settlement-20260815-1" }, error: { code: "STALE_SETTLEMENT_PREVIEW", message: "Loan settlement preview is stale", retryable: false, reviewRequired: false, details: {} } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active", principal: "0.00", interestRate: "0.00", startDate: "2026-08-15" }], borrower: { publicId: "0198c481-3e2b-7000-8000-000000000248", name: "fixture" }, aliases: [] } },
+            { name: "loan.settlement.preview", arguments: { loanPublicId: LOAN_A, asOfDate: "2026-08-15" }, result: { publicId: "0198c481-3e2b-7000-8000-000000000072", previewHash: `v1:${"e".repeat(64)}`, status: "ready", outstandingPrincipal: "4900.00", dueInterest: "25.00", accruedNotDueInterest: "17.14", outstandingFees: "10.00", outstandingPenalties: "5.00", nonRefundableAdvanceInterest: "600.00", settlementTotal: "4957.14", expiresAt: "2026-08-15T06:20:00.000Z", balanceVersion: `v1:${"f".repeat(64)}`, id: "0198c481-3e2b-7000-8000-000000000249", loanPublicId: "0198c481-3e2b-7000-8000-000000000250", asOfDate: "2026-08-15", hashVersion: "v1", executedAt: "2026-08-15T06:30:00.000Z", createdAt: "2026-08-15T06:30:00.000Z", updatedAt: "2026-08-15T06:30:00.000Z" } },
         ],
         run: (mcp) => floatingSettlement(mcp, { confirmed: true }),
     },
     "floating-settlement-non-refundable-refund": {
         script: [
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active" }] } },
-            { name: "loan.settlement.preview", arguments: { loanPublicId: LOAN_A, asOfDate: "2026-08-15" }, result: { publicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, status: "ready", outstandingPrincipal: "5000.00", dueInterest: "25.00", accruedNotDueInterest: "17.14", outstandingFees: "10.00", outstandingPenalties: "5.00", nonRefundableAdvanceInterest: "600.00", settlementTotal: "5057.14", expiresAt: SETTLEMENT_EXPIRES_AT, balanceVersion: SETTLEMENT_BALANCE_VERSION } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active", principal: "0.00", interestRate: "0.00", startDate: "2026-08-15" }], borrower: { publicId: "0198c481-3e2b-7000-8000-000000000251", name: "fixture" }, aliases: [] } },
+            { name: "loan.settlement.preview", arguments: { loanPublicId: LOAN_A, asOfDate: "2026-08-15" }, result: { publicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, status: "ready", outstandingPrincipal: "5000.00", dueInterest: "25.00", accruedNotDueInterest: "17.14", outstandingFees: "10.00", outstandingPenalties: "5.00", nonRefundableAdvanceInterest: "600.00", settlementTotal: "5057.14", expiresAt: SETTLEMENT_EXPIRES_AT, balanceVersion: SETTLEMENT_BALANCE_VERSION, id: "0198c481-3e2b-7000-8000-000000000252", loanPublicId: "0198c481-3e2b-7000-8000-000000000253", asOfDate: "2026-08-15", hashVersion: "v1", executedAt: "2026-08-15T06:30:00.000Z", createdAt: "2026-08-15T06:30:00.000Z", updatedAt: "2026-08-15T06:30:00.000Z" } },
         ],
         run: (mcp) => floatingSettlement(mcp, { refundRequested: true }),
     },
@@ -1299,23 +1305,23 @@ const SCENARIOS: Record<string, Scenario> = {
     },
     "disbursement-full-lifecycle": {
         script: [
-            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [] } },
-            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft" } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [], loanPublicId: "0198c481-3e2b-7000-8000-000000000254" } },
+            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft", grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000255", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000256", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [] } },
             { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: DISBURSEMENT_EVIDENCE_BYTES.byteLength, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, uploadUrl: "https://storage.example/upload", requiredHeaders: { "content-type": "image/jpeg" }, expiresAt: "2099-01-01T00:00:00+00:00" } },
             { name: "loan.disbursement.evidence.finalize", arguments: { disbursementPublicId: DISBURSEMENT, evidencePublicId: DISBURSEMENT_EVIDENCE }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, status: "ready" } },
-            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [{ publicId: DISBURSEMENT, status: "draft" }] } },
-            { name: "loan.disbursement.post", arguments: { disbursementPublicId: DISBURSEMENT, idempotencyKey: "disbursement-post-20260810-1" }, result: { publicId: DISBURSEMENT, status: "posted", duplicate: false } },
-            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [{ publicId: DISBURSEMENT, status: "posted" }] } },
-            { name: "loan.disbursement.reverse", arguments: { disbursementPublicId: DISBURSEMENT, reason: "Owner confirmed duplicate payout record", idempotencyKey: "disbursement-reverse-20260810-1" }, result: { publicId: DISBURSEMENT, status: "reversed", duplicate: false } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [{ publicId: DISBURSEMENT, status: "draft", grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000257", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000258", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [] }], loanPublicId: "0198c481-3e2b-7000-8000-000000000259" } },
+            { name: "loan.disbursement.post", arguments: { disbursementPublicId: DISBURSEMENT, idempotencyKey: "disbursement-post-20260810-1" }, result: { publicId: DISBURSEMENT, status: "posted", duplicate: false, grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000260", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000261", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [], auditPublicId: "0198c481-3e2b-7000-8000-000000000262", correlationId: "0198c481-3e2b-7000-8000-000000000263" } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [{ publicId: DISBURSEMENT, status: "posted", grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000264", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000265", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [] }], loanPublicId: "0198c481-3e2b-7000-8000-000000000266" } },
+            { name: "loan.disbursement.reverse", arguments: { disbursementPublicId: DISBURSEMENT, reason: "Owner confirmed duplicate payout record", idempotencyKey: "disbursement-reverse-20260810-1" }, result: { publicId: DISBURSEMENT, status: "reversed", duplicate: false, grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000267", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000268", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [], reversedEventPublicId: "0198c481-3e2b-7000-8000-000000000269", auditPublicId: "0198c481-3e2b-7000-8000-000000000270", correlationId: "0198c481-3e2b-7000-8000-000000000271" } },
         ],
         run: (mcp) => disbursementLifecycle(mcp, { postConfirmed: true, reverseConfirmed: true }),
     },
     "disbursement-draft-update": {
         script: [
-            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "4000.00", netDisbursed: "3940.00", variance: "-60.00", status: "under_disbursed" }, events: [{ publicId: DISBURSEMENT, status: "draft", grossAmount: "4000.00", loanAttributedAmount: "3940.00", evidenceFilePublicIds: [EVIDENCE] }] } },
-            { name: "loan.disbursement.update", arguments: { disbursementPublicId: DISBURSEMENT, changes: { loanAttributedAmount: "4000.00", note: "Corrected attribution after owner review" } }, result: { publicId: DISBURSEMENT, status: "draft", grossAmount: "4000.00", loanAttributedAmount: "4000.00", evidenceFilePublicIds: [EVIDENCE] } },
-            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "4000.00", netDisbursed: "4000.00", variance: "0.00", status: "matched" }, events: [{ publicId: DISBURSEMENT, status: "draft", grossAmount: "4000.00", loanAttributedAmount: "4000.00", evidenceFilePublicIds: [EVIDENCE] }] } },
-            { name: "loan.disbursement.post", arguments: { disbursementPublicId: DISBURSEMENT, idempotencyKey: "disbursement-post-after-update-1" }, result: { publicId: DISBURSEMENT, status: "posted", duplicate: false } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "4000.00", netDisbursed: "3940.00", variance: "-60.00", status: "under_disbursed" }, events: [{ publicId: DISBURSEMENT, status: "draft", grossAmount: "4000.00", loanAttributedAmount: "3940.00", evidenceFilePublicIds: [EVIDENCE], channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000272", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000273", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z" }], loanPublicId: "0198c481-3e2b-7000-8000-000000000274" } },
+            { name: "loan.disbursement.update", arguments: { disbursementPublicId: DISBURSEMENT, changes: { loanAttributedAmount: "4000.00", note: "Corrected attribution after owner review" } }, result: { publicId: DISBURSEMENT, status: "draft", grossAmount: "4000.00", loanAttributedAmount: "4000.00", evidenceFilePublicIds: [EVIDENCE], channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000275", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000276", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z" } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "4000.00", netDisbursed: "4000.00", variance: "0.00", status: "matched" }, events: [{ publicId: DISBURSEMENT, status: "draft", grossAmount: "4000.00", loanAttributedAmount: "4000.00", evidenceFilePublicIds: [EVIDENCE], channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000277", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000278", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z" }], loanPublicId: "0198c481-3e2b-7000-8000-000000000279" } },
+            { name: "loan.disbursement.post", arguments: { disbursementPublicId: DISBURSEMENT, idempotencyKey: "disbursement-post-after-update-1" }, result: { publicId: DISBURSEMENT, status: "posted", duplicate: false, grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000280", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000281", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [], auditPublicId: "0198c481-3e2b-7000-8000-000000000282", correlationId: "0198c481-3e2b-7000-8000-000000000283" } },
         ],
         run: async (mcp) => {
             await mcp.call("loan.disbursement.list", { loanPublicId: LOAN_A });
@@ -1327,153 +1333,153 @@ const SCENARIOS: Record<string, Scenario> = {
     },
     "renewal-execute": {
         script: [
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
-            { name: "renewal.preview", arguments: { oldLoanPublicId: LOAN_A, requestedPrincipal: "2500.00" }, result: { publicId: RENEWAL, previewHash: PREVIEW_HASH, dueCharges: "0.00" } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000284", name: "fixture" }, aliases: [], loans: [] } },
+            { name: "renewal.preview", arguments: { oldLoanPublicId: LOAN_A, requestedPrincipal: "2500.00" }, result: { publicId: RENEWAL, previewHash: PREVIEW_HASH, dueCharges: "0.00", status: "fixture", oldLoanPublicId: "0198c481-3e2b-7000-8000-000000000285", principalPaid: "0.00", outstandingPrincipal: "0.00", settlementAmount: "0.00", waivedCharges: "0.00", requestedPrincipal: "0.00", cashDirection: "payout", cashAmount: "0.00" } },
             { name: "renewal.execute", arguments: { renewalPublicId: RENEWAL, previewHash: PREVIEW_HASH, confirmed: true, reason: "Owner confirmed the displayed renewal", idempotencyKey: "renewal-execute-20260810-1" }, result: EXECUTED_RENEWAL_RESULT },
         ],
         run: (mcp) => renewalExecute(mcp),
     },
     "payment-reversal": {
         script: [
-            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { status: "posted" } },
-            { name: "payment.reverse", arguments: { paymentIntakePublicId: INTAKE, reason: "Owner confirmed duplicate bank posting" } },
+            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { status: "posted", publicId: "0198c481-3e2b-7000-8000-000000000286", evidence: [], latestProposal: { publicId: "0198c481-3e2b-7000-8000-000000000287", version: -9007199254740991, status: "fixture", warnings: [], totalAllocated: "0.00", allocations: [] } } },
+            { name: "payment.reverse", arguments: { paymentIntakePublicId: INTAKE, reason: "Owner confirmed duplicate bank posting" }, result: { publicId: "0198c481-3e2b-7000-8000-000000000288", status: "fixture", transactions: [] } },
         ],
         run: async (mcp) => { await mcp.call("intake.get", { paymentIntakePublicId: INTAKE }); await mcp.call("payment.reverse", { paymentIntakePublicId: INTAKE, reason: "Owner confirmed duplicate bank posting" }); return { outcome: "completed" }; },
     },
     "renewal-reversal": {
         script: [
             { name: "borrower.portfolio", arguments: { borrowerPublicId: SAME_TASK_RENEWAL_CONTEXT.retainedBorrowerPublicId }, result: RENEWAL_PORTFOLIO },
-            { name: "renewal.reverse", arguments: { renewalPublicId: SAME_TASK_RENEWAL_CONTEXT.executeResult.publicId, reason: "Owner confirmed renewal reversal; backend must atomically check downstream activity", idempotencyKey: "renewal-reverse-20260810-1" } },
+            { name: "renewal.reverse", arguments: { renewalPublicId: SAME_TASK_RENEWAL_CONTEXT.executeResult.publicId, reason: "Owner confirmed renewal reversal; backend must atomically check downstream activity", idempotencyKey: "renewal-reverse-20260810-1" }, result: { publicId: "0198c481-3e2b-7000-8000-000000000289", status: "fixture", oldLoanPublicId: "0198c481-3e2b-7000-8000-000000000290", previewHash: "v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", principalPaid: "0.00", outstandingPrincipal: "0.00", dueCharges: "0.00", settlementAmount: "0.00", waivedCharges: "0.00", requestedPrincipal: "0.00", cashDirection: "payout", cashAmount: "0.00" } },
         ],
         run: (mcp) => reverseRenewal(mcp, SAME_TASK_RENEWAL_CONTEXT),
     },
     "ambiguous-nickname": {
         script: [
-            { name: "borrower.search", arguments: { query: "พี่พล" }, result: { resolution: "ambiguous", candidates: [{ publicId: BORROWER_A }, { publicId: BORROWER_B }] } },
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_B } },
+            { name: "borrower.search", arguments: { query: "พี่พล" }, result: { resolution: "ambiguous", candidates: [{ publicId: BORROWER_A, name: "fixture" }, { publicId: BORROWER_B, name: "fixture" }] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000291", name: "fixture" }, aliases: [], loans: [] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_B }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000292", name: "fixture" }, aliases: [], loans: [] } },
         ],
         run: async (mcp) => { const found = await mcp.call("borrower.search", { query: "พี่พล" }); for (const candidate of found.candidates as Array<{ publicId: string }>) await mcp.call("borrower.portfolio", { borrowerPublicId: candidate.publicId }); return { outcome: "stopped", stopReason: "ambiguous-identity" }; },
     },
     "allocation-mismatch": {
-        script: [{ name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE, allocations: mismatchAllocations }, result: { status: "needs_review", difference: "10.00" } }],
+        script: [{ name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE, allocations: mismatchAllocations }, result: { status: "needs_review", publicId: "0198c481-3e2b-7000-8000-000000000293", version: -9007199254740991, warnings: [], totalAllocated: "0.00", allocations: [] } }],
         run: async (mcp) => { const preview = await mcp.call("payment.preview", { paymentIntakePublicId: INTAKE, allocations: mismatchAllocations }); return { outcome: "stopped", stopReason: String(preview.status) }; },
     },
     "duplicate-reference": {
         script: [
-            { name: "intake.create", arguments: intakeArgs, result: { publicId: ORIGINAL_INTAKE, duplicate: true } },
-            { name: "intake.get", arguments: { paymentIntakePublicId: ORIGINAL_INTAKE } },
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: ORIGINAL_INTAKE, duplicate: true, status: "fixture", duplicateReason: "fixture", warnings: [] } },
+            { name: "intake.get", arguments: { paymentIntakePublicId: ORIGINAL_INTAKE }, result: { publicId: "0198c481-3e2b-7000-8000-000000000294", status: "fixture", evidence: [], latestProposal: { publicId: "0198c481-3e2b-7000-8000-000000000295", version: -9007199254740991, status: "fixture", warnings: [], totalAllocated: "0.00", allocations: [] } } },
         ],
         run: (mcp) => paymentFlow(mcp, {}),
     },
     "duplicate-evidence-hash": {
         script: [
-            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false } },
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null } },
             { name: "evidence.prepare", arguments: { paymentIntakePublicId: INTAKE, mimeType: "image/jpeg", size: PAYMENT_EVIDENCE_BYTES.byteLength, sha256: FILE_HASH, evidenceType: "slip" }, result: { publicId: EVIDENCE, duplicate: true, intakePublicId: ORIGINAL_INTAKE } },
-            { name: "intake.get", arguments: { paymentIntakePublicId: ORIGINAL_INTAKE } },
+            { name: "intake.get", arguments: { paymentIntakePublicId: ORIGINAL_INTAKE }, result: { publicId: "0198c481-3e2b-7000-8000-000000000296", status: "fixture", evidence: [], latestProposal: { publicId: "0198c481-3e2b-7000-8000-000000000297", version: -9007199254740991, status: "fixture", warnings: [], totalAllocated: "0.00", allocations: [] } } },
         ],
         run: (mcp) => paymentFlow(mcp, { evidence: true }),
     },
     "active-loan-edit": {
-        script: [{ name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, status: "active" }] } }],
+        script: [{ name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, status: "active", principal: "0.00", interestRate: "0.00", repaymentType: "fixture", startDate: "2026-08-15" }], borrower: { publicId: "0198c481-3e2b-7000-8000-000000000298", name: "fixture" }, aliases: [] } }],
         run: async (mcp) => { await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A }); return { outcome: "stopped", stopReason: "immutable-active-terms" }; },
     },
     "disbursement-variance-without-confirmation": {
         script: [
-            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [] } },
-            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft" } },
-            { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: DISBURSEMENT_EVIDENCE_BYTES.byteLength, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, uploadUrl: "https://storage.example/upload", requiredHeaders: { "content-type": "image/jpeg" }, expiresAt: "2099-01-01T00:00:00+00:00" } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [], loanPublicId: "0198c481-3e2b-7000-8000-000000000299" } },
+            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft", grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000300", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000301", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [] } },
+            { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: DISBURSEMENT_EVIDENCE_BYTES.byteLength, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, uploadUrl: "https://storage.example/upload", requiredHeaders: {}, expiresAt: "2099-01-01T00:00:00+00:00" } },
             { name: "loan.disbursement.evidence.finalize", arguments: { disbursementPublicId: DISBURSEMENT, evidencePublicId: DISBURSEMENT_EVIDENCE }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, status: "ready" } },
-            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2300.00", variance: "-200.00", status: "under_disbursed" }, events: [{ publicId: DISBURSEMENT, status: "draft" }] } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2300.00", variance: "-200.00", status: "under_disbursed" }, events: [{ publicId: DISBURSEMENT, status: "draft", grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000302", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000303", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [] }], loanPublicId: "0198c481-3e2b-7000-8000-000000000304" } },
         ],
         run: (mcp) => disbursementLifecycle(mcp),
     },
     "disbursement-missing-post-confirmation": {
         script: [
-            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [] } },
-            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft" } },
-            { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: DISBURSEMENT_EVIDENCE_BYTES.byteLength, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, uploadUrl: "https://storage.example/upload", requiredHeaders: { "content-type": "image/jpeg" }, expiresAt: "2099-01-01T00:00:00+00:00" } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [], loanPublicId: "0198c481-3e2b-7000-8000-000000000305" } },
+            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft", grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000306", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000307", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [] } },
+            { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: DISBURSEMENT_EVIDENCE_BYTES.byteLength, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, uploadUrl: "https://storage.example/upload", requiredHeaders: {}, expiresAt: "2099-01-01T00:00:00+00:00" } },
             { name: "loan.disbursement.evidence.finalize", arguments: { disbursementPublicId: DISBURSEMENT, evidencePublicId: DISBURSEMENT_EVIDENCE }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, status: "ready" } },
-            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [{ publicId: DISBURSEMENT, status: "draft" }] } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [{ publicId: DISBURSEMENT, status: "draft", grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000308", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000309", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [] }], loanPublicId: "0198c481-3e2b-7000-8000-000000000310" } },
         ],
         run: (mcp) => disbursementLifecycle(mcp),
     },
     "disbursement-evidence-ready-retry": {
         script: [
-            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [] } },
-            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft" } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [], loanPublicId: "0198c481-3e2b-7000-8000-000000000311" } },
+            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft", grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000312", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000313", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [] } },
             { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: DISBURSEMENT_EVIDENCE_BYTES.byteLength, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, status: "ready" } },
-            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [{ publicId: DISBURSEMENT, status: "draft" }] } },
-            { name: "loan.disbursement.post", arguments: { disbursementPublicId: DISBURSEMENT, idempotencyKey: "disbursement-post-20260810-1" }, result: { publicId: DISBURSEMENT, status: "posted", duplicate: false } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [{ publicId: DISBURSEMENT, status: "draft", grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000314", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000315", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [] }], loanPublicId: "0198c481-3e2b-7000-8000-000000000316" } },
+            { name: "loan.disbursement.post", arguments: { disbursementPublicId: DISBURSEMENT, idempotencyKey: "disbursement-post-20260810-1" }, result: { publicId: DISBURSEMENT, status: "posted", duplicate: false, grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000317", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000318", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [], auditPublicId: "0198c481-3e2b-7000-8000-000000000319", correlationId: "0198c481-3e2b-7000-8000-000000000320" } },
         ],
         run: (mcp) => disbursementLifecycle(mcp, { postConfirmed: true }),
     },
     "disbursement-evidence-expired-upload": {
         script: [
-            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [] } },
-            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft" } },
-            { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: DISBURSEMENT_EVIDENCE_BYTES.byteLength, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, uploadUrl: "https://storage.example/upload", requiredHeaders: { "content-type": "image/jpeg" }, expiresAt: "2000-01-01T00:00:00+00:00" } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [], loanPublicId: "0198c481-3e2b-7000-8000-000000000321" } },
+            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft", grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000322", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000323", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [] } },
+            { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: DISBURSEMENT_EVIDENCE_BYTES.byteLength, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, uploadUrl: "https://storage.example/upload", requiredHeaders: {}, expiresAt: "2000-01-01T00:00:00+00:00" } },
         ],
         run: (mcp) => disbursementLifecycle(mcp, { postConfirmed: true }),
     },
     "disbursement-evidence-finalize-mismatch": {
         script: [
-            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [] } },
-            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft" } },
-            { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: DISBURSEMENT_EVIDENCE_BYTES.byteLength, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, uploadUrl: "https://storage.example/upload", requiredHeaders: { "content-type": "image/jpeg" }, expiresAt: "2099-01-01T00:00:00+00:00" } },
-            { name: "loan.disbursement.evidence.finalize", arguments: { disbursementPublicId: DISBURSEMENT, evidencePublicId: DISBURSEMENT_EVIDENCE }, error: { code: "EVIDENCE_MISMATCH", message: "Evidence checksum or metadata does not match" } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [], loanPublicId: "0198c481-3e2b-7000-8000-000000000324" } },
+            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft", grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000325", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000326", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [] } },
+            { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: DISBURSEMENT_EVIDENCE_BYTES.byteLength, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, uploadUrl: "https://storage.example/upload", requiredHeaders: {}, expiresAt: "2099-01-01T00:00:00+00:00" } },
+            { name: "loan.disbursement.evidence.finalize", arguments: { disbursementPublicId: DISBURSEMENT, evidencePublicId: DISBURSEMENT_EVIDENCE }, error: { code: "EVIDENCE_MISMATCH", message: "Evidence checksum or metadata does not match", retryable: false, reviewRequired: false, details: {} } },
         ],
         run: (mcp) => disbursementLifecycle(mcp, { postConfirmed: true }),
     },
     "disbursement-evidence-checksum-conflict": {
         script: [
-            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [] } },
-            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft" } },
-            { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: DISBURSEMENT_EVIDENCE_BYTES.byteLength, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, error: { code: "EVIDENCE_HASH_CONFLICT", message: "Evidence checksum belongs to another disbursement" } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [], loanPublicId: "0198c481-3e2b-7000-8000-000000000327" } },
+            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft", grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000328", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000329", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [] } },
+            { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: DISBURSEMENT_EVIDENCE_BYTES.byteLength, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, error: { code: "EVIDENCE_HASH_CONFLICT", message: "Evidence checksum belongs to another disbursement", retryable: false, reviewRequired: false, details: {} } },
         ],
         run: (mcp) => disbursementLifecycle(mcp, { postConfirmed: true }),
     },
     "disbursement-reversal-event-not-posted": {
         script: [
-            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [] } },
-            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft" } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "0.00", variance: "-2500.00", status: "under_disbursed" }, events: [], loanPublicId: "0198c481-3e2b-7000-8000-000000000330" } },
+            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft", grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000331", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000332", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [] } },
             { name: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT, mimeType: "image/jpeg", size: DISBURSEMENT_EVIDENCE_BYTES.byteLength, sha256: DISBURSEMENT_FILE_HASH, originalName: "payout-slip.jpg" }, result: { publicId: DISBURSEMENT_EVIDENCE, filePublicId: EVIDENCE, status: "ready" } },
-            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [{ publicId: DISBURSEMENT, status: "draft" }] } },
-            { name: "loan.disbursement.post", arguments: { disbursementPublicId: DISBURSEMENT, idempotencyKey: "disbursement-post-20260810-1" }, result: { publicId: DISBURSEMENT, status: "posted", duplicate: false } },
-            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [{ publicId: DISBURSEMENT, status: "draft" }] } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [{ publicId: DISBURSEMENT, status: "draft", grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000333", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000334", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [] }], loanPublicId: "0198c481-3e2b-7000-8000-000000000335" } },
+            { name: "loan.disbursement.post", arguments: { disbursementPublicId: DISBURSEMENT, idempotencyKey: "disbursement-post-20260810-1" }, result: { publicId: DISBURSEMENT, status: "posted", duplicate: false, grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000336", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000337", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [], auditPublicId: "0198c481-3e2b-7000-8000-000000000338", correlationId: "0198c481-3e2b-7000-8000-000000000339" } },
+            { name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [{ publicId: DISBURSEMENT, status: "draft", grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000340", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000341", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [] }], loanPublicId: "0198c481-3e2b-7000-8000-000000000342" } },
         ],
         run: (mcp) => disbursementLifecycle(mcp, { postConfirmed: true, reverseConfirmed: true }),
     },
     "disbursement-idempotency-conflict": {
         script: [
-            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft" } },
-            { name: "loan.disbursement.post", arguments: { disbursementPublicId: DISBURSEMENT, idempotencyKey: "disbursement-post-20260810-1" }, error: { code: "IDEMPOTENCY_KEY_CONFLICT", message: "Idempotency-Key was already used for another disbursement post" } },
+            { name: "loan.disbursement.draft", arguments: disbursementDraftArgs, result: { publicId: DISBURSEMENT, status: "draft", grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000343", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000344", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [] } },
+            { name: "loan.disbursement.post", arguments: { disbursementPublicId: DISBURSEMENT, idempotencyKey: "disbursement-post-20260810-1" }, error: { code: "IDEMPOTENCY_KEY_CONFLICT", message: "Idempotency-Key was already used for another disbursement post", retryable: false, reviewRequired: false, details: {} } },
         ],
         run: disbursementIdempotencyConflict,
     },
     "disbursement-schedule-mutation": {
-        script: [{ name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [] } }],
+        script: [{ name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" }, events: [], loanPublicId: "0198c481-3e2b-7000-8000-000000000345" } }],
         run: async (mcp) => { await mcp.call("loan.disbursement.list", { loanPublicId: LOAN_A }); return { outcome: "stopped", stopReason: "disbursement-cannot-mutate-schedule" }; },
     },
     "disbursement-update-locked": {
-        script: [{ name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { events: [{ publicId: DISBURSEMENT, status: "posted" }] } }],
+        script: [{ name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { events: [{ publicId: DISBURSEMENT, status: "posted", grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000346", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000347", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [] }], loanPublicId: "0198c481-3e2b-7000-8000-000000000348", summary: { approvedPrincipal: "0.00", netDisbursed: "0.00", variance: "0.00", status: "under_disbursed" } } }],
         run: async (mcp) => { await mcp.call("loan.disbursement.list", { loanPublicId: LOAN_A }); return { outcome: "stopped", stopReason: "disbursement-locked" } as const; },
     },
     "disbursement-update-unsupported-fields": {
-        script: [{ name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { events: [{ publicId: DISBURSEMENT, status: "draft" }] } }],
+        script: [{ name: "loan.disbursement.list", arguments: { loanPublicId: LOAN_A }, result: { events: [{ publicId: DISBURSEMENT, status: "draft", grossAmount: "0.00", loanAttributedAmount: "0.00", channel: "bank_transfer", restructurePublicId: "0198c481-3e2b-7000-8000-000000000349", sourceBankProfilePublicId: "0198c481-3e2b-7000-8000-000000000350", payeeHint: "fixture", note: "fixture", disbursedAt: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z", evidenceFilePublicIds: [] }], loanPublicId: "0198c481-3e2b-7000-8000-000000000351", summary: { approvedPrincipal: "0.00", netDisbursed: "0.00", variance: "0.00", status: "under_disbursed" } } }],
         run: async (mcp) => { await mcp.call("loan.disbursement.list", { loanPublicId: LOAN_A }); return { outcome: "stopped", stopReason: "disbursement-update-unsupported-fields" } as const; },
     },
     "renewal-unsettled-charges": {
         script: [
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
-            { name: "renewal.preview", arguments: { oldLoanPublicId: LOAN_A, requestedPrincipal: "2500.00" }, result: { publicId: RENEWAL, previewHash: PREVIEW_HASH, dueCharges: "23.00" } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000352", name: "fixture" }, aliases: [], loans: [] } },
+            { name: "renewal.preview", arguments: { oldLoanPublicId: LOAN_A, requestedPrincipal: "2500.00" }, result: { publicId: RENEWAL, previewHash: PREVIEW_HASH, dueCharges: "23.00", status: "fixture", oldLoanPublicId: "0198c481-3e2b-7000-8000-000000000353", principalPaid: "0.00", outstandingPrincipal: "0.00", settlementAmount: "0.00", waivedCharges: "0.00", requestedPrincipal: "0.00", cashDirection: "payout", cashAmount: "0.00" } },
         ],
         run: (mcp) => renewalExecute(mcp),
     },
     "renewal-missing-confirmation": {
         script: [
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
-            { name: "renewal.preview", arguments: { oldLoanPublicId: LOAN_A, requestedPrincipal: "2500.00" }, result: { publicId: RENEWAL, previewHash: PREVIEW_HASH, dueCharges: "0.00" } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000354", name: "fixture" }, aliases: [], loans: [] } },
+            { name: "renewal.preview", arguments: { oldLoanPublicId: LOAN_A, requestedPrincipal: "2500.00" }, result: { publicId: RENEWAL, previewHash: PREVIEW_HASH, dueCharges: "0.00", status: "fixture", oldLoanPublicId: "0198c481-3e2b-7000-8000-000000000355", principalPaid: "0.00", outstandingPrincipal: "0.00", settlementAmount: "0.00", waivedCharges: "0.00", requestedPrincipal: "0.00", cashDirection: "payout", cashAmount: "0.00" } },
         ],
         run: (mcp) => renewalExecute(mcp, false),
     },
@@ -1495,10 +1501,12 @@ const SCENARIOS: Record<string, Scenario> = {
                 name: "renewal.reverse",
                 arguments: { renewalPublicId: SAME_TASK_RENEWAL_CONTEXT.executeResult.publicId, reason: "Owner confirmed renewal reversal; backend must atomically check downstream activity", idempotencyKey: "renewal-reverse-20260810-1" },
                 error: {
-                    code: "RENEWAL_REVERSE_BLOCKED",
-                    message: "Reverse downstream replacement-loan entries first",
-                    details: { downstreamEntryCount: 3 },
-                },
+    code: "RENEWAL_REVERSE_BLOCKED",
+    message: "Reverse downstream replacement-loan entries first",
+    details: { downstreamEntryCount: 3 },
+    retryable: false,
+    reviewRequired: false
+},
             },
         ],
         run: (mcp) => reverseRenewal(mcp, SAME_TASK_RENEWAL_CONTEXT),
@@ -1515,21 +1523,21 @@ const SCENARIOS: Record<string, Scenario> = {
                     idempotencyKey: "intermediated-post-20260813-1",
                 },
                 result: {
-                    ...intermediatedGroupResult(),
-                    status: "posted",
-                    updatedAt: "2026-08-13T05:01:00.000Z",
-                    proposalPublicId: INTERMEDIATED_PREVIEW,
-                    loanDisbursementPublicId: INTERMEDIATED_LOAN_DISBURSEMENT,
-                    advanceInterestProjectionPublicId: INTERMEDIATED_ADVANCE_PROJECTION,
-                    fundingAmount: "5000.00",
-                    borrowerPayoutAmount: "4400.00",
-                    advanceInterestAmount: "600.00",
-                    intermediaryHeldBalance: "0.00",
-                    transferEventPublicIds: [...INTERMEDIATED_EVENTS],
-                    duplicate: false,
-                    auditPublicId: INTERMEDIATED_AUDIT,
-                    correlationId: INTERMEDIATED_CORRELATION,
-                },
+    ...intermediatedGroupResult(),
+    status: "posted",
+    updatedAt: "2026-08-13T05:01:00.000Z",
+    proposalPublicId: INTERMEDIATED_PREVIEW,
+    loanDisbursementPublicId: INTERMEDIATED_LOAN_DISBURSEMENT,
+    advanceInterestProjectionPublicId: INTERMEDIATED_ADVANCE_PROJECTION,
+    fundingAmount: "5000.00",
+    borrowerPayoutAmount: "4400.00",
+    advanceInterestAmount: "600.00",
+    intermediaryHeldBalance: "0.00",
+    transferEventPublicIds: [...INTERMEDIATED_EVENTS],
+    duplicate: false,
+    auditPublicId: INTERMEDIATED_AUDIT,
+    correlationId: INTERMEDIATED_CORRELATION,
+},
             },
         ],
         run: (mcp) => intermediatedDisbursementFlow(mcp, { confirmed: true }),
@@ -1613,9 +1621,12 @@ const SCENARIOS: Record<string, Scenario> = {
                     idempotencyKey: "intermediated-post-20260813-1",
                 },
                 error: {
-                    code: "STALE_INTERMEDIATED_DISBURSEMENT_PROPOSAL",
-                    message: "Intermediated disbursement proposal is stale",
-                },
+    code: "STALE_INTERMEDIATED_DISBURSEMENT_PROPOSAL",
+    message: "Intermediated disbursement proposal is stale",
+    retryable: false,
+    reviewRequired: false,
+    details: {}
+},
             },
             intermediatedDetailStep(),
             intermediatedPreviewStep("0198c481-3e2b-7000-8000-000000000092"),
@@ -1640,58 +1651,58 @@ const SCENARIOS: Record<string, Scenario> = {
     },
     "restructure-execute": {
         script: [
-            { name: "borrower.search", arguments: { query: "พี่เกมส์" }, result: { resolution: "unique" } },
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
-            { name: "loan.restructure.preview", arguments: { oldLoanPublicId: LOAN_A, settlementDate: "2026-08-19", replacementTerms, additionalPrincipal: "1000.00", reason: "Owner requested a monthly replacement contract" }, result: { publicId: RESTRUCTURE, previewHash: PREVIEW_HASH, oldBalanceVersion: BALANCE_VERSION, cash: { direction: "payout", amount: "1000.00" } } },
-            { name: "loan.restructure.execute", arguments: { restructurePublicId: RESTRUCTURE, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, confirmed: true, reason: "Owner confirmed the exact settlement and replacement", idempotencyKey: "restructure-execute-20260819-1" } },
+            { name: "borrower.search", arguments: { query: "พี่เกมส์" }, result: { resolution: "unique", candidates: [] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000356", name: "fixture" }, aliases: [], loans: [] } },
+            { name: "loan.restructure.preview", arguments: { oldLoanPublicId: LOAN_A, settlementDate: "2026-08-19", replacementTerms, additionalPrincipal: "1000.00", reason: "Owner requested a monthly replacement contract" }, result: { publicId: RESTRUCTURE, previewHash: PREVIEW_HASH, oldBalanceVersion: BALANCE_VERSION, cash: { direction: "payout", amount: "1000.00" }, oldLoanPublicId: "0198c481-3e2b-7000-8000-000000000357", status: "fixture", settlementDate: "2026-08-15", expiresAt: "2026-08-15T06:30:00.000Z", balance: { fixedInterestCandidate: "0.00", retroactiveInterestCandidate: "0.00", selectedInterest: "0.00", selectedInterestBranch: "fixed", interestDifference: "0.00", exposureTrace: [], lateDays: 0, grossPrincipal: "0.00", grossInterest: "0.00", grossFees: "0.00", grossPenalty: "0.00", grossSettlement: "0.00", waivedInterest: "0.00", waivedFees: "0.00", waivedPenalty: "0.00", netInterest: "0.00", netFees: "0.00", netPenalty: "0.00", externalSettlementCredits: "0.00", netSettlement: "0.00" }, replacementPrincipal: "0.00", externalCreditAllocation: { penalty: "0.00", fee: "0.00", interest: "0.00", principal: "0.00", unallocated: "0.00" }, replacementTerms: { principal: "0.00", interestRate: "0.00", termMonths: 1, startDate: "2026-08-15", repaymentType: "daily", dailyEntry: { durationUnit: "days", durationValue: 1, entryMode: "daily_payment" } }, schedule: [], reason: "fixture" } },
+            { name: "loan.restructure.execute", arguments: { restructurePublicId: RESTRUCTURE, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, confirmed: true, reason: "Owner confirmed the exact settlement and replacement", idempotencyKey: "restructure-execute-20260819-1" }, result: { publicId: "0198c481-3e2b-7000-8000-000000000358", status: "fixture", oldLoanPublicId: "0198c481-3e2b-7000-8000-000000000359", newLoanPublicId: "0198c481-3e2b-7000-8000-000000000360", disbursementDraftPublicId: "0198c481-3e2b-7000-8000-000000000361", auditPublicIds: [], correlationId: "0198c481-3e2b-7000-8000-000000000362" } },
         ],
         run: (mcp) => restructureFlow(mcp),
     },
     "waiver-execute": {
         script: [
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
-            { name: "loan.waiver.preview", arguments: { loanPublicId: LOAN_B, component: "interest", amount: "100.00", reason: "Owner approved hardship relief" }, result: { publicId: WAIVER_PREVIEW, previewHash: PREVIEW_HASH, balanceVersion: BALANCE_VERSION } },
-            { name: "loan.waiver.execute", arguments: { previewPublicId: WAIVER_PREVIEW, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, confirmed: true, reason: "Owner approved hardship relief", idempotencyKey: "waiver-execute-20260819-1" }, result: { publicId: WAIVER } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000363", name: "fixture" }, aliases: [], loans: [] } },
+            { name: "loan.waiver.preview", arguments: { loanPublicId: LOAN_B, component: "interest", amount: "100.00", reason: "Owner approved hardship relief" }, result: { publicId: WAIVER_PREVIEW, previewHash: PREVIEW_HASH, balanceVersion: BALANCE_VERSION, loanPublicId: "0198c481-3e2b-7000-8000-000000000364", restructurePublicId: "0198c481-3e2b-7000-8000-000000000365", component: "interest", amount: "0.00", availableAmount: "0.00", remainingAmount: "0.00", reason: "fixture", expiresAt: "2026-08-15T06:30:00.000Z" } },
+            { name: "loan.waiver.execute", arguments: { previewPublicId: WAIVER_PREVIEW, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, confirmed: true, reason: "Owner approved hardship relief", idempotencyKey: "waiver-execute-20260819-1" }, result: { publicId: WAIVER, status: "executed", component: "interest", amount: "0.00", reason: "fixture", auditPublicId: "0198c481-3e2b-7000-8000-000000000366", correlationId: "0198c481-3e2b-7000-8000-000000000367", executedAt: "2026-08-15T06:30:00.000Z", reversedAt: "2026-08-15T06:30:00.000Z" } },
         ],
         run: (mcp) => waiverFlow(mcp, "Owner approved hardship relief"),
     },
     "restructure-ambiguous-borrower": {
-        script: [{ name: "borrower.search", arguments: { query: "พี่เกมส์" }, result: { resolution: "ambiguous" } }],
+        script: [{ name: "borrower.search", arguments: { query: "พี่เกมส์" }, result: { resolution: "ambiguous", candidates: [] } }],
         run: (mcp) => restructureFlow(mcp),
     },
     "restructure-stale-preview": {
         script: [
-            { name: "borrower.search", arguments: { query: "พี่เกมส์" }, result: { resolution: "unique" } },
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
-            { name: "loan.restructure.preview", arguments: { oldLoanPublicId: LOAN_A, settlementDate: "2026-08-19", replacementTerms, additionalPrincipal: "1000.00", reason: "Owner requested a monthly replacement contract" }, result: { publicId: RESTRUCTURE, previewHash: PREVIEW_HASH, oldBalanceVersion: BALANCE_VERSION, cash: { direction: "payout", amount: "1000.00" } } },
-            { name: "loan.restructure.execute", arguments: { restructurePublicId: RESTRUCTURE, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, confirmed: true, reason: "Owner confirmed the exact settlement and replacement", idempotencyKey: "restructure-execute-20260819-1" }, error: { code: "STALE_RESTRUCTURE_PREVIEW", message: "Balances changed" } },
+            { name: "borrower.search", arguments: { query: "พี่เกมส์" }, result: { resolution: "unique", candidates: [] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000368", name: "fixture" }, aliases: [], loans: [] } },
+            { name: "loan.restructure.preview", arguments: { oldLoanPublicId: LOAN_A, settlementDate: "2026-08-19", replacementTerms, additionalPrincipal: "1000.00", reason: "Owner requested a monthly replacement contract" }, result: { publicId: RESTRUCTURE, previewHash: PREVIEW_HASH, oldBalanceVersion: BALANCE_VERSION, cash: { direction: "payout", amount: "1000.00" }, oldLoanPublicId: "0198c481-3e2b-7000-8000-000000000369", status: "fixture", settlementDate: "2026-08-15", expiresAt: "2026-08-15T06:30:00.000Z", balance: { fixedInterestCandidate: "0.00", retroactiveInterestCandidate: "0.00", selectedInterest: "0.00", selectedInterestBranch: "fixed", interestDifference: "0.00", exposureTrace: [], lateDays: 0, grossPrincipal: "0.00", grossInterest: "0.00", grossFees: "0.00", grossPenalty: "0.00", grossSettlement: "0.00", waivedInterest: "0.00", waivedFees: "0.00", waivedPenalty: "0.00", netInterest: "0.00", netFees: "0.00", netPenalty: "0.00", externalSettlementCredits: "0.00", netSettlement: "0.00" }, replacementPrincipal: "0.00", externalCreditAllocation: { penalty: "0.00", fee: "0.00", interest: "0.00", principal: "0.00", unallocated: "0.00" }, replacementTerms: { principal: "0.00", interestRate: "0.00", termMonths: 1, startDate: "2026-08-15", repaymentType: "daily", dailyEntry: { durationUnit: "days", durationValue: 1, entryMode: "daily_payment" } }, schedule: [], reason: "fixture" } },
+            { name: "loan.restructure.execute", arguments: { restructurePublicId: RESTRUCTURE, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, confirmed: true, reason: "Owner confirmed the exact settlement and replacement", idempotencyKey: "restructure-execute-20260819-1" }, error: { code: "STALE_RESTRUCTURE_PREVIEW", message: "Balances changed", retryable: false, reviewRequired: false, details: {} } },
         ],
         run: (mcp) => restructureFlow(mcp),
     },
     "restructure-missing-confirmation": {
         script: [
-            { name: "borrower.search", arguments: { query: "พี่เกมส์" }, result: { resolution: "unique" } },
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
-            { name: "loan.restructure.preview", arguments: { oldLoanPublicId: LOAN_A, settlementDate: "2026-08-19", replacementTerms, additionalPrincipal: "1000.00", reason: "Owner requested a monthly replacement contract" }, result: { publicId: RESTRUCTURE, previewHash: PREVIEW_HASH, oldBalanceVersion: BALANCE_VERSION, cash: { direction: "payout", amount: "1000.00" } } },
+            { name: "borrower.search", arguments: { query: "พี่เกมส์" }, result: { resolution: "unique", candidates: [] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000370", name: "fixture" }, aliases: [], loans: [] } },
+            { name: "loan.restructure.preview", arguments: { oldLoanPublicId: LOAN_A, settlementDate: "2026-08-19", replacementTerms, additionalPrincipal: "1000.00", reason: "Owner requested a monthly replacement contract" }, result: { publicId: RESTRUCTURE, previewHash: PREVIEW_HASH, oldBalanceVersion: BALANCE_VERSION, cash: { direction: "payout", amount: "1000.00" }, oldLoanPublicId: "0198c481-3e2b-7000-8000-000000000371", status: "fixture", settlementDate: "2026-08-15", expiresAt: "2026-08-15T06:30:00.000Z", balance: { fixedInterestCandidate: "0.00", retroactiveInterestCandidate: "0.00", selectedInterest: "0.00", selectedInterestBranch: "fixed", interestDifference: "0.00", exposureTrace: [], lateDays: 0, grossPrincipal: "0.00", grossInterest: "0.00", grossFees: "0.00", grossPenalty: "0.00", grossSettlement: "0.00", waivedInterest: "0.00", waivedFees: "0.00", waivedPenalty: "0.00", netInterest: "0.00", netFees: "0.00", netPenalty: "0.00", externalSettlementCredits: "0.00", netSettlement: "0.00" }, replacementPrincipal: "0.00", externalCreditAllocation: { penalty: "0.00", fee: "0.00", interest: "0.00", principal: "0.00", unallocated: "0.00" }, replacementTerms: { principal: "0.00", interestRate: "0.00", termMonths: 1, startDate: "2026-08-15", repaymentType: "daily", dailyEntry: { durationUnit: "days", durationValue: 1, entryMode: "daily_payment" } }, schedule: [], reason: "fixture" } },
         ],
         run: (mcp) => restructureFlow(mcp, false),
     },
     "restructure-unexpected-additional-cash": {
         script: [
-            { name: "borrower.search", arguments: { query: "พี่เกมส์" }, result: { resolution: "unique" } },
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
-            { name: "loan.restructure.preview", arguments: { oldLoanPublicId: LOAN_A, settlementDate: "2026-08-19", replacementTerms, additionalPrincipal: "1000.00", reason: "Owner requested a monthly replacement contract" }, result: { publicId: RESTRUCTURE, previewHash: PREVIEW_HASH, oldBalanceVersion: BALANCE_VERSION, cash: { direction: "payout", amount: "1200.00" } } },
+            { name: "borrower.search", arguments: { query: "พี่เกมส์" }, result: { resolution: "unique", candidates: [] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000372", name: "fixture" }, aliases: [], loans: [] } },
+            { name: "loan.restructure.preview", arguments: { oldLoanPublicId: LOAN_A, settlementDate: "2026-08-19", replacementTerms, additionalPrincipal: "1000.00", reason: "Owner requested a monthly replacement contract" }, result: { publicId: RESTRUCTURE, previewHash: PREVIEW_HASH, oldBalanceVersion: BALANCE_VERSION, cash: { direction: "payout", amount: "1200.00" }, oldLoanPublicId: "0198c481-3e2b-7000-8000-000000000373", status: "fixture", settlementDate: "2026-08-15", expiresAt: "2026-08-15T06:30:00.000Z", balance: { fixedInterestCandidate: "0.00", retroactiveInterestCandidate: "0.00", selectedInterest: "0.00", selectedInterestBranch: "fixed", interestDifference: "0.00", exposureTrace: [], lateDays: 0, grossPrincipal: "0.00", grossInterest: "0.00", grossFees: "0.00", grossPenalty: "0.00", grossSettlement: "0.00", waivedInterest: "0.00", waivedFees: "0.00", waivedPenalty: "0.00", netInterest: "0.00", netFees: "0.00", netPenalty: "0.00", externalSettlementCredits: "0.00", netSettlement: "0.00" }, replacementPrincipal: "0.00", externalCreditAllocation: { penalty: "0.00", fee: "0.00", interest: "0.00", principal: "0.00", unallocated: "0.00" }, replacementTerms: { principal: "0.00", interestRate: "0.00", termMonths: 1, startDate: "2026-08-15", repaymentType: "daily", dailyEntry: { durationUnit: "days", durationValue: 1, entryMode: "daily_payment" } }, schedule: [], reason: "fixture" } },
         ],
         run: (mcp) => restructureFlow(mcp),
     },
     "waiver-missing-reason": {
-        script: [{ name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } }],
+        script: [{ name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000374", name: "fixture" }, aliases: [], loans: [] } }],
         run: (mcp) => waiverFlow(mcp),
     },
     "restructure-unsafe-reversal": {
         script: [
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
-            { name: "loan.restructure.reverse", arguments: { restructurePublicId: RESTRUCTURE, reason: "Owner requested reversal after review", idempotencyKey: "restructure-reverse-20260819-1" }, error: { code: "RESTRUCTURE_REVERSAL_BLOCKED", message: "Downstream activity exists" } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000375", name: "fixture" }, aliases: [], loans: [] } },
+            { name: "loan.restructure.reverse", arguments: { restructurePublicId: RESTRUCTURE, reason: "Owner requested reversal after review", idempotencyKey: "restructure-reverse-20260819-1" }, error: { code: "RESTRUCTURE_REVERSAL_BLOCKED", message: "Downstream activity exists", retryable: false, reviewRequired: false, details: {} } },
         ],
         run: async (mcp) => {
             await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A });

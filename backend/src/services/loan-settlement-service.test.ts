@@ -291,6 +291,13 @@ describe("loan settlement service", () => {
         const originalFundEffects = await db.select().from(fundLedgerEntries)
             .where(eq(fundLedgerEntries.transactionId, original!.id))
             .orderBy(fundLedgerEntries.id);
+        const reallocatedProfile = await db.insert(bankProfiles).values({
+            tenantId: seeded.actor.tenantId,
+            name: "Later reallocated fund",
+            type: "personal_savings",
+        }).returning().then((rows) => rows[0]!);
+        await db.update(loanFundingAllocations).set({ bankProfileId: reallocatedProfile.id })
+            .where(eq(loanFundingAllocations.loanId, seeded.loan.id));
 
         setSystemTime(new Date("2026-08-23T12:00:00+07:00"));
 

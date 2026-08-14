@@ -265,7 +265,7 @@ describe("CreditSync executable orchestration evals", () => {
         }
     });
 
-    test("every scripted call and every intermediary-flow output passes the full frozen JSON schemas", async () => {
+    test("every scripted call and every catalog output/error passes the full frozen JSON schemas", async () => {
         const { catalog, contract } = await fixtures();
         const tools = new Map(contract.tools.map((tool) => [tool.name, tool]));
         const ajv = new Ajv({ allErrors: true, strict: false });
@@ -274,6 +274,18 @@ describe("CreditSync executable orchestration evals", () => {
         const outputValidators = new Map(contract.tools.flatMap((tool) => tool.outputSchema
             ? [[tool.name, ajv.compile(tool.outputSchema)] as const]
             : []));
+        const errorValidator = ajv.compile({
+            type: "object",
+            additionalProperties: false,
+            required: ["code", "message", "retryable", "reviewRequired", "details"],
+            properties: {
+                code: { type: "string", minLength: 1 },
+                message: { type: "string", minLength: 1 },
+                retryable: { type: "boolean" },
+                reviewRequired: { type: "boolean" },
+                details: { type: "object", additionalProperties: true },
+            },
+        });
         let validatedCalls = 0;
         let validatedOutputs = 0;
         const validationErrors: string[] = [];
@@ -286,7 +298,6 @@ describe("CreditSync executable orchestration evals", () => {
                     validatedCalls += 1;
                 },
                 validateOutput(name, data) {
-                    if (!entry.id.startsWith("intermediated-disbursement-")) return;
                     const tool = tools.get(name);
                     const validate = outputValidators.get(name);
                     expect(validate, `${entry.id}/${name} missing frozen output schema`).toBeDefined();
@@ -300,6 +311,12 @@ describe("CreditSync executable orchestration evals", () => {
                         }
                         : { schemaVersion: "1.0", data };
                     if (!validate!(envelope)) validationErrors.push(`${entry.id}/${name} output ${conciseSchemaErrors(validate!.errors)}`);
+                    validatedOutputs += 1;
+                },
+                validateError(name, error) {
+                    if (!errorValidator(error)) {
+                        validationErrors.push(`${entry.id}/${name} error ${conciseSchemaErrors(errorValidator.errors)}`);
+                    }
                     validatedOutputs += 1;
                 },
             });

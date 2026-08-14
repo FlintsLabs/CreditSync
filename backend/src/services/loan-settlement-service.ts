@@ -5,6 +5,7 @@ import { db } from "../db";
 import {
     auditLogs,
     floatingTransactionAllocations,
+    fundLedgerEntries,
     loanDisbursements,
     loanInterestAccruals,
     loanInterestRatePreviews,
@@ -869,12 +870,26 @@ export async function reverseLoanSettlement(ctx: CommandContext, input: ReverseL
                 status: restoredStatus,
             }).where(and(eq(loanInterestAccruals.tenantId, ctx.tenantId), eq(loanInterestAccruals.id, accrual.id)));
         }
-        await writeFundEffects(tx, ctx, locked.loan.id, reversal.id, reversedAt, {
-            principal: new FinancialDecimal(original.principalComponent).negated(),
-            interest: new FinancialDecimal(original.interestComponent).negated(),
-            fee: new FinancialDecimal(original.feeComponent).negated(),
-            penalty: new FinancialDecimal(original.penaltyComponent).negated(),
-        });
+        const originalFundEffects = await tx.select().from(fundLedgerEntries).where(and(
+            eq(fundLedgerEntries.tenantId, ctx.tenantId),
+            eq(fundLedgerEntries.transactionId, original.id),
+        )).orderBy(asc(fundLedgerEntries.id));
+        if (originalFundEffects.length) {
+            await tx.insert(fundLedgerEntries).values(originalFundEffects.map((entry) => ({
+                tenantId: ctx.tenantId,
+                bankProfileId: entry.bankProfileId,
+                bankLoanId: entry.bankLoanId,
+                loanId: entry.loanId,
+                transactionId: reversal.id,
+                bankRepaymentId: entry.bankRepaymentId,
+                rolloverEntryId: entry.rolloverEntryId,
+                entryDate: reversedAt,
+                entryType: entry.entryType,
+                amount: signedMoney(new FinancialDecimal(entry.amount).negated()),
+                note: `Compensates settlement fund entry ${entry.publicId}`,
+                createdByUserId: ctx.actorUserId,
+            })));
+        }
         const restoredLoan = await tx.update(loans).set({
             outstandingPrincipal: signedMoney(original.principalComponent),
             outstandingInterest: signedMoney(locked.settlement.originalOutstandingInterest),
