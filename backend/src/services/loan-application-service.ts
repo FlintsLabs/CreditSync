@@ -1,7 +1,7 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import Decimal from "decimal.js";
 import { db } from "../db";
-import { bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanSchedules, loans, users } from "../db/schema";
+import { bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanOpeningBalanceComponents, loanRestructures, loanRestructureWaivers, loanSchedules, loans, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
 import {
@@ -314,7 +314,30 @@ export function previewLoan(input: PublicLoanCalculationParams) {
 }
 
 export async function getLoanApplication(ctx: CommandContext, publicId: string) {
-    return presentLoan(await accessibleLoan(ctx, publicId));
+    const loan = await accessibleLoan(ctx, publicId);
+    const base = await presentLoan(loan);
+    const restructure = await db.query.loanRestructures.findFirst({
+        where: and(eq(loanRestructures.tenantId, ctx.tenantId), inArray(loanRestructures.status, ["executed", "reversed"]), or(eq(loanRestructures.oldLoanId, loan.id), eq(loanRestructures.newLoanId, loan.id))),
+        orderBy: [desc(loanRestructures.createdAt)],
+    });
+    if (!restructure) return { ...base, restructureLineage: null, openingBalanceComponents: [], restructureWaivers: [] };
+    const [oldLoan, newLoan, opening, waivers] = await Promise.all([
+        db.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, restructure.oldLoanId)) }),
+        restructure.newLoanId === null ? null : db.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, restructure.newLoanId)) }),
+        restructure.newLoanId === loan.id ? db.select().from(loanOpeningBalanceComponents).where(and(eq(loanOpeningBalanceComponents.tenantId, ctx.tenantId), eq(loanOpeningBalanceComponents.restructureId, restructure.id), eq(loanOpeningBalanceComponents.loanId, loan.id))).orderBy(loanOpeningBalanceComponents.id) : [],
+        restructure.newLoanId === loan.id ? db.select().from(loanRestructureWaivers).where(and(eq(loanRestructureWaivers.tenantId, ctx.tenantId), eq(loanRestructureWaivers.restructureId, restructure.id), eq(loanRestructureWaivers.loanId, loan.id))).orderBy(loanRestructureWaivers.id) : [],
+    ]);
+    return {
+        ...base,
+        restructureLineage: {
+            restructurePublicId: restructure.publicId,
+            status: restructure.status,
+            restructuredFromPublicId: restructure.newLoanId === loan.id ? oldLoan?.publicId ?? null : null,
+            restructuredToPublicId: restructure.oldLoanId === loan.id ? newLoan?.publicId ?? null : null,
+        },
+        openingBalanceComponents: opening.map(component => ({ publicId: component.publicId, kind: component.componentKind, amount: serializeMoney(component.amount), status: component.status, sourceType: component.sourceType, sourcePublicId: component.sourcePublicId })),
+        restructureWaivers: waivers.map(waiver => ({ publicId: waiver.publicId, component: waiver.componentKind, amount: serializeMoney(waiver.amount), reason: waiver.reason, status: waiver.status, auditPublicId: waiver.auditPublicId, executedAt: waiver.executedAt, reversedAt: waiver.reversedAt })),
+    };
 }
 
 export async function createLoanDraft(ctx: CommandContext, input: LoanDraftInput) {

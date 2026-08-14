@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
     auditLogs, borrowers, loanDisbursementEvents, loanInterestAccruals, loanInterestRatePeriods,
@@ -271,6 +271,49 @@ async function presentExecution(executor: Executor, row: Restructure, oldLoan: L
     const draft = row.newLoanId ? await executor.query.loanDisbursementEvents.findFirst({ where: and(eq(loanDisbursementEvents.tenantId, row.tenantId), eq(loanDisbursementEvents.loanId, row.newLoanId), eq(loanDisbursementEvents.status, "draft")) }) : null;
     return { publicId: row.publicId, status: row.status, oldLoanPublicId: oldLoan.publicId, newLoanPublicId: newLoan?.publicId ?? null, disbursementDraftPublicId: draft?.publicId ?? null, auditPublicIds: [row.executedAuditPublicId, row.reversedAuditPublicId].filter(Boolean), correlationId: row.correlationId };
 }
+
+async function presentRestructureRead(executor: Executor, row: Restructure, oldLoan: Loan) {
+    const newLoan = row.newLoanId
+        ? await executor.query.loans.findFirst({ where: and(eq(loans.tenantId, row.tenantId), eq(loans.id, row.newLoanId)) })
+        : null;
+    const [opening, waivers] = row.newLoanId ? await Promise.all([
+        executor.select().from(loanOpeningBalanceComponents).where(and(eq(loanOpeningBalanceComponents.tenantId, row.tenantId), eq(loanOpeningBalanceComponents.restructureId, row.id))).orderBy(loanOpeningBalanceComponents.id),
+        executor.select().from(loanRestructureWaivers).where(and(eq(loanRestructureWaivers.tenantId, row.tenantId), eq(loanRestructureWaivers.restructureId, row.id))).orderBy(loanRestructureWaivers.id),
+    ]) : [[], []];
+    return {
+        publicId: row.publicId, oldLoanPublicId: oldLoan.publicId, newLoanPublicId: newLoan?.publicId ?? null,
+        status: row.status, settlementDate: row.settlementDate, oldBalanceVersion: row.oldBalanceVersion,
+        previewHash: row.previewHash, expiresAt: row.expiresAt,
+        components: {
+            gross: { principal: serializeMoney(row.grossPrincipal), interest: serializeMoney(row.grossInterest), fees: serializeMoney(row.grossFees), penalty: serializeMoney(row.grossPenalty) },
+            waived: { interest: serializeMoney(row.waivedInterest), fees: serializeMoney(row.waivedFees), penalty: serializeMoney(row.waivedPenalty) },
+            externalCredit: { principal: serializeMoney(row.externalCreditPrincipal), interest: serializeMoney(row.externalCreditInterest), fees: serializeMoney(row.externalCreditFees), penalty: serializeMoney(row.externalCreditPenalty), total: serializeMoney(row.externalSettlementCredits) },
+            net: { principal: serializeMoney(row.netPrincipal), interest: serializeMoney(row.netInterest), fees: serializeMoney(row.netFees), penalty: serializeMoney(row.netPenalty) },
+            additionalPrincipal: serializeMoney(row.additionalPrincipal),
+        },
+        cash: { direction: row.cashDirection, amount: serializeMoney(row.cashAmount) },
+        replacementTerms: row.requestedReplacementTerms, reason: row.reason,
+        openingComponents: opening.map((component: typeof loanOpeningBalanceComponents.$inferSelect) => ({ publicId: component.publicId, kind: component.componentKind, amount: serializeMoney(component.amount), status: component.status, sourceType: component.sourceType, sourcePublicId: component.sourcePublicId })),
+        waivers: waivers.map((waiver: typeof loanRestructureWaivers.$inferSelect) => ({ publicId: waiver.publicId, component: waiver.componentKind, amount: serializeMoney(waiver.amount), reason: waiver.reason, status: waiver.status, auditPublicId: waiver.auditPublicId, executedAt: waiver.executedAt, reversedAt: waiver.reversedAt })),
+        auditPublicIds: [row.executedAuditPublicId, row.reversedAuditPublicId].filter(Boolean), correlationId: row.correlationId,
+        executedAt: row.executedAt, reversedAt: row.reversedAt, createdAt: row.createdAt,
+    };
+}
+
+export async function getLoanRestructure(ctx: CommandContext, restructurePublicId: string) {
+    const { row, oldLoan } = await accessibleRestructure(ctx, restructurePublicId);
+    return presentRestructureRead(db, row, oldLoan);
+}
+
+export async function listLoanRestructures(ctx: CommandContext, loanPublicId: string) {
+    const loan = await accessibleLoan(ctx, loanPublicId);
+    const rows = await db.select().from(loanRestructures).where(and(eq(loanRestructures.tenantId, ctx.tenantId), or(eq(loanRestructures.oldLoanId, loan.id), eq(loanRestructures.newLoanId, loan.id)))).orderBy(desc(loanRestructures.createdAt));
+    return Promise.all(rows.map(async (row) => {
+        const oldLoan = loan.id === row.oldLoanId ? loan : await db.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, row.oldLoanId)) });
+        if (!oldLoan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+        return presentRestructureRead(db, row, oldLoan);
+    }));
+}
 function replacementColumns(replacement: ReturnType<typeof normalizeReplacement>) {
     const { terms, dailyEntry, floating } = replacement;
     const sp = terms.singlePayment;
@@ -326,7 +369,7 @@ export async function executeLoanRestructure(ctx: CommandContext, restructurePub
             status: "active", clonedFromLoanId: oldLoan.id,
         }).returning().then((rows: Loan[]) => rows[0]!);
         const executionAudit = await createAuditLog(tx, { ...auditContext(ctx), entityType: "loan_restructure", entityId: row.publicId, action: "executed", payload: { oldLoanPublicId: oldLoan.publicId, newLoanPublicId: newLoan.publicId, additionalPrincipal: serializeMoney(computed.additionalPrincipal), reason: required.reason } });
-        const executed = await tx.update(loanRestructures).set({ newLoanId: newLoan.id, status: "executed", executeIdempotencyKey: required.idempotencyKey, executeRequestHash: required.requestHash, executeActorSource: ctx.actorSource, executedAuditPublicId: executionAudit.publicId, preExecutionOldLoanState: { status: oldLoan.status ?? "active", outstandingPrincipal: serializeMoney(oldLoan.outstandingPrincipal ?? 0), outstandingInterest: serializeMoney(oldLoan.outstandingInterest ?? 0), outstandingFees: serializeMoney(oldLoan.outstandingFees ?? 0), nextDueDate: oldLoan.nextDueDate ?? null }, executedAt: now, executedByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId, updatedAt: now }).where(and(eq(loanRestructures.tenantId, ctx.tenantId), eq(loanRestructures.id, row.id))).returning().then((rows: Restructure[]) => rows[0]!);
+        const executed = await tx.update(loanRestructures).set({ newLoanId: newLoan.id, status: "executed", executeIdempotencyKey: required.idempotencyKey, executeRequestHash: required.requestHash, executeActorSource: ctx.actorSource, correlationId: ctx.correlationId, executedAuditPublicId: executionAudit.publicId, preExecutionOldLoanState: { status: oldLoan.status ?? "active", outstandingPrincipal: serializeMoney(oldLoan.outstandingPrincipal ?? 0), outstandingInterest: serializeMoney(oldLoan.outstandingInterest ?? 0), outstandingFees: serializeMoney(oldLoan.outstandingFees ?? 0), nextDueDate: oldLoan.nextDueDate ?? null }, executedAt: now, executedByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId, updatedAt: now }).where(and(eq(loanRestructures.tenantId, ctx.tenantId), eq(loanRestructures.id, row.id))).returning().then((rows: Restructure[]) => rows[0]!);
         if (replacement.schedule.length) await tx.insert(loanSchedules).values(replacement.schedule.map(schedule => ({ tenantId: ctx.tenantId, loanId: newLoan.id, installmentNo: schedule.installmentNo, dueDate: schedule.dueDate, scheduledPrincipal: schedule.scheduledPrincipal, scheduledInterest: schedule.scheduledInterest, scheduledFee: schedule.scheduledFee, scheduledTotal: schedule.scheduledTotal, remainingDue: schedule.remainingDue, paidTotal: "0.00", paidPenalty: "0.00", status: "pending" })));
         if (replacement.floating) await tx.insert(loanInterestRatePeriods).values({ tenantId: ctx.tenantId, loanId: newLoan.id, effectiveDate: replacement.terms.startDate!, rateType: replacement.floating.mode, rate: replacement.floating.rate, createdByUserId: ctx.actorUserId });
         const componentRows = [
@@ -371,7 +414,7 @@ export async function reverseLoanRestructure(ctx: CommandContext, restructurePub
         await tx.execute(sql`SELECT id FROM loan_restructures WHERE tenant_id=${ctx.tenantId} AND id=${accessible.row.id} FOR UPDATE`);
         const { row, oldLoan } = await accessibleRestructure(ctx, restructurePublicId, tx);
         if (row.status === "reversed") {
-            if (row.reversalIdempotencyKey === idempotencyKey && row.reversalRequestHash === requestHash) return presentExecution(tx, row, oldLoan);
+            if (row.reversalIdempotencyKey === idempotencyKey && row.reversalRequestHash === requestHash) return { ...(await presentExecution(tx, row, oldLoan)), correlationId: ctx.correlationId };
             throw new DomainError("REVERSAL_IDEMPOTENCY_CONFLICT", "Restructure reversal payload conflicts", 409);
         }
         if (row.status !== "executed" || !row.newLoanId || !row.preExecutionOldLoanState) throw new DomainError("RESTRUCTURE_NOT_REVERSIBLE", "Only executed restructures can be reversed", 409);
@@ -407,6 +450,6 @@ export async function reverseLoanRestructure(ctx: CommandContext, restructurePub
         await tx.update(loanSchedules).set({ status: "cancelled", remainingDue: "0.00", updatedAt: now }).where(and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.loanId, row.newLoanId)));
         const audit = await createAuditLog(tx, { ...auditContext(ctx), entityType: "loan_restructure", entityId: row.publicId, action: "reversed", payload: { reason, blockers } });
         const reversed = await tx.update(loanRestructures).set({ status: "reversed", reversalIdempotencyKey: idempotencyKey, reversalRequestHash: requestHash, reversalActorSource: ctx.actorSource, reversedAuditPublicId: audit.publicId, reversedAt: now, reversedByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId, updatedAt: now }).where(and(eq(loanRestructures.tenantId, ctx.tenantId), eq(loanRestructures.id, row.id))).returning().then((rows: Restructure[]) => rows[0]!);
-        return presentExecution(tx, reversed, oldLoan);
+        return { ...(await presentExecution(tx, reversed, oldLoan)), correlationId: ctx.correlationId };
     });
 }

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
-import { and, eq, gt, sql } from "drizzle-orm";
+import { and, desc, eq, gt, sql } from "drizzle-orm";
 import { db } from "../db";
 import { loanOpeningBalanceComponents, loanRestructures, loanRestructureWaivers, loanWaiverPreviews, loans, transactions, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
@@ -133,6 +133,22 @@ export async function executeLoanWaiver(ctx: CommandContext, previewPublicId: st
 }
 
 function present(row: WaiverRow) { return { publicId: row.publicId, status: row.status, component: row.componentKind, amount: serializeMoney(row.amount), reason: row.reason, auditPublicId: row.auditPublicId, correlationId: row.correlationId, executedAt: row.executedAt, reversedAt: row.reversedAt }; }
+
+export async function listLoanWaivers(ctx: CommandContext, loanPublicId: string) {
+    const { loan, restructure } = await accessibleReplacement(ctx, loanPublicId);
+    const rows = await db.select().from(loanRestructureWaivers).where(and(eq(loanRestructureWaivers.tenantId, ctx.tenantId), eq(loanRestructureWaivers.loanId, loan.id), eq(loanRestructureWaivers.restructureId, restructure.id))).orderBy(desc(loanRestructureWaivers.createdAt));
+    return rows.map(present);
+}
+
+export async function getLoanWaiver(ctx: CommandContext, waiverPublicId: string) {
+    if (!uuidPattern.test(waiverPublicId)) throw new DomainError("INVALID_PUBLIC_ID", "waiverPublicId must be a UUID", 400);
+    const row = await db.query.loanRestructureWaivers.findFirst({ where: and(eq(loanRestructureWaivers.tenantId, ctx.tenantId), eq(loanRestructureWaivers.publicId, waiverPublicId)) });
+    if (!row) throw new DomainError("WAIVER_NOT_FOUND", "Loan waiver not found", 404);
+    const loan = await db.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, row.loanId)) });
+    if (!loan) throw new DomainError("WAIVER_NOT_FOUND", "Loan waiver not found", 404);
+    await accessibleReplacement(ctx, loan.publicId);
+    return present(row);
+}
 
 export async function reverseLoanWaiver(ctx: CommandContext, waiverPublicId: string, input: { reason: string }) {
     if (!uuidPattern.test(waiverPublicId)) throw new DomainError("INVALID_PUBLIC_ID", "waiverPublicId must be a UUID", 400);

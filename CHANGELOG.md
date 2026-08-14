@@ -3,6 +3,7 @@
 ## v0.3.12 - 2026-08-14
 
 ### Added
+- Added closed, tenant-scoped REST read/preview/confirm/execute/reverse adapters for restructures, component waivers, and durable early settlement, with exact public money DTOs, idempotency and correlation propagation, safe loan lineage/opening-component read models, cache invalidation, strict request schemas, and authenticated integration coverage.
 - Added atomic preview-confirm-execute and compensating-reversal services for exact single-payment settlement into independently priced replacement loans, including durable later- and early-settlement waiver previews, component opening balances, externally paid settlement credits with normal allocation, additional-principal payout drafts, strict idempotency and comprehensive balance-version guards, and ordered replacement-loan payment allocation.
 - Added exact single-payment preview, draft/update presentation, direct-capital activation, and one-row maturity schedules across the shared service and closed REST contract, plus explicit floating daily/weekly accrual-cycle round trips with legacy daily defaults.
 - Added tenant-safe single-payment and floating-accrual persistence plus append-only restructure, opening-balance component, waiver, public-lineage, and durable request-key records with database-enforced financial invariants.
