@@ -196,9 +196,7 @@ export function createDefaultMcpToolHandlers(
         }
     },
     "loan.draft": (ctx, input) => createLoanDraft(ctx, input as unknown as LoanDraftInput),
-    "loan.activate": (ctx, input) => activateLoan(ctx, asString(input, "loanPublicId"), {
-        allowedRepaymentTypes: ["daily", "weekly", "monthly", "floating", "single_payment"],
-    }),
+    "loan.activate": (ctx, input) => activateLoan(ctx, asString(input, "loanPublicId")),
     "loan.interest-rate.list": (ctx, input) => listLoanInterestRates(ctx, asString(input, "loanPublicId")),
     "loan.interest-rate.preview": (ctx, input) => previewLoanInterestRateChange(ctx, asString(input, "loanPublicId"), {
         effectiveDate: asString(input, "effectiveDate"),

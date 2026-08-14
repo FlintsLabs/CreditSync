@@ -431,6 +431,7 @@ export default function LoanWizard() {
 
                     {step === 3 && (
                         <div className="space-y-4">
+                            {formData.repaymentType === "single_payment" && <div role="note" className="rounded border border-blue-500/30 bg-blue-500/10 p-4 text-sm"><div className="font-medium">{t("loanWizard.singlePayment.reviewTitle")}</div><p className="mt-1 text-muted-foreground">{t("loanWizard.singlePayment.alternativeNotice")}</p></div>}
                             {formData.repaymentType === "floating" && floatingPreview && (
                                 <FloatingInterestSummary
                                     policy={floatingPreview.floatingInterestPolicy}

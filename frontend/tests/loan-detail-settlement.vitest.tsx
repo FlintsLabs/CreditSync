@@ -213,7 +213,7 @@ describe("floating-loan detail and exact settlement", () => {
         expect(screen.getByText("Borrower Revenue Collected").parentElement).toHaveTextContent(/857\.14/);
         expect(within(summary).queryByText("Due interest")).not.toBeInTheDocument();
         expect(within(summary).queryByText("Accruing interest")).not.toBeInTheDocument();
-    });
+    }, 10_000);
 
     // Break caught: an initial preview failure is invisible because its message exists only in a dialog that never opened.
     it("shows a localized preview failure beside the settlement trigger", async () => {

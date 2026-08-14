@@ -24,6 +24,8 @@ import { LoanRepaymentHistory } from "./LoanRepaymentHistory";
 import { FloatingInterestRateCard } from "./FloatingInterestRateCard";
 import { FloatingInterestSummary, type FloatingInterestPolicyView } from "./FloatingInterestSummary";
 import { IntermediatedDisbursementPanel } from "./IntermediatedDisbursementPanel";
+import { LoanRestructurePanel } from "./LoanRestructurePanel";
+import { LoanOpeningBalances, type OpeningBalanceComponent, type RestructureLineage, type RestructureWaiver } from "./LoanOpeningBalances";
 
 interface LoanDetailData {
     id: string;
@@ -621,6 +623,9 @@ export default function LoanDetail() {
                             </CardContent>
                         </Card>
                     </div>
+
+                    <LoanOpeningBalances loanPublicId={loan.publicId} lineage={loan.restructureLineage} components={loan.openingBalanceComponents} waivers={loan.restructureWaivers} />
+                    <LoanRestructurePanel loan={loan} onExecuted={() => window.location.reload()} />
 
                     <LoanDisbursements ref={disbursementsRef} loanPublicId={loan.publicId ?? loan.id} />
 

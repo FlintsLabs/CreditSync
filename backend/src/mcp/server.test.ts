@@ -9,7 +9,7 @@ import { previewLoan } from "../services/loan-application-service";
 import { parseMoney, serializeMoney } from "../lib/money";
 import { loansRoute } from "../modules/loans";
 import { normalizeMoney as normalizeFrontendMoney } from "../../../frontend/src/lib/workflow-api";
-import { createMcpHttpPlugin, MCP_TOOL_NAMES, type McpToolHandler } from "./server";
+import { createMcpHttpPlugin, MCP_TOOL_NAMES, type CreateMcpHttpPluginInput, type McpToolHandler } from "./server";
 import type { McpRuntimeConfig } from "./security";
 
 const TOKEN = "contract-secret";

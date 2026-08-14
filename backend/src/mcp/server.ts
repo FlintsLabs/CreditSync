@@ -126,6 +126,36 @@ const floatingInterestPolicy = z.object({
     advanceInterestPeriods: z.union([z.literal(0), z.literal(1)]),
     advanceInterestRefundPolicy: z.literal("non_refundable"),
 }).strict();
+const floatingDailyInterest = z.object({
+    mode: z.enum(["per_thousand", "percent"]),
+    rate: z.string().regex(/^\d+(?:\.\d{1,4})?$/),
+    firstDayTreatment: z.enum(["deduct", "start_next_day"]),
+    accrualCycle: z.enum(["daily", "weekly"]).optional(),
+}).strict();
+const singlePayment = z.union([
+    z.object({
+        dueDate: date,
+        fixedAgreedInterest: money,
+        interestPolicy: z.literal("fixed_only"),
+        latePenalty: z.union([
+            z.object({ mode: z.literal("none") }).strict(),
+            z.object({ mode: z.literal("fixed_amount_per_day"), amountPerDay: money, graceDays: z.number().int().min(0).max(100_000) }).strict(),
+        ]),
+    }).strict(),
+    z.object({
+        dueDate: date,
+        fixedAgreedInterest: money,
+        interestPolicy: z.literal("greater_of_fixed_or_retroactive"),
+        retroactiveInterest: z.object({
+            rateType: z.enum(["percent_per_day", "per_thousand_per_day"]),
+            rate: z.string().regex(/^\d+(?:\.\d{1,4})?$/),
+        }).strict(),
+        latePenalty: z.union([
+            z.object({ mode: z.literal("none") }).strict(),
+            z.object({ mode: z.literal("fixed_amount_per_day"), amountPerDay: money, graceDays: z.number().int().min(0).max(100_000) }).strict(),
+        ]),
+    }).strict(),
+]);
 
 const loanTerms = {
     principal: money,
@@ -136,6 +166,8 @@ const loanTerms = {
     totalInstallments: z.number().int().positive().max(100_000).optional(),
     installmentAmount: money.optional(),
     floatingInterestPolicy: floatingInterestPolicy.optional(),
+    floatingDailyInterest: floatingDailyInterest.optional(),
+    singlePayment: singlePayment.optional(),
     dailyEntry: z.object({
         durationUnit: z.enum(["days", "months"]),
         durationValue: z.number().int().positive().max(100_000),
@@ -166,7 +198,8 @@ const publicReplacementTermsInput = z.discriminatedUnion("repaymentType", [
         totalInstallments: z.number().int().positive().max(100_000).optional(), installmentAmount: money.optional(),
     }).strict(),
     z.object({
-        ...replacementBase, repaymentType: z.literal("floating"), floatingDailyInterest: loanTerms.floatingDailyInterest.unwrap(),
+        ...replacementBase, repaymentType: z.literal("floating"),
+        floatingInterestPolicy: floatingInterestPolicy.optional(), floatingDailyInterest: floatingDailyInterest.optional(),
     }).strict(),
     z.object({
         ...replacementBase, repaymentType: z.literal("single_payment"), singlePayment: loanTerms.singlePayment.unwrap(),
@@ -282,6 +315,7 @@ const loanOutput = z.object({
     principal: money,
     principalAmount: money,
     interestRate: money,
+    singlePayment: singlePayment.nullable().optional(),
     floatingInterestPolicy: floatingInterestPolicy.nullable().optional(),
     floatingDailyInterest: z.object({ mode: z.enum(["per_thousand", "percent"]), rate: z.string(), firstDayTreatment: z.enum(["deduct", "start_next_day"]) }).nullable().optional(),
     dailyEntry: z.object({
@@ -413,6 +447,49 @@ const fundingProfileOutput = z.object({
     drawdowns: z.array(fundingDrawdownOutput),
 }).strict();
 const interestRateValue = floatingInterestRate;
+const versionHash = z.string().regex(/^v1:[0-9a-f]{64}$/i);
+const settlementBalanceOutput = z.object({
+    fixedInterestCandidate: money, retroactiveInterestCandidate: money, selectedInterest: money,
+    selectedInterestBranch: z.enum(["fixed", "retroactive"]), interestDifference: money,
+    exposureTrace: z.array(z.object({
+        amount: money, fromDate: date, toDate: date, days: z.number().int().min(0),
+        rateType: z.enum(["percent_per_day", "per_thousand_per_day"]).optional(),
+        rate: z.string().optional(), unroundedInterest: z.string(), roundedInterest: money,
+    }).strict()),
+    lateDays: z.number().int().min(0),
+    grossPrincipal: money, grossInterest: money, grossFees: money, grossPenalty: money, grossSettlement: money,
+    waivedInterest: money, waivedFees: money, waivedPenalty: money,
+    netInterest: money, netFees: money, netPenalty: money, externalSettlementCredits: money, netSettlement: signedMoney,
+}).strict();
+const restructurePreviewOutput = z.object({
+    publicId: uuid, oldLoanPublicId: uuid, status: z.string(), settlementDate: date,
+    oldBalanceVersion: versionHash, previewHash: versionHash, expiresAt: isoDateTime,
+    balance: settlementBalanceOutput, replacementPrincipal: money,
+    externalCreditAllocation: z.object({ penalty: money, fee: money, interest: money, principal: money, unallocated: money }).strict(),
+    replacementTerms: publicReplacementTermsOutput,
+    schedule: z.array(z.object({
+        installmentNo: z.number().int().positive(), dueDate: date,
+        scheduledPrincipal: money, scheduledInterest: money, scheduledFee: money,
+        scheduledTotal: money, remainingDue: money,
+    }).strict()),
+    cash: z.object({ direction: z.enum(["payout", "collection", "none"]), amount: money }).strict(),
+    reason: z.string(),
+}).strict();
+const restructureExecutionOutput = z.object({
+    publicId: uuid, status: z.string(), oldLoanPublicId: uuid, newLoanPublicId: uuid.nullable(),
+    disbursementDraftPublicId: uuid.nullable(), auditPublicIds: z.array(uuid), correlationId: uuid,
+}).strict();
+const waiverPreviewOutput = z.object({
+    publicId: uuid, loanPublicId: uuid, restructurePublicId: uuid,
+    component: z.enum(["interest", "fee", "penalty"]), amount: money,
+    availableAmount: money, remainingAmount: money, reason: z.string(),
+    previewHash: versionHash, balanceVersion: versionHash, expiresAt: isoDateTime,
+}).strict();
+const waiverExecutionOutput = z.object({
+    publicId: uuid, status: z.enum(["executed", "reversed"]),
+    component: z.enum(["interest", "fee", "penalty"]), amount: money, reason: z.string(),
+    auditPublicId: uuid, correlationId: uuid, executedAt: isoDateTime, reversedAt: nullableIsoDateTime,
+}).strict();
 const interestRatePeriodOutput = z.object({
     publicId: uuid,
     effectiveDate: date,
@@ -687,6 +764,19 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
         z.object({
             terms: z.object({ ...loanTerms }).strict(),
             schedule: z.array(scheduleOutput),
+            floatingDailyInterest: z.object({
+                mode: z.enum(["per_thousand", "percent"]),
+                rate: z.string().regex(/^\d+(?:\.\d{1,4})?$/),
+                firstDayTreatment: z.enum(["deduct", "start_next_day"]),
+            }).strict(),
+            firstDayInterest: money,
+            dailyInterestAtCurrentPrincipal: money,
+            netDisbursement: money,
+            nextInterestDate: date,
+        }).strict(),
+        z.object({
+            terms: z.object({ ...loanTerms }).strict(),
+            schedule: z.array(scheduleOutput),
             dailyLoanCalculation: z.object({
                 totalInstallments: z.number().int().positive(), installmentAmount: money, totalRepayment: money, totalInterest: money, dailyInterest: money,
                 flatDailyRatePercent: z.string(), flatMonthlyRatePercent: z.string(), flatAnnualRatePercent: z.string(),
@@ -696,12 +786,19 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
             terms: z.object({ ...loanTerms }).strict(),
             schedule: z.array(scheduleOutput),
             floatingInterestPolicy,
+            floatingDailyInterest,
             fullPeriodInterest: money,
             advanceInterest: money,
             netBorrowerPayout: money,
             firstPeriodStartDate: date,
             firstPeriodDueDate: date,
             periodDays: z.union([z.literal(1), z.literal(7)]),
+            advanceInterestAmount: money,
+            netDisbursement: money,
+            coveredStartDate: date,
+            coveredEndDate: date,
+            nextAccrualDate: date,
+            advanceInterestRefundPolicy: z.literal("non_refundable"),
         }).strict(),
     ]),
     "loan.draft": loanOutput,
@@ -860,7 +957,7 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
     }).strict(),
     "loan.activate": z.object({
         loanPublicId: uuid,
-        idempotencyKey: z.string().trim().min(1).max(200),
+        idempotencyKey: z.string().trim().min(1).max(200).optional(),
     }).strict(),
     "loan.interest-rate.list": z.object({ loanPublicId: uuid }).strict(),
     "loan.interest-rate.preview": z.object({
@@ -1339,7 +1436,11 @@ function frozenToolData(toolName: McpToolName, value: unknown): Record<string, u
         return legacy;
     };
     const projected = projectLoanFields({ ...data });
-    if (toolName === "loan.preview" && typeof projected.fullPeriodInterest === "string") {
+    const projectedTerms = projected.terms && typeof projected.terms === "object" && !Array.isArray(projected.terms)
+        ? projected.terms as Record<string, unknown>
+        : undefined;
+    const generalizedPreview = Boolean(projectedTerms?.floatingInterestPolicy);
+    if (toolName === "loan.preview" && typeof projected.fullPeriodInterest === "string" && !generalizedPreview) {
         projected.firstDayInterest = projected.advanceInterestAmount;
         projected.dailyInterestAtCurrentPrincipal = projected.fullPeriodInterest;
         projected.nextInterestDate = projected.nextAccrualDate;
@@ -1381,7 +1482,10 @@ function createServer(input: CreateMcpHttpPluginInput, ctx: CommandContext) {
             const parsed = rawInput as Record<string, unknown>;
             const idempotencyKey = typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey : undefined;
             const { idempotencyKey: _removed, ...handlerInput } = parsed;
-            const toolContext: CommandContext = { ...ctx, idempotencyKey };
+            const toolContext: CommandContext = {
+                ...ctx,
+                idempotencyKey: idempotencyKey ?? (toolName === "loan.activate" ? ctx.requestId : undefined),
+            };
             try {
                 await input.preflightHandlers?.[toolName]?.(toolContext, handlerInput);
                 const result = await input.handlers[toolName](toolContext, handlerInput);

@@ -282,7 +282,7 @@ if (!testDatabaseUrl) {
                 FROM loan_interest_rate_periods
                 WHERE id IN (${weeklyRatePeriod.id}, ${dailyRatePeriod.id}, ${perThousandWeeklyRatePeriod.id}) ORDER BY id
             `;
-            expect(ratePeriodBackfill).toEqual([
+            expect([...ratePeriodBackfill]).toEqual([
                 { loan_id: weeklyFloatingLoan.id, period_unit: "week", period_length: 1 },
                 { loan_id: dailyFloatingLoan.id, period_unit: "day", period_length: 1 },
                 { loan_id: perThousandWeeklyLoan.id, period_unit: "week", period_length: 1 },
@@ -292,7 +292,7 @@ if (!testDatabaseUrl) {
                     contractual_interest_amount, cumulative_interest_amount, daily_increment_amount
                 FROM loan_interest_accruals ORDER BY accrual_date, id
             `;
-            expect(accrualProjection).toEqual([
+            expect([...accrualProjection]).toEqual([
                 { accrual_date: "2026-08-15", period_unit: "week", period_length: 1, contractual_interest_amount: "600.00", cumulative_interest_amount: "257.14", daily_increment_amount: "85.71" },
                 { accrual_date: "2026-08-16", period_unit: "week", period_length: 1, contractual_interest_amount: "480.00", cumulative_interest_amount: "325.71", daily_increment_amount: "68.57" },
                 { accrual_date: "2026-08-21", period_unit: "week", period_length: 1, contractual_interest_amount: "30.02", cumulative_interest_amount: "4.29", daily_increment_amount: "4.29" },

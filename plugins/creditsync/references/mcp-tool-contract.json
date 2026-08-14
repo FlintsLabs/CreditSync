@@ -1,5 +1,5 @@
 {
-  "compatibility": "Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 5.0.0; breaking changes require plugin 6.0.0.",
+  "compatibility": "Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 6.0.0; breaking changes require plugin 7.0.0.",
   "schemaVersion": "1.0",
   "sourceOfTruth": "Authenticated local MCP SDK Client tools/list response from backend/src/mcp/server.ts",
   "tools": [
@@ -3056,6 +3056,42 @@
             ],
             "type": "object"
           },
+          "floatingDailyInterest": {
+            "additionalProperties": false,
+            "properties": {
+              "accrualCycle": {
+                "enum": [
+                  "daily",
+                  "weekly"
+                ],
+                "type": "string"
+              },
+              "firstDayTreatment": {
+                "enum": [
+                  "deduct",
+                  "start_next_day"
+                ],
+                "type": "string"
+              },
+              "mode": {
+                "enum": [
+                  "per_thousand",
+                  "percent"
+                ],
+                "type": "string"
+              },
+              "rate": {
+                "pattern": "^\\d+(?:\\.\\d{1,4})?$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "mode",
+              "rate",
+              "firstDayTreatment"
+            ],
+            "type": "object"
+          },
           "floatingInterestPolicy": {
             "additionalProperties": false,
             "properties": {
@@ -3331,6 +3367,478 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "dailyInterestAtCurrentPrincipal": {
+                    "maxLength": 32,
+                    "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "firstDayInterest": {
+                    "maxLength": 32,
+                    "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "floatingDailyInterest": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "firstDayTreatment": {
+                        "enum": [
+                          "deduct",
+                          "start_next_day"
+                        ],
+                        "type": "string"
+                      },
+                      "mode": {
+                        "enum": [
+                          "per_thousand",
+                          "percent"
+                        ],
+                        "type": "string"
+                      },
+                      "rate": {
+                        "pattern": "^\\d+(?:\\.\\d{1,4})?$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "rate",
+                      "firstDayTreatment"
+                    ],
+                    "type": "object"
+                  },
+                  "netDisbursement": {
+                    "maxLength": 32,
+                    "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "nextInterestDate": {
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
+                    "type": "string"
+                  },
+                  "schedule": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "amount": {
+                          "maxLength": 32,
+                          "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                          "type": "string"
+                        },
+                        "dueDate": {
+                          "format": "date",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
+                          "type": "string"
+                        },
+                        "installmentNo": {
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991,
+                          "type": "integer"
+                        },
+                        "interestComponent": {
+                          "maxLength": 32,
+                          "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                          "type": "string"
+                        },
+                        "principalComponent": {
+                          "maxLength": 32,
+                          "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                          "type": "string"
+                        },
+                        "remainingPrincipal": {
+                          "maxLength": 32,
+                          "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "installmentNo",
+                        "dueDate",
+                        "amount",
+                        "principalComponent",
+                        "interestComponent",
+                        "remainingPrincipal"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "terms": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "dailyEntry": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "dailyPayment": {
+                            "maxLength": 32,
+                            "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                            "type": "string"
+                          },
+                          "durationUnit": {
+                            "enum": [
+                              "days",
+                              "months"
+                            ],
+                            "type": "string"
+                          },
+                          "durationValue": {
+                            "exclusiveMinimum": 0,
+                            "maximum": 100000,
+                            "type": "integer"
+                          },
+                          "entryMode": {
+                            "enum": [
+                              "daily_payment",
+                              "daily_interest"
+                            ],
+                            "type": "string"
+                          },
+                          "interestInput": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "mode": {
+                                "enum": [
+                                  "percent",
+                                  "fixed_amount",
+                                  "per_thousand"
+                                ],
+                                "type": "string"
+                              },
+                              "value": {
+                                "pattern": "^\\d+(?:\\.\\d{1,4})?$",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "mode",
+                              "value"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "durationUnit",
+                          "durationValue",
+                          "entryMode"
+                        ],
+                        "type": "object"
+                      },
+                      "floatingDailyInterest": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "accrualCycle": {
+                            "enum": [
+                              "daily",
+                              "weekly"
+                            ],
+                            "type": "string"
+                          },
+                          "firstDayTreatment": {
+                            "enum": [
+                              "deduct",
+                              "start_next_day"
+                            ],
+                            "type": "string"
+                          },
+                          "mode": {
+                            "enum": [
+                              "per_thousand",
+                              "percent"
+                            ],
+                            "type": "string"
+                          },
+                          "rate": {
+                            "pattern": "^\\d+(?:\\.\\d{1,4})?$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "mode",
+                          "rate",
+                          "firstDayTreatment"
+                        ],
+                        "type": "object"
+                      },
+                      "floatingInterestPolicy": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "advanceInterestPeriods": {
+                            "anyOf": [
+                              {
+                                "const": 0,
+                                "type": "number"
+                              },
+                              {
+                                "const": 1,
+                                "type": "number"
+                              }
+                            ]
+                          },
+                          "advanceInterestRefundPolicy": {
+                            "const": "non_refundable",
+                            "type": "string"
+                          },
+                          "periodLength": {
+                            "const": 1,
+                            "type": "number"
+                          },
+                          "periodUnit": {
+                            "enum": [
+                              "day",
+                              "week"
+                            ],
+                            "type": "string"
+                          },
+                          "rate": {
+                            "maxLength": 32,
+                            "pattern": "^\\d+(?:\\.\\d{1,4})?$",
+                            "type": "string"
+                          },
+                          "rateMode": {
+                            "enum": [
+                              "percent",
+                              "per_thousand"
+                            ],
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "periodUnit",
+                          "periodLength",
+                          "rateMode",
+                          "rate",
+                          "advanceInterestPeriods",
+                          "advanceInterestRefundPolicy"
+                        ],
+                        "type": "object"
+                      },
+                      "installmentAmount": {
+                        "maxLength": 32,
+                        "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                        "type": "string"
+                      },
+                      "interestRate": {
+                        "maxLength": 32,
+                        "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                        "type": "string"
+                      },
+                      "principal": {
+                        "maxLength": 32,
+                        "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                        "type": "string"
+                      },
+                      "repaymentType": {
+                        "enum": [
+                          "daily",
+                          "weekly",
+                          "monthly",
+                          "floating",
+                          "single_payment"
+                        ],
+                        "type": "string"
+                      },
+                      "singlePayment": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "dueDate": {
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
+                                "type": "string"
+                              },
+                              "fixedAgreedInterest": {
+                                "maxLength": 32,
+                                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                "type": "string"
+                              },
+                              "interestPolicy": {
+                                "const": "fixed_only",
+                                "type": "string"
+                              },
+                              "latePenalty": {
+                                "anyOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "mode": {
+                                        "const": "none",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "mode"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "amountPerDay": {
+                                        "maxLength": 32,
+                                        "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                        "type": "string"
+                                      },
+                                      "graceDays": {
+                                        "maximum": 100000,
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      "mode": {
+                                        "const": "fixed_amount_per_day",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "mode",
+                                      "amountPerDay",
+                                      "graceDays"
+                                    ],
+                                    "type": "object"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "dueDate",
+                              "fixedAgreedInterest",
+                              "interestPolicy",
+                              "latePenalty"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "dueDate": {
+                                "format": "date",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
+                                "type": "string"
+                              },
+                              "fixedAgreedInterest": {
+                                "maxLength": 32,
+                                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                "type": "string"
+                              },
+                              "interestPolicy": {
+                                "const": "greater_of_fixed_or_retroactive",
+                                "type": "string"
+                              },
+                              "latePenalty": {
+                                "anyOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "mode": {
+                                        "const": "none",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "mode"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "amountPerDay": {
+                                        "maxLength": 32,
+                                        "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                        "type": "string"
+                                      },
+                                      "graceDays": {
+                                        "maximum": 100000,
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      "mode": {
+                                        "const": "fixed_amount_per_day",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "mode",
+                                      "amountPerDay",
+                                      "graceDays"
+                                    ],
+                                    "type": "object"
+                                  }
+                                ]
+                              },
+                              "retroactiveInterest": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "rate": {
+                                    "pattern": "^\\d+(?:\\.\\d{1,4})?$",
+                                    "type": "string"
+                                  },
+                                  "rateType": {
+                                    "enum": [
+                                      "percent_per_day",
+                                      "per_thousand_per_day"
+                                    ],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "rateType",
+                                  "rate"
+                                ],
+                                "type": "object"
+                              }
+                            },
+                            "required": [
+                              "dueDate",
+                              "fixedAgreedInterest",
+                              "interestPolicy",
+                              "retroactiveInterest",
+                              "latePenalty"
+                            ],
+                            "type": "object"
+                          }
+                        ]
+                      },
+                      "startDate": {
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
+                        "type": "string"
+                      },
+                      "termMonths": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 1200,
+                        "type": "integer"
+                      },
+                      "totalInstallments": {
+                        "exclusiveMinimum": 0,
+                        "maximum": 100000,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "principal",
+                      "interestRate",
+                      "termMonths",
+                      "repaymentType",
+                      "startDate"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "terms",
+                  "schedule",
+                  "floatingDailyInterest",
+                  "firstDayInterest",
+                  "dailyInterestAtCurrentPrincipal",
+                  "netDisbursement",
+                  "nextInterestDate"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
                   "dailyLoanCalculation": {
                     "anyOf": [
                       {
@@ -3492,6 +4000,42 @@
                           "durationUnit",
                           "durationValue",
                           "entryMode"
+                        ],
+                        "type": "object"
+                      },
+                      "floatingDailyInterest": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "accrualCycle": {
+                            "enum": [
+                              "daily",
+                              "weekly"
+                            ],
+                            "type": "string"
+                          },
+                          "firstDayTreatment": {
+                            "enum": [
+                              "deduct",
+                              "start_next_day"
+                            ],
+                            "type": "string"
+                          },
+                          "mode": {
+                            "enum": [
+                              "per_thousand",
+                              "percent"
+                            ],
+                            "type": "string"
+                          },
+                          "rate": {
+                            "pattern": "^\\d+(?:\\.\\d{1,4})?$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "mode",
+                          "rate",
+                          "firstDayTreatment"
                         ],
                         "type": "object"
                       },
@@ -3776,6 +4320,25 @@
                     "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
                     "type": "string"
                   },
+                  "advanceInterestAmount": {
+                    "maxLength": 32,
+                    "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "advanceInterestRefundPolicy": {
+                    "const": "non_refundable",
+                    "type": "string"
+                  },
+                  "coveredEndDate": {
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
+                    "type": "string"
+                  },
+                  "coveredStartDate": {
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
+                    "type": "string"
+                  },
                   "firstPeriodDueDate": {
                     "format": "date",
                     "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
@@ -3785,6 +4348,42 @@
                     "format": "date",
                     "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
                     "type": "string"
+                  },
+                  "floatingDailyInterest": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "accrualCycle": {
+                        "enum": [
+                          "daily",
+                          "weekly"
+                        ],
+                        "type": "string"
+                      },
+                      "firstDayTreatment": {
+                        "enum": [
+                          "deduct",
+                          "start_next_day"
+                        ],
+                        "type": "string"
+                      },
+                      "mode": {
+                        "enum": [
+                          "per_thousand",
+                          "percent"
+                        ],
+                        "type": "string"
+                      },
+                      "rate": {
+                        "pattern": "^\\d+(?:\\.\\d{1,4})?$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "rate",
+                      "firstDayTreatment"
+                    ],
+                    "type": "object"
                   },
                   "floatingInterestPolicy": {
                     "additionalProperties": false,
@@ -3847,6 +4446,16 @@
                   "netBorrowerPayout": {
                     "maxLength": 32,
                     "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "netDisbursement": {
+                    "maxLength": 32,
+                    "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "nextAccrualDate": {
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
                     "type": "string"
                   },
                   "periodDays": {
@@ -3965,6 +4574,42 @@
                           "durationUnit",
                           "durationValue",
                           "entryMode"
+                        ],
+                        "type": "object"
+                      },
+                      "floatingDailyInterest": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "accrualCycle": {
+                            "enum": [
+                              "daily",
+                              "weekly"
+                            ],
+                            "type": "string"
+                          },
+                          "firstDayTreatment": {
+                            "enum": [
+                              "deduct",
+                              "start_next_day"
+                            ],
+                            "type": "string"
+                          },
+                          "mode": {
+                            "enum": [
+                              "per_thousand",
+                              "percent"
+                            ],
+                            "type": "string"
+                          },
+                          "rate": {
+                            "pattern": "^\\d+(?:\\.\\d{1,4})?$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "mode",
+                          "rate",
+                          "firstDayTreatment"
                         ],
                         "type": "object"
                       },
@@ -4238,12 +4883,19 @@
                   "terms",
                   "schedule",
                   "floatingInterestPolicy",
+                  "floatingDailyInterest",
                   "fullPeriodInterest",
                   "advanceInterest",
                   "netBorrowerPayout",
                   "firstPeriodStartDate",
                   "firstPeriodDueDate",
-                  "periodDays"
+                  "periodDays",
+                  "advanceInterestAmount",
+                  "netDisbursement",
+                  "coveredStartDate",
+                  "coveredEndDate",
+                  "nextAccrualDate",
+                  "advanceInterestRefundPolicy"
                 ],
                 "type": "object"
               }
@@ -4358,6 +5010,42 @@
               "durationUnit",
               "durationValue",
               "entryMode"
+            ],
+            "type": "object"
+          },
+          "floatingDailyInterest": {
+            "additionalProperties": false,
+            "properties": {
+              "accrualCycle": {
+                "enum": [
+                  "daily",
+                  "weekly"
+                ],
+                "type": "string"
+              },
+              "firstDayTreatment": {
+                "enum": [
+                  "deduct",
+                  "start_next_day"
+                ],
+                "type": "string"
+              },
+              "mode": {
+                "enum": [
+                  "per_thousand",
+                  "percent"
+                ],
+                "type": "string"
+              },
+              "rate": {
+                "pattern": "^\\d+(?:\\.\\d{1,4})?$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "mode",
+              "rate",
+              "firstDayTreatment"
             ],
             "type": "object"
           },
@@ -5037,7 +5725,7 @@
                                     "type": "string"
                                   },
                                   "graceDays": {
-                                    "maximum": 9007199254740991,
+                                    "maximum": 100000,
                                     "minimum": 0,
                                     "type": "integer"
                                   },
@@ -5105,7 +5793,7 @@
                                     "type": "string"
                                   },
                                   "graceDays": {
-                                    "maximum": 9007199254740991,
+                                    "maximum": 100000,
                                     "minimum": 0,
                                     "type": "integer"
                                   },
@@ -5127,6 +5815,7 @@
                             "additionalProperties": false,
                             "properties": {
                               "rate": {
+                                "pattern": "^\\d+(?:\\.\\d{1,4})?$",
                                 "type": "string"
                               },
                               "rateType": {
@@ -5275,8 +5964,7 @@
           }
         },
         "required": [
-          "loanPublicId",
-          "idempotencyKey"
+          "loanPublicId"
         ],
         "type": "object"
       },
@@ -5704,7 +6392,7 @@
                                     "type": "string"
                                   },
                                   "graceDays": {
-                                    "maximum": 9007199254740991,
+                                    "maximum": 100000,
                                     "minimum": 0,
                                     "type": "integer"
                                   },
@@ -5772,7 +6460,7 @@
                                     "type": "string"
                                   },
                                   "graceDays": {
-                                    "maximum": 9007199254740991,
+                                    "maximum": 100000,
                                     "minimum": 0,
                                     "type": "integer"
                                   },
@@ -5794,6 +6482,7 @@
                             "additionalProperties": false,
                             "properties": {
                               "rate": {
+                                "pattern": "^\\d+(?:\\.\\d{1,4})?$",
                                 "type": "string"
                               },
                               "rateType": {
@@ -14023,6 +14712,59 @@
                     ],
                     "type": "object"
                   },
+                  "floatingInterestPolicy": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "advanceInterestPeriods": {
+                        "anyOf": [
+                          {
+                            "const": 0,
+                            "type": "number"
+                          },
+                          {
+                            "const": 1,
+                            "type": "number"
+                          }
+                        ]
+                      },
+                      "advanceInterestRefundPolicy": {
+                        "const": "non_refundable",
+                        "type": "string"
+                      },
+                      "periodLength": {
+                        "const": 1,
+                        "type": "number"
+                      },
+                      "periodUnit": {
+                        "enum": [
+                          "day",
+                          "week"
+                        ],
+                        "type": "string"
+                      },
+                      "rate": {
+                        "maxLength": 32,
+                        "pattern": "^\\d+(?:\\.\\d{1,4})?$",
+                        "type": "string"
+                      },
+                      "rateMode": {
+                        "enum": [
+                          "percent",
+                          "per_thousand"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "periodUnit",
+                      "periodLength",
+                      "rateMode",
+                      "rate",
+                      "advanceInterestPeriods",
+                      "advanceInterestRefundPolicy"
+                    ],
+                    "type": "object"
+                  },
                   "interestRate": {
                     "maxLength": 32,
                     "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
@@ -14047,8 +14789,7 @@
                   "interestRate",
                   "termMonths",
                   "startDate",
-                  "repaymentType",
-                  "floatingDailyInterest"
+                  "repaymentType"
                 ],
                 "type": "object"
               },

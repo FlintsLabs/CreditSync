@@ -1,10 +1,10 @@
-# CreditSync Plugin 5.0.0
+# CreditSync Plugin 6.0.0
 
 This private Codex plugin orchestrates the CreditSync MCP app for borrower and intermediary identity, payments, intermediary remittances and multi-leg disbursements, generalized floating-interest origination and settlement, effective-dated rate changes, direct loan disbursements, renewals, and append-only reversal.
 
 ## Package contract
 
-- Plugin version: `5.0.0`
+- Plugin version: `6.0.0`
 - MCP schema version: `1.0`
 - Skills: `creditsync`, `manage-borrowers`, `reconcile-payments`, `reconcile-intermediary-remittances`, `manage-loans`, `manage-floating-interest-rates`, `settle-floating-loans`, `manage-disbursements`, `manage-intermediated-disbursements`, `renew-daily-loan`
 - App manifest: `.app.json`
@@ -70,7 +70,7 @@ Publishing to Git does not hot-reload an installed copy. Start a new Codex task 
 - Intermediated disbursement follows exact identity and active-assignment checks → group and transfer events → per-event evidence → group inspection → zero-variance preview → explicit confirmation → idempotent post. Reversal first re-lists and inspects the exact posted group, then requires a separate reason and confirmation.
 - Reversals require a reason and create compensating history rather than deletion. Renewal reversal uses same-task execute IDs plus the borrower ID retained before execution; `renewal.reverse`, not the limited portfolio view, performs the authoritative atomic downstream-activity check and may return only the backend message plus aggregate `downstreamEntryCount`.
 
-See `references/` for matching, accounting invariants, error recovery, and the frozen full 57-tool metadata snapshot. The snapshot is generated through an authenticated local MCP SDK Client `tools/list` call. `evals/evals.json` and `evals/harness.ts` execute exact ordered/repeated tool calls, supported arguments, injected workflow states, external upload effects, and forbidden-write boundaries while remaining honest that no live private app was used.
+See `references/` for matching, accounting invariants, error recovery, and the frozen full 63-tool metadata snapshot. The snapshot is generated through an authenticated local MCP SDK Client `tools/list` call. `evals/evals.json` and `evals/harness.ts` execute exact ordered/repeated tool calls, supported arguments, injected workflow states, external upload effects, and forbidden-write boundaries while remaining honest that no live private app was used.
 
 Deployment, credential rotation, MinIO evidence, and recovery procedures are maintained in the root repository documentation:
 

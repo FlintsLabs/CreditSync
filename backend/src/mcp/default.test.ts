@@ -1234,7 +1234,8 @@ describe("default MCP adapter integration", () => {
         expect([...new Set(called)].sort()).toEqual([...MCP_TOOL_NAMES].sort());
         expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length);
         expect(called.filter((name) => name === "intermediary.disbursement.event.create")).toHaveLength(2);
-        expect(called).toHaveLength(MCP_TOOL_NAMES.length + 1);
+        expect(called.filter((name) => name === "loan.restructure.execute")).toHaveLength(2);
+        expect(called).toHaveLength(MCP_TOOL_NAMES.length + 3);
 
         await client.close();
     }, 10_000);

@@ -1,5 +1,19 @@
 # CreditSync Plugin Changelog
 
+## 6.0.0 - 2026-08-14
+
+### Added
+
+- Added the six main-authoritative single-payment restructure and component-waiver tools to the weekly-floating and intermediary contract, with executable positive and stop-boundary evals.
+
+### Changed
+
+- Froze the actual authenticated 63-tool union contract and retained all ten orchestration skills, including exact floating settlement and intermediary multi-leg evidence workflows.
+
+### Compatibility
+
+- Released a new major plugin because the frozen catalogue grows from 57 to 63 tools and the loan origination/restructure schemas now accept both legacy floating terms and generalized day-or-week policies. MCP payload schema version remains `1.0`.
+
 ## 5.0.0 - 2026-08-14
 
 ### Changed
