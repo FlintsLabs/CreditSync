@@ -3,6 +3,7 @@
 ## v0.3.12 - 2026-08-14
 
 ### Added
+- Added the approved design for supervised tmux delegation of substantial implementation work to `gpt-5.3-codex-spark`, retaining planning in the user-selected model with explicit fallback, worktree isolation, status, and completion-verification rules.
 - Added the v0.3.12 TDD implementation plan for tenant-bound borrower identity-card signed uploads, Codex-extracted identity application, synchronized Web/REST/MCP delivery, and CreditSync Plugin `8.0.0`'s 67-tool frozen contract.
 - Added the approved design for tenant-bound borrower identity-card uploads through MCP, using signed prepare/finalize storage verification followed by idempotent application of Codex-extracted identity fields with Thai checksum validation and masked audit provenance.
 - Added exact compensating floating-settlement reversal across REST, MCP Plugin `7.0.0`'s 64-tool frozen contract, and localized Web confirmation, preserving negative transaction/allocation/fund provenance and restoring loan/accrual state only when no downstream activity exists.
