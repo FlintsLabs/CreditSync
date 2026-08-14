@@ -20,7 +20,7 @@ const blankDraft = (): Draft => ({ grossAmount: "", loanAttributedAmount: "", ch
 const validMoney = (value: string) => /^\d+(?:\.\d{1,2})?$/.test(value) && /[1-9]/.test(value);
 const hash = (bytes: ArrayBuffer) => Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
 
-export function LoanDisbursements({ loanPublicId }: { loanPublicId: string }) {
+export function LoanDisbursements({ loanPublicId, refreshKey = 0 }: { loanPublicId: string; refreshKey?: number }) {
     const { t, i18n } = useTranslation();
     const [ledger, setLedger] = useState<Ledger | null>(null);
     const [draft, setDraft] = useState<Draft | null>(null);
@@ -48,7 +48,7 @@ export function LoanDisbursements({ loanPublicId }: { loanPublicId: string }) {
         let active = true;
         void api.get(`/loans/${loanPublicId}/disbursements`).then((response) => { if (active) setLedger(response.data as Ledger); }).catch(() => { if (active) setMessage(t("loanDetail.disbursements.errors.load")); });
         return () => { active = false; };
-    }, [loanPublicId, t]);
+    }, [loanPublicId, refreshKey, t]);
 
     const saveDraft = async () => {
         if (!draft) return;

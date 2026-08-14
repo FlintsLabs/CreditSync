@@ -952,6 +952,9 @@
         "posted": "Transfer posted",
         "postError": "Unable to post the confirmed transfer. No financial record was changed.",
         "proposalChanged": "The proposal changed. Review it and confirm again.",
+        "expired": "This proposal expired. Refresh it and review the new proposal before confirming.",
+        "refreshProposal": "Refresh proposal",
+        "refreshFailed": "The transfer was posted, but current financial data could not be refreshed. Do not rely on this presentation until it reloads.",
         "roles": {
             "fundingToIntermediary": "Funding to intermediary",
             "borrowerNetPayout": "Borrower net payout",

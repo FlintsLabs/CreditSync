@@ -99,6 +99,9 @@ export default function IntermediaryDetail() {
 
         <section className="space-y-3"><h2 className="text-lg font-semibold">{t("intermediary.profile.bankAccounts")}</h2><div className="divide-y rounded-lg border bg-card">{profile.bankAccounts.map((account) => <div className="flex items-center gap-3 p-4" key={account.publicId}><Landmark className="h-5 w-5 text-muted-foreground" /><div><p className="font-medium">{account.bankName} · {account.maskedAccountNumber}</p><p className="text-sm text-muted-foreground">{account.accountName}</p></div></div>)}</div></section>
 
-        <IntermediaryTransferLedger intermediaryPublicId={profile.publicId} />
+        <IntermediaryTransferLedger intermediaryPublicId={profile.publicId} onPosted={async () => {
+            const response = await api.get<HeldBalance>(`/intermediaries/${profile.publicId}/held-balance`);
+            setHeldBalance(response.data);
+        }} />
     </div>;
 }

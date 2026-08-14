@@ -1,7 +1,7 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/lib/api";
 import { IntermediatedDisbursementPanel, TransferGroupView } from "../src/pages/dashboard/loans/IntermediatedDisbursementPanel";
 import { IntermediaryTransferLedger } from "../src/pages/dashboard/intermediaries/IntermediaryTransferLedger";
@@ -40,11 +40,12 @@ const events = [
 
 const group = {
     publicId: GROUP_ID, loanPublicId: LOAN_ID, intermediaryPublicId: INTERMEDIARY_ID, status: "ready", retainedBalance: "0.00", events,
-    latestPreview: { publicId: "71111111-1111-4111-8111-111111111111", previewHash: "hash-a", status: "ready", variance: "0.00", evidenceReady: true, warnings: [], expiresAt: "2099-08-14T02:15:00.000Z" },
+    latestPreview: { publicId: "71111111-1111-4111-8111-111111111111", previewHash: "a".repeat(64), status: "ready", variance: "0.00", evidenceReady: true, warnings: [] as Array<{ code: string; amount?: string }>, expiresAt: "2099-08-14T02:15:00.000Z" },
 };
 
 describe("intermediated disbursement money paths", () => {
     beforeEach(() => vi.clearAllMocks());
+    afterEach(() => vi.useRealTimers());
 
     it("renders all roles, exact split payouts, transfer metadata, and one action for every finalized slip", async () => {
         vi.mocked(api.get).mockImplementation(async (url) => url === "/intermediated-disbursements" ? { data: [{ ...group, latestPreview: undefined }] } : { data: group });
@@ -143,7 +144,7 @@ describe("intermediated disbursement money paths", () => {
     });
 
     it("refreshes a stale proposal and requires explicit reconfirmation with a new command key", async () => {
-        const refreshedPreview = { ...group.latestPreview, publicId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", previewHash: "hash-b", expiresAt: "2099-08-14T02:30:00.000Z" };
+        const refreshedPreview = { ...group.latestPreview, publicId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", previewHash: "b".repeat(64), expiresAt: "2099-08-14T02:30:00.000Z" };
         vi.mocked(api.post)
             .mockRejectedValueOnce({ response: { data: { code: "STALE_INTERMEDIATED_DISBURSEMENT_PROPOSAL" } } })
             .mockResolvedValueOnce({ data: refreshedPreview })
@@ -165,13 +166,62 @@ describe("intermediated disbursement money paths", () => {
 
     it("does not carry proposal A confirmation into proposal B", async () => {
         const user = userEvent.setup();
-        const proposalB = { ...group, latestPreview: { ...group.latestPreview, publicId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", previewHash: "hash-b" } };
+        const proposalB = { ...group, latestPreview: { ...group.latestPreview, publicId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", previewHash: "b".repeat(64) } };
         const view = render(<MemoryRouter><TransferGroupView group={group} /></MemoryRouter>);
         await user.click(screen.getByRole("checkbox", { name: /confirm.*zero variance.*ready evidence/i }));
         expect(screen.getByRole("button", { name: /post confirmed transfer/i })).toBeEnabled();
         view.rerender(<MemoryRouter><TransferGroupView group={proposalB} /></MemoryRouter>);
         expect(screen.getByRole("checkbox", { name: /confirm.*zero variance.*ready evidence/i })).not.toBeChecked();
         expect(screen.getByRole("button", { name: /post confirmed transfer/i })).toBeDisabled();
+    });
+
+    it("recomputes expiry from current time when proposal identity changes", () => {
+        vi.useFakeTimers();
+        vi.setSystemTime("2026-08-14T00:00:00.000Z");
+        const proposalA = { ...group, latestPreview: { ...group.latestPreview, expiresAt: "2026-08-14T00:00:10.000Z" } };
+        const view = render(<MemoryRouter><TransferGroupView group={proposalA} /></MemoryRouter>);
+        act(() => { vi.advanceTimersByTime(8_000); });
+        const proposalB = { ...group, latestPreview: { ...group.latestPreview, publicId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", previewHash: "c".repeat(64), expiresAt: "2026-08-14T00:00:20.000Z" } };
+        view.rerender(<MemoryRouter><TransferGroupView group={proposalB} /></MemoryRouter>);
+        expect(screen.getByRole("checkbox", { name: /confirm.*zero variance.*ready evidence/i })).toBeEnabled();
+        act(() => { vi.advanceTimersByTime(12_001); });
+        expect(screen.getByRole("checkbox", { name: /confirm.*zero variance.*ready evidence/i })).toBeDisabled();
+        vi.useRealTimers();
+    });
+
+    it("refreshes an already-expired proposal for explicit re-review", async () => {
+        const refreshedPreview = { ...group.latestPreview, publicId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", previewHash: "d".repeat(64) };
+        vi.mocked(api.post).mockResolvedValue({ data: refreshedPreview });
+        const user = userEvent.setup();
+        render(<MemoryRouter><TransferGroupView group={{ ...group, latestPreview: { ...group.latestPreview, expiresAt: "2026-08-13T00:00:00.000Z" } }} /></MemoryRouter>);
+        expect(screen.getByText(/proposal expired/i)).toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: /refresh proposal/i }));
+        expect(api.post).toHaveBeenCalledWith(`/intermediated-disbursements/${GROUP_ID}/preview`, {});
+        expect(screen.getByRole("checkbox", { name: /confirm.*zero variance.*ready evidence/i })).not.toBeChecked();
+    });
+
+    it("refreshes authoritative group and parent projections after posting", async () => {
+        const postedDetail = { ...group, status: "posted", events: events.map((event) => ({ ...event, status: "posted" })), latestPreview: { ...group.latestPreview, status: "executed" } };
+        vi.mocked(api.post).mockResolvedValue({ data: { status: "posted" } });
+        vi.mocked(api.get).mockResolvedValue({ data: postedDetail });
+        const refreshParents = vi.fn().mockResolvedValue(undefined);
+        const user = userEvent.setup();
+        render(<MemoryRouter><TransferGroupView group={group} onPosted={refreshParents} /></MemoryRouter>);
+        await user.click(screen.getByRole("checkbox", { name: /confirm.*zero variance.*ready evidence/i }));
+        await user.click(screen.getByRole("button", { name: /post confirmed transfer/i }));
+        await waitFor(() => expect(api.get).toHaveBeenCalledWith(`/intermediated-disbursements/${GROUP_ID}`));
+        expect(refreshParents).toHaveBeenCalledWith(postedDetail);
+        expect(await screen.findByText(/transfer posted/i)).toBeInTheDocument();
+    });
+
+    it("blocks stale financial presentation when post refresh fails", async () => {
+        vi.mocked(api.post).mockResolvedValue({ data: { status: "posted" } });
+        vi.mocked(api.get).mockRejectedValue(new Error("refresh failed"));
+        const user = userEvent.setup();
+        render(<MemoryRouter><TransferGroupView group={group} onPosted={vi.fn()} /></MemoryRouter>);
+        await user.click(screen.getByRole("checkbox", { name: /confirm.*zero variance.*ready evidence/i }));
+        await user.click(screen.getByRole("button", { name: /post confirmed transfer/i }));
+        expect(await screen.findByRole("alert")).toHaveTextContent(/posted.*refresh.*do not rely/i);
     });
 
     it("provides a profile-scoped transfer ledger linked to each loan", async () => {
