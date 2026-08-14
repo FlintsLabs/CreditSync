@@ -142,9 +142,9 @@ describe("intermediary profile workspace", () => {
         expect(screen.getByRole("button", { name: /create profile/i })).toBeDisabled();
         await user.click(screen.getByRole("button", { name: /search proposed identity/i }));
         await waitFor(() => {
-            expect(api.get).toHaveBeenCalledWith("/intermediaries", { params: { q: "New Agent" } });
-            expect(api.get).toHaveBeenCalledWith("/intermediaries", { params: { q: "Agent New" } });
-            expect(api.get).toHaveBeenCalledWith("/intermediaries", { params: { q: "N. Agent" } });
+            expect(api.get).toHaveBeenCalledWith("/intermediaries", { params: { q: "New Agent", status: "all" } });
+            expect(api.get).toHaveBeenCalledWith("/intermediaries", { params: { q: "Agent New", status: "all" } });
+            expect(api.get).toHaveBeenCalledWith("/intermediaries", { params: { q: "N. Agent", status: "all" } });
         });
         await user.click(screen.getByRole("checkbox", { name: /reviewed these candidates/i }));
         await user.click(screen.getByRole("button", { name: /create profile/i }));
@@ -152,6 +152,50 @@ describe("intermediary profile workspace", () => {
 
         await user.click(screen.getByRole("button", { name: /new intermediary/i }));
         await user.type(screen.getByLabelText(/^name/i), "Unsearched Agent");
+        expect(screen.getByRole("button", { name: /create profile/i })).toBeDisabled();
+    });
+
+    // Break caught: inactive canonical/alias matches are hidden during candidate review even though create will silently reuse them.
+    it("shows inactive exact candidates with localized status before creation", async () => {
+        const inactiveCandidate = { ...profile, publicId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", name: "Dormant Agent", aliases: ["Dormant Alias"], status: "inactive" };
+        vi.mocked(api.get).mockImplementation(async (url, config) => {
+            if (url === "/intermediaries" && config?.params?.status === "all") return { data: [inactiveCandidate] };
+            if (url === "/intermediaries") return { data: [profile] };
+            throw new Error(`Unexpected GET ${url}`);
+        });
+        const user = userEvent.setup();
+        renderList();
+        await screen.findByText("Mae Mali");
+        await user.click(screen.getByRole("button", { name: /new intermediary/i }));
+        await user.type(screen.getByLabelText(/^name/i), "Dormant Alias");
+        await user.click(screen.getByRole("button", { name: /search proposed identity/i }));
+        expect(await screen.findByRole("link", { name: /Dormant Agent/i })).toBeInTheDocument();
+        expect(screen.getByText("Inactive")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /create profile/i })).toBeDisabled();
+    });
+
+    // Break caught: editing a reviewed canonical name or alias leaves the old candidate approval actionable.
+    it("invalidates reviewed candidates after any proposed identity edit", async () => {
+        const user = userEvent.setup();
+        renderList();
+        await screen.findByText("Mae Mali");
+        await user.click(screen.getByRole("button", { name: /new intermediary/i }));
+        const name = screen.getByLabelText(/^name/i);
+        const aliases = screen.getByLabelText(/aliases/i);
+        await user.type(name, "Reviewed Agent");
+        await user.type(aliases, "Reviewed Alias");
+        await user.click(screen.getByRole("button", { name: /search proposed identity/i }));
+        await user.click(await screen.findByRole("checkbox", { name: /reviewed these candidates/i }));
+        expect(screen.getByRole("button", { name: /create profile/i })).toBeEnabled();
+
+        await user.type(name, " Changed");
+        expect(screen.queryByRole("checkbox", { name: /reviewed these candidates/i })).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /create profile/i })).toBeDisabled();
+        await user.click(screen.getByRole("button", { name: /search proposed identity/i }));
+        await user.click(await screen.findByRole("checkbox", { name: /reviewed these candidates/i }));
+        expect(screen.getByRole("button", { name: /create profile/i })).toBeEnabled();
+        await user.type(aliases, " Changed");
+        expect(screen.queryByRole("checkbox", { name: /reviewed these candidates/i })).not.toBeInTheDocument();
         expect(screen.getByRole("button", { name: /create profile/i })).toBeDisabled();
     });
 

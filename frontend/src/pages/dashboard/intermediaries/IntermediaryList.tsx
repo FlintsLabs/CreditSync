@@ -71,7 +71,7 @@ export default function IntermediaryList() {
         setError(null);
         setReviewed(false);
         try {
-            const responses = await Promise.all([proposedName, ...aliases].map((identity) => api.get<IntermediarySummary[]>("/intermediaries", { params: { q: identity } })));
+            const responses = await Promise.all([proposedName, ...aliases].map((identity) => api.get<IntermediarySummary[]>("/intermediaries", { params: { q: identity, status: "all" } })));
             const unique = new Map(responses.flatMap((response) => response.data).map((candidate) => [candidate.publicId, candidate]));
             setCandidates([...unique.values()]);
             setCandidateKey(identityKey(proposedName, aliases));
@@ -108,7 +108,7 @@ export default function IntermediaryList() {
             <div className="grid gap-3 sm:grid-cols-2"><label className="text-sm font-medium">{t("intermediary.directory.name")}<Input className="mt-1" value={name} onChange={(event) => changeIdentity(() => setName(event.target.value))} required /></label>
                 <label className="text-sm font-medium">{t("intermediary.directory.aliases")}<Input className="mt-1" value={aliasesText} onChange={(event) => changeIdentity(() => setAliasesText(event.target.value))} placeholder={t("intermediary.directory.aliasesHint")} /></label></div>
             <Button type="button" variant="outline" disabled={!name.trim() || busy} onClick={() => void searchCandidates()}>{t("intermediary.directory.searchIdentity")}</Button>
-            {candidateKey === currentIdentityKey && <div className="rounded-md border p-3"><p className="text-sm font-medium">{t("intermediary.directory.candidates", { count: candidates.length })}</p>{candidates.map((candidate) => <Link className="mt-2 block text-sm underline" key={candidate.publicId} to={`/intermediaries/${candidate.publicId}`}>{candidate.name}</Link>)}
+            {candidateKey === currentIdentityKey && <div className="rounded-md border p-3"><p className="text-sm font-medium">{t("intermediary.directory.candidates", { count: candidates.length })}</p>{candidates.map((candidate) => <Link className="mt-2 flex items-center justify-between gap-3 text-sm underline" key={candidate.publicId} to={`/intermediaries/${candidate.publicId}`}><span>{candidate.name}</span><span className="text-xs uppercase no-underline text-muted-foreground">{t(`intermediary.directory.status.${candidate.status}`)}</span></Link>)}
                 <label className="mt-3 flex items-start gap-2 text-sm"><input type="checkbox" checked={reviewed} onChange={(event) => setReviewed(event.target.checked)} />{t("intermediary.directory.reviewedCandidates")}</label></div>}
             {error === "candidate" && <p role="alert" className="text-sm text-destructive">{t("intermediary.directory.errors.candidate")}</p>}
             {error === "create" && <p role="alert" className="text-sm text-destructive">{t("intermediary.directory.errors.create")}</p>}

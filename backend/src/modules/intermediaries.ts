@@ -85,7 +85,7 @@ const intermediaryProfileRoutes = new Elysia({ normalize: false })
 
 export const intermediariesRoute = new Elysia()
     .use(authPlugin)
-    .get("/intermediaries", ({ query, user, request, set }) => invoke(user, request, set, (ctx) => query.q ? searchIntermediaries(ctx, query.q) : listIntermediaries(ctx, query.status)), { query: t.Object({ q: t.Optional(t.String()), status: t.Optional(t.Union([t.Literal("active"), t.Literal("inactive"), t.Literal("all")])) }) })
+    .get("/intermediaries", ({ query, user, request, set }) => invoke(user, request, set, (ctx) => query.q ? searchIntermediaries(ctx, query.q, query.status) : listIntermediaries(ctx, query.status)), { query: t.Object({ q: t.Optional(t.String()), status: t.Optional(t.Union([t.Literal("active"), t.Literal("inactive"), t.Literal("all")])) }) })
     .post("/intermediaries", ({ body, user, request, set }) => invoke(user, request, set, (ctx) => createIntermediary(ctx, body)), { body: t.Object({ name: t.String(), aliases: t.Optional(t.Array(t.String())), notes: t.Optional(t.Nullable(t.String())) }) })
     .patch("/intermediaries/:id", ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => updateIntermediary(ctx, params.id, body)), { ...uuidParam, body: t.Object({ name: t.Optional(t.String()), aliases: t.Optional(t.Array(t.String())), notes: t.Optional(t.Nullable(t.String())), status: t.Optional(t.Union([t.Literal("active"), t.Literal("inactive")])) }) })
     .get("/intermediary-collections", ({ query, user, request, set }) => invoke(user, request, set, (ctx) => listIntermediaryCollections(ctx, query)), { query: t.Object({ intermediaryPublicId: t.Optional(t.String({ format: "uuid" })), status: t.Optional(t.String()) }) })

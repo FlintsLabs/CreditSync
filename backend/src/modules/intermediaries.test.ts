@@ -63,6 +63,18 @@ describe("intermediary settlement REST contract", () => {
         const app = new Elysia().use(intermediariesRoute);
         const token = await authToken(actor);
 
+        const inactive = await db.insert(intermediaries).values({
+            tenantId: actor.tenantId, ownerUserId: actor.id, name: "Dormant Route Intermediary",
+            normalizedName: "dormant route intermediary", aliases: ["Dormant Route Alias"], status: "inactive",
+            createdByUserId: actor.id, updatedByUserId: actor.id,
+        }).returning().then((rows) => rows[0]!);
+        const activeOnlyCandidate = await jsonRequest(app, "/intermediaries?q=Dormant%20Route%20Alias", token);
+        expect(activeOnlyCandidate.body).toEqual([]);
+        const allStatusCandidate = await jsonRequest(app, "/intermediaries?q=Dormant%20Route%20Alias&status=all", token);
+        expect(allStatusCandidate.body).toEqual([expect.objectContaining({
+            publicId: inactive.publicId, name: "Dormant Route Intermediary", status: "inactive",
+        })]);
+
         const legacyCreateWithExtra = await jsonRequest(app, "/intermediary-remittances", token, {
             method: "POST",
             headers: { "idempotency-key": "route-legacy-remittance" },

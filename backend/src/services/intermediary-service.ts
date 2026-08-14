@@ -160,9 +160,9 @@ export async function getIntermediaryHeldBalance(ctx: CommandContext, intermedia
     };
 }
 
-export async function searchIntermediaries(ctx: CommandContext, query: string) {
+export async function searchIntermediaries(ctx: CommandContext, query: string, status: "active" | "inactive" | "all" = "active") {
     const normalized = normalizeIntermediaryText(query);
-    const rows = await listIntermediaries(ctx, "active");
+    const rows = await listIntermediaries(ctx, status);
     return rows.filter((row) => normalizeIntermediaryText(row.name).includes(normalized) || row.aliases.some((alias) => normalizeIntermediaryText(alias).includes(normalized)));
 }
 
