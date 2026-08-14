@@ -38,6 +38,7 @@
 
 ### Infra
 - Kept the frontend TypeScript 6 build gate operational while the configured `baseUrl` compatibility alias remains in use.
+- Documented the approved semantic integration of weekly-floating and intermediary workflows after main's immutable single-payment/restructure migration series, with one additive `0036` rollout and clean-install plus main-through-`0035` upgrade verification.
 
 ## v0.3.11 - 2026-08-13
 
