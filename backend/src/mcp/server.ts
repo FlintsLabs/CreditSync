@@ -63,6 +63,12 @@ export const MCP_TOOL_NAMES = [
     "renewal.preview",
     "renewal.execute",
     "renewal.reverse",
+    "loan.restructure.preview",
+    "loan.restructure.execute",
+    "loan.restructure.reverse",
+    "loan.waiver.preview",
+    "loan.waiver.execute",
+    "loan.waiver.reverse",
     "funding-source.list",
 ] as const;
 
@@ -72,6 +78,7 @@ export type McpToolHandler = (ctx: CommandContext, input: Record<string, unknown
 export interface CreateMcpHttpPluginInput {
     config: McpRuntimeConfig;
     handlers: Record<McpToolName, McpToolHandler>;
+    preflightHandlers?: Partial<Record<McpToolName, McpToolHandler>>;
     resolvePrincipal: (input: { tenantId: string; actorEmail: string }) => Promise<{ tenantId: string; actorUserId: number }>;
     consumeRateLimit: (input: { key: string; max: number; windowSeconds: number }) => Promise<{
         allowed: boolean;
@@ -124,7 +131,7 @@ const loanTerms = {
     principal: money,
     interestRate: money,
     termMonths: z.number().int().positive().max(1_200),
-    repaymentType: z.enum(["daily", "weekly", "monthly", "floating"]),
+    repaymentType: z.enum(["daily", "weekly", "monthly", "floating", "single_payment"]),
     startDate: date,
     totalInstallments: z.number().int().positive().max(100_000).optional(),
     installmentAmount: money.optional(),
@@ -137,9 +144,58 @@ const loanTerms = {
         interestInput: z.object({
             mode: z.enum(["percent", "fixed_amount", "per_thousand"]),
             value: z.string().regex(/^\d+(?:\.\d{1,4})?$/),
-        }).optional(),
-    }).optional(),
+        }).strict().optional(),
+    }).strict().optional(),
 };
+const replacementBase = {
+    interestRate: money,
+    termMonths: z.number().int().positive().max(1_200),
+    startDate: date,
+};
+const publicReplacementTermsInput = z.discriminatedUnion("repaymentType", [
+    z.object({
+        ...replacementBase, repaymentType: z.literal("daily"), dailyEntry: loanTerms.dailyEntry.unwrap(),
+        totalInstallments: z.number().int().positive().max(100_000).optional(), installmentAmount: money.optional(),
+    }).strict(),
+    z.object({
+        ...replacementBase, repaymentType: z.literal("weekly"),
+        totalInstallments: z.number().int().positive().max(100_000).optional(), installmentAmount: money.optional(),
+    }).strict(),
+    z.object({
+        ...replacementBase, repaymentType: z.literal("monthly"),
+        totalInstallments: z.number().int().positive().max(100_000).optional(), installmentAmount: money.optional(),
+    }).strict(),
+    z.object({
+        ...replacementBase, repaymentType: z.literal("floating"), floatingDailyInterest: loanTerms.floatingDailyInterest.unwrap(),
+    }).strict(),
+    z.object({
+        ...replacementBase, repaymentType: z.literal("single_payment"), singlePayment: loanTerms.singlePayment.unwrap(),
+    }).strict(),
+]);
+const publicReplacementBase = { principal: money, ...replacementBase };
+const publicReplacementTermsOutput = z.discriminatedUnion("repaymentType", [
+    z.object({
+        ...publicReplacementBase, repaymentType: z.literal("daily"),
+        totalInstallments: z.number().int().positive().max(100_000).optional(),
+        installmentAmount: money.optional(), dailyEntry: loanTerms.dailyEntry.unwrap(),
+    }).strict(),
+    z.object({
+        ...publicReplacementBase, repaymentType: z.literal("weekly"),
+        totalInstallments: z.number().int().positive().max(100_000).optional(), installmentAmount: money.optional(),
+    }).strict(),
+    z.object({
+        ...publicReplacementBase, repaymentType: z.literal("monthly"),
+        totalInstallments: z.number().int().positive().max(100_000).optional(), installmentAmount: money.optional(),
+    }).strict(),
+    z.object({
+        ...publicReplacementBase, repaymentType: z.literal("floating"),
+        floatingDailyInterest: loanTerms.floatingDailyInterest.unwrap(),
+    }).strict(),
+    z.object({
+        ...publicReplacementBase, repaymentType: z.literal("single_payment"),
+        singlePayment: loanTerms.singlePayment.unwrap(),
+    }).strict(),
+]);
 
 const explicitAllocation = z.object({
     borrowerPublicId: uuid,
@@ -236,7 +292,7 @@ const loanOutput = z.object({
         totalInstallments: z.number().int().positive(), installmentAmount: money, totalRepayment: money, totalInterest: money, dailyInterest: money,
         flatDailyRatePercent: z.string(), flatMonthlyRatePercent: z.string(), flatAnnualRatePercent: z.string(),
     }).nullable().optional(),
-    repaymentType: z.enum(["daily", "weekly", "monthly", "floating"]),
+    repaymentType: z.enum(["daily", "weekly", "monthly", "floating", "single_payment"]),
     termMonths: z.number().int().nullable(),
     installmentAmount: money.nullable(),
     totalInstallments: z.number().int().nullable(),
@@ -263,6 +319,7 @@ const disbursementEventOutput = z.object({
     loanAttributedAmount: money,
     channel: z.enum(["bank_transfer", "cash", "adjustment"]),
     status: z.enum(["draft", "posted", "reversed"]),
+    restructurePublicId: uuid.nullable(),
     sourceBankProfilePublicId: uuid.nullable(),
     payeeHint: z.string().nullable(),
     note: z.string().nullable(),
@@ -733,6 +790,12 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "renewal.preview": renewalOutput,
     "renewal.execute": renewalOutput,
     "renewal.reverse": renewalOutput,
+    "loan.restructure.preview": restructurePreviewOutput,
+    "loan.restructure.execute": restructureExecutionOutput,
+    "loan.restructure.reverse": restructureExecutionOutput,
+    "loan.waiver.preview": waiverPreviewOutput,
+    "loan.waiver.execute": waiverExecutionOutput,
+    "loan.waiver.reverse": waiverExecutionOutput,
     "funding-source.list": z.object({ profiles: z.array(fundingProfileOutput) }).strict(),
 };
 
@@ -969,6 +1032,51 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
         reason: shortText,
         idempotencyKey: z.string().trim().min(1).max(200),
     }).strict(),
+    "loan.restructure.preview": z.object({
+        oldLoanPublicId: uuid,
+        settlementDate: date,
+        replacementTerms: publicReplacementTermsInput,
+        waivers: z.object({
+            interest: z.object({ amount: money, reason: shortText }).strict().optional(),
+            fees: z.object({ amount: money, reason: shortText }).strict().optional(),
+            penalty: z.object({ amount: money, reason: shortText }).strict().optional(),
+        }).strict().optional(),
+        externalSettlementCredit: z.object({ amount: money, payer: shortText, source: shortText }).strict().optional(),
+        additionalPrincipal: money,
+        reason: shortText,
+    }).strict(),
+    "loan.restructure.execute": z.object({
+        restructurePublicId: uuid,
+        previewHash: versionHash,
+        expectedBalanceVersion: versionHash,
+        confirmed: z.literal(true),
+        reason: shortText,
+        idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict(),
+    "loan.restructure.reverse": z.object({
+        restructurePublicId: uuid,
+        reason: shortText,
+        idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict(),
+    "loan.waiver.preview": z.object({
+        loanPublicId: uuid,
+        component: z.enum(["interest", "fee", "penalty"]),
+        amount: money,
+        reason: shortText,
+    }).strict(),
+    "loan.waiver.execute": z.object({
+        previewPublicId: uuid,
+        previewHash: versionHash,
+        expectedBalanceVersion: versionHash,
+        confirmed: z.literal(true),
+        reason: shortText,
+        idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict(),
+    "loan.waiver.reverse": z.object({
+        waiverPublicId: uuid,
+        reason: shortText,
+        idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict(),
     "funding-source.list": z.object({ status: z.enum(["active", "closed", "all"]).optional() }).strict(),
 };
 
@@ -1045,6 +1153,10 @@ const destructiveTools = new Set<McpToolName>([
     "renewal.preview",
     "renewal.execute",
     "renewal.reverse",
+    "loan.restructure.execute",
+    "loan.restructure.reverse",
+    "loan.waiver.execute",
+    "loan.waiver.reverse",
 ]);
 const financialTools = new Set<McpToolName>([
     "payment.post",
@@ -1059,6 +1171,10 @@ const financialTools = new Set<McpToolName>([
     "intermediary.remittance.post",
     "renewal.execute",
     "renewal.reverse",
+    "loan.restructure.execute",
+    "loan.restructure.reverse",
+    "loan.waiver.execute",
+    "loan.waiver.reverse",
 ]);
 const idempotentTools = new Set<McpToolName>([
     ...readOnlyTools,
@@ -1082,6 +1198,10 @@ const idempotentTools = new Set<McpToolName>([
     "intermediary.remittance.post",
     "renewal.execute",
     "renewal.reverse",
+    "loan.restructure.execute",
+    "loan.restructure.reverse",
+    "loan.waiver.execute",
+    "loan.waiver.reverse",
 ]);
 
 const toolDescriptions: Record<McpToolName, string> = {
@@ -1141,6 +1261,12 @@ const toolDescriptions: Record<McpToolName, string> = {
     "renewal.preview": "Preview a daily-loan renewal from current balances.",
     "renewal.execute": "Execute a confirmed renewal idempotently.",
     "renewal.reverse": "Reverse an executed renewal with compensating records.",
+    "loan.restructure.preview": "Preview an exact single-payment settlement and replacement contract from current balances.",
+    "loan.restructure.execute": "Execute an explicitly confirmed restructure preview idempotently.",
+    "loan.restructure.reverse": "Reverse an executed restructure when the authoritative downstream checks allow it.",
+    "loan.waiver.preview": "Preview an interest, fee, or penalty waiver against the current replacement-loan balance.",
+    "loan.waiver.execute": "Execute an explicitly confirmed component waiver preview idempotently.",
+    "loan.waiver.reverse": "Reverse an executed component waiver with a compensating record.",
     "funding-source.list": "List tenant funding profiles and drawdowns read-only.",
 };
 
@@ -1200,6 +1326,39 @@ function dataRecord(value: unknown): Record<string, unknown> {
     return { value: json };
 }
 
+function frozenToolData(toolName: McpToolName, value: unknown): Record<string, unknown> {
+    const data = dataRecord(value);
+    if (toolName !== "loan.preview" && toolName !== "loan.draft" && toolName !== "loan.activate") return data;
+    const projectLoanFields = (record: Record<string, unknown>) => {
+        const legacy = record;
+        const floating = legacy.floatingDailyInterest;
+        if (floating && typeof floating === "object" && !Array.isArray(floating)) {
+            const { accrualCycle: _accrualCycle, ...legacyFloating } = floating as Record<string, unknown>;
+            legacy.floatingDailyInterest = legacyFloating;
+        }
+        return legacy;
+    };
+    const projected = projectLoanFields({ ...data });
+    if (toolName === "loan.preview" && typeof projected.fullPeriodInterest === "string") {
+        projected.firstDayInterest = projected.advanceInterestAmount;
+        projected.dailyInterestAtCurrentPrincipal = projected.fullPeriodInterest;
+        projected.nextInterestDate = projected.nextAccrualDate;
+        delete projected.fullPeriodInterest;
+        delete projected.firstPeriodStartDate;
+        delete projected.advanceInterestAmount;
+        delete projected.coveredStartDate;
+        delete projected.coveredEndDate;
+        delete projected.firstPeriodDueDate;
+        delete projected.nextAccrualDate;
+        delete projected.periodDays;
+        delete projected.advanceInterestRefundPolicy;
+    }
+    if (projected.terms && typeof projected.terms === "object" && !Array.isArray(projected.terms)) {
+        projected.terms = projectLoanFields({ ...(projected.terms as Record<string, unknown>) });
+    }
+    return projected;
+}
+
 function createServer(input: CreateMcpHttpPluginInput, ctx: CommandContext) {
     const server = new McpServer({ name: "creditsync", version: "1.0.0" }, {
         capabilities: { tools: {} },
@@ -1224,6 +1383,7 @@ function createServer(input: CreateMcpHttpPluginInput, ctx: CommandContext) {
             const { idempotencyKey: _removed, ...handlerInput } = parsed;
             const toolContext: CommandContext = { ...ctx, idempotencyKey };
             try {
+                await input.preflightHandlers?.[toolName]?.(toolContext, handlerInput);
                 const result = await input.handlers[toolName](toolContext, handlerInput);
                 const auditPublicIds = financialTools.has(toolName)
                     ? await input.findAuditPublicIds({ ctx: toolContext, toolName, result })
@@ -1237,7 +1397,7 @@ function createServer(input: CreateMcpHttpPluginInput, ctx: CommandContext) {
                 }
                 const structuredContent = successOutputSchema(toolName).safeParse({
                     schemaVersion: "1.0",
-                    data: dataRecord(result),
+                    data: frozenToolData(toolName, result),
                     ...(financialTools.has(toolName) ? {
                         correlationId: toolContext.correlationId,
                         auditPublicIds: auditPublicIds ?? [],

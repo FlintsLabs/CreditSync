@@ -214,10 +214,27 @@
             "activate": "Step 4: Activate Draft"
         },
         "repaymentOptions": {
+            "single_payment": "Single payment",
             "monthly": "Monthly Installment",
             "daily": "Daily Installment",
             "weekly": "Weekly Installment",
             "floating": "Floating (No fixed schedule)"
+        },
+        "singlePayment": {
+            "title": "Single-payment terms",
+            "dueDate": "Due date",
+            "fixedInterest": "Fixed agreed interest",
+            "compareRetroactive": "Compare fixed with retroactive interest",
+            "retroactiveRateType": "Retroactive rate type",
+            "retroactiveRate": "Retroactive daily rate",
+            "percentPerDay": "% per day",
+            "perThousandPerDay": "Baht per ฿1,000 per day",
+            "chargePenalty": "Charge a daily late penalty",
+            "penaltyPerDay": "Penalty per day",
+            "graceDays": "Grace days",
+            "backendValidation": "The server validates the due date and all exact financial terms.",
+            "reviewTitle": "Single-payment calculation",
+            "alternativeNotice": "Fixed and retroactive interest are alternatives and are never added together. The server selects the applicable amount."
         },
         "review": {
             "withDrawdown": "This loan will be created against drawdown #{{id}}.",
@@ -246,6 +263,17 @@
             "activate": "Activate loan",
             "activating": "Activating..."
         }
+    },
+    "restructure": {
+        "title": "Settle and restructure",
+        "description": "Settle the immutable current contract and create a linked replacement contract without rewriting posted history.",
+        "sections": { "settlement": "Settlement and waivers", "external": "External settlement payment", "replacement": "Replacement contract" },
+        "settlementDate": "Settlement date", "reason": "Reason", "interestWaiver": "Interest waiver amount", "interestWaiverReason": "Interest waiver reason", "feeWaiver": "Fee waiver amount", "feeWaiverReason": "Fee waiver reason", "penaltyWaiver": "Penalty waiver amount", "penaltyWaiverReason": "Penalty waiver reason",
+        "externalDescription": "An external payment is money received from a payer or support channel. It is recorded separately and is not a waiver.",
+        "externalAmount": "External payment amount", "externalPayer": "Payer", "externalSource": "Payment source", "replacementType": "Replacement type", "additionalPrincipal": "Additional principal", "dailyDurationUnit": "Duration unit", "exactInstallmentAmount": "Amount per installment", "preview": "Preview restructure", "reviewTitle": "Authoritative settlement preview", "replacementPrincipal": "Replacement principal", "cashMovement": "Actual cash movement", "interestAlternative": "Fixed and retroactive interest are alternatives; the server-selected amount is used once.", "exposureTrace": "Retroactive interest exposure", "exposureTraceDetail": "{{rateType}} · {{rate}} · {{days}} days · {{amount}} interest", "rateTypes": { "percent_per_day": "Percent per day", "per_thousand_per_day": "Per thousand per day", "none": "No retroactive rate" }, "externalConfirmation": "External payment confirmation", "externalIdentity": "{{amount}} from {{payer}} via {{source}}", "noExternalPayment": "No external payment", "externalAllocation": { "penalty": "Penalty allocation", "fee": "Fee allocation", "interest": "Interest allocation", "principal": "Principal allocation", "unallocated": "Unallocated" }, "externalReconciliation": "Allocation reconciliation: entered {{amount}}; unallocated {{unallocated}}", "disbursementDisclosure": "Additional cash is only an approved payout. Execution creates a disbursement draft; it does not post cash automatically.", "expiresAt": "Preview expires {{value}}", "confirmExact": "I confirm this exact preview and its cash movement", "edit": "Edit inputs", "execute": "Execute restructure", "executed": "Replacement loan {{id}} was created.", "disbursementDraft": "Disbursement draft {{id}} requires the normal evidence and posting workflow.",
+        "cashDirection": { "payout": "Payout", "collection": "Collection", "none": "No cash" },
+        "components": { "fixedInterestCandidate": "Fixed interest candidate", "retroactiveInterestCandidate": "Retroactive interest candidate", "selectedInterest": "Selected interest", "grossPrincipal": "Gross principal", "grossInterest": "Gross interest", "grossFees": "Gross fees", "grossPenalty": "Gross penalty", "waivedInterest": "Waived interest", "waivedFees": "Waived fees", "waivedPenalty": "Waived penalty", "netPrincipal": "Net principal", "netInterest": "Net carried interest", "netFees": "Net fees", "netPenalty": "Net penalty" },
+        "errors": { "preview": "Unable to preview the restructure.", "execute": "Unable to execute the restructure. Preview again before retrying.", "expired": "This restructure preview has expired. Preview again with current balances." }
     },
     "transactions": {
         "title": "Transactions",
@@ -965,6 +993,11 @@
     },
     "loanDetail": {
         "title": "Loan agreement",
+        "restructureBalances": {
+            "title": "Restructure opening balances", "lineage": "Restructure lineage", "from": "Restructured from", "to": "Restructured to", "waivers": "Recorded waivers", "payoutStatus": "Payout status", "payoutSeparate": "Tracked separately in the disbursement ledger", "noRelatedPayout": "No related payout record yet", "payoutLoading": "Loading related payout…", "payoutError": "Unable to load the related payout ledger", "reversedHistory": "Reversed opening-balance history",
+            "kinds": { "carried_principal": "Carried principal", "additional_principal": "Additional principal", "carried_interest": "Carried interest", "carried_fee": "Carried fee", "carried_penalty": "Carried penalty", "new_contract_interest": "New contract interest" },
+            "waiverComponents": { "interest": "Interest", "fee": "Fee", "penalty": "Penalty" }
+        },
         "activation": {
             "action": "Activate loan",
             "title": "Activate this loan?",

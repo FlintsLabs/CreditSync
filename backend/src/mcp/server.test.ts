@@ -63,13 +63,15 @@ function intakeFixture(status: "draft" | "posted" = "draft") {
 
 async function startServer(input: {
     toolHandlers?: Partial<Record<(typeof MCP_TOOL_NAMES)[number], McpToolHandler>>;
+    preflightHandlers?: Partial<Record<(typeof MCP_TOOL_NAMES)[number], McpToolHandler>>;
     runtimeConfig?: McpRuntimeConfig;
     logs?: Array<Record<string, unknown>>;
     auditPublicIds?: string[];
 }) {
-    const app = new Elysia().use(createMcpHttpPlugin({
+    const pluginInput: CreateMcpHttpPluginInput = {
         config: input.runtimeConfig ?? config(),
         handlers: handlers(input.toolHandlers ?? {}),
+        preflightHandlers: input.preflightHandlers,
         resolvePrincipal: async ({ tenantId, actorEmail }) => {
             expect(tenantId).toBe("tenant-fixed");
             expect(actorEmail).toBe("mcp-agent@example.test");
@@ -78,7 +80,8 @@ async function startServer(input: {
         consumeRateLimit: async () => ({ allowed: true, remaining: 99, retryAfterSeconds: 0 }),
         findAuditPublicIds: async () => input.auditPublicIds ?? [AUDIT_ID],
         logger: (entry) => input.logs?.push(entry),
-    })).listen({ hostname: "127.0.0.1", port: 0 });
+    };
+    const app = new Elysia().use(createMcpHttpPlugin(pluginInput)).listen({ hostname: "127.0.0.1", port: 0 });
     runningApps.push(app);
     return `http://127.0.0.1:${app.server!.port}`;
 }
@@ -186,7 +189,12 @@ describe("CreditSync stateless MCP contract", () => {
     test("returns a generalized weekly floating-loan preview through the public MCP contract", async () => {
         const baseUrl = await startServer({
             toolHandlers: {
-                "loan.preview": async (_ctx, input) => previewLoan(input as unknown as Parameters<typeof previewLoan>[0]),
+                "loan.preview": async (_ctx, input) => {
+                    const terms = input as unknown as Parameters<typeof previewLoan>[0];
+                    return previewLoan(terms.principal === "5000.00"
+                        ? { ...terms, floatingDailyInterest: { ...terms.floatingDailyInterest!, accrualCycle: "weekly" } }
+                        : terms);
+                },
             },
         });
         const { client, transport } = clientFor(baseUrl);
@@ -396,7 +404,7 @@ describe("CreditSync stateless MCP contract", () => {
                     return {
                         id: DISBURSEMENT_ID, publicId: DISBURSEMENT_ID,
                         grossAmount: "100.00", loanAttributedAmount: "100.00",
-                        channel: "cash", status: "draft", sourceBankProfilePublicId: BORROWER_ID, payeeHint: null, note: null,
+                        channel: "cash", status: "draft", restructurePublicId: null, sourceBankProfilePublicId: BORROWER_ID, payeeHint: null, note: null,
                         disbursedAt: "2026-08-10T00:00:00.000Z", postedAt: null, reversedAt: null,
                         evidenceFilePublicIds: [],
                     };
@@ -406,7 +414,7 @@ describe("CreditSync stateless MCP contract", () => {
                     return {
                         id: DISBURSEMENT_ID, publicId: DISBURSEMENT_ID,
                         grossAmount: "100.00", loanAttributedAmount: "95.00",
-                        channel: "cash", status: "draft", sourceBankProfilePublicId: BORROWER_ID, payeeHint: null, note: "Corrected attribution",
+                        channel: "cash", status: "draft", restructurePublicId: null, sourceBankProfilePublicId: BORROWER_ID, payeeHint: null, note: "Corrected attribution",
                         disbursedAt: "2026-08-10T00:00:00.000Z", postedAt: null, reversedAt: null,
                         evidenceFilePublicIds: [],
                     };
@@ -414,7 +422,7 @@ describe("CreditSync stateless MCP contract", () => {
                 "loan.disbursement.post": async () => ({
                     id: DISBURSEMENT_ID, publicId: DISBURSEMENT_ID,
                     grossAmount: "100.00", loanAttributedAmount: "100.00",
-                    channel: "cash", status: "posted", sourceBankProfilePublicId: BORROWER_ID, payeeHint: null, note: null,
+                    channel: "cash", status: "posted", restructurePublicId: null, sourceBankProfilePublicId: BORROWER_ID, payeeHint: null, note: null,
                     disbursedAt: "2026-08-10T00:00:00.000Z", postedAt: "2026-08-10T00:01:00.000Z", reversedAt: null,
                     evidenceFilePublicIds: [], duplicate: false,
                     auditPublicId: AUDIT_ID, correlationId: AUDIT_ID,
@@ -772,6 +780,10 @@ describe("CreditSync stateless MCP contract", () => {
             "renewal.preview",
             "renewal.execute",
             "renewal.reverse",
+            "loan.restructure.execute",
+            "loan.restructure.reverse",
+            "loan.waiver.execute",
+            "loan.waiver.reverse",
         ]);
         expect(listed.tools.filter((tool) => tool.annotations?.destructiveHint).map((tool) => tool.name)).toEqual(
             MCP_TOOL_NAMES.filter((name) => destructive.has(name)),
@@ -792,6 +804,149 @@ describe("CreditSync stateless MCP contract", () => {
         expect(observedContext?.requestId).toMatch(/^[0-9a-f-]{36}$/);
         expect(observedContext?.correlationId).toMatch(/^[0-9a-f-]{36}$/);
 
+        await client.close();
+    });
+
+    // Break caught: restructure/waiver tools are absent, loosely shaped, or advertise
+    // financial writes as safe reads.
+    test("advertises closed restructure and waiver confirmation contracts", async () => {
+        const baseUrl = await startServer({});
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const listed = await client.listTools();
+        const tools = new Map(listed.tools.map((tool) => [tool.name, tool]));
+
+        for (const name of ["loan.restructure.preview", "loan.waiver.preview"]) {
+            expect(tools.get(name)?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
+        }
+        for (const name of ["loan.restructure.execute", "loan.restructure.reverse", "loan.waiver.execute", "loan.waiver.reverse"]) {
+            expect(tools.get(name)?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false });
+        }
+
+        const execute = tools.get("loan.restructure.execute")?.inputSchema as { required?: string[]; additionalProperties?: boolean };
+        expect(execute.required?.sort()).toEqual([
+            "confirmed", "expectedBalanceVersion", "idempotencyKey", "previewHash", "reason", "restructurePublicId",
+        ]);
+        expect(execute.additionalProperties).toBe(false);
+
+        const unknown = await client.callTool({
+            name: "loan.waiver.execute",
+            arguments: {
+                previewPublicId: BORROWER_ID,
+                previewHash: `v1:${"a".repeat(64)}`,
+                expectedBalanceVersion: `v1:${"b".repeat(64)}`,
+                confirmed: true,
+                reason: "Owner confirmed exact waiver",
+                idempotencyKey: "waiver-execute-1",
+                tenantId: "must-not-be-accepted",
+            },
+        });
+        expect(unknown.isError).toBe(true);
+        expect(unknown.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: "text" })]));
+        await client.close();
+    });
+
+    // Break caught: arbitrary nested replacement-term fields can cross the public
+    // output boundary and expose internal request material.
+    test("rejects unknown nested replacement-term output fields", async () => {
+        let handlerCalls = 0;
+        const baseUrl = await startServer({
+            toolHandlers: {
+                "loan.restructure.preview": async () => {
+                    handlerCalls += 1;
+                    return ({
+                    publicId: BORROWER_ID, oldLoanPublicId: INTAKE_ID, status: "preview",
+                    settlementDate: "2026-08-19", oldBalanceVersion: `v1:${"a".repeat(64)}`,
+                    previewHash: `v1:${"b".repeat(64)}`, expiresAt: "2026-08-19T12:00:00.000Z",
+                    balance: {
+                        fixedInterestCandidate: "100.00", retroactiveInterestCandidate: "0.00",
+                        selectedInterest: "100.00", selectedInterestBranch: "fixed", interestDifference: "100.00",
+                        exposureTrace: [], lateDays: 0, grossPrincipal: "1000.00", grossInterest: "100.00",
+                        grossFees: "0.00", grossPenalty: "0.00", grossSettlement: "1100.00",
+                        waivedInterest: "0.00", waivedFees: "0.00", waivedPenalty: "0.00",
+                        netInterest: "100.00", netFees: "0.00", netPenalty: "0.00",
+                        externalSettlementCredits: "0.00", netSettlement: "1100.00",
+                    },
+                    replacementPrincipal: "1000.00",
+                    externalCreditAllocation: { penalty: "0.00", fee: "0.00", interest: "0.00", principal: "0.00", unallocated: "0.00" },
+                    replacementTerms: {
+                        principal: "1000.00", interestRate: "0.00", termMonths: 1,
+                        repaymentType: "monthly", startDate: "2026-08-19",
+                        unexpectedInternal: "must be rejected",
+                    },
+                    schedule: [], cash: { direction: "none", amount: "0.00" }, reason: "replace",
+                    });
+                },
+            },
+        });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const invalidInput = await client.callTool({
+            name: "loan.restructure.preview",
+            arguments: {
+                oldLoanPublicId: BORROWER_ID, settlementDate: "2026-08-19",
+                replacementTerms: { interestRate: "0.00", termMonths: 1, repaymentType: "monthly", startDate: "2026-08-19", unexpectedInternal: true },
+                additionalPrincipal: "0.00", reason: "replace",
+            },
+        });
+        expect(invalidInput.isError).toBe(true);
+        expect(handlerCalls).toBe(0);
+        const result = await client.callTool({
+            name: "loan.restructure.preview",
+            arguments: {
+                oldLoanPublicId: BORROWER_ID, settlementDate: "2026-08-19",
+                replacementTerms: { interestRate: "0.00", termMonths: 1, repaymentType: "monthly", startDate: "2026-08-19" },
+                additionalPrincipal: "0.00", reason: "replace",
+            },
+        });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({ error: { code: "INVALID_TOOL_OUTPUT" } });
+        expect(handlerCalls).toBe(1);
+        await client.close();
+    });
+
+    test("enforces repayment-type-specific replacement term inputs before the handler", async () => {
+        let handlerCalls = 0;
+        const baseUrl = await startServer({ toolHandlers: {
+            "loan.restructure.preview": async () => {
+                handlerCalls += 1;
+                throw new DomainError("REACHED_HANDLER", "valid replacement terms reached handler", 409);
+            },
+        } });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const request = (replacementTerms: Record<string, unknown>) => client.callTool({
+            name: "loan.restructure.preview",
+            arguments: { oldLoanPublicId: BORROWER_ID, settlementDate: "2026-08-19", replacementTerms, additionalPrincipal: "0.00", reason: "replace" },
+        });
+        const base = { interestRate: "0.00", termMonths: 1, startDate: "2026-08-19" };
+        for (const invalid of [
+            { ...base, repaymentType: "monthly", floatingDailyInterest: { mode: "percent", rate: "1", firstDayTreatment: "start_next_day" } },
+            { ...base, repaymentType: "floating", floatingDailyInterest: { mode: "percent", rate: "1", firstDayTreatment: "start_next_day" }, singlePayment: { dueDate: "2026-09-19", fixedAgreedInterest: "100.00", interestPolicy: "fixed_only", latePenalty: { mode: "none" } } },
+            { ...base, repaymentType: "single_payment", totalInstallments: 1, installmentAmount: "1100.00", singlePayment: { dueDate: "2026-09-19", fixedAgreedInterest: "100.00", interestPolicy: "fixed_only", latePenalty: { mode: "none" } } },
+        ]) expect((await request(invalid)).isError).toBe(true);
+        expect(handlerCalls).toBe(0);
+
+        for (const invalidNested of [
+            { ...base, repaymentType: "floating", floatingDailyInterest: { mode: "percent", rate: "1", firstDayTreatment: "start_next_day", unexpected: true } },
+            { ...base, repaymentType: "daily", dailyEntry: { durationUnit: "days", durationValue: 10, entryMode: "daily_payment", dailyPayment: "110.00", unexpected: true } },
+            { ...base, repaymentType: "daily", dailyEntry: { durationUnit: "days", durationValue: 10, entryMode: "daily_interest", interestInput: { mode: "percent", value: "1", unexpected: true } } },
+        ]) expect((await request(invalidNested)).isError).toBe(true);
+        expect(handlerCalls).toBe(0);
+
+        const dailyEntry = { durationUnit: "days", durationValue: 10, entryMode: "daily_payment", dailyPayment: "110.00" };
+        const valid = [
+            { ...base, repaymentType: "daily", dailyEntry, totalInstallments: 10, installmentAmount: "110.00" },
+            { ...base, repaymentType: "weekly", totalInstallments: 4, installmentAmount: "275.00" },
+            { ...base, repaymentType: "monthly", totalInstallments: 1, installmentAmount: "1100.00" },
+            { ...base, repaymentType: "floating", floatingDailyInterest: { mode: "percent", rate: "1", firstDayTreatment: "start_next_day" } },
+            { ...base, repaymentType: "single_payment", singlePayment: { dueDate: "2026-09-19", fixedAgreedInterest: "100.00", interestPolicy: "fixed_only", latePenalty: { mode: "none" } } },
+        ];
+        for (const terms of valid) {
+            const result = await request(terms);
+            expect(result.structuredContent).toMatchObject({ error: { code: "REACHED_HANDLER" } });
+        }
+        expect(handlerCalls).toBe(5);
         await client.close();
     });
 

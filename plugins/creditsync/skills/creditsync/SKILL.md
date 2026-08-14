@@ -40,6 +40,7 @@ Every activation, post, reversal, and renewal uses explicit public IDs. Supply c
 - Actual loan payouts routed through an intermediary, including assignment checks, transfer legs, per-event evidence, exact preview, posting, or reversal: use `manage-intermediated-disbursements`.
 - Borrower payments held by a collector, remittance slips, exact allocation, and posting: use `reconcile-intermediary-remittances`.
 - Daily-loan reset/renewal and reversal: use `renew-daily-loan`.
+- Single-payment settlement/restructure, component waiver, additional principal, and their reversals: use `restructure-loan`.
 
 Use the plugin references for the frozen tool contract, matching policy, financial rules, and error recovery. Do not use generic HTTP, SQL, or web requests as a substitute for a missing CreditSync tool.
 

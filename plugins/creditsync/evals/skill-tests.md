@@ -1,5 +1,9 @@
 # Skill application evidence
 
+## Plugin 2.5.0 settlement/restructure extension
+
+The executable harness covers an identity-resolved `inspect → preview → exact confirmation → execute` restructure, a later component-waiver preview/execute, and six stop gates: ambiguous borrower, stale preview, missing confirmation, unexpected additional cash, missing waiver reason, and authoritative unsafe-reversal rejection. Every scripted argument is checked against the authenticated frozen 47-tool schema; forbidden financial writes and unsupported fields fail the suite.
+
 These are local scripted-MCP orchestration results, not live accounting executions. No production CreditSync tools were called and no financial writes were made.
 
 ## RED baseline

@@ -103,6 +103,15 @@ export default function LoanWizard() {
         dailyPayment: "",
         dailyInterestInputMode: "percent" as "percent" | "fixed_amount" | "per_thousand",
         dailyInterestInputValue: "",
+        floatingAccrualCycle: "daily" as "daily" | "weekly",
+        singlePaymentDueDate: "",
+        singlePaymentFixedAgreedInterest: "",
+        singlePaymentInterestPolicy: "fixed_only" as "fixed_only" | "greater_of_fixed_or_retroactive",
+        singlePaymentRetroactiveRateType: "percent_per_day" as "percent_per_day" | "per_thousand_per_day",
+        singlePaymentRetroactiveRate: "",
+        singlePaymentLatePenaltyMode: "none" as "none" | "fixed_amount_per_day",
+        singlePaymentLatePenaltyAmountPerDay: "",
+        singlePaymentLatePenaltyGraceDays: "0",
     });
 
     const [schedule, setSchedule] = useState<LoanSchedulePreview[]>([]);
@@ -326,7 +335,7 @@ export default function LoanWizard() {
                             <div className="grid gap-2 md:col-span-2">
                                 <label>{t("loanWizard.repaymentType", "Repayment Type")}</label>
                                 <div className="flex flex-wrap gap-2" role="radiogroup">
-                                    {(["monthly", "daily", "weekly", "floating"] as const).map((type) => (
+                                    {(["single_payment", "monthly", "daily", "weekly", "floating"] as const).map((type) => (
                                         <button key={type} type="button" role="radio" aria-checked={formData.repaymentType === type} onClick={() => setFormData({ ...formData, repaymentType: type })} className={`rounded-full border px-3 py-2 text-sm transition-colors ${formData.repaymentType === type ? "border-primary bg-primary text-primary-foreground" : "border-input bg-background hover:bg-muted"}`}>
                                             {t(`loanWizard.repaymentOptions.${type}`)}
                                         </button>
@@ -358,6 +367,20 @@ export default function LoanWizard() {
                                     onClick={(event) => event.currentTarget.showPicker?.()}
                                 />
                             </div>
+                            {formData.repaymentType === "single_payment" && (
+                                <fieldset className="grid gap-4 rounded border p-4 md:col-span-2">
+                                    <legend className="px-1 font-medium">{t("loanWizard.singlePayment.title")}</legend>
+                                    <div className="grid gap-4 sm:grid-cols-2">
+                                        <label className="grid gap-2" htmlFor="single-payment-due">{t("loanWizard.singlePayment.dueDate")}<Input id="single-payment-due" type="date" value={formData.singlePaymentDueDate} onChange={e => setFormData({ ...formData, singlePaymentDueDate: e.target.value })} /></label>
+                                        <label className="grid gap-2" htmlFor="single-payment-interest">{t("loanWizard.singlePayment.fixedInterest")}<Input id="single-payment-interest" type="number" min="0" step="0.01" value={formData.singlePaymentFixedAgreedInterest} onChange={e => setFormData({ ...formData, singlePaymentFixedAgreedInterest: e.target.value })} /></label>
+                                    </div>
+                                    <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={formData.singlePaymentInterestPolicy === "greater_of_fixed_or_retroactive"} onChange={e => setFormData({ ...formData, singlePaymentInterestPolicy: e.target.checked ? "greater_of_fixed_or_retroactive" : "fixed_only" })} /><span>{t("loanWizard.singlePayment.compareRetroactive")}</span></label>
+                                    {formData.singlePaymentInterestPolicy === "greater_of_fixed_or_retroactive" && <div className="grid gap-4 sm:grid-cols-2"><label className="grid gap-2">{t("loanWizard.singlePayment.retroactiveRateType")}<select className="flex h-10 rounded-md border bg-background px-3" value={formData.singlePaymentRetroactiveRateType} onChange={e => setFormData({ ...formData, singlePaymentRetroactiveRateType: e.target.value as typeof formData.singlePaymentRetroactiveRateType })}><option value="percent_per_day">{t("loanWizard.singlePayment.percentPerDay")}</option><option value="per_thousand_per_day">{t("loanWizard.singlePayment.perThousandPerDay")}</option></select></label><label className="grid gap-2" htmlFor="single-payment-retro-rate">{t("loanWizard.singlePayment.retroactiveRate")}<Input id="single-payment-retro-rate" type="number" min="0" step="0.0001" value={formData.singlePaymentRetroactiveRate} onChange={e => setFormData({ ...formData, singlePaymentRetroactiveRate: e.target.value })} /></label></div>}
+                                    <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={formData.singlePaymentLatePenaltyMode === "fixed_amount_per_day"} onChange={e => setFormData({ ...formData, singlePaymentLatePenaltyMode: e.target.checked ? "fixed_amount_per_day" : "none" })} /><span>{t("loanWizard.singlePayment.chargePenalty")}</span></label>
+                                    {formData.singlePaymentLatePenaltyMode === "fixed_amount_per_day" && <div className="grid gap-4 sm:grid-cols-2"><label className="grid gap-2" htmlFor="single-payment-penalty">{t("loanWizard.singlePayment.penaltyPerDay")}<Input id="single-payment-penalty" type="number" min="0" step="0.01" value={formData.singlePaymentLatePenaltyAmountPerDay} onChange={e => setFormData({ ...formData, singlePaymentLatePenaltyAmountPerDay: e.target.value })} /></label><label className="grid gap-2" htmlFor="single-payment-grace">{t("loanWizard.singlePayment.graceDays")}<Input id="single-payment-grace" type="number" min="0" step="1" value={formData.singlePaymentLatePenaltyGraceDays} onChange={e => setFormData({ ...formData, singlePaymentLatePenaltyGraceDays: e.target.value })} /></label></div>}
+                                    <p className="text-xs text-muted-foreground">{t("loanWizard.singlePayment.backendValidation")}</p>
+                                </fieldset>
+                            )}
                             {formData.repaymentType === "daily" && (
                                 <>
                                     <div className="grid gap-2">
@@ -400,6 +423,7 @@ export default function LoanWizard() {
                                         </div>
                                         {formData.advanceInterestPeriods === 1 && <p className="text-xs text-amber-700 dark:text-amber-300">{t("loanWizard.floating.nonRefundableWarning")}</p>}
                                     </div>
+                                    <div className="grid gap-2 md:col-span-2"><label>{t("loanWizard.floatingAccrualCycle")}</label><div className="flex gap-2">{(["daily", "weekly"] as const).map(cycle => <button key={cycle} type="button" onClick={() => setFormData({ ...formData, floatingAccrualCycle: cycle })} className={`rounded-full border px-3 py-2 text-sm ${formData.floatingAccrualCycle === cycle ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}>{t(`loanWizard.floatingAccrualOptions.${cycle}`)}</button>)}</div></div>
                                 </>
                             )}
                         </div>

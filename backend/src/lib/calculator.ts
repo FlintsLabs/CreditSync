@@ -5,7 +5,7 @@ import { parseMoney, serializeMoney } from "./money";
 import { normalizeDailyLoanEntry, type DailyLoanEntryInput } from "./daily-loan-entry";
 import type { FloatingInterestPolicy } from "./floating-interest-policy";
 
-export type RepaymentType = "daily" | "weekly" | "monthly" | "floating";
+export type RepaymentType = "single_payment" | "daily" | "weekly" | "monthly" | "floating";
 
 export interface LoanCalculationParams {
     principal: Decimal.Value;
@@ -15,6 +15,7 @@ export interface LoanCalculationParams {
     startDate: Date;
     totalInstallments?: number;
     installmentAmount?: Decimal.Value;
+    singlePayment?: SinglePaymentTerms;
 }
 
 export interface InstallmentSchedule {
@@ -47,6 +48,19 @@ export interface PublicInstallmentSchedule {
     remainingPrincipal: string;
 }
 
+export interface PublicWeeklyFloatingInterestPreviewFields {
+    fullPeriodInterest: string;
+    firstPeriodStartDate: string;
+    advanceInterestAmount: string;
+    netDisbursement: string;
+    coveredStartDate: string | null;
+    coveredEndDate: string | null;
+    firstPeriodDueDate: string;
+    nextAccrualDate: string;
+    periodDays: 7;
+    advanceInterestRefundPolicy: "non_refundable";
+}
+
 export interface PublicLoanTerms {
     principal: string;
     interestRate: string;
@@ -54,14 +68,24 @@ export interface PublicLoanTerms {
     repaymentType: RepaymentType;
     totalInstallments?: number;
     installmentAmount?: string;
+    startDate?: string;
+    singlePayment?: SinglePaymentTermsInput;
 }
 
-export function normalizePublicLoanTerms(input: PublicLoanTerms): PublicLoanTerms {
+export interface NormalizedPublicLoanTerms extends Omit<PublicLoanTerms, "singlePayment"> {
+    singlePayment?: SinglePaymentTerms;
+}
+
+export function normalizePublicLoanTerms(input: PublicLoanTerms): NormalizedPublicLoanTerms {
     if (!Number.isFinite(input.termMonths) || !Number.isInteger(input.termMonths) || input.termMonths <= 0) {
         throw new Error("Term months must be a positive whole number");
     }
-    if (!(["daily", "weekly", "monthly", "floating"] as const).includes(input.repaymentType)) {
+    if (!(["single_payment", "daily", "weekly", "monthly", "floating"] as const).includes(input.repaymentType)) {
         throw new Error("Repayment type is not supported");
+    }
+    if (input.repaymentType === "single_payment"
+        && (input.totalInstallments !== undefined || input.installmentAmount !== undefined)) {
+        throw new Error("Single-payment terms cannot include installment metadata");
     }
     if (input.totalInstallments !== undefined
         && (!Number.isFinite(input.totalInstallments)
@@ -71,6 +95,16 @@ export function normalizePublicLoanTerms(input: PublicLoanTerms): PublicLoanTerm
             ? "Daily total installments must be a positive integer"
             : "Total installments must be a positive integer");
     }
+    if (input.repaymentType === "single_payment" && input.singlePayment === undefined) {
+        throw new Error("Single-payment terms are required");
+    }
+    if (input.repaymentType !== "single_payment" && input.singlePayment !== undefined) {
+        throw new Error("Single-payment terms require single-payment repayment");
+    }
+    const singlePayment = input.singlePayment === undefined ? undefined : (() => {
+        if (input.startDate === undefined) throw new Error("Single-payment start date is required");
+        return normalizeSinglePaymentTerms(input.singlePayment, normalizeBangkokBusinessDate(input.startDate));
+    })();
 
     return {
         ...input,
@@ -79,6 +113,7 @@ export function normalizePublicLoanTerms(input: PublicLoanTerms): PublicLoanTerm
         installmentAmount: input.installmentAmount === undefined
             ? undefined
             : serializeMoney(parseMoney(input.installmentAmount)),
+        singlePayment,
     };
 }
 
@@ -94,6 +129,28 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
     const interestRatePercent = new FinancialDecimal(interestRate);
     if (!principalMoney.isFinite() || !interestRatePercent.isFinite() || principalMoney.isNegative() || interestRatePercent.isNegative()) {
         throw new Error("Loan principal and interest rate must be non-negative finite values");
+    }
+    if (repaymentType === "single_payment") {
+        if (!params.singlePayment) throw new Error("Single-payment terms are required");
+        const startBusinessDate = new Intl.DateTimeFormat("en-CA", {
+            timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit",
+        }).formatToParts(startDate).reduce<Record<string, string>>((parts, part) => {
+            if (part.type !== "literal") parts[part.type] = part.value;
+            return parts;
+        }, {});
+        const singlePayment = normalizeSinglePaymentTerms(
+            params.singlePayment,
+            `${startBusinessDate.year}-${startBusinessDate.month}-${startBusinessDate.day}`,
+        );
+        const interest = parseMoney(singlePayment.fixedAgreedInterest);
+        return [{
+            installmentNo: 1,
+            dueDate: singlePayment.dueDate,
+            amount: serializeMoney(principalMoney.plus(interest)),
+            principalComponent: serializeMoney(principalMoney),
+            interestComponent: serializeMoney(interest),
+            remainingPrincipal: "0.00",
+        }];
     }
     const totalInterest = principalMoney.times(interestRatePercent).div(100).times(termMonths).div(12)
         .toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
@@ -173,6 +230,7 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
 }
 
 export function calculatePublicLoanSchedule(params: PublicLoanCalculationParams): PublicInstallmentSchedule[] {
+    const startDate = normalizeBangkokBusinessDate(params.startDate);
     const dailyEntry = params.dailyEntry === undefined ? null : (() => {
         if (params.repaymentType !== "daily") throw new Error("Daily entry requires daily repayment");
         return normalizeDailyLoanEntry({ principal: params.principal, ...params.dailyEntry });
@@ -189,9 +247,10 @@ export function calculatePublicLoanSchedule(params: PublicLoanCalculationParams)
         interestRate: parseMoney(terms.interestRate),
         termMonths: terms.termMonths,
         repaymentType: terms.repaymentType,
-        startDate: new Date(params.startDate),
+        startDate: new Date(`${startDate}T00:00:00+07:00`),
         totalInstallments: terms.totalInstallments,
         installmentAmount: terms.installmentAmount === undefined ? undefined : parseMoney(terms.installmentAmount),
+        singlePayment: terms.singlePayment,
     });
 
     return schedule.map((row) => ({

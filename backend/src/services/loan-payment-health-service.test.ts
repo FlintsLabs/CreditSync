@@ -2,7 +2,17 @@ import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bu
 import { and, eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { borrowers, loanInterestAccruals, loanInterestRatePeriods, loanSchedules, loans, users } from "../db/schema";
+import {
+    auditLogs,
+    borrowers,
+    floatingTransactionAllocations,
+    loanInterestAccruals,
+    loanInterestRatePeriods,
+    loanSchedules,
+    loans,
+    transactions,
+    users,
+} from "../db/schema";
 import { loansRoute } from "../modules/loans";
 import type { CommandContext } from "./command-context";
 import { getLoanPaymentHealth } from "./loan-payment-health-service";
@@ -74,13 +84,15 @@ describe("loan payment-health service", () => {
         });
     });
 
-    // Break caught: today's floating interest is overdue immediately, partial history uses gross, or retries duplicate dates.
-    integrationTest("materializes floating accruals idempotently and uses exact unpaid remainders", async () => {
+    // Break caught: today's floating interest is overdue immediately, partial history uses gross,
+    // or a health read writes missing financial snapshots.
+    integrationTest("projects floating accruals without mutation and uses exact unpaid remainders", async () => {
         const { actor, borrower } = await seedActorAndBorrower("tenant-a");
         const loan = await db.insert(loans).values({
             tenantId: "tenant-a", ownerUserId: actor.id, borrowerId: borrower.id,
             principalAmount: "1000.00", interestRate: "0.00", repaymentType: "floating",
             dailyInterestMode: "per_thousand", dailyInterestRate: "15.0000",
+            floatingAccrualCycle: "daily",
             firstDayTreatment: "start_next_day", interestStartDate: "2026-08-09",
             outstandingPrincipal: "1000.00", status: "active",
         }).returning().then((rows) => rows[0]!);
@@ -88,10 +100,32 @@ describe("loan payment-health service", () => {
             tenantId: "tenant-a", loanId: loan.id, effectiveDate: "2026-08-09", expiryDate: null,
             rateType: "per_thousand", rate: "15.0000", createdByUserId: actor.id,
         }).returning().then((rows) => rows[0]!);
-        await db.insert(loanInterestAccruals).values({
-            tenantId: "tenant-a", loanId: loan.id, interestRatePeriodId: period.id, accrualDate: "2026-08-10",
-            openingPrincipal: "1000.00", rateMode: "per_thousand", rate: "15.0000",
-            interestAmount: "15.00", paidAmount: "7.50", status: "accrued", createdByUserId: actor.id,
+        await db.transaction(async (tx) => {
+            const accrual = await tx.insert(loanInterestAccruals).values({
+                tenantId: "tenant-a", loanId: loan.id, interestRatePeriodId: period.id, accrualDate: "2026-08-10",
+                openingPrincipal: "1000.00", rateMode: "per_thousand", rate: "15.0000",
+                interestAmount: "15.00", paidAmount: "7.50", status: "accrued", createdByUserId: actor.id,
+            }).returning().then((rows) => rows[0]!);
+            const payment = await tx.insert(transactions).values({
+                tenantId: "tenant-a", ownerUserId: actor.id, loanId: loan.id,
+                amount: "7.50", principalComponent: "0.00", interestComponent: "7.50",
+                feeComponent: "0.00", penaltyComponent: "0.00", type: "repayment",
+                transactionDate: new Date("2026-08-10T05:00:00.000Z"), entryType: "repayment",
+                idempotencyKey: "health-partial-payment", postedAt: new Date("2026-08-10T05:00:00.000Z"),
+            }).returning().then((rows) => rows[0]!);
+            const audit = await tx.insert(auditLogs).values({
+                tenantId: "tenant-a", entityType: "transaction", entityId: payment.publicId,
+                action: "floating_payment_allocations_recorded", actorUserId: actor.id, actorSource: "web",
+                requestId: "health-partial-payment", correlationId: "health-partial-payment",
+            }).returning().then((rows) => rows[0]!);
+            await tx.insert(floatingTransactionAllocations).values({
+                tenantId: "tenant-a", loanId: loan.id, transactionId: payment.id,
+                dueDate: "2026-08-10", component: "interest", interestAccrualId: accrual.id,
+                effectiveDate: "2026-08-10", allocationOrder: 1, entryType: "payment", amount: "7.50",
+                idempotencyKey: "health-partial-allocation", auditPublicId: audit.publicId,
+                actorSource: "web", requestId: "health-partial-payment",
+                correlationId: "health-partial-payment", createdByUserId: actor.id,
+            });
         });
 
         const input = { asOf: new Date("2026-08-11T12:00:00+07:00"), context: context(actor) };
@@ -105,7 +139,101 @@ describe("loan payment-health service", () => {
         expect(second).toEqual(first);
         expect(await db.select().from(loanInterestAccruals).where(and(
             eq(loanInterestAccruals.tenantId, "tenant-a"), eq(loanInterestAccruals.loanId, loan.id),
-        ))).toHaveLength(2);
+        ))).toHaveLength(1);
+    });
+
+    // Break caught: weekly interest is absent between boundaries or becomes
+    // normally payable before the complete weekly period is due.
+    integrationTest("projects prorated weekly interest daily and promotes the exact period at its boundary", async () => {
+        const { actor, borrower } = await seedActorAndBorrower("tenant-weekly-health");
+        const loan = await db.insert(loans).values({
+            tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id,
+            principalAmount: "5000.00", interestRate: "0.00", repaymentType: "floating",
+            dailyInterestMode: "percent", dailyInterestRate: "12.0000",
+            floatingAccrualCycle: "weekly",
+            firstDayTreatment: "start_next_day", interestStartDate: "2026-08-10",
+            outstandingPrincipal: "5000.00", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanInterestRatePeriods).values({
+            tenantId: actor.tenantId, loanId: loan.id, effectiveDate: "2026-08-10", expiryDate: null,
+            rateType: "percent", rate: "12.0000", createdByUserId: actor.id,
+        });
+
+        expect(await getLoanPaymentHealth(db, loan, {
+            asOf: new Date("2026-08-13T12:00:00+07:00"), actorUserId: actor.id,
+        })).toMatchObject({
+            status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00",
+            accruingInterestAmount: "257.14", overdueItemCount: 0, maxOverdueDays: 0,
+        });
+        expect(await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id))).toHaveLength(0);
+
+        expect(await getLoanPaymentHealth(db, loan, {
+            asOf: new Date("2026-08-17T12:00:00+07:00"), actorUserId: actor.id,
+        })).toMatchObject({
+            status: "due_today", dueTodayAmount: "600.00", overdueAmount: "0.00",
+            accruingInterestAmount: "0.00", overdueItemCount: 0, maxOverdueDays: 0,
+        });
+        expect(await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id))).toHaveLength(0);
+
+        expect(await getLoanPaymentHealth(db, loan, {
+            asOf: new Date("2026-08-18T12:00:00+07:00"), actorUserId: actor.id,
+        })).toMatchObject({
+            status: "overdue", dueTodayAmount: "0.00", overdueAmount: "600.00",
+            accruingInterestAmount: "85.71", overdueItemCount: 1, maxOverdueDays: 1,
+        });
+        expect(await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id))).toHaveLength(0);
+    });
+
+    // Break caught: a pre-proration weekly aggregate is overlaid on only its
+    // anchor date while the other six projected increments remain payable.
+    integrationTest("does not double count a legacy weekly aggregate with projected period increments", async () => {
+        const { actor, borrower } = await seedActorAndBorrower("tenant-legacy-weekly-health");
+        const loan = await db.insert(loans).values({
+            tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id,
+            principalAmount: "5000.00", interestRate: "0.00", repaymentType: "floating",
+            dailyInterestMode: "percent", dailyInterestRate: "12.0000", floatingAccrualCycle: "weekly",
+            firstDayTreatment: "start_next_day", interestStartDate: "2026-08-10",
+            outstandingPrincipal: "5000.00", outstandingInterest: "600.00", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        const period = await db.insert(loanInterestRatePeriods).values({
+            tenantId: actor.tenantId, loanId: loan.id, effectiveDate: "2026-08-10", expiryDate: null,
+            rateType: "percent", rate: "12.0000", createdByUserId: actor.id,
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanInterestAccruals).values({
+            tenantId: actor.tenantId, loanId: loan.id, interestRatePeriodId: period.id,
+            accrualDate: "2026-08-17", openingPrincipal: "5000.00", rateMode: "percent", rate: "12.0000",
+            interestAmount: "600.00", paidAmount: "0.00", status: "due", createdByUserId: actor.id,
+        });
+
+        expect(await getLoanPaymentHealth(db, loan, {
+            asOf: new Date("2026-08-18T12:00:00+07:00"), actorUserId: actor.id,
+        })).toMatchObject({
+            status: "overdue", overdueAmount: "600.00", accruingInterestAmount: "85.71",
+            overdueItemCount: 1, maxOverdueDays: 1,
+        });
+    });
+
+    // Break caught: a mid-period contractual rate change reuses the old rate or
+    // restarts the whole period cumulative amount instead of starting a new segment.
+    integrationTest("preserves rate segments inside a prorated weekly period", async () => {
+        const { actor, borrower } = await seedActorAndBorrower("tenant-weekly-rate-segments");
+        const loan = await db.insert(loans).values({
+            tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id,
+            principalAmount: "5000.00", interestRate: "0.00", repaymentType: "floating",
+            dailyInterestMode: "percent", dailyInterestRate: "12.0000", floatingAccrualCycle: "weekly",
+            firstDayTreatment: "start_next_day", interestStartDate: "2026-08-10",
+            outstandingPrincipal: "5000.00", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        const periods = await db.insert(loanInterestRatePeriods).values([
+            { tenantId: actor.tenantId, loanId: loan.id, effectiveDate: "2026-08-10", expiryDate: "2026-08-12", rateType: "percent", rate: "12.0000", createdByUserId: actor.id },
+            { tenantId: actor.tenantId, loanId: loan.id, effectiveDate: "2026-08-13", expiryDate: null, rateType: "percent", rate: "6.0000", createdByUserId: actor.id },
+        ]).returning();
+
+        await getLoanPaymentHealth(db, loan, { asOf: new Date("2026-08-13T12:00:00+07:00"), actorUserId: actor.id });
+        expect(await getLoanPaymentHealth(db, loan, {
+            asOf: new Date("2026-08-13T12:00:00+07:00"), actorUserId: actor.id,
+        })).toMatchObject({ status: "current", accruingInterestAmount: "214.29" });
+        expect(await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id))).toHaveLength(0);
     });
 
     // Break caught: a catch-up accrual applies today's rate to every missing historical date.
@@ -115,6 +243,7 @@ describe("loan payment-health service", () => {
             tenantId: "tenant-a", ownerUserId: actor.id, borrowerId: borrower.id,
             principalAmount: "1000.00", interestRate: "0.00", repaymentType: "floating",
             dailyInterestMode: "per_thousand", dailyInterestRate: "15.0000",
+            floatingAccrualCycle: "daily",
             firstDayTreatment: "start_next_day", interestStartDate: "2026-08-30",
             outstandingPrincipal: "1000.00", status: "active",
         }).returning().then((rows) => rows[0]!);
@@ -179,6 +308,7 @@ describe("loan payment-health service", () => {
         const loan = await db.insert(loans).values({
             tenantId: "tenant-a", ownerUserId: actor.id, borrowerId: borrower.id,
             principalAmount: "500.00", interestRate: "0.00", repaymentType: "floating",
+            floatingAccrualCycle: "daily",
             outstandingPrincipal: "500.00", status: "active",
         }).returning().then((rows) => rows[0]!);
 

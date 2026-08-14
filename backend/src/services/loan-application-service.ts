@@ -1,6 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanSchedules, loans, users } from "../db/schema";
+import { bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanOpeningBalanceComponents, loanRestructures, loanRestructureWaivers, loanSchedules, loans, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
 import {
@@ -8,6 +8,7 @@ import {
     normalizePublicLoanTerms,
     type PublicLoanCalculationParams,
     type RepaymentType,
+    type PublicWeeklyFloatingInterestPreviewFields,
 } from "../lib/calculator";
 import { generateLoanSchedule } from "../lib/loan-schedule";
 import { computeLoanRollup } from "../lib/loan-rollup";
@@ -24,6 +25,7 @@ import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import type { FloatingDailyInterest } from "../lib/floating-daily-interest";
 import { normalizeDailyLoanEntry, type DailyLoanEntryInput, type NormalizedDailyLoanEntry } from "../lib/daily-loan-entry";
+import type { SinglePaymentTerms } from "../lib/single-payment";
 
 type LoanRow = typeof loans.$inferSelect;
 
@@ -202,6 +204,7 @@ export async function presentLoan(row: LoanRow) {
         floatingDailyInterest: floatingInterestPolicy?.periodUnit === "day" && row.firstDayTreatment
             ? { mode: row.dailyInterestMode as FloatingDailyInterest["mode"], rate: row.dailyInterestRate, firstDayTreatment: row.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"] }
             : null,
+        singlePayment: singlePaymentFor(row),
         dailyEntry,
         dailyLoanCalculation,
         repaymentType: row.repaymentType,
@@ -251,6 +254,16 @@ function existingDailyEntry(row: LoanRow): DailyLoanEntryInput | undefined {
     return undefined;
 }
 
+function existingFloatingPolicy(row: LoanRow): FloatingDailyInterest | undefined {
+    if (row.repaymentType !== "floating" || !row.dailyInterestMode || row.dailyInterestRate === null || !row.firstDayTreatment) return undefined;
+    return {
+        mode: row.dailyInterestMode as FloatingDailyInterest["mode"],
+        rate: new Decimal(row.dailyInterestRate).toFixed(4),
+        firstDayTreatment: row.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"],
+        accrualCycle: (row.floatingAccrualCycle ?? "daily") as "daily" | "weekly",
+    };
+}
+
 function normalizeTerms(input: PublicLoanCalculationParams): { terms: ReturnType<typeof normalizePublicLoanTerms>; dailyEntry: NormalizedDailyLoanEntry | null } {
     try {
         if (input.dailyEntry !== undefined && input.repaymentType !== "daily") throw new Error("Daily entry requires daily repayment");
@@ -267,6 +280,14 @@ function normalizeTerms(input: PublicLoanCalculationParams): { terms: ReturnType
         };
     } catch (error) {
         throw new DomainError("INVALID_LOAN_TERMS", error instanceof Error ? error.message : "Invalid loan terms", 400);
+    }
+}
+
+function normalizeFloatingPolicy(input: FloatingDailyInterestInput) {
+    try {
+        return normalizeFloatingDailyInterest(input);
+    } catch {
+        throw new DomainError("INVALID_LOAN_TERMS", "Floating interest policy is invalid", 400);
     }
 }
 
@@ -296,7 +317,36 @@ export function previewLoan(input: PublicLoanCalculationParams) {
 }
 
 export async function getLoanApplication(ctx: CommandContext, publicId: string) {
-    return presentLoan(await accessibleLoan(ctx, publicId));
+    const loan = await accessibleLoan(ctx, publicId);
+    const base = await presentLoan(loan);
+    const [inbound, outbound] = await Promise.all([
+        db.query.loanRestructures.findFirst({ where: and(eq(loanRestructures.tenantId, ctx.tenantId), inArray(loanRestructures.status, ["executed", "reversed"]), eq(loanRestructures.newLoanId, loan.id)), orderBy: [desc(loanRestructures.createdAt)] }),
+        db.query.loanRestructures.findFirst({ where: and(eq(loanRestructures.tenantId, ctx.tenantId), inArray(loanRestructures.status, ["executed", "reversed"]), eq(loanRestructures.oldLoanId, loan.id)), orderBy: [desc(loanRestructures.createdAt)] }),
+    ]);
+    if (!inbound && !outbound) return { ...base, restructureLineage: null, openingBalanceComponents: [], restructureWaivers: [] };
+    const [inboundOldLoan, outboundNewLoan, opening, waivers] = await Promise.all([
+        inbound ? db.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, inbound.oldLoanId)) }) : null,
+        outbound?.newLoanId ? db.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, outbound.newLoanId)) }) : null,
+        inbound ? db.select().from(loanOpeningBalanceComponents).where(and(eq(loanOpeningBalanceComponents.tenantId, ctx.tenantId), eq(loanOpeningBalanceComponents.restructureId, inbound.id), eq(loanOpeningBalanceComponents.loanId, loan.id))).orderBy(loanOpeningBalanceComponents.id) : [],
+        inbound ? db.select().from(loanRestructureWaivers).where(and(eq(loanRestructureWaivers.tenantId, ctx.tenantId), eq(loanRestructureWaivers.restructureId, inbound.id), eq(loanRestructureWaivers.loanId, loan.id))).orderBy(loanRestructureWaivers.id) : [],
+    ]);
+    // Preserve the legacy scalar contract: when a loan has been restructured
+    // onward, the latest matching aggregate is its outbound transition. The
+    // structured fields below retain both directions independently.
+    const primary = outbound ?? inbound!;
+    return {
+        ...base,
+        restructureLineage: {
+            restructurePublicId: primary.publicId,
+            status: primary.status,
+            restructuredFromPublicId: inboundOldLoan?.publicId ?? null,
+            restructuredToPublicId: outboundNewLoan?.publicId ?? null,
+            inbound: inbound ? { restructurePublicId: inbound.publicId, loanPublicId: inboundOldLoan?.publicId ?? null, status: inbound.status } : null,
+            outbound: outbound ? { restructurePublicId: outbound.publicId, loanPublicId: outboundNewLoan?.publicId ?? null, status: outbound.status } : null,
+        },
+        openingBalanceComponents: opening.map(component => ({ publicId: component.publicId, kind: component.componentKind, amount: serializeMoney(component.amount), status: component.status, sourceType: component.sourceType, sourcePublicId: component.sourcePublicId })),
+        restructureWaivers: waivers.map(waiver => ({ publicId: waiver.publicId, component: waiver.componentKind, amount: serializeMoney(waiver.amount), reason: waiver.reason, status: waiver.status, auditPublicId: waiver.auditPublicId, executedAt: waiver.executedAt, reversedAt: waiver.reversedAt })),
+    };
 }
 
 export async function createLoanDraft(ctx: CommandContext, input: LoanDraftInput) {
@@ -332,12 +382,13 @@ export async function createLoanDraft(ctx: CommandContext, input: LoanDraftInput
             dailyInterestInputMode: dailyEntry?.interestInput?.mode ?? null,
             dailyInterestInputValue: dailyEntry?.interestInput?.value ?? null,
             dailyFlatRatePercent: dailyEntry?.flatDailyRatePercent ?? null,
+            ...singlePaymentColumns(terms.singlePayment),
             principalAmount: terms.principal,
             interestRate: terms.interestRate,
             repaymentType: terms.repaymentType,
             termMonths: terms.repaymentType === "floating" ? null : terms.termMonths,
-            totalInstallments: terms.totalInstallments,
-            installmentAmount: terms.installmentAmount,
+            totalInstallments: terms.totalInstallments ?? null,
+            installmentAmount: terms.installmentAmount ?? null,
             startDate: input.startDate,
             outstandingPrincipal: "0.00",
             outstandingInterest: "0.00",
@@ -401,7 +452,7 @@ export async function updateLoanDraft(ctx: CommandContext, publicId: string, inp
         termMonths: input.termMonths ?? existing.termMonths ?? 1,
         totalInstallments: input.totalInstallments ?? existing.totalInstallments ?? undefined,
         installmentAmount: input.installmentAmount === undefined
-            ? existing.installmentAmount === null ? undefined : serializeMoney(existing.installmentAmount)
+            ? repaymentTypeChanged || existing.installmentAmount === null ? undefined : serializeMoney(existing.installmentAmount)
             : input.installmentAmount,
         startDate: input.startDate ?? existing.startDate ?? new Date().toISOString().slice(0, 10),
         dailyEntry: input.dailyEntry ?? existingDailyEntry(existing),
@@ -438,6 +489,12 @@ export async function updateLoanDraft(ctx: CommandContext, publicId: string, inp
             dailyInterestInputMode: dailyEntry?.interestInput?.mode ?? null,
             dailyInterestInputValue: dailyEntry?.interestInput?.value ?? null,
             dailyFlatRatePercent: dailyEntry?.flatDailyRatePercent ?? null,
+            dailyInterestMode: policy?.mode ?? null,
+            dailyInterestRate: policy?.rate ?? null,
+            firstDayTreatment: policy?.firstDayTreatment ?? null,
+            floatingAccrualCycle: policy?.accrualCycle ?? null,
+            interestStartDate: policy ? mergedInput.startDate : null,
+            ...singlePaymentColumns(merged.singlePayment),
             startDate: input.startDate ?? existing.startDate,
             updatedAt: new Date(),
         }).where(and(
@@ -566,6 +623,7 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
                 startDate: current.startDate ?? undefined,
                 totalInstallments: current.totalInstallments ?? undefined,
                 installmentAmount: current.installmentAmount ?? undefined,
+                singlePayment: singlePaymentFor(current) ?? undefined,
             });
         } catch (error) {
             throw new DomainError("INVALID_LOAN_TERMS", error instanceof Error ? error.message : "Invalid loan terms", 400);

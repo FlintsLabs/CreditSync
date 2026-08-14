@@ -11,6 +11,9 @@ const expectedWorkflowTables = [
     "paymentMatchAllocations",
     "loanRenewals",
     "loanAdjustments",
+    "loanRestructures",
+    "loanOpeningBalanceComponents",
+    "loanRestructureWaivers",
 ] as const;
 
 function workflowTable(exportName: string): PgTable {
@@ -128,6 +131,27 @@ describe("agent workflow Drizzle schema", () => {
                     where: '"loan_adjustments"."reversed_adjustment_id" IS NOT NULL',
                 },
             },
+            loanRestructures: {
+                loan_restructures_tenant_id_id_unique: { columns: ["tenant_id", "id"], where: null },
+                loan_restructures_tenant_execute_key_unique: {
+                    columns: ["tenant_id", "execute_idempotency_key"],
+                    where: '"loan_restructures"."execute_idempotency_key" IS NOT NULL',
+                },
+                loan_restructures_tenant_reversal_key_unique: {
+                    columns: ["tenant_id", "reversal_idempotency_key"],
+                    where: '"loan_restructures"."reversal_idempotency_key" IS NOT NULL',
+                },
+            },
+            loanOpeningBalanceComponents: {
+                loan_opening_balance_components_tenant_id_id_unique: { columns: ["tenant_id", "id"], where: null },
+            },
+            loanRestructureWaivers: {
+                loan_restructure_waivers_tenant_id_id_unique: { columns: ["tenant_id", "id"], where: null },
+                loan_restructure_waivers_tenant_execute_key_unique: {
+                    columns: ["tenant_id", "execute_idempotency_key"],
+                    where: null,
+                },
+            },
             transactions: {
                 transactions_tenant_id_id_unique: { columns: ["tenant_id", "id"], where: null },
                 transactions_tenant_idempotency_unique: {
@@ -196,6 +220,26 @@ describe("agent workflow Drizzle schema", () => {
                 created_by_user_id: "users",
                 updated_by_user_id: "users",
             },
+            loanRestructures: {
+                old_loan_id: "loans",
+                new_loan_id: "loans",
+                created_by_user_id: "users",
+                updated_by_user_id: "users",
+                executed_by_user_id: "users",
+                reversed_by_user_id: "users",
+            },
+            loanOpeningBalanceComponents: {
+                restructure_id: "loan_restructures",
+                loan_id: "loans",
+                created_by_user_id: "users",
+            },
+            loanRestructureWaivers: {
+                restructure_id: "loan_restructures",
+                loan_id: "loans",
+                reversed_waiver_id: "loan_restructure_waivers",
+                created_by_user_id: "users",
+                reversed_by_user_id: "users",
+            },
             transactions: {
                 payment_intake_id: "payment_intakes",
                 reversed_transaction_id: "transactions",
@@ -258,6 +302,9 @@ describe("agent workflow Drizzle schema", () => {
             paymentMatchAllocations: "payment_match_allocations_status_check",
             loanRenewals: "loan_renewals_status_check",
             loanAdjustments: "loan_adjustments_status_check",
+            loanRestructures: "loan_restructures_status_check",
+            loanOpeningBalanceComponents: "loan_opening_balance_components_kind_check",
+            loanRestructureWaivers: "loan_restructure_waivers_status_check",
             auditLogs: "audit_logs_actor_source_check",
         };
 

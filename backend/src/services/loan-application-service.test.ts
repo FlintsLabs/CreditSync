@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import Decimal from "decimal.js";
 import { and, eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
@@ -14,6 +14,7 @@ import {
     previewLoan,
     updateLoanDraft,
 } from "./loan-application-service";
+import { correctFloatingInterestAccruals } from "./floating-interest-service";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
@@ -378,6 +379,178 @@ describe("loan application service", () => {
         });
     });
 
+    // Break caught: single-payment terms are dropped from drafts, reconstructed
+    // from interestRate at activation, or coupled to an actual payout record.
+    integrationTest("round-trips and activates exact single-payment terms with direct capital", async () => {
+        const actor = await seedUser("tenant-a", "single-payment@example.test", "owner");
+        const ctx = context("tenant-a", actor.id, "single-payment-create");
+        const borrower = await createBorrower(ctx, { name: "Single Payment Borrower" });
+        const profile = await db.insert(bankProfiles).values({
+            tenantId: "tenant-a",
+            name: "Single Payment Capital",
+            type: "personal_savings",
+            accountingMode: "capital_pool",
+            creditLimit: "6000.00",
+        }).returning().then((rows) => rows[0]!);
+        const singlePayment = {
+            dueDate: "2026-08-19",
+            fixedAgreedInterest: "500.00" as const,
+            interestPolicy: "fixed_only" as const,
+            latePenalty: { mode: "none" as const },
+        };
+
+        const draft = await createLoanDraft(ctx, {
+            borrowerPublicId: borrower.publicId,
+            bankProfilePublicId: profile.publicId,
+            principal: "5000.00",
+            interestRate: "99.00",
+            repaymentType: "single_payment",
+            termMonths: 1,
+            startDate: "2026-08-10",
+            singlePayment,
+        });
+        expect(draft).toMatchObject({
+            status: "draft",
+            principal: "5000.00",
+            interestRate: "99.00",
+            bankProfilePublicId: profile.publicId,
+            nextDueDate: null,
+            singlePayment: {
+                dueDate: "2026-08-19",
+                fixedAgreedInterest: "500.00",
+                interestPolicy: "fixed_only",
+                latePenalty: { mode: "none" },
+            },
+        });
+        expect(await db.select().from(loanSchedules)).toHaveLength(0);
+
+        const retroactiveEdit = await updateLoanDraft(context("tenant-a", actor.id, "single-payment-update-retroactive"), draft.publicId, {
+            singlePayment: {
+                dueDate: "2026-08-20",
+                fixedAgreedInterest: "525.00",
+                interestPolicy: "greater_of_fixed_or_retroactive",
+                retroactiveInterest: { rateType: "percent_per_day", rate: "1.2500" },
+                latePenalty: { mode: "fixed_amount_per_day", amountPerDay: "20.00", graceDays: 2 },
+            },
+        });
+        expect(retroactiveEdit.singlePayment).toEqual({
+            dueDate: "2026-08-20",
+            fixedAgreedInterest: "525.00",
+            interestPolicy: "greater_of_fixed_or_retroactive",
+            retroactiveInterest: { rateType: "percent_per_day", rate: "1.2500" },
+            latePenalty: { mode: "fixed_amount_per_day", amountPerDay: "20.00", graceDays: 2 },
+        });
+
+        const edited = await updateLoanDraft(context("tenant-a", actor.id, "single-payment-update-fixed"), draft.publicId, {
+            principal: "5000.00",
+            singlePayment: { ...singlePayment, fixedAgreedInterest: "500.00" },
+        });
+        expect(edited.singlePayment).toEqual({
+            dueDate: "2026-08-19",
+            fixedAgreedInterest: "500.00",
+            interestPolicy: "fixed_only",
+            latePenalty: { mode: "none" },
+        });
+
+        const activated = await activateLoan(context("tenant-a", actor.id, "single-payment-activate"), draft.publicId);
+        expect(activated).toMatchObject({
+            status: "active",
+            principal: "5000.00",
+            interestRate: "99.00",
+            nextDueDate: "2026-08-19",
+            outstandingPrincipal: "5000.00",
+            outstandingInterest: "500.00",
+            singlePayment: edited.singlePayment,
+        });
+        const stored = await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) });
+        expect(stored).toMatchObject({
+            singlePaymentDueDate: "2026-08-19",
+            singlePaymentFixedAgreedInterest: "500.00",
+            singlePaymentInterestPolicy: "fixed_only",
+            singlePaymentRetroactiveRateType: null,
+            singlePaymentRetroactiveRate: null,
+            singlePaymentLatePenaltyMode: "none",
+            singlePaymentLatePenaltyAmountPerDay: null,
+            singlePaymentLatePenaltyGraceDays: null,
+        });
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, stored!.id))).toMatchObject([{
+            installmentNo: 1,
+            dueDate: "2026-08-19",
+            scheduledPrincipal: "5000.00",
+            scheduledInterest: "500.00",
+            scheduledTotal: "5500.00",
+            remainingDue: "5500.00",
+        }]);
+        expect(await db.select().from(loanFundingAllocations).where(eq(loanFundingAllocations.loanId, stored!.id))).toMatchObject([{
+            bankProfileId: profile.id,
+            bankLoanId: null,
+            allocatedAmount: "5000.00",
+        }]);
+        expect(await db.select().from(loanDisbursements).where(eq(loanDisbursements.loanId, stored!.id))).toHaveLength(0);
+
+        await expect(updateLoanDraft(context("tenant-a", actor.id, "single-payment-locked"), draft.publicId, {
+            singlePayment: { ...singlePayment, fixedAgreedInterest: "999.00" },
+        })).rejects.toMatchObject({ code: "LOAN_TERMS_LOCKED", status: 409 });
+    });
+
+    // Break caught: draft updates silently discard explicit incompatible term
+    // objects and carry periodic installment metadata into a type transition.
+    integrationTest("rejects explicit incompatible terms and clears only inherited transition metadata", async () => {
+        const actor = await seedUser("tenant-a", "closed-update@example.test", "owner");
+        const ctx = context("tenant-a", actor.id, "closed-update-create");
+        const borrower = await createBorrower(ctx, { name: "Closed Update Borrower" });
+        const draft = await createLoanDraft(ctx, {
+            borrowerPublicId: borrower.publicId,
+            principal: "5000.00", interestRate: "12.00", repaymentType: "monthly", termMonths: 3,
+            totalInstallments: 3, installmentAmount: "1800.00", startDate: "2026-08-10",
+        });
+        const singlePayment = {
+            dueDate: "2026-08-19", fixedAgreedInterest: "500.00", interestPolicy: "fixed_only" as const,
+            latePenalty: { mode: "none" as const },
+        };
+
+        const sameType = await updateLoanDraft(context("tenant-a", actor.id, "closed-update-preserve-monthly"), draft.publicId, {
+            principal: "5100.00",
+        });
+        expect(sameType).toMatchObject({
+            repaymentType: "monthly", totalInstallments: 3, installmentAmount: "1800.00",
+        });
+
+        await expect(updateLoanDraft(context("tenant-a", actor.id, "closed-update-reject-single"), draft.publicId, {
+            singlePayment,
+        })).rejects.toMatchObject({ code: "INVALID_LOAN_TERMS", status: 400 });
+
+        const transitioned = await updateLoanDraft(context("tenant-a", actor.id, "closed-update-to-single"), draft.publicId, {
+            repaymentType: "single_payment",
+            termMonths: 1,
+            singlePayment,
+        });
+        expect(transitioned).toMatchObject({
+            repaymentType: "single_payment", totalInstallments: null, installmentAmount: null,
+            singlePayment,
+        });
+        expect(await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) })).toMatchObject({
+            repaymentType: "single_payment", totalInstallments: null, installmentAmount: null,
+        });
+
+        await expect(updateLoanDraft(context("tenant-a", actor.id, "closed-update-reject-floating"), draft.publicId, {
+            floatingDailyInterest: {
+                mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "weekly",
+            },
+        })).rejects.toMatchObject({ code: "INVALID_LOAN_TERMS", status: 400 });
+
+        const floating = await updateLoanDraft(context("tenant-a", actor.id, "closed-update-to-floating"), draft.publicId, {
+            repaymentType: "floating",
+            floatingDailyInterest: {
+                mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "weekly",
+            },
+        });
+        expect(floating).toMatchObject({
+            repaymentType: "floating", totalInstallments: null, installmentAmount: null, singlePayment: null,
+            floatingDailyInterest: { accrualCycle: "weekly" },
+        });
+    });
+
     // Break caught: activation stores 108.00 outstanding for a 100.00 zero-interest loan split over 12 months.
     integrationTest("activation conserves non-even schedule and rollup money exactly", async () => {
         const actor = await seedUser("tenant-a", "conservation@example.test", "collector");
@@ -477,7 +650,7 @@ describe("loan application service", () => {
     });
 
     // Break caught: a first-day paid accrual cannot prove which effective-dated rate produced it.
-    integrationTest("links a deducted first-day accrual to the initial rate period", async () => {
+    integrationTest("links a weekly deducted first-period accrual to the initial rate period", async () => {
         const actor = await seedUser("tenant-a", "floating-first-day@example.test", "collector");
         const ctx = context("tenant-a", actor.id);
         const borrower = await createBorrower(ctx, { name: "Floating First Day Borrower" });
@@ -495,8 +668,64 @@ describe("loan application service", () => {
         await activateLoan(ctx, draft.publicId);
 
         const [period] = await db.select().from(loanInterestRatePeriods).where(eq(loanInterestRatePeriods.loanId, stored!.id));
-        const [accrual] = await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, stored!.id));
-        expect(accrual).toMatchObject({ interestRatePeriodId: period!.id, accrualDate: "2026-08-10", interestAmount: "15.00", paidAmount: "15.00" });
+        const accruals = await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, stored!.id))
+            .orderBy(loanInterestAccruals.accrualDate);
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, stored!.id) })).toMatchObject({ floatingAccrualCycle: "weekly" });
+        expect(accruals).toHaveLength(7);
+        expect(accruals.reduce((sum, row) => sum.plus(row.interestAmount), new Decimal(0)).toFixed(2)).toBe("15.00");
+        expect(accruals.every((row) => row.interestRatePeriodId === period!.id && row.status === "paid"
+            && row.interestAmount === row.paidAmount)).toBe(true);
+        expect(accruals[0]).toMatchObject({
+            accrualDate: "2026-08-11", periodStartDate: "2026-08-10", periodEndDate: "2026-08-17",
+            periodDayIndex: 1, periodDays: 7, openingPrincipal: "1000.00",
+        });
+        expect(accruals[6]).toMatchObject({
+            accrualDate: "2026-08-17", periodDayIndex: 7, cumulativeInterestAmount: "15.00",
+        });
+    });
+
+    // Break caught: correcting a future snapshot in an advance-paid period
+    // reprices the non-refundable charge from a later principal payment.
+    integrationTest("keeps the activation basis immutable when correcting a weekly advance period", async () => {
+        const actor = await seedUser("tenant-advance-correction", "advance-correction@example.test", "owner");
+        const createContext = context(actor.tenantId, actor.id, "advance-create");
+        const borrower = await createBorrower(createContext, { name: "Advance Correction Borrower" });
+        const draft = await createLoanDraft(createContext, {
+            borrowerPublicId: borrower.publicId,
+            principal: "5000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1,
+            startDate: "2026-08-10",
+            floatingDailyInterest: {
+                mode: "percent", rate: "12.0000", firstDayTreatment: "deduct", accrualCycle: "weekly",
+            },
+        });
+        await activateLoan(createContext, draft.publicId);
+        const stored = (await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) }))!;
+        await db.insert(transactions).values({
+            tenantId: actor.tenantId, ownerUserId: actor.id, loanId: stored.id,
+            amount: "1000.00", principalComponent: "1000.00", interestComponent: "0.00",
+            feeComponent: "0.00", penaltyComponent: "0.00", transactionDate: new Date("2026-08-12T05:00:00.000Z"),
+            recordedByUserId: actor.id, entryType: "repayment", postedAt: new Date("2026-08-12T05:00:00.000Z"),
+        });
+
+        await correctFloatingInterestAccruals(
+            context(actor.tenantId, actor.id, "advance-correction"),
+            draft.publicId,
+            ["2026-08-13"],
+            "Repair paid advance snapshot",
+        );
+
+        const active = await db.select().from(loanInterestAccruals).where(and(
+            eq(loanInterestAccruals.loanId, stored.id),
+            sql`${loanInterestAccruals.status} <> 'reversed'`,
+        )).orderBy(loanInterestAccruals.accrualDate);
+        expect(active).toHaveLength(7);
+        expect(active.every((row) => row.status === "paid" && row.interestAmount === row.paidAmount)).toBe(true);
+        expect(active.reduce((sum, row) => sum.plus(row.interestAmount), new Decimal(0)).toFixed(2)).toBe("600.00");
+        expect(active.reduce((sum, row) => sum.plus(row.paidAmount), new Decimal(0)).toFixed(2)).toBe("600.00");
+        expect(active[2]).toMatchObject({
+            accrualDate: "2026-08-13", openingPrincipal: "5000.00",
+            interestAmount: "85.71", cumulativeInterestAmount: "257.14", status: "paid",
+        });
     });
 
     // Break caught: scheduled activation loses huge Decimal principal/interest before persisting rows and rollups.
@@ -805,6 +1034,98 @@ describe("loan application service", () => {
         const compatible = await getLoanApplication(firstCtx, legacy.publicId);
         expect(compatible).toMatchObject({ publicId: legacy.publicId, status: "active", termMonths: null });
         expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, legacy.id))).toHaveLength(0);
+    });
+
+    // Break caught: create/update route variants leak raw floating normalization
+    // exceptions or silently accept incompatible financial term objects.
+    integrationTest("returns stable REST errors for invalid floating create/update and closed updates", async () => {
+        const owner = await seedUser("tenant-a", "rest-invalid-terms@example.test", "owner");
+        const ctx = context("tenant-a", owner.id);
+        const borrower = await createBorrower(ctx, { name: "Invalid Terms Borrower" });
+        const draft = await createLoanDraft(ctx, { borrowerPublicId: borrower.publicId, ...terms });
+        const token = await authToken(owner);
+        const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+        const app = new Elysia().use(loansRoute);
+        const floatingBase = {
+            principal: "5000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1,
+            startDate: "2026-08-10", borrowerPublicId: borrower.publicId,
+        };
+        const policies = [
+            { mode: "percent", rate: "0", firstDayTreatment: "start_next_day", accrualCycle: "daily" },
+            { mode: "percent", rate: "not-a-rate", firstDayTreatment: "start_next_day", accrualCycle: "daily" },
+            { mode: "percent", rate: "1.00000", firstDayTreatment: "start_next_day", accrualCycle: "daily" },
+            { mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "monthly" },
+        ];
+        for (const [index, floatingDailyInterest] of policies.entries()) {
+            const created = await jsonRequest(app, "/loans", {
+                method: "POST", headers, body: JSON.stringify({ ...floatingBase, floatingDailyInterest }),
+            });
+            expect(created.response.status, created.text).toBe(400);
+            expect(created.body).toEqual({ error: "Floating interest policy is invalid", code: "INVALID_LOAN_TERMS" });
+            expect(created.text).not.toContain("DecimalError");
+
+            const updated = await jsonRequest(app, `/loans/${draft.publicId}`, {
+                method: "PUT",
+                headers: { ...headers, "x-request-id": `invalid-floating-update-${index}` },
+                body: JSON.stringify({ repaymentType: "floating", floatingDailyInterest }),
+            });
+            expect(updated.response.status, updated.text).toBe(400);
+            expect(updated.body).toEqual({ error: "Floating interest policy is invalid", code: "INVALID_LOAN_TERMS" });
+            expect(updated.text).not.toContain("DecimalError");
+        }
+        expect(await db.select().from(loans)).toHaveLength(1);
+
+        const singlePayment = {
+            dueDate: "2026-08-19", fixedAgreedInterest: "500.00", interestPolicy: "fixed_only",
+            latePenalty: { mode: "none" },
+        };
+        const incompatible = await jsonRequest(app, `/loans/${draft.publicId}`, {
+            method: "PUT", headers, body: JSON.stringify({ singlePayment }),
+        });
+        expect(incompatible.response.status, incompatible.text).toBe(400);
+        expect(incompatible.body).toMatchObject({ code: "INVALID_LOAN_TERMS" });
+
+        const transitioned = await jsonRequest(app, `/loans/${draft.publicId}`, {
+            method: "PUT", headers,
+            body: JSON.stringify({ repaymentType: "single_payment", termMonths: 1, singlePayment }),
+        });
+        expect(transitioned.response.status, transitioned.text).toBe(200);
+        expect(transitioned.body).toMatchObject({
+            repaymentType: "single_payment", totalInstallments: null, installmentAmount: null,
+        });
+    });
+
+    // Break caught: the legacy annual-rate closing calculator reports zero or
+    // native-number drift instead of the current weekly period projection.
+    integrationTest("includes exact interim weekly interest in the closing summary", async () => {
+        setSystemTime(new Date("2026-08-13T12:00:00+07:00"));
+        try {
+            const actor = await seedUser("tenant-weekly-closing", "weekly-closing@example.test", "owner");
+            const ctx = context(actor.tenantId, actor.id, "weekly-closing-create");
+            const borrower = await createBorrower(ctx, { name: "Weekly Closing Borrower" });
+            const draft = await createLoanDraft(ctx, {
+                borrowerPublicId: borrower.publicId,
+                principal: "5000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1,
+                startDate: "2026-08-10",
+                floatingDailyInterest: {
+                    mode: "percent", rate: "12.0000", firstDayTreatment: "start_next_day", accrualCycle: "weekly",
+                },
+            });
+            await activateLoan(ctx, draft.publicId);
+            const token = await authToken(actor);
+            const app = new Elysia().use(loansRoute);
+            const closing = await jsonRequest(app, `/loans/${draft.publicId}/closing-summary`, {
+                headers: { authorization: `Bearer ${token}` },
+            });
+
+            expect(closing.response.status, closing.text).toBe(200);
+            expect(closing.body).toMatchObject({
+                principal: "5000.00", totalInterest: "257.14", totalDue: "5257.14", balance: "5257.14",
+                accruingInterest: "257.14", dueInterest: "0.00", totalPaid: "0.00",
+            });
+        } finally {
+            setSystemTime();
+        }
     });
 
     // Break caught: core loan REST adapters expose numeric database keys or accept numeric public money/source identifiers.

@@ -1,7 +1,15 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type Decimal from "decimal.js";
 import { db } from "../db";
-import { loanAdjustments, loanInterestAccruals, loanInterestRatePeriods, loans, transactions } from "../db/schema";
+import {
+    floatingPenaltyLedgerEntries,
+    floatingTransactionAllocations,
+    loanAdjustments,
+    loanInterestAccruals,
+    loanInterestRatePeriods,
+    loans,
+    transactions,
+} from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import { FinancialDecimal } from "../lib/financial-decimal";
 import { calculateDailyInterest, interestDatesThrough, type FloatingDailyInterest } from "../lib/floating-daily-interest";
@@ -107,8 +115,9 @@ async function accrueLegacyFloatingInterestThrough(
             openingPrincipal: openingPrincipal.toFixed(2),
             rateMode: policy.mode,
             rate: policy.rate,
-            interestAmount: calculateDailyInterest(openingPrincipal.toFixed(2), policy),
-            status: "accrued",
+            interestAmount,
+            paidAmount: advancePaid ? interestAmount : "0.00",
+            status: advancePaid ? "paid" : "accrued",
             createdByUserId: actorUserId,
         };
     })).onConflictDoNothing();
@@ -549,6 +558,32 @@ export async function correctFloatingInterestAccruals(ctx: CommandContext, loanP
         const loan = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.publicId, loanPublicId)) });
         if (!loan || loan.repaymentType !== "floating") throw new DomainError("FLOATING_LOAN_NOT_FOUND", "Floating loan not found", 404);
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${loan.id} FOR UPDATE`);
+        if (!loan.interestStartDate || !loan.firstDayTreatment) {
+            throw new DomainError("INVALID_LOAN_TERMS", "Floating interest policy is invalid", 409);
+        }
+        const firstDayTreatment = loan.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"];
+        const accrualCycle = (loan.floatingAccrualCycle ?? "daily") as FloatingAccrualCycle;
+        for (const accrualDate of uniqueDates) {
+            let scheduled = false;
+            try {
+                scheduled = interestDatesThrough(
+                    loan.interestStartDate,
+                    accrualDate,
+                    firstDayTreatment,
+                    accrualCycle,
+                ).includes(accrualDate);
+            } catch {
+                scheduled = false;
+            }
+            if (!scheduled) {
+                throw new DomainError(
+                    "ACCRUAL_DATE_NOT_SCHEDULED",
+                    "Floating accrual date is outside the loan's accrual cycle",
+                    409,
+                    { accrualDate },
+                );
+            }
+        }
         const oldRows = await tx.select().from(loanInterestAccruals).where(and(
             eq(loanInterestAccruals.tenantId, ctx.tenantId), eq(loanInterestAccruals.loanId, loan.id),
             inArray(loanInterestAccruals.accrualDate, uniqueDates), sql`${loanInterestAccruals.status} <> 'reversed'`,

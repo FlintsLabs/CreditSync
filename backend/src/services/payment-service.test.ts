@@ -7,11 +7,16 @@ import {
     bankProfiles,
     borrowers,
     files,
+    floatingPenaltyLedgerEntries,
+    floatingTransactionAllocations,
     fundLedgerEntries,
     loanFundingAllocations,
     loanAdjustments,
     loanInterestAccruals,
     loanInterestRatePeriods,
+    loanOpeningBalanceComponents,
+    loanRestructureWaivers,
+    loanRestructures,
     loanSchedules,
     loans,
     paymentEvidence,
@@ -34,12 +39,34 @@ import {
     previewPaymentMatch,
     reversePayment,
     reviewPaymentIntake,
+    allocateRestructuredPayment,
+    calculateEarlySettlementUnearnedInterest,
+    executeEarlyLoanSettlement,
+    previewEarlyLoanSettlement,
     type EvidenceStorageGateway,
 } from "./payment-service";
 import { accrueFloatingInterestThrough, correctFloatingInterestAccruals, floatingInterestDue } from "./floating-interest-service";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
+
+describe("restructured-loan payment allocation", () => {
+    test("allocates penalty, fee, carried interest, due new interest, then principal with exact conservation", () => {
+        expect(allocateRestructuredPayment("1000.00", {
+            penalty: "100.00", fee: "50.00", carriedInterest: "300.00", dueNewInterest: "200.00", principal: "5000.00",
+        })).toEqual({ penalty: "100.00", fee: "50.00", carriedInterest: "300.00", dueNewInterest: "200.00", principal: "350.00", unallocated: "0.00" });
+        expect(allocateRestructuredPayment("75.00", {
+            penalty: "100.00", fee: "50.00", carriedInterest: "300.00", dueNewInterest: "200.00", principal: "5000.00",
+        })).toEqual({ penalty: "75.00", fee: "0.00", carriedInterest: "0.00", dueNewInterest: "0.00", principal: "0.00", unallocated: "0.00" });
+    });
+
+    test("early settlement waives only unearned new-contract interest", () => {
+        expect(calculateEarlySettlementUnearnedInterest({ contractualNewInterest: "600.00", earnedNewInterest: "225.00" })).toEqual({
+            earnedNewInterest: "225.00", unearnedNewInterest: "375.00", proposedWaiver: "375.00", reason: "early_settlement_unearned_interest",
+        });
+        expect(() => calculateEarlySettlementUnearnedInterest({ contractualNewInterest: "100.00", earnedNewInterest: "100.01" })).toThrow("Earned interest cannot exceed contractual interest");
+    });
+});
 
 async function resetApplicationTables() {
     await db.execute(sql`TRUNCATE TABLE
@@ -72,6 +99,9 @@ async function seedLoan(input: {
     alias?: string;
     schedules: Array<{ total: string; principal?: string; interest?: string; fee?: string; dueDate?: string }>;
     funded?: boolean;
+    lateFeeMode?: "none" | "fixed";
+    lateFeeAmount?: string;
+    nextDueDate?: string;
 }) {
     const borrower = await db.insert(borrowers).values({
         tenantId: input.actor.tenantId,
@@ -94,6 +124,9 @@ async function seedLoan(input: {
         outstandingPrincipal: principal,
         outstandingInterest: "0.00",
         outstandingFees: "0.00",
+        lateFeeMode: input.lateFeeMode ?? "none",
+        lateFeeAmount: input.lateFeeAmount ?? "0.00",
+        nextDueDate: input.nextDueDate,
         status: "active",
     }).returning().then((rows) => rows[0]!);
     const schedules = await db.insert(loanSchedules).values(input.schedules.map((row, index) => ({
@@ -128,12 +161,14 @@ async function seedLoan(input: {
     return { borrower, loan, schedules };
 }
 
-async function seedFloatingLoan(actor: { id: number; tenantId: string }) {
+async function seedFloatingLoan(actor: { id: number; tenantId: string }, accrualCycle: "daily" | "weekly" = "daily") {
     const borrower = await db.insert(borrowers).values({ tenantId: actor.tenantId, ownerUserId: actor.id, name: "Floating borrower" }).returning().then((rows) => rows[0]!);
     const loan = await db.insert(loans).values({
         tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id,
         principalAmount: "4000.00", interestRate: "0.00", repaymentType: "floating",
-        dailyInterestMode: "per_thousand", dailyInterestRate: "15.0000", firstDayTreatment: "deduct",
+        dailyInterestMode: "per_thousand", dailyInterestRate: "15.0000",
+        firstDayTreatment: accrualCycle === "weekly" ? "start_next_day" : "deduct",
+        floatingAccrualCycle: accrualCycle,
         interestStartDate: "2026-08-06", outstandingPrincipal: "4000.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active",
     }).returning().then((rows) => rows[0]!);
     const period = await db.insert(loanInterestRatePeriods).values({
@@ -167,6 +202,52 @@ describe("payment application service", () => {
 
     if (integrationEnabled) beforeEach(resetApplicationTables);
     afterEach(() => setSystemTime());
+
+    integrationTest("consumes carried and waived new interest once across replacement schedules and restores rollups on reversal", async () => {
+        const actor = await seedUser("tenant-restructured-payment");
+        const seeded = await seedLoan({ actor, borrowerName: "Replacement payer", funded: true, schedules: [
+            { total: "550.00", principal: "350.00", interest: "200.00", dueDate: "2026-08-10" },
+            { total: "550.00", principal: "350.00", interest: "200.00", dueDate: "2026-09-10" },
+        ] });
+        const oldLoan = await db.insert(loans).values({ tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: seeded.borrower.id, principalAmount: "5000.00", interestRate: "0.00", repaymentType: "monthly", termMonths: 1, startDate: "2026-07-01", outstandingPrincipal: "5000.00", outstandingInterest: "300.00", outstandingFees: "50.00", status: "restructured" }).returning().then(rows => rows[0]!);
+        const audit = await db.insert(auditLogs).values({ tenantId: actor.tenantId, entityType: "loan_restructure", entityId: oldLoan.publicId, action: "seed", actorSource: "system", correlationId: "seed" }).returning().then(rows => rows[0]!);
+        const restructure = await db.insert(loanRestructures).values({ tenantId: actor.tenantId, oldLoanId: oldLoan.id, newLoanId: seeded.loan.id, settlementDate: "2026-08-01", oldBalanceVersion: "v1:" + "a".repeat(64), status: "executed", previewHash: "v1:" + "b".repeat(64), requestHash: "c".repeat(64), requestedReplacementTerms: {}, grossPrincipal: "5000.00", grossInterest: "300.00", grossFees: "50.00", grossPenalty: "100.00", netPrincipal: "5000.00", netInterest: "300.00", netFees: "50.00", netPenalty: "100.00", cashDirection: "none", cashAmount: "0.00", reason: "seed", createdActorSource: "system", executeActorSource: "system", correlationId: "seed", executeIdempotencyKey: crypto.randomUUID(), executeRequestHash: "d".repeat(64), executedAuditPublicId: audit.publicId, preExecutionOldLoanState: { status: "active", outstandingPrincipal: "5000.00", outstandingInterest: "300.00", outstandingFees: "50.00", nextDueDate: null }, expiresAt: new Date(Date.now() + 60_000), executedAt: new Date() }).returning().then(rows => rows[0]!);
+        await db.insert(loanOpeningBalanceComponents).values([
+            { tenantId: actor.tenantId, restructureId: restructure.id, loanId: seeded.loan.id, componentKind: "carried_principal", amount: "700.00", sourceType: "loan", sourcePublicId: oldLoan.publicId, createdByUserId: actor.id },
+            { tenantId: actor.tenantId, restructureId: restructure.id, loanId: seeded.loan.id, componentKind: "carried_interest", amount: "300.00", sourceType: "loan_restructure", sourcePublicId: restructure.publicId, createdByUserId: actor.id },
+            { tenantId: actor.tenantId, restructureId: restructure.id, loanId: seeded.loan.id, componentKind: "carried_fee", amount: "50.00", sourceType: "loan_restructure", sourcePublicId: restructure.publicId, createdByUserId: actor.id },
+            { tenantId: actor.tenantId, restructureId: restructure.id, loanId: seeded.loan.id, componentKind: "carried_penalty", amount: "100.00", sourceType: "loan_restructure", sourcePublicId: restructure.publicId, createdByUserId: actor.id },
+            { tenantId: actor.tenantId, restructureId: restructure.id, loanId: seeded.loan.id, componentKind: "new_contract_interest", amount: "400.00", sourceType: "loan_restructure", sourcePublicId: restructure.publicId, createdByUserId: actor.id },
+        ]);
+        const early = await previewEarlyLoanSettlement(context(actor), seeded.loan.publicId, { settlementDate: "2026-08-10" });
+        await executeEarlyLoanSettlement(context(actor, "waive-first-schedule-interest"), early.publicId, { confirmed: true, previewHash: early.previewHash, expectedBalanceVersion: early.balanceVersion });
+        expect(await db.query.loanRestructureWaivers.findFirst({ where: and(eq(loanRestructureWaivers.loanId, seeded.loan.id), eq(loanRestructureWaivers.componentKind, "new_interest")) })).toMatchObject({ settlementDate: "2026-08-10", scheduleAllocations: [{ schedulePublicId: seeded.schedules[1]!.publicId, dueDate: "2026-09-10", amount: "200.00" }] });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({ outstandingPrincipal: "700.00", outstandingInterest: "500.00", outstandingFees: "150.00", status: "active", nextDueDate: "2026-08-10" });
+        const intake = await createPaymentIntake(context(actor), { amount: "700.00", receivedAt: "2026-08-10T10:00:00.000Z", payerName: "Replacement payer" });
+        const preview = await previewPaymentMatch(context(actor), intake.publicId, { allocations: [{ borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "700.00" }] });
+        await postPayment(context(actor), intake.publicId, { proposalPublicId: preview.publicId });
+        const posted = await db.query.transactions.findFirst({ where: and(eq(transactions.loanId, seeded.loan.id), eq(transactions.entryType, "repayment")) });
+        expect(posted).toMatchObject({ amount: "700.00", penaltyComponent: "100.00", feeComponent: "50.00", interestComponent: "500.00", principalComponent: "50.00" });
+        expect(new Decimal(posted!.principalComponent).plus(posted!.interestComponent).plus(posted!.feeComponent).plus(posted!.penaltyComponent).toFixed(2)).toBe("700.00");
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({ outstandingPrincipal: "650.00", outstandingInterest: "0.00", outstandingFees: "0.00" });
+
+        const secondIntake = await createPaymentIntake(context(actor), { amount: "500.00", receivedAt: "2026-09-10T10:00:00.000Z", payerName: "Replacement payer" });
+        const secondPreview = await previewPaymentMatch(context(actor), secondIntake.publicId, { allocations: [{ borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "500.00" }] });
+        await postPayment(context(actor), secondIntake.publicId, { proposalPublicId: secondPreview.publicId });
+        const secondIntakeRow = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, secondIntake.publicId) });
+        const second = await db.select().from(transactions).where(and(eq(transactions.paymentIntakeId, secondIntakeRow!.id), eq(transactions.entryType, "repayment")));
+        expect(second.map(row => ({ scheduleId: row.scheduleId, interest: row.interestComponent, principal: row.principalComponent }))).toEqual([
+            { scheduleId: seeded.schedules[0]!.id, interest: "0.00", principal: "300.00" },
+            { scheduleId: seeded.schedules[1]!.id, interest: "0.00", principal: "200.00" },
+        ]);
+        expect(second.reduce((sum, row) => sum.plus(row.interestComponent), new Decimal(0)).toFixed(2)).toBe("0.00");
+        expect(second.reduce((sum, row) => sum.plus(row.principalComponent), new Decimal(0)).toFixed(2)).toBe("500.00");
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({ outstandingPrincipal: "150.00", outstandingInterest: "0.00", outstandingFees: "0.00" });
+
+        await reversePayment(context(actor), secondIntake.publicId, { reason: "Regression reversal" });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({ outstandingPrincipal: "650.00", outstandingInterest: "0.00", outstandingFees: "0.00" });
+        expect((await db.select().from(fundLedgerEntries).where(eq(fundLedgerEntries.loanId, seeded.loan.id))).reduce((sum, row) => row.entryType.endsWith("_out") ? sum.minus(row.amount) : sum.plus(row.amount), new Decimal(0)).toFixed(2)).toBe("700.00");
+    });
 
     // Break caught: a zero-valued legacy accrual silently makes a floating payment reduce principal despite a positive daily rate.
     integrationTest("blocks floating allocation when an active accrual has an impossible zero principal", async () => {
@@ -205,6 +286,91 @@ describe("payment application service", () => {
         expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({ outstandingInterest: "60.00" });
         expect(await db.select().from(loanAdjustments)).toEqual([expect.objectContaining({ adjustmentType: "floating_interest_accrual_correction", amount: "120.00", reason: "Repair activation accrual basis" })]);
         expect(await db.select().from(auditLogs).where(eq(auditLogs.action, "floating_interest_accruals_corrected"))).toHaveLength(1);
+    });
+
+    // Break caught: correction rejects valid interim weekly snapshots or
+    // replaces them with a full weekly charge rather than the daily increment.
+    integrationTest("corrects an interim weekly period snapshot with immutable period metadata", async () => {
+        const actor = await seedUser("tenant-weekly-correction");
+        const seeded = await seedFloatingLoan(actor, "weekly");
+        await db.insert(loanInterestAccruals).values({
+            tenantId: actor.tenantId, loanId: seeded.loan.id, interestRatePeriodId: seeded.period.id,
+            accrualDate: "2026-08-09", openingPrincipal: "0.00", rateMode: "per_thousand", rate: "15.0000",
+            interestAmount: "0.00", createdByUserId: actor.id,
+        });
+
+        await correctFloatingInterestAccruals(
+            context(actor, "repair-weekly-interim"), seeded.loan.publicId, ["2026-08-09"], "Repair weekly interim snapshot",
+        );
+        expect(await db.select().from(loanInterestAccruals).where(and(
+            eq(loanInterestAccruals.loanId, seeded.loan.id), eq(loanInterestAccruals.accrualDate, "2026-08-09"),
+        )).orderBy(loanInterestAccruals.id)).toEqual([
+            expect.objectContaining({ status: "reversed", interestAmount: "0.00" }),
+            expect.objectContaining({
+                status: "accruing", openingPrincipal: "4000.00", interestAmount: "8.57", paidAmount: "0.00",
+                periodStartDate: "2026-08-06", periodEndDate: "2026-08-13", periodDayIndex: 3, periodDays: 7,
+                cumulativeInterestAmount: "25.71",
+            }),
+        ]);
+    });
+
+    // Break caught: a normal repayment silently consumes the current weekly
+    // period projection, or a same-day principal payment rewrites prior days.
+    integrationTest("excludes accruing weekly interest and changes principal only on following snapshots", async () => {
+        const actor = await seedUser("tenant-weekly-payment");
+        const seeded = await seedFloatingLoan(actor, "weekly");
+        const intake = await createPaymentIntake(context(actor), {
+            amount: "100.00", receivedAt: "2026-08-09T05:00:00.000Z",
+        });
+        const preview = await previewPaymentMatch(context(actor), intake.publicId, {
+            allocations: [{
+                borrowerPublicId: seeded.borrower.publicId,
+                loanPublicId: seeded.loan.publicId,
+                amount: "100.00",
+            }],
+        });
+
+        const posted = await postPayment(context(actor), intake.publicId, { proposalPublicId: preview.publicId });
+        expect(posted.transactions).toEqual([expect.objectContaining({
+            interestComponent: "0.00", principalComponent: "100.00",
+        })]);
+        const throughPaymentDate = await db.select().from(loanInterestAccruals)
+            .where(eq(loanInterestAccruals.loanId, seeded.loan.id)).orderBy(loanInterestAccruals.accrualDate);
+        expect(throughPaymentDate).toMatchObject([
+            { accrualDate: "2026-08-07", openingPrincipal: "4000.00", interestAmount: "8.57", status: "accruing" },
+            { accrualDate: "2026-08-08", openingPrincipal: "4000.00", interestAmount: "8.57", status: "accruing" },
+            { accrualDate: "2026-08-09", openingPrincipal: "4000.00", interestAmount: "8.57", status: "accruing" },
+        ]);
+
+        const refreshedLoan = (await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) }))!;
+        await import("./floating-interest-service").then(({ accrueFloatingInterestThrough }) =>
+            accrueFloatingInterestThrough(db, refreshedLoan, new Date("2026-08-10T12:00:00+07:00"), actor.id));
+        expect(await db.query.loanInterestAccruals.findFirst({ where: and(
+            eq(loanInterestAccruals.loanId, seeded.loan.id), eq(loanInterestAccruals.accrualDate, "2026-08-10"),
+        ) })).toMatchObject({
+            openingPrincipal: "3900.00", interestAmount: "8.36", cumulativeInterestAmount: "34.07", status: "accruing",
+        });
+
+        const boundaryIntake = await createPaymentIntake(context(actor), {
+            amount: "100.00", receivedAt: "2026-08-13T05:00:00.000Z",
+        });
+        const boundaryPreview = await previewPaymentMatch(context(actor), boundaryIntake.publicId, {
+            allocations: [{
+                borrowerPublicId: seeded.borrower.publicId,
+                loanPublicId: seeded.loan.publicId,
+                amount: "100.00",
+            }],
+        });
+        const boundaryPosted = await postPayment(context(actor), boundaryIntake.publicId, {
+            proposalPublicId: boundaryPreview.publicId,
+        });
+        expect(boundaryPosted.transactions).toEqual([expect.objectContaining({
+            interestComponent: "59.14", principalComponent: "40.86",
+        })]);
+        expect(await db.select().from(loanInterestAccruals).where(and(
+            eq(loanInterestAccruals.loanId, seeded.loan.id),
+            eq(loanInterestAccruals.status, "paid"),
+        ))).toHaveLength(7);
     });
 
     // Break caught: reversing an unscheduled floating repayment leaves its principal and paid daily interest reduced.
@@ -858,8 +1024,9 @@ describe("payment application service", () => {
             actor,
             borrowerName: "Late payer",
             schedules: [{ total: "100.00", principal: "70.00", interest: "20.00", fee: "10.00", dueDate: "2026-08-01" }],
+            lateFeeMode: "fixed",
+            lateFeeAmount: "15.00",
         });
-        await db.update(loans).set({ lateFeeMode: "fixed", lateFeeAmount: "15.00" }).where(eq(loans.id, seeded.loan.id));
         const intake = await createPaymentIntake(context(actor), {
             amount: "45.00", receivedAt: "2026-08-10T10:00:00.000Z",
         });
@@ -887,9 +1054,10 @@ describe("payment application service", () => {
                 { total: "30.00", principal: "10.00", interest: "10.00", fee: "10.00", dueDate: "2026-08-01" },
                 { total: "70.00", principal: "70.00", dueDate: "2026-09-10" },
             ],
+            lateFeeMode: "fixed",
+            lateFeeAmount: "5.00",
+            nextDueDate: "2026-08-01",
         });
-        await db.update(loans).set({ lateFeeMode: "fixed", lateFeeAmount: "5.00", nextDueDate: "2026-08-01" })
-            .where(eq(loans.id, seeded.loan.id));
         const intake = await createPaymentIntake(context(actor), { amount: "45.00", receivedAt: "2026-08-10T10:00:00.000Z" });
         const preview = await previewPaymentMatch(context(actor), intake.publicId, { allocations: [{
             borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "45.00",

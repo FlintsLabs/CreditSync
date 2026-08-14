@@ -32,6 +32,7 @@
       "Review the CreditSync payment inbox.",
       "Find a borrower and show outstanding loans.",
       "Preview a daily-loan renewal.",
+      "Preview a single-payment loan settlement and replacement contract.",
       "Record a loan disbursement with evidence.",
       "Record an assigned intermediary three-leg disbursement with evidence.",
       "Schedule a future floating-loan interest rate.",

@@ -1,5 +1,6 @@
 import type Decimal from "decimal.js";
 import { calculateLoanSchedule, type RepaymentType } from "./calculator";
+import type { SinglePaymentTerms } from "./single-payment";
 
 interface GenerateLoanScheduleInput {
     principal: Decimal.Value;
@@ -9,6 +10,7 @@ interface GenerateLoanScheduleInput {
     startDate?: string;
     totalInstallments?: number;
     installmentAmount?: Decimal.Value;
+    singlePayment?: SinglePaymentTerms;
 }
 
 export interface GeneratedLoanScheduleRow {
@@ -31,6 +33,7 @@ export function generateLoanSchedule(input: GenerateLoanScheduleInput): Generate
         startDate,
         totalInstallments: input.totalInstallments,
         installmentAmount: input.installmentAmount,
+        singlePayment: input.singlePayment,
     });
 
     return schedule.map((row) => ({

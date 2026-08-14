@@ -68,6 +68,35 @@ codex plugin add creditsync@personal
 
 The committed placeholder cannot connect and must remain until private registration supplies a real ID. URL and secrets never belong in the plugin package.
 
+## Single-payment settlement and restructure operation
+
+Use the same inspect-first sequence in Web, REST, or the CreditSync Plugin:
+
+1. Resolve the borrower and inspect the exact source loan. Never turn a fuzzy alias candidate into a financial selection automatically.
+2. Preview the settlement/restructure. Single-payment contract interest is either the fixed agreed amount or the greater of fixed and retroactive actual-disbursement exposure; the candidates are mutually exclusive. A contracted daily late penalty may accrue concurrently after its due date and grace period.
+3. Review principal, interest, fee, and penalty separately. A waiver forgives an eligible non-principal component and requires a reason. An external payment is real settlement value and must include its payer/source identity; it allocates through the normal component order and must not leave an unexplained remainder.
+4. Review the independently priced replacement type and exact schedule. Only outstanding principal plus optional additional approved principal forms replacement principal. Carried interest/fees/penalties remain separate opening components. Any additional-principal cash-out is a linked disbursement draft, not a posted payout.
+5. Obtain explicit human confirmation of the displayed preview, cash direction, waiver reasons, external-payment identity/allocation, replacement terms, and any new payout. Execute using the returned preview public ID/hash, expected balance version, reason, and a stable operation-scoped idempotency key. Stop on expiry, staleness, ambiguity, conflict, or changed cash.
+6. Re-read the old/replacement loans, restructure record, opening components, waivers, and linked disbursement draft. Post an actual payout only through the existing disbursement inspect/evidence/confirm/idempotency workflow.
+
+Later waivers follow their own preview, exact confirmation, execute, and compensating-reversal flow. Only interest, fee, and penalty are eligible; principal is never waivable. Before restructure or waiver reversal, re-list the exact record, state the reason, and obtain confirmation. Stop when downstream payments, posted disbursements, later waivers/restructures/renewals, or another dependency blocks safe compensation. Never edit or delete an executed aggregate, opening component, waiver, allocation, or posted financial row.
+
+## v0.3.12 migration and release verification
+
+Deploy the complete ordered migration chain through `0035_disbursement_restructure_relation.sql`. In the contiguous release range, `0023`–`0026` establish intermediary collection/remittance, effective-dated floating rates, append-only accrual correction, and evidence dependencies; `0027` starts the settlement/restructure schema; `0028`–`0030` complete floating weekly snapshots and the append-only penalty ledger used by settlement projections; and `0031`–`0035` add durable waiver preview/scope/provenance, external-credit allocation, and payout lineage. Do not skip intermediate migrations or apply selected files manually.
+
+Before deployment, with production writers stopped or routed away:
+
+1. Back up PostgreSQL and MinIO and retain the previously deployed application images/plugin snapshot.
+2. Validate a fresh disposable PostgreSQL migration chain and all database-backed suites with `cd backend && ./scripts/test-disposable-postgres.sh`, then run `bun run typecheck`.
+3. Run `cd frontend && bun run test && bun run lint && bun run build` and, from the repository root, `bun test plugins/creditsync/tests`, `bun plugins/creditsync/scripts/validate.ts`, and the plugin-creator validator.
+4. Start infrastructure first, then rebuild backend and frontend. Confirm backend logs report migrations through `0035` without errors.
+5. In the production PostgreSQL container, inspect `__drizzle_migrations` and the expected loan/restructure/waiver/opening-component/external-credit/disbursement-relation columns and tables. This is a schema-only check—do not create test loans or transactions in a live tenant.
+6. Check internal backend MCP health at `http://127.0.0.1:3000/mcp/health` from the backend container, public frontend health at `http://127.0.0.1:8088/`, authenticated `tools/list` count/contract, and sanitized logs.
+7. Reconcile loans, schedules, transactions, funding, disbursements, restructures, opening components, waivers, and external-credit allocations before reopening Web/MCP writes.
+
+Applied additive migrations remain in place during an application rollback. Roll back only to an image compatible with those columns/tables; never down-migrate by deleting financial history.
+
 ## Release and operational rollback
 
 Before rollout, preserve database/object backups and the previously deployed app image/plugin directory. Apply migrations before accepting writes, then run reconciliation totals and the MCP contract suite. If application health or accounting verification fails:
@@ -76,6 +105,6 @@ Before rollout, preserve database/object backups and the previously deployed app
 2. Keep the database and object store intact; do not delete or edit posted records.
 3. Roll the application image back only when it remains compatible with applied additive migrations.
 4. If data restoration is required, stop all writers and follow the isolated restore procedure in `backup-recovery.md`.
-5. Reconcile transaction, schedule, loan, renewal, and funding totals before reopening web/MCP writes.
+5. Reconcile transaction, schedule, loan, renewal, restructure, waiver, disbursement, opening-component, external-credit, and funding totals before reopening web/MCP writes.
 
 Removing or reinstalling the plugin affects only Codex discovery. It does not roll back financial data.

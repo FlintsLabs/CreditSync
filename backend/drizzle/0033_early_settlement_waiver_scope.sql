@@ -1,0 +1,4 @@
+ALTER TABLE "loan_restructure_waivers" DROP CONSTRAINT "loan_restructure_waivers_kind_check";--> statement-breakpoint
+ALTER TABLE "loan_waiver_previews" DROP CONSTRAINT "loan_waiver_previews_kind_check";--> statement-breakpoint
+ALTER TABLE "loan_restructure_waivers" ADD CONSTRAINT "loan_restructure_waivers_kind_check" CHECK ("loan_restructure_waivers"."component_kind" IN ('interest', 'fee', 'penalty', 'new_interest'));--> statement-breakpoint
+ALTER TABLE "loan_waiver_previews" ADD CONSTRAINT "loan_waiver_previews_kind_check" CHECK ("loan_waiver_previews"."component_kind" IN ('interest', 'fee', 'penalty', 'new_interest'));

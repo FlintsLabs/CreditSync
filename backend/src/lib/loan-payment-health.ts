@@ -8,6 +8,7 @@ export interface LoanPaymentHealth {
     overdueAmount: string;
     overdueItemCount: number;
     maxOverdueDays: number;
+    accruingInterestAmount?: string;
 }
 
 export interface LoanPaymentHealthInput {
@@ -28,6 +29,7 @@ export interface LoanPaymentHealthInput {
         periodEndDate?: string | null;
         interestAmount: string;
         paidAmount: string;
+        penaltyDue?: string;
         status: string;
     }>;
 }
@@ -64,6 +66,7 @@ export function computeLoanPaymentHealth(input: LoanPaymentHealthInput): LoanPay
     let overdue = zero();
     let overdueItemCount = 0;
     let maxOverdueDays = 0;
+    let accruingInterest = zero();
 
     if (input.repaymentType === "floating") {
         const payableByDueDate = new Map<string, Decimal>();
@@ -113,11 +116,15 @@ export function computeLoanPaymentHealth(input: LoanPaymentHealthInput): LoanPay
                 ? "settled"
                 : "current";
 
-    return {
+    const health: LoanPaymentHealth = {
         status,
         dueTodayAmount: money(dueNow),
         overdueAmount: money(overdue),
         overdueItemCount,
         maxOverdueDays,
     };
+    if (input.repaymentType === "floating" && input.accruals.some((row) => ["accruing", "due", "partially_paid"].includes(row.status))) {
+        health.accruingInterestAmount = money(accruingInterest);
+    }
+    return health;
 }

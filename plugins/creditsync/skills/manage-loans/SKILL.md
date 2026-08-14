@@ -26,6 +26,7 @@ If requested terms change at any point, start again at `loan.preview`; do not ac
 - Draft: inspect it in `borrower.portfolio`; if the required edit tool is unavailable, report that limitation rather than activating incorrect terms.
 - Active, paid, or renewed: principal, installment, term, rate, and schedule are historical facts. Do not update them or describe a new draft as an edit.
 - A new agreement, renewal, or audited correcting workflow may be appropriate, but only use a workflow the operator explicitly chooses and the available CreditSync tools support.
+- To settle an active single-payment agreement into another supported contract without rewriting history, route to `restructure-loan`.
 
 ## Quick reference
 

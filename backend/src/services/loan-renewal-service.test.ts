@@ -54,7 +54,12 @@ function utcDateOffset(days: number) {
     return date.toISOString().slice(0, 10);
 }
 
-async function seedDailyLoan(options: { paidInstallments?: number; allocatedAmount?: string } = {}) {
+async function seedDailyLoan(options: {
+    paidInstallments?: number;
+    allocatedAmount?: string;
+    lateFeeMode?: "none" | "daily_percent";
+    lateFeeAmount?: string;
+} = {}) {
     const paidInstallments = options.paidInstallments ?? 10;
     const seedId = crypto.randomUUID();
     const tenantId = "tenant-renewal";
@@ -82,6 +87,8 @@ async function seedDailyLoan(options: { paidInstallments?: number; allocatedAmou
         outstandingPrincipal: "2500.00", // intentionally stale: renewal must use posted principal
         outstandingInterest: "350.00",
         outstandingFees: "0.00",
+        lateFeeMode: options.lateFeeMode ?? "none",
+        lateFeeAmount: options.lateFeeAmount ?? "0.00",
         status: "active",
     }).returning().then((rows) => rows[0]!);
     const generated = generateLoanSchedule({
@@ -559,9 +566,7 @@ describe("daily-loan renewal service", () => {
     integrationTest("expires a preview when a due day and daily penalty change before its TTL", async () => {
         setSystemTime(new Date("2026-08-10T23:59:00.000Z"));
         try {
-            const seeded = await seedDailyLoan();
-            await db.update(loans).set({ lateFeeMode: "daily_percent", lateFeeAmount: "1.00" })
-                .where(eq(loans.id, seeded.oldLoan.id));
+            const seeded = await seedDailyLoan({ lateFeeMode: "daily_percent", lateFeeAmount: "1.00" });
             const preview = await previewLoanRenewal(
                 context(seeded.tenantId, seeded.actor.id), seeded.oldLoan.publicId, { requestedPrincipal: "2500.00" },
             );

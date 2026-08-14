@@ -53,6 +53,9 @@ interface LoanDetailData {
         dailyInterest: string;
         flatDailyRatePercent: string;
     } | null;
+    restructureLineage?: RestructureLineage | null;
+    openingBalanceComponents?: OpeningBalanceComponent[];
+    restructureWaivers?: RestructureWaiver[];
 }
 
 interface BorrowerData {

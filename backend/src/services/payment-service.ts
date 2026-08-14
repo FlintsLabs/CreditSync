@@ -6,9 +6,14 @@ import {
     borrowerAliases,
     borrowers,
     files,
+    floatingPenaltyLedgerEntries,
+    floatingTransactionAllocations,
     fundLedgerEntries,
     loanFundingAllocations,
     loanInterestAccruals,
+    loanOpeningBalanceComponents,
+    loanRestructureWaivers,
+    loanRestructures,
     loanSchedules,
     loans,
     paymentEvidence,
@@ -844,6 +849,15 @@ async function stateHash(executor: Executor, intake: IntakeRow, allocations: Arr
     const loanRows = loanIds.length ? await executor.select().from(loans).where(and(
         eq(loans.tenantId, intake.tenantId), inArray(loans.id, loanIds),
     )).orderBy(loans.id) : [];
+    const floatingAccrualRows = loanIds.length ? await executor.select().from(loanInterestAccruals).where(and(
+        eq(loanInterestAccruals.tenantId, intake.tenantId), inArray(loanInterestAccruals.loanId, loanIds),
+    )).orderBy(loanInterestAccruals.loanId, loanInterestAccruals.accrualDate, loanInterestAccruals.id) : [];
+    const floatingPenaltyRows = loanIds.length ? await executor.select().from(floatingPenaltyLedgerEntries).where(and(
+        eq(floatingPenaltyLedgerEntries.tenantId, intake.tenantId), inArray(floatingPenaltyLedgerEntries.loanId, loanIds),
+    )).orderBy(floatingPenaltyLedgerEntries.loanId, floatingPenaltyLedgerEntries.dueDate, floatingPenaltyLedgerEntries.penaltyDate, floatingPenaltyLedgerEntries.id) : [];
+    const floatingAllocationRows = loanIds.length ? await executor.select().from(floatingTransactionAllocations).where(and(
+        eq(floatingTransactionAllocations.tenantId, intake.tenantId), inArray(floatingTransactionAllocations.loanId, loanIds),
+    )).orderBy(floatingTransactionAllocations.loanId, floatingTransactionAllocations.transactionId, floatingTransactionAllocations.allocationOrder) : [];
     return hash(JSON.stringify({
         intake: { id: intake.id, amount: intake.amount, receivedAt: intake.receivedAt.toISOString() },
         allocations: allocations.map((item) => ({ loanId: item.loanId, scheduleId: item.scheduleId, amount: serializeMoney(item.amount) })),
@@ -862,6 +876,19 @@ async function stateHash(executor: Executor, intake: IntakeRow, allocations: Arr
         schedules: scheduleRows.map((item: typeof loanSchedules.$inferSelect) => ({
             id: item.id, paidTotal: item.paidTotal, paidPenalty: item.paidPenalty, remainingDue: item.remainingDue,
             status: item.status, updatedAt: item.updatedAt?.toISOString(),
+        })),
+        floatingAccruals: floatingAccrualRows.map((item: typeof loanInterestAccruals.$inferSelect) => ({
+            id: item.id, loanId: item.loanId, accrualDate: item.accrualDate, periodEndDate: item.periodEndDate,
+            interestAmount: item.interestAmount, paidAmount: item.paidAmount, status: item.status,
+        })),
+        floatingPenalties: floatingPenaltyRows.map((item: typeof floatingPenaltyLedgerEntries.$inferSelect) => ({
+            id: item.id, loanId: item.loanId, dueDate: item.dueDate, penaltyDate: item.penaltyDate,
+            entryType: item.entryType, amount: item.amount, openingInterestBasis: item.openingInterestBasis,
+        })),
+        floatingAllocations: floatingAllocationRows.map((item: typeof floatingTransactionAllocations.$inferSelect) => ({
+            id: item.id, loanId: item.loanId, transactionId: item.transactionId, dueDate: item.dueDate,
+            component: item.component, effectiveDate: item.effectiveDate, amount: item.amount,
+            reversedAllocationId: item.reversedAllocationId,
         })),
     }));
 }
@@ -954,8 +981,10 @@ async function expandExplicit(
         let remaining = amount;
         for (const schedule of schedules) {
             if (remaining.isZero()) break;
+            const restructureBuckets = await restructuredPaymentBuckets(executor, ctx.tenantId, loan.id, schedule, loan, intake.receivedAt);
+            const restructuredAvailable = restructureBuckets ? new Decimal(restructureBuckets.penalty).plus(restructureBuckets.fee).plus(restructureBuckets.carriedInterest).plus(restructureBuckets.dueNewInterest).plus(restructureBuckets.principal) : null;
             const available = availableBySchedule.get(schedule.id)
-                ?? new Decimal(schedule.remainingDue).plus(schedulePenaltyDue(loan, schedule, intake.receivedAt));
+                ?? restructuredAvailable ?? new Decimal(schedule.remainingDue).plus(schedulePenaltyDue(loan, schedule, intake.receivedAt));
             if (available.lte(0)) continue;
             const allocated = Decimal.min(remaining, available).toDecimalPlaces(2);
             expanded.push({
@@ -1102,6 +1131,85 @@ function signed(value: Decimal.Value) {
     return new Decimal(value).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
 }
 
+export interface RestructuredPaymentBuckets {
+    penalty: string;
+    fee: string;
+    carriedInterest: string;
+    dueNewInterest: string;
+    principal: string;
+}
+
+/** Exact, policy-ordered allocation kernel shared by posting and close-out flows. */
+export function allocateRestructuredPayment(amount: string, buckets: RestructuredPaymentBuckets) {
+    let remaining = parseMoney(amount);
+    const values = (Object.keys(buckets) as Array<keyof RestructuredPaymentBuckets>).reduce((result, key) => {
+        const available = parseMoney(buckets[key]);
+        const allocated = Decimal.min(remaining, available);
+        remaining = remaining.minus(allocated);
+        result[key] = serializeMoney(allocated);
+        return result;
+    }, {} as Record<keyof RestructuredPaymentBuckets, string>);
+    return { ...values, unallocated: serializeMoney(remaining) };
+}
+
+export function calculateEarlySettlementUnearnedInterest(input: { contractualNewInterest: string; earnedNewInterest: string }) {
+    const contractual = parseMoney(input.contractualNewInterest);
+    const earned = parseMoney(input.earnedNewInterest);
+    if (earned.gt(contractual)) throw new DomainError("INVALID_EARNED_INTEREST", "Earned interest cannot exceed contractual interest", 400);
+    const unearned = contractual.minus(earned);
+    return {
+        earnedNewInterest: serializeMoney(earned),
+        unearnedNewInterest: serializeMoney(unearned),
+        proposedWaiver: serializeMoney(unearned),
+        reason: "early_settlement_unearned_interest" as const,
+    };
+}
+
+export async function previewEarlyLoanSettlement(ctx: CommandContext, loanPublicId: string, input: { settlementDate: string }) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.settlementDate)) throw new DomainError("INVALID_SETTLEMENT_DATE", "settlementDate must be YYYY-MM-DD", 400);
+    const loan = await db.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.publicId, loanPublicId)) });
+    if (!loan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+    const restructure = await db.query.loanRestructures.findFirst({ where: and(eq(loanRestructures.tenantId, ctx.tenantId), eq(loanRestructures.newLoanId, loan.id), eq(loanRestructures.status, "executed")) });
+    if (!restructure) throw new DomainError("LOAN_NOT_RESTRUCTURED", "Early settlement waiver requires a restructured replacement loan", 409);
+    if (loan.repaymentType === "floating") throw new DomainError("EARLY_SETTLEMENT_UNSUPPORTED_FOR_FLOATING", "Floating replacements accrue interest without contractual unearned interest", 409);
+    const [opening, schedules, current] = await Promise.all([
+        db.select().from(loanOpeningBalanceComponents).where(and(eq(loanOpeningBalanceComponents.tenantId, ctx.tenantId), eq(loanOpeningBalanceComponents.loanId, loan.id), eq(loanOpeningBalanceComponents.restructureId, restructure.id))),
+        db.select().from(loanSchedules).where(and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.loanId, loan.id))).orderBy(loanSchedules.installmentNo),
+        currentRestructureBuckets(db, ctx.tenantId, loan.id),
+    ]);
+    const openingAmount = (kind: string) => opening.filter(row => row.componentKind === kind).reduce((sum, row) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
+    const contractual = openingAmount("new_contract_interest");
+    const earned = schedules.filter(row => row.dueDate <= input.settlementDate).reduce((sum, row) => sum.plus(row.scheduledInterest), new Decimal(0));
+    if (!current) throw new DomainError("LOAN_NOT_RESTRUCTURED", "Early settlement waiver requires a restructured replacement loan", 409);
+    const calculation = calculateEarlySettlementUnearnedInterest({ contractualNewInterest: serializeMoney(contractual), earnedNewInterest: serializeMoney(Decimal.min(contractual, earned)) });
+    const currentNewInterest = await getLoanWaiverAvailability(ctx, loanPublicId, "new_interest");
+    const futureSchedules = schedules.filter(row => row.dueDate > input.settlementDate).sort((a, b) => b.installmentNo - a.installmentNo);
+    let remainingFutureWaiver = Decimal.min(calculation.proposedWaiver, currentNewInterest.availableAmount);
+    const scheduleAllocations: Array<{ schedulePublicId: string; dueDate: string; amount: string }> = [];
+    for (const schedule of futureSchedules) {
+        if (remainingFutureWaiver.lte(0)) break;
+        const applied = Decimal.min(remainingFutureWaiver, current.newInterestDueBySchedule.get(schedule.id) ?? 0);
+        if (applied.gt(0)) scheduleAllocations.push({ schedulePublicId: schedule.publicId, dueDate: schedule.dueDate, amount: serializeMoney(applied) });
+        remainingFutureWaiver = remainingFutureWaiver.minus(applied);
+    }
+    const proposedWaiver = serializeMoney(scheduleAllocations.reduce((sum, item) => sum.plus(item.amount), new Decimal(0)));
+    if (new Decimal(proposedWaiver).isZero()) throw new DomainError("NO_UNEARNED_INTEREST", "No unearned new-contract interest is available to waive", 409);
+    const waiver = await previewLoanWaiver(ctx, loanPublicId, { component: "new_interest", amount: proposedWaiver, reason: calculation.reason }, { allowInternalNewInterest: true, settlementDate: input.settlementDate, scheduleAllocations });
+    return { ...waiver, settlementDate: input.settlementDate, outstandingPrincipal: serializeMoney(current.principal), carriedBalances: { interest: serializeMoney(current.carriedInterest), fee: serializeMoney(current.carriedFee), penalty: serializeMoney(current.carriedPenalty) }, ...calculation, proposedWaiver };
+}
+
+export async function executeEarlyLoanSettlement(ctx: CommandContext, previewPublicId: string, input: { confirmed: boolean; previewHash: string; expectedBalanceVersion: string }) {
+    return executeLoanWaiver(ctx, previewPublicId, { ...input, reason: "early_settlement_unearned_interest" });
+}
+
+function paymentBusinessDate(value: Date) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(value);
+    const read = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value;
+    return `${read("year")}-${read("month")}-${read("day")}`;
+}
+
 function allocateScheduleComponents(
     schedule: typeof loanSchedules.$inferSelect,
     loan: typeof loans.$inferSelect,
@@ -1181,6 +1289,27 @@ export async function writeFundEffects(tx: Executor, ctx: CommandContext, loanId
     }
 }
 
+export async function postExternalSettlementCreditInTransaction(tx: Executor, ctx: CommandContext, input: {
+    loan: typeof loans.$inferSelect;
+    amount: string;
+    receivedAt: Date;
+    payer: string;
+    source: string;
+    idempotencyKey: string;
+    components: { principal: string; interest: string; fee: string; penalty: string };
+}) {
+    const amount = parseMoney(input.amount);
+    const components = { principal: parseMoney(input.components.principal), interest: parseMoney(input.components.interest), fee: parseMoney(input.components.fee), penalty: parseMoney(input.components.penalty) };
+    if (!Object.values(components).reduce((sum, value) => sum.plus(value), new Decimal(0)).eq(amount)) throw new DomainError("PAYMENT_COMPONENT_MISMATCH", "External settlement credit components must conserve the payment amount", 409);
+    const intake = await tx.insert(paymentIntakes).values({ tenantId: ctx.tenantId, ownerUserId: input.loan.ownerUserId, source: ctx.actorSource === "mcp" ? "mcp" : "web", status: "posted", amount: serializeMoney(amount), receivedAt: input.receivedAt, payerName: input.payer, idempotencyKey: input.idempotencyKey, originLoanId: input.loan.id, warnings: [], notes: `External settlement credit: ${input.source}`, postedAt: new Date(), createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId, postedByUserId: ctx.actorUserId }).returning().then((rows: IntakeRow[]) => rows[0]!);
+    const proposal = await tx.insert(paymentMatchProposals).values({ tenantId: ctx.tenantId, paymentIntakeId: intake.id, version: 1, proposalHash: hash(JSON.stringify({ intake: intake.publicId, loan: input.loan.publicId, amount: serializeMoney(amount), components: input.components })), status: "posted", warnings: [], createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((rows: ProposalRow[]) => rows[0]!);
+    const allocation = await tx.insert(paymentMatchAllocations).values({ tenantId: ctx.tenantId, proposalId: proposal.id, allocationOrder: 1, borrowerId: input.loan.borrowerId, loanId: input.loan.id, scheduleId: null, amount: serializeMoney(amount), status: "posted", matchReason: "external_settlement_credit", createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((rows: AllocationRow[]) => rows[0]!);
+    const transaction = await tx.insert(transactions).values({ tenantId: ctx.tenantId, ownerUserId: input.loan.ownerUserId, loanId: input.loan.id, amount: serializeMoney(amount), principalComponent: serializeMoney(components.principal), interestComponent: serializeMoney(components.interest), feeComponent: serializeMoney(components.fee), penaltyComponent: serializeMoney(components.penalty), type: "close_account", entryType: "repayment", transactionDate: input.receivedAt, paymentIntakeId: intake.id, idempotencyKey: `payment:${intake.publicId}:${allocation.publicId}`, notes: `External settlement credit — ${input.payer}: ${input.source}`, recordedByUserId: ctx.actorUserId }).returning().then((rows: Array<typeof transactions.$inferSelect>) => rows[0]!);
+    await writeFundEffects(tx, ctx, input.loan.id, transaction.id, input.receivedAt, components);
+    const audit = await createAuditLog(tx, { ...auditContext(ctx), entityType: "payment_intake", entityId: intake.publicId, action: "external_settlement_credit_posted", payload: { proposalPublicId: proposal.publicId, allocationPublicId: allocation.publicId, transactionPublicId: transaction.publicId, loanPublicId: input.loan.publicId, components: input.components } });
+    return { intake, proposal, allocation, transaction, audit };
+}
+
 function presentTransaction(row: typeof transactions.$inferSelect) {
     return {
         id: row.publicId,
@@ -1206,19 +1335,33 @@ async function refreshLoanRollups(tx: Executor, tenantId: string, loanIds: numbe
     for (const loanId of [...new Set(loanIds)]) {
         const loan = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, tenantId), eq(loans.id, loanId)) });
         if (loan?.repaymentType === "floating") continue;
-        const schedules = await tx.select().from(loanSchedules).where(and(
+        const schedules: Array<typeof loanSchedules.$inferSelect> = await tx.select().from(loanSchedules).where(and(
             eq(loanSchedules.tenantId, tenantId), eq(loanSchedules.loanId, loanId),
         )).orderBy(loanSchedules.installmentNo);
         const rollup = computeLoanRollup(schedules);
+        const restructure = await currentRestructureBuckets(tx, tenantId, loanId);
+        const outstandingPrincipal = restructure?.principal ?? rollup.outstandingPrincipal;
+        const outstandingInterest = restructure ? restructure.carriedInterest.plus(restructure.newInterest) : rollup.outstandingInterest;
+        const scheduleFees = restructure ? schedules.reduce((sum, item) => sum.plus(Decimal.max(0, new Decimal(item.scheduledFee).minus(restructure.paidFeeBySchedule.get(item.id) ?? 0))), new Decimal(0)) : rollup.outstandingFees;
+        const outstandingFees = restructure ? scheduleFees.plus(restructure.carriedFee).plus(restructure.carriedPenalty) : rollup.outstandingFees;
+        const economicNextDue = restructure ? schedules.find(item => new Decimal(item.scheduledPrincipal).minus(restructure.paidPrincipalBySchedule.get(item.id) ?? 0).gt(0)
+            || new Decimal(item.scheduledFee).minus(restructure.paidFeeBySchedule.get(item.id) ?? 0).gt(0)
+            || (restructure.newInterestDueBySchedule.get(item.id) ?? new Decimal(0)).gt(0))?.dueDate
+            ?? (restructure.carriedInterest.gt(0) || restructure.carriedFee.gt(0) || restructure.carriedPenalty.gt(0) ? schedules[0]?.dueDate ?? null : null) : rollup.nextDueDate;
+        const economicallySettled = outstandingPrincipal.isZero() && outstandingInterest.isZero() && outstandingFees.isZero();
         await tx.update(loans).set({
-            outstandingPrincipal: serializeMoney(rollup.outstandingPrincipal),
-            outstandingInterest: serializeMoney(rollup.outstandingInterest),
-            outstandingFees: serializeMoney(rollup.outstandingFees),
-            nextDueDate: rollup.nextDueDate,
-            status: rollup.status,
+            outstandingPrincipal: serializeMoney(outstandingPrincipal),
+            outstandingInterest: serializeMoney(outstandingInterest),
+            outstandingFees: serializeMoney(outstandingFees),
+            nextDueDate: economicallySettled ? null : economicNextDue,
+            status: restructure ? economicallySettled ? "completed" : rollup.status === "completed" ? "active" : rollup.status : rollup.status,
             updatedAt: new Date(),
         }).where(and(eq(loans.tenantId, tenantId), eq(loans.id, loanId)));
     }
+}
+
+export async function refreshReplacementLoanEconomicRollup(tx: Executor, tenantId: string, loanId: number) {
+    await refreshLoanRollups(tx, tenantId, [loanId]);
 }
 
 export async function postPayment(ctx: CommandContext, intakePublicId: string, input: { proposalPublicId: string }, executor?: Executor) {
@@ -1306,7 +1449,80 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
                         remainingInterest = remainingInterest.minus(applied);
                     }
                 }
-                const transaction = await tx.insert(transactions).values({ tenantId: ctx.tenantId, ownerUserId: loan.ownerUserId ?? ctx.actorUserId, loanId: loan.id, amount: signed(allocation.amount), principalComponent: signed(principal), interestComponent: signed(interest), feeComponent: "0.00", penaltyComponent: "0.00", type: "repayment", transactionDate: intake.receivedAt, recordedByUserId: ctx.actorUserId, paymentIntakeId: intake.id, entryType: "repayment", idempotencyKey: `payment:${intake.publicId}:${allocation.publicId}`, postedAt: new Date() }).returning().then((rows: Array<typeof transactions.$inferSelect>) => rows[0]!);
+                const transaction = await tx.insert(transactions).values({ tenantId: ctx.tenantId, ownerUserId: loan.ownerUserId ?? ctx.actorUserId, loanId: loan.id, amount: signed(allocation.amount), principalComponent: signed(principal), interestComponent: signed(interest), feeComponent: "0.00", penaltyComponent: signed(penalty), type: "repayment", transactionDate: intake.receivedAt, recordedByUserId: ctx.actorUserId, paymentIntakeId: intake.id, entryType: "repayment", idempotencyKey: `payment:${intake.publicId}:${allocation.publicId}`, postedAt: new Date() }).returning().then((rows: Array<typeof transactions.$inferSelect>) => rows[0]!);
+                const planned: Array<{ dueDate: string; component: "penalty" | "interest"; interestAccrualId: number | null; amount: Decimal }> = [];
+                let remainingPenalty = penalty;
+                for (const group of obligations.penaltyGroups) {
+                    if (remainingPenalty.lte(0)) break;
+                    const applied = Decimal.min(remainingPenalty, group.penaltyDue);
+                    if (applied.gt(0)) planned.push({ dueDate: group.dueDate, component: "penalty", interestAccrualId: null, amount: applied });
+                    remainingPenalty = remainingPenalty.minus(applied);
+                }
+                if (remainingPenalty.gt(0)) throw new DomainError("FLOATING_PENALTY_ALLOCATION_MISMATCH", "Floating penalty history cannot support this payment", 409);
+                let remainingInterest = interest;
+                for (const accrual of obligations.rows) {
+                    if (remainingInterest.lte(0)) break;
+                    const dueDate = accrual.periodEndDate ?? accrual.accrualDate;
+                    if (!["accrued", "due", "partially_paid"].includes(accrual.status) || dueDate > paymentBusinessDate(intake.receivedAt)) continue;
+                    const due = Decimal.max(new Decimal(accrual.interestAmount).minus(accrual.paidAmount), 0);
+                    const applied = Decimal.min(remainingInterest, due);
+                    if (applied.gt(0)) planned.push({ dueDate, component: "interest", interestAccrualId: accrual.id, amount: applied });
+                    remainingInterest = remainingInterest.minus(applied);
+                }
+                if (remainingInterest.gt(0)) throw new DomainError("FLOATING_INTEREST_ALLOCATION_MISMATCH", "Floating interest history cannot support this payment", 409);
+                const allocationAudit = await createAuditLog(tx, {
+                    ...auditContext(ctx), entityType: "transaction", entityId: transaction.publicId,
+                    action: "floating_payment_allocations_recorded",
+                    payload: {
+                        loanPublicId: loan.publicId,
+                        transactionPublicId: transaction.publicId,
+                        effectiveDate: paymentBusinessDate(intake.receivedAt),
+                        allocations: planned.map((item, index) => ({ allocationOrder: index + 1, dueDate: item.dueDate, component: item.component, amount: item.amount.toFixed(2) })),
+                    },
+                });
+                obligations = await materializeFloatingPenaltyAssessments(
+                    tx, ctx, loan, intake.receivedAt, allocationAudit.publicId, transaction.id,
+                );
+                if (planned.length) {
+                    await tx.insert(floatingTransactionAllocations).values(planned.map((item, index) => ({
+                        tenantId: ctx.tenantId,
+                        loanId: loan.id,
+                        transactionId: transaction.id,
+                        dueDate: item.dueDate,
+                        component: item.component,
+                        interestAccrualId: item.interestAccrualId,
+                        effectiveDate: paymentBusinessDate(intake.receivedAt),
+                        allocationOrder: index + 1,
+                        entryType: "payment",
+                        amount: item.amount.toFixed(2),
+                        idempotencyKey: `floating-allocation:${transaction.publicId}:${index + 1}`,
+                        auditPublicId: allocationAudit.publicId,
+                        actorSource: ctx.actorSource,
+                        requestId: ctx.requestId,
+                        correlationId: ctx.correlationId,
+                        createdByUserId: ctx.actorUserId,
+                    })));
+                }
+                if (interest.gt(0)) {
+                    for (const item of planned.filter((candidate) => candidate.component === "interest")) {
+                        const accrual = obligations.rows.find((row) => row.id === item.interestAccrualId);
+                        if (!accrual) throw new DomainError("FLOATING_INTEREST_ACCRUAL_MISSING", "Floating interest allocation has no active accrual", 409);
+                        const paidAmount = new Decimal(accrual.paidAmount).plus(item.amount);
+                        await tx.update(loanInterestAccruals).set({
+                            paidAmount: signed(paidAmount),
+                            status: paidAmount.eq(accrual.interestAmount) ? "paid" : accrual.periodStartDate ? "partially_paid" : "accrued",
+                        }).where(eq(loanInterestAccruals.id, accrual.id));
+                    }
+                    await reconcileFloatingPenaltyLedgerAfterInterestAllocation(
+                        tx,
+                        ctx,
+                        loan,
+                        paymentBusinessDate(intake.receivedAt),
+                        transaction,
+                    );
+                }
+                if (laterExactAllocation) rejectLaterExactAllocation();
+                await tx.update(loans).set({ outstandingInterest: signed(obligations.dueInterest.minus(interest)), outstandingPrincipal: signed(new Decimal(loan.outstandingPrincipal ?? loan.principalAmount).minus(principal)), updatedAt: new Date() }).where(and(eq(loans.id, loan.id), eq(loans.tenantId, ctx.tenantId)));
                 createdTransactions.push(transaction);
                 if (principal.gt(0)) await reprojectFloatingInterestAfterTransaction(tx, ctx, loan, transaction);
                 await writeFundEffects(tx, ctx, loan.id, transaction.id, intake.receivedAt, { fee: new Decimal(0), interest, principal, penalty: new Decimal(0) });
@@ -1315,10 +1531,24 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
             if (!allocation.scheduleId) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Payment allocation has no schedule", 409);
             const schedule = await tx.query.loanSchedules.findFirst({ where: and(eq(loanSchedules.id, allocation.scheduleId), eq(loanSchedules.tenantId, ctx.tenantId)) });
             if (!schedule || !loan || schedule.loanId !== loan.id) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Payment target no longer exists", 409);
-            const components = allocateScheduleComponents(schedule, loan, allocation.amount, intake.receivedAt);
-            const nonPenalty = components.fee.plus(components.interest).plus(components.principal);
+            const restructureBuckets = await restructuredPaymentBuckets(tx, ctx.tenantId, loan.id, schedule, loan, intake.receivedAt);
+            const restructured = restructureBuckets ? allocateRestructuredPayment(allocation.amount, {
+                penalty: restructureBuckets.penalty, fee: restructureBuckets.fee, carriedInterest: restructureBuckets.carriedInterest,
+                dueNewInterest: restructureBuckets.dueNewInterest, principal: restructureBuckets.principal,
+            }) : null;
+            if (restructured && new Decimal(restructured.unallocated).gt(0)) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Allocation exceeds the latest restructured-loan obligation", 409);
+            const components = restructured ? {
+                penalty: new Decimal(restructured.penalty), fee: new Decimal(restructured.fee),
+                interest: new Decimal(restructured.carriedInterest).plus(restructured.dueNewInterest), principal: new Decimal(restructured.principal),
+            } : allocateScheduleComponents(schedule, loan, allocation.amount, intake.receivedAt);
+            // Carried balances predate this schedule and must not make its immutable
+            // contractual row appear paid. Only current-contract components advance it.
+            const scheduleFee = restructureBuckets ? Decimal.max(0, components.fee.minus(restructureBuckets.carriedFee)) : components.fee;
+            const scheduleInterest = restructured ? new Decimal(restructured.dueNewInterest) : components.interest;
+            const schedulePenalty = restructureBuckets ? Decimal.max(0, components.penalty.minus(restructureBuckets.carriedPenalty)) : components.penalty;
+            const nonPenalty = scheduleFee.plus(scheduleInterest).plus(components.principal);
             const newPaid = new Decimal(schedule.paidTotal).plus(nonPenalty);
-            const newPaidPenalty = new Decimal(schedule.paidPenalty).plus(components.penalty);
+            const newPaidPenalty = new Decimal(schedule.paidPenalty).plus(schedulePenalty);
             const newRemaining = Decimal.max(0, new Decimal(schedule.remainingDue).minus(nonPenalty));
             const lifecycle = scheduleLifecycle(loan, schedule, {
                 paidTotal: newPaid,
@@ -1396,6 +1626,8 @@ export async function reversePayment(ctx: CommandContext, intakePublicId: string
         if (scheduleIds.length) await tx.execute(sql`SELECT id FROM loan_schedules WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(scheduleIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
         const reversals: Array<typeof transactions.$inferSelect> = [];
         for (const original of originals) {
+            let floatingLoanForReversal: typeof loans.$inferSelect | null = null;
+            let floatingOriginalAllocations: Array<typeof floatingTransactionAllocations.$inferSelect> = [];
             const existing = await tx.query.transactions.findFirst({ where: and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.reversedTransactionId, original.id)) });
             if (existing) { reversals.push(existing); continue; }
             const laterRepayments = (await tx.select().from(transactions).where(and(

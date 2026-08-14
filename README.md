@@ -14,7 +14,7 @@ CreditSync is designed for workflows like:
 
 - Creating borrower profiles and storing their history
 - Uploading ID card images and extracting text with OCR
-- Creating loan agreements with daily, weekly, monthly, or floating interest logic
+- Creating loan agreements with single-payment, daily, weekly, monthly, or floating interest logic
 - Generating installment schedules before confirming a loan
 - Capturing data-only or image-first repayments, reviewing matches, posting allocations, and reversing corrections
 - Calculating closing balances for early payoff
@@ -33,6 +33,7 @@ The repo already contains a working MVP foundation:
 - Loan calculation plus draft-review-activation flow
 - Payment intake, evidence, review, grouped allocation, posting, and compensating reversal workflow
 - Daily-loan renewal preview, confirmed execution, and compensating reversal workflow
+- Single-payment settlement/restructure preview, explicit confirmation, component waivers, replacement contracts, and compensating reversal workflow
 - Legacy repayment-history reads remain available; repayment writes use the payment-intake workflow exclusively
 - Closing summary calculation for loans
 - LINE webhook ingestion for image uploads
@@ -70,14 +71,25 @@ Account identity and tenant role are read-only values supplied by the authorized
 ### 3. Loan Management
 
 - calculate repayment schedules before saving
-- support `daily`, `weekly`, `monthly`, and `floating` repayment types
+- support `single_payment`, `daily`, `weekly`, `monthly`, and `floating` repayment types
+- preview and persist exact single-payment due dates, agreed fixed-interest floors, optional greater-of retroactive interest, and contracted late penalties before activation creates one immutable maturity row
+- preserve legacy floating contracts as daily-accrual while allowing new floating terms to state an explicit `daily` or `weekly` accrual cycle; weekly preview exposes `fullPeriodInterest`, `firstPeriodStartDate`, `advanceInterestAmount`, `netDisbursement`, the inclusive `coveredStartDate`/`coveredEndDate`, the excluded `firstPeriodDueDate` and matching `nextAccrualDate`, plus `advanceInterestRefundPolicy: "non_refundable"`; for a 10 August anchor the covered dates are 10–16 August and the due/next-period boundary is 17 August
+- accrue a weekly rate proportionally into immutable daily snapshots, make it normally payable only at the seven-day boundary anchored to `interestStartDate`, and charge it as one paid, non-refundable first period when `deduct` is selected; overdue floating penalties use an append-only dated due-group ledger, exact penalty/interest transaction allocations, compensating adjustments and reasoned reversals, and pure as-of closing/health projections that never rewrite financial history; migration creates an exact Bangkok cutover for every legacy floating loan, while backdated payments stop for reconciliation if they would overlap later immutable allocations
 - manage effective-dated floating-interest periods from Loan Detail, including exact current daily interest, future scheduled changes, previewed automatic range splitting, and audited confirmation
 - create editable loan drafts, then activate them to lock terms and generate schedules exactly once
 - use separate preview, draft-save, and activation confirmations in the web wizard
 - distinguish due-now and overdue scheduled or floating daily-interest obligations directly on the loan-agreement list before opening details
 - preview installment breakdown
-- calculate closing balance based on elapsed time and payments already received
+- calculate floating closing obligations from current outstanding principal, unpaid due and accruing interest, outstanding fees, and applicable penalties while reporting payment history separately
 - record actual borrower cash, bank-transfer, or adjustment disbursements independently of approved loan terms
+
+Single-payment contracts keep principal, agreed interest, fees, and late penalties as separate exact components. A contract can use the agreed fixed interest only, or the greater of that fixed amount and retroactive interest calculated from actual posted-disbursement exposure; those two interest candidates are alternatives and are never added together. When contracted, the daily late penalty accrues concurrently after the due date and grace period. The localized wizard shows the authoritative one-row maturity preview before a draft is saved and activated.
+
+Loan Detail can settle and restructure an eligible contract into a new `single_payment`, `daily`, `weekly`, `monthly`, or `floating` contract. The backend preview shows gross, waived, externally paid, and carried balances independently. Waiving interest, fees, or penalties requires a component-specific reason and preserves the forgiven amount in the append-only ledger; an external payment is different because it is allocated as real settlement value in `penalty -> fee -> interest -> principal` order. Outstanding principal plus optional newly approved principal becomes the replacement principal—carried interest, fees, and penalties are opening components and are not capitalized. Additional approved principal is not itself proof of cash sent: execution creates a linked disbursement draft whose normal evidence/post lifecycle remains authoritative for the payout.
+
+Restructure is `preview -> review exact totals and cash direction -> explicit confirmation -> execute`. Preview expiry, a stale balance version/hash, an idempotency conflict, an unallocated external credit, or unexpected cash stops execution. A safely repeated request with the same key and payload returns the original result. Reversal writes compensating history and is blocked after downstream payments, posted payout events, later waivers/restructures/renewals, or other dependent records make reversal unsafe. Later eligible carried interest/fee/penalty can be waived through its own preview/confirmed execute/reverse workflow; principal cannot be waived.
+
+The authenticated REST surface is mounted below `/api/loans`: list/inspect and preview use `/:loanId/restructures`, execution/reversal use `/restructures/:restructureId`, component waivers use `/:loanId/waivers` and `/waivers/:waiverId`, and durable early settlement uses `/:loanId/early-settlement/preview` followed by `/early-settlement/:previewId/execute`. Every financial execute/reverse request carries a non-blank reason and `Idempotency-Key`; execute also carries the exact confirmation/hash/version fields returned by preview. The Web workflow calls these adapters but renders only backend-calculated money and schedules.
 
 ### 4. Transaction Management
 
@@ -106,7 +118,7 @@ Loan detail repayment history is available from `GET /loans/:loanPublicId/paymen
 
 Payment Inbox presents incoming payments as a responsive flat list and loads 25 newest-first records per page. Operators can search payer names and filter by status or an inclusive Asia/Bangkok received-date range; changing a filter returns to the first page while refresh and payment actions retain the active view.
 
-The authenticated loan-disbursement API is rooted at `/loans/:loanPublicId/disbursements`. It provides list, draft create/update, `/:disbursementId/evidence/upload-intents`, `/:disbursementId/evidence/:evidenceId/finalize`, `/:disbursementId/post`, and `/:disbursementId/reverse` operations. Gross transfer and loan-attributed amounts are exact two-decimal strings; grouped transfers require a note. Draft commands deliberately reject `evidenceFilePublicIds`: create the draft first, then prepare a signed evidence upload and finalize that evidence against the draft. Post and reverse require an `Idempotency-Key`, and reversal also requires a non-blank reason. These ledger events do not change approved principal, schedules, or funding allocations.
+The authenticated loan-disbursement API is rooted at `/loans/:loanPublicId/disbursements`. It provides list, draft create/update, `/:disbursementId/evidence/upload-intents`, `/:disbursementId/evidence/:evidenceId/finalize`, `/:disbursementId/post`, and `/:disbursementId/reverse` operations. Gross transfer and loan-attributed amounts are exact two-decimal strings; grouped transfers require a note. Draft commands deliberately reject `evidenceFilePublicIds`: create the draft first, then prepare a signed evidence upload and finalize that evidence against the draft. Post and reverse require an `Idempotency-Key`, and reversal also requires a non-blank reason. Restructure-created additional-principal payouts expose an immutable nullable `restructurePublicId`; note edits never change that linkage, and the relation is preserved on posting and compensating reversal. These ledger events do not change approved principal, schedules, or funding allocations.
 
 Intermediary money is tracked as two linked ledgers. `/intermediary-collections` records the amount and time a borrower paid a collector without prematurely posting lender cash, while `/intermediary-remittances` records the gross transfer received from that collector. Operators explicitly select collections, preview an exact zero-balance proposal, optionally attach the remittance slip through `evidence/prepare` followed by direct signed PUT and `evidence/:evidenceId/finalize`, then post with confirmation and an idempotency key. Historical collections may reference an already-posted payment intake; CreditSync validates loan, timestamp, and exact amount and does not create a second repayment. The `/intermediaries` workspace provides canonical-name or confirmed-alias search, search-before-create review of both active and inactive exact candidates, exact managed-loan summaries linked to Loan Detail, assignment history, masked payment destinations, and unreconciled disbursement warnings. `GET /intermediaries/:id/held-balance` exposes the authenticated tenant-scoped exact funding, payout, advance-interest-return, disbursement-held, collection-held, and total-held projection used by that profile. Collection and remittance ledgers remain available at `/intermediaries/remittances`, including profile-scoped filtering.
 
@@ -327,7 +339,7 @@ CreditSync serves a private stateless Streamable HTTP MCP endpoint at `/mcp` in 
 
 All MCP requests are bound to the server-side `MCP_TENANT_ID` and `MCP_ACTOR_EMAIL`. A client cannot submit or override tenant or actor identity. The configured actor must already exist in that tenant, and its normal CreditSync role/portfolio permissions still apply. Funding sources are list-only; the MCP surface has no generic SQL, arbitrary fetch, or funding mutation tool.
 
-The backend schema-version `1.0` tool names are:
+The backend schema-version `1.0` exposes 47 frozen tools, including:
 
 ```text
 borrower.search       borrower.portfolio    borrower.create

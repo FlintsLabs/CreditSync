@@ -16,7 +16,11 @@ const DRAFT = "0198c481-3e2b-7000-8000-000000000034";
 const DISBURSEMENT = "0198c481-3e2b-7000-8000-000000000051";
 const DISBURSEMENT_EVIDENCE = "0198c481-3e2b-7000-8000-000000000052";
 const RENEWAL = "0198c481-3e2b-7000-8000-000000000041";
+const RESTRUCTURE = "0198c481-3e2b-7000-8000-000000000071";
+const WAIVER_PREVIEW = "0198c481-3e2b-7000-8000-000000000072";
+const WAIVER = "0198c481-3e2b-7000-8000-000000000073";
 const PREVIEW_HASH = `v1:${"a".repeat(64)}`;
+const BALANCE_VERSION = `v1:${"b".repeat(64)}`;
 const RATE_PREVIEW = "0198c481-3e2b-7000-8000-000000000061";
 const SETTLEMENT = "0198c481-3e2b-7000-8000-000000000071";
 const PAYMENT_EVIDENCE_BYTES = new TextEncoder().encode("payment-slip-fixture-bytes");
@@ -207,6 +211,49 @@ const mismatchAllocations = [
     allocations[1],
     { borrowerPublicId: BORROWER_A, loanPublicId: LOAN_C, amount: "140.00" },
 ];
+
+const replacementTerms = {
+    interestRate: "0.00", termMonths: 1,
+    repaymentType: "monthly", startDate: "2026-08-19",
+};
+
+async function restructureFlow(mcp: ScriptedMcp, confirmed = true) {
+    const search = await mcp.call("borrower.search", { query: "พี่เกมส์" });
+    if (search.resolution !== "unique") return { outcome: "stopped", stopReason: "ambiguous-borrower" } as const;
+    await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A });
+    const preview = await mcp.call("loan.restructure.preview", {
+        oldLoanPublicId: LOAN_A, settlementDate: "2026-08-19", replacementTerms,
+        additionalPrincipal: "1000.00", reason: "Owner requested a monthly replacement contract",
+    });
+    if (preview.cash && (preview.cash as { amount?: string }).amount !== "1000.00") {
+        return { outcome: "stopped", stopReason: "unexpected-additional-cash" } as const;
+    }
+    if (!confirmed) return { outcome: "stopped", stopReason: "restructure-confirmation-required" } as const;
+    try {
+        await mcp.call("loan.restructure.execute", {
+            restructurePublicId: preview.publicId, previewHash: preview.previewHash,
+            expectedBalanceVersion: preview.oldBalanceVersion, confirmed: true,
+            reason: "Owner confirmed the exact settlement and replacement",
+            idempotencyKey: "restructure-execute-20260819-1",
+        });
+        return { outcome: "completed" } as const;
+    } catch (error) {
+        if (error instanceof ScriptedMcpError && /STALE|EXPIRED/u.test(error.code)) return { outcome: "stopped", stopReason: "stale-restructure-preview" } as const;
+        throw error;
+    }
+}
+
+async function waiverFlow(mcp: ScriptedMcp, reason?: string) {
+    await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A });
+    if (!reason?.trim()) return { outcome: "stopped", stopReason: "waiver-reason-required" } as const;
+    const preview = await mcp.call("loan.waiver.preview", { loanPublicId: LOAN_B, component: "interest", amount: "100.00", reason });
+    await mcp.call("loan.waiver.execute", {
+        previewPublicId: preview.publicId, previewHash: preview.previewHash,
+        expectedBalanceVersion: preview.balanceVersion, confirmed: true, reason,
+        idempotencyKey: "waiver-execute-20260819-1",
+    });
+    return { outcome: "completed" } as const;
+}
 
 async function paymentFlow(mcp: ScriptedMcp, options: {
     evidence?: boolean;
@@ -1579,6 +1626,72 @@ const SCENARIOS: Record<string, Scenario> = {
                 return { outcome: "completed" } as const;
             } catch {
                 return { outcome: "stopped", stopReason: "authorization-failed" } as const;
+            }
+        },
+    },
+    "restructure-execute": {
+        script: [
+            { name: "borrower.search", arguments: { query: "พี่เกมส์" }, result: { resolution: "unique" } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
+            { name: "loan.restructure.preview", arguments: { oldLoanPublicId: LOAN_A, settlementDate: "2026-08-19", replacementTerms, additionalPrincipal: "1000.00", reason: "Owner requested a monthly replacement contract" }, result: { publicId: RESTRUCTURE, previewHash: PREVIEW_HASH, oldBalanceVersion: BALANCE_VERSION, cash: { direction: "payout", amount: "1000.00" } } },
+            { name: "loan.restructure.execute", arguments: { restructurePublicId: RESTRUCTURE, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, confirmed: true, reason: "Owner confirmed the exact settlement and replacement", idempotencyKey: "restructure-execute-20260819-1" } },
+        ],
+        run: (mcp) => restructureFlow(mcp),
+    },
+    "waiver-execute": {
+        script: [
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
+            { name: "loan.waiver.preview", arguments: { loanPublicId: LOAN_B, component: "interest", amount: "100.00", reason: "Owner approved hardship relief" }, result: { publicId: WAIVER_PREVIEW, previewHash: PREVIEW_HASH, balanceVersion: BALANCE_VERSION } },
+            { name: "loan.waiver.execute", arguments: { previewPublicId: WAIVER_PREVIEW, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, confirmed: true, reason: "Owner approved hardship relief", idempotencyKey: "waiver-execute-20260819-1" }, result: { publicId: WAIVER } },
+        ],
+        run: (mcp) => waiverFlow(mcp, "Owner approved hardship relief"),
+    },
+    "restructure-ambiguous-borrower": {
+        script: [{ name: "borrower.search", arguments: { query: "พี่เกมส์" }, result: { resolution: "ambiguous" } }],
+        run: (mcp) => restructureFlow(mcp),
+    },
+    "restructure-stale-preview": {
+        script: [
+            { name: "borrower.search", arguments: { query: "พี่เกมส์" }, result: { resolution: "unique" } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
+            { name: "loan.restructure.preview", arguments: { oldLoanPublicId: LOAN_A, settlementDate: "2026-08-19", replacementTerms, additionalPrincipal: "1000.00", reason: "Owner requested a monthly replacement contract" }, result: { publicId: RESTRUCTURE, previewHash: PREVIEW_HASH, oldBalanceVersion: BALANCE_VERSION, cash: { direction: "payout", amount: "1000.00" } } },
+            { name: "loan.restructure.execute", arguments: { restructurePublicId: RESTRUCTURE, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, confirmed: true, reason: "Owner confirmed the exact settlement and replacement", idempotencyKey: "restructure-execute-20260819-1" }, error: { code: "STALE_RESTRUCTURE_PREVIEW", message: "Balances changed" } },
+        ],
+        run: (mcp) => restructureFlow(mcp),
+    },
+    "restructure-missing-confirmation": {
+        script: [
+            { name: "borrower.search", arguments: { query: "พี่เกมส์" }, result: { resolution: "unique" } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
+            { name: "loan.restructure.preview", arguments: { oldLoanPublicId: LOAN_A, settlementDate: "2026-08-19", replacementTerms, additionalPrincipal: "1000.00", reason: "Owner requested a monthly replacement contract" }, result: { publicId: RESTRUCTURE, previewHash: PREVIEW_HASH, oldBalanceVersion: BALANCE_VERSION, cash: { direction: "payout", amount: "1000.00" } } },
+        ],
+        run: (mcp) => restructureFlow(mcp, false),
+    },
+    "restructure-unexpected-additional-cash": {
+        script: [
+            { name: "borrower.search", arguments: { query: "พี่เกมส์" }, result: { resolution: "unique" } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
+            { name: "loan.restructure.preview", arguments: { oldLoanPublicId: LOAN_A, settlementDate: "2026-08-19", replacementTerms, additionalPrincipal: "1000.00", reason: "Owner requested a monthly replacement contract" }, result: { publicId: RESTRUCTURE, previewHash: PREVIEW_HASH, oldBalanceVersion: BALANCE_VERSION, cash: { direction: "payout", amount: "1200.00" } } },
+        ],
+        run: (mcp) => restructureFlow(mcp),
+    },
+    "waiver-missing-reason": {
+        script: [{ name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } }],
+        run: (mcp) => waiverFlow(mcp),
+    },
+    "restructure-unsafe-reversal": {
+        script: [
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A } },
+            { name: "loan.restructure.reverse", arguments: { restructurePublicId: RESTRUCTURE, reason: "Owner requested reversal after review", idempotencyKey: "restructure-reverse-20260819-1" }, error: { code: "RESTRUCTURE_REVERSAL_BLOCKED", message: "Downstream activity exists" } },
+        ],
+        run: async (mcp) => {
+            await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A });
+            try {
+                await mcp.call("loan.restructure.reverse", { restructurePublicId: RESTRUCTURE, reason: "Owner requested reversal after review", idempotencyKey: "restructure-reverse-20260819-1" });
+                return { outcome: "completed" } as const;
+            } catch (error) {
+                if (error instanceof ScriptedMcpError && error.code === "RESTRUCTURE_REVERSAL_BLOCKED") return { outcome: "stopped", stopReason: "unsafe-restructure-reversal" } as const;
+                throw error;
             }
         },
     },

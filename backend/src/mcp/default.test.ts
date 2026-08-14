@@ -471,7 +471,7 @@ describe("default MCP adapter integration", () => {
         const loan = await db.insert(loans).values({
             tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id,
             principalAmount: "1000.00", outstandingPrincipal: "1000.00", interestRate: "0.00",
-            repaymentType: "floating", firstDayTreatment: "start_next_day", interestStartDate: "2026-08-01", status: "active",
+            repaymentType: "floating", floatingAccrualCycle: "daily", firstDayTreatment: "start_next_day", interestStartDate: "2026-08-01", status: "active",
         }).returning().then((rows) => rows[0]!);
         await db.insert(loanInterestRatePeriods).values({
             tenantId: TENANT_ID, loanId: loan.id, effectiveDate: "2026-08-01", expiryDate: null,
@@ -506,7 +506,7 @@ describe("default MCP adapter integration", () => {
     integrationTest("rejects evidence IDs on disbursement draft so callers use prepare then finalize", async () => {
         const actor = await db.insert(users).values({ tenantId: TENANT_ID, email: ACTOR_EMAIL, role: "owner" }).returning().then((rows) => rows[0]!);
         const borrower = await db.insert(borrowers).values({ tenantId: TENANT_ID, ownerUserId: actor.id, name: "MCP evidence boundary borrower" }).returning().then((rows) => rows[0]!);
-        const loan = await db.insert(loans).values({ tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "100.00", interestRate: "0.00", repaymentType: "floating", outstandingPrincipal: "100.00", status: "active" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({ tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "100.00", interestRate: "0.00", repaymentType: "floating", floatingAccrualCycle: "daily", outstandingPrincipal: "100.00", status: "active" }).returning().then((rows) => rows[0]!);
         const { client } = await startDefaultServer();
         const result = await client.callTool({
             name: "loan.disbursement.draft",
@@ -546,7 +546,7 @@ describe("default MCP adapter integration", () => {
         const [existingLoan, draft] = await db.insert(loans).values([
             {
                 tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id,
-                principalAmount: "120.00", interestRate: "0.00", repaymentType: "floating",
+                principalAmount: "120.00", interestRate: "0.00", repaymentType: "floating", floatingAccrualCycle: "daily",
                 outstandingPrincipal: "120.00", status: "active",
             },
             {
@@ -597,6 +597,120 @@ describe("default MCP adapter integration", () => {
             eq(auditLogs.action, "activated"),
         ))).toHaveLength(0);
 
+        await client.close();
+    });
+
+    integrationTest("activates a single-payment draft through the synchronized MCP contract", async () => {
+        const actor = await db.insert(users).values({
+            tenantId: TENANT_ID,
+            email: ACTOR_EMAIL,
+            role: "owner",
+        }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({
+            tenantId: TENANT_ID,
+            ownerUserId: actor.id,
+            name: "MCP single-payment borrower",
+        }).returning().then((rows) => rows[0]!);
+        const draft = await db.insert(loans).values({
+            tenantId: TENANT_ID,
+            ownerUserId: actor.id,
+            borrowerId: borrower.id,
+            principalAmount: "5000.00",
+            interestRate: "0.00",
+            repaymentType: "single_payment",
+            termMonths: 1,
+            startDate: "2026-08-10",
+            singlePaymentDueDate: "2026-08-19",
+            singlePaymentFixedAgreedInterest: "500.00",
+            singlePaymentInterestPolicy: "fixed_only",
+            singlePaymentLatePenaltyMode: "none",
+            outstandingPrincipal: "0.00",
+            outstandingInterest: "0.00",
+            outstandingFees: "0.00",
+            status: "draft",
+        }).returning().then((rows) => rows[0]!);
+        const { client } = await startDefaultServer();
+
+        const result = await client.callTool({
+            name: "loan.activate",
+            arguments: { loanPublicId: draft.publicId },
+        });
+
+        expect(result.isError).not.toBe(true);
+        expect(result.structuredContent).toMatchObject({ schemaVersion: "1.0", data: { publicId: draft.publicId, repaymentType: "single_payment", status: "active", singlePayment: { dueDate: "2026-08-19", fixedAgreedInterest: "500.00" } } });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, draft.id) })).toMatchObject({
+            status: "active",
+            outstandingPrincipal: "5000.00",
+            outstandingInterest: "500.00",
+            nextDueDate: "2026-08-19",
+        });
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, draft.id))).toHaveLength(1);
+        expect(await db.select().from(auditLogs).where(and(
+            eq(auditLogs.entityId, draft.publicId),
+            eq(auditLogs.action, "activated"),
+        ))).toHaveLength(1);
+
+        await client.close();
+    });
+
+    // Break caught: the adapter's unlocked preflight sees a monthly draft,
+    // then a winning REST transition changes it to single-payment before the
+    // financial activation lock and the MCP write still commits.
+    integrationTest("rechecks and activates a newly committed single-payment type after the row lock", async () => {
+        const actor = await db.insert(users).values({ tenantId: TENANT_ID, email: ACTOR_EMAIL, role: "owner" })
+            .returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({
+            tenantId: TENANT_ID, ownerUserId: actor.id, name: "MCP activation race borrower",
+        }).returning().then((rows) => rows[0]!);
+        const draft = await db.insert(loans).values({
+            tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id,
+            principalAmount: "5000.00", interestRate: "0.00", repaymentType: "monthly", termMonths: 1,
+            totalInstallments: 1, installmentAmount: "5000.00", startDate: "2026-08-10",
+            outstandingPrincipal: "0.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "draft",
+        }).returning().then((rows) => rows[0]!);
+        let releaseTransition!: () => void;
+        const transitionMayCommit = new Promise<void>((resolve) => { releaseTransition = resolve; });
+        let transitionLocked!: () => void;
+        const transitionHasLock = new Promise<void>((resolve) => { transitionLocked = resolve; });
+        const transition = db.transaction(async (tx) => {
+            await tx.execute(sql`SELECT id FROM loans WHERE id = ${draft.id} FOR UPDATE`);
+            await tx.update(loans).set({
+                repaymentType: "single_payment", termMonths: 1, totalInstallments: null, installmentAmount: null,
+                singlePaymentDueDate: "2026-08-19", singlePaymentFixedAgreedInterest: "500.00",
+                singlePaymentInterestPolicy: "fixed_only", singlePaymentLatePenaltyMode: "none",
+            }).where(eq(loans.id, draft.id));
+            transitionLocked();
+            await transitionMayCommit;
+        });
+        await transitionHasLock;
+        const { client } = await startDefaultServer();
+        const activation = client.callTool({ name: "loan.activate", arguments: { loanPublicId: draft.publicId } });
+
+        let activationWaitingOnLock = false;
+        for (let attempt = 0; attempt < 100 && !activationWaitingOnLock; attempt += 1) {
+            const waiting = await db.execute(sql<{ waiting: boolean }>`SELECT EXISTS (
+                SELECT 1 FROM pg_stat_activity
+                WHERE pid <> pg_backend_pid()
+                  AND wait_event_type = 'Lock'
+                  AND query LIKE 'SELECT id FROM loans WHERE id = %FOR UPDATE%'
+            ) AS waiting`);
+            activationWaitingOnLock = waiting[0]?.waiting === true;
+            if (!activationWaitingOnLock) await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(activationWaitingOnLock).toBe(true);
+        releaseTransition();
+        await transition;
+        const result = await activation;
+
+        expect(result.isError).not.toBe(true);
+        expect(result.structuredContent).toMatchObject({ data: { publicId: draft.publicId, repaymentType: "single_payment", status: "active" } });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, draft.id) })).toMatchObject({
+            repaymentType: "single_payment", status: "active", outstandingPrincipal: "5000.00", outstandingInterest: "500.00",
+        });
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, draft.id))).toHaveLength(1);
+        expect(await db.select().from(auditLogs).where(and(
+            eq(auditLogs.entityId, draft.publicId), eq(auditLogs.action, "activated"),
+        ))).toHaveLength(1);
         await client.close();
     });
 
@@ -1059,6 +1173,61 @@ describe("default MCP adapter integration", () => {
             renewalPublicId: renewal.publicId,
             reason: "MCP all-tools contract reversal",
             idempotencyKey: "mcp-all-tools-renewal-reverse",
+        });
+
+        const seedSinglePayment = async (suffix: string) => {
+            const oldLoan = await db.insert(loans).values({
+                tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower!.id,
+                principalAmount: "1000.00", interestRate: "0.00", repaymentType: "single_payment", termMonths: 1,
+                startDate: "2026-08-01", singlePaymentDueDate: "2026-08-19",
+                singlePaymentFixedAgreedInterest: "100.00", singlePaymentInterestPolicy: "fixed_only",
+                singlePaymentLatePenaltyMode: "none", outstandingPrincipal: "1000.00",
+                outstandingInterest: "100.00", outstandingFees: "0.00", status: "active",
+            }).returning().then((rows) => rows[0]!);
+            await db.insert(loanDisbursementEvents).values({
+                tenantId: TENANT_ID, loanId: oldLoan.id, grossAmount: "1000.00", loanAttributedAmount: "1000.00",
+                channel: "cash", status: "posted", disbursedAt: new Date("2026-08-01T03:00:00Z"),
+                postedAt: new Date("2026-08-01T03:01:00Z"), postIdempotencyKey: `mcp-restructure-seed-${suffix}`,
+                createdByUserId: actor.id,
+            });
+            return oldLoan;
+        };
+        const previewRestructure = async (oldLoanPublicId: string, suffix: string) => (await call("loan.restructure.preview", {
+            oldLoanPublicId, settlementDate: "2026-08-19",
+            replacementTerms: { interestRate: "0.00", termMonths: 1, repaymentType: "monthly", startDate: "2026-08-19", totalInstallments: 1, installmentAmount: "1000.00" },
+            additionalPrincipal: "0.00", reason: `MCP restructure ${suffix}`,
+        })).data;
+
+        const reversibleOld = await seedSinglePayment("reverse");
+        const reversible = await previewRestructure(reversibleOld.publicId, "reverse");
+        await call("loan.restructure.execute", {
+            restructurePublicId: reversible.publicId, previewHash: reversible.previewHash,
+            expectedBalanceVersion: reversible.oldBalanceVersion, confirmed: true,
+            reason: "MCP restructure reverse", idempotencyKey: "mcp-restructure-execute-reverse",
+        });
+        await call("loan.restructure.reverse", {
+            restructurePublicId: reversible.publicId, reason: "MCP safe restructure reversal",
+            idempotencyKey: "mcp-restructure-reverse",
+        });
+
+        const waiverOld = await seedSinglePayment("waiver");
+        const waiverRestructure = await previewRestructure(waiverOld.publicId, "waiver");
+        const waiverExecution = (await call("loan.restructure.execute", {
+            restructurePublicId: waiverRestructure.publicId, previewHash: waiverRestructure.previewHash,
+            expectedBalanceVersion: waiverRestructure.oldBalanceVersion, confirmed: true,
+            reason: "MCP restructure waiver", idempotencyKey: "mcp-restructure-execute-waiver",
+        })).data;
+        const waiverPreview = (await call("loan.waiver.preview", {
+            loanPublicId: waiverExecution.newLoanPublicId, component: "interest", amount: "50.00", reason: "MCP hardship relief",
+        })).data;
+        const waiverExecutionResult = (await call("loan.waiver.execute", {
+            previewPublicId: waiverPreview.publicId, previewHash: waiverPreview.previewHash,
+            expectedBalanceVersion: waiverPreview.balanceVersion, confirmed: true, reason: "MCP hardship relief",
+            idempotencyKey: "mcp-waiver-execute",
+        })).data;
+        await call("loan.waiver.reverse", {
+            waiverPublicId: waiverExecutionResult.publicId, reason: "MCP waiver reversal",
+            idempotencyKey: "mcp-waiver-reverse",
         });
         await call("funding-source.list", { status: "active" });
 

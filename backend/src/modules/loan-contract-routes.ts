@@ -1,5 +1,6 @@
 import { Elysia, t } from "elysia";
 import { and, desc, eq } from "drizzle-orm";
+import Decimal from "decimal.js";
 import { db } from "../db";
 import { borrowers, loanSchedules, loans, transactions } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
@@ -11,7 +12,8 @@ import { serializeMoney } from "../lib/money";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
 import { findAccessibleBorrowerByPublicId, findAccessibleLoanByPublicId } from "../lib/public-id";
 import { activateLoan, createLoanDraft, getLoanApplication, presentLoan, previewLoan, updateLoanDraft } from "../services/loan-application-service";
-import { getLoanPaymentHealth } from "../services/loan-payment-health-service";
+import { bangkokBusinessDate, getLoanPaymentHealth } from "../services/loan-payment-health-service";
+import { floatingInterestBalances } from "../services/floating-interest-service";
 import { DomainError } from "../services/domain-error";
 import { loanCommandContext, loanDomainFailure, loanUnauthorized } from "./loan-http-support";
 import { dailyEntry, floatingInterestPolicy, loanTermsBody, publicMoney, repaymentType } from "./loan-route-schemas";
@@ -192,17 +194,27 @@ export const loanContractRoutes = new Elysia().use(authPlugin)
         }
     }, { params: t.Object({ id: t.String() }), body: t.Object({ note: t.Optional(t.String()) }) })
     .post("/calculate", ({ body, set }) => {
-        try { return previewLoan(body).schedule; }
+        try {
+            assertClosedLoanTerms(body, false);
+            return previewLoan(body as unknown as Parameters<typeof previewLoan>[0]).schedule;
+        }
         catch (error) { return loanDomainFailure(error, set); }
     }, { body: loanTermsBody })
     .post("/preview", ({ body, set }) => {
-        try { return previewLoan(body); }
+        try {
+            assertClosedLoanTerms(body, false);
+            return previewLoan(body as unknown as Parameters<typeof previewLoan>[0]);
+        }
         catch (error) { return loanDomainFailure(error, set); }
     }, { body: loanTermsBody })
     .post("/", async ({ body, user, request, set }) => {
         if (!user) return loanUnauthorized(set);
         try {
-            const created = await createLoanDraft(loanCommandContext(user, request), body);
+            assertClosedLoanTerms(body, true);
+            const created = await createLoanDraft(
+                loanCommandContext(user, request),
+                body as unknown as Parameters<typeof createLoanDraft>[1],
+            );
             await invalidateTenantCache(user.tenantId);
             return created;
         } catch (error) {
@@ -221,7 +233,12 @@ export const loanContractRoutes = new Elysia().use(authPlugin)
     .put("/:id", async ({ params, body, user, request, set }) => {
         if (!user) return loanUnauthorized(set);
         try {
-            const updated = await updateLoanDraft(loanCommandContext(user, request), params.id, body);
+            assertClosedLoanTerms(body, true);
+            const updated = await updateLoanDraft(
+                loanCommandContext(user, request),
+                params.id,
+                body as unknown as Parameters<typeof updateLoanDraft>[2],
+            );
             await invalidateTenantCache(user.tenantId);
             return updated;
         } catch (error) {

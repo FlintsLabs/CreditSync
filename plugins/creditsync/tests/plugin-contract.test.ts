@@ -61,6 +61,7 @@ describe("CreditSync plugin 5.0.0 contract", () => {
             "manage-disbursements",
             "manage-intermediated-disbursements",
             "renew-daily-loan",
+            "restructure-loan",
         ];
         for (const skill of skills) {
             const path = resolve(pluginRoot, "skills", skill, "SKILL.md");
@@ -97,6 +98,25 @@ describe("CreditSync plugin 5.0.0 contract", () => {
         expect(contract.tools.every((tool) => tool.inputSchema && tool.outputSchema && tool.annotations)).toBe(true);
         const advertised = await captureAdvertisedMcpContract();
         expect(canonicalContractJson(contract)).toBe(canonicalContractJson(advertised));
+        for (const name of ["loan.restructure.preview", "loan.waiver.preview"]) {
+            expect(contract.tools.find((tool) => tool.name === name)?.annotations).toMatchObject({
+                readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false,
+            });
+        }
+        const restructureOutput = contract.tools.find((tool) => tool.name === "loan.restructure.preview")?.outputSchema as any;
+        const replacementTerms = restructureOutput.properties.data.properties.replacementTerms;
+        expect(replacementTerms.oneOf).toHaveLength(5);
+        expect(replacementTerms.oneOf.every((variant: { additionalProperties?: boolean }) => variant.additionalProperties === false)).toBe(true);
+        const restructureInput = contract.tools.find((tool) => tool.name === "loan.restructure.preview")?.inputSchema as any;
+        const replacementInput = restructureInput.properties.replacementTerms;
+        expect(replacementInput.oneOf).toHaveLength(5);
+        expect(replacementInput.oneOf.every((variant: { additionalProperties?: boolean }) => variant.additionalProperties === false)).toBe(true);
+        const inputVariants = replacementInput.oneOf as Array<{ properties: Record<string, any> }>;
+        const floatingInput = inputVariants.find((variant) => variant.properties.floatingDailyInterest);
+        const dailyInput = inputVariants.find((variant) => variant.properties.dailyEntry);
+        expect(floatingInput?.properties.floatingDailyInterest.additionalProperties).toBe(false);
+        expect(dailyInput?.properties.dailyEntry.additionalProperties).toBe(false);
+        expect(dailyInput?.properties.dailyEntry.properties.interestInput.additionalProperties).toBe(false);
     });
 
     test("requires audit and correlation UUIDs from every intermediary administrative and evidence write", async () => {
@@ -152,6 +172,8 @@ describe("CreditSync plugin 5.0.0 contract", () => {
             "disbursement-draft-update",
             "disbursement-evidence-ready-retry",
             "renewal-execute",
+            "restructure-execute",
+            "waiver-execute",
             "payment-reversal",
             "ambiguous-nickname",
             "allocation-mismatch",
@@ -187,6 +209,12 @@ describe("CreditSync plugin 5.0.0 contract", () => {
             "renewal-reversal-without-borrower",
             "renewal-reversal-blocked",
             "unauthorized-access",
+            "restructure-ambiguous-borrower",
+            "restructure-stale-preview",
+            "restructure-missing-confirmation",
+            "restructure-unexpected-additional-cash",
+            "waiver-missing-reason",
+            "restructure-unsafe-reversal",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
         expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(17);
         expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(37);

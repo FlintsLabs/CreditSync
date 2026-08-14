@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import Decimal from "decimal.js";
 import { db } from "../db";
 import { loanInterestAccruals, loanSchedules, loans } from "../db/schema";
 import { computeLoanPaymentHealth, type LoanPaymentHealth } from "../lib/loan-payment-health";
