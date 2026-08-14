@@ -27,14 +27,28 @@ async function preview(body: unknown) {
 }
 
 describe("loan contract route schemas", () => {
-    // Break caught: Elysia strips a legacy top-level policy before the service can reject the ambiguous request.
-    test("rejects a generalized preview that also includes the legacy policy", async () => {
-        const response = await preview({
+    // Break caught: the additive adapter strips a second equivalent policy or
+    // lets a conflicting legacy projection silently override generalized terms.
+    test("accepts equivalent dual floating projections and rejects conflicts", async () => {
+        const equivalent = await preview({
             ...weeklyPreview,
-            floatingDailyInterest: { mode: "percent", rate: "12", firstDayTreatment: "deduct" },
+            floatingDailyInterest: {
+                mode: "percent", rate: "12", firstDayTreatment: "deduct", accrualCycle: "weekly",
+            },
         });
+        expect(equivalent.status).toBe(200);
 
-        expect(response.status).toBe(422);
+        const conflict = await preview({
+            ...weeklyPreview,
+            floatingDailyInterest: {
+                mode: "percent", rate: "12", firstDayTreatment: "deduct", accrualCycle: "daily",
+            },
+        });
+        expect(conflict.status).toBe(400);
+        expect(await conflict.json()).toEqual({
+            code: "INVALID_LOAN_TERMS",
+            error: "Floating interest policy inputs conflict",
+        });
     });
 
     // Break caught: Elysia silently strips an unknown nested policy field and accepts a contract the closed schema does not define.

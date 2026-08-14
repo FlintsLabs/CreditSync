@@ -4,6 +4,7 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
     auditLogs,
+    floatingTransactionAllocations,
     loanDisbursements,
     loanInterestAccruals,
     loans,
@@ -499,12 +500,6 @@ export async function executeLoanSettlement(ctx: CommandContext, input: ExecuteL
             createdAt: executedAt,
             updatedAt: executedAt,
         }).returning().then((rows: TransactionRow[]) => rows[0]!);
-        await writeFundEffects(tx, ctx, loan.id, transaction.id, transactionDate, {
-            principal: snapshot.outstandingPrincipal,
-            interest: interestComponent,
-            fee: snapshot.outstandingFees,
-            penalty: snapshot.outstandingPenalties,
-        });
 
         const accrualRows = await tx.select().from(loanInterestAccruals).where(and(
             eq(loanInterestAccruals.tenantId, ctx.tenantId),
@@ -512,6 +507,63 @@ export async function executeLoanSettlement(ctx: CommandContext, input: ExecuteL
             sql`${loanInterestAccruals.status} <> 'reversed'`,
             sql`${loanInterestAccruals.accrualDate} <= ${settlement.asOfDate}`,
         )).orderBy(asc(loanInterestAccruals.accrualDate), asc(loanInterestAccruals.id));
+        const interestAllocations = accrualRows.flatMap((row) => {
+            const amount = FinancialDecimal.max(
+                0,
+                new FinancialDecimal(row.interestAmount).minus(row.paidAmount),
+            ).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
+            return amount.isZero() ? [] : [{ row, amount }];
+        });
+        const allocatedInterest = interestAllocations.reduce(
+            (sum: Decimal, item) => sum.plus(item.amount),
+            new FinancialDecimal(0),
+        );
+        if (!allocatedInterest.eq(interestComponent)) {
+            throw new DomainError(
+                "SETTLEMENT_INTEREST_ALLOCATION_MISMATCH",
+                "Settlement interest component does not match its immutable accrual provenance",
+                409,
+            );
+        }
+        if (interestAllocations.length) {
+            const allocationAudit = await createAuditLog(tx, {
+                ...auditContext(ctx),
+                entityType: "transaction",
+                entityId: transaction.publicId,
+                action: "floating_settlement_allocations_recorded",
+                payload: {
+                    loanPublicId: loan.publicId,
+                    settlementPublicId: settlement.publicId,
+                    transactionPublicId: transaction.publicId,
+                    effectiveDate: settlement.asOfDate,
+                    allocations: interestAllocations.map((item, index) => ({
+                        allocationOrder: index + 1,
+                        accrualPublicId: item.row.publicId,
+                        dueDate: item.row.periodEndDate ?? item.row.accrualDate,
+                        component: "interest",
+                        amount: item.amount.toFixed(2),
+                    })),
+                },
+            });
+            await tx.insert(floatingTransactionAllocations).values(interestAllocations.map((item, index) => ({
+                tenantId: ctx.tenantId,
+                loanId: loan.id,
+                transactionId: transaction.id,
+                dueDate: item.row.periodEndDate ?? item.row.accrualDate,
+                component: "interest",
+                interestAccrualId: item.row.id,
+                effectiveDate: settlement.asOfDate,
+                allocationOrder: index + 1,
+                entryType: "payment",
+                amount: item.amount.toFixed(2),
+                idempotencyKey: `floating-settlement-allocation:${transaction.publicId}:${index + 1}`,
+                auditPublicId: allocationAudit.publicId,
+                actorSource: ctx.actorSource,
+                requestId: ctx.requestId,
+                correlationId: ctx.correlationId,
+                createdByUserId: ctx.actorUserId,
+            })));
+        }
         for (const row of accrualRows) {
             if (new FinancialDecimal(row.paidAmount).eq(row.interestAmount)) continue;
             await tx.update(loanInterestAccruals).set({
@@ -522,6 +574,12 @@ export async function executeLoanSettlement(ctx: CommandContext, input: ExecuteL
                 eq(loanInterestAccruals.id, row.id),
             ));
         }
+        await writeFundEffects(tx, ctx, loan.id, transaction.id, transactionDate, {
+            principal: snapshot.outstandingPrincipal,
+            interest: interestComponent,
+            fee: snapshot.outstandingFees,
+            penalty: snapshot.outstandingPenalties,
+        });
         const remainingAccruals = await tx.select().from(loanInterestAccruals).where(and(
             eq(loanInterestAccruals.tenantId, ctx.tenantId),
             eq(loanInterestAccruals.loanId, loan.id),

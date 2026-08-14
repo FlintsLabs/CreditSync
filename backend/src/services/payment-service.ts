@@ -40,7 +40,15 @@ import {
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import { normalizeBorrowerText } from "./borrower-service";
-import { floatingInterestDue, isFloatingAccrualPayableThrough, reprojectFloatingInterestAfterTransaction } from "./floating-interest-service";
+import { executeLoanWaiver, getLoanWaiverAvailability, previewLoanWaiver } from "./loan-waiver-service";
+import {
+    accrueFloatingInterestThrough,
+    floatingInterestDue,
+    floatingPaymentObligations,
+    materializeFloatingPenaltyAssessments,
+    reconcileFloatingPenaltyLedgerAfterInterestAllocation,
+    reprojectFloatingInterestAfterTransaction,
+} from "./floating-interest-service";
 
 type Executor = any;
 type IntakeRow = typeof paymentIntakes.$inferSelect;
@@ -1235,6 +1243,107 @@ function allocateScheduleComponents(
     return { fee, interest, principal, penalty };
 }
 
+async function currentRestructureBuckets(executor: Executor, tenantId: string, loanId: number) {
+    const restructure = await executor.query.loanRestructures.findFirst({ where: and(
+        eq(loanRestructures.tenantId, tenantId), eq(loanRestructures.newLoanId, loanId), eq(loanRestructures.status, "executed"),
+    ) });
+    if (!restructure) return null;
+    const [opening, waivers, posted, schedules] = await Promise.all([
+        executor.select().from(loanOpeningBalanceComponents).where(and(eq(loanOpeningBalanceComponents.tenantId, tenantId), eq(loanOpeningBalanceComponents.loanId, loanId), eq(loanOpeningBalanceComponents.restructureId, restructure.id))),
+        executor.select().from(loanRestructureWaivers).where(and(eq(loanRestructureWaivers.tenantId, tenantId), eq(loanRestructureWaivers.loanId, loanId), eq(loanRestructureWaivers.restructureId, restructure.id))),
+        executor.select().from(transactions).where(and(eq(transactions.tenantId, tenantId), eq(transactions.loanId, loanId))).orderBy(transactions.id),
+        executor.select().from(loanSchedules).where(and(eq(loanSchedules.tenantId, tenantId), eq(loanSchedules.loanId, loanId))).orderBy(loanSchedules.installmentNo),
+    ]);
+    const netOpening = (kind: string) => opening.filter((row: typeof loanOpeningBalanceComponents.$inferSelect) => row.componentKind === kind)
+        .reduce((sum: Decimal, row: typeof loanOpeningBalanceComponents.$inferSelect) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
+    const netWaived = (kind: string) => waivers.filter((row: typeof loanRestructureWaivers.$inferSelect) => row.componentKind === kind)
+        .reduce((sum: Decimal, row: typeof loanRestructureWaivers.$inferSelect) => sum.plus(row.status === "executed" ? row.amount : new Decimal(row.amount).negated()), new Decimal(0));
+    const reversedIds = new Set((posted as Array<typeof transactions.$inferSelect>).filter(row => row.entryType === "reversal" && row.reversedTransactionId !== null).map(row => row.reversedTransactionId!));
+    const active = (posted as Array<typeof transactions.$inferSelect>).filter(row => row.entryType === "repayment" && !reversedIds.has(row.id));
+    let carriedPenalty = Decimal.max(0, netOpening("carried_penalty").minus(netWaived("penalty")));
+    let carriedFee = Decimal.max(0, netOpening("carried_fee").minus(netWaived("fee")));
+    const carriedInterestGross = netOpening("carried_interest");
+    const totalInterestWaiver = netWaived("interest");
+    const carriedWaiver = Decimal.min(carriedInterestGross, totalInterestWaiver);
+    const generalNewInterestWaiver = Decimal.max(0, totalInterestWaiver.minus(carriedWaiver));
+    let carriedInterest = Decimal.max(0, carriedInterestGross.minus(carriedWaiver));
+    const paidNewInterestBySchedule = new Map<number, Decimal>();
+    const paidPrincipalBySchedule = new Map<number, Decimal>();
+    const paidFeeBySchedule = new Map<number, Decimal>();
+    for (const row of active) {
+        carriedPenalty = Decimal.max(0, carriedPenalty.minus(row.penaltyComponent));
+        const paidCarriedFee = Decimal.min(carriedFee, row.feeComponent);
+        carriedFee = carriedFee.minus(paidCarriedFee);
+        const paidCarried = Decimal.min(carriedInterest, row.interestComponent);
+        carriedInterest = carriedInterest.minus(paidCarried);
+        const paidNew = new Decimal(row.interestComponent).minus(paidCarried);
+        if (row.scheduleId) {
+            if (paidNew.gt(0)) paidNewInterestBySchedule.set(row.scheduleId, (paidNewInterestBySchedule.get(row.scheduleId) ?? new Decimal(0)).plus(paidNew));
+            paidPrincipalBySchedule.set(row.scheduleId, (paidPrincipalBySchedule.get(row.scheduleId) ?? new Decimal(0)).plus(row.principalComponent));
+            const paidScheduleFee = new Decimal(row.feeComponent).minus(paidCarriedFee);
+            if (paidScheduleFee.gt(0)) paidFeeBySchedule.set(row.scheduleId, (paidFeeBySchedule.get(row.scheduleId) ?? new Decimal(0)).plus(paidScheduleFee));
+        }
+    }
+    const waivedNewInterestBySchedule = new Map<number, Decimal>();
+    let remainingNewWaiver = generalNewInterestWaiver;
+    for (const item of schedules) {
+        const applied = Decimal.min(remainingNewWaiver, item.scheduledInterest);
+        waivedNewInterestBySchedule.set(item.id, applied);
+        remainingNewWaiver = remainingNewWaiver.minus(applied);
+    }
+    const schedulesByPublicId = new Map<string, typeof loanSchedules.$inferSelect>(schedules.map((item: typeof loanSchedules.$inferSelect) => [item.publicId, item]));
+    for (const waiver of waivers.filter((row: typeof loanRestructureWaivers.$inferSelect) => row.componentKind === "new_interest")) {
+        const direction = waiver.status === "executed" ? new Decimal(1) : new Decimal(-1);
+        const allocations = waiver.scheduleAllocations?.length ? waiver.scheduleAllocations : [...schedules].reverse().map((item: typeof loanSchedules.$inferSelect) => ({ schedulePublicId: item.publicId, dueDate: item.dueDate, amount: item.scheduledInterest }));
+        let remainingWaiver = new Decimal(waiver.amount);
+        for (const allocation of allocations) {
+            if (remainingWaiver.lte(0)) break;
+            const target = schedulesByPublicId.get(allocation.schedulePublicId);
+            if (!target) continue;
+            const applied = Decimal.min(remainingWaiver, allocation.amount);
+            waivedNewInterestBySchedule.set(target.id, Decimal.max(0, (waivedNewInterestBySchedule.get(target.id) ?? new Decimal(0)).plus(direction.times(applied))));
+            remainingWaiver = remainingWaiver.minus(applied);
+        }
+    }
+    const paidPrincipal = active.reduce((sum, row) => sum.plus(row.principalComponent), new Decimal(0));
+    const principal = Decimal.max(0, netOpening("carried_principal").plus(netOpening("additional_principal")).minus(paidPrincipal));
+    const newInterest = schedules.reduce((sum: Decimal, item: typeof loanSchedules.$inferSelect) => sum.plus(Decimal.max(0, new Decimal(item.scheduledInterest)
+        .minus(waivedNewInterestBySchedule.get(item.id) ?? 0)
+        .minus(paidNewInterestBySchedule.get(item.id) ?? 0))), new Decimal(0));
+    const newInterestDueBySchedule = new Map<number, Decimal>(schedules.map((item: typeof loanSchedules.$inferSelect) => [item.id, Decimal.max(0, new Decimal(item.scheduledInterest)
+        .minus(waivedNewInterestBySchedule.get(item.id) ?? 0)
+        .minus(paidNewInterestBySchedule.get(item.id) ?? 0))]));
+    return { carriedPenalty, carriedFee, carriedInterest, newInterest, newInterestDueBySchedule, paidNewInterestBySchedule, paidPrincipalBySchedule, paidFeeBySchedule, waivedNewInterestBySchedule, principal };
+}
+
+async function restructuredPaymentBuckets(
+    executor: Executor,
+    tenantId: string,
+    loanId: number,
+    schedule: typeof loanSchedules.$inferSelect,
+    loan: typeof loans.$inferSelect,
+    receivedAt: Date,
+) {
+    const current = await currentRestructureBuckets(executor, tenantId, loanId);
+    if (!current) return null;
+    const dueNewInterest = Decimal.max(0, new Decimal(schedule.scheduledInterest)
+        .minus(current.waivedNewInterestBySchedule.get(schedule.id) ?? 0)
+        .minus(current.paidNewInterestBySchedule.get(schedule.id) ?? 0));
+    const dueScheduleFee = Decimal.max(0, new Decimal(schedule.scheduledFee).minus(current.paidFeeBySchedule.get(schedule.id) ?? 0));
+    const duePrincipal = Decimal.max(0, new Decimal(schedule.scheduledPrincipal).minus(current.paidPrincipalBySchedule.get(schedule.id) ?? 0));
+    const schedulePenalty = schedulePenaltyDue(loan, schedule, receivedAt);
+    return {
+        penalty: serializeMoney(current.carriedPenalty.plus(schedulePenalty)),
+        fee: serializeMoney(current.carriedFee.plus(dueScheduleFee)),
+        carriedInterest: serializeMoney(current.carriedInterest),
+        dueNewInterest: serializeMoney(dueNewInterest),
+        principal: serializeMoney(duePrincipal),
+        carriedPenalty: current.carriedPenalty,
+        schedulePenalty,
+        carriedFee: current.carriedFee,
+    };
+}
+
 export async function writeFundEffects(tx: Executor, ctx: CommandContext, loanId: number, transactionId: number, entryDate: Date, components: Record<string, Decimal>) {
     const [funding, loan] = await Promise.all([
         tx.select().from(loanFundingAllocations).where(and(
@@ -1422,31 +1531,44 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
             const loan = await tx.query.loans.findFirst({ where: and(eq(loans.id, allocation.loanId), eq(loans.tenantId, ctx.tenantId)) });
             if (!loan) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Payment target no longer exists", 409);
             if (!allocation.scheduleId && loan.repaymentType === "floating") {
-                const dueInterest = await floatingInterestDue(tx, loan, intake.receivedAt, ctx);
-                const interest = Decimal.min(new Decimal(allocation.amount), dueInterest);
-                const principal = new Decimal(allocation.amount).minus(interest);
+                await accrueFloatingInterestThrough(tx, loan, intake.receivedAt, ctx);
+                let obligations = await floatingPaymentObligations(tx, loan, intake.receivedAt, ctx);
+                let remaining = new FinancialDecimal(allocation.amount);
+                const penalty = FinancialDecimal.min(remaining, obligations.duePenalty);
+                remaining = remaining.minus(penalty);
+                const interest = FinancialDecimal.min(remaining, obligations.dueInterest);
+                const principal = remaining.minus(interest);
                 if (principal.gt(loan.outstandingPrincipal ?? loan.principalAmount)) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Allocation exceeds the latest floating balance", 409);
-                await tx.update(loans).set({ outstandingInterest: signed(dueInterest.minus(interest)), outstandingPrincipal: signed(new Decimal(loan.outstandingPrincipal ?? loan.principalAmount).minus(principal)), updatedAt: new Date() }).where(and(eq(loans.id, loan.id), eq(loans.tenantId, ctx.tenantId)));
-                if (interest.gt(0)) {
-                    let remainingInterest = interest;
-                    const accruals = (await tx.select().from(loanInterestAccruals).where(and(
-                        eq(loanInterestAccruals.tenantId, ctx.tenantId),
-                        eq(loanInterestAccruals.loanId, loan.id),
-                        inArray(loanInterestAccruals.status, ["accrued", "due", "partially_paid"]),
-                    )).orderBy(loanInterestAccruals.accrualDate))
-                        .filter((row: typeof loanInterestAccruals.$inferSelect) => isFloatingAccrualPayableThrough(row, bangkokBusinessDate(intake.receivedAt)));
-                    for (const accrual of accruals) {
-                        if (remainingInterest.lte(0)) break;
-                        const due = new Decimal(accrual.interestAmount).minus(accrual.paidAmount);
-                        const applied = Decimal.min(remainingInterest, due);
-                        const paidAmount = new Decimal(accrual.paidAmount).plus(applied);
-                        const status = paidAmount.eq(accrual.interestAmount)
-                            ? "paid"
-                            : accrual.periodEndDate
-                                ? "partially_paid"
-                                : "accrued";
-                        await tx.update(loanInterestAccruals).set({ paidAmount: signed(paidAmount), status }).where(eq(loanInterestAccruals.id, accrual.id));
-                        remainingInterest = remainingInterest.minus(applied);
+                const effectiveDate = paymentBusinessDate(intake.receivedAt);
+                const laterExactAllocation = penalty.gt(0) || interest.gt(0)
+                    ? await tx.query.floatingTransactionAllocations.findFirst({ where: and(
+                        eq(floatingTransactionAllocations.tenantId, ctx.tenantId),
+                        eq(floatingTransactionAllocations.loanId, loan.id),
+                        sql`${floatingTransactionAllocations.effectiveDate} > ${effectiveDate}`,
+                    ) })
+                    : undefined;
+                const rejectLaterExactAllocation = () => {
+                    throw new DomainError(
+                        "FLOATING_BACKDATED_ALLOCATION_REQUIRES_RECONCILIATION",
+                        "Backdated payment cannot overlap later immutable floating allocations",
+                        409,
+                        { loanPublicId: loan.publicId, effectiveDate },
+                    );
+                };
+                if (laterExactAllocation && interest.lte(0)) rejectLaterExactAllocation();
+                if (principal.gt(0)) {
+                    const laterPenalty = await tx.query.floatingPenaltyLedgerEntries.findFirst({ where: and(
+                        eq(floatingPenaltyLedgerEntries.tenantId, ctx.tenantId),
+                        eq(floatingPenaltyLedgerEntries.loanId, loan.id),
+                        sql`${floatingPenaltyLedgerEntries.penaltyDate} > ${effectiveDate}`,
+                    ) });
+                    if (laterPenalty) {
+                        throw new DomainError(
+                            "FLOATING_BACKDATED_PRINCIPAL_REQUIRES_RECONCILIATION",
+                            "Backdated principal cannot precede immutable floating penalty history",
+                            409,
+                            { loanPublicId: loan.publicId, effectiveDate },
+                        );
                     }
                 }
                 const transaction = await tx.insert(transactions).values({ tenantId: ctx.tenantId, ownerUserId: loan.ownerUserId ?? ctx.actorUserId, loanId: loan.id, amount: signed(allocation.amount), principalComponent: signed(principal), interestComponent: signed(interest), feeComponent: "0.00", penaltyComponent: signed(penalty), type: "repayment", transactionDate: intake.receivedAt, recordedByUserId: ctx.actorUserId, paymentIntakeId: intake.id, entryType: "repayment", idempotencyKey: `payment:${intake.publicId}:${allocation.publicId}`, postedAt: new Date() }).returning().then((rows: Array<typeof transactions.$inferSelect>) => rows[0]!);
@@ -1454,7 +1576,7 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
                 let remainingPenalty = penalty;
                 for (const group of obligations.penaltyGroups) {
                     if (remainingPenalty.lte(0)) break;
-                    const applied = Decimal.min(remainingPenalty, group.penaltyDue);
+                    const applied = FinancialDecimal.min(remainingPenalty, group.penaltyDue);
                     if (applied.gt(0)) planned.push({ dueDate: group.dueDate, component: "penalty", interestAccrualId: null, amount: applied });
                     remainingPenalty = remainingPenalty.minus(applied);
                 }
@@ -1462,10 +1584,12 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
                 let remainingInterest = interest;
                 for (const accrual of obligations.rows) {
                     if (remainingInterest.lte(0)) break;
-                    const dueDate = accrual.periodEndDate ?? accrual.accrualDate;
-                    if (!["accrued", "due", "partially_paid"].includes(accrual.status) || dueDate > paymentBusinessDate(intake.receivedAt)) continue;
-                    const due = Decimal.max(new Decimal(accrual.interestAmount).minus(accrual.paidAmount), 0);
-                    const applied = Decimal.min(remainingInterest, due);
+                    const dueDate = accrual.status === "accrued" || accrual.periodUnit === "day" || accrual.periodDays === 1
+                        ? accrual.accrualDate
+                        : accrual.periodEndDate ?? accrual.accrualDate;
+                    if (!["accrued", "due", "partially_paid"].includes(accrual.status) || dueDate > effectiveDate) continue;
+                    const due = FinancialDecimal.max(new FinancialDecimal(accrual.interestAmount).minus(accrual.paidAmount), 0);
+                    const applied = FinancialDecimal.min(remainingInterest, due);
                     if (applied.gt(0)) planned.push({ dueDate, component: "interest", interestAccrualId: accrual.id, amount: applied });
                     remainingInterest = remainingInterest.minus(applied);
                 }
@@ -1476,7 +1600,7 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
                     payload: {
                         loanPublicId: loan.publicId,
                         transactionPublicId: transaction.publicId,
-                        effectiveDate: paymentBusinessDate(intake.receivedAt),
+                        effectiveDate,
                         allocations: planned.map((item, index) => ({ allocationOrder: index + 1, dueDate: item.dueDate, component: item.component, amount: item.amount.toFixed(2) })),
                     },
                 });
@@ -1507,7 +1631,7 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
                     for (const item of planned.filter((candidate) => candidate.component === "interest")) {
                         const accrual = obligations.rows.find((row) => row.id === item.interestAccrualId);
                         if (!accrual) throw new DomainError("FLOATING_INTEREST_ACCRUAL_MISSING", "Floating interest allocation has no active accrual", 409);
-                        const paidAmount = new Decimal(accrual.paidAmount).plus(item.amount);
+                        const paidAmount = new FinancialDecimal(accrual.paidAmount).plus(item.amount);
                         await tx.update(loanInterestAccruals).set({
                             paidAmount: signed(paidAmount),
                             status: paidAmount.eq(accrual.interestAmount) ? "paid" : accrual.periodStartDate ? "partially_paid" : "accrued",
@@ -1522,10 +1646,10 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
                     );
                 }
                 if (laterExactAllocation) rejectLaterExactAllocation();
-                await tx.update(loans).set({ outstandingInterest: signed(obligations.dueInterest.minus(interest)), outstandingPrincipal: signed(new Decimal(loan.outstandingPrincipal ?? loan.principalAmount).minus(principal)), updatedAt: new Date() }).where(and(eq(loans.id, loan.id), eq(loans.tenantId, ctx.tenantId)));
+                await tx.update(loans).set({ outstandingInterest: signed(obligations.dueInterest.minus(interest)), outstandingPrincipal: signed(new FinancialDecimal(loan.outstandingPrincipal ?? loan.principalAmount).minus(principal)), updatedAt: new Date() }).where(and(eq(loans.id, loan.id), eq(loans.tenantId, ctx.tenantId)));
                 createdTransactions.push(transaction);
                 if (principal.gt(0)) await reprojectFloatingInterestAfterTransaction(tx, ctx, loan, transaction);
-                await writeFundEffects(tx, ctx, loan.id, transaction.id, intake.receivedAt, { fee: new Decimal(0), interest, principal, penalty: new Decimal(0) });
+                await writeFundEffects(tx, ctx, loan.id, transaction.id, intake.receivedAt, { fee: new FinancialDecimal(0), interest, principal, penalty });
                 continue;
             }
             if (!allocation.scheduleId) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Payment allocation has no schedule", 409);
@@ -1644,7 +1768,6 @@ export async function reversePayment(ctx: CommandContext, intakePublicId: string
                     throw new DomainError("REVERSAL_NOT_LATEST", "Reverse later payments on this loan allocation first", 409);
                 }
             }
-            let floatingLoanForReprojection: typeof loans.$inferSelect | null = null;
             if (original.scheduleId) {
                 const schedule = await tx.query.loanSchedules.findFirst({ where: and(eq(loanSchedules.id, original.scheduleId), eq(loanSchedules.tenantId, ctx.tenantId)) });
                 if (!schedule) throw new DomainError("REVERSAL_TARGET_MISSING", "Original schedule no longer exists", 409);
@@ -1660,43 +1783,21 @@ export async function reversePayment(ctx: CommandContext, intakePublicId: string
                 const loan = await tx.query.loans.findFirst({ where: and(eq(loans.id, original.loanId), eq(loans.tenantId, ctx.tenantId)) });
                 if (!loan) throw new DomainError("REVERSAL_TARGET_MISSING", "Original loan no longer exists", 409);
                 if (loan.repaymentType === "floating") {
-                    floatingLoanForReprojection = loan;
-                    let interestToRestore = new Decimal(original.interestComponent);
-                    const accruals = await tx.select().from(loanInterestAccruals).where(and(
-                        eq(loanInterestAccruals.tenantId, ctx.tenantId), eq(loanInterestAccruals.loanId, loan.id), sql`${loanInterestAccruals.status} <> 'reversed'`,
-                    )).orderBy(desc(loanInterestAccruals.accrualDate), desc(loanInterestAccruals.id));
-                    for (const accrual of accruals) {
-                        if (interestToRestore.lte(0)) break;
-                        const restored = Decimal.min(interestToRestore, new Decimal(accrual.paidAmount));
-                        if (restored.eq(0)) continue;
-                        const paidAmount = new Decimal(accrual.paidAmount).minus(restored);
-                        const currentBusinessDate = new Intl.DateTimeFormat("en-CA", {
-                            timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit",
-                        }).format(new Date());
-                        const status = paidAmount.eq(accrual.interestAmount)
-                            ? "paid"
-                            : accrual.periodEndDate
-                                ? accrual.periodEndDate <= currentBusinessDate
-                                    ? paidAmount.gt(0) ? "partially_paid" : "due"
-                                    : "accruing"
-                                : "accrued";
-                        await tx.update(loanInterestAccruals).set({ paidAmount: signed(paidAmount), status })
-                            .where(and(eq(loanInterestAccruals.id, accrual.id), eq(loanInterestAccruals.tenantId, ctx.tenantId)));
-                        interestToRestore = interestToRestore.minus(restored);
+                    floatingLoanForReversal = loan;
+                    floatingOriginalAllocations = await tx.select().from(floatingTransactionAllocations).where(and(
+                        eq(floatingTransactionAllocations.tenantId, ctx.tenantId),
+                        eq(floatingTransactionAllocations.transactionId, original.id),
+                        eq(floatingTransactionAllocations.entryType, "payment"),
+                    )).orderBy(floatingTransactionAllocations.allocationOrder);
+                    const allocatedPenalty = floatingOriginalAllocations
+                        .filter((row) => row.component === "penalty")
+                        .reduce((sum, row) => sum.plus(row.amount), new FinancialDecimal(0));
+                    const allocatedInterest = floatingOriginalAllocations
+                        .filter((row) => row.component === "interest")
+                        .reduce((sum, row) => sum.plus(row.amount), new FinancialDecimal(0));
+                    if (!allocatedPenalty.eq(original.penaltyComponent) || !allocatedInterest.eq(original.interestComponent)) {
+                        throw new DomainError("REVERSAL_ALLOCATION_MISMATCH", "Floating transaction allocation provenance cannot support this reversal", 409);
                     }
-                    if (interestToRestore.gt(0)) throw new DomainError("REVERSAL_INTEREST_MISMATCH", "Paid floating interest history cannot support this reversal", 409);
-                    const refreshedAccruals = await tx.select().from(loanInterestAccruals).where(and(
-                        eq(loanInterestAccruals.tenantId, ctx.tenantId), eq(loanInterestAccruals.loanId, loan.id), sql`${loanInterestAccruals.status} <> 'reversed'`,
-                    ));
-                    const outstandingInterest = refreshedAccruals
-                        .filter((accrual: typeof loanInterestAccruals.$inferSelect) => ["accrued", "due", "partially_paid"].includes(accrual.status))
-                        .reduce((sum: Decimal, accrual: typeof loanInterestAccruals.$inferSelect) =>
-                            sum.plus(new Decimal(accrual.interestAmount).minus(accrual.paidAmount)), new Decimal(0));
-                    await tx.update(loans).set({
-                        outstandingPrincipal: signed(new Decimal(loan.outstandingPrincipal ?? loan.principalAmount).plus(original.principalComponent)),
-                        outstandingInterest: signed(outstandingInterest),
-                        updatedAt: new Date(),
-                    }).where(and(eq(loans.id, loan.id), eq(loans.tenantId, ctx.tenantId)));
                 }
             }
             const reversal = await tx.insert(transactions).values({
@@ -1719,8 +1820,89 @@ export async function reversePayment(ctx: CommandContext, intakePublicId: string
                 postedAt: new Date(),
             }).returning().then((rows: Array<typeof transactions.$inferSelect>) => rows[0]!);
             reversals.push(reversal);
-            if (floatingLoanForReprojection && !new Decimal(original.principalComponent).eq(0)) {
-                await reprojectFloatingInterestAfterTransaction(tx, ctx, floatingLoanForReprojection, reversal);
+            if (floatingLoanForReversal) {
+                const allocationAudit = await createAuditLog(tx, {
+                    ...auditContext(ctx), entityType: "transaction", entityId: reversal.publicId,
+                    action: "floating_payment_allocations_reversed",
+                    payload: {
+                        loanPublicId: floatingLoanForReversal.publicId,
+                        originalTransactionPublicId: original.publicId,
+                        reversalTransactionPublicId: reversal.publicId,
+                        reason,
+                        allocations: floatingOriginalAllocations.map((item) => ({
+                            originalAllocationPublicId: item.publicId,
+                            dueDate: item.dueDate,
+                            component: item.component,
+                            amount: signed(new FinancialDecimal(item.amount).negated()),
+                        })),
+                    },
+                });
+                const effectiveDate = paymentBusinessDate(reversal.transactionDate ?? new Date());
+                if (floatingOriginalAllocations.length) {
+                    await tx.insert(floatingTransactionAllocations).values(floatingOriginalAllocations.map((item, index) => ({
+                        tenantId: ctx.tenantId,
+                        loanId: floatingLoanForReversal!.id,
+                        transactionId: reversal.id,
+                        dueDate: item.dueDate,
+                        component: item.component,
+                        interestAccrualId: item.interestAccrualId,
+                        effectiveDate,
+                        allocationOrder: index + 1,
+                        entryType: "reversal",
+                        amount: signed(new FinancialDecimal(item.amount).negated()),
+                        reversedAllocationId: item.id,
+                        reason,
+                        idempotencyKey: `floating-allocation-reversal:${item.publicId}`,
+                        auditPublicId: allocationAudit.publicId,
+                        actorSource: ctx.actorSource,
+                        requestId: ctx.requestId,
+                        correlationId: ctx.correlationId,
+                        createdByUserId: ctx.actorUserId,
+                    })));
+                    for (const allocation of floatingOriginalAllocations.filter((row) => row.component === "interest")) {
+                        const accrual = allocation.interestAccrualId
+                            ? await tx.query.loanInterestAccruals.findFirst({ where: and(
+                                eq(loanInterestAccruals.tenantId, ctx.tenantId),
+                                eq(loanInterestAccruals.id, allocation.interestAccrualId),
+                            ) })
+                            : null;
+                        if (!accrual) throw new DomainError("REVERSAL_TARGET_MISSING", "Original floating interest allocation no longer has an accrual", 409);
+                        const paidAmount = new FinancialDecimal(accrual.paidAmount).minus(allocation.amount);
+                        if (paidAmount.lt(0)) throw new DomainError("REVERSAL_INTEREST_MISMATCH", "Paid floating interest history cannot support this reversal", 409);
+                        const dueDate = accrual.status === "accrued" || accrual.periodUnit === "day" || accrual.periodDays === 1
+                            ? accrual.accrualDate
+                            : accrual.periodEndDate ?? accrual.accrualDate;
+                        const status = paidAmount.eq(accrual.interestAmount)
+                            ? "paid"
+                            : paidAmount.gt(0) && accrual.periodStartDate
+                                ? "partially_paid"
+                                : accrual.periodStartDate && dueDate > effectiveDate
+                                    ? "accruing"
+                                    : accrual.periodStartDate
+                                        ? "due"
+                                        : "accrued";
+                        await tx.update(loanInterestAccruals).set({ paidAmount: signed(paidAmount), status })
+                            .where(and(eq(loanInterestAccruals.id, accrual.id), eq(loanInterestAccruals.tenantId, ctx.tenantId)));
+                    }
+                }
+                if (floatingOriginalAllocations.some((item) => item.component === "interest")) {
+                    await reconcileFloatingPenaltyLedgerAfterInterestAllocation(
+                        tx,
+                        ctx,
+                        floatingLoanForReversal,
+                        effectiveDate,
+                        reversal,
+                        { includeEffectiveDate: true },
+                    );
+                }
+                await tx.update(loans).set({
+                    outstandingPrincipal: signed(new FinancialDecimal(floatingLoanForReversal.outstandingPrincipal ?? floatingLoanForReversal.principalAmount).plus(original.principalComponent)),
+                    outstandingInterest: signed(new FinancialDecimal(floatingLoanForReversal.outstandingInterest ?? 0).plus(original.interestComponent)),
+                    updatedAt: new Date(),
+                }).where(and(eq(loans.id, floatingLoanForReversal.id), eq(loans.tenantId, ctx.tenantId)));
+                if (!new FinancialDecimal(original.principalComponent).eq(0)) {
+                    await reprojectFloatingInterestAfterTransaction(tx, ctx, floatingLoanForReversal, reversal);
+                }
             }
             const ledger = await tx.select().from(fundLedgerEntries).where(and(
                 eq(fundLedgerEntries.tenantId, ctx.tenantId), eq(fundLedgerEntries.transactionId, original.id),

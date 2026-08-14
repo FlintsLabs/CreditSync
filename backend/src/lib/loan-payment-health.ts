@@ -1,4 +1,5 @@
-import Decimal from "decimal.js";
+import type Decimal from "decimal.js";
+import { FinancialDecimal } from "./financial-decimal";
 
 export type LoanPaymentHealthStatus = "current" | "due_today" | "overdue" | "settled";
 
@@ -26,6 +27,7 @@ export interface LoanPaymentHealthInput {
     }>;
     accruals: Array<{
         accrualDate: string;
+        dueDate?: string | null;
         periodEndDate?: string | null;
         interestAmount: string;
         paidAmount: string;
@@ -34,7 +36,7 @@ export interface LoanPaymentHealthInput {
     }>;
 }
 
-const zero = () => new Decimal(0);
+const zero = () => new FinancialDecimal(0);
 
 function calendarDays(from: string, to: string) {
     const start = Date.parse(`${from}T00:00:00Z`);
@@ -43,14 +45,14 @@ function calendarDays(from: string, to: string) {
 }
 
 function money(value: Decimal) {
-    return value.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
+    return value.toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP).toFixed(2);
 }
 
 function scheduledPenalty(input: LoanPaymentHealthInput, remainingDue: Decimal, overdueDays: number, paidPenalty: Decimal) {
     if (remainingDue.lte(0) || overdueDays <= 0) return zero();
 
     const lateFeeMode = input.lateFeeMode ?? "none";
-    const lateFeeAmount = new Decimal(input.lateFeeAmount ?? "0");
+    const lateFeeAmount = new FinancialDecimal(input.lateFeeAmount ?? "0");
     let accrued = zero();
     if (lateFeeMode === "fixed" || lateFeeMode === "fixed_plus_percent") {
         accrued = accrued.plus(lateFeeAmount);
@@ -58,7 +60,7 @@ function scheduledPenalty(input: LoanPaymentHealthInput, remainingDue: Decimal, 
     if (lateFeeMode === "daily_percent" || lateFeeMode === "fixed_plus_percent") {
         accrued = accrued.plus(remainingDue.times(lateFeeAmount).div(100).times(overdueDays));
     }
-    return Decimal.max(accrued.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).minus(paidPenalty), 0);
+    return FinancialDecimal.max(accrued.toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP).minus(paidPenalty), 0);
 }
 
 export function computeLoanPaymentHealth(input: LoanPaymentHealthInput): LoanPaymentHealth {
@@ -69,34 +71,45 @@ export function computeLoanPaymentHealth(input: LoanPaymentHealthInput): LoanPay
     let accruingInterest = zero();
 
     if (input.repaymentType === "floating") {
-        const payableByDueDate = new Map<string, Decimal>();
+        const payableByDueDate = new Map<string, { interest: Decimal; penalty: Decimal }>();
         for (const accrual of input.accruals) {
-            if (["reversed", "paid", "accruing"].includes(accrual.status)) continue;
-            const unpaid = Decimal.max(new Decimal(accrual.interestAmount).minus(accrual.paidAmount), 0);
-            const dueDate = ["accrued", "partial"].includes(accrual.status)
-                ? accrual.accrualDate
-                : accrual.periodEndDate ?? accrual.accrualDate;
-            if (unpaid.isZero() || dueDate > input.businessDate) continue;
-            payableByDueDate.set(dueDate, (payableByDueDate.get(dueDate) ?? zero()).plus(unpaid));
+            if (accrual.status === "reversed" || accrual.accrualDate > input.businessDate) continue;
+            const unpaid = FinancialDecimal.max(new FinancialDecimal(accrual.interestAmount).minus(accrual.paidAmount), 0);
+            const penalty = FinancialDecimal.max(new FinancialDecimal(accrual.penaltyDue ?? "0"), 0);
+            if (accrual.status === "accruing") {
+                accruingInterest = accruingInterest.plus(unpaid);
+                continue;
+            }
+            const dueDate = accrual.dueDate
+                ?? (["accrued", "partial"].includes(accrual.status)
+                    ? accrual.accrualDate
+                    : accrual.periodEndDate ?? accrual.accrualDate);
+            if ((unpaid.isZero() && penalty.isZero()) || dueDate > input.businessDate) continue;
+            const current = payableByDueDate.get(dueDate) ?? { interest: zero(), penalty: zero() };
+            payableByDueDate.set(dueDate, {
+                interest: current.interest.plus(unpaid),
+                penalty: current.penalty.plus(penalty),
+            });
         }
-        for (const [dueDate, unpaid] of payableByDueDate) {
+        for (const [dueDate, payable] of payableByDueDate) {
+            const amount = payable.interest.plus(payable.penalty);
             if (dueDate === input.businessDate) {
-                dueNow = dueNow.plus(unpaid);
+                dueNow = dueNow.plus(amount);
                 continue;
             }
             const overdueDays = calendarDays(dueDate, input.businessDate);
-            overdue = overdue.plus(unpaid);
+            overdue = overdue.plus(amount);
             overdueItemCount += 1;
             maxOverdueDays = Math.max(maxOverdueDays, overdueDays);
         }
     } else {
         const gracePeriodDays = Math.max(0, input.gracePeriodDays ?? 0);
         for (const schedule of input.schedules) {
-            const remainingDue = Decimal.max(new Decimal(schedule.remainingDue), 0);
+            const remainingDue = FinancialDecimal.max(new FinancialDecimal(schedule.remainingDue), 0);
             if (remainingDue.isZero() || schedule.dueDate > input.businessDate) continue;
 
             const overdueDays = Math.max(0, calendarDays(schedule.dueDate, input.businessDate) - gracePeriodDays);
-            const penalty = scheduledPenalty(input, remainingDue, overdueDays, new Decimal(schedule.paidPenalty));
+            const penalty = scheduledPenalty(input, remainingDue, overdueDays, new FinancialDecimal(schedule.paidPenalty));
             const totalDue = remainingDue.plus(penalty);
             if (overdueDays > 0) {
                 overdue = overdue.plus(totalDue);

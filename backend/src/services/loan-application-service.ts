@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import { bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanOpeningBalanceComponents, loanRestructures, loanRestructureWaivers, loanSchedules, loans, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
@@ -23,13 +23,69 @@ import {
 } from "../lib/floating-interest-policy";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
-import type { FloatingDailyInterest } from "../lib/floating-daily-interest";
+import {
+    calculateDailyInterest,
+    nextInterestDate,
+    normalizeFloatingDailyInterest,
+    type FloatingDailyInterest,
+    type FloatingDailyInterestInput,
+} from "../lib/floating-daily-interest";
 import { normalizeDailyLoanEntry, type DailyLoanEntryInput, type NormalizedDailyLoanEntry } from "../lib/daily-loan-entry";
 import type { SinglePaymentTerms } from "../lib/single-payment";
 
 type LoanRow = typeof loans.$inferSelect;
 
 type DailyLoanEntryMetadata = Pick<NormalizedDailyLoanEntry, "durationUnit" | "durationValue" | "entryMode" | "dailyPayment" | "interestInput" | "flatDailyRatePercent">;
+
+function singlePaymentFor(row: LoanRow): SinglePaymentTerms | null {
+    if (row.repaymentType !== "single_payment"
+        || !row.singlePaymentDueDate
+        || row.singlePaymentFixedAgreedInterest === null
+        || !row.singlePaymentInterestPolicy
+        || !row.singlePaymentLatePenaltyMode) return null;
+    const latePenalty = row.singlePaymentLatePenaltyMode === "fixed_amount_per_day"
+        && row.singlePaymentLatePenaltyAmountPerDay !== null
+        && row.singlePaymentLatePenaltyGraceDays !== null
+        ? { mode: "fixed_amount_per_day" as const, amountPerDay: serializeMoney(row.singlePaymentLatePenaltyAmountPerDay), graceDays: row.singlePaymentLatePenaltyGraceDays }
+        : { mode: "none" as const };
+    if (row.singlePaymentInterestPolicy === "greater_of_fixed_or_retroactive"
+        && row.singlePaymentRetroactiveRateType
+        && row.singlePaymentRetroactiveRate !== null) {
+        return {
+            dueDate: row.singlePaymentDueDate,
+            fixedAgreedInterest: serializeMoney(row.singlePaymentFixedAgreedInterest),
+            interestPolicy: "greater_of_fixed_or_retroactive",
+            retroactiveInterest: {
+                rateType: row.singlePaymentRetroactiveRateType as "percent_per_day" | "per_thousand_per_day",
+                rate: new FinancialDecimal(row.singlePaymentRetroactiveRate).toFixed(4),
+            },
+            latePenalty,
+        };
+    }
+    return {
+        dueDate: row.singlePaymentDueDate,
+        fixedAgreedInterest: serializeMoney(row.singlePaymentFixedAgreedInterest),
+        interestPolicy: "fixed_only",
+        latePenalty,
+    };
+}
+
+function singlePaymentColumns(singlePayment: SinglePaymentTerms | undefined) {
+    return {
+        singlePaymentDueDate: singlePayment?.dueDate ?? null,
+        singlePaymentFixedAgreedInterest: singlePayment?.fixedAgreedInterest ?? null,
+        singlePaymentInterestPolicy: singlePayment?.interestPolicy ?? null,
+        singlePaymentRetroactiveRateType: singlePayment?.interestPolicy === "greater_of_fixed_or_retroactive"
+            ? singlePayment.retroactiveInterest.rateType : null,
+        singlePaymentRetroactiveRate: singlePayment?.interestPolicy === "greater_of_fixed_or_retroactive"
+            ? singlePayment.retroactiveInterest.rate : null,
+        singlePaymentLatePenaltyMode: singlePayment?.latePenalty.mode ?? null,
+        singlePaymentLatePenaltyAmountPerDay: singlePayment?.latePenalty.mode === "fixed_amount_per_day"
+            ? singlePayment.latePenalty.amountPerDay : null,
+        singlePaymentLatePenaltyGraceDays: singlePayment?.latePenalty.mode === "fixed_amount_per_day"
+            ? singlePayment.latePenalty.graceDays : null,
+    };
+}
 
 function floatingPolicyForRow(row: LoanRow): FloatingInterestPolicy | null {
     if (!row.interestPeriodUnit || row.interestPeriodLength === null || row.advanceInterestPeriods === null
@@ -46,24 +102,53 @@ function floatingPolicyForRow(row: LoanRow): FloatingInterestPolicy | null {
     });
 }
 
+function floatingDailyInterestForPolicy(policy: FloatingInterestPolicy): FloatingDailyInterest {
+    return {
+        mode: policy.rateMode,
+        rate: policy.rate,
+        firstDayTreatment: policy.advanceInterestPeriods === 1 ? "deduct" : "start_next_day",
+        accrualCycle: policy.periodUnit === "week" ? "weekly" : "daily",
+    };
+}
+
+function floatingPolicyFromDaily(input: FloatingDailyInterestInput): FloatingInterestPolicy {
+    const daily = normalizeFloatingDailyInterest(input);
+    return normalizeFloatingInterestPolicy({
+        periodUnit: daily.accrualCycle === "weekly" ? "week" : "day",
+        periodLength: 1,
+        rateMode: daily.mode,
+        rate: daily.rate,
+        advanceInterestPeriods: daily.firstDayTreatment === "deduct" ? 1 : 0,
+        advanceInterestRefundPolicy: "non_refundable",
+    });
+}
+
 function normalizeInputPolicy(input: PublicLoanCalculationParams) {
-    if ("floatingDailyInterest" in input) {
-        throw new DomainError("INVALID_LOAN_TERMS", "Use floatingInterestPolicy for a floating interest policy", 400);
-    }
     if (input.repaymentType !== "floating") {
-        if (input.floatingInterestPolicy !== undefined) {
+        if (input.floatingInterestPolicy !== undefined || input.floatingDailyInterest !== undefined) {
             throw new DomainError("INVALID_LOAN_TERMS", "Floating interest policy requires floating repayment", 400);
         }
         return null;
     }
-    if (!input.floatingInterestPolicy) {
+    if (!input.floatingInterestPolicy && !input.floatingDailyInterest) {
         throw new DomainError("INVALID_LOAN_TERMS", "Floating loans require a floating interest policy", 400);
     }
+    let generalized: FloatingInterestPolicy | null;
+    let legacy: FloatingInterestPolicy | null;
     try {
-        return normalizeFloatingInterestPolicy(input.floatingInterestPolicy);
-    } catch (error) {
-        throw new DomainError("INVALID_LOAN_TERMS", error instanceof Error ? error.message : "Invalid floating interest policy", 400);
+        generalized = input.floatingInterestPolicy
+            ? normalizeFloatingInterestPolicy(input.floatingInterestPolicy)
+            : null;
+        legacy = input.floatingDailyInterest
+            ? floatingPolicyFromDaily(input.floatingDailyInterest)
+            : null;
+    } catch {
+        throw new DomainError("INVALID_LOAN_TERMS", "Floating interest policy is invalid", 400);
     }
+    if (generalized && legacy && JSON.stringify(generalized) !== JSON.stringify(legacy)) {
+        throw new DomainError("INVALID_LOAN_TERMS", "Floating interest policy inputs conflict", 400);
+    }
+    return generalized ?? legacy!;
 }
 
 function addCalendarDays(date: string, days: number) {
@@ -201,9 +286,7 @@ export async function presentLoan(row: LoanRow) {
         principalAmount: principal,
         interestRate,
         floatingInterestPolicy,
-        floatingDailyInterest: floatingInterestPolicy?.periodUnit === "day" && row.firstDayTreatment
-            ? { mode: row.dailyInterestMode as FloatingDailyInterest["mode"], rate: row.dailyInterestRate, firstDayTreatment: row.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"] }
-            : null,
+        floatingDailyInterest: floatingInterestPolicy ? floatingDailyInterestForPolicy(floatingInterestPolicy) : null,
         singlePayment: singlePaymentFor(row),
         dailyEntry,
         dailyLoanCalculation,
@@ -254,16 +337,6 @@ function existingDailyEntry(row: LoanRow): DailyLoanEntryInput | undefined {
     return undefined;
 }
 
-function existingFloatingPolicy(row: LoanRow): FloatingDailyInterest | undefined {
-    if (row.repaymentType !== "floating" || !row.dailyInterestMode || row.dailyInterestRate === null || !row.firstDayTreatment) return undefined;
-    return {
-        mode: row.dailyInterestMode as FloatingDailyInterest["mode"],
-        rate: new Decimal(row.dailyInterestRate).toFixed(4),
-        firstDayTreatment: row.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"],
-        accrualCycle: (row.floatingAccrualCycle ?? "daily") as "daily" | "weekly",
-    };
-}
-
 function normalizeTerms(input: PublicLoanCalculationParams): { terms: ReturnType<typeof normalizePublicLoanTerms>; dailyEntry: NormalizedDailyLoanEntry | null } {
     try {
         if (input.dailyEntry !== undefined && input.repaymentType !== "daily") throw new Error("Daily entry requires daily repayment");
@@ -283,14 +356,6 @@ function normalizeTerms(input: PublicLoanCalculationParams): { terms: ReturnType
     }
 }
 
-function normalizeFloatingPolicy(input: FloatingDailyInterestInput) {
-    try {
-        return normalizeFloatingDailyInterest(input);
-    } catch {
-        throw new DomainError("INVALID_LOAN_TERMS", "Floating interest policy is invalid", 400);
-    }
-}
-
 export function previewLoan(input: PublicLoanCalculationParams) {
     const { terms, dailyEntry } = normalizeTerms(input);
     const policy = normalizeInputPolicy(input);
@@ -300,16 +365,51 @@ export function previewLoan(input: PublicLoanCalculationParams) {
         const fullPeriodInterest = calculatePeriodInterest(terms.principal, policy);
         const advanceInterest = policy.advanceInterestPeriods === 1 ? fullPeriodInterest : "0.00";
         const firstPeriod = interestPeriodFor(input.startDate, input.startDate, policy);
-        return {
+        const floatingDailyInterest = floatingDailyInterestForPolicy(policy);
+        const netBorrowerPayout = serializeMoney(new FinancialDecimal(terms.principal).minus(advanceInterest));
+        const common = {
             terms,
             schedule,
             floatingInterestPolicy: policy,
+            floatingDailyInterest,
             fullPeriodInterest,
             advanceInterest,
-            netBorrowerPayout: serializeMoney(new FinancialDecimal(terms.principal).minus(advanceInterest)),
+            netBorrowerPayout,
             firstPeriodStartDate: firstPeriod.periodStart,
             firstPeriodDueDate: firstPeriod.nextPeriodStart,
             periodDays: firstPeriod.periodDays,
+        };
+        if (policy.periodUnit === "week") {
+            const weeklyFields: PublicWeeklyFloatingInterestPreviewFields = {
+                fullPeriodInterest,
+                firstPeriodStartDate: firstPeriod.periodStart,
+                advanceInterestAmount: advanceInterest,
+                netDisbursement: netBorrowerPayout,
+                coveredStartDate: policy.advanceInterestPeriods === 1 ? firstPeriod.periodStart : null,
+                coveredEndDate: policy.advanceInterestPeriods === 1 ? addCalendarDays(firstPeriod.periodStart, 6) : null,
+                firstPeriodDueDate: firstPeriod.nextPeriodStart,
+                nextAccrualDate: firstPeriod.nextPeriodStart,
+                periodDays: 7,
+                advanceInterestRefundPolicy: "non_refundable",
+            };
+            if (input.floatingDailyInterest !== undefined && input.floatingInterestPolicy === undefined) {
+                return {
+                    terms,
+                    schedule,
+                    floatingInterestPolicy: policy,
+                    floatingDailyInterest,
+                    ...weeklyFields,
+                };
+            }
+            return { ...common, ...weeklyFields };
+        }
+        const dailyInterestAtCurrentPrincipal = calculateDailyInterest(terms.principal, floatingDailyInterest);
+        return {
+            ...common,
+            firstDayInterest: advanceInterest,
+            dailyInterestAtCurrentPrincipal,
+            netDisbursement: netBorrowerPayout,
+            nextInterestDate: nextInterestDate(input.startDate, floatingDailyInterest.firstDayTreatment, floatingDailyInterest.accrualCycle),
         };
     } catch (error) {
         throw new DomainError("INVALID_LOAN_TERMS", error instanceof Error ? error.message : "Invalid loan terms", 400);
@@ -376,6 +476,7 @@ export async function createLoanDraft(ctx: CommandContext, input: LoanDraftInput
             advanceInterestPeriods: policy?.advanceInterestPeriods ?? null,
             advanceInterestRefundPolicy: policy?.advanceInterestRefundPolicy ?? null,
             interestPeriodAnchorDate: policy ? input.startDate : null,
+            floatingAccrualCycle: policy ? policy.periodUnit === "week" ? "weekly" : "daily" : null,
             dailyTermUnit: dailyEntry?.durationUnit ?? null,
             dailyTermValue: dailyEntry?.durationValue ?? null,
             dailyEntryMode: dailyEntry?.entryMode ?? null,
@@ -444,21 +545,34 @@ export async function updateLoanDraft(ctx: CommandContext, publicId: string, inp
         throw new DomainError("FUNDING_SOURCE_CONFLICT", "Choose either a drawdown or an own-capital profile", 400);
     }
     const repaymentType = (input.repaymentType ?? existing.repaymentType) as RepaymentType;
+    if (input.dailyEntry !== undefined && repaymentType !== "daily") {
+        throw new DomainError("INVALID_LOAN_TERMS", "Daily entry requires daily repayment", 400);
+    }
+    if ((input.floatingInterestPolicy !== undefined || input.floatingDailyInterest !== undefined) && repaymentType !== "floating") {
+        throw new DomainError("INVALID_LOAN_TERMS", "Floating interest policy requires floating repayment", 400);
+    }
+    if (input.singlePayment !== undefined && repaymentType !== "single_payment") {
+        throw new DomainError("INVALID_LOAN_TERMS", "Single-payment terms require single-payment repayment", 400);
+    }
+    const repaymentTypeChanged = repaymentType !== existing.repaymentType;
     const existingFloatingInterestPolicy = floatingPolicyForRow(existing);
+    const suppliedFloatingPolicy = input.floatingInterestPolicy !== undefined || input.floatingDailyInterest !== undefined;
     const mergedInput: PublicLoanCalculationParams = {
         principal: input.principal ?? serializeMoney(existing.principalAmount),
         interestRate: input.interestRate ?? serializeMoney(existing.interestRate),
         repaymentType,
         termMonths: input.termMonths ?? existing.termMonths ?? 1,
-        totalInstallments: input.totalInstallments ?? existing.totalInstallments ?? undefined,
+        totalInstallments: input.totalInstallments ?? (repaymentTypeChanged ? undefined : existing.totalInstallments ?? undefined),
         installmentAmount: input.installmentAmount === undefined
             ? repaymentTypeChanged || existing.installmentAmount === null ? undefined : serializeMoney(existing.installmentAmount)
             : input.installmentAmount,
         startDate: input.startDate ?? existing.startDate ?? new Date().toISOString().slice(0, 10),
-        dailyEntry: input.dailyEntry ?? existingDailyEntry(existing),
+        dailyEntry: input.dailyEntry ?? (repaymentTypeChanged ? undefined : existingDailyEntry(existing)),
         floatingInterestPolicy: repaymentType === "floating"
-            ? input.floatingInterestPolicy ?? existingFloatingInterestPolicy ?? undefined
+            ? input.floatingInterestPolicy ?? (!suppliedFloatingPolicy && !repaymentTypeChanged ? existingFloatingInterestPolicy ?? undefined : undefined)
             : input.floatingInterestPolicy,
+        floatingDailyInterest: input.floatingDailyInterest,
+        singlePayment: input.singlePayment ?? (repaymentTypeChanged ? undefined : singlePaymentFor(existing) ?? undefined),
     };
     if (repaymentType !== "daily") delete mergedInput.dailyEntry;
     const { terms: merged, dailyEntry } = normalizeTerms(mergedInput);
@@ -472,8 +586,8 @@ export async function updateLoanDraft(ctx: CommandContext, publicId: string, inp
             interestRate: merged.interestRate,
             repaymentType: merged.repaymentType,
             termMonths: merged.repaymentType === "floating" ? null : merged.termMonths,
-            totalInstallments: merged.totalInstallments,
-            installmentAmount: merged.installmentAmount,
+            totalInstallments: merged.totalInstallments ?? null,
+            installmentAmount: merged.installmentAmount ?? null,
             dailyInterestMode: policy?.rateMode ?? null,
             dailyInterestRate: policy?.rate ?? null,
             firstDayTreatment: policy ? policy.advanceInterestPeriods === 1 ? "deduct" : "start_next_day" : null,
@@ -483,17 +597,13 @@ export async function updateLoanDraft(ctx: CommandContext, publicId: string, inp
             advanceInterestPeriods: policy?.advanceInterestPeriods ?? null,
             advanceInterestRefundPolicy: policy?.advanceInterestRefundPolicy ?? null,
             interestPeriodAnchorDate: policy ? mergedInput.startDate : null,
+            floatingAccrualCycle: policy ? policy.periodUnit === "week" ? "weekly" : "daily" : null,
             dailyTermUnit: dailyEntry?.durationUnit ?? null,
             dailyTermValue: dailyEntry?.durationValue ?? null,
             dailyEntryMode: dailyEntry?.entryMode ?? null,
             dailyInterestInputMode: dailyEntry?.interestInput?.mode ?? null,
             dailyInterestInputValue: dailyEntry?.interestInput?.value ?? null,
             dailyFlatRatePercent: dailyEntry?.flatDailyRatePercent ?? null,
-            dailyInterestMode: policy?.mode ?? null,
-            dailyInterestRate: policy?.rate ?? null,
-            firstDayTreatment: policy?.firstDayTreatment ?? null,
-            floatingAccrualCycle: policy?.accrualCycle ?? null,
-            interestStartDate: policy ? mergedInput.startDate : null,
             ...singlePaymentColumns(merged.singlePayment),
             startDate: input.startDate ?? existing.startDate,
             updatedAt: new Date(),
@@ -684,6 +794,7 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
                         periodStartDate: firstPeriod.periodStart,
                         periodEndDate: firstPeriod.nextPeriodStart,
                         periodDayIndex: elapsedDays,
+                        periodDays: firstPeriod.periodDays,
                         periodUnit: policy.periodUnit,
                         periodLength: policy.periodLength,
                         contractualInterestAmount: fullPeriodInterest,

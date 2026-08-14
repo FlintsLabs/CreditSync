@@ -4,7 +4,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
     auditLogs, bankProfiles, borrowers, fundLedgerEntries, loanDisbursementEvents, loanFundingAllocations, loanOpeningBalanceComponents,
-    loanRenewals, loanRestructures, loanSchedules, loans, paymentIntakes, paymentMatchAllocations, paymentMatchProposals, transactions, users,
+    loanInterestRatePeriods, loanRenewals, loanRestructures, loanSchedules, loans, paymentIntakes, paymentMatchAllocations, paymentMatchProposals, transactions, users,
 } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import { executeLoanRestructure, previewLoanRestructure, reverseLoanRestructure } from "./loan-restructure-service";
@@ -121,6 +121,60 @@ describe("loan restructure service", () => {
         expect((await db.select().from(transactions).where(eq(transactions.loanId, loan.id))).map(row => [row.amount, row.entryType]))
             .toEqual([["200.00", "repayment"], ["-200.00", "reversal"]]);
         expect((await db.select().from(fundLedgerEntries).where(eq(fundLedgerEntries.loanId, loan.id))).reduce((sum, row) => row.entryType.endsWith("_out") ? sum.minus(row.amount) : sum.plus(row.amount), new Decimal(0)).toFixed(2)).toBe("0.00");
+    });
+
+    integrationTest("creates a weekly floating replacement with the generalized interest policy", async () => {
+        const { loan, ctx } = await seed();
+        const weeklyReplacementTerms = {
+            repaymentType: "floating" as const,
+            startDate: "2026-08-15",
+            termMonths: 1,
+            interestRate: "0.00",
+            floatingInterestPolicy: {
+                periodUnit: "week" as const,
+                periodLength: 1 as const,
+                rateMode: "percent" as const,
+                rate: "12.0000",
+                advanceInterestPeriods: 1 as const,
+                advanceInterestRefundPolicy: "non_refundable" as const,
+            },
+        };
+        const preview = await previewLoanRestructure(ctx(), loan.publicId, {
+            settlementDate: "2026-08-15",
+            replacementTerms: weeklyReplacementTerms,
+            additionalPrincipal: "0.00",
+            reason: "replace with weekly floating terms",
+        });
+        const executed = await executeLoanRestructure(ctx("execute-weekly-floating"), preview.publicId, {
+            confirmed: true,
+            previewHash: preview.previewHash,
+            expectedBalanceVersion: preview.oldBalanceVersion,
+            reason: "weekly floating replacement approved",
+        });
+        const replacement = await db.query.loans.findFirst({ where: eq(loans.publicId, executed.newLoanPublicId) });
+        expect(replacement).toMatchObject({
+            repaymentType: "floating",
+            termMonths: null,
+            dailyInterestMode: "percent",
+            dailyInterestRate: "12.0000",
+            firstDayTreatment: "deduct",
+            floatingAccrualCycle: "weekly",
+            interestStartDate: "2026-08-15",
+            interestPeriodUnit: "week",
+            interestPeriodLength: 1,
+            advanceInterestPeriods: 1,
+            advanceInterestRefundPolicy: "non_refundable",
+            interestPeriodAnchorDate: "2026-08-15",
+        });
+        const ratePeriods = await db.select().from(loanInterestRatePeriods).where(eq(loanInterestRatePeriods.loanId, replacement!.id));
+        expect(ratePeriods).toHaveLength(1);
+        expect(ratePeriods[0]).toMatchObject({
+            effectiveDate: "2026-08-15",
+            rateType: "percent",
+            rate: "12.0000",
+            periodUnit: "week",
+            periodLength: 1,
+        });
     });
 
     integrationTest("rejects stale balance and conflicting idempotency payload", async () => {

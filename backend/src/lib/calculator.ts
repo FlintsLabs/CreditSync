@@ -4,6 +4,13 @@ import { FinancialDecimal } from "./financial-decimal";
 import { parseMoney, serializeMoney } from "./money";
 import { normalizeDailyLoanEntry, type DailyLoanEntryInput } from "./daily-loan-entry";
 import type { FloatingInterestPolicy } from "./floating-interest-policy";
+import type { FloatingDailyInterestInput } from "./floating-daily-interest";
+import {
+    normalizeBangkokBusinessDate,
+    normalizeSinglePaymentTerms,
+    type SinglePaymentTerms,
+    type SinglePaymentTermsInput,
+} from "./single-payment";
 
 export type RepaymentType = "single_payment" | "daily" | "weekly" | "monthly" | "floating";
 
@@ -37,6 +44,8 @@ export interface PublicLoanCalculationParams {
     installmentAmount?: string;
     dailyEntry?: DailyLoanEntryInput;
     floatingInterestPolicy?: FloatingInterestPolicy;
+    floatingDailyInterest?: FloatingDailyInterestInput;
+    singlePayment?: SinglePaymentTermsInput;
 }
 
 export interface PublicInstallmentSchedule {

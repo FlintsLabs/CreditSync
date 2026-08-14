@@ -13,7 +13,7 @@ async function resetTables() {
     await db.execute(sql`TRUNCATE TABLE audit_logs, loan_adjustments, transactions, loan_interest_accruals, loan_interest_rate_periods, loans, borrowers, users RESTART IDENTITY CASCADE`);
 }
 
-async function seedWeeklyLoan(tenantId: string) {
+async function seedWeeklyLoan(tenantId: string, overrides: Partial<typeof loans.$inferInsert> = {}) {
     const actor = await db.insert(users).values({
         tenantId,
         email: `${tenantId}@floating-accrual.test`,
@@ -44,6 +44,7 @@ async function seedWeeklyLoan(tenantId: string) {
         outstandingInterest: "0.00",
         outstandingFees: "0.00",
         status: "active",
+        ...overrides,
     }).returning().then((rows) => rows[0]!);
     return { actor, borrower, loan };
 }
@@ -69,17 +70,16 @@ describe("floating interest accrual service", () => {
     // Break caught: the service's Decimal context rounds away cents while reconstructing a
     // 29-digit principal, summing weekly accruals, or recording a correction delta.
     integrationTest("preserves exact 29-digit principal history, accrual totals, and correction deltas", async () => {
-        const { actor, loan } = await seedWeeklyLoan("tenant-weekly-precision-boundary");
         const principal = "98765432109876543210987654321.09";
         const principalPayment = "12345678901234567890.10";
         const reducedPrincipal = "98765432097530864309753086430.99";
-        await db.update(loans).set({
+        const { actor, loan } = await seedWeeklyLoan("tenant-weekly-precision-boundary", {
             principalAmount: principal,
             outstandingPrincipal: reducedPrincipal,
             dailyInterestRate: "0.0007",
             interestPeriodAnchorDate: "2026-08-14",
             interestStartDate: "2026-08-14",
-        }).where(eq(loans.id, loan.id));
+        });
         const ratePeriod = await db.insert(loanInterestRatePeriods).values({
             tenantId: loan.tenantId,
             loanId: loan.id,

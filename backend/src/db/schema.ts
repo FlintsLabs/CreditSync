@@ -222,6 +222,52 @@ export const loans = pgTable("loans", {
         .where(sql`${table.activationIdempotencyKey} IS NOT NULL`),
     check("loans_term_months_check", sql`${table.termMonths} IS NULL OR ${table.termMonths} > 0`),
     check("loans_one_funding_source_check", sql`${table.bankLoanId} IS NULL OR ${table.fundingBankProfileId} IS NULL`),
+    check("loans_single_payment_terms_check", sql`
+        (${table.repaymentType} <> 'single_payment' AND
+            ${table.singlePaymentDueDate} IS NULL AND
+            ${table.singlePaymentFixedAgreedInterest} IS NULL AND
+            ${table.singlePaymentInterestPolicy} IS NULL AND
+            ${table.singlePaymentRetroactiveRateType} IS NULL AND
+            ${table.singlePaymentRetroactiveRate} IS NULL AND
+            ${table.singlePaymentLatePenaltyMode} IS NULL AND
+            ${table.singlePaymentLatePenaltyAmountPerDay} IS NULL AND
+            ${table.singlePaymentLatePenaltyGraceDays} IS NULL)
+        OR
+        (${table.repaymentType} = 'single_payment' AND
+            ${table.startDate} IS NOT NULL AND
+            ${table.singlePaymentDueDate} > ${table.startDate} AND
+            ${table.singlePaymentFixedAgreedInterest} IS NOT NULL AND
+            (
+                (${table.singlePaymentInterestPolicy} = 'fixed_only' AND
+                    ${table.singlePaymentRetroactiveRateType} IS NULL AND
+                    ${table.singlePaymentRetroactiveRate} IS NULL)
+                OR
+                (${table.singlePaymentInterestPolicy} = 'greater_of_fixed_or_retroactive' AND
+                    ${table.singlePaymentRetroactiveRateType} IN ('percent_per_day', 'per_thousand_per_day') AND
+                    ${table.singlePaymentRetroactiveRate} IS NOT NULL)
+            ) AND
+            (
+                (${table.singlePaymentLatePenaltyMode} = 'none' AND
+                    ${table.singlePaymentLatePenaltyAmountPerDay} IS NULL AND
+                    ${table.singlePaymentLatePenaltyGraceDays} IS NULL)
+                OR
+                (${table.singlePaymentLatePenaltyMode} = 'fixed_amount_per_day' AND
+                    ${table.singlePaymentLatePenaltyAmountPerDay} IS NOT NULL AND
+                    ${table.singlePaymentLatePenaltyGraceDays} >= 0)
+            ))
+    `),
+    check("loans_floating_accrual_cycle_check", sql`
+        (${table.repaymentType} = 'floating' AND ${table.floatingAccrualCycle} IN ('daily', 'weekly'))
+        OR (${table.repaymentType} <> 'floating' AND ${table.floatingAccrualCycle} IS NULL)
+    `),
+    check("loans_single_payment_money_check", sql`
+        (${table.singlePaymentFixedAgreedInterest} IS NULL OR
+            (${table.singlePaymentFixedAgreedInterest} >= 0 AND scale(${table.singlePaymentFixedAgreedInterest}) <= 2)) AND
+        (${table.singlePaymentRetroactiveRate} IS NULL OR
+            (${table.singlePaymentRetroactiveRate} >= 0 AND scale(${table.singlePaymentRetroactiveRate}) <= 4)) AND
+        (${table.singlePaymentLatePenaltyAmountPerDay} IS NULL OR
+            (${table.singlePaymentLatePenaltyAmountPerDay} >= 0 AND scale(${table.singlePaymentLatePenaltyAmountPerDay}) <= 2))
+    `),
     check("loans_interest_period_unit_check", sql`${table.interestPeriodUnit} IS NULL OR ${table.interestPeriodUnit} IN ('day', 'week')`),
     check("loans_interest_period_length_check", sql`${table.interestPeriodLength} IS NULL OR ${table.interestPeriodLength} = 1`),
     check("loans_advance_interest_periods_check", sql`${table.advanceInterestPeriods} IS NULL OR ${table.advanceInterestPeriods} IN (0, 1)`),
@@ -357,13 +403,9 @@ export const loanInterestAccruals = pgTable("loan_interest_accruals", {
     periodDays: integer("period_days"),
     cumulativeInterestAmount: numeric("cumulative_interest_amount"),
     interestAmount: numeric("interest_amount").notNull(),
-    periodStartDate: date("period_start_date"),
-    periodEndDate: date("period_end_date"),
-    periodDayIndex: integer("period_day_index"),
     periodUnit: text("period_unit"),
     periodLength: integer("period_length"),
     contractualInterestAmount: numeric("contractual_interest_amount"),
-    cumulativeInterestAmount: numeric("cumulative_interest_amount"),
     dailyIncrementAmount: numeric("daily_increment_amount"),
     paidAmount: numeric("paid_amount").default("0").notNull(),
     accruedPenalty: numeric("accrued_penalty").default("0").notNull(),
@@ -382,6 +424,26 @@ export const loanInterestAccruals = pgTable("loan_interest_accruals", {
         columns: [table.tenantId, table.interestRatePeriodId],
         foreignColumns: [loanInterestRatePeriods.tenantId, loanInterestRatePeriods.id],
     }),
+    check("loan_interest_accruals_status_check", sql`${table.status} IN ('accrued', 'accruing', 'due', 'paid', 'partially_paid', 'reversed')`),
+    check("loan_interest_accruals_penalty_money_check", sql`
+        ${table.accruedPenalty} >= 0 AND scale(${table.accruedPenalty}) <= 2
+        AND ${table.paidPenalty} >= 0 AND scale(${table.paidPenalty}) <= 2
+        AND ${table.paidPenalty} <= ${table.accruedPenalty}
+    `),
+    check("loan_interest_accruals_period_snapshot_check", sql`
+        (${table.periodStartDate} IS NULL AND ${table.periodEndDate} IS NULL AND ${table.periodDayIndex} IS NULL
+            AND ${table.periodDays} IS NULL AND ${table.cumulativeInterestAmount} IS NULL)
+        OR
+        (${table.periodStartDate} IS NOT NULL AND ${table.periodEndDate} > ${table.periodStartDate}
+            AND ${table.periodDayIndex} BETWEEN 1 AND COALESCE(
+                ${table.periodDays},
+                CASE ${table.periodUnit} WHEN 'week' THEN 7 ELSE 1 END
+            )
+            AND (${table.periodDays} IS NULL
+                OR (${table.periodUnit} = 'day' AND ${table.periodDays} = 1)
+                OR (${table.periodUnit} = 'week' AND ${table.periodDays} = 7))
+            AND ${table.cumulativeInterestAmount} >= 0)
+    `),
     check("loan_interest_accruals_period_unit_check", sql`${table.periodUnit} IS NULL OR ${table.periodUnit} IN ('day', 'week')`),
     check("loan_interest_accruals_period_length_check", sql`${table.periodLength} IS NULL OR ${table.periodLength} = 1`),
     check("loan_interest_accruals_period_date_order_check", sql`${table.periodStartDate} IS NULL OR ${table.periodEndDate} IS NULL OR ${table.periodEndDate} > ${table.periodStartDate}`),

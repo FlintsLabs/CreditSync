@@ -149,6 +149,7 @@ describe("computeLoanPaymentHealth", () => {
             overdueAmount: "0.00",
             overdueItemCount: 0,
             maxOverdueDays: 0,
+            accruingInterestAmount: "85.71",
         });
         expect(computeLoanPaymentHealth({ ...weekly, businessDate: "2026-08-21", accruals: [...duePeriod, ...currentPeriod] })).toEqual({
             status: "overdue",
@@ -156,6 +157,7 @@ describe("computeLoanPaymentHealth", () => {
             overdueAmount: "600.00",
             overdueItemCount: 1,
             maxOverdueDays: 1,
+            accruingInterestAmount: "85.71",
         });
     });
 

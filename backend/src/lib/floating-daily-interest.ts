@@ -1,3 +1,4 @@
+import type Decimal from "decimal.js";
 import { FinancialDecimal } from "./financial-decimal";
 
 export type FloatingAccrualCycle = "daily" | "weekly";
@@ -18,7 +19,20 @@ export function normalizeFloatingDailyInterest(input: FloatingDailyInterestInput
     if (input.firstDayTreatment !== "deduct" && input.firstDayTreatment !== "start_next_day") {
         throw new Error("First-day treatment is invalid");
     }
-    const rate = new FinancialDecimal(input.rate);
+    if (input.accrualCycle !== undefined && input.accrualCycle !== "daily" && input.accrualCycle !== "weekly") {
+        throw new Error("Floating accrual cycle is invalid");
+    }
+    const decimalSyntax = /^[+-]?(?:\d+(?:\.(\d*))?|\.(\d+))(?:e[+-]?\d+)?$/iu.exec(input.rate);
+    const suppliedFraction = decimalSyntax?.[1] ?? decimalSyntax?.[2] ?? "";
+    if (!decimalSyntax || suppliedFraction.length > 4) {
+        throw new Error("Daily interest rate must be a positive decimal with at most four places");
+    }
+    let rate: Decimal;
+    try {
+        rate = new FinancialDecimal(input.rate);
+    } catch {
+        throw new Error("Daily interest rate must be a positive decimal with at most four places");
+    }
     if (!rate.isFinite() || rate.lte(0) || rate.decimalPlaces() > 4) {
         throw new Error("Daily interest rate must be a positive decimal with at most four places");
     }

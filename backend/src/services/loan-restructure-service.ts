@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import Decimal from "decimal.js";
+import type Decimal from "decimal.js";
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
@@ -11,7 +11,9 @@ import { canAccessTenantWideData } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
 import { normalizePublicLoanTerms, type PublicLoanCalculationParams, type RepaymentType } from "../lib/calculator";
 import { normalizeDailyLoanEntry } from "../lib/daily-loan-entry";
-import { normalizeFloatingDailyInterest } from "../lib/floating-daily-interest";
+import { normalizeFloatingDailyInterest, type FloatingDailyInterest } from "../lib/floating-daily-interest";
+import { normalizeFloatingInterestPolicy, type FloatingInterestPolicy } from "../lib/floating-interest-policy";
+import { FinancialDecimal } from "../lib/financial-decimal";
 import { generateLoanSchedule } from "../lib/loan-schedule";
 import { parseMoney, serializeMoney } from "../lib/money";
 import { calculateSinglePaymentSettlement, type SinglePaymentExposure, type SinglePaymentTerms } from "../lib/single-payment";
@@ -68,7 +70,7 @@ function singlePaymentTerms(loan: Loan): SinglePaymentTerms {
         ? { mode: "fixed_amount_per_day" as const, amountPerDay: serializeMoney(loan.singlePaymentLatePenaltyAmountPerDay!), graceDays: loan.singlePaymentLatePenaltyGraceDays! }
         : { mode: "none" as const };
     return loan.singlePaymentInterestPolicy === "greater_of_fixed_or_retroactive"
-        ? { dueDate: loan.singlePaymentDueDate, fixedAgreedInterest: serializeMoney(loan.singlePaymentFixedAgreedInterest), interestPolicy: "greater_of_fixed_or_retroactive", retroactiveInterest: { rateType: loan.singlePaymentRetroactiveRateType as "percent_per_day" | "per_thousand_per_day", rate: new Decimal(loan.singlePaymentRetroactiveRate!).toFixed(4) }, latePenalty }
+        ? { dueDate: loan.singlePaymentDueDate, fixedAgreedInterest: serializeMoney(loan.singlePaymentFixedAgreedInterest), interestPolicy: "greater_of_fixed_or_retroactive", retroactiveInterest: { rateType: loan.singlePaymentRetroactiveRateType as "percent_per_day" | "per_thousand_per_day", rate: new FinancialDecimal(loan.singlePaymentRetroactiveRate!).toFixed(4) }, latePenalty }
         : { dueDate: loan.singlePaymentDueDate, fixedAgreedInterest: serializeMoney(loan.singlePaymentFixedAgreedInterest), interestPolicy: "fixed_only", latePenalty };
 }
 async function actorFor(ctx: CommandContext, executor: Executor = db) {
@@ -118,23 +120,23 @@ async function snapshot(executor: Executor, ctx: CommandContext, loan: Loan, set
     if (laterTransaction || laterDisbursement) throw new DomainError("RESTRUCTURE_SETTLEMENT_PRECEDES_ACTIVE_ACTIVITY", "Settlement date cannot precede active posted loan activity", 409, { settlementDate, laterActivityType: laterTransaction ? "transaction" : "disbursement" });
     const activeTransactions = allActiveTransactions.filter(row => bangkokDate(row.transactionDate ?? row.postedAt) <= settlementDate);
     const activeDisbursements = allActiveDisbursements.filter(row => bangkokDate(row.disbursedAt ?? row.postedAt ?? row.createdAt!) <= settlementDate);
-    const totalDisbursed = activeDisbursements.reduce((sum, row) => sum.plus(row.loanAttributedAmount), new Decimal(0));
-    const principalPaid = activeTransactions.reduce((sum, row) => sum.plus(row.principalComponent), new Decimal(0));
-    const outstandingPrincipal = Decimal.max(0, totalDisbursed.minus(principalPaid));
-    const outstandingFees = Decimal.max(0,
-        (schedules as Array<typeof loanSchedules.$inferSelect>).reduce((sum: Decimal, row) => sum.plus(row.scheduledFee), new Decimal(0))
-            .minus(activeTransactions.reduce((sum: Decimal, row) => sum.plus(row.feeComponent), new Decimal(0)))
+    const totalDisbursed = activeDisbursements.reduce((sum, row) => sum.plus(row.loanAttributedAmount), new FinancialDecimal(0));
+    const principalPaid = activeTransactions.reduce((sum, row) => sum.plus(row.principalComponent), new FinancialDecimal(0));
+    const outstandingPrincipal = FinancialDecimal.max(0, totalDisbursed.minus(principalPaid));
+    const outstandingFees = FinancialDecimal.max(0,
+        (schedules as Array<typeof loanSchedules.$inferSelect>).reduce((sum: Decimal, row) => sum.plus(row.scheduledFee), new FinancialDecimal(0))
+            .minus(activeTransactions.reduce((sum: Decimal, row) => sum.plus(row.feeComponent), new FinancialDecimal(0)))
             .plus(loan.outstandingFees ?? 0),
     );
     const events = [
-        ...activeDisbursements.map(row => ({ date: bangkokDate(row.disbursedAt ?? row.postedAt ?? row.createdAt!), delta: new Decimal(row.loanAttributedAmount), tie: row.id })),
-        ...activeTransactions.filter(row => new Decimal(row.principalComponent).gt(0)).map(row => ({ date: bangkokDate(row.transactionDate ?? row.postedAt), delta: new Decimal(row.principalComponent).negated(), tie: row.id + 1_000_000_000 })),
+        ...activeDisbursements.map(row => ({ date: bangkokDate(row.disbursedAt ?? row.postedAt ?? row.createdAt!), delta: new FinancialDecimal(row.loanAttributedAmount), tie: row.id })),
+        ...activeTransactions.filter(row => new FinancialDecimal(row.principalComponent).gt(0)).map(row => ({ date: bangkokDate(row.transactionDate ?? row.postedAt), delta: new FinancialDecimal(row.principalComponent).negated(), tie: row.id + 1_000_000_000 })),
     ].sort((a, b) => a.date.localeCompare(b.date) || a.tie - b.tie);
-    let balance = new Decimal(0);
+    let balance = new FinancialDecimal(0);
     const exposures: SinglePaymentExposure[] = [];
     for (let index = 0; index < events.length; index++) {
         const event = events[index]!;
-        balance = Decimal.max(0, balance.plus(event.delta));
+        balance = FinancialDecimal.max(0, balance.plus(event.delta));
         const toDate = events[index + 1]?.date ?? settlementDate;
         if (event.date < toDate) exposures.push({ amount: serializeMoney(balance), fromDate: event.date, toDate });
     }
@@ -153,15 +155,39 @@ function normalizeReplacement(input: ReplacementLoanTerms, replacementPrincipal:
     try { terms = normalizePublicLoanTerms({ ...input, principal: serializeMoney(replacementPrincipal) }); }
     catch (error) { throw new DomainError("INVALID_REPLACEMENT_TERMS", error instanceof Error ? error.message : "Replacement terms are invalid", 400); }
     let dailyEntry = null;
-    let floating = null;
+    let floating: FloatingDailyInterest | null = null;
+    let floatingPolicy: FloatingInterestPolicy | null = null;
     if (terms.repaymentType === "daily") {
         if (!input.dailyEntry) throw new DomainError("INVALID_REPLACEMENT_TERMS", "Daily replacement terms require daily entry terms", 400);
         try { dailyEntry = normalizeDailyLoanEntry({ ...input.dailyEntry, principal: serializeMoney(replacementPrincipal) }); }
         catch (error) { throw new DomainError("INVALID_REPLACEMENT_TERMS", error instanceof Error ? error.message : "Daily replacement terms are invalid", 400); }
     }
     if (terms.repaymentType === "floating") {
-        if (!input.floatingDailyInterest) throw new DomainError("INVALID_REPLACEMENT_TERMS", "Floating replacement terms require interest policy", 400);
-        try { floating = normalizeFloatingDailyInterest(input.floatingDailyInterest); }
+        if (!input.floatingDailyInterest && !input.floatingInterestPolicy) {
+            throw new DomainError("INVALID_REPLACEMENT_TERMS", "Floating replacement terms require interest policy", 400);
+        }
+        try {
+            const legacy = input.floatingDailyInterest ? normalizeFloatingDailyInterest(input.floatingDailyInterest) : null;
+            const generalized = input.floatingInterestPolicy ? normalizeFloatingInterestPolicy(input.floatingInterestPolicy) : null;
+            const legacyAsGeneralized = legacy ? normalizeFloatingInterestPolicy({
+                periodUnit: legacy.accrualCycle === "weekly" ? "week" : "day",
+                periodLength: 1,
+                rateMode: legacy.mode,
+                rate: legacy.rate,
+                advanceInterestPeriods: legacy.firstDayTreatment === "deduct" ? 1 : 0,
+                advanceInterestRefundPolicy: "non_refundable",
+            }) : null;
+            if (generalized && legacyAsGeneralized && JSON.stringify(generalized) !== JSON.stringify(legacyAsGeneralized)) {
+                throw new Error("Floating replacement interest policy inputs conflict");
+            }
+            floatingPolicy = generalized ?? legacyAsGeneralized!;
+            floating = legacy ?? {
+                mode: floatingPolicy.rateMode,
+                rate: floatingPolicy.rate,
+                firstDayTreatment: floatingPolicy.advanceInterestPeriods === 1 ? "deduct" : "start_next_day",
+                accrualCycle: floatingPolicy.periodUnit === "week" ? "weekly" : "daily",
+            };
+        }
         catch (error) { throw new DomainError("INVALID_REPLACEMENT_TERMS", error instanceof Error ? error.message : "Floating replacement terms are invalid", 400); }
     }
     const schedule = terms.repaymentType === "floating" ? [] : generateLoanSchedule({
@@ -170,7 +196,7 @@ function normalizeReplacement(input: ReplacementLoanTerms, replacementPrincipal:
         totalInstallments: terms.totalInstallments, installmentAmount: terms.installmentAmount,
         singlePayment: terms.singlePayment,
     });
-    return { terms, dailyEntry, floating, schedule };
+    return { terms, dailyEntry, floating, floatingPolicy, schedule };
 }
 
 function waiver(input: PreviewLoanRestructureInput, component: "interest" | "fees" | "penalty", gross: Decimal) {
@@ -183,7 +209,7 @@ function waiver(input: PreviewLoanRestructureInput, component: "interest" | "fee
 function allocateExternalCredit(amount: Decimal, balances: { penalty: Decimal; fee: Decimal; interest: Decimal; principal: Decimal }) {
     let remaining = amount;
     const take = (available: Decimal) => {
-        const allocated = Decimal.min(remaining, available);
+        const allocated = FinancialDecimal.min(remaining, available);
         remaining = remaining.minus(allocated);
         return allocated;
     };
@@ -206,18 +232,18 @@ async function computePreview(executor: Executor, ctx: CommandContext, loan: Loa
     const current = await snapshot(executor, ctx, loan, settlementDate);
     const terms = singlePaymentTerms(loan);
     const gross = calculateSinglePaymentSettlement({ settlementDate, terms, exposures: current.exposures, waivers: { interest: "0.00", fees: "0.00", penalties: "0.00" }, outstandingPrincipal: serializeMoney(current.outstandingPrincipal), outstandingFees: serializeMoney(current.outstandingFees), externalSettlementCredits: "0.00" });
-    const waivedInterest = waiver(input, "interest", new Decimal(gross.grossInterest));
-    const waivedFees = waiver(input, "fees", new Decimal(gross.grossFees));
-    const waivedPenalty = waiver(input, "penalty", new Decimal(gross.grossPenalty));
+    const waivedInterest = waiver(input, "interest", new FinancialDecimal(gross.grossInterest));
+    const waivedFees = waiver(input, "fees", new FinancialDecimal(gross.grossFees));
+    const waivedPenalty = waiver(input, "penalty", new FinancialDecimal(gross.grossPenalty));
     const calculated = calculateSinglePaymentSettlement({ settlementDate, terms, exposures: current.exposures, waivers: { interest: serializeMoney(waivedInterest), fees: serializeMoney(waivedFees), penalties: serializeMoney(waivedPenalty) }, outstandingPrincipal: serializeMoney(current.outstandingPrincipal), outstandingFees: serializeMoney(current.outstandingFees), externalSettlementCredits: serializeMoney(creditAmount) });
-    const creditAllocation = allocateExternalCredit(creditAmount, { penalty: new Decimal(calculated.netPenalty), fee: new Decimal(calculated.netFees), interest: new Decimal(calculated.netInterest), principal: current.outstandingPrincipal });
+    const creditAllocation = allocateExternalCredit(creditAmount, { penalty: new FinancialDecimal(calculated.netPenalty), fee: new FinancialDecimal(calculated.netFees), interest: new FinancialDecimal(calculated.netInterest), principal: current.outstandingPrincipal });
     if (creditAllocation.unallocated.gt(0)) {
         throw new DomainError("EXTERNAL_CREDIT_EXCEEDS_SETTLEMENT", "External settlement credit cannot exceed the net eligible settlement", 400);
     }
     const netPrincipal = current.outstandingPrincipal.minus(creditAllocation.principal);
-    const netInterest = new Decimal(calculated.netInterest).minus(creditAllocation.interest);
-    const netFees = new Decimal(calculated.netFees).minus(creditAllocation.fee);
-    const netPenalty = new Decimal(calculated.netPenalty).minus(creditAllocation.penalty);
+    const netInterest = new FinancialDecimal(calculated.netInterest).minus(creditAllocation.interest);
+    const netFees = new FinancialDecimal(calculated.netFees).minus(creditAllocation.fee);
+    const netPenalty = new FinancialDecimal(calculated.netPenalty).minus(creditAllocation.penalty);
     const replacementPrincipal = netPrincipal.plus(additionalPrincipal);
     if (replacementPrincipal.lte(0)) throw new DomainError("INVALID_REPLACEMENT_PRINCIPAL", "Replacement principal must be greater than zero", 400);
     const replacement = normalizeReplacement(input.replacementTerms, replacementPrincipal);
@@ -234,7 +260,7 @@ function presentPreview(row: Restructure, loan: Loan, computed: Awaited<ReturnTy
         publicId: row.publicId, oldLoanPublicId: loan.publicId, status: row.status,
         settlementDate: row.settlementDate, oldBalanceVersion: row.oldBalanceVersion, previewHash: row.previewHash, expiresAt: row.expiresAt,
         balance: computed.calculated,
-        replacementPrincipal: serializeMoney(new Decimal(row.netPrincipal).plus(row.additionalPrincipal)),
+        replacementPrincipal: serializeMoney(new FinancialDecimal(row.netPrincipal).plus(row.additionalPrincipal)),
         externalCreditAllocation: { penalty: serializeMoney(row.externalCreditPenalty), fee: serializeMoney(row.externalCreditFees), interest: serializeMoney(row.externalCreditInterest), principal: serializeMoney(row.externalCreditPrincipal), unallocated: "0.00" },
         replacementTerms: computed.replacement.terms,
         schedule: computed.replacement.schedule, cash: { direction: row.cashDirection, amount: serializeMoney(row.cashAmount) },
@@ -321,7 +347,7 @@ export async function listLoanRestructures(ctx: CommandContext, loanPublicId: st
     }));
 }
 function replacementColumns(replacement: ReturnType<typeof normalizeReplacement>) {
-    const { terms, dailyEntry, floating } = replacement;
+    const { terms, dailyEntry, floating, floatingPolicy } = replacement;
     const sp = terms.singlePayment;
     return {
         principalAmount: terms.principal, interestRate: terms.interestRate, repaymentType: terms.repaymentType,
@@ -329,6 +355,11 @@ function replacementColumns(replacement: ReturnType<typeof normalizeReplacement>
         startDate: terms.startDate!, dailyTermUnit: dailyEntry?.durationUnit ?? null, dailyTermValue: dailyEntry?.durationValue ?? null,
         dailyEntryMode: dailyEntry?.entryMode ?? null, dailyInterestInputMode: dailyEntry?.interestInput?.mode ?? null, dailyInterestInputValue: dailyEntry?.interestInput?.value ?? null, dailyFlatRatePercent: dailyEntry?.flatDailyRatePercent ?? null,
         dailyInterestMode: floating?.mode ?? null, dailyInterestRate: floating?.rate ?? null, firstDayTreatment: floating?.firstDayTreatment ?? null, floatingAccrualCycle: floating?.accrualCycle ?? null, interestStartDate: floating ? terms.startDate! : null,
+        interestPeriodUnit: floatingPolicy?.periodUnit ?? null,
+        interestPeriodLength: floatingPolicy?.periodLength ?? null,
+        advanceInterestPeriods: floatingPolicy?.advanceInterestPeriods ?? null,
+        advanceInterestRefundPolicy: floatingPolicy?.advanceInterestRefundPolicy ?? null,
+        interestPeriodAnchorDate: floatingPolicy ? terms.startDate! : null,
         singlePaymentDueDate: sp?.dueDate ?? null, singlePaymentFixedAgreedInterest: sp?.fixedAgreedInterest ?? null, singlePaymentInterestPolicy: sp?.interestPolicy ?? null,
         singlePaymentRetroactiveRateType: sp?.interestPolicy === "greater_of_fixed_or_retroactive" ? sp.retroactiveInterest.rateType : null,
         singlePaymentRetroactiveRate: sp?.interestPolicy === "greater_of_fixed_or_retroactive" ? sp.retroactiveInterest.rate : null,
@@ -364,8 +395,8 @@ export async function executeLoanRestructure(ctx: CommandContext, restructurePub
         // authoritative staleness guard is the exact financial balance version.
         if (computed.current.version !== row.oldBalanceVersion || oldLoan.status !== "active") return { stale: true as const, details: { currentVersion: computed.current.version, oldBalanceVersion: row.oldBalanceVersion, status: oldLoan.status } };
         const replacement = computed.replacement;
-        const scheduleInterest = replacement.schedule.reduce((sum, schedule) => sum.plus(schedule.scheduledInterest), new Decimal(0));
-        const scheduleFees = replacement.schedule.reduce((sum, schedule) => sum.plus(schedule.scheduledFee), new Decimal(0));
+        const scheduleInterest = replacement.schedule.reduce((sum, schedule) => sum.plus(schedule.scheduledInterest), new FinancialDecimal(0));
+        const scheduleFees = replacement.schedule.reduce((sum, schedule) => sum.plus(schedule.scheduledFee), new FinancialDecimal(0));
         const now = new Date();
         const newLoan = await tx.insert(loans).values({
             tenantId: ctx.tenantId, ownerUserId: oldLoan.ownerUserId, borrowerId: oldLoan.borrowerId,
@@ -377,7 +408,16 @@ export async function executeLoanRestructure(ctx: CommandContext, restructurePub
         const executionAudit = await createAuditLog(tx, { ...auditContext(ctx), entityType: "loan_restructure", entityId: row.publicId, action: "executed", payload: { oldLoanPublicId: oldLoan.publicId, newLoanPublicId: newLoan.publicId, additionalPrincipal: serializeMoney(computed.additionalPrincipal), reason: required.reason } });
         const executed = await tx.update(loanRestructures).set({ newLoanId: newLoan.id, status: "executed", executeIdempotencyKey: required.idempotencyKey, executeRequestHash: required.requestHash, executeActorSource: ctx.actorSource, correlationId: ctx.correlationId, executedAuditPublicId: executionAudit.publicId, preExecutionOldLoanState: { status: oldLoan.status ?? "active", outstandingPrincipal: serializeMoney(oldLoan.outstandingPrincipal ?? 0), outstandingInterest: serializeMoney(oldLoan.outstandingInterest ?? 0), outstandingFees: serializeMoney(oldLoan.outstandingFees ?? 0), nextDueDate: oldLoan.nextDueDate ?? null }, executedAt: now, executedByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId, updatedAt: now }).where(and(eq(loanRestructures.tenantId, ctx.tenantId), eq(loanRestructures.id, row.id))).returning().then((rows: Restructure[]) => rows[0]!);
         if (replacement.schedule.length) await tx.insert(loanSchedules).values(replacement.schedule.map(schedule => ({ tenantId: ctx.tenantId, loanId: newLoan.id, installmentNo: schedule.installmentNo, dueDate: schedule.dueDate, scheduledPrincipal: schedule.scheduledPrincipal, scheduledInterest: schedule.scheduledInterest, scheduledFee: schedule.scheduledFee, scheduledTotal: schedule.scheduledTotal, remainingDue: schedule.remainingDue, paidTotal: "0.00", paidPenalty: "0.00", status: "pending" })));
-        if (replacement.floating) await tx.insert(loanInterestRatePeriods).values({ tenantId: ctx.tenantId, loanId: newLoan.id, effectiveDate: replacement.terms.startDate!, rateType: replacement.floating.mode, rate: replacement.floating.rate, createdByUserId: ctx.actorUserId });
+        if (replacement.floatingPolicy) await tx.insert(loanInterestRatePeriods).values({
+            tenantId: ctx.tenantId,
+            loanId: newLoan.id,
+            effectiveDate: replacement.terms.startDate!,
+            rateType: replacement.floatingPolicy.rateMode,
+            rate: replacement.floatingPolicy.rate,
+            periodUnit: replacement.floatingPolicy.periodUnit,
+            periodLength: replacement.floatingPolicy.periodLength,
+            createdByUserId: ctx.actorUserId,
+        });
         const componentRows = [
             ["carried_principal", serializeMoney(computed.netPrincipal), "loan", oldLoan.publicId],
             ["additional_principal", serializeMoney(computed.additionalPrincipal), "loan_restructure", row.publicId],
@@ -386,7 +426,7 @@ export async function executeLoanRestructure(ctx: CommandContext, restructurePub
             ["carried_penalty", serializeMoney(computed.netPenalty), "loan_restructure", row.publicId],
             ["new_contract_interest", serializeMoney(scheduleInterest), "loan_restructure", row.publicId],
         ] as const;
-        await tx.insert(loanOpeningBalanceComponents).values(componentRows.filter(([, amount]) => new Decimal(amount).gt(0)).map(([componentKind, amount, sourceType, sourcePublicId]) => ({ tenantId: ctx.tenantId, restructureId: row.id, loanId: newLoan.id, componentKind, amount, sourceType, sourcePublicId, createdByUserId: ctx.actorUserId })));
+        await tx.insert(loanOpeningBalanceComponents).values(componentRows.filter(([, amount]) => new FinancialDecimal(amount).gt(0)).map(([componentKind, amount, sourceType, sourcePublicId]) => ({ tenantId: ctx.tenantId, restructureId: row.id, loanId: newLoan.id, componentKind, amount, sourceType, sourcePublicId, createdByUserId: ctx.actorUserId })));
         for (const [componentKind, amount, item] of [["interest", computed.waivedInterest, stored.waivers?.interest], ["fee", computed.waivedFees, stored.waivers?.fees], ["penalty", computed.waivedPenalty, stored.waivers?.penalty]] as const) {
             if (amount.gt(0)) {
                 const waiverAudit = await createAuditLog(tx, { ...auditContext(ctx), entityType: "loan_restructure_waiver", entityId: row.publicId, action: "executed_with_restructure", payload: { componentKind, amount: serializeMoney(amount), reason: item?.reason } });

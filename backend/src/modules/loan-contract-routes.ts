@@ -16,7 +16,57 @@ import { bangkokBusinessDate, getLoanPaymentHealth } from "../services/loan-paym
 import { floatingInterestBalances } from "../services/floating-interest-service";
 import { DomainError } from "../services/domain-error";
 import { loanCommandContext, loanDomainFailure, loanUnauthorized } from "./loan-http-support";
-import { dailyEntry, floatingInterestPolicy, loanTermsBody, publicMoney, repaymentType } from "./loan-route-schemas";
+import { loanDraftBody, loanDraftUpdateBody, loanTermsBody } from "./loan-route-schemas";
+
+function assertKnownKeys(value: Record<string, unknown>, allowedKeys: readonly string[], path = "body") {
+    const unexpected = Object.keys(value).filter((key) => !allowedKeys.includes(key));
+    if (unexpected.length) {
+        throw new DomainError("VALIDATION_ERROR", `Unexpected ${path} field: ${unexpected[0]}`, 422, {
+            unexpectedFields: unexpected.map((key) => `${path}.${key}`),
+        });
+    }
+}
+
+function assertClosedLoanTerms(body: Record<string, unknown>, draft: boolean) {
+    assertKnownKeys(body, [
+        "principal", "interestRate", "termMonths", "repaymentType", "startDate",
+        "totalInstallments", "installmentAmount", "floatingInterestPolicy", "floatingDailyInterest",
+        "dailyEntry", "singlePayment",
+        ...(draft ? ["borrowerPublicId", "bankLoanPublicId", "bankProfilePublicId"] : []),
+    ]);
+    const policy = body.floatingInterestPolicy as Record<string, unknown> | undefined;
+    if (policy) {
+        assertKnownKeys(policy, [
+            "periodUnit", "periodLength", "rateMode", "rate", "advanceInterestPeriods",
+            "advanceInterestRefundPolicy",
+        ], "body.floatingInterestPolicy");
+    }
+    const floating = body.floatingDailyInterest as Record<string, unknown> | undefined;
+    if (floating) {
+        assertKnownKeys(floating, ["mode", "rate", "firstDayTreatment", "accrualCycle"], "body.floatingDailyInterest");
+    }
+    const daily = body.dailyEntry as Record<string, unknown> | undefined;
+    if (daily) {
+        assertKnownKeys(daily, ["durationUnit", "durationValue", "entryMode", "dailyPayment", "interestInput"], "body.dailyEntry");
+        const interestInput = daily.interestInput as Record<string, unknown> | undefined;
+        if (interestInput) {
+            assertKnownKeys(interestInput, ["mode", "value"], "body.dailyEntry.interestInput");
+        }
+    }
+    const single = body.singlePayment as Record<string, unknown> | undefined;
+    if (single) {
+        assertKnownKeys(single, ["dueDate", "fixedAgreedInterest", "interestPolicy", "retroactiveInterest", "latePenalty"], "body.singlePayment");
+        const retroactive = single.retroactiveInterest as Record<string, unknown> | undefined;
+        if (retroactive) {
+            assertKnownKeys(retroactive, ["rateType", "rate"], "body.singlePayment.retroactiveInterest");
+        }
+        const penalty = single.latePenalty as Record<string, unknown> | undefined;
+        if (penalty) {
+            assertKnownKeys(penalty, penalty.mode === "fixed_amount_per_day"
+                ? ["mode", "amountPerDay", "graceDays"] : ["mode"], "body.singlePayment.latePenalty");
+        }
+    }
+}
 
 function requireLegacyCloseEligible(loan: typeof loans.$inferSelect) {
     if (loan.repaymentType === "floating") {
@@ -28,7 +78,7 @@ function requireLegacyCloseEligible(loan: typeof loans.$inferSelect) {
     }
 }
 
-export const loanContractRoutes = new Elysia().use(authPlugin)
+export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugin)
     .get("/", async ({ user, query, request, set }) => {
         if (!user) return loanUnauthorized(set);
         const ctx = loanCommandContext(user, request);
@@ -220,16 +270,7 @@ export const loanContractRoutes = new Elysia().use(authPlugin)
         } catch (error) {
             return loanDomainFailure(error, set);
         }
-    }, {
-        body: t.Object({
-            borrowerPublicId: t.String(),
-            bankLoanPublicId: t.Optional(t.Nullable(t.String())),
-            bankProfilePublicId: t.Optional(t.Nullable(t.String())),
-            principal: publicMoney, interestRate: publicMoney, repaymentType, termMonths: t.Number(),
-            totalInstallments: t.Optional(t.Number()), installmentAmount: t.Optional(publicMoney),
-            floatingInterestPolicy: t.Optional(floatingInterestPolicy), dailyEntry: t.Optional(dailyEntry), startDate: t.String(),
-        }, { additionalProperties: t.Never() }),
-    })
+    }, { body: loanDraftBody })
     .put("/:id", async ({ params, body, user, request, set }) => {
         if (!user) return loanUnauthorized(set);
         try {
@@ -244,18 +285,7 @@ export const loanContractRoutes = new Elysia().use(authPlugin)
         } catch (error) {
             return loanDomainFailure(error, set);
         }
-    }, {
-        params: t.Object({ id: t.String() }),
-        body: t.Object({
-            borrowerPublicId: t.Optional(t.String()),
-            bankLoanPublicId: t.Optional(t.Nullable(t.String())),
-            bankProfilePublicId: t.Optional(t.Nullable(t.String())),
-            principal: t.Optional(publicMoney), interestRate: t.Optional(publicMoney),
-            repaymentType: t.Optional(repaymentType), termMonths: t.Optional(t.Number()),
-            totalInstallments: t.Optional(t.Number()), installmentAmount: t.Optional(publicMoney),
-            floatingInterestPolicy: t.Optional(floatingInterestPolicy), dailyEntry: t.Optional(dailyEntry), startDate: t.Optional(t.String()),
-        }, { additionalProperties: t.Never() }),
-    })
+    }, { params: t.Object({ id: t.String() }), body: loanDraftUpdateBody })
     .post("/:id/activate", async ({ params, user, request, set }) => {
         if (!user) return loanUnauthorized(set);
         try {

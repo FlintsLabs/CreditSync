@@ -252,18 +252,13 @@ describe("loan payment-health service", () => {
             { tenantId: "tenant-a", loanId: loan.id, effectiveDate: "2026-09-01", expiryDate: null, rateType: "per_thousand", rate: "18.0000", createdByUserId: actor.id },
         ]).returning();
 
-        await getLoanPaymentHealth(db, loan, { asOf: new Date("2026-09-02T12:00:00+07:00"), context: context(actor) });
-
-        expect(await db.select({
-            accrualDate: loanInterestAccruals.accrualDate,
-            interestRatePeriodId: loanInterestAccruals.interestRatePeriodId,
-            rate: loanInterestAccruals.rate,
-            interestAmount: loanInterestAccruals.interestAmount,
-        }).from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id)).orderBy(loanInterestAccruals.accrualDate)).toEqual([
-            { accrualDate: "2026-08-31", interestRatePeriodId: periods[0]!.id, rate: "15.0000", interestAmount: "15.00" },
-            { accrualDate: "2026-09-01", interestRatePeriodId: periods[1]!.id, rate: "18.0000", interestAmount: "18.00" },
-            { accrualDate: "2026-09-02", interestRatePeriodId: periods[1]!.id, rate: "18.0000", interestAmount: "18.00" },
-        ]);
+        expect(await getLoanPaymentHealth(db, loan, {
+            asOf: new Date("2026-09-02T12:00:00+07:00"), context: context(actor),
+        })).toMatchObject({
+            status: "overdue", dueTodayAmount: "18.00", overdueAmount: "33.00",
+            overdueItemCount: 2, maxOverdueDays: 2,
+        });
+        expect(await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id))).toHaveLength(0);
     });
 
     // Break caught: weekly accruals are due during days one through seven, or one completed period is reported as seven overdue obligations.
@@ -286,19 +281,19 @@ describe("loan payment-health service", () => {
             asOf: new Date("2026-08-18T12:00:00+07:00"), context: context(actor),
         })).toEqual({
             status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00",
-            overdueItemCount: 0, maxOverdueDays: 0,
+            overdueItemCount: 0, maxOverdueDays: 0, accruingInterestAmount: "514.29",
         });
         expect(await getLoanPaymentHealth(db, loan, {
             asOf: new Date("2026-08-20T12:00:00+07:00"), context: context(actor),
         })).toEqual({
             status: "due_today", dueTodayAmount: "600.00", overdueAmount: "0.00",
-            overdueItemCount: 0, maxOverdueDays: 0,
+            overdueItemCount: 0, maxOverdueDays: 0, accruingInterestAmount: "85.71",
         });
         expect(await getLoanPaymentHealth(db, loan, {
             asOf: new Date("2026-08-21T12:00:00+07:00"), context: context(actor),
         })).toEqual({
             status: "overdue", dueTodayAmount: "0.00", overdueAmount: "600.00",
-            overdueItemCount: 1, maxOverdueDays: 1,
+            overdueItemCount: 1, maxOverdueDays: 1, accruingInterestAmount: "171.43",
         });
     });
 

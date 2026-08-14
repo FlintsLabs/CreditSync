@@ -140,16 +140,25 @@ describe("loan application service", () => {
         });
     });
 
-    // Break caught: accepting the removed daily-only request shape creates ambiguous contractual period semantics.
-    test("rejects the legacy daily-only floating policy request", () => {
-        expect(() => previewLoan({
+    // Break caught: the additive generalized policy removes the established
+    // daily-only request adapter or returns a different normalized projection.
+    test("adapts the legacy daily-only floating policy request", () => {
+        expect(previewLoan({
             principal: "5000.00",
             interestRate: "0.00",
             repaymentType: "floating",
             termMonths: 1,
             startDate: "2026-08-13",
             floatingDailyInterest: { mode: "percent", rate: "12", firstDayTreatment: "deduct" },
-        } as unknown as Parameters<typeof previewLoan>[0])).toThrow("floating interest policy");
+        })).toMatchObject({
+            floatingInterestPolicy: {
+                periodUnit: "day", periodLength: 1, rateMode: "percent", rate: "12.0000",
+                advanceInterestPeriods: 1, advanceInterestRefundPolicy: "non_refundable",
+            },
+            floatingDailyInterest: {
+                mode: "percent", rate: "12.0000", firstDayTreatment: "deduct", accrualCycle: "daily",
+            },
+        });
     });
 
     if (integrationEnabled) beforeEach(resetApplicationTables);
@@ -163,7 +172,9 @@ describe("loan application service", () => {
         expect(draft).toMatchObject({
             status: "draft",
             floatingInterestPolicy: { ...weeklyAdvanceTerms.floatingInterestPolicy, rate: "12.0000" },
-            floatingDailyInterest: null,
+            floatingDailyInterest: {
+                mode: "percent", rate: "12.0000", firstDayTreatment: "deduct", accrualCycle: "weekly",
+            },
         });
 
         const stored = await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) });
@@ -658,9 +669,8 @@ describe("loan application service", () => {
             borrowerPublicId: borrower.publicId,
             principal: "1000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1,
             startDate: "2026-08-10",
-            floatingInterestPolicy: {
-                periodUnit: "day", periodLength: 1, rateMode: "per_thousand", rate: "15",
-                advanceInterestPeriods: 1, advanceInterestRefundPolicy: "non_refundable",
+            floatingDailyInterest: {
+                mode: "per_thousand", rate: "15", firstDayTreatment: "deduct", accrualCycle: "weekly",
             },
         });
         const stored = await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) });
@@ -676,11 +686,11 @@ describe("loan application service", () => {
         expect(accruals.every((row) => row.interestRatePeriodId === period!.id && row.status === "paid"
             && row.interestAmount === row.paidAmount)).toBe(true);
         expect(accruals[0]).toMatchObject({
-            accrualDate: "2026-08-11", periodStartDate: "2026-08-10", periodEndDate: "2026-08-17",
+            accrualDate: "2026-08-10", periodStartDate: "2026-08-10", periodEndDate: "2026-08-17",
             periodDayIndex: 1, periodDays: 7, openingPrincipal: "1000.00",
         });
         expect(accruals[6]).toMatchObject({
-            accrualDate: "2026-08-17", periodDayIndex: 7, cumulativeInterestAmount: "15.00",
+            accrualDate: "2026-08-16", periodDayIndex: 7, cumulativeInterestAmount: "15.00",
         });
     });
 
@@ -722,9 +732,9 @@ describe("loan application service", () => {
         expect(active.every((row) => row.status === "paid" && row.interestAmount === row.paidAmount)).toBe(true);
         expect(active.reduce((sum, row) => sum.plus(row.interestAmount), new Decimal(0)).toFixed(2)).toBe("600.00");
         expect(active.reduce((sum, row) => sum.plus(row.paidAmount), new Decimal(0)).toFixed(2)).toBe("600.00");
-        expect(active[2]).toMatchObject({
+        expect(active[3]).toMatchObject({
             accrualDate: "2026-08-13", openingPrincipal: "5000.00",
-            interestAmount: "85.71", cumulativeInterestAmount: "257.14", status: "paid",
+            interestAmount: "85.72", cumulativeInterestAmount: "342.86", status: "paid",
         });
     });
 
@@ -1095,9 +1105,9 @@ describe("loan application service", () => {
         });
     });
 
-    // Break caught: the legacy annual-rate closing calculator reports zero or
-    // native-number drift instead of the current weekly period projection.
-    integrationTest("includes exact interim weekly interest in the closing summary", async () => {
+    // Break caught: the legacy closing-summary route bypasses the reviewed
+    // floating settlement workflow for an interim weekly period.
+    integrationTest("rejects an interim weekly legacy closing summary", async () => {
         setSystemTime(new Date("2026-08-13T12:00:00+07:00"));
         try {
             const actor = await seedUser("tenant-weekly-closing", "weekly-closing@example.test", "owner");
@@ -1118,10 +1128,10 @@ describe("loan application service", () => {
                 headers: { authorization: `Bearer ${token}` },
             });
 
-            expect(closing.response.status, closing.text).toBe(200);
-            expect(closing.body).toMatchObject({
-                principal: "5000.00", totalInterest: "257.14", totalDue: "5257.14", balance: "5257.14",
-                accruingInterest: "257.14", dueInterest: "0.00", totalPaid: "0.00",
+            expect(closing.response.status, closing.text).toBe(409);
+            expect(closing.body).toEqual({
+                code: "FLOATING_SETTLEMENT_REQUIRED",
+                error: "Floating loans require the preview-and-execute settlement workflow",
             });
         } finally {
             setSystemTime();

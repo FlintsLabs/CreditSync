@@ -5,6 +5,7 @@ import {
     auditLogs,
     bankProfiles,
     borrowers,
+    floatingTransactionAllocations,
     fundLedgerEntries,
     loanDisbursements,
     loanFundingAllocations,
@@ -77,7 +78,12 @@ async function waitForBlockedAdvisoryLock() {
 const paidAdvanceIncrements = ["85.71", "85.72", "85.71", "85.72", "85.71", "85.72", "85.71"];
 const paidAdvanceCumulative = ["85.71", "171.43", "257.14", "342.86", "428.57", "514.29", "600.00"];
 
-async function seedWeeklyLoan(input: { tenantId: string; advancePeriods?: 0 | 1 }) {
+async function seedWeeklyLoan(input: {
+    tenantId: string;
+    advancePeriods?: 0 | 1;
+    principal?: string;
+    rate?: string;
+}) {
     const actor = await seedUser(input.tenantId);
     const borrower = await db.insert(borrowers).values({
         tenantId: input.tenantId,
@@ -85,23 +91,26 @@ async function seedWeeklyLoan(input: { tenantId: string; advancePeriods?: 0 | 1 
         name: "Settlement borrower",
     }).returning().then((rows) => rows[0]!);
     const advancePeriods = input.advancePeriods ?? 0;
+    const principal = input.principal ?? "5000.00";
+    const rate = input.rate ?? "12.0000";
     const loan = await db.insert(loans).values({
         tenantId: input.tenantId,
         ownerUserId: actor.id,
         borrowerId: borrower.id,
-        principalAmount: "5000.00",
+        principalAmount: principal,
         interestRate: "0.00",
         repaymentType: "floating",
         dailyInterestMode: "percent",
-        dailyInterestRate: "12.0000",
+        dailyInterestRate: rate,
         firstDayTreatment: advancePeriods === 1 ? "deduct" : "start_next_day",
         interestStartDate: "2026-08-13",
+        floatingAccrualCycle: "weekly",
         interestPeriodUnit: "week",
         interestPeriodLength: 1,
         advanceInterestPeriods: advancePeriods,
         advanceInterestRefundPolicy: "non_refundable",
         interestPeriodAnchorDate: "2026-08-13",
-        outstandingPrincipal: "5000.00",
+        outstandingPrincipal: principal,
         outstandingInterest: "0.00",
         outstandingFees: "0.00",
         status: "active",
@@ -111,7 +120,7 @@ async function seedWeeklyLoan(input: { tenantId: string; advancePeriods?: 0 | 1 
         loanId: loan.id,
         effectiveDate: "2026-08-13",
         rateType: "percent",
-        rate: "12.0000",
+        rate,
         periodUnit: "week",
         periodLength: 1,
         createdByUserId: actor.id,
@@ -178,15 +187,12 @@ describe("loan settlement service", () => {
     // Break caught: settlement arithmetic or stale/zero comparisons use Decimal's default
     // 20-digit precision and erase low-order cents from a valid 29-digit public balance.
     integrationTest("settles a 29-digit balance exactly and detects a one-cent stale change", async () => {
-        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-precision-boundary" });
         const principal = "98765432109876543210987654321.09";
-        await db.update(loans).set({
-            principalAmount: principal,
-            outstandingPrincipal: principal,
-            dailyInterestRate: "0.0007",
-        }).where(eq(loans.id, seeded.loan.id));
-        await db.update(loanInterestRatePeriods).set({ rate: "0.0007" })
-            .where(eq(loanInterestRatePeriods.id, seeded.ratePeriod.id));
+        const seeded = await seedWeeklyLoan({
+            tenantId: "tenant-settlement-precision-boundary",
+            principal,
+            rate: "0.0007",
+        });
         const profile = await db.insert(bankProfiles).values({
             tenantId: seeded.actor.tenantId,
             name: "Precision settlement fund",
@@ -261,17 +267,14 @@ describe("loan settlement service", () => {
     // 20-digit context, changing each source's exact cents even though the remainder masks
     // the error in the aggregate ledger total.
     integrationTest("conserves a 29-digit settlement principal across two exact funding sources", async () => {
-        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-multi-source-precision" });
         const principal = "88888888888888888888888888888.09";
         const firstShare = "44444444444444444444444444443.54";
         const secondShare = "44444444444444444444444444444.55";
-        await db.update(loans).set({
-            principalAmount: principal,
-            outstandingPrincipal: principal,
-            dailyInterestRate: "0.0001",
-        }).where(eq(loans.id, seeded.loan.id));
-        await db.update(loanInterestRatePeriods).set({ rate: "0.0001" })
-            .where(eq(loanInterestRatePeriods.id, seeded.ratePeriod.id));
+        const seeded = await seedWeeklyLoan({
+            tenantId: "tenant-settlement-multi-source-precision",
+            principal,
+            rate: "0.0001",
+        });
         const profiles = await db.insert(bankProfiles).values([
             { tenantId: seeded.actor.tenantId, name: "Precision source one", type: "personal_savings" },
             { tenantId: seeded.actor.tenantId, name: "Precision source two", type: "personal_savings" },
@@ -575,6 +578,18 @@ describe("loan settlement service", () => {
             expect.objectContaining({ accrualDate: "2026-08-14", paidAmount: "85.72", status: "paid" }),
             expect.objectContaining({ accrualDate: "2026-08-15", paidAmount: "85.71", status: "paid" }),
         ]));
+        const settlementTransaction = await db.query.transactions.findFirst({
+            where: eq(transactions.publicId, first.transaction.publicId),
+        });
+        expect(await db.select().from(floatingTransactionAllocations).where(and(
+            eq(floatingTransactionAllocations.tenantId, seeded.actor.tenantId),
+            eq(floatingTransactionAllocations.transactionId, settlementTransaction!.id),
+            eq(floatingTransactionAllocations.component, "interest"),
+        )).orderBy(floatingTransactionAllocations.allocationOrder)).toEqual([
+            expect.objectContaining({ allocationOrder: 1, amount: "85.71", dueDate: "2026-08-20" }),
+            expect.objectContaining({ allocationOrder: 2, amount: "85.72", dueDate: "2026-08-20" }),
+            expect.objectContaining({ allocationOrder: 3, amount: "85.71", dueDate: "2026-08-20" }),
+        ]);
         expect(await db.select().from(auditLogs).where(and(
             eq(auditLogs.entityId, preview.publicId),
             eq(auditLogs.action, "executed"),
