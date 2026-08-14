@@ -3,7 +3,7 @@ import Decimal from "decimal.js";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
-    auditLogs, borrowers, loanDisbursementEvents, loanInterestAccruals, loanInterestRatePeriods,
+    auditLogs, borrowers, loanAdjustments, loanDisbursementEvents, loanInterestAccruals, loanInterestRatePeriods,
     loanOpeningBalanceComponents, loanRestructures, loanRestructureWaivers, loanSchedules, loans,
     transactions, users,
 } from "../db/schema";
@@ -324,6 +324,20 @@ export async function executeLoanRestructure(ctx: CommandContext, restructurePub
                 await tx.insert(loanRestructureWaivers).values({ tenantId: ctx.tenantId, restructureId: row.id, loanId: newLoan.id, componentKind, amount: serializeMoney(amount), reason: item!.reason, status: "executed", actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, executeIdempotencyKey: `restructure:${required.idempotencyKey}:waiver:${componentKind}`, executeRequestHash: sha({ row: row.publicId, componentKind, amount: serializeMoney(amount), reason: item!.reason }), auditPublicId: waiverAudit.publicId, createdByUserId: ctx.actorUserId, executedAt: now });
             }
         }
+        if (computed.creditAmount.gt(0)) {
+            await tx.insert(loanAdjustments).values({
+                tenantId: ctx.tenantId,
+                loanId: oldLoan.id,
+                adjustmentType: "external_settlement_credit",
+                amount: serializeMoney(computed.creditAmount),
+                status: "posted",
+                idempotencyKey: `restructure:${required.idempotencyKey}:external-credit`,
+                reason: `${stored.externalSettlementCredit!.payer}: ${stored.externalSettlementCredit!.source}`,
+                effectiveAt: new Date(`${row.settlementDate}T00:00:00+07:00`),
+                createdByUserId: ctx.actorUserId,
+                updatedByUserId: ctx.actorUserId,
+            });
+        }
         let draft = null;
         if (computed.additionalPrincipal.gt(0)) draft = await createDisbursementDraftInTransaction(tx, ctx, newLoan, { grossAmount: serializeMoney(computed.additionalPrincipal), loanAttributedAmount: serializeMoney(computed.additionalPrincipal), channel: "adjustment", note: `Additional principal approved by restructure ${row.publicId}; payout not yet posted`, payeeHint: null, disbursedAt: now.toISOString() });
         await tx.update(loans).set({ status: "restructured", updatedAt: now }).where(and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, oldLoan.id), eq(loans.status, "active")));
@@ -351,7 +365,10 @@ export async function reverseLoanRestructure(ctx: CommandContext, restructurePub
         const [paymentCount, postedDisbursements, laterWaivers, laterRestructures, rateChanges] = await Promise.all([
             tx.select({ count: sql<number>`count(*)::int` }).from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.loanId, row.newLoanId))),
             tx.select({ count: sql<number>`count(*)::int` }).from(loanDisbursementEvents).where(and(eq(loanDisbursementEvents.tenantId, ctx.tenantId), eq(loanDisbursementEvents.loanId, row.newLoanId), inArray(loanDisbursementEvents.status, ["posted", "reversed"]))),
-            tx.select({ count: sql<number>`count(*)::int` }).from(loanRestructureWaivers).where(and(eq(loanRestructureWaivers.tenantId, ctx.tenantId), eq(loanRestructureWaivers.loanId, row.newLoanId))),
+            tx.select({ count: sql<number>`count(*)::int` }).from(loanRestructureWaivers).where(and(
+                eq(loanRestructureWaivers.tenantId, ctx.tenantId), eq(loanRestructureWaivers.loanId, row.newLoanId),
+                sql`${loanRestructureWaivers.executeIdempotencyKey} NOT LIKE ${`restructure:${row.executeIdempotencyKey}:%`}`,
+            )),
             tx.select({ count: sql<number>`count(*)::int` }).from(loanRestructures).where(and(eq(loanRestructures.tenantId, ctx.tenantId), eq(loanRestructures.oldLoanId, row.newLoanId), inArray(loanRestructures.status, ["executed", "reversed"]))),
             tx.select({ count: sql<number>`count(*)::int` }).from(loanInterestRatePeriods).where(and(eq(loanInterestRatePeriods.tenantId, ctx.tenantId), eq(loanInterestRatePeriods.loanId, row.newLoanId))),
         ]);

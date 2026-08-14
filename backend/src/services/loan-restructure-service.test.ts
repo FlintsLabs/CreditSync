@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
-    auditLogs, borrowers, loanDisbursementEvents, loanOpeningBalanceComponents,
+    auditLogs, borrowers, loanAdjustments, loanDisbursementEvents, loanOpeningBalanceComponents,
     loanRestructures, loanSchedules, loans, transactions, users,
 } from "../db/schema";
 import type { CommandContext } from "./command-context";
@@ -72,6 +72,7 @@ describe("loan restructure service", () => {
         const preview = await previewLoanRestructure(ctx(), loan.publicId, {
             settlementDate: "2026-08-15", replacementTerms, additionalPrincipal: "1000.00",
             waivers: { interest: { amount: "100.00", reason: "hardship" } }, reason: "replace contract",
+            externalSettlementCredit: { amount: "200.00", payer: "Family", source: "assistance" },
         });
         const input = { confirmed: true as const, previewHash: preview.previewHash, expectedBalanceVersion: preview.oldBalanceVersion, reason: "approved replacement" };
         const first = await executeLoanRestructure(ctx("execute-1"), preview.publicId, input);
@@ -92,6 +93,8 @@ describe("loan restructure service", () => {
         ]));
         const drafts = await db.select().from(loanDisbursementEvents).where(eq(loanDisbursementEvents.loanId, newLoan!.id));
         expect(drafts.map(d => [d.status, d.grossAmount, d.loanAttributedAmount])).toEqual([["draft", "1000.00", "1000.00"]]);
+        expect((await db.select().from(loanAdjustments).where(eq(loanAdjustments.loanId, loan.id))).map(row => [row.adjustmentType, row.amount, row.reason]))
+            .toEqual([["external_settlement_credit", "200.00", "Family: assistance"]]);
     });
 
     integrationTest("rejects stale balance and conflicting idempotency payload", async () => {
