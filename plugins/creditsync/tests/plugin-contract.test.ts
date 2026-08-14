@@ -145,6 +145,10 @@ describe("CreditSync plugin 4.0.0 contract", () => {
             "intermediated-disbursement-missing-evidence",
             "intermediated-disbursement-duplicate-transfer",
             "intermediated-disbursement-amount-payee-mismatch",
+            "intermediated-disbursement-finalize-evidence-id-mismatch",
+            "intermediated-disbursement-finalize-file-id-mismatch",
+            "intermediated-disbursement-ready-metadata-mismatch",
+            "intermediated-disbursement-inspection-evidence-mismatch",
             "intermediated-disbursement-unexplained-retained-balance",
             "intermediated-disbursement-stale-preview",
             "intermediated-disbursement-missing-confirmation",
@@ -156,7 +160,7 @@ describe("CreditSync plugin 4.0.0 contract", () => {
             "unauthorized-access",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
         expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(17);
-        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(33);
+        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(37);
     });
 
     test("floating settlement skill preserves exact composition and all execution stop gates", async () => {

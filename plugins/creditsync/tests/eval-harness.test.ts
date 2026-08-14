@@ -75,6 +75,24 @@ describe("CreditSync executable orchestration evals", () => {
                 bytesUnchanged: true,
             };
         }));
+        const prepareCalls = result.calls.filter((call) => call.name === "intermediary.disbursement.evidence.prepare");
+        const finalizeCalls = result.calls.filter((call) => call.name === "intermediary.disbursement.evidence.finalize");
+        for (const index of [0, 1, 2]) {
+            const bytes = Buffer.from(`intermediated-slip-${index + 1}-fixture-bytes`, "utf8");
+            expect(prepareCalls[index]?.arguments).toEqual({
+                groupPublicId: "0198c481-3e2b-7000-8000-000000000084",
+                eventPublicId: `0198c481-3e2b-7000-8000-00000000008${index + 5}`,
+                mimeType: "image/png",
+                size: bytes.byteLength,
+                sha256: sha256(bytes),
+                originalName: `intermediated-slip-${index + 1}.png`,
+            });
+            expect(finalizeCalls[index]?.arguments).toEqual({
+                groupPublicId: "0198c481-3e2b-7000-8000-000000000084",
+                eventPublicId: `0198c481-3e2b-7000-8000-00000000008${index + 5}`,
+                evidencePublicId: `0198c481-3e2b-7000-8000-0000000000${index + 88}`,
+            });
+        }
         expect(result.calls.at(-1)?.arguments).toMatchObject({ confirmed: true });
         expect(result.events.slice(-3).map((event) => event.type === "tool" ? event.name : `${event.type}:${event.name}`)).toEqual([
             "presentation:intermediated-disbursement-preview",
@@ -95,6 +113,10 @@ describe("CreditSync executable orchestration evals", () => {
             "intermediated-disbursement-missing-evidence": "intermediated-evidence-required",
             "intermediated-disbursement-duplicate-transfer": "intermediated-duplicate-transfer",
             "intermediated-disbursement-amount-payee-mismatch": "intermediated-transfer-mismatch",
+            "intermediated-disbursement-finalize-evidence-id-mismatch": "intermediated-evidence-binding-mismatch",
+            "intermediated-disbursement-finalize-file-id-mismatch": "intermediated-evidence-binding-mismatch",
+            "intermediated-disbursement-ready-metadata-mismatch": "intermediated-evidence-binding-mismatch",
+            "intermediated-disbursement-inspection-evidence-mismatch": "intermediated-evidence-binding-mismatch",
             "intermediated-disbursement-unexplained-retained-balance": "intermediated-retained-balance-unexplained",
             "intermediated-disbursement-stale-preview": "fresh-intermediated-confirmation-required",
             "intermediated-disbursement-missing-confirmation": "intermediated-confirmation-required",
@@ -104,6 +126,28 @@ describe("CreditSync executable orchestration evals", () => {
             expect(result).toMatchObject({ outcome: "stopped", stopReason });
             const confirmedPosts = result.calls.filter((call) => call.name === "intermediary.disbursement.post" && call.arguments.confirmed === true);
             expect(confirmedPosts).toHaveLength(id === "intermediated-disbursement-stale-preview" ? 1 : 0);
+        }
+    });
+
+    test("intermediated disbursement stops when evidence identity or immutable slip metadata changes", async () => {
+        const scenarioIds = [
+            "intermediated-disbursement-finalize-evidence-id-mismatch",
+            "intermediated-disbursement-finalize-file-id-mismatch",
+            "intermediated-disbursement-ready-metadata-mismatch",
+            "intermediated-disbursement-inspection-evidence-mismatch",
+        ] as const;
+        for (const id of scenarioIds) {
+            const result = await runEvalScenario(id);
+            expect(result).toMatchObject({
+                outcome: "stopped",
+                stopReason: "intermediated-evidence-binding-mismatch",
+            });
+            expect(result.calls.some((call) => call.name === "intermediary.disbursement.preview")).toBe(false);
+            expect(result.calls.some((call) => call.name === "intermediary.disbursement.post")).toBe(false);
+            if (id === "intermediated-disbursement-ready-metadata-mismatch") {
+                expect(result.calls.some((call) => call.name === "intermediary.disbursement.evidence.finalize")).toBe(false);
+                expect(result.effects).toEqual([]);
+            }
         }
     });
 

@@ -12,7 +12,7 @@
 
 ### Fixed
 
-- Required literal intermediated-disbursement confirmation, validated its complete scripted inputs and outputs with a full JSON Schema parser, sent the declared retained balance, compared exact roles/references/amounts/payees/evidence before preview, and verified upload descriptors against unchanged fixture bytes and SHA-256.
+- Required literal intermediated-disbursement confirmation, validated its complete scripted inputs and outputs with a full JSON Schema parser, sent the declared retained balance, bound each supplied slip's evidence/file UUID and immutable MIME/size/SHA-256 across prepare, ready retry, finalize, and inspection, compared exact roles/references/amounts/payees before preview, and verified upload descriptors against unchanged fixture bytes.
 
 ### Compatibility
 

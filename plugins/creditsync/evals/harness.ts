@@ -46,6 +46,8 @@ const INTERMEDIATED_EVIDENCE_FILES = [
     "0198c481-3e2b-7000-8000-000000000094",
     "0198c481-3e2b-7000-8000-000000000095",
 ] as const;
+const INTERMEDIATED_WRONG_EVIDENCE = "0198c481-3e2b-7000-8000-000000000100";
+const INTERMEDIATED_WRONG_EVIDENCE_FILE = "0198c481-3e2b-7000-8000-000000000101";
 const INTERMEDIATED_AUDIT = "0198c481-3e2b-7000-8000-000000000096";
 const INTERMEDIATED_CORRELATION = "0198c481-3e2b-7000-8000-000000000097";
 const INTERMEDIATED_LOAN_DISBURSEMENT = "0198c481-3e2b-7000-8000-000000000098";
@@ -777,16 +779,26 @@ function intermediatedEventScript(index: number, options: { missingEvidence?: bo
     ];
 }
 
-function intermediatedPresentedEvents(payeeMismatch = false) {
+function intermediatedPresentedEvents(options: {
+    transferMismatch?: boolean;
+    evidenceBindingMismatch?: boolean;
+} = {}) {
     return intermediatedEventSpecs.map((_, index) => ({
         ...intermediatedEventResult(index),
-        ...(payeeMismatch && index === 1 ? { payeeHint: "Different unconfirmed payee" } : {}),
+        ...(options.transferMismatch && index === 1 ? {
+            role: "funding_to_intermediary",
+            amount: "4399.99",
+            payeeHint: "Different unconfirmed payee",
+            bankReference: "UNCONFIRMED-REFERENCE",
+        } : {}),
         evidence: {
             status: "ready",
             count: 1,
             items: [{
                 publicId: INTERMEDIATED_EVIDENCE[index]!,
-                filePublicId: INTERMEDIATED_EVIDENCE_FILES[index]!,
+                filePublicId: options.evidenceBindingMismatch && index === 1
+                    ? INTERMEDIATED_WRONG_EVIDENCE_FILE
+                    : INTERMEDIATED_EVIDENCE_FILES[index]!,
                 status: "ready",
                 mimeType: "image/png",
             }],
@@ -794,12 +806,49 @@ function intermediatedPresentedEvents(payeeMismatch = false) {
     }));
 }
 
-function intermediatedDetailStep(payeeMismatch = false): ScriptStep {
+function intermediatedDetailStep(options: {
+    transferMismatch?: boolean;
+    evidenceBindingMismatch?: boolean;
+} = {}): ScriptStep {
     return {
         name: "intermediary.disbursement.get",
         arguments: { groupPublicId: INTERMEDIATED_GROUP },
-        result: { ...intermediatedGroupResult(), events: intermediatedPresentedEvents(payeeMismatch), latestPreview: null },
+        result: { ...intermediatedGroupResult(), events: intermediatedPresentedEvents(options), latestPreview: null },
     };
+}
+
+function intermediatedFinalizeBindingMismatchScript(field: "publicId" | "filePublicId"): ScriptStep[] {
+    const eventScript = intermediatedEventScript(0);
+    const finalize = eventScript.at(-1)!;
+    return [
+        ...intermediatedIdentityScript(),
+        intermediatedGroupCreateStep(),
+        ...eventScript.slice(0, -1),
+        {
+            ...finalize,
+            result: {
+                ...finalize.result,
+                [field]: field === "publicId" ? INTERMEDIATED_WRONG_EVIDENCE : INTERMEDIATED_WRONG_EVIDENCE_FILE,
+            },
+        },
+    ];
+}
+
+function intermediatedReadyMetadataMismatchScript(): ScriptStep[] {
+    const eventScript = intermediatedEventScript(0);
+    const prepare = eventScript[1]!;
+    return [
+        ...intermediatedIdentityScript(),
+        intermediatedGroupCreateStep(),
+        eventScript[0]!,
+        {
+            ...prepare,
+            result: {
+                ...intermediatedEvidenceResult(0, "ready"),
+                sha256: "0".repeat(64),
+            },
+        },
+    ];
 }
 
 function intermediatedPreviewResult(publicId = INTERMEDIATED_PREVIEW) {
@@ -900,6 +949,14 @@ async function intermediatedDisbursementFlow(
         return { outcome: "stopped", stopReason: "intermediated-retained-balance-unexplained" } as const;
     }
 
+    const evidenceBindings: Array<{
+        eventPublicId: string;
+        evidencePublicId: string;
+        filePublicId: string;
+        mimeType: string;
+        size: number;
+        sha256: string;
+    }> = [];
     for (const [index, spec] of intermediatedEventSpecs.entries()) {
         let event: Record<string, unknown>;
         try {
@@ -911,21 +968,38 @@ async function intermediatedDisbursementFlow(
             throw error;
         }
         if (event.publicId !== spec.publicId) return { outcome: "stopped", stopReason: "intermediated-transfer-mismatch" } as const;
+        const evidenceArgs = intermediatedEvidenceArgs(index);
         let prepared: Record<string, unknown>;
         try {
-            prepared = await mcp.call("intermediary.disbursement.evidence.prepare", intermediatedEvidenceArgs(index));
+            prepared = await mcp.call("intermediary.disbursement.evidence.prepare", evidenceArgs);
         } catch (error) {
             if (error instanceof ScriptedMcpError && error.code === "EVIDENCE_HASH_CONFLICT") {
                 return { outcome: "stopped", stopReason: "intermediated-duplicate-transfer" } as const;
             }
             throw error;
         }
+        if (typeof prepared.publicId !== "string"
+            || typeof prepared.filePublicId !== "string"
+            || prepared.mimeType !== evidenceArgs.mimeType
+            || prepared.size !== evidenceArgs.size
+            || prepared.sha256 !== evidenceArgs.sha256
+            || !["pending", "ready"].includes(String(prepared.status))) {
+            return { outcome: "stopped", stopReason: "intermediated-evidence-binding-mismatch" } as const;
+        }
+        const evidenceBinding = {
+            eventPublicId: spec.publicId,
+            evidencePublicId: prepared.publicId,
+            filePublicId: prepared.filePublicId,
+            mimeType: evidenceArgs.mimeType,
+            size: evidenceArgs.size,
+            sha256: evidenceArgs.sha256,
+        };
+        evidenceBindings.push(evidenceBinding);
         if (prepared.status === "ready") continue;
         const expiresAt = typeof prepared.expiresAt === "string" ? Date.parse(prepared.expiresAt) : Number.NaN;
         if (typeof prepared.uploadUrl !== "string" || !prepared.requiredHeaders || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
             return { outcome: "stopped", stopReason: "intermediated-evidence-required" } as const;
         }
-        const evidenceArgs = intermediatedEvidenceArgs(index);
         mcp.uploadEvidence({
             name: "intermediated-evidence.put",
             uploadUrl: prepared.uploadUrl,
@@ -937,9 +1011,16 @@ async function intermediatedDisbursementFlow(
         const finalized = await mcp.call("intermediary.disbursement.evidence.finalize", {
             groupPublicId: INTERMEDIATED_GROUP,
             eventPublicId: spec.publicId,
-            evidencePublicId: prepared.publicId,
+            evidencePublicId: evidenceBinding.evidencePublicId,
         });
-        if (finalized.status !== "ready") return { outcome: "stopped", stopReason: "intermediated-evidence-required" } as const;
+        if (finalized.status !== "ready"
+            || finalized.publicId !== evidenceBinding.evidencePublicId
+            || finalized.filePublicId !== evidenceBinding.filePublicId
+            || finalized.mimeType !== evidenceBinding.mimeType
+            || finalized.size !== evidenceBinding.size
+            || finalized.sha256 !== evidenceBinding.sha256) {
+            return { outcome: "stopped", stopReason: "intermediated-evidence-binding-mismatch" } as const;
+        }
     }
 
     const detail = await mcp.call("intermediary.disbursement.get", { groupPublicId: INTERMEDIATED_GROUP });
@@ -949,24 +1030,38 @@ async function intermediatedDisbursementFlow(
         amount: string;
         payeeHint: string | null;
         bankReference: string | null;
-        evidence: { status: string; count: number; items: Array<{ publicId: string; status: string; mimeType: string }> };
+        evidence: { status: string; count: number; items: Array<{
+            publicId: string;
+            filePublicId: string;
+            status: string;
+            mimeType: string;
+        }> };
     }>;
-    if (events.length !== intermediatedEventSpecs.length || intermediatedEventSpecs.some((spec) => {
+    const inspectedTransferMismatch = events.length !== intermediatedEventSpecs.length || intermediatedEventSpecs.some((spec) => {
         const event = events.find((candidate) => candidate.publicId === spec.publicId);
-        const index = intermediatedEventSpecs.indexOf(spec);
         return !event
             || event.role !== spec.role
             || event.amount !== spec.amount
             || event.payeeHint !== spec.payeeHint
-            || event.bankReference !== spec.bankReference
+            || event.bankReference !== spec.bankReference;
+    });
+    if (inspectedTransferMismatch) {
+        return { outcome: "stopped", stopReason: "intermediated-transfer-mismatch" } as const;
+    }
+    const inspectedEvidenceMismatch = intermediatedEventSpecs.some((spec, index) => {
+        const event = events.find((candidate) => candidate.publicId === spec.publicId)!;
+        const evidenceBinding = evidenceBindings[index];
+        return !evidenceBinding
             || event.evidence.status !== "ready"
             || event.evidence.count !== 1
             || event.evidence.items.length !== 1
-            || event.evidence.items[0]?.publicId !== INTERMEDIATED_EVIDENCE[index]
+            || event.evidence.items[0]?.publicId !== evidenceBinding.evidencePublicId
+            || event.evidence.items[0]?.filePublicId !== evidenceBinding.filePublicId
             || event.evidence.items[0]?.status !== "ready"
-            || event.evidence.items[0]?.mimeType !== "image/png";
-    })) {
-        return { outcome: "stopped", stopReason: "intermediated-transfer-mismatch" } as const;
+            || event.evidence.items[0]?.mimeType !== evidenceBinding.mimeType;
+    });
+    if (inspectedEvidenceMismatch) {
+        return { outcome: "stopped", stopReason: "intermediated-evidence-binding-mismatch" } as const;
     }
     const preview = await mcp.call("intermediary.disbursement.preview", { groupPublicId: INTERMEDIATED_GROUP });
     if (preview.status !== "ready"
@@ -1414,7 +1509,30 @@ const SCENARIOS: Record<string, Scenario> = {
             ...intermediatedEventScript(0),
             ...intermediatedEventScript(1),
             ...intermediatedEventScript(2),
-            intermediatedDetailStep(true),
+            intermediatedDetailStep({ transferMismatch: true }),
+        ],
+        run: (mcp) => intermediatedDisbursementFlow(mcp),
+    },
+    "intermediated-disbursement-finalize-evidence-id-mismatch": {
+        script: intermediatedFinalizeBindingMismatchScript("publicId"),
+        run: (mcp) => intermediatedDisbursementFlow(mcp),
+    },
+    "intermediated-disbursement-finalize-file-id-mismatch": {
+        script: intermediatedFinalizeBindingMismatchScript("filePublicId"),
+        run: (mcp) => intermediatedDisbursementFlow(mcp),
+    },
+    "intermediated-disbursement-ready-metadata-mismatch": {
+        script: intermediatedReadyMetadataMismatchScript(),
+        run: (mcp) => intermediatedDisbursementFlow(mcp),
+    },
+    "intermediated-disbursement-inspection-evidence-mismatch": {
+        script: [
+            ...intermediatedIdentityScript(),
+            intermediatedGroupCreateStep(),
+            ...intermediatedEventScript(0),
+            ...intermediatedEventScript(1),
+            ...intermediatedEventScript(2),
+            intermediatedDetailStep({ evidenceBindingMismatch: true }),
         ],
         run: (mcp) => intermediatedDisbursementFlow(mcp),
     },
