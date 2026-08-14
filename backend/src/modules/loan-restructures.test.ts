@@ -6,6 +6,7 @@ import { auditLogs, borrowers, loanDisbursementEvents, loanOpeningBalanceCompone
 import { loansRoute } from "./loans";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
+const cacheIntegrationTest = process.env.TEST_DATABASE_URL && process.env.CACHE_URL ? test : test.skip;
 
 async function tokenFor(user: { id: number; email: string; role: string | null; tenantId: string }) {
     const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -182,6 +183,7 @@ describe("loan restructure REST contract", () => {
         const detail = await call(new Elysia().use(loansRoute), `/loans/${seeded.b.publicId}`, await tokenFor(seeded.user));
         expect(detail.response.status).toBe(200);
         expect(detail.body.restructureLineage).toMatchObject({
+            restructurePublicId: seeded.r2.publicId, status: "executed",
             restructuredFromPublicId: seeded.a.publicId, restructuredToPublicId: seeded.c.publicId,
             inbound: { restructurePublicId: seeded.r1.publicId, loanPublicId: seeded.a.publicId, status: "executed" },
             outbound: { restructurePublicId: seeded.r2.publicId, loanPublicId: seeded.c.publicId, status: "executed" },
@@ -194,6 +196,7 @@ describe("loan restructure REST contract", () => {
         const seeded = await seedThreeLoanChain("reversed");
         const detail = await call(new Elysia().use(loansRoute), `/loans/${seeded.b.publicId}`, await tokenFor(seeded.user));
         expect(detail.body.restructureLineage).toMatchObject({
+            restructurePublicId: seeded.r2.publicId, status: "reversed",
             restructuredFromPublicId: seeded.a.publicId, restructuredToPublicId: seeded.c.publicId,
             inbound: { restructurePublicId: seeded.r1.publicId, status: "executed" },
             outbound: { restructurePublicId: seeded.r2.publicId, status: "reversed" },
@@ -201,5 +204,28 @@ describe("loan restructure REST contract", () => {
         expect(detail.body.openingBalanceComponents).toHaveLength(1);
         expect(detail.body.openingBalanceComponents[0]).toMatchObject({ amount: "300.00", sourcePublicId: seeded.r1.publicId });
         expect(detail.body.restructureWaivers).toHaveLength(1);
+    });
+
+    cacheIntegrationTest("invalidates a prewarmed loan-detail cache after restructure execution", async () => {
+        const seeded = await seedRouteLoan();
+        const app = new Elysia().use(loansRoute);
+        const token = await tokenFor(seeded.user);
+        const before = await call(app, `/loans/${seeded.loan.publicId}`, token);
+        expect(before.body).toMatchObject({ status: "active", restructureLineage: null });
+        const preview = await call(app, `/loans/${seeded.loan.publicId}/restructures/preview`, token, {
+            method: "POST",
+            body: JSON.stringify({
+                settlementDate: "2026-08-15", additionalPrincipal: "0.00", reason: "cache invalidation proof",
+                replacementTerms: { repaymentType: "single_payment", startDate: "2026-08-15", termMonths: 1, interestRate: "0.00", singlePayment: { dueDate: "2026-09-15", fixedAgreedInterest: "0.00", interestPolicy: "fixed_only", latePenalty: { mode: "none" } } },
+            }),
+        });
+        expect(preview.response.status).toBe(200);
+        const executed = await call(app, `/loans/restructures/${preview.body.publicId}/execute`, token, {
+            method: "POST", headers: { "idempotency-key": "cache-invalidation-restructure" },
+            body: JSON.stringify({ confirmed: true, previewHash: preview.body.previewHash, expectedBalanceVersion: preview.body.oldBalanceVersion, reason: "cache invalidation proof" }),
+        });
+        expect(executed.response.status).toBe(200);
+        const after = await call(app, `/loans/${seeded.loan.publicId}`, token);
+        expect(after.body).toMatchObject({ status: "restructured", restructureLineage: { outbound: { restructurePublicId: preview.body.publicId, status: "executed" } } });
     });
 });

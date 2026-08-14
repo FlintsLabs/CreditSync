@@ -327,7 +327,10 @@ export async function getLoanApplication(ctx: CommandContext, publicId: string) 
         inbound ? db.select().from(loanOpeningBalanceComponents).where(and(eq(loanOpeningBalanceComponents.tenantId, ctx.tenantId), eq(loanOpeningBalanceComponents.restructureId, inbound.id), eq(loanOpeningBalanceComponents.loanId, loan.id))).orderBy(loanOpeningBalanceComponents.id) : [],
         inbound ? db.select().from(loanRestructureWaivers).where(and(eq(loanRestructureWaivers.tenantId, ctx.tenantId), eq(loanRestructureWaivers.restructureId, inbound.id), eq(loanRestructureWaivers.loanId, loan.id))).orderBy(loanRestructureWaivers.id) : [],
     ]);
-    const primary = inbound ?? outbound!;
+    // Preserve the legacy scalar contract: when a loan has been restructured
+    // onward, the latest matching aggregate is its outbound transition. The
+    // structured fields below retain both directions independently.
+    const primary = outbound ?? inbound!;
     return {
         ...base,
         restructureLineage: {
