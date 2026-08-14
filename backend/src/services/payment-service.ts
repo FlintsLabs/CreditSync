@@ -21,6 +21,7 @@ import {
 import { createAuditLog } from "../lib/audit-log";
 import { canAccessTenantWideData } from "../lib/access";
 import { invalidateTenantCache } from "../lib/cache";
+import { FinancialDecimal } from "../lib/financial-decimal";
 import { computeLoanRollup } from "../lib/loan-rollup";
 import { parseMoney, serializeMoney, sumMoney } from "../lib/money";
 import {
@@ -1142,27 +1143,28 @@ export async function writeFundEffects(tx: Executor, ctx: CommandContext, loanId
         netBySource.set(key, {
             bankProfileId: item.bankProfileId,
             bankLoanId: item.bankLoanId,
-            amount: (current?.amount ?? new Decimal(0)).plus(item.allocatedAmount),
+            amount: (current?.amount ?? new FinancialDecimal(0)).plus(item.allocatedAmount),
         });
     }
     const eligible = [...netBySource.values()]
         .filter((item) => item.amount.gt(0))
         .sort((a, b) => a.bankProfileId - b.bankProfileId || (a.bankLoanId ?? 0) - (b.bankLoanId ?? 0));
-    const total = eligible.reduce((sum, item) => sum.plus(item.amount), new Decimal(0));
-    const principal = new Decimal(loan.principalAmount);
+    const total = eligible.reduce((sum, item) => sum.plus(item.amount), new FinancialDecimal(0));
+    const principal = new FinancialDecimal(loan.principalAmount);
     if (eligible.length === 0 || total.lte(0) || principal.lte(0)) return;
-    const denominator = Decimal.max(principal, total);
-    const fundedRatio = Decimal.min(1, total.div(principal));
+    const denominator = FinancialDecimal.max(principal, total);
+    const fundedRatio = FinancialDecimal.min(1, total.div(principal));
     const entryTypes: Record<string, string> = { principal: "principal_return_in", interest: "interest_income_in", fee: "fee_income_in", penalty: "penalty_income_in" };
     for (const [component, value] of Object.entries(components)) {
-        if (value.isZero()) continue;
-        const fundedComponent = value.times(fundedRatio).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+        const componentAmount = new FinancialDecimal(value);
+        if (componentAmount.isZero()) continue;
+        const fundedComponent = componentAmount.times(fundedRatio).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
         if (fundedComponent.isZero()) continue;
-        let assigned = new Decimal(0);
+        let assigned = new FinancialDecimal(0);
         for (const [index, allocation] of eligible.entries()) {
             const amount = index === eligible.length - 1
                 ? fundedComponent.minus(assigned)
-                : value.times(allocation.amount).div(denominator).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+                : componentAmount.times(allocation.amount).div(denominator).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
             assigned = assigned.plus(amount);
             await tx.insert(fundLedgerEntries).values({
                 tenantId: ctx.tenantId,

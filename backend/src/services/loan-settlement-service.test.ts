@@ -257,6 +257,77 @@ describe("loan settlement service", () => {
             .toMatchObject({ status: "paid", outstandingPrincipal: "0.00", outstandingInterest: "0.00" });
     });
 
+    // Break caught: writeFundEffects sums multi-source allocations with Decimal's default
+    // 20-digit context, changing each source's exact cents even though the remainder masks
+    // the error in the aggregate ledger total.
+    integrationTest("conserves a 29-digit settlement principal across two exact funding sources", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-multi-source-precision" });
+        const principal = "88888888888888888888888888888.09";
+        const firstShare = "44444444444444444444444444443.54";
+        const secondShare = "44444444444444444444444444444.55";
+        await db.update(loans).set({
+            principalAmount: principal,
+            outstandingPrincipal: principal,
+            dailyInterestRate: "0.0001",
+        }).where(eq(loans.id, seeded.loan.id));
+        await db.update(loanInterestRatePeriods).set({ rate: "0.0001" })
+            .where(eq(loanInterestRatePeriods.id, seeded.ratePeriod.id));
+        const profiles = await db.insert(bankProfiles).values([
+            { tenantId: seeded.actor.tenantId, name: "Precision source one", type: "personal_savings" },
+            { tenantId: seeded.actor.tenantId, name: "Precision source two", type: "personal_savings" },
+        ]).returning();
+        await db.insert(loanFundingAllocations).values([
+            {
+                tenantId: seeded.actor.tenantId,
+                loanId: seeded.loan.id,
+                bankProfileId: profiles[0]!.id,
+                allocatedAmount: firstShare,
+                allocationDate: "2026-08-13",
+                createdByUserId: seeded.actor.id,
+            },
+            {
+                tenantId: seeded.actor.tenantId,
+                loanId: seeded.loan.id,
+                bankProfileId: profiles[1]!.id,
+                allocatedAmount: secondShare,
+                allocationDate: "2026-08-13",
+                createdByUserId: seeded.actor.id,
+            },
+        ]);
+        const preview = await previewLoanSettlement(
+            context(seeded.actor),
+            seeded.loan.publicId,
+            "2026-08-13",
+        );
+
+        const executed = await executeLoanSettlement(context(seeded.actor, "multi-source-precision-settlement"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "Return the exact principal to both funding sources",
+        });
+
+        expect(executed.transaction.principalComponent).toBe(principal);
+        const principalEntries = await db.select().from(fundLedgerEntries).where(and(
+            eq(fundLedgerEntries.loanId, seeded.loan.id),
+            eq(fundLedgerEntries.entryType, "principal_return_in"),
+        )).orderBy(fundLedgerEntries.id);
+        expect(principalEntries).toEqual([
+            expect.objectContaining({ bankProfileId: profiles[0]!.id, amount: firstShare }),
+            expect.objectContaining({ bankProfileId: profiles[1]!.id, amount: secondShare }),
+        ]);
+        const conservation = await db.execute(sql`
+            SELECT
+                SUM(amount) = ${principal}::numeric AS exact_sum,
+                BOOL_AND(amount >= 0) AS all_non_negative
+            FROM fund_ledger_entries
+            WHERE tenant_id = ${seeded.actor.tenantId}
+                AND loan_id = ${seeded.loan.id}
+                AND entry_type = 'principal_return_in'
+        `);
+        expect(conservation[0]).toMatchObject({ exact_sum: true, all_non_negative: true });
+    });
+
     // Break caught: settlement reuses normal-payment allocation and omits current-period accruing interest.
     integrationTest("previews THB 5,257.14 after three weekly accrual dates without advance interest", async () => {
         const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-no-advance" });

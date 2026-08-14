@@ -14,6 +14,7 @@
 - Added explicitly confirmed atomic posting and compensating reversal for zero-variance intermediary disbursement groups, linking exact borrower payout and activation-time advance-interest projections by public provenance IDs while preserving optional evidence, collection/remittance ledgers, and Decimal-only held balances.
 
 ### Fixed
+- Preserved exact per-source multi-fund payment and settlement attribution at the 29-integer-digit public-money boundary by applying the shared high-precision Decimal context across allocation aggregation, ratio calculation, cent rounding, and final-source remainder conservation.
 - Preserved full 29-digit Decimal precision across floating-interest accrual, correction, settlement preview, stale checks, execution, and funding-ledger allocation; rejected floating loans from the legacy closing-summary and direct-close routes; and enforced append-only accrual facts at the PostgreSQL boundary while retaining service-owned payment lifecycle updates and compensating replacements.
 - Required public audit and correlation UUIDs on intermediary bank-account, assignment-create/end, and transfer-evidence prepare/finalize MCP results, including operation-specific idempotent replay metadata and fail-closed missing-audit handling, while preserving the existing REST response DTOs.
 - Made the literal Bun frontend test gate preload a Bun-compatible DOM and Testing Library matcher setup, and aborted/rejected superseded actual-disbursement ledger reads so a failed newer refresh cannot leave an intermediary post pending.
