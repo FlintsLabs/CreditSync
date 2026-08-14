@@ -890,20 +890,38 @@
             "subtitle": "Search profiles and review the loans each intermediary manages.",
             "new": "New intermediary",
             "name": "Name",
+            "aliases": "Aliases",
+            "aliasesHint": "Separate aliases with commas",
             "create": "Create profile",
+            "searchIdentity": "Search proposed identity",
+            "candidates_one": "{{count}} possible existing profile",
+            "candidates_other": "{{count}} possible existing profiles",
+            "reviewedCandidates": "I reviewed these candidates and confirmed the proposed identity.",
             "searchLabel": "Search intermediaries",
             "searchPlaceholder": "Search canonical name or confirmed alias",
             "search": "Search",
-            "empty": "No intermediary profiles found."
+            "empty": "No intermediary profiles found.",
+            "status": { "active": "Active", "inactive": "Inactive" },
+            "errors": {
+                "load": "Could not load intermediaries.",
+                "search": "Could not search intermediaries.",
+                "candidate": "Could not search the proposed identity. Try again before creating.",
+                "create": "Could not create the intermediary profile. Review the identity and try again."
+            }
         },
         "profile": {
             "back": "Back to intermediaries",
             "notFound": "Intermediary profile not found.",
+            "loadError": "Could not load intermediary profile.",
             "remittances": "Collections and remittances",
             "overview": "Portfolio overview",
             "unreconciled_one": "{{count}} disbursement group needs review.",
             "unreconciled_other": "{{count}} disbursement groups need review.",
-            "totals": { "principal": "Outstanding principal", "interest": "Outstanding interest", "fees": "Outstanding fees", "retained": "Retained balance" },
+            "totals": {
+                "principal": "Outstanding principal", "interest": "Outstanding interest", "fees": "Outstanding fees",
+                "fundingReceived": "Funding received", "borrowerPayout": "Borrower payout", "advanceInterestReturned": "Advance interest returned",
+                "disbursementHeldBalance": "Disbursement held balance", "collectionHeldBalance": "Collection held balance", "totalHeldBalance": "Total held balance"
+            },
             "managedLoans": "Active managed loans",
             "borrower": "Borrower",
             "role": "Role",

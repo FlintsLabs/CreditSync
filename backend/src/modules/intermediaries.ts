@@ -5,6 +5,7 @@ import { DomainError, presentDomainError } from "../services/domain-error";
 import {
     createIntermediary, createIntermediaryCollection, createIntermediaryRemittance,
     finalizeIntermediaryRemittanceEvidence, getIntermediaryCollection, getIntermediaryRemittance, listIntermediaries,
+    getIntermediaryHeldBalance,
     listIntermediaryCollections, listIntermediaryRemittances, manualApproveIntermediaryCollection,
     postIntermediaryRemittance, prepareIntermediaryRemittanceEvidence, previewIntermediaryRemittance, reverseIntermediaryRemittance,
     saveRemittanceAllocations, searchIntermediaries, updateIntermediary,
@@ -34,6 +35,23 @@ const uuidParam = { params: t.Object({ id: t.String({ format: "uuid" }) }) };
 const intermediaryProfileRoutes = new Elysia({ normalize: false })
     .use(authPlugin)
     .get("/intermediaries/:id", ({ params, user, request, set }) => invoke(user, request, set, (ctx) => getIntermediaryProfile(ctx, params.id)), uuidParam)
+    .get("/intermediaries/:id/held-balance", ({ params, user, request, set }) => invoke(user, request, set, (ctx) => getIntermediaryHeldBalance(ctx, params.id)), {
+        ...uuidParam,
+        response: t.Union([
+            t.Object({
+                intermediaryPublicId: t.String({ format: "uuid" }),
+                fundingReceived: t.String({ pattern: "^(0|[1-9]\\d*)\\.\\d{2}$", maxLength: 32 }),
+                borrowerPayout: t.String({ pattern: "^(0|[1-9]\\d*)\\.\\d{2}$", maxLength: 32 }),
+                advanceInterestReturned: t.String({ pattern: "^(0|[1-9]\\d*)\\.\\d{2}$", maxLength: 32 }),
+                disbursementHeldBalance: t.String({ pattern: "^-?(0|[1-9]\\d*)\\.\\d{2}$", maxLength: 33 }),
+                collectionHeldBalance: t.String({ pattern: "^(0|[1-9]\\d*)\\.\\d{2}$", maxLength: 32 }),
+                totalHeldBalance: t.String({ pattern: "^-?(0|[1-9]\\d*)\\.\\d{2}$", maxLength: 33 }),
+            }, { additionalProperties: t.Never() }),
+            t.Object({
+                error: t.String(), code: t.String(), details: t.Optional(t.Record(t.String(), t.Unknown())),
+            }, { additionalProperties: t.Never() }),
+        ]),
+    })
     .put("/intermediaries/:id/bank-accounts", ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => saveIntermediaryBankAccount(ctx, params.id, body)), {
         ...uuidParam,
         body: t.Object({

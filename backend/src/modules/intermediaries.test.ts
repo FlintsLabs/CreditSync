@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { borrowers, intermediaries, loans, users } from "../db/schema";
+import { borrowers, intermediaries, intermediaryCollections, loans, users } from "../db/schema";
 import { intermediariesRoute } from "./intermediaries";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
@@ -37,7 +37,7 @@ describe("intermediary settlement REST contract", () => {
 
     test("protects manual intermediary workflow endpoints", async () => {
         const app = new Elysia().use(intermediariesRoute);
-        for (const path of ["/intermediaries", "/intermediaries/00000000-0000-0000-0000-000000000000", "/intermediary-collections", "/intermediary-remittances"]) {
+        for (const path of ["/intermediaries", "/intermediaries/00000000-0000-0000-0000-000000000000", "/intermediaries/00000000-0000-0000-0000-000000000000/held-balance", "/intermediary-collections", "/intermediary-remittances"]) {
             const response = await app.handle(new Request(`http://localhost${path}`));
             expect(response.status).toBe(401);
         }
@@ -162,6 +162,25 @@ describe("intermediary settlement REST contract", () => {
             assignments: [expect.objectContaining({ publicId: assigned.body.publicId, status: "active" })],
         });
         expect(JSON.stringify(profile.body)).not.toContain("1111222233");
+
+        await db.insert(intermediaryCollections).values({
+            tenantId: actor.tenantId, ownerUserId: actor.id, intermediaryId: intermediary.id,
+            borrowerId: borrower.id, loanId: loan.id, amount: "9007199254740993.01",
+            borrowerPaidAt: new Date("2026-01-15T00:00:00.000Z"), status: "pending_remittance",
+            idempotencyKey: "route-held-pending", createdByUserId: actor.id, updatedByUserId: actor.id,
+        });
+        const held = await jsonRequest(app, `/intermediaries/${intermediary.publicId}/held-balance`, token);
+        expect(held.response.status).toBe(200);
+        expect(held.body).toEqual({
+            intermediaryPublicId: intermediary.publicId,
+            fundingReceived: "0.00", borrowerPayout: "0.00", advanceInterestReturned: "0.00",
+            disbursementHeldBalance: "0.00", collectionHeldBalance: "9007199254740993.01",
+            totalHeldBalance: "9007199254740993.01",
+        });
+        expect(Object.keys(held.body).sort()).toEqual([
+            "advanceInterestReturned", "borrowerPayout", "collectionHeldBalance", "disbursementHeldBalance",
+            "fundingReceived", "intermediaryPublicId", "totalHeldBalance",
+        ]);
 
         const ended = await jsonRequest(app, `/intermediary-assignments/${assigned.body.publicId}/end`, token, {
             method: "POST",

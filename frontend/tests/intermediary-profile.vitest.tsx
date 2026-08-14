@@ -92,6 +92,15 @@ const groups = [{
     updatedAt: "2026-08-13T00:00:00.000Z",
     events: [],
 }];
+const heldBalance = {
+    intermediaryPublicId: INTERMEDIARY_ID,
+    fundingReceived: "5000.00",
+    borrowerPayout: "4400.00",
+    advanceInterestReturned: "600.00",
+    disbursementHeldBalance: "0.00",
+    collectionHeldBalance: "123.45",
+    totalHeldBalance: "123.45",
+};
 
 function renderList() {
     return render(<MemoryRouter><Routes><Route path="*" element={<IntermediaryList />} /></Routes></MemoryRouter>);
@@ -114,26 +123,36 @@ describe("intermediary profile workspace", () => {
             }
             if (url === `/intermediaries/${INTERMEDIARY_ID}`) return { data: profile };
             if (url === `/intermediaries/${INTERMEDIARY_ID}/managed-loans`) return { data: managedLoans };
+            if (url === `/intermediaries/${INTERMEDIARY_ID}/held-balance`) return { data: heldBalance };
             if (url === "/intermediated-disbursements") return { data: groups };
             throw new Error(`Unexpected GET ${url}`);
         });
     });
 
-    // Break caught: the directory stops querying canonical intermediary search or cannot create a profile from the same workspace.
-    it("searches and creates intermediary profiles", async () => {
+    // Break caught: profile creation can bypass the canonical/alias candidate search, or editing searched identity retains stale approval.
+    it("requires candidate review for the exact proposed name and aliases before creation", async () => {
         vi.mocked(api.post).mockResolvedValue({ data: { ...profile, publicId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", name: "New Agent" } });
         const user = userEvent.setup();
         renderList();
 
         expect(await screen.findByRole("link", { name: /Mae Mali/i })).toHaveAttribute("href", `/intermediaries/${INTERMEDIARY_ID}`);
-        await user.type(screen.getByRole("searchbox", { name: /search intermediaries/i }), "Mali Agent");
-        await user.click(screen.getByRole("button", { name: /search/i }));
-        await waitFor(() => expect(api.get).toHaveBeenLastCalledWith("/intermediaries", { params: { q: "Mali Agent" } }));
-
         await user.click(screen.getByRole("button", { name: /new intermediary/i }));
         await user.type(screen.getByLabelText(/name/i), "New Agent");
+        await user.type(screen.getByLabelText(/aliases/i), "Agent New, N. Agent");
+        expect(screen.getByRole("button", { name: /create profile/i })).toBeDisabled();
+        await user.click(screen.getByRole("button", { name: /search proposed identity/i }));
+        await waitFor(() => {
+            expect(api.get).toHaveBeenCalledWith("/intermediaries", { params: { q: "New Agent" } });
+            expect(api.get).toHaveBeenCalledWith("/intermediaries", { params: { q: "Agent New" } });
+            expect(api.get).toHaveBeenCalledWith("/intermediaries", { params: { q: "N. Agent" } });
+        });
+        await user.click(screen.getByRole("checkbox", { name: /reviewed these candidates/i }));
         await user.click(screen.getByRole("button", { name: /create profile/i }));
-        await waitFor(() => expect(api.post).toHaveBeenCalledWith("/intermediaries", { name: "New Agent" }));
+        await waitFor(() => expect(api.post).toHaveBeenCalledWith("/intermediaries", { name: "New Agent", aliases: ["Agent New", "N. Agent"] }));
+
+        await user.click(screen.getByRole("button", { name: /new intermediary/i }));
+        await user.type(screen.getByLabelText(/^name/i), "Unsearched Agent");
+        expect(screen.getByRole("button", { name: /create profile/i })).toBeDisabled();
     });
 
     // Break caught: managed loans lose their Loan Detail destination, totals are rounded through JS numbers, or review groups disappear.
@@ -143,14 +162,74 @@ describe("intermediary profile workspace", () => {
         expect(await screen.findByRole("heading", { name: "Mae Mali" })).toBeInTheDocument();
         const overview = screen.getByRole("region", { name: /portfolio overview/i });
         expect(within(overview).getByText(/9,007,199,254,740,000\.01/)).toBeInTheDocument();
-        expect(within(overview).getByText(/600\.00/)).toBeInTheDocument();
+        expect(within(overview).getAllByText(/600\.00/)).toHaveLength(2);
         expect(within(overview).getByText(/10\.00/)).toBeInTheDocument();
-        expect(within(overview).getByText(/123\.45/)).toBeInTheDocument();
+        expect(within(overview).getAllByText(/123\.45/)).toHaveLength(2);
+        expect(within(overview).getByText(/5,000\.00/)).toBeInTheDocument();
+        expect(within(overview).getByText(/4,400\.00/)).toBeInTheDocument();
         expect(screen.getAllByRole("link", { name: /Somchai Exact/i })).toHaveLength(2);
         for (const link of screen.getAllByRole("link", { name: /Somchai Exact/i })) expect(link).toHaveAttribute("href", `/loans/${LOAN_ID}`);
         expect(screen.getByRole("alert")).toHaveTextContent(/1 disbursement group needs review/i);
         expect(screen.getByText(/Krungthai.*•••• 2233/)).toBeInTheDocument();
         expect(screen.queryByText(/1111222233/)).not.toBeInTheDocument();
+    });
+
+    // Break caught: default decimal.js precision rounds a valid 29-digit maximum, or summing multiple loans loses cents.
+    it("totals max-bound and multi-loan public money without precision loss", async () => {
+        const exactLoans = [{ ...managedLoans[0], outstandingPrincipal: "99999999999999999999999999999.99", outstandingInterest: "0.00", outstandingFees: "0.00" }];
+        vi.mocked(api.get).mockImplementation(async (url) => {
+            if (url === `/intermediaries/${INTERMEDIARY_ID}`) return { data: profile };
+            if (url === `/intermediaries/${INTERMEDIARY_ID}/managed-loans`) return { data: exactLoans };
+            if (url === `/intermediaries/${INTERMEDIARY_ID}/held-balance`) return { data: heldBalance };
+            if (url === "/intermediated-disbursements") return { data: [] };
+            throw new Error(`Unexpected GET ${url}`);
+        });
+        const first = renderDetail();
+        expect(await screen.findAllByText(/99,999,999,999,999,999,999,999,999,999\.99/)).toHaveLength(3);
+        first.unmount();
+
+        vi.mocked(api.get).mockImplementation(async (url) => {
+            if (url === `/intermediaries/${INTERMEDIARY_ID}`) return { data: profile };
+            if (url === `/intermediaries/${INTERMEDIARY_ID}/managed-loans`) return { data: [
+                { ...managedLoans[0], publicId: LOAN_ID, outstandingPrincipal: "10000000000000000000.01" },
+                { ...managedLoans[0], publicId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", borrowerName: "Second Borrower", outstandingPrincipal: "20000000000000000000.02" },
+            ] };
+            if (url === `/intermediaries/${INTERMEDIARY_ID}/held-balance`) return { data: heldBalance };
+            if (url === "/intermediated-disbursements") return { data: [] };
+            throw new Error(`Unexpected GET ${url}`);
+        });
+        renderDetail();
+        expect(await screen.findByText(/30,000,000,000,000,000,000\.03/)).toBeInTheDocument();
+    });
+
+    // Break caught: failed list/detail requests disappear into an unhandled promise or a server outage is mislabeled as not found.
+    it("shows localized retryable list errors and distinguishes detail 404 from server failure", async () => {
+        vi.mocked(api.get).mockRejectedValueOnce({ response: { status: 503 } });
+        const user = userEvent.setup();
+        const list = renderList();
+        expect(await screen.findByRole("alert")).toHaveTextContent(/could not load intermediaries/i);
+        await user.click(screen.getByRole("button", { name: /retry/i }));
+        expect(await screen.findByRole("link", { name: /Mae Mali/i })).toBeInTheDocument();
+        list.unmount();
+
+        vi.mocked(api.get).mockRejectedValue({ response: { status: 404 } });
+        const missing = renderDetail();
+        expect(await screen.findByText(/profile not found/i)).toBeInTheDocument();
+        missing.unmount();
+
+        vi.mocked(api.get).mockRejectedValue({ response: { status: 500 } });
+        renderDetail();
+        expect(await screen.findByRole("alert")).toHaveTextContent(/could not load intermediary profile/i);
+        expect(screen.queryByText(/profile not found/i)).not.toBeInTheDocument();
+    });
+
+    // Break caught: directory lifecycle statuses leak raw English enum values in either locale.
+    it("localizes directory active and inactive statuses", async () => {
+        vi.mocked(api.get).mockResolvedValue({ data: [profile, { ...profile, publicId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", name: "Retired Agent", status: "inactive" }] });
+        await appI18n.changeLanguage("th");
+        renderList();
+        expect(await screen.findByText("ใช้งานอยู่")).toBeInTheDocument();
+        expect(screen.getByText("ปิดใช้งาน")).toBeInTheDocument();
     });
 
     // Break caught: ended assignments are filtered out or the profile redesign removes the established collections/remittances access.

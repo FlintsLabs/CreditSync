@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import Decimal from "decimal.js";
 import { Link, useParams } from "react-router-dom";
 import { AlertTriangle, ArrowLeft, Landmark } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../../lib/api";
-import { formatMoneyExact } from "../../../lib/workflow-model";
+import { formatMoneyExact, sumMoney } from "../../../lib/workflow-model";
 
 type Assignment = {
     publicId: string; loanPublicId: string; loanStatus?: string; borrowerName?: string;
@@ -22,8 +21,11 @@ type ManagedLoan = {
     status: string | null; roles: string[];
 };
 type Group = { publicId: string; retainedBalance: string; status: string };
-
-const sumMoney = (values: string[]) => values.reduce((sum, value) => sum.plus(value), new Decimal(0)).toFixed(2);
+type HeldBalance = {
+    intermediaryPublicId: string; fundingReceived: string; borrowerPayout: string;
+    advanceInterestReturned: string; disbursementHeldBalance: string;
+    collectionHeldBalance: string; totalHeldBalance: string;
+};
 
 export default function IntermediaryDetail() {
     const { id = "" } = useParams();
@@ -31,35 +33,47 @@ export default function IntermediaryDetail() {
     const [profile, setProfile] = useState<Profile | null>(null);
     const [loans, setLoans] = useState<ManagedLoan[]>([]);
     const [groups, setGroups] = useState<Group[]>([]);
+    const [heldBalance, setHeldBalance] = useState<HeldBalance | null>(null);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState<"notFound" | "failed" | null>(null);
+    const [reload, setReload] = useState(0);
 
     useEffect(() => {
         let active = true;
         void Promise.all([
             api.get<Profile>(`/intermediaries/${id}`),
             api.get<ManagedLoan[]>(`/intermediaries/${id}/managed-loans`),
+            api.get<HeldBalance>(`/intermediaries/${id}/held-balance`),
             api.get<Group[]>("/intermediated-disbursements", { params: { intermediaryPublicId: id } }),
-        ]).then(([profileResponse, loansResponse, groupsResponse]) => {
+        ]).then(([profileResponse, loansResponse, heldResponse, groupsResponse]) => {
             if (!active) return;
             setProfile(profileResponse.data);
             setLoans(loansResponse.data);
+            setHeldBalance(heldResponse.data);
             setGroups(groupsResponse.data);
+            setLoadError(null);
+        }).catch((error: unknown) => {
+            if (!active) return;
+            const status = (error as { response?: { status?: number } })?.response?.status;
+            setProfile(null); setLoans([]); setHeldBalance(null); setGroups([]);
+            setLoadError(status === 404 ? "notFound" : "failed");
         }).finally(() => { if (active) setLoading(false); });
         return () => { active = false; };
-    }, [id]);
+    }, [id, reload]);
 
     const totals = useMemo(() => ({
         principal: sumMoney(loans.map((loan) => loan.outstandingPrincipal)),
         interest: sumMoney(loans.map((loan) => loan.outstandingInterest)),
         fees: sumMoney(loans.map((loan) => loan.outstandingFees)),
-        retained: sumMoney(groups.filter((group) => group.status !== "reversed").map((group) => group.retainedBalance)),
-    }), [groups, loans]);
+    }), [loans]);
     const reviewGroups = groups.filter((group) => ["draft", "needs_review"].includes(group.status));
     const money = (value: string) => formatMoneyExact(value, i18n.language);
     const date = (value: string) => new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeZone: "Asia/Bangkok" }).format(new Date(value));
 
     if (loading) return <p>{t("common.loading")}</p>;
-    if (!profile) return <p>{t("intermediary.profile.notFound")}</p>;
+    if (loadError === "notFound") return <p>{t("intermediary.profile.notFound")}</p>;
+    if (loadError === "failed") return <div role="alert" className="rounded-md border border-destructive/40 p-4 text-destructive"><p>{t("intermediary.profile.loadError")}</p><button className="mt-3 rounded-md border px-3 py-2 text-sm" onClick={() => { setLoading(true); setReload((value) => value + 1); }}>{t("common.retry")}</button></div>;
+    if (!profile || !heldBalance) return null;
 
     return <div className="space-y-6">
         <Link className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground" to="/intermediaries"><ArrowLeft className="mr-2 h-4 w-4" />{t("intermediary.profile.back")}</Link>
@@ -70,8 +84,9 @@ export default function IntermediaryDetail() {
 
         {reviewGroups.length > 0 && <div role="alert" className="flex gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900 dark:bg-amber-950 dark:text-amber-100"><AlertTriangle className="h-5 w-5 shrink-0" /><span>{t("intermediary.profile.unreconciled", { count: reviewGroups.length })}</span></div>}
 
-        <section aria-label={t("intermediary.profile.overview")} className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {(["principal", "interest", "fees", "retained"] as const).map((key) => <div className="rounded-lg border bg-card p-4" key={key}><p className="text-sm text-muted-foreground">{t(`intermediary.profile.totals.${key}`)}</p><p className="mt-1 text-xl font-semibold">{money(totals[key])}</p></div>)}
+        <section aria-label={t("intermediary.profile.overview")} className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            {(["principal", "interest", "fees"] as const).map((key) => <div className="rounded-lg border bg-card p-4" key={key}><p className="text-sm text-muted-foreground">{t(`intermediary.profile.totals.${key}`)}</p><p className="mt-1 text-xl font-semibold">{money(totals[key])}</p></div>)}
+            {(["fundingReceived", "borrowerPayout", "advanceInterestReturned", "disbursementHeldBalance", "collectionHeldBalance", "totalHeldBalance"] as const).map((key) => <div className="rounded-lg border bg-card p-4" key={key}><p className="text-sm text-muted-foreground">{t(`intermediary.profile.totals.${key}`)}</p><p className="mt-1 text-xl font-semibold">{money(heldBalance[key])}</p></div>)}
         </section>
 
         <section className="space-y-3"><h2 className="text-lg font-semibold">{t("intermediary.profile.managedLoans")}</h2>
