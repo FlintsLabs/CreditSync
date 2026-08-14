@@ -19,7 +19,7 @@ import {
 } from "../../../components/ui/dialog";
 import { formatMoneyExact } from "../../../lib/workflow-model";
 import { LoanRenewalPanel } from "./LoanRenewalPanel";
-import { LoanDisbursements } from "./LoanDisbursements";
+import { LoanDisbursements, type LoanDisbursementsHandle } from "./LoanDisbursements";
 import { LoanRepaymentHistory } from "./LoanRepaymentHistory";
 import { FloatingInterestRateCard } from "./FloatingInterestRateCard";
 import { FloatingInterestSummary, type FloatingInterestPolicyView } from "./FloatingInterestSummary";
@@ -193,7 +193,7 @@ export default function LoanDetail() {
     const [settlementError, setSettlementError] = useState("");
     const [settlementExecuted, setSettlementExecuted] = useState(false);
     const [postSettlementRefreshStatus, setPostSettlementRefreshStatus] = useState<"idle" | "refreshing" | "failed">("idle");
-    const [disbursementRefreshKey, setDisbursementRefreshKey] = useState(0);
+    const disbursementsRef = useRef<LoanDisbursementsHandle>(null);
     const money = (value: string | null | undefined) => formatMoneyExact(value ?? "0.00", i18n.language);
     const isPositiveMoney = (value: string | null | undefined) => new Decimal(value ?? "0").isPositive();
     const isNegativeMoney = (value: string | null | undefined) => new Decimal(value ?? "0").isNegative();
@@ -619,11 +619,11 @@ export default function LoanDetail() {
                         </Card>
                     </div>
 
-                    <LoanDisbursements loanPublicId={loan.publicId ?? loan.id} refreshKey={disbursementRefreshKey} />
+                    <LoanDisbursements ref={disbursementsRef} loanPublicId={loan.publicId ?? loan.id} />
 
                     <IntermediatedDisbursementPanel loanPublicId={loan.publicId ?? loan.id} onPosted={async () => {
-                        await api.get(`/loans/${loan.publicId ?? loan.id}/disbursements`);
-                        setDisbursementRefreshKey((value) => value + 1);
+                        if (!disbursementsRef.current) throw new Error("Disbursement ledger is unavailable");
+                        await disbursementsRef.current.refresh();
                     }} />
 
                     <LoanRepaymentHistory

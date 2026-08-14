@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { FileUp, RotateCcw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api, resolveFileAccess } from "../../../lib/api";
@@ -20,7 +20,9 @@ const blankDraft = (): Draft => ({ grossAmount: "", loanAttributedAmount: "", ch
 const validMoney = (value: string) => /^\d+(?:\.\d{1,2})?$/.test(value) && /[1-9]/.test(value);
 const hash = (bytes: ArrayBuffer) => Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
 
-export function LoanDisbursements({ loanPublicId, refreshKey = 0 }: { loanPublicId: string; refreshKey?: number }) {
+export type LoanDisbursementsHandle = { refresh: () => Promise<void> };
+
+export const LoanDisbursements = forwardRef<LoanDisbursementsHandle, { loanPublicId: string }>(function LoanDisbursements({ loanPublicId }, ref) {
     const { t, i18n } = useTranslation();
     const [ledger, setLedger] = useState<Ledger | null>(null);
     const [draft, setDraft] = useState<Draft | null>(null);
@@ -44,11 +46,12 @@ export function LoanDisbursements({ loanPublicId, refreshKey = 0 }: { loanPublic
         setLedger(next);
         setSelected((current) => current ? next.events.find((event) => event.publicId === current.publicId) ?? null : null);
     };
+    useImperativeHandle(ref, () => ({ refresh: readLedger }));
     useEffect(() => {
         let active = true;
         void api.get(`/loans/${loanPublicId}/disbursements`).then((response) => { if (active) setLedger(response.data as Ledger); }).catch(() => { if (active) setMessage(t("loanDetail.disbursements.errors.load")); });
         return () => { active = false; };
-    }, [loanPublicId, refreshKey, t]);
+    }, [loanPublicId, t]);
 
     const saveDraft = async () => {
         if (!draft) return;
@@ -95,4 +98,4 @@ export function LoanDisbursements({ loanPublicId, refreshKey = 0 }: { loanPublic
         {selected?.status === "posted" && <div className="rounded border p-3">{!reversalOpen && <Button variant="destructive" disabled={busy} onClick={() => setReversalOpen(true)}><RotateCcw className="mr-2 h-4 w-4" />{t("loanDetail.disbursements.reverse")}</Button>}{reversalOpen && <div className="mt-3 grid gap-2"><label className="grid gap-1 text-sm">{t("loanDetail.disbursements.reversalReason")}<Input value={reason} onChange={(event) => setReason(event.target.value)} /></label><div className="flex gap-2"><Button variant="outline" onClick={() => setReversalOpen(false)}>{t("common.cancel")}</Button><Button variant="destructive" disabled={busy || !reason.trim()} onClick={() => void reverse()}>{t("loanDetail.disbursements.confirmReverse")}</Button></div></div>}</div>}
         {ledger?.events.length ? <div className="space-y-2">{ledger.events.map((event) => <div key={event.publicId} className="rounded border p-3 text-sm"><button type="button" className="w-full text-left" onClick={() => { setSelected(event); setDraft(event.status === "draft" ? { grossAmount: event.grossAmount, loanAttributedAmount: event.loanAttributedAmount, channel: event.channel, sourceBankProfilePublicId: event.sourceBankProfilePublicId ?? "", payeeHint: event.payeeHint ?? "", note: event.note ?? "", disbursedAt: event.disbursedAt?.slice(0, 16) ?? "" } : null); }}><span className="font-medium">{t(`loanDetail.disbursements.channels.${event.channel}`)} · {t(`loanDetail.disbursements.recordStatus.${event.status}`)}</span><span className="float-right">{formatMoneyExact(event.loanAttributedAmount, i18n.language)}</span></button><div className="mt-1 text-xs text-muted-foreground">{event.sourceBankProfilePublicId && <span>{event.sourceBankProfilePublicId} · </span>}{event.payeeHint && <span>{event.payeeHint}</span>}</div>{event.status !== "draft" && normalizeMoney(event.grossAmount) !== normalizeMoney(event.loanAttributedAmount) && <div className="mt-1 text-xs text-muted-foreground">{t("loanDetail.disbursements.grouped", { gross: formatMoneyExact(event.grossAmount, i18n.language), attributed: formatMoneyExact(event.loanAttributedAmount, i18n.language) })}</div>}<div className="mt-2 flex flex-wrap gap-2">{event.evidenceFilePublicIds.map((id, index) => <EvidencePreviewButton key={id} available label={`${t("evidence.preview")} ${index + 1}`} resolve={() => resolveFileAccess(id)} />)}</div></div>)}</div> : <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">{t("loanDetail.disbursements.empty")}</div>}
     </CardContent></Card>;
-}
+});

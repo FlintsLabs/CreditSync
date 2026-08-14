@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import IntermediaryList from "../src/pages/dashboard/intermediaries/IntermediaryList";
 import IntermediaryDetail from "../src/pages/dashboard/intermediaries/IntermediaryDetail";
+import { refreshForScope } from "../src/pages/dashboard/intermediaries/intermediary-scope";
 import { api } from "../src/lib/api";
 import appI18n from "../src/lib/i18n";
 
@@ -127,6 +128,18 @@ describe("intermediary profile workspace", () => {
             if (url === "/intermediated-disbursements") return { data: groups };
             throw new Error(`Unexpected GET ${url}`);
         });
+    });
+
+    it("does not install deferred post-A balance after navigation to profile B", async () => {
+        let finish!: (value: typeof heldBalance) => void;
+        const request = () => new Promise<typeof heldBalance>((resolve) => { finish = resolve; });
+        const active = { current: INTERMEDIARY_ID };
+        const install = vi.fn();
+        const pending = refreshForScope(INTERMEDIARY_ID, active, request, install);
+        active.current = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        finish(heldBalance);
+        await pending;
+        expect(install).not.toHaveBeenCalled();
     });
 
     // Break caught: profile creation can bypass the canonical/alias candidate search, or editing searched identity retains stale approval.

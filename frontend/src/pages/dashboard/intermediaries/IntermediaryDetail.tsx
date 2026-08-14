@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { AlertTriangle, ArrowLeft, Landmark } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../../lib/api";
 import { formatMoneyExact, sumMoney } from "../../../lib/workflow-model";
 import { IntermediaryTransferLedger } from "./IntermediaryTransferLedger";
+import { refreshForScope } from "./intermediary-scope";
 
 type Assignment = {
     publicId: string; loanPublicId: string; loanStatus?: string; borrowerName?: string;
@@ -38,8 +39,10 @@ export default function IntermediaryDetail() {
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<"notFound" | "failed" | null>(null);
     const [reload, setReload] = useState(0);
+    const activeProfileId = useRef(id);
 
     useEffect(() => {
+        activeProfileId.current = id;
         let active = true;
         void Promise.all([
             api.get<Profile>(`/intermediaries/${id}`),
@@ -100,8 +103,7 @@ export default function IntermediaryDetail() {
         <section className="space-y-3"><h2 className="text-lg font-semibold">{t("intermediary.profile.bankAccounts")}</h2><div className="divide-y rounded-lg border bg-card">{profile.bankAccounts.map((account) => <div className="flex items-center gap-3 p-4" key={account.publicId}><Landmark className="h-5 w-5 text-muted-foreground" /><div><p className="font-medium">{account.bankName} · {account.maskedAccountNumber}</p><p className="text-sm text-muted-foreground">{account.accountName}</p></div></div>)}</div></section>
 
         <IntermediaryTransferLedger intermediaryPublicId={profile.publicId} onPosted={async () => {
-            const response = await api.get<HeldBalance>(`/intermediaries/${profile.publicId}/held-balance`);
-            setHeldBalance(response.data);
+            await refreshForScope(profile.publicId, activeProfileId, async () => (await api.get<HeldBalance>(`/intermediaries/${profile.publicId}/held-balance`)).data, setHeldBalance);
         }} />
     </div>;
 }

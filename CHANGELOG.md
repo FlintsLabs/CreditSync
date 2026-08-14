@@ -14,6 +14,7 @@
 - Added explicitly confirmed atomic posting and compensating reversal for zero-variance intermediary disbursement groups, linking exact borrower payout and activation-time advance-interest projections by public provenance IDs while preserving optional evidence, collection/remittance ledgers, and Decimal-only held balances.
 
 ### Fixed
+- Made intermediary post completion await installation of the refreshed Loan Detail disbursement ledger, guarded deferred profile-balance refreshes against navigation scope changes, cleared blocking refresh warnings only after complete same-key retry success, and aligned Web preview-warning types with backend objects.
 - Recomputed intermediary proposal expiry from the live clock on every proposal change, added explicit expired-proposal refresh/re-review, adopted authoritative group and parent financial projections after posting, and blocked stale presentation when that refresh fails.
 - Bound intermediary-transfer confirmation and command keys to the exact unexpired proposal ID/hash, refreshed stale proposals for mandatory re-review, cleared prior-profile transfer actions immediately on scope changes, and invalidated pending signed-slip resolution on component unmount.
 - Discarded signed transfer-evidence descriptors when their preview closes, including in-flight resolutions, so reopening always requests a fresh short-lived URL.

@@ -1,10 +1,12 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { createRef } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/lib/api";
 import { IntermediatedDisbursementPanel, TransferGroupView } from "../src/pages/dashboard/loans/IntermediatedDisbursementPanel";
 import { IntermediaryTransferLedger } from "../src/pages/dashboard/intermediaries/IntermediaryTransferLedger";
+import { LoanDisbursements, type LoanDisbursementsHandle } from "../src/pages/dashboard/loans/LoanDisbursements";
 
 vi.mock("../src/lib/api", () => ({ api: { get: vi.fn(), post: vi.fn() } }));
 
@@ -44,7 +46,7 @@ const group = {
 };
 
 describe("intermediated disbursement money paths", () => {
-    beforeEach(() => vi.clearAllMocks());
+    beforeEach(() => vi.resetAllMocks());
     afterEach(() => vi.useRealTimers());
 
     it("renders all roles, exact split payouts, transfer metadata, and one action for every finalized slip", async () => {
@@ -222,6 +224,34 @@ describe("intermediated disbursement money paths", () => {
         await user.click(screen.getByRole("checkbox", { name: /confirm.*zero variance.*ready evidence/i }));
         await user.click(screen.getByRole("button", { name: /post confirmed transfer/i }));
         expect(await screen.findByRole("alert")).toHaveTextContent(/posted.*refresh.*do not rely/i);
+    });
+
+    it("awaits installation of the refreshed actual-disbursement ledger", async () => {
+        const ref = createRef<LoanDisbursementsHandle>();
+        const oldLedger = { loanPublicId: LOAN_ID, summary: { approvedPrincipal: "5000.00", netDisbursed: "0.00", variance: "-5000.00", status: "under_disbursed" }, events: [] };
+        const newLedger = { loanPublicId: LOAN_ID, summary: { approvedPrincipal: "5000.00", netDisbursed: "4400.00", variance: "-600.00", status: "under_disbursed" }, events: [] };
+        vi.mocked(api.get).mockResolvedValueOnce({ data: oldLedger }).mockResolvedValueOnce({ data: newLedger });
+        render(<MemoryRouter><LoanDisbursements ref={ref} loanPublicId={LOAN_ID} /></MemoryRouter>);
+        expect((await screen.findByText("Net disbursed")).parentElement).toHaveTextContent(/THB.*0\.00/);
+        await act(async () => { await ref.current!.refresh(); });
+        expect(screen.getByText("Net disbursed").parentElement).toHaveTextContent(/THB.*4,400\.00/);
+    });
+
+    it("clears blocking refresh failure only after same-key retry fully refreshes", async () => {
+        const postedDetail = { ...group, status: "posted", events: events.map((event) => ({ ...event, status: "posted" })) };
+        vi.mocked(api.post).mockResolvedValue({ data: { status: "posted" } });
+        vi.mocked(api.get).mockRejectedValueOnce(new Error("refresh failed")).mockResolvedValueOnce({ data: postedDetail });
+        const parentRefresh = vi.fn().mockResolvedValue(undefined);
+        const user = userEvent.setup();
+        render(<MemoryRouter><TransferGroupView group={group} onPosted={parentRefresh} /></MemoryRouter>);
+        const check = screen.getByRole("checkbox", { name: /confirm.*zero variance.*ready evidence/i });
+        await user.click(check); await user.click(screen.getByRole("button", { name: /post confirmed transfer/i }));
+        expect(await screen.findByRole("alert")).toHaveTextContent(/do not rely/i);
+        await user.click(screen.getByRole("button", { name: /post confirmed transfer/i }));
+        await waitFor(() => expect(screen.queryByText(/do not rely/i)).not.toBeInTheDocument());
+        const posts = vi.mocked(api.post).mock.calls.filter(([url]) => String(url).endsWith("/post"));
+        expect(posts[1]![2]).toEqual(posts[0]![2]);
+        expect(parentRefresh).toHaveBeenCalledWith(postedDetail);
     });
 
     it("provides a profile-scoped transfer ledger linked to each loan", async () => {

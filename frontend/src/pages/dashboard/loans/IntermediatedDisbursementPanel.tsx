@@ -6,6 +6,7 @@ import { formatMoneyExact } from "../../../lib/workflow-model";
 import { EvidencePreviewButton } from "../../../components/evidence/EvidencePreviewButton";
 
 type EvidenceItem = { publicId: string; filePublicId: string; status: string; mimeType: string | null };
+type PreviewWarning = { code: string; amount?: string };
 export type IntermediatedTransferEvent = {
     publicId: string; role: "funding_to_intermediary" | "borrower_net_payout" | "advance_interest_return";
     channel: string; amount: string; senderHint: string | null; payeeHint: string | null;
@@ -15,7 +16,7 @@ export type IntermediatedTransferEvent = {
 export type IntermediatedDisbursementGroup = {
     publicId: string; loanPublicId: string; intermediaryPublicId: string; status: string;
     retainedBalance: string; events: IntermediatedTransferEvent[];
-    latestPreview?: { publicId: string; previewHash: string; status: string; variance: string; evidenceReady: boolean; warnings: string[]; expiresAt: string } | null;
+    latestPreview?: { publicId: string; previewHash: string; status: string; variance: string; evidenceReady: boolean; warnings: PreviewWarning[]; expiresAt: string } | null;
 };
 
 const ROLE_KEYS = {
@@ -119,7 +120,7 @@ export function TransferGroupView({ group, onPosted }: { group: IntermediatedDis
                     try {
                         const detail = (await api.get(`/intermediated-disbursements/${group.publicId}`)).data as IntermediatedDisbursementGroup;
                         if (onPosted) await onPosted(detail);
-                        setAuthoritativeGroup(detail); setPosted(true); setConfirmedProposalIdentity(null);
+                        setAuthoritativeGroup(detail); setPosted(true); setConfirmedProposalIdentity(null); setRefreshFailed(false);
                     } catch {
                         setRefreshFailed(true);
                     }
