@@ -3,6 +3,7 @@
 ## v0.3.13 - 2026-08-15
 
 ### Added
+- Added the approved design for an append-only revolving funding ledger covering credit-card and personal-loan drawdowns, fee-only VAT, manual provider charges and repayments, exact funding allocations, compensating corrections, and synchronized Web/MCP workflows.
 - Added the approved app-wide table pagination design, standardizing server-side pagination for persistent collections, client-side pagination for authoritative previews, localized shared controls, URL-restorable state, and exact financial-value preservation.
 - Added the TDD implementation plan for app-wide table pagination, covering shared controls, paged REST reads, URL and preview state, complete verification gates, supervised tmux execution, integration, and deployment.
 
