@@ -4,6 +4,7 @@
 
 ### Added
 - Added the approved app-wide table pagination design, standardizing server-side pagination for persistent collections, client-side pagination for authoritative previews, localized shared controls, URL-restorable state, and exact financial-value preservation.
+- Added the TDD implementation plan for app-wide table pagination, covering shared controls, paged REST reads, URL and preview state, complete verification gates, supervised tmux execution, integration, and deployment.
 
 ## v0.3.12 - 2026-08-14
 
