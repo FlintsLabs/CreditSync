@@ -44,7 +44,7 @@ test("registers append-only dated floating penalty and allocation ledgers", asyn
     const migration = await Bun.file(penaltyLedgerMigrationPath).text();
     const journal = await Bun.file(journalPath).json() as { entries: Array<{ idx: number; tag: string }> };
 
-    expect(journal.entries.at(-1)).toMatchObject({ idx: 30, tag: "0030_floating_penalty_ledger" });
+    expect(journal.entries.find((entry) => entry.idx === 30)).toMatchObject({ idx: 30, tag: "0030_floating_penalty_ledger" });
     for (const table of ["floating_penalty_ledger_entries", "floating_transaction_allocations"]) {
         expect(migration).toContain(`CREATE TABLE "${table}"`);
         expect(migration).toMatch(new RegExp(`BEFORE UPDATE OR DELETE ON "${table}"`, "u"));

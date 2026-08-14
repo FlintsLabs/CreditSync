@@ -3,6 +3,7 @@
 ## v0.3.12 - 2026-08-14
 
 ### Added
+- Documented the complete operator and agent settlement/restructure workflow, Plugin 2.5.0/47-tool contract, ordered migrations 0023–0035, production-safe schema and health checks, reconciliation scope, rollback boundaries, and reproducible release-verification evidence.
 - Added localized Thai/English Web workflows for exact single-payment loan creation and backend-authoritative settlement/restructuring, including fixed-versus-retroactive policy controls, contracted late penalties, component waivers with reasons, external settlement payments, additional-principal payout disclosure, every replacement contract type, exact confirmation/expiry handling, linked opening balances, waivers, lineage, and disbursement-ledger status.
 - Added six closed CreditSync MCP settlement/restructure and component-waiver tools with direct application-service adapters, exact public UUID/money contracts, confirmation/hash/version/reason/idempotency gates, audited write metadata, synchronized Plugin 2.5.0 orchestration, a frozen 47-tool contract, and executable safety evals.
 - Added closed, tenant-scoped REST read/preview/confirm/execute/reverse adapters for restructures, component waivers, and durable early settlement, with exact public money DTOs, idempotency and correlation propagation, safe loan lineage/opening-component read models, cache invalidation, strict request schemas, and authenticated integration coverage.
@@ -14,6 +15,8 @@
 - Added the approved design for exact single-payment maturity loans, greater-of fixed or retroactive contract interest, optional concurrent daily late penalties, component-level settlement waivers, and append-only restructuring into independently priced replacement contracts.
 
 ### Fixed
+- Aligned the Thai restructure opening-balance translations with the shared Loan Detail locale path and added full English/Thai leaf-key parity coverage.
+- Kept the floating penalty migration contract additive after later migrations and synchronized the final Drizzle snapshot so schema generation does not propose duplicate columns from handcrafted migrations 0034–0035.
 - Replaced note-based additional-principal payout matching with an immutable tenant-safe restructure relation preserved through draft edits, posting, and reversal; exposed it consistently through REST/MCP, added explicit payout loading/error/empty states, and completed settlement review with unallocated external-credit reconciliation plus localized percent/per-thousand exposure-rate labels.
 - Completed the settlement confirmation surface with exact external-payment identity and backend allocation, authoritative retroactive exposure traces, live preview-expiry revocation, full replacement-term controls, and linked draft/posted/reversed additional-principal payout history without treating reversed opening components as active balances.
 - Recursively closed shared MCP floating-interest, daily-entry, and nested daily-interest input objects so unknown nested keys cannot reach loan or restructure handlers.

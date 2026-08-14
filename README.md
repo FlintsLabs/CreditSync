@@ -33,6 +33,7 @@ The repo already contains a working MVP foundation:
 - Loan calculation plus draft-review-activation flow
 - Payment intake, evidence, review, grouped allocation, posting, and compensating reversal workflow
 - Daily-loan renewal preview, confirmed execution, and compensating reversal workflow
+- Single-payment settlement/restructure preview, explicit confirmation, component waivers, replacement contracts, and compensating reversal workflow
 - Legacy repayment-history reads remain available; repayment writes use the payment-intake workflow exclusively
 - Closing summary calculation for loans
 - LINE webhook ingestion for image uploads
@@ -81,6 +82,14 @@ Account identity and tenant role are read-only values supplied by the authorized
 - preview installment breakdown
 - calculate floating closing obligations from current outstanding principal, unpaid due and accruing interest, outstanding fees, and applicable penalties while reporting payment history separately
 - record actual borrower cash, bank-transfer, or adjustment disbursements independently of approved loan terms
+
+Single-payment contracts keep principal, agreed interest, fees, and late penalties as separate exact components. A contract can use the agreed fixed interest only, or the greater of that fixed amount and retroactive interest calculated from actual posted-disbursement exposure; those two interest candidates are alternatives and are never added together. When contracted, the daily late penalty accrues concurrently after the due date and grace period. The localized wizard shows the authoritative one-row maturity preview before a draft is saved and activated.
+
+Loan Detail can settle and restructure an eligible contract into a new `single_payment`, `daily`, `weekly`, `monthly`, or `floating` contract. The backend preview shows gross, waived, externally paid, and carried balances independently. Waiving interest, fees, or penalties requires a component-specific reason and preserves the forgiven amount in the append-only ledger; an external payment is different because it is allocated as real settlement value in `penalty -> fee -> interest -> principal` order. Outstanding principal plus optional newly approved principal becomes the replacement principal—carried interest, fees, and penalties are opening components and are not capitalized. Additional approved principal is not itself proof of cash sent: execution creates a linked disbursement draft whose normal evidence/post lifecycle remains authoritative for the payout.
+
+Restructure is `preview -> review exact totals and cash direction -> explicit confirmation -> execute`. Preview expiry, a stale balance version/hash, an idempotency conflict, an unallocated external credit, or unexpected cash stops execution. A safely repeated request with the same key and payload returns the original result. Reversal writes compensating history and is blocked after downstream payments, posted payout events, later waivers/restructures/renewals, or other dependent records make reversal unsafe. Later eligible carried interest/fee/penalty can be waived through its own preview/confirmed execute/reverse workflow; principal cannot be waived.
+
+The authenticated REST surface is mounted below `/api/loans`: list/inspect and preview use `/:loanId/restructures`, execution/reversal use `/restructures/:restructureId`, component waivers use `/:loanId/waivers` and `/waivers/:waiverId`, and durable early settlement uses `/:loanId/early-settlement/preview` followed by `/early-settlement/:previewId/execute`. Every financial execute/reverse request carries a non-blank reason and `Idempotency-Key`; execute also carries the exact confirmation/hash/version fields returned by preview. The Web workflow calls these adapters but renders only backend-calculated money and schedules.
 
 ### 4. Transaction Management
 
@@ -324,7 +333,7 @@ CreditSync serves a private stateless Streamable HTTP MCP endpoint at `/mcp` in 
 
 All MCP requests are bound to the server-side `MCP_TENANT_ID` and `MCP_ACTOR_EMAIL`. A client cannot submit or override tenant or actor identity. The configured actor must already exist in that tenant, and its normal CreditSync role/portfolio permissions still apply. Funding sources are list-only; the MCP surface has no generic SQL, arbitrary fetch, or funding mutation tool.
 
-The backend schema-version `1.0` tool names are:
+The backend schema-version `1.0` exposes 47 frozen tools, including:
 
 ```text
 borrower.search       borrower.portfolio    borrower.create
@@ -334,15 +343,23 @@ evidence.finalize     payment.preview       payment.post
 payment.reverse       loan.preview          loan.draft
 loan.activate         loan.interest-rate.list
 loan.interest-rate.preview  loan.interest-rate.execute
-renewal.preview       renewal.execute
-renewal.reverse       funding-source.list
 loan.disbursement.list       loan.disbursement.draft
 loan.disbursement.update
 loan.disbursement.evidence.prepare  loan.disbursement.evidence.finalize
 loan.disbursement.post       loan.disbursement.reverse
+intermediary.search          intermediary.create
+intermediary.collection.list  intermediary.collection.create
+intermediary.remittance.get   intermediary.remittance.create
+intermediary.remittance.allocations.save  intermediary.remittance.preview
+intermediary.remittance.evidence.prepare  intermediary.remittance.evidence.finalize
+intermediary.remittance.post
+renewal.preview       renewal.execute       renewal.reverse
+loan.restructure.preview  loan.restructure.execute  loan.restructure.reverse
+loan.waiver.preview       loan.waiver.execute       loan.waiver.reverse
+funding-source.list
 ```
 
-Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Disbursement drafts support strict non-empty PATCH updates to editable metadata; each update retains finalized evidence and requires a re-list plus fresh confirmation before posting. Payment posting/reversal, loan activation, floating-interest execution, renewal execution/reversal, disbursement post/reverse, and intermediary remittance posting follow explicit confirmation and audit boundaries. The frozen MCP schema does not yet expose single-payment terms; attempting to activate a single-payment draft is rejected before the financial handler can mutate it. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces. The bundled Plugin `2.4.0` freezes the matching 41-tool backend contract.
+Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Disbursement drafts support strict non-empty PATCH updates to editable metadata; each update retains finalized evidence and requires a re-list plus fresh confirmation before posting. Payment posting/reversal, loan activation, floating-interest execution, renewal execution/reversal, restructure/waiver execution/reversal, disbursement post/reverse, and intermediary remittance posting follow explicit confirmation and audit boundaries. `loan.preview` and `loan.draft` accept the same closed single-payment policy used by REST/Web, while restructure preview/execute/reverse and component-waiver preview/execute/reverse call the shared application services directly. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces. The bundled Plugin `2.5.0` freezes the matching 47-tool backend contract.
 
 ### Configure and rotate the bearer token
 
@@ -364,7 +381,7 @@ For rotation, put the old and new hashes in `MCP_API_TOKEN_HASHES` separated by 
 
 ## Private CreditSync Plugin
 
-The repository includes CreditSync Plugin `2.4.0` under [`plugins/creditsync`](./plugins/creditsync). It combines eight orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
+The repository includes CreditSync Plugin `2.5.0` under [`plugins/creditsync`](./plugins/creditsync). Its orchestration skills include settlement/restructure stop gates and use a private app reference to the HTTPS MCP endpoint; the package does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
 
 Before installation, register the deployed MCP endpoint as a private Codex app and replace the conspicuous `plugin_asdk_app_REPLACE_AFTER_PRIVATE_REGISTRATION` value in `plugins/creditsync/.app.json` with the returned `plugin_asdk_app...` technical ID. Then validate the package, add this Git repository as the marketplace that tracks `main`, and install the plugin:
 

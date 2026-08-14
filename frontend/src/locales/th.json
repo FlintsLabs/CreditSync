@@ -511,11 +511,6 @@
     },
     "loans": {
         "title": "สัญญาเงินกู้",
-        "restructureBalances": {
-            "title": "ยอดยกมาตอนปรับโครงสร้าง", "lineage": "ลำดับสัญญาที่ปรับโครงสร้าง", "from": "ปรับมาจาก", "to": "ปรับต่อไปเป็น", "waivers": "รายการเวฟที่บันทึก", "payoutStatus": "สถานะการจ่ายเงิน", "payoutSeparate": "ติดตามแยกในบัญชีรายการจ่ายเงิน", "noRelatedPayout": "ยังไม่มีรายการจ่ายเงินที่เกี่ยวข้อง", "payoutLoading": "กำลังโหลดรายการจ่ายเงินที่เกี่ยวข้อง…", "payoutError": "ไม่สามารถโหลดบัญชีรายการจ่ายเงินที่เกี่ยวข้องได้", "reversedHistory": "ประวัติยอดตั้งต้นที่กลับรายการแล้ว",
-            "kinds": { "carried_principal": "เงินต้นยกมา", "additional_principal": "เงินต้นเพิ่ม", "carried_interest": "ดอกเบี้ยยกมา", "carried_fee": "ค่าธรรมเนียมยกมา", "carried_penalty": "ค่าปรับยกมา", "new_contract_interest": "ดอกเบี้ยสัญญาใหม่" },
-            "waiverComponents": { "interest": "ดอกเบี้ย", "fee": "ค่าธรรมเนียม", "penalty": "ค่าปรับ" }
-        },
         "description": "จัดการสัญญาที่ใช้งานอยู่และติดตามการรับชำระ",
         "new": "สร้างสัญญาใหม่",
         "create": "สร้างสัญญา",
@@ -836,6 +831,11 @@
     },
     "loanDetail": {
         "title": "สัญญาเงินกู้",
+        "restructureBalances": {
+            "title": "ยอดยกมาตอนปรับโครงสร้าง", "lineage": "ลำดับสัญญาที่ปรับโครงสร้าง", "from": "ปรับมาจาก", "to": "ปรับต่อไปเป็น", "waivers": "รายการเวฟที่บันทึก", "payoutStatus": "สถานะการจ่ายเงิน", "payoutSeparate": "ติดตามแยกในบัญชีรายการจ่ายเงิน", "noRelatedPayout": "ยังไม่มีรายการจ่ายเงินที่เกี่ยวข้อง", "payoutLoading": "กำลังโหลดรายการจ่ายเงินที่เกี่ยวข้อง…", "payoutError": "ไม่สามารถโหลดบัญชีรายการจ่ายเงินที่เกี่ยวข้องได้", "reversedHistory": "ประวัติยอดตั้งต้นที่กลับรายการแล้ว",
+            "kinds": { "carried_principal": "เงินต้นยกมา", "additional_principal": "เงินต้นเพิ่ม", "carried_interest": "ดอกเบี้ยยกมา", "carried_fee": "ค่าธรรมเนียมยกมา", "carried_penalty": "ค่าปรับยกมา", "new_contract_interest": "ดอกเบี้ยสัญญาใหม่" },
+            "waiverComponents": { "interest": "ดอกเบี้ย", "fee": "ค่าธรรมเนียม", "penalty": "ค่าปรับ" }
+        },
         "activation": {
             "action": "เปิดใช้งานสัญญา",
             "title": "เปิดใช้งานสัญญานี้หรือไม่",
