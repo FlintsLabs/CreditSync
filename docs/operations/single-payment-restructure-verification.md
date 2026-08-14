@@ -14,9 +14,9 @@ Verified on 2026-08-14 in the isolated `codex/single-payment-restructure` worktr
 
 | Gate | Result |
 | --- | --- |
-| `cd backend && ./scripts/test-disposable-postgres.sh` | 359 pass, 2 cache-only skip, 0 fail; 2,504 assertions across 361 tests/60 files |
+| `cd backend && ./scripts/test-disposable-postgres.sh` | 362 pass, 2 cache-only skip, 0 fail; 2,514 assertions across 364 tests/60 files |
 | Cache-gated suites with a disposable Dragonfly plus disposable PostgreSQL | 12 pass, 0 fail; includes both tests skipped by the PostgreSQL-only full run |
-| `cd backend && bun test` without database services | 177 pass, 184 expected DB-dependent skips, 0 fail |
+| `cd backend && bun test` without database services | 177 pass, 187 expected DB-dependent skips, 0 fail |
 | `cd backend && bun run typecheck` | Pass |
 | `cd frontend && bun run test` | 30 files, 119 tests pass |
 | `cd frontend && bun run lint` | Pass |
@@ -28,6 +28,8 @@ Verified on 2026-08-14 in the isolated `codex/single-payment-restructure` worktr
 | `cd backend && bun run generate --name final_schema_drift_check` | `No schema changes, nothing to migrate` |
 
 The first full PostgreSQL run exposed a stale static test that required migration `0030` to be the journal's final entry. The contract was corrected to require its durable index/tag instead; the fresh full rerun passed. Schema generation also exposed missing snapshot metadata for handcrafted migrations `0034`–`0035`; committing the final `0035` snapshot removed the false duplicate-column proposal without adding a redundant migration.
+
+The final aggregate review additionally found and closed three cross-task gaps: waiver execute/reverse now re-authorizes portfolio access after locking (including idempotent replay), settlement rejects later active source-loan payments or posted payouts that would otherwise be excluded from a backdated snapshot, and every replacement contract starts exactly on its settlement date. The final PostgreSQL counts above include these regression tests; a focused cache run passed 12 tests and 80 assertions against Dragonfly.
 
 ## Release audits
 
