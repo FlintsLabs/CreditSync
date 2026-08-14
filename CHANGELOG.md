@@ -16,6 +16,7 @@
 
 ### Changed
 - Refreshed the release-verification report after final aggregate review, including the authorization and temporal-overlap regressions, current full PostgreSQL counts, and a fresh cache-backed verification run.
+- Normalized the committed implementation-plan EOF so the complete release range passes Git whitespace validation.
 
 ### Fixed
 - Re-authorized waiver execution and reversal against the locked replacement-loan portfolio, blocked settlement dates that exclude later active source-loan payments or posted payouts, and required every replacement contract to start exactly on its settlement date during preview and execution revalidation.

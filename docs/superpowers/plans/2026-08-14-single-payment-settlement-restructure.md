@@ -360,4 +360,3 @@ Confirm no raw secrets, identity values, signed URLs, `Number` money conversion,
 - [ ] **Step 5: Update versioned changelogs and create final commit(s)**
 
 Each commit stages its matching `CHANGELOG.md` entry. The final commit includes README/operations documentation and accurately summarizes the verified staged set.
-
