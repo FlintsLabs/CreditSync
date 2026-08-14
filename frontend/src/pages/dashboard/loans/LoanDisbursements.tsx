@@ -24,13 +24,14 @@ export type LoanDisbursementsHandle = { refresh: () => Promise<void> };
 
 export const LoanDisbursements = forwardRef<LoanDisbursementsHandle, { loanPublicId: string }>(function LoanDisbursements({ loanPublicId }, ref) {
     const { t, i18n } = useTranslation();
-    const [ledger, setLedger] = useState<Ledger | null>(null);
+    const [ledgerState, setLedger] = useState<Ledger | null>(null);
     const [draft, setDraft] = useState<Draft | null>(null);
     const [selected, setSelected] = useState<Disbursement | null>(null);
     const [reversalOpen, setReversalOpen] = useState(false);
     const [reason, setReason] = useState("");
     const [message, setMessage] = useState("");
     const [busy, setBusy] = useState(false);
+    const readGeneration = useRef(0);
     const operationKeys = useRef(new Map<string, string>());
     const actionKey = (action: string, eventId: string) => {
         const key = `${action}:${eventId}`;
@@ -41,16 +42,19 @@ export const LoanDisbursements = forwardRef<LoanDisbursementsHandle, { loanPubli
         return created;
     };
     const readLedger = async () => {
+        const generation = ++readGeneration.current;
+        const scope = loanPublicId;
         const response = await api.get(`/loans/${loanPublicId}/disbursements`);
         const next = response.data as Ledger;
+        if (generation !== readGeneration.current || next.loanPublicId !== scope) return;
         setLedger(next);
         setSelected((current) => current ? next.events.find((event) => event.publicId === current.publicId) ?? null : null);
     };
     useImperativeHandle(ref, () => ({ refresh: readLedger }));
     useEffect(() => {
-        let active = true;
-        void api.get(`/loans/${loanPublicId}/disbursements`).then((response) => { if (active) setLedger(response.data as Ledger); }).catch(() => { if (active) setMessage(t("loanDetail.disbursements.errors.load")); });
-        return () => { active = false; };
+        void readLedger().catch(() => setMessage(t("loanDetail.disbursements.errors.load")));
+        return () => { readGeneration.current += 1; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [loanPublicId, t]);
 
     const saveDraft = async () => {
@@ -89,6 +93,7 @@ export const LoanDisbursements = forwardRef<LoanDisbursementsHandle, { loanPubli
     };
     const differs = Boolean(draft && validMoney(draft.grossAmount) && validMoney(draft.loanAttributedAmount) && normalizeMoney(draft.grossAmount) !== normalizeMoney(draft.loanAttributedAmount));
     const canSave = Boolean(draft && validMoney(draft.grossAmount) && validMoney(draft.loanAttributedAmount) && (!differs || draft.note.trim()));
+    const ledger = ledgerState?.loanPublicId === loanPublicId ? ledgerState : null;
     const summary = ledger ? formatDisbursementSummary(ledger.summary) : null;
     return <Card><CardHeader className="flex-row items-center justify-between gap-3 space-y-0"><div><CardTitle>{t("loanDetail.disbursements.title")}</CardTitle><p className="mt-1 text-sm text-muted-foreground">{t("loanDetail.disbursements.description")}</p></div><Button size="sm" disabled={busy} onClick={() => { setSelected(null); setDraft(blankDraft()); }}>{t("loanDetail.disbursements.add")}</Button></CardHeader><CardContent className="space-y-4">
         {message && <div role="alert" className="rounded border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{message}</div>}

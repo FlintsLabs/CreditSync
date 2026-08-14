@@ -237,6 +237,20 @@ describe("intermediated disbursement money paths", () => {
         expect(screen.getByText("Net disbursed").parentElement).toHaveTextContent(/THB.*4,400\.00/);
     });
 
+    it("never lets an older initial ledger response overwrite a newer refresh", async () => {
+        const ref = createRef<LoanDisbursementsHandle>();
+        let finishOld!: (value: { data: unknown }) => void;
+        const oldLedger = { loanPublicId: LOAN_ID, summary: { approvedPrincipal: "5000.00", netDisbursed: "0.00", variance: "-5000.00", status: "under_disbursed" }, events: [] };
+        const newLedger = { loanPublicId: LOAN_ID, summary: { approvedPrincipal: "5000.00", netDisbursed: "4400.00", variance: "-600.00", status: "under_disbursed" }, events: [] };
+        vi.mocked(api.get).mockImplementationOnce(() => new Promise((resolve) => { finishOld = resolve; })).mockResolvedValueOnce({ data: newLedger });
+        render(<MemoryRouter><LoanDisbursements ref={ref} loanPublicId={LOAN_ID} /></MemoryRouter>);
+        await act(async () => { await ref.current!.refresh(); });
+        expect(screen.getByText("Net disbursed").parentElement).toHaveTextContent(/4,400\.00/);
+        finishOld({ data: oldLedger });
+        await act(async () => { await Promise.resolve(); });
+        expect(screen.getByText("Net disbursed").parentElement).toHaveTextContent(/4,400\.00/);
+    });
+
     it("clears blocking refresh failure only after same-key retry fully refreshes", async () => {
         const postedDetail = { ...group, status: "posted", events: events.map((event) => ({ ...event, status: "posted" })) };
         vi.mocked(api.post).mockResolvedValue({ data: { status: "posted" } });

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { AlertTriangle, ArrowLeft, Landmark } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -40,9 +40,9 @@ export default function IntermediaryDetail() {
     const [loadError, setLoadError] = useState<"notFound" | "failed" | null>(null);
     const [reload, setReload] = useState(0);
     const activeProfileId = useRef(id);
+    useLayoutEffect(() => { activeProfileId.current = id; }, [id]);
 
     useEffect(() => {
-        activeProfileId.current = id;
         let active = true;
         void Promise.all([
             api.get<Profile>(`/intermediaries/${id}`),

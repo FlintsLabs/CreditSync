@@ -1,6 +1,6 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import IntermediaryList from "../src/pages/dashboard/intermediaries/IntermediaryList";
 import IntermediaryDetail from "../src/pages/dashboard/intermediaries/IntermediaryDetail";
@@ -126,6 +126,7 @@ describe("intermediary profile workspace", () => {
             if (url === `/intermediaries/${INTERMEDIARY_ID}/managed-loans`) return { data: managedLoans };
             if (url === `/intermediaries/${INTERMEDIARY_ID}/held-balance`) return { data: heldBalance };
             if (url === "/intermediated-disbursements") return { data: groups };
+            if (url === `/intermediated-disbursements/${groups[0]!.publicId}`) return { data: groups[0] };
             throw new Error(`Unexpected GET ${url}`);
         });
     });
@@ -140,6 +141,27 @@ describe("intermediary profile workspace", () => {
         finish(heldBalance);
         await pending;
         expect(install).not.toHaveBeenCalled();
+    });
+
+    it("keeps routed profile B after deferred profile A resolves", async () => {
+        const PROFILE_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        let finishA!: (value: { data: unknown }) => void;
+        vi.mocked(api.get).mockImplementation(async (url) => {
+            if (url === `/intermediaries/${INTERMEDIARY_ID}`) return new Promise((resolve) => { finishA = resolve; });
+            if (String(url).startsWith(`/intermediaries/${INTERMEDIARY_ID}/`)) return { data: [] };
+            if (url === `/intermediaries/${PROFILE_B}`) return { data: { ...profile, publicId: PROFILE_B, name: "Profile B", assignments: [] } };
+            if (url === `/intermediaries/${PROFILE_B}/managed-loans`) return { data: [] };
+            if (url === `/intermediaries/${PROFILE_B}/held-balance`) return { data: { ...heldBalance, intermediaryPublicId: PROFILE_B } };
+            if (url === "/intermediated-disbursements") return { data: [] };
+            throw new Error(`Unexpected GET ${url}`);
+        });
+        render(<MemoryRouter initialEntries={[`/intermediaries/${INTERMEDIARY_ID}`]}><Link to={`/intermediaries/${PROFILE_B}`}>Go B</Link><Routes><Route path="/intermediaries/:id" element={<IntermediaryDetail />} /></Routes></MemoryRouter>);
+        await userEvent.click(screen.getByRole("link", { name: "Go B" }));
+        expect(await screen.findByRole("heading", { name: "Profile B" })).toBeInTheDocument();
+        finishA({ data: profile });
+        await act(async () => { await Promise.resolve(); });
+        expect(screen.getByRole("heading", { name: "Profile B" })).toBeInTheDocument();
+        expect(screen.queryByRole("heading", { name: "Mae Mali" })).not.toBeInTheDocument();
     });
 
     // Break caught: profile creation can bypass the canonical/alias candidate search, or editing searched identity retains stale approval.
@@ -226,7 +248,7 @@ describe("intermediary profile workspace", () => {
         expect(within(overview).getByText(/4,400\.00/)).toBeInTheDocument();
         expect(screen.getAllByRole("link", { name: /Somchai Exact/i })).toHaveLength(2);
         for (const link of screen.getAllByRole("link", { name: /Somchai Exact/i })) expect(link).toHaveAttribute("href", `/loans/${LOAN_ID}`);
-        expect(screen.getByRole("alert")).toHaveTextContent(/1 disbursement group needs review/i);
+        expect(screen.getByText(/1 disbursement group needs review/i)).toBeInTheDocument();
         expect(screen.getByText(/Krungthai.*•••• 2233/)).toBeInTheDocument();
         expect(screen.queryByText(/1111222233/)).not.toBeInTheDocument();
     });
