@@ -89,6 +89,15 @@ describe("CreditSync plugin 2.5.0 contract", () => {
         expect(contract.tools.every((tool) => tool.inputSchema && tool.outputSchema && tool.annotations)).toBe(true);
         const advertised = await captureAdvertisedMcpContract();
         expect(canonicalContractJson(contract)).toBe(canonicalContractJson(advertised));
+        for (const name of ["loan.restructure.preview", "loan.waiver.preview"]) {
+            expect(contract.tools.find((tool) => tool.name === name)?.annotations).toMatchObject({
+                readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false,
+            });
+        }
+        const restructureOutput = contract.tools.find((tool) => tool.name === "loan.restructure.preview")?.outputSchema as any;
+        const replacementTerms = restructureOutput.properties.data.properties.replacementTerms;
+        expect(replacementTerms.oneOf).toHaveLength(5);
+        expect(replacementTerms.oneOf.every((variant: { additionalProperties?: boolean }) => variant.additionalProperties === false)).toBe(true);
     });
 
     test("eval catalog covers every required positive and negative workflow", async () => {

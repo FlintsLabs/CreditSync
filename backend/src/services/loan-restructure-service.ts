@@ -230,7 +230,7 @@ function presentPreview(row: Restructure, loan: Loan, computed: Awaited<ReturnTy
         balance: computed.calculated,
         replacementPrincipal: serializeMoney(new Decimal(row.netPrincipal).plus(row.additionalPrincipal)),
         externalCreditAllocation: { penalty: serializeMoney(row.externalCreditPenalty), fee: serializeMoney(row.externalCreditFees), interest: serializeMoney(row.externalCreditInterest), principal: serializeMoney(row.externalCreditPrincipal), unallocated: "0.00" },
-        replacementTerms: row.requestedReplacementTerms,
+        replacementTerms: computed.replacement.terms,
         schedule: computed.replacement.schedule, cash: { direction: row.cashDirection, amount: serializeMoney(row.cashAmount) },
         reason: row.reason,
     };

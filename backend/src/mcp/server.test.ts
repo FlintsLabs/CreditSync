@@ -366,10 +366,8 @@ describe("CreditSync stateless MCP contract", () => {
             "renewal.preview",
             "renewal.execute",
             "renewal.reverse",
-            "loan.restructure.preview",
             "loan.restructure.execute",
             "loan.restructure.reverse",
-            "loan.waiver.preview",
             "loan.waiver.execute",
             "loan.waiver.reverse",
         ]);
@@ -405,7 +403,7 @@ describe("CreditSync stateless MCP contract", () => {
         const tools = new Map(listed.tools.map((tool) => [tool.name, tool]));
 
         for (const name of ["loan.restructure.preview", "loan.waiver.preview"]) {
-            expect(tools.get(name)?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false });
+            expect(tools.get(name)?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
         }
         for (const name of ["loan.restructure.execute", "loan.restructure.reverse", "loan.waiver.execute", "loan.waiver.reverse"]) {
             expect(tools.get(name)?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false });
@@ -431,6 +429,65 @@ describe("CreditSync stateless MCP contract", () => {
         });
         expect(unknown.isError).toBe(true);
         expect(unknown.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: "text" })]));
+        await client.close();
+    });
+
+    // Break caught: arbitrary nested replacement-term fields can cross the public
+    // output boundary and expose internal request material.
+    test("rejects unknown nested replacement-term output fields", async () => {
+        let handlerCalls = 0;
+        const baseUrl = await startServer({
+            toolHandlers: {
+                "loan.restructure.preview": async () => {
+                    handlerCalls += 1;
+                    return ({
+                    publicId: BORROWER_ID, oldLoanPublicId: INTAKE_ID, status: "preview",
+                    settlementDate: "2026-08-19", oldBalanceVersion: `v1:${"a".repeat(64)}`,
+                    previewHash: `v1:${"b".repeat(64)}`, expiresAt: "2026-08-19T12:00:00.000Z",
+                    balance: {
+                        fixedInterestCandidate: "100.00", retroactiveInterestCandidate: "0.00",
+                        selectedInterest: "100.00", selectedInterestBranch: "fixed", interestDifference: "100.00",
+                        exposureTrace: [], lateDays: 0, grossPrincipal: "1000.00", grossInterest: "100.00",
+                        grossFees: "0.00", grossPenalty: "0.00", grossSettlement: "1100.00",
+                        waivedInterest: "0.00", waivedFees: "0.00", waivedPenalty: "0.00",
+                        netInterest: "100.00", netFees: "0.00", netPenalty: "0.00",
+                        externalSettlementCredits: "0.00", netSettlement: "1100.00",
+                    },
+                    replacementPrincipal: "1000.00",
+                    externalCreditAllocation: { penalty: "0.00", fee: "0.00", interest: "0.00", principal: "0.00", unallocated: "0.00" },
+                    replacementTerms: {
+                        principal: "1000.00", interestRate: "0.00", termMonths: 1,
+                        repaymentType: "monthly", startDate: "2026-08-19",
+                        unexpectedInternal: "must be rejected",
+                    },
+                    schedule: [], cash: { direction: "none", amount: "0.00" }, reason: "replace",
+                    });
+                },
+            },
+        });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const invalidInput = await client.callTool({
+            name: "loan.restructure.preview",
+            arguments: {
+                oldLoanPublicId: BORROWER_ID, settlementDate: "2026-08-19",
+                replacementTerms: { interestRate: "0.00", termMonths: 1, repaymentType: "monthly", startDate: "2026-08-19", unexpectedInternal: true },
+                additionalPrincipal: "0.00", reason: "replace",
+            },
+        });
+        expect(invalidInput.isError).toBe(true);
+        expect(handlerCalls).toBe(0);
+        const result = await client.callTool({
+            name: "loan.restructure.preview",
+            arguments: {
+                oldLoanPublicId: BORROWER_ID, settlementDate: "2026-08-19",
+                replacementTerms: { interestRate: "0.00", termMonths: 1, repaymentType: "monthly", startDate: "2026-08-19" },
+                additionalPrincipal: "0.00", reason: "replace",
+            },
+        });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({ error: { code: "INVALID_TOOL_OUTPUT" } });
+        expect(handlerCalls).toBe(1);
         await client.close();
     });
 

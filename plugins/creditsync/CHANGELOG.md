@@ -7,6 +7,10 @@
 - Added closed MCP contracts and a dedicated orchestration skill for single-payment settlement/restructure, eligible component waivers, additional-principal disclosure, confirmation gates, and compensating reversals.
 - Added positive restructure/waiver evals and negative identity, stale-preview, missing-reason/confirmation, unexpected-cash, and unsafe-reversal stop gates.
 
+### Fixed
+
+- Marked stateful preview tools as non-read-only but non-destructive, and froze exact repayment-type-specific replacement-term outputs without arbitrary nested fields.
+
 ## 2.4.0 - 2026-08-13
 
 ### Added

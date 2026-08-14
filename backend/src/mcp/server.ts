@@ -143,6 +143,35 @@ const loanTerms = {
     }).optional(),
 };
 const { principal: _replacementPrincipalIsBackendOwned, ...replacementLoanTerms } = loanTerms;
+const publicReplacementBase = {
+    principal: money,
+    interestRate: money,
+    termMonths: z.number().int().positive().max(1_200),
+    startDate: date,
+};
+const publicReplacementTermsOutput = z.discriminatedUnion("repaymentType", [
+    z.object({
+        ...publicReplacementBase, repaymentType: z.literal("daily"),
+        totalInstallments: z.number().int().positive().max(100_000).optional(),
+        installmentAmount: money.optional(), dailyEntry: loanTerms.dailyEntry.optional(),
+    }).strict(),
+    z.object({
+        ...publicReplacementBase, repaymentType: z.literal("weekly"),
+        totalInstallments: z.number().int().positive().max(100_000).optional(), installmentAmount: money.optional(),
+    }).strict(),
+    z.object({
+        ...publicReplacementBase, repaymentType: z.literal("monthly"),
+        totalInstallments: z.number().int().positive().max(100_000).optional(), installmentAmount: money.optional(),
+    }).strict(),
+    z.object({
+        ...publicReplacementBase, repaymentType: z.literal("floating"),
+        floatingDailyInterest: loanTerms.floatingDailyInterest,
+    }).strict(),
+    z.object({
+        ...publicReplacementBase, repaymentType: z.literal("single_payment"),
+        singlePayment: loanTerms.singlePayment,
+    }).strict(),
+]);
 
 const explicitAllocation = z.object({
     borrowerPublicId: uuid,
@@ -384,7 +413,7 @@ const restructurePreviewOutput = z.object({
     oldBalanceVersion: versionHash, previewHash: versionHash, expiresAt: isoDateTime,
     balance: settlementBalanceOutput, replacementPrincipal: money,
     externalCreditAllocation: z.object({ penalty: money, fee: money, interest: money, principal: money, unallocated: money }).strict(),
-    replacementTerms: z.record(z.string(), z.unknown()),
+    replacementTerms: publicReplacementTermsOutput,
     schedule: z.array(z.object({
         installmentNo: z.number().int().positive(), dueDate: date,
         scheduledPrincipal: money, scheduledInterest: money, scheduledFee: money,
@@ -804,10 +833,8 @@ const destructiveTools = new Set<McpToolName>([
     "renewal.preview",
     "renewal.execute",
     "renewal.reverse",
-    "loan.restructure.preview",
     "loan.restructure.execute",
     "loan.restructure.reverse",
-    "loan.waiver.preview",
     "loan.waiver.execute",
     "loan.waiver.reverse",
 ]);
