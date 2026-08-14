@@ -513,6 +513,13 @@ describe("CreditSync stateless MCP contract", () => {
         ]) expect((await request(invalid)).isError).toBe(true);
         expect(handlerCalls).toBe(0);
 
+        for (const invalidNested of [
+            { ...base, repaymentType: "floating", floatingDailyInterest: { mode: "percent", rate: "1", firstDayTreatment: "start_next_day", unexpected: true } },
+            { ...base, repaymentType: "daily", dailyEntry: { durationUnit: "days", durationValue: 10, entryMode: "daily_payment", dailyPayment: "110.00", unexpected: true } },
+            { ...base, repaymentType: "daily", dailyEntry: { durationUnit: "days", durationValue: 10, entryMode: "daily_interest", interestInput: { mode: "percent", value: "1", unexpected: true } } },
+        ]) expect((await request(invalidNested)).isError).toBe(true);
+        expect(handlerCalls).toBe(0);
+
         const dailyEntry = { durationUnit: "days", durationValue: 10, entryMode: "daily_payment", dailyPayment: "110.00" };
         const valid = [
             { ...base, repaymentType: "daily", dailyEntry, totalInstallments: 10, installmentAmount: "110.00" },

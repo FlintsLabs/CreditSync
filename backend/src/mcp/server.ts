@@ -109,7 +109,7 @@ const loanTerms = {
         mode: z.enum(["per_thousand", "percent"]), rate: z.string().regex(/^\d+(?:\.\d{1,4})?$/),
         firstDayTreatment: z.enum(["deduct", "start_next_day"]),
         accrualCycle: z.enum(["daily", "weekly"]).optional(),
-    }).optional(),
+    }).strict().optional(),
     singlePayment: z.union([
         z.object({
             dueDate: date,
@@ -139,8 +139,8 @@ const loanTerms = {
         interestInput: z.object({
             mode: z.enum(["percent", "fixed_amount", "per_thousand"]),
             value: z.string().regex(/^\d+(?:\.\d{1,4})?$/),
-        }).optional(),
-    }).optional(),
+        }).strict().optional(),
+    }).strict().optional(),
 };
 const replacementBase = {
     interestRate: money,

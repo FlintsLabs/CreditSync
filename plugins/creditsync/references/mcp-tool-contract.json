@@ -3000,6 +3000,7 @@
         "additionalProperties": false,
         "properties": {
           "dailyEntry": {
+            "additionalProperties": false,
             "properties": {
               "dailyPayment": {
                 "maxLength": 32,
@@ -3026,6 +3027,7 @@
                 "type": "string"
               },
               "interestInput": {
+                "additionalProperties": false,
                 "properties": {
                   "mode": {
                     "enum": [
@@ -3055,6 +3057,7 @@
             "type": "object"
           },
           "floatingDailyInterest": {
+            "additionalProperties": false,
             "properties": {
               "accrualCycle": {
                 "enum": [
@@ -4208,6 +4211,7 @@
             "type": "string"
           },
           "dailyEntry": {
+            "additionalProperties": false,
             "properties": {
               "dailyPayment": {
                 "maxLength": 32,
@@ -4234,6 +4238,7 @@
                 "type": "string"
               },
               "interestInput": {
+                "additionalProperties": false,
                 "properties": {
                   "mode": {
                     "enum": [
@@ -4263,6 +4268,7 @@
             "type": "object"
           },
           "floatingDailyInterest": {
+            "additionalProperties": false,
             "properties": {
               "accrualCycle": {
                 "enum": [
@@ -9636,6 +9642,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "dailyEntry": {
+                    "additionalProperties": false,
                     "properties": {
                       "dailyPayment": {
                         "maxLength": 32,
@@ -9662,6 +9669,7 @@
                         "type": "string"
                       },
                       "interestInput": {
+                        "additionalProperties": false,
                         "properties": {
                           "mode": {
                             "enum": [
@@ -9815,6 +9823,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "floatingDailyInterest": {
+                    "additionalProperties": false,
                     "properties": {
                       "accrualCycle": {
                         "enum": [

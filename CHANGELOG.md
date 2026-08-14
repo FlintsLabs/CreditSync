@@ -13,6 +13,7 @@
 - Added the approved design for exact single-payment maturity loans, greater-of fixed or retroactive contract interest, optional concurrent daily late penalties, component-level settlement waivers, and append-only restructuring into independently priced replacement contracts.
 
 ### Fixed
+- Recursively closed shared MCP floating-interest, daily-entry, and nested daily-interest input objects so unknown nested keys cannot reach loan or restructure handlers.
 - Closed MCP replacement-term inputs by repayment type, requiring daily, floating, and single-payment policy objects only on their matching variants while rejecting cross-variant schedule and policy fields before service execution.
 - Classified restructure/waiver previews truthfully as stateful but non-destructive MCP operations, and replaced their open replacement-term output bag with strict repayment-type-specific public terms that exclude stored request internals and arbitrary nested fields.
 - Preserved independent inbound and outbound restructure lineage across multi-hop and reversed contract chains while retaining legacy scalar lineage semantics for the latest outbound transition, and kept each replacement loan's opening components and waivers anchored to its own inbound restructure; expanded REST regression coverage for role scope, real prewarmed-cache invalidation, malformed identifiers and money, confirmation/idempotency failures, and conflicting retries.

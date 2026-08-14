@@ -102,6 +102,12 @@ describe("CreditSync plugin 2.5.0 contract", () => {
         const replacementInput = restructureInput.properties.replacementTerms;
         expect(replacementInput.oneOf).toHaveLength(5);
         expect(replacementInput.oneOf.every((variant: { additionalProperties?: boolean }) => variant.additionalProperties === false)).toBe(true);
+        const inputVariants = replacementInput.oneOf as Array<{ properties: Record<string, any> }>;
+        const floatingInput = inputVariants.find((variant) => variant.properties.floatingDailyInterest);
+        const dailyInput = inputVariants.find((variant) => variant.properties.dailyEntry);
+        expect(floatingInput?.properties.floatingDailyInterest.additionalProperties).toBe(false);
+        expect(dailyInput?.properties.dailyEntry.additionalProperties).toBe(false);
+        expect(dailyInput?.properties.dailyEntry.properties.interestInput.additionalProperties).toBe(false);
     });
 
     test("eval catalog covers every required positive and negative workflow", async () => {
