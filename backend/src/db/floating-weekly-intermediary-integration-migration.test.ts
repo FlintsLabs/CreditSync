@@ -89,7 +89,18 @@ describe("floating weekly and intermediary integration migration lineage", () =>
             Bun.file(`${backendRoot}drizzle/meta/0036_snapshot.json`).json(),
         ]);
         expect(integrationSnapshot.prevId).toBe(mainSnapshot.id);
-        expect(integrationSnapshot.tables["public.loan_settlement_previews"]).toBeDefined();
+        const settlementPreview = integrationSnapshot.tables["public.loan_settlement_previews"];
+        expect(settlementPreview).toBeDefined();
+        expect(settlementPreview.columns.original_outstanding_interest).toMatchObject({
+            name: "original_outstanding_interest",
+            type: "numeric",
+            notNull: true,
+        });
+        expect(settlementPreview.columns.original_next_due_date).toMatchObject({
+            name: "original_next_due_date",
+            type: "date",
+            notNull: false,
+        });
         expect(integrationSnapshot.tables["public.intermediated_disbursement_groups"]).toBeDefined();
         for (const name of [
             "loans_single_payment_terms_check",

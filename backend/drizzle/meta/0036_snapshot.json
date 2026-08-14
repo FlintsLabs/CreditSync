@@ -10415,6 +10415,18 @@
           "primaryKey": false,
           "notNull": true
         },
+        "original_outstanding_interest": {
+          "name": "original_outstanding_interest",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "original_next_due_date": {
+          "name": "original_next_due_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
         "non_refundable_advance_interest": {
           "name": "non_refundable_advance_interest",
           "type": "numeric",
