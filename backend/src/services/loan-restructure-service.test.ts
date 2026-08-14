@@ -101,7 +101,11 @@ describe("loan restructure service", () => {
             ["carried_principal", "5000.00"], ["additional_principal", "1000.00"], ["carried_interest", "1165.00"], ["new_contract_interest", "240.00"],
         ]));
         const drafts = await db.select().from(loanDisbursementEvents).where(eq(loanDisbursementEvents.loanId, newLoan!.id));
-        expect(drafts.map(d => [d.status, d.grossAmount, d.loanAttributedAmount])).toEqual([["draft", "1000.00", "1000.00"]]);
+        expect(drafts.map(d => [d.status, d.grossAmount, d.loanAttributedAmount, d.restructureId])).toEqual([["draft", "1000.00", "1000.00", expect.any(Number)]]);
+        const executedRestructure = await db.query.loanRestructures.findFirst({ where: eq(loanRestructures.publicId, preview.publicId) });
+        expect(executedRestructure).toBeDefined();
+        expect(drafts[0]?.restructureId).toBe(executedRestructure!.id);
+        await expect(db.update(loanDisbursementEvents).set({ restructureId: null }).where(eq(loanDisbursementEvents.id, drafts[0]!.id)).execute()).rejects.toBeDefined();
         expect((await db.select().from(transactions).where(eq(transactions.loanId, loan.id))).map(row => [row.amount, row.principalComponent, row.interestComponent, row.feeComponent, row.penaltyComponent, row.entryType]))
             .toEqual([["200.00", "0.00", "135.00", "25.00", "40.00", "repayment"]]);
         const creditTransaction = await db.query.transactions.findFirst({ where: and(eq(transactions.loanId, loan.id), eq(transactions.entryType, "repayment")) });

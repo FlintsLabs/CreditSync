@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { auditLogs, bankProfiles, files, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loans, users } from "../db/schema";
+import { auditLogs, bankProfiles, files, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loanRestructures, loans, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import { parseMoney, serializeMoney } from "../lib/money";
 import { BUCKET_NAME, createSignedPutUrl, headStoredObject, toStorageReference, type SignedPutRequest, type StoredObjectHead } from "../lib/storage";
@@ -152,10 +152,13 @@ async function presentEvent(event: EventRow, evidenceFilePublicIds: string[] = [
     const sourceProfile = event.sourceBankProfileId === null ? null : await executor.query.bankProfiles.findFirst({
         where: and(eq(bankProfiles.id, event.sourceBankProfileId), eq(bankProfiles.tenantId, event.tenantId)),
     });
+    const restructure = event.restructureId === null ? null : await executor.query.loanRestructures.findFirst({
+        where: and(eq(loanRestructures.id, event.restructureId), eq(loanRestructures.tenantId, event.tenantId)),
+    });
     return {
         id: event.publicId, publicId: event.publicId, grossAmount: serializeMoney(event.grossAmount), loanAttributedAmount: serializeMoney(event.loanAttributedAmount),
         channel: event.channel, status: event.status, sourceBankProfilePublicId: sourceProfile?.publicId ?? null, payeeHint: event.payeeHint, note: event.note, disbursedAt: event.disbursedAt,
-        postedAt: event.postedAt, reversedAt: event.reversedAt, evidenceFilePublicIds,
+        restructurePublicId: restructure?.publicId ?? null, postedAt: event.postedAt, reversedAt: event.reversedAt, evidenceFilePublicIds,
     };
 }
 
@@ -199,12 +202,14 @@ export async function createDisbursementDraftInTransaction(
     ctx: CommandContext,
     loan: typeof loans.$inferSelect,
     input: CreateDisbursementDraftInput,
+    restructureId?: number,
 ) {
     const draft = validateDraft(input);
     const sourceProfile = await sourceProfileFor(ctx, input.sourceBankProfilePublicId, tx);
     const created = await tx.insert(loanDisbursementEvents).values({
         tenantId: ctx.tenantId,
         loanId: loan.id,
+        restructureId: restructureId ?? null,
         ...draft,
         sourceBankProfileId: sourceProfile?.id ?? null,
         payeeHint: normalizedText(input.payeeHint),
@@ -323,7 +328,7 @@ export async function reverseDisbursement(ctx: CommandContext, disbursementPubli
         }
         const reversal = await tx.insert(loanDisbursementEvents).values({
             tenantId: ctx.tenantId, loanId: original.loanId, grossAmount: original.grossAmount, loanAttributedAmount: original.loanAttributedAmount,
-            channel: original.channel, sourceBankProfileId: original.sourceBankProfileId, payeeHint: original.payeeHint, status: "reversed", reversedEventId: original.id,
+            channel: original.channel, sourceBankProfileId: original.sourceBankProfileId, payeeHint: original.payeeHint, status: "reversed", reversedEventId: original.id, restructureId: original.restructureId,
             note, disbursedAt: original.disbursedAt, postedAt: new Date(), reversedAt: new Date(), createdByUserId: ctx.actorUserId,
             reversalIdempotencyKey: idempotencyKey, reversalRequestHash,
         }).returning().then((rows) => rows[0]!);

@@ -160,6 +160,11 @@ describe("loan restructure REST contract", () => {
         expect(oldDetail.body.restructureLineage).toMatchObject({ inbound: null, outbound: { restructurePublicId: preview.body.publicId, loanPublicId: executed.body.newLoanPublicId, status: "executed" } });
         expect(newDetail.body.restructureLineage).toMatchObject({ inbound: { restructurePublicId: preview.body.publicId, loanPublicId: seeded.loan.publicId, status: "executed" }, outbound: null });
         expect(newDetail.body.openingBalanceComponents).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "additional_principal", amount: "1000.00" })]));
+        const payoutLedger = await call(app, `/loans/${executed.body.newLoanPublicId}/disbursements`, token);
+        expect(payoutLedger.response.status).toBe(200);
+        expect(payoutLedger.body.events).toEqual([expect.objectContaining({ publicId: executed.body.disbursementDraftPublicId, restructurePublicId: preview.body.publicId, status: "draft" })]);
+        const editedPayout = await call(app, `/loans/${executed.body.newLoanPublicId}/disbursements/${executed.body.disbursementDraftPublicId}`, token, { method: "PUT", body: JSON.stringify({ note: "operator replaced the generated note" }) });
+        expect(editedPayout.body).toMatchObject({ restructurePublicId: preview.body.publicId, note: "operator replaced the generated note" });
 
         const manager = await db.insert(users).values({ tenantId: seeded.user.tenantId, email: `${crypto.randomUUID()}@example.test`, role: "manager" }).returning().then(rows => rows[0]!);
         const collector = await db.insert(users).values({ tenantId: seeded.user.tenantId, email: `${crypto.randomUUID()}@example.test`, role: "collector" }).returning().then(rows => rows[0]!);

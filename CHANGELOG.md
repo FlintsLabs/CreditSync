@@ -14,6 +14,7 @@
 - Added the approved design for exact single-payment maturity loans, greater-of fixed or retroactive contract interest, optional concurrent daily late penalties, component-level settlement waivers, and append-only restructuring into independently priced replacement contracts.
 
 ### Fixed
+- Replaced note-based additional-principal payout matching with an immutable tenant-safe restructure relation preserved through draft edits, posting, and reversal; exposed it consistently through REST/MCP, added explicit payout loading/error/empty states, and completed settlement review with unallocated external-credit reconciliation plus localized percent/per-thousand exposure-rate labels.
 - Completed the settlement confirmation surface with exact external-payment identity and backend allocation, authoritative retroactive exposure traces, live preview-expiry revocation, full replacement-term controls, and linked draft/posted/reversed additional-principal payout history without treating reversed opening components as active balances.
 - Recursively closed shared MCP floating-interest, daily-entry, and nested daily-interest input objects so unknown nested keys cannot reach loan or restructure handlers.
 - Closed MCP replacement-term inputs by repayment type, requiring daily, floating, and single-payment policy objects only on their matching variants while rejecting cross-variant schedule and policy fields before service execution.

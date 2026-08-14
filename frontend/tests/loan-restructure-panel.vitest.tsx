@@ -10,8 +10,8 @@ const LOAN_ID = "019ff023-fd64-7d41-9aae-723d2a458a8a";
 const preview = {
     publicId: "019ff023-fd64-7d41-9aae-723d2a458a8b", status: "preview", settlementDate: "2026-08-19",
     oldBalanceVersion: "v1:balance", previewHash: "v1:preview", expiresAt: "2099-08-19T12:00:00.000Z",
-    balance: { grossPrincipal: "5000.00", grossInterest: "500.00", grossFees: "50.00", grossPenalty: "20.00", waivedInterest: "100.00", waivedFees: "0.00", waivedPenalty: "20.00", netPrincipal: "5000.00", netInterest: "400.00", netFees: "50.00", netPenalty: "0.00", fixedInterestCandidate: "500.00", retroactiveInterestCandidate: "450.00", selectedInterest: "500.00", selectedInterestBranch: "fixed", exposureTrace: [{ amount: "5000.00", fromDate: "2026-08-10", toDate: "2026-08-19", days: 9, rateType: "percent_per_day", rate: "1.0000", unroundedInterest: "450.000000", roundedInterest: "450.00" }] },
-    replacementPrincipal: "6000.00", externalCreditAllocation: { principal: "100.00", interest: "75.00", fee: "25.00", penalty: "0.00", unallocated: "0.00" },
+    balance: { grossPrincipal: "5000.00", grossInterest: "500.00", grossFees: "50.00", grossPenalty: "20.00", waivedInterest: "100.00", waivedFees: "0.00", waivedPenalty: "20.00", netPrincipal: "5000.00", netInterest: "400.00", netFees: "50.00", netPenalty: "0.00", fixedInterestCandidate: "500.00", retroactiveInterestCandidate: "450.00", selectedInterest: "500.00", selectedInterestBranch: "fixed", exposureTrace: [{ amount: "5000.00", fromDate: "2026-08-10", toDate: "2026-08-19", days: 9, rateType: "percent_per_day", rate: "1.0000", unroundedInterest: "450.000000", roundedInterest: "450.00" }, { amount: "1000.00", fromDate: "2026-08-18", toDate: "2026-08-19", days: 1, rateType: "per_thousand_per_day", rate: "10.0000", unroundedInterest: "10.000000", roundedInterest: "10.00" }] },
+    replacementPrincipal: "6000.00", externalCreditAllocation: { principal: "100.00", interest: "75.00", fee: "25.00", penalty: "0.00", unallocated: "100.00" },
     replacementTerms: { repaymentType: "monthly", startDate: "2026-08-19", interestRate: "12.00", termMonths: 12 },
     schedule: [{ installmentNo: 1, dueDate: "2026-09-19", amount: "560.00", principalComponent: "500.00", interestComponent: "60.00" }],
     cash: { direction: "payout", amount: "1000.00" }, reason: "ช่วยปรับโครงสร้าง",
@@ -29,7 +29,7 @@ describe("LoanRestructurePanel", () => {
         fireEvent.change(screen.getByLabelText(/interest waiver amount/i), { target: { value: "100" } });
         expect(screen.getByRole("button", { name: /preview restructure/i })).toBeDisabled();
         fireEvent.change(screen.getByLabelText(/interest waiver reason/i), { target: { value: "assistance" } });
-        fireEvent.change(screen.getByLabelText(/external payment amount/i), { target: { value: "200" } });
+        fireEvent.change(screen.getByLabelText(/external payment amount/i), { target: { value: "300" } });
         fireEvent.change(screen.getByLabelText(/payer/i), { target: { value: "Charity" } });
         fireEvent.change(screen.getByLabelText(/payment source/i), { target: { value: "support fund" } });
         fireEvent.change(screen.getByLabelText(/additional principal/i), { target: { value: "1000" } });
@@ -37,14 +37,17 @@ describe("LoanRestructurePanel", () => {
         await user.click(screen.getByRole("button", { name: /preview restructure/i }));
         expect(api.post).toHaveBeenCalledWith(`/loans/${LOAN_ID}/restructures/preview`, expect.objectContaining({
             waivers: { interest: { amount: "100.00", reason: "assistance" } },
-            externalSettlementCredit: { amount: "200.00", payer: "Charity", source: "support fund" }, additionalPrincipal: "1000.00",
+            externalSettlementCredit: { amount: "300.00", payer: "Charity", source: "support fund" }, additionalPrincipal: "1000.00",
         }));
         expect((await screen.findAllByText(/5,000\.00/)).length).toBeGreaterThan(0);
         expect(screen.getByText(/additional cash is only an approved payout/i)).toBeInTheDocument();
         expect(screen.getByText(/Charity.*support fund/i)).toBeInTheDocument();
         expect(screen.getByText(/principal allocation/i).parentElement).toHaveTextContent(/100\.00/);
+        expect(screen.getByText(/^unallocated$/i).parentElement).toHaveTextContent(/100\.00/);
+        expect(screen.getByText(/allocation reconciliation/i).parentElement).toHaveTextContent(/300\.00/);
         expect(screen.getByText(/8\/10\/2026.*8\/19\/2026/i)).toBeInTheDocument();
         expect(screen.getByText(/1\.0000.*9 days.*450\.00/i)).toBeInTheDocument();
+        expect(screen.getByText(/per thousand per day.*10\.0000.*1 day.*10\.00/i)).toBeInTheDocument();
     });
 
     it("expires a displayed preview while the panel remains open and removes execution authority", async () => {

@@ -238,7 +238,7 @@ describe("CreditSync stateless MCP contract", () => {
                     return {
                         id: DISBURSEMENT_ID, publicId: DISBURSEMENT_ID,
                         grossAmount: "100.00", loanAttributedAmount: "100.00",
-                        channel: "cash", status: "draft", sourceBankProfilePublicId: BORROWER_ID, payeeHint: null, note: null,
+                        channel: "cash", status: "draft", restructurePublicId: null, sourceBankProfilePublicId: BORROWER_ID, payeeHint: null, note: null,
                         disbursedAt: "2026-08-10T00:00:00.000Z", postedAt: null, reversedAt: null,
                         evidenceFilePublicIds: [],
                     };
@@ -248,7 +248,7 @@ describe("CreditSync stateless MCP contract", () => {
                     return {
                         id: DISBURSEMENT_ID, publicId: DISBURSEMENT_ID,
                         grossAmount: "100.00", loanAttributedAmount: "95.00",
-                        channel: "cash", status: "draft", sourceBankProfilePublicId: BORROWER_ID, payeeHint: null, note: "Corrected attribution",
+                        channel: "cash", status: "draft", restructurePublicId: null, sourceBankProfilePublicId: BORROWER_ID, payeeHint: null, note: "Corrected attribution",
                         disbursedAt: "2026-08-10T00:00:00.000Z", postedAt: null, reversedAt: null,
                         evidenceFilePublicIds: [],
                     };
@@ -256,7 +256,7 @@ describe("CreditSync stateless MCP contract", () => {
                 "loan.disbursement.post": async () => ({
                     id: DISBURSEMENT_ID, publicId: DISBURSEMENT_ID,
                     grossAmount: "100.00", loanAttributedAmount: "100.00",
-                    channel: "cash", status: "posted", sourceBankProfilePublicId: BORROWER_ID, payeeHint: null, note: null,
+                    channel: "cash", status: "posted", restructurePublicId: null, sourceBankProfilePublicId: BORROWER_ID, payeeHint: null, note: null,
                     disbursedAt: "2026-08-10T00:00:00.000Z", postedAt: "2026-08-10T00:01:00.000Z", reversedAt: null,
                     evidenceFilePublicIds: [], duplicate: false,
                     auditPublicId: AUDIT_ID, correlationId: AUDIT_ID,

@@ -396,7 +396,7 @@ export async function executeLoanRestructure(ctx: CommandContext, restructurePub
             });
         }
         let draft = null;
-        if (computed.additionalPrincipal.gt(0)) draft = await createDisbursementDraftInTransaction(tx, ctx, newLoan, { grossAmount: serializeMoney(computed.additionalPrincipal), loanAttributedAmount: serializeMoney(computed.additionalPrincipal), channel: "adjustment", note: `Additional principal approved by restructure ${row.publicId}; payout not yet posted`, payeeHint: null, disbursedAt: now.toISOString() });
+        if (computed.additionalPrincipal.gt(0)) draft = await createDisbursementDraftInTransaction(tx, ctx, newLoan, { grossAmount: serializeMoney(computed.additionalPrincipal), loanAttributedAmount: serializeMoney(computed.additionalPrincipal), channel: "adjustment", note: "Additional principal payout pending", payeeHint: null, disbursedAt: now.toISOString() }, row.id);
         await tx.update(loans).set({ status: "restructured", updatedAt: now }).where(and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, oldLoan.id), eq(loans.status, "active")));
         return { value: await presentExecution(tx, executed, oldLoan) };
     });

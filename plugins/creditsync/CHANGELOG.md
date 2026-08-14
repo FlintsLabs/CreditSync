@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Exposed the immutable nullable restructure relation on disbursement outputs so agents can associate additional-principal payouts without interpreting editable notes.
 - Recursively closed floating-interest, daily-entry, and daily interest-input objects in the frozen MCP schema.
 - Froze replacement-term inputs as five exact closed branches with variant-required policies and cross-variant field rejection.
 - Marked stateful preview tools as non-read-only but non-destructive, and froze exact repayment-type-specific replacement-term outputs without arbitrary nested fields.

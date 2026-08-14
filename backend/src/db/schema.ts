@@ -524,6 +524,7 @@ export const loanDisbursementEvents = pgTable("loan_disbursement_events", {
     publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: tenantId,
     loanId: integer("loan_id").references(() => loans.id).notNull(),
+    restructureId: integer("restructure_id"),
     grossAmount: numeric("gross_amount").notNull(),
     loanAttributedAmount: numeric("loan_attributed_amount").notNull(),
     channel: text("channel").notNull(),
