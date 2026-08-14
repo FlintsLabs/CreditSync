@@ -15,6 +15,7 @@ import {
     loanInterestAccruals,
     loanInterestRatePeriods,
     loanOpeningBalanceComponents,
+    loanRestructureWaivers,
     loanRestructures,
     loanSchedules,
     loans,
@@ -202,13 +203,15 @@ describe("payment application service", () => {
         ]);
         const early = await previewEarlyLoanSettlement(context(actor), seeded.loan.publicId, { settlementDate: "2026-08-10" });
         await executeEarlyLoanSettlement(context(actor, "waive-first-schedule-interest"), early.publicId, { confirmed: true, previewHash: early.previewHash, expectedBalanceVersion: early.balanceVersion });
+        expect(await db.query.loanRestructureWaivers.findFirst({ where: and(eq(loanRestructureWaivers.loanId, seeded.loan.id), eq(loanRestructureWaivers.componentKind, "new_interest")) })).toMatchObject({ settlementDate: "2026-08-10", scheduleAllocations: [{ schedulePublicId: seeded.schedules[1]!.publicId, dueDate: "2026-09-10", amount: "200.00" }] });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({ outstandingPrincipal: "700.00", outstandingInterest: "500.00", outstandingFees: "150.00", status: "active", nextDueDate: "2026-08-10" });
         const intake = await createPaymentIntake(context(actor), { amount: "700.00", receivedAt: "2026-08-10T10:00:00.000Z", payerName: "Replacement payer" });
         const preview = await previewPaymentMatch(context(actor), intake.publicId, { allocations: [{ borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "700.00" }] });
         await postPayment(context(actor), intake.publicId, { proposalPublicId: preview.publicId });
         const posted = await db.query.transactions.findFirst({ where: and(eq(transactions.loanId, seeded.loan.id), eq(transactions.entryType, "repayment")) });
-        expect(posted).toMatchObject({ amount: "700.00", penaltyComponent: "100.00", feeComponent: "50.00", interestComponent: "300.00", principalComponent: "250.00" });
+        expect(posted).toMatchObject({ amount: "700.00", penaltyComponent: "100.00", feeComponent: "50.00", interestComponent: "500.00", principalComponent: "50.00" });
         expect(new Decimal(posted!.principalComponent).plus(posted!.interestComponent).plus(posted!.feeComponent).plus(posted!.penaltyComponent).toFixed(2)).toBe("700.00");
-        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({ outstandingPrincipal: "450.00", outstandingInterest: "200.00", outstandingFees: "0.00" });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({ outstandingPrincipal: "650.00", outstandingInterest: "0.00", outstandingFees: "0.00" });
 
         const secondIntake = await createPaymentIntake(context(actor), { amount: "500.00", receivedAt: "2026-09-10T10:00:00.000Z", payerName: "Replacement payer" });
         const secondPreview = await previewPaymentMatch(context(actor), secondIntake.publicId, { allocations: [{ borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "500.00" }] });
@@ -216,15 +219,15 @@ describe("payment application service", () => {
         const secondIntakeRow = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, secondIntake.publicId) });
         const second = await db.select().from(transactions).where(and(eq(transactions.paymentIntakeId, secondIntakeRow!.id), eq(transactions.entryType, "repayment")));
         expect(second.map(row => ({ scheduleId: row.scheduleId, interest: row.interestComponent, principal: row.principalComponent }))).toEqual([
-            { scheduleId: seeded.schedules[0]!.id, interest: "0.00", principal: "100.00" },
-            { scheduleId: seeded.schedules[1]!.id, interest: "200.00", principal: "200.00" },
+            { scheduleId: seeded.schedules[0]!.id, interest: "0.00", principal: "300.00" },
+            { scheduleId: seeded.schedules[1]!.id, interest: "0.00", principal: "200.00" },
         ]);
-        expect(second.reduce((sum, row) => sum.plus(row.interestComponent), new Decimal(0)).toFixed(2)).toBe("200.00");
-        expect(second.reduce((sum, row) => sum.plus(row.principalComponent), new Decimal(0)).toFixed(2)).toBe("300.00");
+        expect(second.reduce((sum, row) => sum.plus(row.interestComponent), new Decimal(0)).toFixed(2)).toBe("0.00");
+        expect(second.reduce((sum, row) => sum.plus(row.principalComponent), new Decimal(0)).toFixed(2)).toBe("500.00");
         expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({ outstandingPrincipal: "150.00", outstandingInterest: "0.00", outstandingFees: "0.00" });
 
         await reversePayment(context(actor), secondIntake.publicId, { reason: "Regression reversal" });
-        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({ outstandingPrincipal: "450.00", outstandingInterest: "200.00", outstandingFees: "0.00" });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({ outstandingPrincipal: "650.00", outstandingInterest: "0.00", outstandingFees: "0.00" });
         expect((await db.select().from(fundLedgerEntries).where(eq(fundLedgerEntries.loanId, seeded.loan.id))).reduce((sum, row) => row.entryType.endsWith("_out") ? sum.minus(row.amount) : sum.plus(row.amount), new Decimal(0)).toFixed(2)).toBe("700.00");
     });
 

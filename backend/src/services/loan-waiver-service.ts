@@ -66,7 +66,7 @@ async function componentState(executor: Executor, ctx: CommandContext, loanId: n
     const available = component === "new_interest"
         ? Decimal.max(0, newGross.minus(generalNewWaiver).minus(explicitNewWaived).minus(paidNew))
         : Decimal.max(0, openingAmount.minus(waived).minus(paid));
-    const version = hash({ loanId, restructureId, component, opening: opening.map(row => [row.publicId, row.componentKind, row.amount, row.status]), waivers: waivers.map(row => [row.publicId, row.amount, row.status, row.reversedWaiverId]), payments: posted.map(row => [row.publicId, row.entryType, row.reversedTransactionId, row.interestComponent, row.feeComponent, row.penaltyComponent]) });
+    const version = hash({ loanId, restructureId, component, opening: opening.map(row => [row.publicId, row.componentKind, row.amount, row.status]), waivers: waivers.map(row => [row.publicId, row.amount, row.status, row.reversedWaiverId, row.settlementDate, row.scheduleAllocations]), payments: posted.map(row => [row.publicId, row.entryType, row.reversedTransactionId, row.interestComponent, row.feeComponent, row.penaltyComponent]) });
     return { openingAmount, waived, paid, available, version };
 }
 
@@ -76,7 +76,7 @@ export async function getLoanWaiverAvailability(ctx: CommandContext, loanPublicI
     return { availableAmount: serializeMoney(state.available), balanceVersion: state.version };
 }
 
-export async function previewLoanWaiver(ctx: CommandContext, loanPublicId: string, input: { component: "interest" | "fee" | "penalty" | "new_interest"; amount: string; reason: string }, options: { allowInternalNewInterest?: boolean } = {}) {
+export async function previewLoanWaiver(ctx: CommandContext, loanPublicId: string, input: { component: "interest" | "fee" | "penalty" | "new_interest"; amount: string; reason: string }, options: { allowInternalNewInterest?: boolean; settlementDate?: string; scheduleAllocations?: Array<{ schedulePublicId: string; dueDate: string; amount: string }> } = {}) {
     const component = componentKind(input.component, options.allowInternalNewInterest);
     const amount = waiverMoney(input.amount);
     const reason = requireText(input.reason, "WAIVER_REASON_REQUIRED", "A waiver reason is required");
@@ -87,8 +87,8 @@ export async function previewLoanWaiver(ctx: CommandContext, loanPublicId: strin
     return db.transaction(async tx => {
         await tx.update(loanWaiverPreviews).set({ status: "expired", updatedAt: new Date() }).where(and(eq(loanWaiverPreviews.tenantId, ctx.tenantId), eq(loanWaiverPreviews.loanId, loan.id), eq(loanWaiverPreviews.componentKind, component), eq(loanWaiverPreviews.status, "preview")));
         const publicId = crypto.randomUUID();
-        const previewHash = hash({ publicId, loanPublicId, restructurePublicId: restructure.publicId, component, amount: serializeMoney(amount), reason, balanceVersion: state.version, expiresAt: expiresAt.toISOString() });
-        const row = await tx.insert(loanWaiverPreviews).values({ publicId, tenantId: ctx.tenantId, loanId: loan.id, restructureId: restructure.id, componentKind: component, amount: serializeMoney(amount), reason, balanceVersion: state.version, previewHash, expiresAt, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, createdByUserId: ctx.actorUserId }).returning().then(rows => rows[0]!);
+        const previewHash = hash({ publicId, loanPublicId, restructurePublicId: restructure.publicId, component, amount: serializeMoney(amount), reason, settlementDate: options.settlementDate, scheduleAllocations: options.scheduleAllocations, balanceVersion: state.version, expiresAt: expiresAt.toISOString() });
+        const row = await tx.insert(loanWaiverPreviews).values({ publicId, tenantId: ctx.tenantId, loanId: loan.id, restructureId: restructure.id, componentKind: component, amount: serializeMoney(amount), reason, settlementDate: options.settlementDate, scheduleAllocations: options.scheduleAllocations ?? [], balanceVersion: state.version, previewHash, expiresAt, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, createdByUserId: ctx.actorUserId }).returning().then(rows => rows[0]!);
         await createAuditLog(tx, { tenantId: ctx.tenantId, actorUserId: ctx.actorUserId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, entityType: "loan_waiver_preview", entityId: row.publicId, action: "previewed", payload: { loanPublicId, component, amount: serializeMoney(amount), balanceVersion: state.version, expiresAt: expiresAt.toISOString() } });
         return { publicId: row.publicId, loanPublicId, restructurePublicId: restructure.publicId, component, amount: serializeMoney(amount), availableAmount: serializeMoney(state.available), remainingAmount: serializeMoney(state.available.minus(amount)), reason, previewHash, balanceVersion: state.version, expiresAt };
     });
@@ -124,8 +124,10 @@ export async function executeLoanWaiver(ctx: CommandContext, previewPublicId: st
         }
         if (new Decimal(preview.amount).gt(state.available)) throw new DomainError("WAIVER_EXCEEDS_COMPONENT", "Waiver exceeds the available component", 409);
         const audit = await createAuditLog(tx, { tenantId: ctx.tenantId, actorUserId: ctx.actorUserId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, entityType: "loan_restructure_waiver", entityId: previewPublicId, action: "executed", payload: { component, amount: preview.amount, reason } });
-        const row = await tx.insert(loanRestructureWaivers).values({ tenantId: ctx.tenantId, restructureId: preview.restructureId, loanId: preview.loanId, componentKind: component, amount: preview.amount, reason, status: "executed", actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, executeIdempotencyKey: idempotencyKey, executeRequestHash: requestHash, auditPublicId: audit.publicId, createdByUserId: ctx.actorUserId, executedAt: new Date() }).returning().then((rows: WaiverRow[]) => rows[0]!);
+        const row = await tx.insert(loanRestructureWaivers).values({ tenantId: ctx.tenantId, restructureId: preview.restructureId, loanId: preview.loanId, componentKind: component, amount: preview.amount, reason, settlementDate: preview.settlementDate, scheduleAllocations: preview.scheduleAllocations, status: "executed", actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, executeIdempotencyKey: idempotencyKey, executeRequestHash: requestHash, auditPublicId: audit.publicId, createdByUserId: ctx.actorUserId, executedAt: new Date() }).returning().then((rows: WaiverRow[]) => rows[0]!);
         await tx.update(loanWaiverPreviews).set({ status: "consumed", consumedAt: new Date(), updatedAt: new Date() }).where(and(eq(loanWaiverPreviews.tenantId, ctx.tenantId), eq(loanWaiverPreviews.id, preview.id), eq(loanWaiverPreviews.status, "preview")));
+        const { refreshReplacementLoanEconomicRollup } = await import("./payment-service");
+        await refreshReplacementLoanEconomicRollup(tx, ctx.tenantId, preview.loanId);
         return present(row);
     });
 }
@@ -154,7 +156,9 @@ export async function reverseLoanWaiver(ctx: CommandContext, waiverPublicId: str
         const later = await tx.query.loanRestructureWaivers.findFirst({ where: and(eq(loanRestructureWaivers.tenantId, ctx.tenantId), eq(loanRestructureWaivers.loanId, original.loanId), eq(loanRestructureWaivers.componentKind, original.componentKind), sql`${loanRestructureWaivers.id} > ${original.id}`) });
         if (later) throw new DomainError("WAIVER_REVERSAL_BLOCKED", "Later waiver activity must be reversed first", 409);
         const audit = await createAuditLog(tx, { tenantId: ctx.tenantId, actorUserId: ctx.actorUserId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, entityType: "loan_restructure_waiver", entityId: waiverPublicId, action: "reversed", payload: { reason, originalAmount: serializeMoney(original.amount) } });
-        const compensating = await tx.insert(loanRestructureWaivers).values({ tenantId: ctx.tenantId, restructureId: original.restructureId, loanId: original.loanId, componentKind: original.componentKind, amount: original.amount, reason, status: "reversed", reversedWaiverId: original.id, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, executeIdempotencyKey: `reversal-entry:${idempotencyKey}`, executeRequestHash: sha({ original: original.publicId, amount: original.amount }), reversalIdempotencyKey: idempotencyKey, reversalRequestHash: requestHash, auditPublicId: audit.publicId, createdByUserId: ctx.actorUserId, reversedByUserId: ctx.actorUserId, executedAt: new Date(), reversedAt: new Date() }).returning().then((rows: WaiverRow[]) => rows[0]!);
+        const compensating = await tx.insert(loanRestructureWaivers).values({ tenantId: ctx.tenantId, restructureId: original.restructureId, loanId: original.loanId, componentKind: original.componentKind, amount: original.amount, reason, settlementDate: original.settlementDate, scheduleAllocations: original.scheduleAllocations, status: "reversed", reversedWaiverId: original.id, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, executeIdempotencyKey: `reversal-entry:${idempotencyKey}`, executeRequestHash: sha({ original: original.publicId, amount: original.amount }), reversalIdempotencyKey: idempotencyKey, reversalRequestHash: requestHash, auditPublicId: audit.publicId, createdByUserId: ctx.actorUserId, reversedByUserId: ctx.actorUserId, executedAt: new Date(), reversedAt: new Date() }).returning().then((rows: WaiverRow[]) => rows[0]!);
+        const { refreshReplacementLoanEconomicRollup } = await import("./payment-service");
+        await refreshReplacementLoanEconomicRollup(tx, ctx.tenantId, original.loanId);
         return present(compensating);
     });
 }

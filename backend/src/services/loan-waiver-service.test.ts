@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { auditLogs, borrowers, loanOpeningBalanceComponents, loanRestructures, loanRestructureWaivers, loanWaiverPreviews, loans, transactions, users } from "../db/schema";
+import { auditLogs, borrowers, loanOpeningBalanceComponents, loanRestructures, loanRestructureWaivers, loanSchedules, loanWaiverPreviews, loans, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import { executeLoanWaiver, previewLoanWaiver, reverseLoanWaiver } from "./loan-waiver-service";
 import { executeEarlyLoanSettlement, previewEarlyLoanSettlement } from "./payment-service";
@@ -41,6 +41,20 @@ describe("later restructure waiver service", () => {
         expect(await db.select().from(loanRestructureWaivers).where(eq(loanRestructureWaivers.loanId, newLoan.id))).toHaveLength(2);
     });
 
+    integrationTest("refreshes economic rollups to completed on waiver and restores them without mutating schedules", async () => {
+        const { newLoan, ctx } = await seed();
+        const schedule = await db.insert(loanSchedules).values({ tenantId: ctx().tenantId, loanId: newLoan.id, installmentNo: 1, dueDate: "2026-08-31", scheduledPrincipal: "5000.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "5000.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "5000.00", status: "pending" }).returning().then(rows => rows[0]!);
+        await db.insert(transactions).values({ tenantId: ctx().tenantId, ownerUserId: ctx().actorUserId, loanId: newLoan.id, scheduleId: schedule.id, amount: "5075.00", principalComponent: "5000.00", interestComponent: "0.00", feeComponent: "50.00", penaltyComponent: "25.00", entryType: "repayment", idempotencyKey: crypto.randomUUID(), recordedByUserId: ctx().actorUserId });
+        const beforeSchedule = await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.id, schedule.id) });
+        const preview = await previewLoanWaiver(ctx(), newLoan.publicId, { component: "interest", amount: "500.00", reason: "final assistance" });
+        const waiver = await executeLoanWaiver(ctx("settle-by-waiver"), preview.publicId, { confirmed: true, previewHash: preview.previewHash, expectedBalanceVersion: preview.balanceVersion, reason: "final assistance" });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, newLoan.id) })).toMatchObject({ outstandingPrincipal: "0.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "completed", nextDueDate: null });
+        expect(await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.id, schedule.id) })).toEqual(beforeSchedule);
+        await reverseLoanWaiver(ctx("restore-final-waiver"), waiver.publicId, { reason: "assistance withdrawn" });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, newLoan.id) })).toMatchObject({ outstandingPrincipal: "0.00", outstandingInterest: "500.00", outstandingFees: "0.00", status: "active", nextDueDate: "2026-08-31" });
+        expect(await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.id, schedule.id) })).toEqual(beforeSchedule);
+    });
+
     integrationTest("rejects principal, over-waiver, and missing reason", async () => {
         const { newLoan, ctx } = await seed();
         await expect(previewLoanWaiver(ctx(), newLoan.publicId, { component: "principal" as never, amount: "1.00", reason: "no" })).rejects.toMatchObject({ code: "WAIVER_COMPONENT_NOT_ALLOWED" });
@@ -59,6 +73,7 @@ describe("later restructure waiver service", () => {
     integrationTest("persists and executes an early-settlement waiver against unearned new interest only", async () => {
         const { newLoan, restructure, ctx } = await seed();
         await db.insert(loanOpeningBalanceComponents).values({ tenantId: ctx().tenantId, restructureId: restructure.id, loanId: newLoan.id, componentKind: "new_contract_interest", amount: "200.00", sourceType: "loan_restructure", sourcePublicId: restructure.publicId, createdByUserId: ctx().actorUserId });
+        await db.insert(loanSchedules).values({ tenantId: ctx().tenantId, loanId: newLoan.id, installmentNo: 1, dueDate: "2026-08-31", scheduledPrincipal: "5000.00", scheduledInterest: "200.00", scheduledFee: "0.00", scheduledTotal: "5200.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "5200.00", status: "pending" });
         const payment = await db.insert(transactions).values({ tenantId: ctx().tenantId, ownerUserId: ctx().actorUserId, loanId: newLoan.id, amount: "365.00", principalComponent: "250.00", interestComponent: "100.00", feeComponent: "10.00", penaltyComponent: "5.00", entryType: "repayment", idempotencyKey: crypto.randomUUID(), recordedByUserId: ctx().actorUserId }).returning().then(rows => rows[0]!);
         const current = await previewEarlyLoanSettlement(ctx(), newLoan.publicId, { settlementDate: "2026-08-10" });
         expect(current).toMatchObject({ outstandingPrincipal: "4750.00", carriedBalances: { interest: "400.00", fee: "40.00", penalty: "20.00" } });
@@ -88,6 +103,7 @@ describe("later restructure waiver service", () => {
     integrationTest("shares one deterministic cap between general and new-interest waivers", async () => {
         const { newLoan, restructure, ctx } = await seed();
         await db.insert(loanOpeningBalanceComponents).values({ tenantId: ctx().tenantId, restructureId: restructure.id, loanId: newLoan.id, componentKind: "new_contract_interest", amount: "200.00", sourceType: "loan_restructure", sourcePublicId: restructure.publicId, createdByUserId: ctx().actorUserId });
+        await db.insert(loanSchedules).values({ tenantId: ctx().tenantId, loanId: newLoan.id, installmentNo: 1, dueDate: "2026-08-31", scheduledPrincipal: "5000.00", scheduledInterest: "200.00", scheduledFee: "0.00", scheduledTotal: "5200.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "5200.00", status: "pending" });
         const general = await previewLoanWaiver(ctx(), newLoan.publicId, { component: "interest", amount: "600.00", reason: "combined help" });
         await executeLoanWaiver(ctx("general-600"), general.publicId, { confirmed: true, previewHash: general.previewHash, expectedBalanceVersion: general.balanceVersion, reason: "combined help" });
         const early = await previewEarlyLoanSettlement(ctx(), newLoan.publicId, { settlementDate: "2026-08-10" });

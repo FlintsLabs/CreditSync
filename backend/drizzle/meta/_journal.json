@@ -239,6 +239,13 @@
       "when": 1786667764416,
       "tag": "0033_early_settlement_waiver_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1786698900000,
+      "tag": "0034_waiver_schedule_provenance",
+      "breakpoints": true
     }
   ]
 }

@@ -116,6 +116,7 @@ describe("loan restructure service", () => {
         expect((await db.select().from(loanDisbursementEvents).where(eq(loanDisbursementEvents.loanId, newLoan!.id)))[0]?.status).toBe("reversed");
         expect((await db.select().from(transactions).where(eq(transactions.loanId, loan.id))).map(row => [row.amount, row.entryType]))
             .toEqual([["200.00", "repayment"], ["-200.00", "reversal"]]);
+        expect((await db.select().from(fundLedgerEntries).where(eq(fundLedgerEntries.loanId, loan.id))).reduce((sum, row) => row.entryType.endsWith("_out") ? sum.minus(row.amount) : sum.plus(row.amount), new Decimal(0)).toFixed(2)).toBe("0.00");
     });
 
     integrationTest("rejects stale balance and conflicting idempotency payload", async () => {

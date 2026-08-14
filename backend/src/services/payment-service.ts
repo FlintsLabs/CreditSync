@@ -1180,9 +1180,18 @@ export async function previewEarlyLoanSettlement(ctx: CommandContext, loanPublic
     if (!current) throw new DomainError("LOAN_NOT_RESTRUCTURED", "Early settlement waiver requires a restructured replacement loan", 409);
     const calculation = calculateEarlySettlementUnearnedInterest({ contractualNewInterest: serializeMoney(contractual), earnedNewInterest: serializeMoney(Decimal.min(contractual, earned)) });
     const currentNewInterest = await getLoanWaiverAvailability(ctx, loanPublicId, "new_interest");
-    const proposedWaiver = serializeMoney(Decimal.min(calculation.proposedWaiver, currentNewInterest.availableAmount));
+    const futureSchedules = schedules.filter(row => row.dueDate > input.settlementDate).sort((a, b) => b.installmentNo - a.installmentNo);
+    let remainingFutureWaiver = Decimal.min(calculation.proposedWaiver, currentNewInterest.availableAmount);
+    const scheduleAllocations: Array<{ schedulePublicId: string; dueDate: string; amount: string }> = [];
+    for (const schedule of futureSchedules) {
+        if (remainingFutureWaiver.lte(0)) break;
+        const applied = Decimal.min(remainingFutureWaiver, current.newInterestDueBySchedule.get(schedule.id) ?? 0);
+        if (applied.gt(0)) scheduleAllocations.push({ schedulePublicId: schedule.publicId, dueDate: schedule.dueDate, amount: serializeMoney(applied) });
+        remainingFutureWaiver = remainingFutureWaiver.minus(applied);
+    }
+    const proposedWaiver = serializeMoney(scheduleAllocations.reduce((sum, item) => sum.plus(item.amount), new Decimal(0)));
     if (new Decimal(proposedWaiver).isZero()) throw new DomainError("NO_UNEARNED_INTEREST", "No unearned new-contract interest is available to waive", 409);
-    const waiver = await previewLoanWaiver(ctx, loanPublicId, { component: "new_interest", amount: proposedWaiver, reason: calculation.reason }, { allowInternalNewInterest: true });
+    const waiver = await previewLoanWaiver(ctx, loanPublicId, { component: "new_interest", amount: proposedWaiver, reason: calculation.reason }, { allowInternalNewInterest: true, settlementDate: input.settlementDate, scheduleAllocations });
     return { ...waiver, settlementDate: input.settlementDate, outstandingPrincipal: serializeMoney(current.principal), carriedBalances: { interest: serializeMoney(current.carriedInterest), fee: serializeMoney(current.carriedFee), penalty: serializeMoney(current.carriedPenalty) }, ...calculation, proposedWaiver };
 }
 
@@ -1245,7 +1254,7 @@ async function currentRestructureBuckets(executor: Executor, tenantId: string, l
     const carriedInterestGross = netOpening("carried_interest");
     const totalInterestWaiver = netWaived("interest");
     const carriedWaiver = Decimal.min(carriedInterestGross, totalInterestWaiver);
-    const newInterestWaiver = Decimal.max(0, totalInterestWaiver.minus(carriedWaiver)).plus(netWaived("new_interest"));
+    const generalNewInterestWaiver = Decimal.max(0, totalInterestWaiver.minus(carriedWaiver));
     let carriedInterest = Decimal.max(0, carriedInterestGross.minus(carriedWaiver));
     const paidNewInterestBySchedule = new Map<number, Decimal>();
     const paidPrincipalBySchedule = new Map<number, Decimal>();
@@ -1265,18 +1274,35 @@ async function currentRestructureBuckets(executor: Executor, tenantId: string, l
         }
     }
     const waivedNewInterestBySchedule = new Map<number, Decimal>();
-    let remainingNewWaiver = newInterestWaiver;
+    let remainingNewWaiver = generalNewInterestWaiver;
     for (const item of schedules) {
         const applied = Decimal.min(remainingNewWaiver, item.scheduledInterest);
         waivedNewInterestBySchedule.set(item.id, applied);
         remainingNewWaiver = remainingNewWaiver.minus(applied);
+    }
+    const schedulesByPublicId = new Map<string, typeof loanSchedules.$inferSelect>(schedules.map((item: typeof loanSchedules.$inferSelect) => [item.publicId, item]));
+    for (const waiver of waivers.filter((row: typeof loanRestructureWaivers.$inferSelect) => row.componentKind === "new_interest")) {
+        const direction = waiver.status === "executed" ? new Decimal(1) : new Decimal(-1);
+        const allocations = waiver.scheduleAllocations?.length ? waiver.scheduleAllocations : [...schedules].reverse().map((item: typeof loanSchedules.$inferSelect) => ({ schedulePublicId: item.publicId, dueDate: item.dueDate, amount: item.scheduledInterest }));
+        let remainingWaiver = new Decimal(waiver.amount);
+        for (const allocation of allocations) {
+            if (remainingWaiver.lte(0)) break;
+            const target = schedulesByPublicId.get(allocation.schedulePublicId);
+            if (!target) continue;
+            const applied = Decimal.min(remainingWaiver, allocation.amount);
+            waivedNewInterestBySchedule.set(target.id, Decimal.max(0, (waivedNewInterestBySchedule.get(target.id) ?? new Decimal(0)).plus(direction.times(applied))));
+            remainingWaiver = remainingWaiver.minus(applied);
+        }
     }
     const paidPrincipal = active.reduce((sum, row) => sum.plus(row.principalComponent), new Decimal(0));
     const principal = Decimal.max(0, netOpening("carried_principal").plus(netOpening("additional_principal")).minus(paidPrincipal));
     const newInterest = schedules.reduce((sum: Decimal, item: typeof loanSchedules.$inferSelect) => sum.plus(Decimal.max(0, new Decimal(item.scheduledInterest)
         .minus(waivedNewInterestBySchedule.get(item.id) ?? 0)
         .minus(paidNewInterestBySchedule.get(item.id) ?? 0))), new Decimal(0));
-    return { carriedPenalty, carriedFee, carriedInterest, newInterest, paidNewInterestBySchedule, paidPrincipalBySchedule, paidFeeBySchedule, waivedNewInterestBySchedule, principal };
+    const newInterestDueBySchedule = new Map<number, Decimal>(schedules.map((item: typeof loanSchedules.$inferSelect) => [item.id, Decimal.max(0, new Decimal(item.scheduledInterest)
+        .minus(waivedNewInterestBySchedule.get(item.id) ?? 0)
+        .minus(paidNewInterestBySchedule.get(item.id) ?? 0))]));
+    return { carriedPenalty, carriedFee, carriedInterest, newInterest, newInterestDueBySchedule, paidNewInterestBySchedule, paidPrincipalBySchedule, paidFeeBySchedule, waivedNewInterestBySchedule, principal };
 }
 
 async function restructuredPaymentBuckets(
@@ -1406,20 +1432,33 @@ async function refreshLoanRollups(tx: Executor, tenantId: string, loanIds: numbe
     for (const loanId of [...new Set(loanIds)]) {
         const loan = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, tenantId), eq(loans.id, loanId)) });
         if (loan?.repaymentType === "floating") continue;
-        const schedules = await tx.select().from(loanSchedules).where(and(
+        const schedules: Array<typeof loanSchedules.$inferSelect> = await tx.select().from(loanSchedules).where(and(
             eq(loanSchedules.tenantId, tenantId), eq(loanSchedules.loanId, loanId),
         )).orderBy(loanSchedules.installmentNo);
         const rollup = computeLoanRollup(schedules);
         const restructure = await currentRestructureBuckets(tx, tenantId, loanId);
+        const outstandingPrincipal = restructure?.principal ?? rollup.outstandingPrincipal;
+        const outstandingInterest = restructure ? restructure.carriedInterest.plus(restructure.newInterest) : rollup.outstandingInterest;
+        const scheduleFees = restructure ? schedules.reduce((sum, item) => sum.plus(Decimal.max(0, new Decimal(item.scheduledFee).minus(restructure.paidFeeBySchedule.get(item.id) ?? 0))), new Decimal(0)) : rollup.outstandingFees;
+        const outstandingFees = restructure ? scheduleFees.plus(restructure.carriedFee).plus(restructure.carriedPenalty) : rollup.outstandingFees;
+        const economicNextDue = restructure ? schedules.find(item => new Decimal(item.scheduledPrincipal).minus(restructure.paidPrincipalBySchedule.get(item.id) ?? 0).gt(0)
+            || new Decimal(item.scheduledFee).minus(restructure.paidFeeBySchedule.get(item.id) ?? 0).gt(0)
+            || (restructure.newInterestDueBySchedule.get(item.id) ?? new Decimal(0)).gt(0))?.dueDate
+            ?? (restructure.carriedInterest.gt(0) || restructure.carriedFee.gt(0) || restructure.carriedPenalty.gt(0) ? schedules[0]?.dueDate ?? null : null) : rollup.nextDueDate;
+        const economicallySettled = outstandingPrincipal.isZero() && outstandingInterest.isZero() && outstandingFees.isZero();
         await tx.update(loans).set({
-            outstandingPrincipal: serializeMoney(restructure?.principal ?? rollup.outstandingPrincipal),
-            outstandingInterest: serializeMoney(restructure ? restructure.carriedInterest.plus(restructure.newInterest) : rollup.outstandingInterest),
-            outstandingFees: serializeMoney(rollup.outstandingFees.plus(restructure?.carriedFee ?? 0).plus(restructure?.carriedPenalty ?? 0)),
-            nextDueDate: rollup.nextDueDate,
-            status: rollup.status,
+            outstandingPrincipal: serializeMoney(outstandingPrincipal),
+            outstandingInterest: serializeMoney(outstandingInterest),
+            outstandingFees: serializeMoney(outstandingFees),
+            nextDueDate: economicallySettled ? null : economicNextDue,
+            status: restructure ? economicallySettled ? "completed" : rollup.status === "completed" ? "active" : rollup.status : rollup.status,
             updatedAt: new Date(),
         }).where(and(eq(loans.tenantId, tenantId), eq(loans.id, loanId)));
     }
+}
+
+export async function refreshReplacementLoanEconomicRollup(tx: Executor, tenantId: string, loanId: number) {
+    await refreshLoanRollups(tx, tenantId, [loanId]);
 }
 
 export async function postPayment(ctx: CommandContext, intakePublicId: string, input: { proposalPublicId: string }, executor?: Executor) {
