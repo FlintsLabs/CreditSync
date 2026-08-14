@@ -56,6 +56,7 @@
         "unsupported": "This file cannot be embedded. Open it in a new tab to view it.",
         "preview": "Preview evidence",
         "previewSlip": "Preview slip",
+        "pendingSlip": "Slip unavailable until upload verification succeeds. Upload the slip again to retry.",
         "previewIdCard": "Preview ID card"
     },
     "appbar": {

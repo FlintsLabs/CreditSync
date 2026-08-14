@@ -17,6 +17,7 @@
 - Added explicitly confirmed atomic posting and compensating reversal for zero-variance intermediary disbursement groups, linking exact borrower payout and activation-time advance-interest projections by public provenance IDs while preserving optional evidence, collection/remittance ledgers, and Decimal-only held balances.
 
 ### Fixed
+- Kept Payment Inbox filters within the narrow review panel at tablet widths and explained pending evidence uploads inline instead of presenting an unusable slip-preview action.
 - Synchronized the generated `0036` Drizzle snapshot with the settlement reversal's immutable original-interest and next-due-date columns, with a static lineage regression that prevents future add-column drift.
 - Preserved exact original settlement fund-ledger coordinates during compensating reversal after later funding reallocation, and normalized every executable plugin eval result and stable error fixture against the complete frozen MCP schemas without scenario exemptions.
 - Bound delayed floating-settlement reversals to the Bangkok reversal date, restored exact pre-execution loan rollups from immutable preview snapshots, blocked post-settlement rate-timeline authority and paid-loan rate mutations under the loan lock, and validated settlement-reversal eval fixtures against the complete frozen MCP output schema.

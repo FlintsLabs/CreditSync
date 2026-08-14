@@ -60,8 +60,8 @@ export function PaymentInboxList({
     const hasFilters = Boolean(query.search || query.status || query.from || query.to);
 
     return <>
-        <div className="grid gap-3 border-b p-4 sm:grid-cols-2 xl:grid-cols-4">
-            <label className="sm:col-span-2 xl:col-span-4">
+        <div className="grid gap-3 border-b p-4 sm:grid-cols-2">
+            <label className="sm:col-span-2">
                 <span className="sr-only">{t("payments.filters.search")}</span>
                 <Input
                     type="search"
@@ -71,10 +71,10 @@ export function PaymentInboxList({
                     onChange={(event) => setFilter({ search: event.target.value })}
                 />
             </label>
-            <label className="grid gap-1 text-sm">
+            <label className="grid min-w-0 gap-1 text-sm">
                 <span className="text-muted-foreground">{t("payments.filters.status")}</span>
                 <select
-                    className="h-10 rounded-md border border-input bg-background px-3"
+                    className="h-10 min-w-0 rounded-md border border-input bg-background px-3"
                     value={query.status}
                     aria-label={t("payments.filters.status")}
                     onChange={(event) => setFilter({ status: event.target.value })}
@@ -83,13 +83,13 @@ export function PaymentInboxList({
                     {statuses.map((status) => <option key={status} value={status}>{t(`payments.status.${status}`)}</option>)}
                 </select>
             </label>
-            <label className="grid gap-1 text-sm">
+            <label className="grid min-w-0 gap-1 text-sm">
                 <span className="text-muted-foreground">{t("payments.filters.from")}</span>
-                <Input type="date" value={query.from} onChange={(event) => setFilter({ from: event.target.value })} />
+                <Input className="min-w-0" type="date" value={query.from} onChange={(event) => setFilter({ from: event.target.value })} />
             </label>
-            <label className="grid gap-1 text-sm">
+            <label className="grid min-w-0 gap-1 text-sm">
                 <span className="text-muted-foreground">{t("payments.filters.to")}</span>
-                <Input type="date" value={query.to} onChange={(event) => setFilter({ to: event.target.value })} />
+                <Input className="min-w-0" type="date" value={query.to} onChange={(event) => setFilter({ to: event.target.value })} />
             </label>
             <div className="flex items-end">
                 <Button

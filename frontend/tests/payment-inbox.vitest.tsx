@@ -70,6 +70,21 @@ describe("PaymentInbox", () => {
         } }));
     });
 
+    test("keeps date filters in a two-column layout inside the narrow inbox panel", async () => {
+        render(<MemoryRouter><PaymentInbox /></MemoryRouter>);
+
+        const fromDate = await screen.findByLabelText(/from date/i);
+        const toDate = screen.getByLabelText(/to date/i);
+        const filterGrid = fromDate.closest("label")?.parentElement;
+
+        expect(filterGrid).toHaveClass("sm:grid-cols-2");
+        expect(filterGrid).not.toHaveClass("xl:grid-cols-4");
+        expect(fromDate.closest("label")).toHaveClass("min-w-0");
+        expect(toDate.closest("label")).toHaveClass("min-w-0");
+        expect(fromDate).toHaveClass("min-w-0");
+        expect(toDate).toHaveClass("min-w-0");
+    });
+
     test("gives every payment status a distinct semantic tone while retaining its label", async () => {
         const statuses = ["draft", "needs_review", "ready", "posted", "reversed", "duplicate"];
         vi.mocked(api.get).mockImplementation(async (url) => {
@@ -294,5 +309,24 @@ describe("PaymentInbox", () => {
         await user.click(await screen.findByRole("button", { name: /preview slip/i }));
         expect(await screen.findByRole("img", { name: /preview slip/i })).toHaveAttribute("src", "https://signed.example/payment.jpg");
         expect(resolveFileAccess).toHaveBeenCalledWith(filePublicId);
+    });
+
+    test("explains why a pending slip cannot be previewed", async () => {
+        const user = userEvent.setup();
+        vi.mocked(api.get).mockImplementation(async (url) => {
+            if (url === "/payment-intakes") return { data: listPage };
+            if (url === "/loans") return { data: loans };
+            if (url === `/payment-intakes/${INTAKE_B}`) return { data: { ...detail(INTAKE_B), evidence: [
+                { publicId: "evidence-pending", status: "pending", mimeType: "image/jpeg", filePublicId: null },
+            ] } };
+            if (url === "/audit-logs") return { data: [] };
+            throw new Error(`Unexpected GET ${url}`);
+        });
+        render(<MemoryRouter><PaymentInbox /></MemoryRouter>);
+
+        await user.click(await screen.findByRole("button", { name: /^B/ }));
+
+        expect(await screen.findByText("Slip unavailable until upload verification succeeds. Upload the slip again to retry.")).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /preview slip/i })).not.toBeInTheDocument();
     });
 });
