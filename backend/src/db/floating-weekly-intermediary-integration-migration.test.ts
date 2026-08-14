@@ -149,7 +149,8 @@ if (!testDatabaseUrl) {
                     (1100.00::numeric, 'single_payment'::text, 100.00::numeric, 5.00::numeric, DATE '2026-09-01', 100.00::numeric, 'fixed_only'::text, 'none'::text, NULL::text, NULL::numeric, NULL::text, NULL::date, NULL::text),
                     (1200.00::numeric, 'single_payment'::text, 0.00::numeric, 0.00::numeric, DATE '2026-10-01', 120.00::numeric, 'fixed_only'::text, 'none'::text, NULL::text, NULL::numeric, NULL::text, NULL::date, NULL::text),
                     (5000.00::numeric, 'floating'::text, 325.71::numeric, 0.00::numeric, NULL::date, NULL::numeric, NULL::text, NULL::text, 'percent'::text, 12.0000::numeric, 'none'::text, DATE '2026-08-13', 'weekly'::text),
-                    (2000.00::numeric, 'floating'::text, 30.00::numeric, 0.00::numeric, NULL::date, NULL::numeric, NULL::text, NULL::text, 'per_thousand'::text, 15.0000::numeric, 'none'::text, DATE '2026-08-14', 'daily'::text)
+                    (2000.00::numeric, 'floating'::text, 30.00::numeric, 0.00::numeric, NULL::date, NULL::numeric, NULL::text, NULL::text, 'per_thousand'::text, 15.0000::numeric, 'none'::text, DATE '2026-08-14', 'daily'::text),
+                    (2001.00::numeric, 'floating'::text, 4.29::numeric, 0.00::numeric, NULL::date, NULL::numeric, NULL::text, NULL::text, 'per_thousand'::text, 15.0000::numeric, 'none'::text, DATE '2026-08-21', 'weekly'::text)
                 ) AS fixture(principal, repayment_type, outstanding_interest, outstanding_fees, single_due_date, single_interest, single_policy, single_penalty_mode, daily_mode, daily_rate, first_day_treatment, interest_start_date, floating_cycle)
                 WHERE users.email = 'owner@upgrade-0036.test'
                 RETURNING id, public_id, repayment_type, principal_amount
@@ -157,6 +158,7 @@ if (!testDatabaseUrl) {
             const singleLoans = seededLoans.filter((loan) => loan.repayment_type === "single_payment");
             const weeklyFloatingLoan = seededLoans.find((loan) => loan.principal_amount === "5000.00")!;
             const dailyFloatingLoan = seededLoans.find((loan) => loan.principal_amount === "2000.00")!;
+            const perThousandWeeklyLoan = seededLoans.find((loan) => loan.principal_amount === "2001.00")!;
             const actor = (await sql<{ id: number }[]>`SELECT id FROM users WHERE email = 'owner@upgrade-0036.test'`)[0]!;
 
             const ratePeriods = await sql<{ id: number; loan_id: number }[]>`
@@ -164,11 +166,13 @@ if (!testDatabaseUrl) {
                     tenant_id, loan_id, effective_date, rate_type, rate, created_by_user_id
                 ) VALUES
                     ('tenant-upgrade-0036', ${weeklyFloatingLoan.id}, DATE '2026-08-13', 'percent', 12.0000, ${actor.id}),
-                    ('tenant-upgrade-0036', ${dailyFloatingLoan.id}, DATE '2026-08-14', 'per_thousand', 15.0000, ${actor.id})
+                    ('tenant-upgrade-0036', ${dailyFloatingLoan.id}, DATE '2026-08-14', 'per_thousand', 15.0000, ${actor.id}),
+                    ('tenant-upgrade-0036', ${perThousandWeeklyLoan.id}, DATE '2026-08-21', 'per_thousand', 15.0000, ${actor.id})
                 RETURNING id, loan_id
             `;
             const weeklyRatePeriod = ratePeriods.find((period) => period.loan_id === weeklyFloatingLoan.id)!;
             const dailyRatePeriod = ratePeriods.find((period) => period.loan_id === dailyFloatingLoan.id)!;
+            const perThousandWeeklyRatePeriod = ratePeriods.find((period) => period.loan_id === perThousandWeeklyLoan.id)!;
 
             await sql`
                 INSERT INTO loan_schedules (
@@ -195,7 +199,9 @@ if (!testDatabaseUrl) {
                     ('tenant-upgrade-0036', ${weeklyFloatingLoan.id}, ${weeklyRatePeriod.id}, DATE '2026-08-15', 5000.00, 'percent', 12.0000,
                         DATE '2026-08-13', DATE '2026-08-20', 3, 7, 257.14, 85.71, 0.00, 2.00, 0.00, 'accruing', ${actor.id}),
                     ('tenant-upgrade-0036', ${weeklyFloatingLoan.id}, ${weeklyRatePeriod.id}, DATE '2026-08-16', 4000.00, 'percent', 12.0000,
-                        DATE '2026-08-13', DATE '2026-08-20', 4, 7, 325.71, 68.57, 0.00, 0.00, 0.00, 'accruing', ${actor.id})
+                        DATE '2026-08-13', DATE '2026-08-20', 4, 7, 325.71, 68.57, 0.00, 0.00, 0.00, 'accruing', ${actor.id}),
+                    ('tenant-upgrade-0036', ${perThousandWeeklyLoan.id}, ${perThousandWeeklyRatePeriod.id}, DATE '2026-08-21', 2001.00, 'per_thousand', 15.0000,
+                        DATE '2026-08-21', DATE '2026-08-28', 1, 7, 4.29, 4.29, 0.00, 1.01, 0.00, 'accruing', ${actor.id})
             `;
             const audit = await sql<{ public_id: string }[]>`
                 INSERT INTO audit_logs (tenant_id, entity_type, entity_id, action, actor_user_id, actor_source, correlation_id)
@@ -274,11 +280,12 @@ if (!testDatabaseUrl) {
             const ratePeriodBackfill = await sql`
                 SELECT loan_id, period_unit, period_length
                 FROM loan_interest_rate_periods
-                WHERE id IN (${weeklyRatePeriod.id}, ${dailyRatePeriod.id}) ORDER BY id
+                WHERE id IN (${weeklyRatePeriod.id}, ${dailyRatePeriod.id}, ${perThousandWeeklyRatePeriod.id}) ORDER BY id
             `;
             expect(ratePeriodBackfill).toEqual([
                 { loan_id: weeklyFloatingLoan.id, period_unit: "week", period_length: 1 },
                 { loan_id: dailyFloatingLoan.id, period_unit: "day", period_length: 1 },
+                { loan_id: perThousandWeeklyLoan.id, period_unit: "week", period_length: 1 },
             ]);
             const accrualProjection = await sql`
                 SELECT accrual_date::text AS accrual_date, period_unit, period_length,
@@ -288,6 +295,7 @@ if (!testDatabaseUrl) {
             expect(accrualProjection).toEqual([
                 { accrual_date: "2026-08-15", period_unit: "week", period_length: 1, contractual_interest_amount: "600.00", cumulative_interest_amount: "257.14", daily_increment_amount: "85.71" },
                 { accrual_date: "2026-08-16", period_unit: "week", period_length: 1, contractual_interest_amount: "480.00", cumulative_interest_amount: "325.71", daily_increment_amount: "68.57" },
+                { accrual_date: "2026-08-21", period_unit: "week", period_length: 1, contractual_interest_amount: "30.02", cumulative_interest_amount: "4.29", daily_increment_amount: "4.29" },
             ]);
         } finally {
             await sql.end();
