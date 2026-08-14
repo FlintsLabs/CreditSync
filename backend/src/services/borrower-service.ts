@@ -200,7 +200,7 @@ export async function addBorrowerAlias(
     const borrower = await accessibleBorrower(ctx, borrowerPublicId);
     const normalizedAlias = normalizeBorrowerText(input.alias);
     if (!normalizedAlias) throw new DomainError("INVALID_ALIAS", "Alias is required", 400);
-    return db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
         const row = await tx.insert(borrowerAliases).values({
             tenantId: ctx.tenantId,
             borrowerId: borrower.id,
@@ -226,6 +226,8 @@ export async function addBorrowerAlias(
         });
         return after;
     });
+    await invalidateTenantCache(ctx.tenantId);
+    return result;
 }
 
 async function mutateAlias(ctx: CommandContext, aliasPublicId: string, status: "confirmed" | "inactive") {
@@ -236,7 +238,7 @@ async function mutateAlias(ctx: CommandContext, aliasPublicId: string, status: "
     const borrower = await accessibleBorrower(ctx, (await db.query.borrowers.findFirst({
         where: and(eq(borrowers.id, alias.borrowerId), eq(borrowers.tenantId, ctx.tenantId)),
     }))?.publicId ?? "");
-    return db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
         const row = await tx.update(borrowerAliases).set({
             status,
             confirmedAt: status === "confirmed" ? new Date() : alias.confirmedAt,
@@ -252,6 +254,8 @@ async function mutateAlias(ctx: CommandContext, aliasPublicId: string, status: "
         });
         return after;
     });
+    await invalidateTenantCache(ctx.tenantId);
+    return result;
 }
 
 export const confirmBorrowerAlias = (ctx: CommandContext, aliasPublicId: string) =>

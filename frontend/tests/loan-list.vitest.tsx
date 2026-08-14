@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import i18n from "../src/lib/i18n";
@@ -66,5 +67,88 @@ describe("LoanList", () => {
 
         expect(await screen.findByText("ค้างชำระ 3 วัน")).toBeInTheDocument();
         expect(screen.getByText(/ค้างสูงสุด 3 วัน/)).toBeInTheDocument();
+    });
+
+    test("renders borrower labels above overflow and searches aliases and tags", async () => {
+        await i18n.changeLanguage("en");
+        vi.mocked(api.get).mockResolvedValue({ data: [
+            {
+                id: "loan-labels",
+                publicId: "loan-labels",
+                borrowerName: "สมหญิงใจดี",
+                borrowerAliases: [" นก ", "VIP", "", "vip"],
+                borrowerTags: ["vip", "ตลาดเช้า", "เจ้าประจำ"],
+                principal: "5000.00",
+                outstandingPrincipal: "4900.00",
+                status: "active",
+                repaymentType: "daily",
+                installmentAmount: "250.00",
+                totalInstallments: 12,
+                startDate: "2026-08-01",
+                createdAt: "2026-08-10T07:30:00.000Z",
+                paymentHealth: { status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00", overdueItemCount: 0, maxOverdueDays: 0 },
+            },
+            {
+                id: "loan-no-labels",
+                publicId: "loan-no-labels",
+                borrowerName: "แปะ",
+                principal: "1000.00",
+                outstandingPrincipal: "900.00",
+                status: "active",
+                repaymentType: "floating",
+                installmentAmount: null,
+                totalInstallments: null,
+                startDate: "2026-08-01",
+                createdAt: "2026-08-10T07:30:00.000Z",
+                paymentHealth: { status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00", overdueItemCount: 0, maxOverdueDays: 0 },
+            },
+        ] });
+
+        render(<MemoryRouter><LoanList /></MemoryRouter>);
+
+        const firstLoanCard = await screen.findByText("สมหญิงใจดี");
+        const labeledCard = firstLoanCard.closest("a");
+        expect(labeledCard).not.toBeNull();
+        expect(within(labeledCard!).getByText("นก")).toBeInTheDocument();
+        expect(within(labeledCard!).getByText("VIP")).toBeInTheDocument();
+        expect(within(labeledCard!).getByText("ตลาดเช้า")).toBeInTheDocument();
+        expect(within(labeledCard!).queryByText("เจ้าประจำ")).not.toBeInTheDocument();
+        const overflow = within(labeledCard!).getByText("+1");
+        expect(overflow).toBeInTheDocument();
+        expect(overflow).toHaveAttribute("aria-label", "1 more borrower label");
+
+        const searchInput = screen.getByPlaceholderText("Name, nickname, tag, or loan #");
+        await userEvent.type(searchInput, "เจ้าประจำ");
+        expect(await screen.findByText("สมหญิงใจดี")).toBeInTheDocument();
+        expect(screen.queryByText("แปะ")).not.toBeInTheDocument();
+    });
+
+    test("localizes borrower label helper copy in Thai", async () => {
+        await i18n.changeLanguage("th");
+        vi.mocked(api.get).mockResolvedValue({ data: [
+            {
+                id: "loan-th-labels",
+                publicId: "loan-th-labels",
+                borrowerName: "ลูกหนี้",
+                borrowerAliases: ["ชื่อเล่น", "สมชาย"],
+                borrowerTags: ["แท็ก", "แผง"],
+                principal: "1200.00",
+                outstandingPrincipal: "1200.00",
+                status: "active",
+                repaymentType: "daily",
+                installmentAmount: "100.00",
+                totalInstallments: 12,
+                startDate: "2026-08-01",
+                createdAt: "2026-08-10T07:30:00.000Z",
+                paymentHealth: { status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00", overdueItemCount: 0, maxOverdueDays: 0 },
+            },
+        ] });
+
+        render(<MemoryRouter><LoanList /></MemoryRouter>);
+
+        expect(await screen.findByPlaceholderText("ชื่อ ชื่อเล่น แท็ก หรือเลขสัญญา")).toBeInTheDocument();
+        const overflow = await screen.findByText("+1");
+        expect(overflow).toHaveAttribute("aria-label", "ป้ายกำกับลูกหนี้เพิ่มเติม 1 รายการ");
+        expect(screen.getByText("ลูกหนี้")).toBeInTheDocument();
     });
 });

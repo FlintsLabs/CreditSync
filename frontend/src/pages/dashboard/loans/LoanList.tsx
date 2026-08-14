@@ -10,6 +10,8 @@ import { LoanClosingModal } from "./LoanClosingModal";
 import { useTranslation } from "react-i18next";
 import { formatMoneyExact } from "../../../lib/workflow-model";
 import { LoanPaymentHealthBadge, type LoanPaymentHealth } from "./LoanPaymentHealthBadge";
+import { Badge } from "../../../components/ui/badge";
+import { getVisibleBorrowerLabels, loanMatchesSearch, type BorrowerLabelLoan } from "./loan-list-model";
 
 const currentPaymentHealth: LoanPaymentHealth = {
     status: "current",
@@ -23,6 +25,8 @@ interface LoanRow {
     id: string;
     publicId: string;
     borrowerName: string;
+    borrowerAliases?: string[] | null;
+    borrowerTags?: string[] | null;
     principal: string;
     outstandingPrincipal: string;
     status: string;
@@ -56,12 +60,8 @@ export default function LoanList() {
     }, []);
 
     const visibleLoans = useMemo(() => {
-        const searchText = search.trim().toLowerCase();
         const filtered = loans.filter((loan) => {
-            const matchesSearch =
-                !searchText ||
-                loan.borrowerName?.toLowerCase().includes(searchText) ||
-                String(loan.id).includes(searchText);
+            const matchesSearch = loanMatchesSearch(loan as BorrowerLabelLoan, search);
             const matchesStatus = statusFilter === "all" || loan.status === statusFilter;
             const matchesFunding = fundingFilter === "all";
             return matchesSearch && matchesStatus && matchesFunding;
@@ -146,6 +146,27 @@ export default function LoanList() {
                         <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
                             <div className="space-y-1">
                                 <CardTitle className="text-sm font-medium">{loan.borrowerName}</CardTitle>
+                                {(() => {
+                                    const labelState = getVisibleBorrowerLabels(loan);
+                                    if (labelState.visible.length === 0) return null;
+                                    return (
+                                        <div className="flex flex-wrap gap-1">
+                                            {labelState.visible.map((label) => (
+                                                <Badge key={label} variant="outline" className="h-5 text-xs">
+                                                    {label}
+                                                </Badge>
+                                            ))}
+                                            {labelState.overflow > 0 ? (
+                                                <span
+                                                    aria-label={t("loans.borrowerLabels.more", { count: labelState.overflow })}
+                                                    className="inline-flex items-center rounded-full border border-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
+                                                >
+                                                    +{labelState.overflow}
+                                                </span>
+                                            ) : null}
+                                        </div>
+                                    );
+                                })()}
                                 <div className="text-xs text-muted-foreground">{t("loans.loanLabel", { defaultValue: "Loan #{{id}}", id: loan.id })}</div>
                             </div>
                            <DropdownMenu>

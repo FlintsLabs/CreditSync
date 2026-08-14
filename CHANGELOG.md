@@ -8,6 +8,8 @@
 - Added the approved design for an append-only revolving funding ledger covering credit-card and personal-loan drawdowns, fee-only VAT, manual provider charges and repayments, exact funding allocations, compensating corrections, and synchronized Web/MCP workflows.
 - Added the approved app-wide table pagination design, standardizing server-side pagination for persistent collections, client-side pagination for authoritative previews, localized shared controls, URL-restorable state, and exact financial-value preservation.
 - Added the TDD implementation plan for app-wide table pagination, covering shared controls, paged REST reads, URL and preview state, complete verification gates, supervised tmux execution, integration, and deployment.
+- Added confirmed borrower aliases and borrower tags to loan-list DTOs and a locale-aware model for label normalization, deduplication, overflow, and search matching.
+- Added loan card borrower-label rendering with up to three visible badges and a localized overflow count, with search matching across hidden labels.
 
 ## v0.3.12 - 2026-08-14
 

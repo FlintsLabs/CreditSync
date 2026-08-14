@@ -534,7 +534,11 @@
         "description": "Manage active contracts and track repayments.",
         "new": "New Loan",
         "create": "Create Loan",
-        "search": "Borrower or loan #",
+        "search": "Name, nickname, tag, or loan #",
+        "borrowerLabels": {
+            "more_one": "1 more borrower label",
+            "more_other": "{{count}} more borrower labels"
+        },
         "loanLabel": "Loan #{{id}}",
         "originalPrincipal": "Original principal",
         "repaymentType": "Repayment type",

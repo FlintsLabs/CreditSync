@@ -1,8 +1,8 @@
 import { Elysia, t } from "elysia";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import Decimal from "decimal.js";
 import { db } from "../db";
-import { borrowers, loanSchedules, loans, transactions } from "../db/schema";
+import { borrowerAliases, borrowers, loanSchedules, loans, transactions } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
 import { calculateLoanClosingSummary } from "../lib/calculator";
 import { createAuditLog } from "../lib/audit-log";
@@ -100,17 +100,37 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                     loan: loans,
                     borrowerPublicId: borrowers.publicId,
                     borrowerName: borrowers.name,
+                    borrowerId: borrowers.id,
+                    borrowerTags: borrowers.tags,
                 }).from(loans)
                     .leftJoin(borrowers, eq(loans.borrowerId, borrowers.id))
                     .where(and(...conditions))
                     .orderBy(desc(loans.createdAt));
+
+                const visibleBorrowerIds = [...new Set(rows.flatMap((row) => row.borrowerId == null ? [] : [row.borrowerId]))];
+                const aliasRows = visibleBorrowerIds.length === 0 ? [] : await db.select({
+                    borrowerId: borrowerAliases.borrowerId,
+                    alias: borrowerAliases.alias,
+                }).from(borrowerAliases).where(and(
+                    eq(borrowerAliases.tenantId, user.tenantId),
+                    eq(borrowerAliases.status, "confirmed"),
+                    inArray(borrowerAliases.borrowerId, visibleBorrowerIds),
+                ));
+
+                const aliasesByBorrower = new Map<number, string[]>();
+                for (const aliasRow of aliasRows) {
+                    aliasesByBorrower.set(aliasRow.borrowerId, [...(aliasesByBorrower.get(aliasRow.borrowerId) ?? []), aliasRow.alias]);
+                }
+
                 const asOf = new Date();
-                return Promise.all(rows.map(async ({ loan, borrowerPublicId, borrowerName }) => ({
+                return Promise.all(rows.map(async ({ loan, borrowerPublicId, borrowerName, borrowerId, borrowerTags }) => ({
                     id: loan.publicId,
                     publicId: loan.publicId,
                     borrowerId: borrowerPublicId,
                     borrowerPublicId,
                     borrowerName,
+                    borrowerAliases: borrowerId == null ? [] : aliasesByBorrower.get(borrowerId) ?? [],
+                    borrowerTags: borrowerTags ?? [],
                     principal: serializeMoney(loan.principalAmount),
                     outstandingPrincipal: serializeMoney(loan.outstandingPrincipal ?? "0"),
                     status: loan.status,
