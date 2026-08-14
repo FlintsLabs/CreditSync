@@ -96,7 +96,7 @@ describe("loan interest rate service", () => {
 
     integrationTest("executes the latest preview once with audit context and idempotent replay", async () => {
         setSystemTime(new Date("2026-08-11T10:00:00+07:00"));
-        const { actor, loan } = await seedFloatingLoan("tenant-a", "execute", "1000.00", "closed");
+        const { actor, loan } = await seedFloatingLoan("tenant-a", "execute", "1000.00", "active");
         const preview = await previewLoanInterestRateChange(context("tenant-a", actor.id), loan.publicId, {
             effectiveDate: "2026-09-01", expiryDate: null, rateType: "percent", rate: "1",
         });
@@ -137,6 +137,24 @@ describe("loan interest rate service", () => {
             expect(error).toBeInstanceOf(DomainError);
             expect((error as DomainError).code).toBe("RATE_PERIOD_PREVIEW_STALE");
         }
+    });
+
+    integrationTest("rejects a new interest-rate execution after the floating loan is paid", async () => {
+        const { actor, loan } = await seedFloatingLoan("tenant-paid-rate", "paid-guard");
+        const preview = await previewLoanInterestRateChange(context("tenant-paid-rate", actor.id), loan.publicId, {
+            effectiveDate: "2026-09-01", expiryDate: null, rateType: "percent", rate: "1",
+        });
+        await db.update(loans).set({ status: "paid" }).where(eq(loans.id, loan.id));
+
+        await expect(executeLoanInterestRateChange(context("tenant-paid-rate", actor.id, "paid-rate-change"), loan.publicId, {
+            previewPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            reason: "Must not mutate a paid loan",
+        })).rejects.toMatchObject({ code: "LOAN_NOT_ACTIVE", status: 409 });
+        expect(await db.select().from(auditLogs).where(and(
+            eq(auditLogs.entityId, loan.publicId),
+            eq(auditLogs.action, "interest_rate_timeline_changed"),
+        ))).toHaveLength(0);
     });
 
     integrationTest("serializes concurrent execution into one timeline and audit", async () => {

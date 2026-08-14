@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import type Decimal from "decimal.js";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
     auditLogs,
     floatingTransactionAllocations,
     loanDisbursements,
     loanInterestAccruals,
+    loanInterestRatePreviews,
     loans,
     loanSettlementPreviews,
     transactions,
@@ -34,6 +35,14 @@ type TransactionRow = typeof transactions.$inferSelect;
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const businessDatePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+function bangkokBusinessDate(value: Date) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(value);
+    const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value;
+    return `${part("year")}-${part("month")}-${part("day")}`;
+}
 const previewHashPattern = /^v1:[0-9a-f]{64}$/i;
 const hashVersion = "v1";
 const previewTtlMilliseconds = 15 * 60 * 1000;
@@ -317,6 +326,8 @@ export async function previewLoanSettlement(
             accruedNotDueInterest: snapshot.accruedNotDueInterest.toFixed(2),
             outstandingFees: snapshot.outstandingFees.toFixed(2),
             outstandingPenalties: snapshot.outstandingPenalties.toFixed(2),
+            originalOutstandingInterest: money(loan.outstandingInterest ?? "0.00").toFixed(2),
+            originalNextDueDate: loan.nextDueDate,
             nonRefundableAdvanceInterest: snapshot.nonRefundableAdvanceInterest.toFixed(2),
             settlementTotal: snapshot.settlementTotal.toFixed(2),
             balanceVersion: snapshot.balanceVersion,
@@ -768,7 +779,20 @@ export async function reverseLoanSettlement(ctx: CommandContext, input: ReverseL
                 downstreamTransactionPublicId: downstream.publicId,
             });
         }
+        const downstreamRateChange = await tx.query.loanInterestRatePreviews.findFirst({ where: and(
+            eq(loanInterestRatePreviews.tenantId, ctx.tenantId),
+            eq(loanInterestRatePreviews.loanId, locked.loan.id),
+            eq(loanInterestRatePreviews.status, "executed"),
+            gt(loanInterestRatePreviews.executedAt, locked.settlement.executedAt!),
+        ) });
+        if (downstreamRateChange) {
+            throw new DomainError("SETTLEMENT_REVERSAL_BLOCKED", "Settlement reversal is blocked by a downstream interest-rate timeline change", 409, {
+                transactionPublicId: original.publicId,
+                interestRatePreviewPublicId: downstreamRateChange.publicId,
+            });
+        }
         const reversedAt = new Date();
+        const reversalBusinessDate = bangkokBusinessDate(reversedAt);
         const reversal = await tx.insert(transactions).values({
             tenantId: ctx.tenantId,
             ownerUserId: original.ownerUserId,
@@ -814,7 +838,7 @@ export async function reverseLoanSettlement(ctx: CommandContext, input: ReverseL
                 dueDate: row.dueDate,
                 component: row.component,
                 interestAccrualId: row.interestAccrualId,
-                effectiveDate: locked.settlement.asOfDate,
+                effectiveDate: reversalBusinessDate,
                 allocationOrder: index + 1,
                 entryType: "reversal",
                 amount: signedMoney(new FinancialDecimal(row.amount).negated()),
@@ -839,7 +863,7 @@ export async function reverseLoanSettlement(ctx: CommandContext, input: ReverseL
                 ? "partially_paid"
                 : accrual.periodUnit === "day" || accrual.periodDays === 1
                     ? "accrued"
-                    : (accrual.periodEndDate ?? accrual.accrualDate) <= locked.settlement.asOfDate ? "due" : "accruing";
+                    : (accrual.periodEndDate ?? accrual.accrualDate) <= reversalBusinessDate ? "due" : "accruing";
             await tx.update(loanInterestAccruals).set({
                 paidAmount: signedMoney(restoredPaid),
                 status: restoredStatus,
@@ -853,9 +877,10 @@ export async function reverseLoanSettlement(ctx: CommandContext, input: ReverseL
         });
         const restoredLoan = await tx.update(loans).set({
             outstandingPrincipal: signedMoney(original.principalComponent),
-            outstandingInterest: signedMoney(original.interestComponent),
+            outstandingInterest: signedMoney(locked.settlement.originalOutstandingInterest),
             outstandingFees: signedMoney(original.feeComponent),
             status: "active",
+            nextDueDate: locked.settlement.originalNextDueDate,
             updatedAt: reversedAt,
         }).where(and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, locked.loan.id)))
             .returning().then((rows: LoanRow[]) => rows[0]!);

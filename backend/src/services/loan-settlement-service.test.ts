@@ -11,6 +11,7 @@ import {
     loanFundingAllocations,
     loanInterestAccruals,
     loanInterestRatePeriods,
+    loanInterestRatePreviews,
     loans,
     loanSettlementPreviews,
     transactions,
@@ -271,6 +272,8 @@ describe("loan settlement service", () => {
             allocationDate: "2026-08-13",
             createdByUserId: seeded.actor.id,
         });
+        await db.update(loans).set({ outstandingInterest: "123.45", nextDueDate: "2026-08-20" })
+            .where(eq(loans.id, seeded.loan.id));
         const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-21");
         const executed = await executeLoanSettlement(context(seeded.actor, "execute-before-reversal"), {
             settlementPublicId: preview.publicId,
@@ -288,6 +291,8 @@ describe("loan settlement service", () => {
         const originalFundEffects = await db.select().from(fundLedgerEntries)
             .where(eq(fundLedgerEntries.transactionId, original!.id))
             .orderBy(fundLedgerEntries.id);
+
+        setSystemTime(new Date("2026-08-23T12:00:00+07:00"));
 
         const reversal = await reverseLoanSettlement(context(seeded.actor, "reverse-settlement-exact"), {
             settlementPublicId: preview.publicId,
@@ -319,6 +324,7 @@ describe("loan settlement service", () => {
                 reversedAllocationId: row.id,
                 allocationOrder: index + 1,
                 entryType: "reversal",
+                effectiveDate: "2026-08-23",
             })),
         );
         expect(await db.select().from(fundLedgerEntries)
@@ -331,7 +337,8 @@ describe("loan settlement service", () => {
         expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({
             status: "active",
             outstandingPrincipal: "5000.00",
-            outstandingInterest: "771.43",
+            outstandingInterest: "123.45",
+            nextDueDate: "2026-08-20",
         });
         expect(await db.query.transactions.findFirst({ where: eq(transactions.id, original!.id) })).toEqual(original);
 
@@ -370,6 +377,41 @@ describe("loan settlement service", () => {
             code: "SETTLEMENT_REVERSAL_BLOCKED",
             status: 409,
             details: { transactionPublicId: original!.publicId },
+        });
+    });
+
+    integrationTest("blocks settlement reversal after a durable post-settlement rate-timeline execution", async () => {
+        setSystemTime(new Date("2026-08-19T12:00:00+07:00"));
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-rate-blocker" });
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-19");
+        await executeLoanSettlement(context(seeded.actor, "execute-before-rate-blocker"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "Execute before durable rate blocker",
+        });
+        const ratePreview = await db.insert(loanInterestRatePreviews).values({
+            tenantId: seeded.actor.tenantId,
+            loanId: seeded.loan.id,
+            createdByUserId: seeded.actor.id,
+            request: { effectiveDate: "2026-09-01", expiryDate: null, rateType: "percent", rate: "1.0000" },
+            requestHash: "rate-request-after-settlement",
+            previewHash: `v1:${"a".repeat(64)}`,
+            beforeTimeline: [],
+            afterTimeline: [],
+            timelineVersion: `v1:${"b".repeat(64)}`,
+            status: "executed",
+            executeIdempotencyKey: "rate-after-settlement",
+            expiresAt: new Date("2026-08-19T13:00:00+07:00"),
+            executedAt: new Date("2026-08-19T12:05:00+07:00"),
+        }).returning().then((rows) => rows[0]!);
+
+        await expect(reverseLoanSettlement(context(seeded.actor, "blocked-by-rate-change"), {
+            settlementPublicId: preview.publicId,
+            reason: "Must not erase later rate authority",
+        })).rejects.toMatchObject({
+            code: "SETTLEMENT_REVERSAL_BLOCKED",
+            details: { interestRatePreviewPublicId: ratePreview.publicId },
         });
     });
 

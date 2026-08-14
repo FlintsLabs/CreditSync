@@ -214,11 +214,12 @@ describe("floating period policy database contract", () => {
             INSERT INTO loan_settlement_previews
                 (tenant_id, loan_id, as_of_date, outstanding_principal, due_interest,
                  accrued_not_due_interest, outstanding_fees, outstanding_penalties,
+                 original_outstanding_interest, original_next_due_date,
                  non_refundable_advance_interest, settlement_total, balance_version,
                  preview_hash, status, expires_at)
             VALUES
                 ('tenant-preview-b', ${loan.id}, '2026-08-15', 5000.00, 0.00,
-                 257.14, 0.00, 0.00, 0.00, 5257.14, 'balance-v1',
+                 257.14, 0.00, 0.00, 0.00, '2026-08-20', 0.00, 5257.14, 'balance-v1',
                  'preview-hash', 'ready', now() + interval '5 minutes')
         `);
 
@@ -230,6 +231,7 @@ describe("floating period policy database contract", () => {
         const baseColumns = sql`
             (tenant_id, loan_id, as_of_date, outstanding_principal, due_interest,
              accrued_not_due_interest, outstanding_fees, outstanding_penalties,
+             original_outstanding_interest, original_next_due_date,
              non_refundable_advance_interest, settlement_total, balance_version,
              preview_hash, status, expires_at)
         `;
@@ -237,12 +239,12 @@ describe("floating period policy database contract", () => {
         const insertWithoutHash = async () => db.execute(sql`
             INSERT INTO loan_settlement_previews ${baseColumns}
             VALUES ('tenant-preview', ${loan.id}, '2026-08-15', 5000.00, 0.00, 257.14,
-                    0.00, 0.00, 0.00, 5257.14, 'balance-v1', NULL, 'ready', now() + interval '5 minutes')
+                    0.00, 0.00, 0.00, '2026-08-20', 0.00, 5257.14, 'balance-v1', NULL, 'ready', now() + interval '5 minutes')
         `);
         const insertWithoutExpiry = async () => db.execute(sql`
             INSERT INTO loan_settlement_previews ${baseColumns}
             VALUES ('tenant-preview', ${loan.id}, '2026-08-15', 5000.00, 0.00, 257.14,
-                    0.00, 0.00, 0.00, 5257.14, 'balance-v1', 'hash', 'ready', NULL)
+                    0.00, 0.00, 0.00, '2026-08-20', 0.00, 5257.14, 'balance-v1', 'hash', 'ready', NULL)
         `);
 
         await expect(insertWithoutHash()).rejects.toMatchObject({ cause: { code: "23502" } });
@@ -250,7 +252,7 @@ describe("floating period policy database contract", () => {
         await expectConstraintViolation(sql`
             INSERT INTO loan_settlement_previews ${baseColumns}
             VALUES ('tenant-preview', ${loan.id}, '2026-08-15', 5000.00, 0.00, 257.14,
-                    0.00, 0.00, 0.00, 5257.14, 'balance-v1', 'hash', 'draft', now() + interval '5 minutes')
+                    0.00, 0.00, 0.00, '2026-08-20', 0.00, 5257.14, 'balance-v1', 'hash', 'draft', now() + interval '5 minutes')
         `);
     });
 });

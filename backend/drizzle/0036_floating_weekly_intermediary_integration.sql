@@ -267,6 +267,8 @@ CREATE TABLE "loan_settlement_previews" (
 	"accrued_not_due_interest" numeric NOT NULL,
 	"outstanding_fees" numeric NOT NULL,
 	"outstanding_penalties" numeric NOT NULL,
+	"original_outstanding_interest" numeric NOT NULL,
+	"original_next_due_date" date,
 	"non_refundable_advance_interest" numeric NOT NULL,
 	"settlement_total" numeric NOT NULL,
 	"balance_version" text NOT NULL,

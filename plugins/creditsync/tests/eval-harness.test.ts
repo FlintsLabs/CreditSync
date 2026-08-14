@@ -309,6 +309,32 @@ describe("CreditSync executable orchestration evals", () => {
         expect(validatedOutputs).toBeGreaterThan(0);
     });
 
+    test("every settlement reversal fixture matches the complete frozen output schema", async () => {
+        const { catalog, contract } = await fixtures();
+        const tool = contract.tools.find((candidate) => candidate.name === "loan.settlement.reverse");
+        expect(tool?.outputSchema).toBeDefined();
+        const ajv = new Ajv({ allErrors: true, strict: false });
+        addFormats(ajv);
+        const validate = ajv.compile(tool!.outputSchema!);
+        const errors: string[] = [];
+        for (const entry of catalog.cases) {
+            await runEvalScenario(entry.id, {
+                validateCall() {},
+                validateOutput(name, data) {
+                    if (name !== "loan.settlement.reverse") return;
+                    const envelope = {
+                        schemaVersion: "1.0",
+                        data,
+                        correlationId: "0198c481-3e2b-7000-8000-000000000099",
+                        auditPublicIds: ["0198c481-3e2b-7000-8000-000000000098"],
+                    };
+                    if (!validate(envelope)) errors.push(`${entry.id}/${name} output ${conciseSchemaErrors(validate.errors)}`);
+                },
+            });
+        }
+        expect(errors).toEqual([]);
+    });
+
     test("alias add and confirmation are separate calls with the returned alias UUID", async () => {
         const result = await runEvalScenario("borrower-create-alias");
         const aliasCalls = result.calls.filter((call) => call.name === "borrower.alias");

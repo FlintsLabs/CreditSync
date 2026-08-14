@@ -483,6 +483,8 @@ export const loanSettlementPreviews = pgTable("loan_settlement_previews", {
     accruedNotDueInterest: numeric("accrued_not_due_interest").notNull(),
     outstandingFees: numeric("outstanding_fees").notNull(),
     outstandingPenalties: numeric("outstanding_penalties").notNull(),
+    originalOutstandingInterest: numeric("original_outstanding_interest").notNull(),
+    originalNextDueDate: date("original_next_due_date"),
     nonRefundableAdvanceInterest: numeric("non_refundable_advance_interest").notNull(),
     settlementTotal: numeric("settlement_total").notNull(),
     balanceVersion: text("balance_version").notNull(),

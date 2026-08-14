@@ -290,6 +290,7 @@ export async function executeLoanInterestRateChange(
     await accessibleLoan(ctx, loanPublicId);
     return db.transaction(async (tx) => {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`loan-rate-change:${ctx.tenantId}:${loanPublicId}`}, 0))`);
+        await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND public_id = ${loanPublicId} FOR UPDATE`);
         const loan = await accessibleLoan(ctx, loanPublicId, tx);
         const reused = await tx.query.loanInterestRatePreviews.findFirst({ where: and(
             eq(loanInterestRatePreviews.tenantId, ctx.tenantId),
@@ -315,6 +316,9 @@ export async function executeLoanInterestRateChange(
                 auditPublicId: preview.executedAuditPublicId!,
                 correlationId: ctx.correlationId,
             };
+        }
+        if (loan.status !== "active") {
+            throw new DomainError("LOAN_NOT_ACTIVE", "Interest rate timeline changes require an active loan", 409);
         }
         if (preview.status !== "ready" || preview.expiresAt.getTime() <= Date.now() || preview.previewHash !== input.previewHash) {
             throw new DomainError("RATE_PERIOD_PREVIEW_STALE", "Interest rate preview is stale or expired", 409);

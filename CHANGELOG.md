@@ -15,6 +15,7 @@
 - Added explicitly confirmed atomic posting and compensating reversal for zero-variance intermediary disbursement groups, linking exact borrower payout and activation-time advance-interest projections by public provenance IDs while preserving optional evidence, collection/remittance ledgers, and Decimal-only held balances.
 
 ### Fixed
+- Bound delayed floating-settlement reversals to the Bangkok reversal date, restored exact pre-execution loan rollups from immutable preview snapshots, blocked post-settlement rate-timeline authority and paid-loan rate mutations under the loan lock, and validated settlement-reversal eval fixtures against the complete frozen MCP output schema.
 - Included authoritative due floating penalties in settlement previews, stale balance versions, execution allocations, materialized penalty provenance, and exact close-zero checks.
 - Included authoritative due floating penalties in payment-preview availability so an exact penalty-plus-interest-plus-principal receipt previews and posts with full Decimal conservation without making accruing-not-due interest normally payable.
 - Made public schedule due dates follow normalized Bangkok business dates independently of the runtime timezone, aligned settled floating-loan REST coverage with its exact informational accruing-interest projection, restored real time after frozen-clock floating regressions, and restored the fully migrated disposable schema after isolated historical-migration tests without masking their original failures.
