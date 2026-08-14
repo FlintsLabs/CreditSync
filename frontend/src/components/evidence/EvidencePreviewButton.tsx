@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ExternalLink, Eye, Loader2, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../ui/Button";
@@ -20,6 +20,7 @@ export function EvidencePreviewButton({ available, label, mimeType, resolve }: E
     const [descriptor, setDescriptor] = useState<EvidenceDescriptor | null>(null);
     const [failed, setFailed] = useState(false);
     const requestGeneration = useRef(0);
+    useEffect(() => () => { requestGeneration.current += 1; }, []);
 
     const load = useCallback(async () => {
         const generation = ++requestGeneration.current;

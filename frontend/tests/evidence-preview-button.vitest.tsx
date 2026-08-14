@@ -58,4 +58,17 @@ describe("EvidencePreviewButton", () => {
         expect(await screen.findByRole("img", { name: "View slip" })).toHaveAttribute("src", "https://signed.example/fresh.jpg");
         expect(resolve).toHaveBeenCalledTimes(2);
     });
+
+    test("ignores a pending descriptor completion after unmount", async () => {
+        let finish!: (value: { url: string; mimeType: string }) => void;
+        const readUrl = vi.fn(() => "https://signed.example/unmounted.jpg");
+        const resolve = vi.fn(() => new Promise<{ url: string; mimeType: string }>((done) => { finish = done; }));
+        const user = userEvent.setup();
+        const view = render(<EvidencePreviewButton available label="View slip" resolve={resolve} />);
+        await user.click(screen.getByRole("button", { name: "View slip" }));
+        view.unmount();
+        finish({ get url() { return readUrl(); }, mimeType: "image/jpeg" });
+        await Promise.resolve();
+        expect(readUrl).not.toHaveBeenCalled();
+    });
 });

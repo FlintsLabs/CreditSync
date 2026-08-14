@@ -6,25 +6,26 @@ import { TransferGroupView, type IntermediatedDisbursementGroup } from "../loans
 
 export function IntermediaryTransferLedger({ intermediaryPublicId }: { intermediaryPublicId: string }) {
     const { t } = useTranslation();
-    const [groups, setGroups] = useState<IntermediatedDisbursementGroup[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [failed, setFailed] = useState(false);
+    const [result, setResult] = useState<{ scope: string; groups: IntermediatedDisbursementGroup[]; failed: boolean } | null>(null);
     useEffect(() => {
         let active = true;
         void api.get("/intermediated-disbursements", { params: { intermediaryPublicId } }).then(async (response) => {
             const summaries = (response.data ?? []) as IntermediatedDisbursementGroup[];
             return Promise.all(summaries.map(async (group) => (await api.get(`/intermediated-disbursements/${group.publicId}`)).data));
         }).then((details) => {
-            if (active) { setGroups(details); setFailed(false); }
-        }).catch(() => { if (active) setFailed(true); }).finally(() => { if (active) setLoading(false); });
+            if (active) setResult({ scope: intermediaryPublicId, groups: details, failed: false });
+        }).catch(() => { if (active) setResult({ scope: intermediaryPublicId, groups: [], failed: true }); });
         return () => { active = false; };
     }, [intermediaryPublicId]);
+    const scopeLoading = result?.scope !== intermediaryPublicId;
+    const groups = scopeLoading ? [] : result.groups;
+    const failed = !scopeLoading && result.failed;
     return <section aria-label={t("intermediatedDisbursement.ledgerTitle")} className="space-y-3">
         <h2 className="text-lg font-semibold">{t("intermediatedDisbursement.ledgerTitle")}</h2>
-        {loading ? <p>{t("common.loading")}</p> : failed ? <p role="alert">{t("intermediatedDisbursement.loadError")}</p> : groups.map((group) => <div className="space-y-2" key={group.publicId}>
+        {scopeLoading ? <p>{t("common.loading")}</p> : failed ? <p role="alert">{t("intermediatedDisbursement.loadError")}</p> : groups.map((group) => <div className="space-y-2" key={group.publicId}>
             <Link className="inline-flex text-sm font-medium text-primary hover:underline" to={`/loans/${group.loanPublicId}`}>{t("intermediatedDisbursement.openLoan")}</Link>
             <TransferGroupView group={group} />
         </div>)}
-        {!loading && !failed && groups.length === 0 && <p className="rounded border border-dashed p-4 text-sm text-muted-foreground">{t("intermediatedDisbursement.empty")}</p>}
+        {!scopeLoading && !failed && groups.length === 0 && <p className="rounded border border-dashed p-4 text-sm text-muted-foreground">{t("intermediatedDisbursement.empty")}</p>}
     </section>;
 }

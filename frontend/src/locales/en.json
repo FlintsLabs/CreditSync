@@ -951,6 +951,7 @@
         "postConfirmed": "Post confirmed transfer",
         "posted": "Transfer posted",
         "postError": "Unable to post the confirmed transfer. No financial record was changed.",
+        "proposalChanged": "The proposal changed. Review it and confirm again.",
         "roles": {
             "fundingToIntermediary": "Funding to intermediary",
             "borrowerNetPayout": "Borrower net payout",

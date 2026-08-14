@@ -14,6 +14,7 @@
 - Added explicitly confirmed atomic posting and compensating reversal for zero-variance intermediary disbursement groups, linking exact borrower payout and activation-time advance-interest projections by public provenance IDs while preserving optional evidence, collection/remittance ledgers, and Decimal-only held balances.
 
 ### Fixed
+- Bound intermediary-transfer confirmation and command keys to the exact unexpired proposal ID/hash, refreshed stale proposals for mandatory re-review, cleared prior-profile transfer actions immediately on scope changes, and invalidated pending signed-slip resolution on component unmount.
 - Discarded signed transfer-evidence descriptors when their preview closes, including in-flight resolutions, so reopening always requests a fresh short-lived URL.
 - Included inactive exact canonical-name and confirmed-alias matches in intermediary search-before-create candidate review, with localized lifecycle status and automatic invalidation of reviewed candidates after any proposed identity edit.
 - Preserved 29-digit intermediary portfolio totals with the shared high-precision financial decimal path, replaced declared group-retained summaries with the authenticated authoritative held-balance projection, required exact canonical-name/alias candidate review before profile creation, localized directory statuses and retryable failures, and distinguished missing profiles from service outages.

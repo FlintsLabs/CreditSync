@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Decimal from "decimal.js";
 import { useTranslation } from "react-i18next";
 import { api } from "../../../lib/api";
@@ -15,7 +15,7 @@ export type IntermediatedTransferEvent = {
 export type IntermediatedDisbursementGroup = {
     publicId: string; loanPublicId: string; intermediaryPublicId: string; status: string;
     retainedBalance: string; events: IntermediatedTransferEvent[];
-    latestPreview?: { publicId: string; status: string; variance: string; evidenceReady: boolean; warnings: string[] } | null;
+    latestPreview?: { publicId: string; previewHash: string; status: string; variance: string; evidenceReady: boolean; warnings: string[]; expiresAt: string } | null;
 };
 
 const ROLE_KEYS = {
@@ -30,13 +30,27 @@ export function TransferGroupView({ group }: { group: IntermediatedDisbursementG
         .filter((item) => item.status === "ready")
         .map((item) => ({ event, item })));
     const suppliedEvidenceReady = group.events.every((event) => event.evidence.items.every((item) => item.status === "ready"));
-    const preview = group.latestPreview;
-    const [confirmed, setConfirmed] = useState(false);
+    const sourceProposalIdentity = group.latestPreview ? `${group.latestPreview.publicId}:${group.latestPreview.previewHash}` : "none";
+    const [refreshed, setRefreshed] = useState<{ sourceProposalIdentity: string; preview: NonNullable<IntermediatedDisbursementGroup["latestPreview"]> } | null>(null);
+    const preview = refreshed?.sourceProposalIdentity === sourceProposalIdentity ? refreshed.preview : group.latestPreview ?? null;
+    const proposalIdentity = preview ? `${preview.publicId}:${preview.previewHash}` : null;
+    const [confirmedProposalIdentity, setConfirmedProposalIdentity] = useState<string | null>(null);
     const [posting, setPosting] = useState(false);
-    const [postFailed, setPostFailed] = useState(false);
+    const [postFailedIdentity, setPostFailedIdentity] = useState<string | null>(null);
+    const [changedProposalIdentity, setChangedProposalIdentity] = useState<string | null>(null);
     const [posted, setPosted] = useState(group.status === "posted");
     const postIntent = useRef<{ proposalPublicId: string; key: string } | null>(null);
+    const confirmed = proposalIdentity !== null && confirmedProposalIdentity === proposalIdentity;
+    const [clock, setClock] = useState(() => Date.now());
+    useEffect(() => {
+        if (!preview) return;
+        const remaining = Date.parse(preview.expiresAt) - clock;
+        if (remaining <= 0) return;
+        const timer = window.setTimeout(() => setClock(Date.now()), Math.min(remaining + 1, 2_147_483_647));
+        return () => window.clearTimeout(timer);
+    }, [clock, preview]);
     const confirmable = Boolean(preview && preview.status === "ready" && preview.evidenceReady
+        && Date.parse(preview.expiresAt) > clock
         && new Decimal(preview.variance).isZero() && suppliedEvidenceReady);
     const date = (value: string) => new Intl.DateTimeFormat(i18n.language, {
         dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Bangkok",
@@ -73,42 +87,67 @@ export function TransferGroupView({ group }: { group: IntermediatedDisbursementG
             </div>)}
         </div>
         <label className="flex items-start gap-2 text-sm">
-            <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} disabled={!confirmable || posting || posted} />
+            <input type="checkbox" checked={confirmed} onChange={(event) => setConfirmedProposalIdentity(event.target.checked ? proposalIdentity : null)} disabled={!confirmable || posting || posted} />
             <span>{t("intermediatedDisbursement.confirmReady")}</span>
         </label>
         {!confirmable && <p role="alert" className="text-sm text-amber-700 dark:text-amber-300">{t("intermediatedDisbursement.confirmBlocked")}</p>}
-        {postFailed && <p role="alert" className="text-sm text-destructive">{t("intermediatedDisbursement.postError")}</p>}
+        {changedProposalIdentity === proposalIdentity && <p role="status" className="text-sm text-amber-700 dark:text-amber-300">{t("intermediatedDisbursement.proposalChanged")}</p>}
+        {postFailedIdentity === proposalIdentity && <p role="alert" className="text-sm text-destructive">{t("intermediatedDisbursement.postError")}</p>}
         <button className="rounded-md border px-3 py-2 text-sm font-medium disabled:opacity-50" type="button" disabled={!confirmable || !confirmed || posting || posted} onClick={() => {
             if (!preview) return;
-            setPosting(true); setPostFailed(false);
+            setPosting(true); setPostFailedIdentity(null); setChangedProposalIdentity(null);
             if (postIntent.current?.proposalPublicId !== preview.publicId) {
                 postIntent.current = { proposalPublicId: preview.publicId, key: crypto.randomUUID() };
             }
-            void api.post(`/intermediated-disbursements/${group.publicId}/post`, { proposalPublicId: preview.publicId, confirmed: true }, {
-                headers: { "Idempotency-Key": postIntent.current.key },
-            }).then(() => { setPosted(true); setConfirmed(false); }).catch(() => setPostFailed(true)).finally(() => setPosting(false));
+            const run = async () => {
+                try {
+                    await api.post(`/intermediated-disbursements/${group.publicId}/post`, { proposalPublicId: preview.publicId, confirmed: true }, {
+                        headers: { "Idempotency-Key": postIntent.current!.key },
+                    });
+                    setPosted(true); setConfirmedProposalIdentity(null);
+                } catch (error) {
+                    const code = (error as { response?: { data?: { code?: string } } }).response?.data?.code;
+                    if (code === "STALE_INTERMEDIATED_DISBURSEMENT_PROPOSAL") {
+                        try {
+                            const response = await api.post(`/intermediated-disbursements/${group.publicId}/preview`, {});
+                            const nextPreview = response.data as NonNullable<IntermediatedDisbursementGroup["latestPreview"]>;
+                            setRefreshed({ sourceProposalIdentity, preview: nextPreview });
+                            setConfirmedProposalIdentity(null);
+                            setChangedProposalIdentity(`${nextPreview.publicId}:${nextPreview.previewHash}`);
+                            postIntent.current = null;
+                        } catch {
+                            setPostFailedIdentity(proposalIdentity);
+                        }
+                    } else {
+                        setPostFailedIdentity(proposalIdentity);
+                    }
+                } finally {
+                    setPosting(false);
+                }
+            };
+            void run();
         }}>{posted ? t("intermediatedDisbursement.posted") : t("intermediatedDisbursement.postConfirmed")}</button>
     </article>;
 }
 
 export function IntermediatedDisbursementPanel({ loanPublicId }: { loanPublicId: string }) {
     const { t } = useTranslation();
-    const [groups, setGroups] = useState<IntermediatedDisbursementGroup[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [failed, setFailed] = useState(false);
+    const [result, setResult] = useState<{ scope: string; groups: IntermediatedDisbursementGroup[]; failed: boolean } | null>(null);
     useEffect(() => {
         let active = true;
         void api.get("/intermediated-disbursements", { params: { loanPublicId } }).then(async (response) => {
             const summaries = (response.data ?? []) as IntermediatedDisbursementGroup[];
             return Promise.all(summaries.map(async (group) => (await api.get(`/intermediated-disbursements/${group.publicId}`)).data));
         }).then((details) => {
-            if (active) { setGroups(details); setFailed(false); }
-        }).catch(() => { if (active) setFailed(true); }).finally(() => { if (active) setLoading(false); });
+            if (active) setResult({ scope: loanPublicId, groups: details, failed: false });
+        }).catch(() => { if (active) setResult({ scope: loanPublicId, groups: [], failed: true }); });
         return () => { active = false; };
     }, [loanPublicId]);
-    const content = useMemo(() => groups.map((group) => <TransferGroupView group={group} key={group.publicId} />), [groups]);
+    const scopeLoading = result?.scope !== loanPublicId;
+    const groups = scopeLoading ? [] : result.groups;
+    const failed = !scopeLoading && result.failed;
     return <section aria-label={t("intermediatedDisbursement.panelTitle")} className="space-y-3">
         <h2 className="text-lg font-semibold">{t("intermediatedDisbursement.panelTitle")}</h2>
-        {loading ? <p>{t("common.loading")}</p> : failed ? <p role="alert">{t("intermediatedDisbursement.loadError")}</p> : groups.length ? content : <p className="rounded border border-dashed p-4 text-sm text-muted-foreground">{t("intermediatedDisbursement.empty")}</p>}
+        {scopeLoading ? <p>{t("common.loading")}</p> : failed ? <p role="alert">{t("intermediatedDisbursement.loadError")}</p> : groups.length ? groups.map((group) => <TransferGroupView group={group} key={group.publicId} />) : <p className="rounded border border-dashed p-4 text-sm text-muted-foreground">{t("intermediatedDisbursement.empty")}</p>}
     </section>;
 }
