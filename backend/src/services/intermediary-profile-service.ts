@@ -297,7 +297,11 @@ export async function saveIntermediaryBankAccount(ctx: CommandContext, intermedi
             }
             const replay = priorBankAccountResult(prior);
             if (!replay) throw new DomainError("IDEMPOTENT_RESULT_NOT_FOUND", "Stored bank-account result is unavailable", 409);
-            return replay;
+            return {
+                ...replay,
+                auditPublicId: prior.publicId,
+                correlationId: prior.correlationId ?? ctx.correlationId,
+            };
         }
 
         await lockCommand(tx, "intermediary-bank-account-identity", ctx, accountNumberHash);
@@ -355,7 +359,7 @@ export async function saveIntermediaryBankAccount(ctx: CommandContext, intermedi
                 updatedByUserId: ctx.actorUserId,
             }).returning().then((rows) => rows[0]!);
         const after = presentBankAccount(row);
-        await createAuditLog(tx, {
+        const audit = await createAuditLog(tx, {
             ...auditContext(ctx),
             entityType: "intermediary_bank_account",
             entityId: row.publicId,
@@ -368,7 +372,7 @@ export async function saveIntermediaryBankAccount(ctx: CommandContext, intermedi
                 requestFingerprint,
             },
         });
-        return after;
+        return { ...after, auditPublicId: audit.publicId, correlationId: ctx.correlationId };
     });
 }
 
@@ -423,7 +427,11 @@ export async function assignIntermediaryToLoan(ctx: CommandContext, loanPublicId
                 }
                 const replay = priorAssignmentResult(prior);
                 if (!replay) throw new DomainError("IDEMPOTENT_RESULT_NOT_FOUND", "Stored assignment result is unavailable", 409);
-                return replay;
+                return {
+                    ...replay,
+                    auditPublicId: prior.publicId,
+                    correlationId: prior.correlationId ?? ctx.correlationId,
+                };
             }
 
             const [loan, intermediary] = await Promise.all([
@@ -457,14 +465,14 @@ export async function assignIntermediaryToLoan(ctx: CommandContext, loanPublicId
                 updatedByUserId: ctx.actorUserId,
             }).returning().then((rows) => rows[0]!);
             const after = presentAssignment(row, { loanPublicId, intermediaryPublicId: input.intermediaryPublicId });
-            await createAuditLog(tx, {
+            const audit = await createAuditLog(tx, {
                 ...auditContext(ctx),
                 entityType: "loan_intermediary_assignment",
                 entityId: row.publicId,
                 action: "assigned",
                 payload: { before: null, after, idempotencyKey, requestFingerprint },
             });
-            return after;
+            return { ...after, auditPublicId: audit.publicId, correlationId: ctx.correlationId };
         });
     } catch (error) {
         if (error instanceof DomainError) throw error;
@@ -500,7 +508,11 @@ export async function endIntermediaryAssignment(ctx: CommandContext, assignmentP
             if (!loan || !intermediary || !ownerAccessible(actor, loan.ownerUserId) || !ownerAccessible(actor, intermediary.ownerUserId)) {
                 throw new DomainError("INTERMEDIARY_ASSIGNMENT_NOT_FOUND", "Intermediary assignment not found", 404);
             }
-            return presentAssignment(replay, { loanPublicId: loan.publicId, intermediaryPublicId: intermediary.publicId });
+            return {
+                ...presentAssignment(replay, { loanPublicId: loan.publicId, intermediaryPublicId: intermediary.publicId }),
+                auditPublicId: prior.publicId,
+                correlationId: prior.correlationId ?? ctx.correlationId,
+            };
         }
 
         const existing = await tx.query.loanIntermediaryAssignments.findFirst({
@@ -602,14 +614,14 @@ export async function endIntermediaryAssignment(ctx: CommandContext, assignmentP
         if (!row) throw new DomainError("INTERMEDIARY_ASSIGNMENT_ENDED", "Intermediary assignment has already ended", 409);
         const before = presentAssignment(locked, { loanPublicId: loan.publicId, intermediaryPublicId: intermediary.publicId });
         const after = presentAssignment(row, { loanPublicId: loan.publicId, intermediaryPublicId: intermediary.publicId });
-        await createAuditLog(tx, {
+        const audit = await createAuditLog(tx, {
             ...auditContext(ctx),
             entityType: "loan_intermediary_assignment",
             entityId: row.publicId,
             action: "ended",
             payload: { before, after, reason, idempotencyKey, requestFingerprint },
         });
-        return after;
+        return { ...after, auditPublicId: audit.publicId, correlationId: ctx.correlationId };
     });
 }
 

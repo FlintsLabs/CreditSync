@@ -66,6 +66,115 @@ function context(actor: { id: number; tenantId: string }, idempotencyKey: string
 describe("floating interest accrual service", () => {
     if (integrationEnabled) beforeEach(resetTables);
 
+    // Break caught: the service's Decimal context rounds away cents while reconstructing a
+    // 29-digit principal, summing weekly accruals, or recording a correction delta.
+    integrationTest("preserves exact 29-digit principal history, accrual totals, and correction deltas", async () => {
+        const { actor, loan } = await seedWeeklyLoan("tenant-weekly-precision-boundary");
+        const principal = "98765432109876543210987654321.09";
+        const principalPayment = "12345678901234567890.10";
+        const reducedPrincipal = "98765432097530864309753086430.99";
+        await db.update(loans).set({
+            principalAmount: principal,
+            outstandingPrincipal: reducedPrincipal,
+            dailyInterestRate: "0.0007",
+            interestPeriodAnchorDate: "2026-08-14",
+            interestStartDate: "2026-08-14",
+        }).where(eq(loans.id, loan.id));
+        const ratePeriod = await db.insert(loanInterestRatePeriods).values({
+            tenantId: loan.tenantId,
+            loanId: loan.id,
+            effectiveDate: "2026-08-14",
+            expiryDate: null,
+            rateType: "percent",
+            rate: "0.0007",
+            periodUnit: "week",
+            periodLength: 1,
+            createdByUserId: actor.id,
+        }).returning().then((rows) => rows[0]!);
+        const payment = await db.insert(transactions).values({
+            tenantId: loan.tenantId,
+            ownerUserId: actor.id,
+            loanId: loan.id,
+            amount: principalPayment,
+            principalComponent: principalPayment,
+            interestComponent: "0.00",
+            feeComponent: "0.00",
+            penaltyComponent: "0.00",
+            type: "repayment",
+            transactionDate: new Date("2026-08-13T12:00:00+07:00"),
+            recordedByUserId: actor.id,
+            entryType: "repayment",
+            idempotencyKey: "precision-boundary-payment",
+            postedAt: new Date("2026-08-13T12:00:00+07:00"),
+        }).returning().then((rows) => rows[0]!);
+        const storedLoan = await db.query.loans.findFirst({ where: eq(loans.id, loan.id) });
+
+        await accrueFloatingInterestThrough(db, storedLoan!, bangkokNoon("2026-08-20"), context(actor));
+
+        const initial = await db.select({
+            accrualDate: loanInterestAccruals.accrualDate,
+            openingPrincipal: loanInterestAccruals.openingPrincipal,
+            interestAmount: loanInterestAccruals.interestAmount,
+            cumulativeInterestAmount: loanInterestAccruals.cumulativeInterestAmount,
+        }).from(loanInterestAccruals)
+            .where(eq(loanInterestAccruals.loanId, loan.id))
+            .orderBy(loanInterestAccruals.accrualDate);
+        expect(initial).toEqual([
+            { accrualDate: "2026-08-14", openingPrincipal: reducedPrincipal, interestAmount: "98765432097530864309753.09", cumulativeInterestAmount: "98765432097530864309753.09" },
+            { accrualDate: "2026-08-15", openingPrincipal: reducedPrincipal, interestAmount: "98765432097530864309753.08", cumulativeInterestAmount: "197530864195061728619506.17" },
+            { accrualDate: "2026-08-16", openingPrincipal: reducedPrincipal, interestAmount: "98765432097530864309753.09", cumulativeInterestAmount: "296296296292592592929259.26" },
+            { accrualDate: "2026-08-17", openingPrincipal: reducedPrincipal, interestAmount: "98765432097530864309753.09", cumulativeInterestAmount: "395061728390123457239012.35" },
+            { accrualDate: "2026-08-18", openingPrincipal: reducedPrincipal, interestAmount: "98765432097530864309753.08", cumulativeInterestAmount: "493827160487654321548765.43" },
+            { accrualDate: "2026-08-19", openingPrincipal: reducedPrincipal, interestAmount: "98765432097530864309753.09", cumulativeInterestAmount: "592592592585185185858518.52" },
+            { accrualDate: "2026-08-20", openingPrincipal: reducedPrincipal, interestAmount: "98765432097530864309753.09", cumulativeInterestAmount: "691358024682716050168271.61" },
+        ]);
+
+        await db.insert(transactions).values({
+            tenantId: loan.tenantId,
+            ownerUserId: actor.id,
+            loanId: loan.id,
+            amount: `-${principalPayment}`,
+            principalComponent: `-${principalPayment}`,
+            interestComponent: "0.00",
+            feeComponent: "0.00",
+            penaltyComponent: "0.00",
+            type: "reversal",
+            transactionDate: new Date("2026-08-16T12:00:00+07:00"),
+            recordedByUserId: actor.id,
+            entryType: "reversal",
+            reversedTransactionId: payment.id,
+            idempotencyKey: "precision-boundary-payment-reversal",
+            postedAt: new Date("2026-08-20T12:00:00+07:00"),
+        });
+        const correction = await correctFloatingInterestAccruals(
+            context(actor, "precision-boundary-correction"),
+            loan.publicId,
+            ["2026-08-17"],
+            "Restore exact principal after the compensating reversal",
+        );
+
+        expect(correction.amount).toBe("49382715604938.27");
+        const activeFinal = await db.query.loanInterestAccruals.findFirst({
+            where: and(
+                eq(loanInterestAccruals.loanId, loan.id),
+                eq(loanInterestAccruals.accrualDate, "2026-08-20"),
+                sql`${loanInterestAccruals.status} <> 'reversed'`,
+            ),
+        });
+        expect(activeFinal).toMatchObject({
+            openingPrincipal: principal,
+            interestRatePeriodId: ratePeriod.id,
+            interestAmount: "98765432109876543210987.66",
+            cumulativeInterestAmount: "691358024732098765773209.88",
+        });
+        expect((await floatingInterestDue(
+            db,
+            (await db.query.loans.findFirst({ where: eq(loans.id, loan.id) }))!,
+            bangkokNoon("2026-08-21"),
+            context(actor),
+        )).toFixed(2)).toBe("691358024732098765773209.88");
+    });
+
     // Break caught: weekly projection is payable before its boundary, loses the exact THB 600 total, or promotion rewrites snapshot money.
     integrationTest("keeps days one through seven accruing and promotes the completed period at its boundary", async () => {
         const { actor, loan } = await seedWeeklyLoan("tenant-weekly-boundary");

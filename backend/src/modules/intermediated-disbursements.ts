@@ -53,6 +53,11 @@ async function invoke<T>(
     }
 }
 
+function withoutMcpWriteMetadata<T extends Record<string, unknown>>(value: T) {
+    const { auditPublicId: _auditPublicId, correlationId: _correlationId, ...rest } = value;
+    return rest;
+}
+
 const money = t.String({ pattern: "^(0|[1-9]\\d*)\\.\\d{2}$", maxLength: 32 });
 const groupId = { params: t.Object({ id: t.String({ format: "uuid" }) }, { additionalProperties: t.Never() }) };
 const eventEvidenceIds = t.Object({
@@ -136,13 +141,13 @@ export function createIntermediatedDisbursementsRoute(evidenceGateway?: Transfer
     )
     .post(
         "/intermediated-disbursements/:id/events/:eventId/evidence/upload-intents",
-        ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => prepareTransferEvidence(
+        ({ params, body, user, request, set }) => invoke(user, request, set, async (ctx) => withoutMcpWriteMetadata(await prepareTransferEvidence(
             ctx,
             params.id,
             params.eventId,
             body,
             evidenceGateway,
-        )),
+        ))),
         {
             params: eventEvidenceIds,
             query: emptyQuery,
@@ -160,13 +165,13 @@ export function createIntermediatedDisbursementsRoute(evidenceGateway?: Transfer
     )
     .post(
         "/intermediated-disbursements/:id/events/:eventId/evidence/:evidenceId/finalize",
-        ({ params, user, request, set }) => invoke(user, request, set, (ctx) => finalizeTransferEvidence(
+        ({ params, user, request, set }) => invoke(user, request, set, async (ctx) => withoutMcpWriteMetadata(await finalizeTransferEvidence(
             ctx,
             params.id,
             params.eventId,
             params.evidenceId,
             evidenceGateway,
-        )),
+        ))),
         {
             params: evidenceIds,
             query: emptyQuery,

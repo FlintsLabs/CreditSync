@@ -175,6 +175,88 @@ describe("loan settlement service", () => {
     if (integrationEnabled) beforeEach(resetApplicationTables);
     afterEach(() => setSystemTime());
 
+    // Break caught: settlement arithmetic or stale/zero comparisons use Decimal's default
+    // 20-digit precision and erase low-order cents from a valid 29-digit public balance.
+    integrationTest("settles a 29-digit balance exactly and detects a one-cent stale change", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-precision-boundary" });
+        const principal = "98765432109876543210987654321.09";
+        await db.update(loans).set({
+            principalAmount: principal,
+            outstandingPrincipal: principal,
+            dailyInterestRate: "0.0007",
+        }).where(eq(loans.id, seeded.loan.id));
+        await db.update(loanInterestRatePeriods).set({ rate: "0.0007" })
+            .where(eq(loanInterestRatePeriods.id, seeded.ratePeriod.id));
+        const profile = await db.insert(bankProfiles).values({
+            tenantId: seeded.actor.tenantId,
+            name: "Precision settlement fund",
+            type: "personal_savings",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanFundingAllocations).values({
+            tenantId: seeded.actor.tenantId,
+            loanId: seeded.loan.id,
+            bankProfileId: profile.id,
+            allocatedAmount: principal,
+            allocationDate: "2026-08-13",
+            createdByUserId: seeded.actor.id,
+        });
+
+        const preview = await previewLoanSettlement(
+            context(seeded.actor),
+            seeded.loan.publicId,
+            "2026-08-19",
+        );
+        expect(preview).toMatchObject({
+            outstandingPrincipal: principal,
+            dueInterest: "0.00",
+            accruedNotDueInterest: "691358024769135802476913.58",
+            settlementTotal: "98766123467901312346790131234.67",
+        });
+
+        await db.update(loans).set({ outstandingPrincipal: "98765432109876543210987654321.08" })
+            .where(eq(loans.id, seeded.loan.id));
+        await expect(executeLoanSettlement(context(seeded.actor, "precision-stale-cent"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "A one-cent principal change must invalidate the reviewed total",
+        })).rejects.toMatchObject({ code: "STALE_SETTLEMENT_PREVIEW", status: 409 });
+
+        const fresh = await previewLoanSettlement(
+            context(seeded.actor),
+            seeded.loan.publicId,
+            "2026-08-19",
+        );
+        expect(fresh.settlementTotal).toBe("98766123467901312346790131234.66");
+        const executed = await executeLoanSettlement(context(seeded.actor, "precision-settle-exact"), {
+            settlementPublicId: fresh.publicId,
+            previewHash: fresh.previewHash,
+            confirmed: true,
+            reason: "Collect the exact reviewed high-value balance",
+        });
+        expect(executed.transaction).toMatchObject({
+            amount: "98766123467901312346790131234.66",
+            principalComponent: "98765432109876543210987654321.08",
+            interestComponent: "691358024769135802476913.58",
+        });
+        expect(await db.select().from(fundLedgerEntries)
+            .where(eq(fundLedgerEntries.loanId, seeded.loan.id))
+            .orderBy(fundLedgerEntries.id)).toEqual([
+            expect.objectContaining({
+                bankProfileId: profile.id,
+                entryType: "principal_return_in",
+                amount: "98765432109876543210987654321.08",
+            }),
+            expect.objectContaining({
+                bankProfileId: profile.id,
+                entryType: "interest_income_in",
+                amount: "691358024769135802476913.58",
+            }),
+        ]);
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) }))
+            .toMatchObject({ status: "paid", outstandingPrincipal: "0.00", outstandingInterest: "0.00" });
+    });
+
     // Break caught: settlement reuses normal-payment allocation and omits current-period accruing interest.
     integrationTest("previews THB 5,257.14 after three weekly accrual dates without advance interest", async () => {
         const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-no-advance" });

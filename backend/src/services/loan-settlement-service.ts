@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import Decimal from "decimal.js";
+import type Decimal from "decimal.js";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
@@ -14,6 +14,7 @@ import {
 import { canAccessTenantWideData } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
 import { invalidateTenantCache } from "../lib/cache";
+import { FinancialDecimal } from "../lib/financial-decimal";
 import { serializeMoney } from "../lib/money";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
@@ -136,7 +137,7 @@ async function accessibleSettlement(
 }
 
 function money(value: Decimal.Value) {
-    return new Decimal(value).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    return new FinancialDecimal(value).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
 }
 
 async function settlementSnapshot(
@@ -162,26 +163,26 @@ async function settlementSnapshot(
             eq(loanDisbursements.loanId, loan.id),
         )).orderBy(asc(loanDisbursements.id)),
     ]);
-    let dueInterest = new Decimal(0);
-    let accruedNotDueInterest = new Decimal(0);
+    let dueInterest = new FinancialDecimal(0);
+    let accruedNotDueInterest = new FinancialDecimal(0);
     for (const row of accrualRows) {
         if (row.accrualDate > asOfDate) continue;
-        const unpaid = Decimal.max(0, new Decimal(row.interestAmount).minus(row.paidAmount));
+        const unpaid = FinancialDecimal.max(0, new FinancialDecimal(row.interestAmount).minus(row.paidAmount));
         if (unpaid.isZero()) continue;
         if (isFloatingAccrualPayableThrough(row, asOfDate)) dueInterest = dueInterest.plus(unpaid);
         else accruedNotDueInterest = accruedNotDueInterest.plus(unpaid);
     }
     const outstandingPrincipal = money(loan.outstandingPrincipal ?? loan.principalAmount);
     const outstandingFees = money(loan.outstandingFees ?? "0.00");
-    const outstandingPenalties = new Decimal(0);
+    const outstandingPenalties = new FinancialDecimal(0);
     const nonRefundableAdvanceInterest = disbursementRows.reduce(
         (sum: Decimal, row: typeof loanDisbursements.$inferSelect) => sum.plus(row.firstDayInterestDeducted),
-        new Decimal(0),
-    ).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+        new FinancialDecimal(0),
+    ).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
     dueInterest = money(dueInterest);
     accruedNotDueInterest = money(accruedNotDueInterest);
     const settlementTotal = outstandingPrincipal.plus(dueInterest).plus(accruedNotDueInterest)
-        .plus(outstandingFees).plus(outstandingPenalties).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+        .plus(outstandingFees).plus(outstandingPenalties).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
     const balanceVersion = versionedHash({
         contract: "loan-settlement-balance",
         version: hashVersion,
@@ -400,13 +401,13 @@ async function presentExecution(
 }
 
 function sameStoredAmounts(row: SettlementRow, snapshot: SettlementSnapshot) {
-    return new Decimal(row.outstandingPrincipal).eq(snapshot.outstandingPrincipal)
-        && new Decimal(row.dueInterest).eq(snapshot.dueInterest)
-        && new Decimal(row.accruedNotDueInterest).eq(snapshot.accruedNotDueInterest)
-        && new Decimal(row.outstandingFees).eq(snapshot.outstandingFees)
-        && new Decimal(row.outstandingPenalties).eq(snapshot.outstandingPenalties)
-        && new Decimal(row.nonRefundableAdvanceInterest).eq(snapshot.nonRefundableAdvanceInterest)
-        && new Decimal(row.settlementTotal).eq(snapshot.settlementTotal);
+    return new FinancialDecimal(row.outstandingPrincipal).eq(snapshot.outstandingPrincipal)
+        && new FinancialDecimal(row.dueInterest).eq(snapshot.dueInterest)
+        && new FinancialDecimal(row.accruedNotDueInterest).eq(snapshot.accruedNotDueInterest)
+        && new FinancialDecimal(row.outstandingFees).eq(snapshot.outstandingFees)
+        && new FinancialDecimal(row.outstandingPenalties).eq(snapshot.outstandingPenalties)
+        && new FinancialDecimal(row.nonRefundableAdvanceInterest).eq(snapshot.nonRefundableAdvanceInterest)
+        && new FinancialDecimal(row.settlementTotal).eq(snapshot.settlementTotal);
 }
 
 async function hasLaterActiveAccruals(tx: Executor, tenantId: string, loanId: number, asOfDate: string) {
@@ -512,7 +513,7 @@ export async function executeLoanSettlement(ctx: CommandContext, input: ExecuteL
             sql`${loanInterestAccruals.accrualDate} <= ${settlement.asOfDate}`,
         )).orderBy(asc(loanInterestAccruals.accrualDate), asc(loanInterestAccruals.id));
         for (const row of accrualRows) {
-            if (new Decimal(row.paidAmount).eq(row.interestAmount)) continue;
+            if (new FinancialDecimal(row.paidAmount).eq(row.interestAmount)) continue;
             await tx.update(loanInterestAccruals).set({
                 paidAmount: money(row.interestAmount).toFixed(2),
                 status: "paid",
@@ -529,13 +530,13 @@ export async function executeLoanSettlement(ctx: CommandContext, input: ExecuteL
         ));
         const remainingInterest = remainingAccruals.reduce(
             (sum: Decimal, row: typeof loanInterestAccruals.$inferSelect) => sum.plus(
-                Decimal.max(0, new Decimal(row.interestAmount).minus(row.paidAmount)),
+                FinancialDecimal.max(0, new FinancialDecimal(row.interestAmount).minus(row.paidAmount)),
             ),
-            new Decimal(0),
+            new FinancialDecimal(0),
         );
-        const remainingPrincipal = new Decimal(loan.outstandingPrincipal ?? loan.principalAmount)
+        const remainingPrincipal = new FinancialDecimal(loan.outstandingPrincipal ?? loan.principalAmount)
             .minus(snapshot.outstandingPrincipal);
-        const remainingFees = new Decimal(loan.outstandingFees ?? "0.00").minus(snapshot.outstandingFees);
+        const remainingFees = new FinancialDecimal(loan.outstandingFees ?? "0.00").minus(snapshot.outstandingFees);
         if (!remainingPrincipal.isZero() || !remainingInterest.isZero() || !remainingFees.isZero()
             || !snapshot.outstandingPenalties.isZero()) {
             throw new DomainError("SETTLEMENT_BALANCE_NOT_ZERO", "Settlement cannot close a loan with a remaining balance", 409);

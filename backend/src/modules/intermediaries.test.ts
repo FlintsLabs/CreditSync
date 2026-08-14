@@ -133,6 +133,8 @@ describe("intermediary settlement REST contract", () => {
         expect(account.body).not.toHaveProperty("accountNumber");
         expect(account.body).not.toHaveProperty("accountNumberHash");
         expect(account.body).not.toHaveProperty("accountNumberLast4");
+        expect(account.body).not.toHaveProperty("auditPublicId");
+        expect(account.body).not.toHaveProperty("correlationId");
 
         const invalidRole = await jsonRequest(app, `/loans/${loan.publicId}/intermediary-assignments`, token, {
             method: "POST",
@@ -156,6 +158,8 @@ describe("intermediary settlement REST contract", () => {
         expect(assigned.body).toMatchObject({ loanPublicId: loan.publicId, intermediaryPublicId: intermediary.publicId, role: "both", status: "active" });
         expect(assigned.body).not.toHaveProperty("loanId");
         expect(assigned.body).not.toHaveProperty("intermediaryId");
+        expect(assigned.body).not.toHaveProperty("auditPublicId");
+        expect(assigned.body).not.toHaveProperty("correlationId");
 
         const managed = await jsonRequest(app, `/intermediaries/${intermediary.publicId}/managed-loans?role=collection`, token);
         expect(managed.response.status).toBe(200);
@@ -201,6 +205,8 @@ describe("intermediary settlement REST contract", () => {
         });
         expect(ended.response.status).toBe(200);
         expect(ended.body).toMatchObject({ publicId: assigned.body.publicId, status: "ended", effectiveTo: "2026-02-01T00:00:00.000Z" });
+        expect(ended.body).not.toHaveProperty("auditPublicId");
+        expect(ended.body).not.toHaveProperty("correlationId");
 
         const assignedReplayAfterEnd = await jsonRequest(app, `/loans/${loan.publicId}/intermediary-assignments`, token, {
             method: "POST",

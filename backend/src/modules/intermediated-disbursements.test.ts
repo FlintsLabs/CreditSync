@@ -296,6 +296,8 @@ describe("intermediated disbursement REST contract", () => {
             requiredHeaders: { "content-type": "image/png" },
             expiresAt: expect.any(String),
         });
+        expect(prepared.body).not.toHaveProperty("auditPublicId");
+        expect(prepared.body).not.toHaveProperty("correlationId");
         expect(putRequests[0]!.metadata).toEqual({
             tenant: owner.actor.tenantId,
             group: created.body.publicId,
@@ -312,6 +314,8 @@ describe("intermediated disbursement REST contract", () => {
         const finalized = await jsonRequest(app, `${evidenceBase}/${evidencePublicId}/finalize`, token, { method: "POST" });
         expect({ status: finalized.response.status, body: finalized.body }).toMatchObject({ status: 200 });
         expect(finalized.body).toMatchObject({ publicId: evidencePublicId, status: "ready", sha256: "a".repeat(64) });
+        expect(finalized.body).not.toHaveProperty("auditPublicId");
+        expect(finalized.body).not.toHaveProperty("correlationId");
 
         const unknownFinalizeField = await jsonRequest(app, `${evidenceBase}/${evidencePublicId}/finalize`, token, {
             method: "POST",
@@ -324,6 +328,8 @@ describe("intermediated disbursement REST contract", () => {
             body: JSON.stringify({ mimeType: "image/png", size: 128, sha256: "a".repeat(64) }),
         });
         expect(readyRetry.body).toMatchObject({ publicId: evidencePublicId, status: "ready" });
+        expect(readyRetry.body).not.toHaveProperty("auditPublicId");
+        expect(readyRetry.body).not.toHaveProperty("correlationId");
         expect(putRequests).toHaveLength(1);
 
         for (const [path, init] of [

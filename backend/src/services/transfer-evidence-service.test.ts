@@ -224,6 +224,10 @@ describe("intermediated transfer evidence lifecycle", () => {
             [secondSplit.publicId, evidenceInput("c", "split.png")],
         ] as const) {
             const pending = await prepareTransferEvidence(context(owner.actor), group.publicId, eventPublicId, input, gateway);
+            expect(pending).toMatchObject({
+                auditPublicId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+                correlationId: "corr-read",
+            });
             expect(gateway.putRequests.at(-1)).toMatchObject({
                 contentType: input.mimeType,
                 contentLength: input.size,
@@ -235,7 +239,13 @@ describe("intermediated transfer evidence lifecycle", () => {
                 },
             });
             gateway.acceptLastPut();
-            prepared.push(await finalizeTransferEvidence(context(owner.actor), group.publicId, eventPublicId, pending.publicId, gateway));
+            const finalized = await finalizeTransferEvidence(context(owner.actor), group.publicId, eventPublicId, pending.publicId, gateway);
+            expect(finalized).toMatchObject({
+                auditPublicId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+                correlationId: "corr-read",
+            });
+            expect(finalized.auditPublicId).not.toBe(pending.auditPublicId);
+            prepared.push(finalized);
         }
 
         expect(await listTransferEvidence(context(owner.actor), group.publicId, firstSplit.publicId)).toEqual([
@@ -247,13 +257,20 @@ describe("intermediated transfer evidence lifecycle", () => {
         ]);
 
         const putCount = gateway.putRequests.length;
-        expect(await prepareTransferEvidence(
-            context(owner.actor),
+        const prepareReplay = await prepareTransferEvidence(
+            context(owner.actor, "prepare-ready-retry"),
             group.publicId,
             firstSplit.publicId,
             evidenceInput("a", "renamed-does-not-reupload.png"),
             gateway,
-        )).toMatchObject({ publicId: prepared[0]!.publicId, status: "ready" });
+        );
+        expect(prepareReplay).toMatchObject({
+            publicId: prepared[0]!.publicId,
+            status: "ready",
+            auditPublicId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+            correlationId: "corr-read",
+        });
+        expect(prepareReplay.auditPublicId).not.toBe(prepared[0]!.auditPublicId);
         expect(gateway.putRequests).toHaveLength(putCount);
 
         const access = await getTransferEvidenceAccess(
@@ -385,7 +402,22 @@ describe("intermediated transfer evidence lifecycle", () => {
 
         const finalized = await finalizeTransferEvidence(context(owner.actor), group.publicId, event.publicId, pending.publicId, gateway);
         expect(gateway.headCalls).toBe(1);
-        expect(await finalizeTransferEvidence(context(owner.actor), group.publicId, event.publicId, pending.publicId, gateway)).toEqual(finalized);
+        const replay = await finalizeTransferEvidence(
+            context(owner.actor, "finalize-ready-retry"),
+            group.publicId,
+            event.publicId,
+            pending.publicId,
+            gateway,
+        );
+        expect(replay).toEqual(finalized);
+        expect(replay).toMatchObject({
+            auditPublicId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+            correlationId: "corr-read",
+        });
+        expect(await db.select().from(auditLogs).where(and(
+            eq(auditLogs.entityType, "intermediated_transfer_evidence"),
+            eq(auditLogs.entityId, pending.publicId),
+        ))).toHaveLength(2);
         expect(gateway.headCalls).toBe(1);
     });
 

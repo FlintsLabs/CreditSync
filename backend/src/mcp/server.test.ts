@@ -601,6 +601,25 @@ describe("CreditSync stateless MCP contract", () => {
         ];
         expect(listed.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(expectedNewTools));
         for (const name of [
+            "intermediary.bank-account.save",
+            "intermediary.assignment.create",
+            "intermediary.assignment.end",
+            "intermediary.disbursement.evidence.prepare",
+            "intermediary.disbursement.evidence.finalize",
+        ]) {
+            const output = listed.tools.find((tool) => tool.name === name)?.outputSchema as {
+                properties?: { data?: { required?: string[]; properties?: Record<string, unknown> } };
+            } | undefined;
+            expect(output?.properties?.data?.required).toEqual(expect.arrayContaining([
+                "auditPublicId",
+                "correlationId",
+            ]));
+            expect(output?.properties?.data?.properties).toMatchObject({
+                auditPublicId: { format: "uuid" },
+                correlationId: { format: "uuid" },
+            });
+        }
+        for (const name of [
             "intermediary.profile.get",
             "intermediary.managed-loan.list",
             "intermediary.disbursement.list",

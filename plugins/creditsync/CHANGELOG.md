@@ -1,5 +1,19 @@
 # CreditSync Plugin Changelog
 
+## 5.0.0 - 2026-08-14
+
+### Changed
+
+- Required `auditPublicId` and `correlationId` UUIDs in the closed MCP results for intermediary bank-account save, assignment create/end, and transfer-evidence prepare/finalize while preserving their existing REST response DTOs.
+
+### Fixed
+
+- Replayed the authoritative stored audit identifiers for idempotent administrative commands and already-prepared or finalized evidence instead of reporting a successful write without traceable command metadata.
+
+### Compatibility
+
+- Released a new major plugin because five frozen output schemas now require audit/correlation fields. The catalogue remains 57 tools and 10 skills, and MCP payload schema version remains `1.0`.
+
 ## 4.0.0 - 2026-08-14
 
 ### Added

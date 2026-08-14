@@ -98,6 +98,13 @@ function resultData(result: Awaited<ReturnType<Client["callTool"]>>) {
     return structured;
 }
 
+function expectWriteAuditMetadata(data: Record<string, unknown>) {
+    expect(data).toMatchObject({
+        auditPublicId: expect.stringMatching(UUID_PATTERN),
+        correlationId: expect.stringMatching(UUID_PATTERN),
+    });
+}
+
 describe("default MCP adapter integration", () => {
     // Break caught: the real MCP adapter cannot complete the inspect-first borrower/intermediary
     // assignment -> exact group/events -> three finalized slips -> zero-variance preview ->
@@ -215,6 +222,7 @@ describe("default MCP adapter integration", () => {
                 idempotencyKey: "mcp-intermediated-assignment",
             },
         })).data;
+        expectWriteAuditMetadata(assignment);
         const profile = resultData(await client.callTool({
             name: "intermediary.profile.get",
             arguments: { intermediaryPublicId: intermediary.publicId },
@@ -265,6 +273,7 @@ describe("default MCP adapter integration", () => {
                     originalName: `slip-${index + 1}.png`,
                 },
             })).data;
+            expectWriteAuditMetadata(prepared);
             expect(prepared.uploadUrl).toMatch(/^https:\/\/upload\.example\.test\//);
             evidenceSpecs.push({
                 publicId: String(prepared.publicId),
@@ -278,6 +287,7 @@ describe("default MCP adapter integration", () => {
                     evidencePublicId: prepared.publicId,
                 },
             })).data;
+            expectWriteAuditMetadata(finalized);
             expect(finalized).toMatchObject({ publicId: prepared.publicId, status: "ready" });
         }
 
@@ -931,14 +941,15 @@ describe("default MCP adapter integration", () => {
 
         await call("intermediary.search", { query: "MCP all-tools collector" });
         const intermediary = (await call("intermediary.create", { name: "MCP all-tools collector" })).data;
-        await call("intermediary.bank-account.save", {
+        const bankAccount = (await call("intermediary.bank-account.save", {
             intermediaryPublicId: intermediary.publicId,
             bankCode: "BBL",
             bankName: "Bangkok Bank",
             accountName: "MCP all-tools collector",
             accountNumber: "1234567890",
             idempotencyKey: "mcp-all-tools-intermediary-account",
-        });
+        })).data;
+        expectWriteAuditMetadata(bankAccount);
         const assignment = (await call("intermediary.assignment.create", {
             loanPublicId,
             intermediaryPublicId: intermediary.publicId,
@@ -946,6 +957,7 @@ describe("default MCP adapter integration", () => {
             effectiveFrom: "2026-08-01T00:00:00.000Z",
             idempotencyKey: "mcp-all-tools-intermediary-assignment",
         })).data;
+        expectWriteAuditMetadata(assignment);
         await call("intermediary.profile.get", { intermediaryPublicId: intermediary.publicId });
         await call("intermediary.managed-loan.list", { intermediaryPublicId: intermediary.publicId, role: "disbursement" });
         const group = (await call("intermediary.disbursement.create", {
@@ -984,11 +996,13 @@ describe("default MCP adapter integration", () => {
             sha256: "e".repeat(64),
             originalName: "intermediated-funding.png",
         })).data;
-        await call("intermediary.disbursement.evidence.finalize", {
+        expectWriteAuditMetadata(transferEvidence);
+        const finalizedTransferEvidence = (await call("intermediary.disbursement.evidence.finalize", {
             groupPublicId: group.publicId,
             eventPublicId: groupEvents[0]!.publicId,
             evidencePublicId: transferEvidence.publicId,
-        });
+        })).data;
+        expectWriteAuditMetadata(finalizedTransferEvidence);
         await call("intermediary.disbursement.list", { loanPublicId, intermediaryPublicId: intermediary.publicId });
         await call("intermediary.disbursement.get", { groupPublicId: group.publicId });
         const groupPreview = (await call("intermediary.disbursement.preview", { groupPublicId: group.publicId })).data;
@@ -1004,12 +1018,13 @@ describe("default MCP adapter integration", () => {
             confirmed: true,
             idempotencyKey: "mcp-all-tools-intermediated-reverse",
         });
-        await call("intermediary.assignment.end", {
+        const endedAssignment = (await call("intermediary.assignment.end", {
             assignmentPublicId: assignment.publicId,
             effectiveTo: "2026-08-11T00:00:00.000Z",
             reason: "MCP all-tools assignment complete",
             idempotencyKey: "mcp-all-tools-intermediary-assignment-end",
-        });
+        })).data;
+        expectWriteAuditMetadata(endedAssignment);
         const collection = (await call("intermediary.collection.create", {
             intermediaryPublicId: intermediary.publicId, borrowerPublicId, loanPublicId, amount: "40.00",
             borrowerPaidAt: "2026-08-10T01:00:00.000Z", bankReference: "MCP-COLLECTION-1",
@@ -1053,5 +1068,5 @@ describe("default MCP adapter integration", () => {
         expect(called).toHaveLength(MCP_TOOL_NAMES.length + 1);
 
         await client.close();
-    });
+    }, 10_000);
 });

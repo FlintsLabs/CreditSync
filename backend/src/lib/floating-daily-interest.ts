@@ -1,4 +1,4 @@
-import Decimal from "decimal.js";
+import { FinancialDecimal } from "./financial-decimal";
 
 export type FloatingDailyInterest = {
     mode: "per_thousand" | "percent";
@@ -11,7 +11,7 @@ export function normalizeFloatingDailyInterest(input: FloatingDailyInterest): Fl
     if (input.firstDayTreatment !== "deduct" && input.firstDayTreatment !== "start_next_day") {
         throw new Error("First-day treatment is invalid");
     }
-    const rate = new Decimal(input.rate);
+    const rate = new FinancialDecimal(input.rate);
     if (!rate.isFinite() || rate.lte(0) || rate.decimalPlaces() > 4) {
         throw new Error("Daily interest rate must be a positive decimal with at most four places");
     }
@@ -20,12 +20,12 @@ export function normalizeFloatingDailyInterest(input: FloatingDailyInterest): Fl
 
 export function calculateDailyInterest(openingPrincipal: string, policy: FloatingDailyInterest) {
     const normalized = normalizeFloatingDailyInterest(policy);
-    const principal = new Decimal(openingPrincipal);
+    const principal = new FinancialDecimal(openingPrincipal);
     if (!principal.isFinite() || principal.lt(0)) throw new Error("Opening principal is invalid");
     const amount = normalized.mode === "per_thousand"
         ? principal.div(1000).times(normalized.rate)
         : principal.times(normalized.rate).div(100);
-    return amount.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
+    return amount.toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP).toFixed(2);
 }
 
 function dateAtMidnight(date: string) {

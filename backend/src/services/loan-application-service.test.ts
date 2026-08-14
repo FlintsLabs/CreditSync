@@ -3,7 +3,7 @@ import Decimal from "decimal.js";
 import { and, eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { auditLogs, bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanSchedules, loans, users } from "../db/schema";
+import { auditLogs, bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanSchedules, loans, transactions, users } from "../db/schema";
 import { loansRoute } from "../modules/loans";
 import type { CommandContext } from "./command-context";
 import { createBorrower } from "./borrower-service";
@@ -433,6 +433,47 @@ describe("loan application service", () => {
         expect(await db.select().from(loanInterestRatePeriods).where(eq(loanInterestRatePeriods.loanId, stored!.id))).toMatchObject([{
             effectiveDate: "2026-08-10", expiryDate: null, rateType: "per_thousand", rate: "1.0000",
         }]);
+    });
+
+    // Break caught: the legacy scheduled-loan close endpoints bypass floating accrual,
+    // reviewed preview, confirmation, idempotency, and append-only settlement history.
+    integrationTest("rejects floating loans from both legacy close endpoints without mutation", async () => {
+        const actor = await seedUser("tenant-a", "floating-legacy-close@example.test", "owner");
+        const ctx = context("tenant-a", actor.id, "floating-legacy-close-activation");
+        const borrower = await createBorrower(ctx, { name: "Floating Legacy Close Borrower" });
+        const draft = await createLoanDraft(ctx, { borrowerPublicId: borrower.publicId, ...weeklyAdvanceTerms });
+        await activateLoan(ctx, draft.publicId);
+        const stored = await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) });
+        const before = {
+            loan: stored,
+            audits: await db.select().from(auditLogs).where(eq(auditLogs.entityId, draft.publicId)),
+            accruals: await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, stored!.id)),
+            transactions: await db.select().from(transactions).where(eq(transactions.loanId, stored!.id)),
+        };
+        const headers = {
+            authorization: `Bearer ${await authToken(actor)}`,
+            "content-type": "application/json",
+        };
+        const app = new Elysia().use(loansRoute);
+
+        const summary = await jsonRequest(app, `/loans/${draft.publicId}/closing-summary`, { headers });
+        const close = await jsonRequest(app, `/loans/${draft.publicId}/close`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ note: "Must use reviewed settlement" }),
+        });
+
+        expect(summary.response.status, summary.text).toBe(409);
+        expect(summary.body).toEqual({
+            code: "FLOATING_SETTLEMENT_REQUIRED",
+            error: "Floating loans require the preview-and-execute settlement workflow",
+        });
+        expect(close.response.status, close.text).toBe(409);
+        expect(close.body).toEqual(summary.body);
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, stored!.id) })).toEqual(before.loan);
+        expect(await db.select().from(auditLogs).where(eq(auditLogs.entityId, draft.publicId))).toEqual(before.audits);
+        expect(await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, stored!.id))).toEqual(before.accruals);
+        expect(await db.select().from(transactions).where(eq(transactions.loanId, stored!.id))).toEqual(before.transactions);
     });
 
     // Break caught: a first-day paid accrual cannot prove which effective-dated rate produced it.

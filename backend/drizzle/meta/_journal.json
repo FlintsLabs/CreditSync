@@ -204,6 +204,13 @@
       "when": 1786649322505,
       "tag": "0028_intermediary_assignments_disbursement_groups",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1786677729106,
+      "tag": "0029_floating_interest_accrual_immutability",
+      "breakpoints": true
     }
   ]
 }

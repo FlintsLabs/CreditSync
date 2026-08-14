@@ -16,6 +16,16 @@ import { DomainError } from "../services/domain-error";
 import { loanCommandContext, loanDomainFailure, loanUnauthorized } from "./loan-http-support";
 import { dailyEntry, floatingInterestPolicy, loanTermsBody, publicMoney, repaymentType } from "./loan-route-schemas";
 
+function requireLegacyCloseEligible(loan: typeof loans.$inferSelect) {
+    if (loan.repaymentType === "floating") {
+        throw new DomainError(
+            "FLOATING_SETTLEMENT_REQUIRED",
+            "Floating loans require the preview-and-execute settlement workflow",
+            409,
+        );
+    }
+}
+
 export const loanContractRoutes = new Elysia().use(authPlugin)
     .get("/", async ({ user, query, request, set }) => {
         if (!user) return loanUnauthorized(set);
@@ -130,21 +140,26 @@ export const loanContractRoutes = new Elysia().use(authPlugin)
     }, { params: t.Object({ id: t.String() }) })
     .get("/:id/closing-summary", async ({ params, user, set }) => {
         if (!user) return loanUnauthorized(set);
-        const loan = await findAccessibleLoanByPublicId(user, params.id);
-        if (!loan) return loanDomainFailure(new DomainError("LOAN_NOT_FOUND", "Loan not found", 404), set);
-        const loanTransactions = await db.select().from(transactions)
-            .where(and(eq(transactions.loanId, loan.id), eq(transactions.tenantId, user.tenantId)));
-        const summary = calculateLoanClosingSummary({ ...loan, startDate: loan.startDate ?? new Date() }, loanTransactions);
-        return {
-            loanId: loan.publicId,
-            loanPublicId: loan.publicId,
-            principal: serializeMoney(summary.principal),
-            totalInterest: serializeMoney(summary.totalInterest),
-            totalPaid: serializeMoney(summary.totalPaid),
-            totalDue: serializeMoney(summary.totalDue),
-            balance: summary.balance < 0 ? `-${serializeMoney(Math.abs(summary.balance))}` : serializeMoney(summary.balance),
-            daysSinceStart: summary.daysSinceStart,
-        };
+        try {
+            const loan = await findAccessibleLoanByPublicId(user, params.id);
+            if (!loan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+            requireLegacyCloseEligible(loan);
+            const loanTransactions = await db.select().from(transactions)
+                .where(and(eq(transactions.loanId, loan.id), eq(transactions.tenantId, user.tenantId)));
+            const summary = calculateLoanClosingSummary({ ...loan, startDate: loan.startDate ?? new Date() }, loanTransactions);
+            return {
+                loanId: loan.publicId,
+                loanPublicId: loan.publicId,
+                principal: serializeMoney(summary.principal),
+                totalInterest: serializeMoney(summary.totalInterest),
+                totalPaid: serializeMoney(summary.totalPaid),
+                totalDue: serializeMoney(summary.totalDue),
+                balance: summary.balance < 0 ? `-${serializeMoney(Math.abs(summary.balance))}` : serializeMoney(summary.balance),
+                daysSinceStart: summary.daysSinceStart,
+            };
+        } catch (error) {
+            return loanDomainFailure(error, set);
+        }
     }, { params: t.Object({ id: t.String() }) })
     .post("/:id/close", async ({ params, body, user, request, set }) => {
         if (!user) return loanUnauthorized(set);
@@ -155,6 +170,7 @@ export const loanContractRoutes = new Elysia().use(authPlugin)
                     where: and(eq(loans.id, resolved.id), ...loanAccessFilters(user)),
                 }) : null;
                 if (!loan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+                requireLegacyCloseEligible(loan);
                 if (loan.status === "closed") throw new DomainError("LOAN_ALREADY_CLOSED", "Loan is already closed", 409);
                 const before = await getLoanApplication(loanCommandContext(user, request), loan.publicId);
                 const updated = await tx.update(loans).set({ status: "closed", updatedAt: new Date() })

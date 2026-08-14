@@ -1,8 +1,9 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import Decimal from "decimal.js";
+import type Decimal from "decimal.js";
 import { db } from "../db";
 import { loanAdjustments, loanInterestAccruals, loanInterestRatePeriods, loans, transactions } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
+import { FinancialDecimal } from "../lib/financial-decimal";
 import { calculateDailyInterest, interestDatesThrough, type FloatingDailyInterest } from "../lib/floating-daily-interest";
 import {
     calculateAccruedInterest,
@@ -51,8 +52,8 @@ function principalAtStartOfDate(
 ) {
     const principalAppliedBefore = rows
         .filter((row) => row.postedAt && row.transactionDate && bangkokDate(row.transactionDate) < accrualDate)
-        .reduce((sum, row) => sum.plus(row.principalComponent), new Decimal(0));
-    return Decimal.max(0, new Decimal(loan.principalAmount).minus(principalAppliedBefore)).toFixed(2);
+        .reduce((sum, row) => sum.plus(row.principalComponent), new FinancialDecimal(0));
+    return FinancialDecimal.max(0, new FinancialDecimal(loan.principalAmount).minus(principalAppliedBefore)).toFixed(2);
 }
 
 async function accrueLegacyFloatingInterestThrough(
@@ -93,7 +94,7 @@ async function accrueLegacyFloatingInterestThrough(
             loanPublicId: loan.publicId,
         });
     }
-    const openingPrincipal = new Decimal(loan.outstandingPrincipal ?? loan.principalAmount);
+    const openingPrincipal = new FinancialDecimal(loan.outstandingPrincipal ?? loan.principalAmount);
     await tx.insert(loanInterestAccruals).values(resolved.map(({ accrualDate, period }) => {
         const effectivePeriod = period!;
         const storedPeriod = rowByPublicId.get(effectivePeriod.publicId)!;
@@ -162,7 +163,7 @@ async function accrueFloatingInterestThroughInTransaction(tx: Executor, loan: ty
     let previousPeriodKey: string | null = null;
     let previousSegmentKey: string | null = null;
     let segmentElapsedDays = 0;
-    let periodCumulative = new Decimal(0);
+    let periodCumulative = new FinancialDecimal(0);
 
     for (const accrualDate of accrualDates) {
         const existingRow = activeByDate.get(accrualDate);
@@ -174,7 +175,7 @@ async function accrueFloatingInterestThroughInTransaction(tx: Executor, loan: ty
                 previousPeriodKey = periodKey;
                 previousSegmentKey = null;
                 segmentElapsedDays = 0;
-                periodCumulative = new Decimal(0);
+                periodCumulative = new FinancialDecimal(0);
             }
             const segmentKey = `${periodKey}:${existingRow.interestRatePeriodId ?? "none"}:${existingRow.openingPrincipal}:${existingRow.rateMode}:${existingRow.rate}`;
             if (segmentKey !== previousSegmentKey) {
@@ -184,7 +185,7 @@ async function accrueFloatingInterestThroughInTransaction(tx: Executor, loan: ty
             segmentElapsedDays += 1;
             periodCumulative = existingRow.cumulativeInterestAmount === null
                 ? periodCumulative.plus(existingRow.interestAmount)
-                : new Decimal(existingRow.cumulativeInterestAmount);
+                : new FinancialDecimal(existingRow.cumulativeInterestAmount);
             continue;
         }
 
@@ -197,7 +198,7 @@ async function accrueFloatingInterestThroughInTransaction(tx: Executor, loan: ty
             previousPeriodKey = periodKey;
             previousSegmentKey = null;
             segmentElapsedDays = 0;
-            periodCumulative = new Decimal(0);
+            periodCumulative = new FinancialDecimal(0);
         }
         const openingPrincipal = principalAtStartOfDate(loan, transactionRows, accrualDate);
         const segmentKey = `${periodKey}:${storedPeriod.id}:${openingPrincipal}:${storedPeriod.rateType}:${storedPeriod.rate}`;
@@ -238,7 +239,7 @@ async function accrueFloatingInterestThroughInTransaction(tx: Executor, loan: ty
     )).orderBy(asc(loanInterestAccruals.accrualDate), asc(loanInterestAccruals.id));
     for (const row of active) {
         if (!row.periodEndDate || row.periodEndDate > throughDate || row.status === "paid") continue;
-        const paidAmount = new Decimal(row.paidAmount);
+        const paidAmount = new FinancialDecimal(row.paidAmount);
         const nextStatus = paidAmount.eq(row.interestAmount)
             ? "paid"
             : paidAmount.gt(0)
@@ -330,10 +331,10 @@ export async function floatingInterestDue(tx: Executor, loan: typeof loans.$infe
     const corrupt = rows.find((row: typeof loanInterestAccruals.$inferSelect) =>
         row.status !== "reversed"
         && row.accrualDate <= throughDate
-        && new Decimal(row.openingPrincipal).eq(0)
-        && new Decimal(row.interestAmount).eq(0)
-        && new Decimal(row.rate).gt(0)
-        && new Decimal(loan.outstandingPrincipal ?? loan.principalAmount).gt(0));
+        && new FinancialDecimal(row.openingPrincipal).eq(0)
+        && new FinancialDecimal(row.interestAmount).eq(0)
+        && new FinancialDecimal(row.rate).gt(0)
+        && new FinancialDecimal(loan.outstandingPrincipal ?? loan.principalAmount).gt(0));
     if (corrupt) {
         throw new DomainError("FLOATING_INTEREST_ACCRUAL_CORRUPT", "Floating interest history must be corrected before allocating a payment", 409, {
             loanPublicId: loan.publicId,
@@ -342,13 +343,13 @@ export async function floatingInterestDue(tx: Executor, loan: typeof loans.$infe
         });
     }
     return rows.filter((row: typeof loanInterestAccruals.$inferSelect) => isFloatingAccrualPayableThrough(row, throughDate))
-        .reduce((total: Decimal, row: typeof loanInterestAccruals.$inferSelect) => total.plus(new Decimal(row.interestAmount).minus(row.paidAmount)), new Decimal(0));
+        .reduce((total: Decimal, row: typeof loanInterestAccruals.$inferSelect) => total.plus(new FinancialDecimal(row.interestAmount).minus(row.paidAmount)), new FinancialDecimal(0));
 }
 
 function payableOutstanding(rows: Array<typeof loanInterestAccruals.$inferSelect>) {
     return rows
         .filter((row) => ["accrued", "due", "partially_paid"].includes(row.status))
-        .reduce((sum, row) => sum.plus(new Decimal(row.interestAmount).minus(row.paidAmount)), new Decimal(0));
+        .reduce((sum, row) => sum.plus(new FinancialDecimal(row.interestAmount).minus(row.paidAmount)), new FinancialDecimal(0));
 }
 
 function replacementStatus(
@@ -371,7 +372,7 @@ async function replaceGeneralizedAccruals(
     targetRows: Array<typeof loanInterestAccruals.$inferSelect>,
     sourceTransactionId: number | null,
 ) {
-    if (!targetRows.length) return { replacements: [] as Array<typeof loanInterestAccruals.$inferSelect>, delta: new Decimal(0) };
+    if (!targetRows.length) return { replacements: [] as Array<typeof loanInterestAccruals.$inferSelect>, delta: new FinancialDecimal(0) };
     if (!hasPeriodPolicy(loan)) throw new DomainError("FLOATING_PERIOD_POLICY_REQUIRED", "Floating loan period policy is required for generalized correction", 409);
     const active = await tx.select().from(loanInterestAccruals).where(and(
         eq(loanInterestAccruals.tenantId, ctx.tenantId),
@@ -399,11 +400,11 @@ async function replaceGeneralizedAccruals(
         eq(transactions.loanId, loan.id),
     ));
     const replacements: Array<typeof loanInterestAccruals.$inferSelect> = [];
-    let delta = new Decimal(0);
+    let delta = new FinancialDecimal(0);
     let previousPeriodKey: string | null = null;
     let previousSegmentKey: string | null = null;
     let segmentElapsedDays = 0;
-    let periodCumulative = new Decimal(0);
+    let periodCumulative = new FinancialDecimal(0);
 
     for (const row of active) {
         const targeted = targetIds.has(row.id);
@@ -421,7 +422,7 @@ async function replaceGeneralizedAccruals(
             previousPeriodKey = periodKey;
             previousSegmentKey = null;
             segmentElapsedDays = 0;
-            periodCumulative = new Decimal(0);
+            periodCumulative = new FinancialDecimal(0);
         }
         const openingPrincipal = targeted
             ? principalAtStartOfDate(loan, transactionRows, row.accrualDate)
@@ -438,13 +439,13 @@ async function replaceGeneralizedAccruals(
         if (!targeted) {
             periodCumulative = row.cumulativeInterestAmount === null
                 ? periodCumulative.plus(row.interestAmount)
-                : new Decimal(row.cumulativeInterestAmount);
+                : new FinancialDecimal(row.cumulativeInterestAmount);
             continue;
         }
 
         const accrued = calculateAccruedInterest(openingPrincipal, policy, segmentElapsedDays);
         periodCumulative = periodCumulative.plus(accrued.incrementAmount);
-        const paidAmount = new Decimal(row.paidAmount);
+        const paidAmount = new FinancialDecimal(row.paidAmount);
         if (paidAmount.gt(accrued.incrementAmount)) {
             throw new DomainError(
                 "FLOATING_ACCRUAL_PAID_CONFLICT",
@@ -455,7 +456,7 @@ async function replaceGeneralizedAccruals(
                     accrualPublicId: row.publicId,
                     accrualDate: row.accrualDate,
                     paidAmount: paidAmount.toFixed(2),
-                    recalculatedInterestAmount: new Decimal(accrued.incrementAmount).toFixed(2),
+                    recalculatedInterestAmount: new FinancialDecimal(accrued.incrementAmount).toFixed(2),
                 },
             );
         }
@@ -488,7 +489,7 @@ async function replaceGeneralizedAccruals(
             createdByUserId: ctx.actorUserId,
         }).returning().then((rows: Array<typeof loanInterestAccruals.$inferSelect>) => rows[0]!);
         replacements.push(replacement);
-        delta = delta.plus(new Decimal(replacement.interestAmount).minus(row.interestAmount));
+        delta = delta.plus(new FinancialDecimal(replacement.interestAmount).minus(row.interestAmount));
     }
     return { replacements, delta };
 }
@@ -544,7 +545,7 @@ export async function correctFloatingInterestAccruals(ctx: CommandContext, loanP
     if (!uniqueDates.length) throw new DomainError("CORRECTION_DATES_REQUIRED", "Select at least one accrual date", 400);
     return db.transaction(async (tx) => {
         const prior = await tx.query.loanAdjustments.findFirst({ where: and(eq(loanAdjustments.tenantId, ctx.tenantId), eq(loanAdjustments.idempotencyKey, ctx.idempotencyKey!)) });
-        if (prior) return { adjustmentPublicId: prior.publicId, correctedDates: uniqueDates, amount: new Decimal(prior.amount).toFixed(2) };
+        if (prior) return { adjustmentPublicId: prior.publicId, correctedDates: uniqueDates, amount: new FinancialDecimal(prior.amount).toFixed(2) };
         const loan = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.publicId, loanPublicId)) });
         if (!loan || loan.repaymentType !== "floating") throw new DomainError("FLOATING_LOAN_NOT_FOUND", "Floating loan not found", 404);
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${loan.id} FOR UPDATE`);
@@ -553,7 +554,7 @@ export async function correctFloatingInterestAccruals(ctx: CommandContext, loanP
             inArray(loanInterestAccruals.accrualDate, uniqueDates), sql`${loanInterestAccruals.status} <> 'reversed'`,
         )).orderBy(asc(loanInterestAccruals.accrualDate));
         if (oldRows.length !== uniqueDates.length) throw new DomainError("ACCRUAL_CORRECTION_TARGET_MISMATCH", "Every correction date must identify one active accrual", 409);
-        let delta = new Decimal(0);
+        let delta = new FinancialDecimal(0);
         let replacements: Array<typeof loanInterestAccruals.$inferSelect> = [];
         if (hasPeriodPolicy(loan)) {
             const suffixRows = await tx.select().from(loanInterestAccruals).where(and(
@@ -588,7 +589,7 @@ export async function correctFloatingInterestAccruals(ctx: CommandContext, loanP
                 const interestAmount = calculateDailyInterest(openingPrincipal, policy);
                 const paidAmount = old.accrualDate === loan.interestStartDate && loan.firstDayTreatment === "deduct"
                     ? interestAmount
-                    : Decimal.min(new Decimal(old.paidAmount), new Decimal(interestAmount)).toFixed(2);
+                    : FinancialDecimal.min(new FinancialDecimal(old.paidAmount), new FinancialDecimal(interestAmount)).toFixed(2);
                 await tx.update(loanInterestAccruals).set({ status: "reversed" }).where(and(
                     eq(loanInterestAccruals.tenantId, ctx.tenantId),
                     eq(loanInterestAccruals.id, old.id),
@@ -612,13 +613,13 @@ export async function correctFloatingInterestAccruals(ctx: CommandContext, loanP
                     cumulativeInterestAmount: hasSnapshot ? interestAmount : null,
                     dailyIncrementAmount: hasSnapshot ? interestAmount : null,
                     paidAmount,
-                    status: new Decimal(paidAmount).eq(interestAmount) ? "paid" : "accrued",
+                    status: new FinancialDecimal(paidAmount).eq(interestAmount) ? "paid" : "accrued",
                     sourceTransactionId: old.sourceTransactionId,
                     reversedAccrualId: old.id,
                     createdByUserId: ctx.actorUserId,
                 }).returning().then((rows) => rows[0]!);
                 replacements.push(replacement);
-                delta = delta.plus(new Decimal(interestAmount).minus(old.interestAmount));
+                delta = delta.plus(new FinancialDecimal(interestAmount).minus(old.interestAmount));
             }
         }
         const active = await tx.select().from(loanInterestAccruals).where(and(eq(loanInterestAccruals.tenantId, ctx.tenantId), eq(loanInterestAccruals.loanId, loan.id), sql`${loanInterestAccruals.status} <> 'reversed'`));
@@ -631,7 +632,7 @@ export async function correctFloatingInterestAccruals(ctx: CommandContext, loanP
         await createAuditLog(tx, {
             tenantId: ctx.tenantId, actorUserId: ctx.actorUserId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId,
             entityType: "loan", entityId: loan.publicId, action: "floating_interest_accruals_corrected",
-            payload: { adjustmentPublicId: adjustment.publicId, reason: cleanReason, corrected: replacements.map((row) => ({ accrualDate: row.accrualDate, accrualPublicId: row.publicId, openingPrincipal: new Decimal(row.openingPrincipal).toFixed(2), interestAmount: new Decimal(row.interestAmount).toFixed(2), paidAmount: new Decimal(row.paidAmount).toFixed(2) })) },
+            payload: { adjustmentPublicId: adjustment.publicId, reason: cleanReason, corrected: replacements.map((row) => ({ accrualDate: row.accrualDate, accrualPublicId: row.publicId, openingPrincipal: new FinancialDecimal(row.openingPrincipal).toFixed(2), interestAmount: new FinancialDecimal(row.interestAmount).toFixed(2), paidAmount: new FinancialDecimal(row.paidAmount).toFixed(2) })) },
         });
         return { adjustmentPublicId: adjustment.publicId, correctedDates: uniqueDates, amount: delta.toFixed(2) };
     });

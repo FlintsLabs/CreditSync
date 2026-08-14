@@ -29,6 +29,10 @@ const invoke = async <T>(user: RouteUser | null, request: Request, set: { status
     if (!user) return unauthorized(set);
     try { return await command(context(user, request)); } catch (error) { return failure(error, set); }
 };
+const withoutMcpWriteMetadata = <T extends Record<string, unknown>>(value: T) => {
+    const { auditPublicId: _auditPublicId, correlationId: _correlationId, ...rest } = value;
+    return rest;
+};
 
 const uuidParam = { params: t.Object({ id: t.String({ format: "uuid" }) }) };
 
@@ -52,7 +56,7 @@ const intermediaryProfileRoutes = new Elysia({ normalize: false })
             }, { additionalProperties: t.Never() }),
         ]),
     })
-    .put("/intermediaries/:id/bank-accounts", ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => saveIntermediaryBankAccount(ctx, params.id, body)), {
+    .put("/intermediaries/:id/bank-accounts", ({ params, body, user, request, set }) => invoke(user, request, set, async (ctx) => withoutMcpWriteMetadata(await saveIntermediaryBankAccount(ctx, params.id, body))), {
         ...uuidParam,
         body: t.Object({
             bankCode: t.String({ minLength: 2, maxLength: 20, pattern: "^[A-Z][A-Z0-9]{1,19}$" }),
@@ -66,7 +70,7 @@ const intermediaryProfileRoutes = new Elysia({ normalize: false })
         ...uuidParam,
         query: t.Object({ role: t.Optional(t.Union([t.Literal("disbursement"), t.Literal("collection"), t.Literal("all")])) }, { additionalProperties: t.Never() }),
     })
-    .post("/loans/:id/intermediary-assignments", ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => assignIntermediaryToLoan(ctx, params.id, body)), {
+    .post("/loans/:id/intermediary-assignments", ({ params, body, user, request, set }) => invoke(user, request, set, async (ctx) => withoutMcpWriteMetadata(await assignIntermediaryToLoan(ctx, params.id, body))), {
         ...uuidParam,
         body: t.Object({
             intermediaryPublicId: t.String({ format: "uuid" }),
@@ -75,7 +79,7 @@ const intermediaryProfileRoutes = new Elysia({ normalize: false })
             note: t.Optional(t.Nullable(t.String({ maxLength: 1000 }))),
         }, { additionalProperties: t.Never() }),
     })
-    .post("/intermediary-assignments/:id/end", ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => endIntermediaryAssignment(ctx, params.id, body)), {
+    .post("/intermediary-assignments/:id/end", ({ params, body, user, request, set }) => invoke(user, request, set, async (ctx) => withoutMcpWriteMetadata(await endIntermediaryAssignment(ctx, params.id, body))), {
         ...uuidParam,
         body: t.Object({
             effectiveTo: t.String({ format: "date-time" }),

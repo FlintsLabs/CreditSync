@@ -18,7 +18,7 @@ async function json(path: string) {
     return JSON.parse(await readFile(resolve(pluginRoot, path), "utf8")) as Record<string, unknown>;
 }
 
-describe("CreditSync plugin 4.0.0 contract", () => {
+describe("CreditSync plugin 5.0.0 contract", () => {
     test("exposes the documented local validation command", async () => {
         const packageManifest = await json("package.json");
         expect(packageManifest.private).toBe(true);
@@ -28,7 +28,7 @@ describe("CreditSync plugin 4.0.0 contract", () => {
     test("manifest exposes only the private app and orchestration skills", async () => {
         const manifest = await json(".codex-plugin/plugin.json");
         expect(manifest.name).toBe("creditsync");
-        expect(manifest.version).toBe("4.0.0");
+        expect(manifest.version).toBe("5.0.0");
         expect(manifest.skills).toBe("./skills/");
         expect(manifest.apps).toBe("./.app.json");
         expect(manifest).not.toHaveProperty("mcpServers");
@@ -91,12 +91,41 @@ describe("CreditSync plugin 4.0.0 contract", () => {
     test("frozen full MCP metadata matches an actual authenticated tools/list response", async () => {
         const contract = await json("references/mcp-tool-contract.json") as unknown as FrozenMcpContract;
         expect(contract.schemaVersion).toBe("1.0");
-        expect(contract.compatibility).toBe("Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 4.0.0; breaking changes require plugin 5.0.0.");
+        expect(contract.compatibility).toBe("Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 5.0.0; breaking changes require plugin 6.0.0.");
         expect(contract.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
         expect(contract.tools).toHaveLength(57);
         expect(contract.tools.every((tool) => tool.inputSchema && tool.outputSchema && tool.annotations)).toBe(true);
         const advertised = await captureAdvertisedMcpContract();
         expect(canonicalContractJson(contract)).toBe(canonicalContractJson(advertised));
+    });
+
+    test("requires audit and correlation UUIDs from every intermediary administrative and evidence write", async () => {
+        const contract = await json("references/mcp-tool-contract.json") as unknown as FrozenMcpContract;
+        for (const name of [
+            "intermediary.bank-account.save",
+            "intermediary.assignment.create",
+            "intermediary.assignment.end",
+            "intermediary.disbursement.evidence.prepare",
+            "intermediary.disbursement.evidence.finalize",
+        ]) {
+            const tool = contract.tools.find((candidate) => candidate.name === name);
+            const dataSchema = (tool?.outputSchema as {
+                properties?: {
+                    data?: {
+                        required?: string[];
+                        properties?: Record<string, { format?: string }>;
+                    };
+                };
+            } | undefined)?.properties?.data;
+            expect(dataSchema?.required, `${name} required output fields`).toEqual(expect.arrayContaining([
+                "auditPublicId",
+                "correlationId",
+            ]));
+            expect(dataSchema?.properties, `${name} output properties`).toMatchObject({
+                auditPublicId: { format: "uuid" },
+                correlationId: { format: "uuid" },
+            });
+        }
     });
 
     test("eval catalog covers every required positive and negative workflow", async () => {
@@ -274,7 +303,7 @@ describe("CreditSync plugin 4.0.0 contract", () => {
         expect(existsSync(resolve(pluginRoot, "scripts/validate.ts"))).toBe(true);
         expect(existsSync(resolve(pluginRoot, "assets/README.md"))).toBe(true);
         for (const forbidden of [".mcp.json", "hooks.json", "hooks", "ui", "oauth.json"]) {
-            expect(existsSync(resolve(pluginRoot, forbidden)), `${forbidden} must stay out of 4.0.0`).toBe(false);
+            expect(existsSync(resolve(pluginRoot, forbidden)), `${forbidden} must stay out of 5.0.0`).toBe(false);
         }
     });
 });

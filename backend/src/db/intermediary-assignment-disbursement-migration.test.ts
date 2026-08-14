@@ -145,8 +145,9 @@ test("exports and journals the additive intermediary assignment and disbursement
 
     expect(await Bun.file(`${backendRoot}drizzle/0028_intermediary_assignments_disbursement_groups.sql`).exists()).toBe(true);
     const journal = await Bun.file(`${backendRoot}drizzle/meta/_journal.json`).json();
-    expect(journal.entries.at(-2)?.tag).toBe("0027_floating_interest_period_policy");
-    expect(journal.entries.at(-1)?.tag).toBe("0028_intermediary_assignments_disbursement_groups");
+    const migrationIndex = journal.entries.findIndex((entry: { tag?: string }) =>
+        entry.tag === "0028_intermediary_assignments_disbursement_groups");
+    expect(journal.entries[migrationIndex - 1]?.tag).toBe("0027_floating_interest_period_policy");
 });
 
 test("keeps migration 0028 additive and declares tenant, lifecycle, money, and immutability protections", async () => {

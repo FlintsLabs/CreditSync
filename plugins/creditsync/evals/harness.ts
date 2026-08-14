@@ -737,6 +737,8 @@ function intermediatedEvidenceResult(index: number, status: "pending" | "ready")
         originalName: args.originalName,
         finalizedAt: status === "ready" ? `2026-08-13T0${index + 2}:05:00.000Z` : null,
         createdAt: `2026-08-13T0${index + 2}:00:00.000Z`,
+        auditPublicId: INTERMEDIATED_AUDIT,
+        correlationId: INTERMEDIATED_CORRELATION,
     };
 }
 

@@ -138,7 +138,10 @@ describe("intermediary profile, account, and assignment service", () => {
             accountName: "Somsri Collector",
             maskedAccountNumber: "•••• 7890",
             status: "active",
+            auditPublicId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+            correlationId: "corr-bank-save-1",
         });
+        expect(replay).toMatchObject({ auditPublicId: first.auditPublicId, correlationId: "corr-bank-save-1" });
         expect(replay.publicId).toBe(first.publicId);
         expect(reused.publicId).toBe(first.publicId);
         expect(reused).toMatchObject({ bankName: "Kasikorn Bank", note: "Updated payout label" });
@@ -167,6 +170,7 @@ describe("intermediary profile, account, and assignment service", () => {
         expect(bankAudits).toHaveLength(2);
         expect(bankAudits.map((entry) => entry.action)).toEqual(["created", "saved"]);
         expect(bankAudits[0]).toMatchObject({
+            publicId: first.auditPublicId,
             actorUserId: actor.id,
             actorSource: "web",
             requestId: "req-bank-save-1",
@@ -261,7 +265,7 @@ describe("intermediary profile, account, and assignment service", () => {
             accountNumberHash: legacyHash,
             note: null,
         })).digest("hex");
-        await db.insert(auditLogs).values({
+        const legacyAudit = await db.insert(auditLogs).values({
             tenantId: actor.tenantId,
             entityType: "intermediary_bank_account",
             entityId: legacy.publicId,
@@ -277,12 +281,16 @@ describe("intermediary profile, account, and assignment service", () => {
                 idempotencyKey: "bank-upgrade-replay",
                 requestFingerprint: legacyFingerprint,
             },
-        });
+        }).returning().then((rows) => rows[0]!);
 
         const replay = await saveIntermediaryBankAccount(
             context(actor, "bank-upgrade-replay"), intermediary.publicId, legacyInput,
         );
-        expect(replay).toEqual(legacyResponse);
+        expect(replay).toEqual({
+            ...legacyResponse,
+            auditPublicId: legacyAudit.publicId,
+            correlationId: "corr-bank-upgrade-replay",
+        });
 
         const saved = await saveIntermediaryBankAccount(
             context(actor, "bank-upgrade-save"),
@@ -420,6 +428,14 @@ describe("intermediary profile, account, and assignment service", () => {
             { intermediaryPublicId: intermediary.publicId, role: "collection", effectiveFrom: "2026-01-01T00:00:00.000Z", note: "First period" },
         );
         expect(historicalReplay.publicId).toBe(historical.publicId);
+        expect(historical).toMatchObject({
+            auditPublicId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+            correlationId: "corr-assignment-history-1",
+        });
+        expect(historicalReplay).toMatchObject({
+            auditPublicId: historical.auditPublicId,
+            correlationId: "corr-assignment-history-1",
+        });
         const ended = await endIntermediaryAssignment(
             context(actor, "assignment-end-1"),
             historical.publicId,
@@ -431,6 +447,10 @@ describe("intermediary profile, account, and assignment service", () => {
             { effectiveTo: "2026-02-01T00:00:00.000Z", reason: "Route changed" },
         );
         expect(endedReplay).toEqual(ended);
+        expect(ended).toMatchObject({
+            auditPublicId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+            correlationId: "corr-assignment-end-1",
+        });
         const assignedReplayAfterEnd = await assignIntermediaryToLoan(
             context(actor, "assignment-history-1"),
             first.loan.publicId,

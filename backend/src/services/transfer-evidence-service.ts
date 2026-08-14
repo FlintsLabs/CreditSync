@@ -1,6 +1,7 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
+    auditLogs,
     files,
     intermediaries,
     intermediatedDisbursementGroupPreviews,
@@ -101,6 +102,43 @@ function presentEvidence(intent: EvidenceIntent, file: EvidenceFile) {
         originalName: file.originalName,
         finalizedAt: intent.finalizedAt?.toISOString() ?? null,
         createdAt: intent.createdAt.toISOString(),
+    };
+}
+
+async function evidenceAudit(
+    executor: Executor,
+    ctx: CommandContext,
+    evidencePublicId: string,
+    action: "prepared" | "finalized",
+) {
+    const audit = await executor.query.auditLogs.findFirst({
+        where: and(
+            eq(auditLogs.tenantId, ctx.tenantId),
+            eq(auditLogs.entityType, "intermediated_transfer_evidence"),
+            eq(auditLogs.entityId, evidencePublicId),
+            eq(auditLogs.action, action),
+        ),
+        orderBy: desc(auditLogs.id),
+    });
+    if (!audit) {
+        throw new DomainError(
+            "EVIDENCE_AUDIT_NOT_FOUND",
+            "Transfer evidence audit metadata is unavailable",
+            409,
+        );
+    }
+    return audit;
+}
+
+function withEvidenceAudit<T extends Record<string, unknown>>(
+    value: T,
+    audit: typeof auditLogs.$inferSelect,
+    ctx: CommandContext,
+) {
+    return {
+        ...value,
+        auditPublicId: audit.publicId,
+        correlationId: audit.correlationId ?? ctx.correlationId,
     };
 }
 
@@ -244,7 +282,10 @@ export async function prepareTransferEvidence(
             }
             requireMatchingInput(existing, input);
             const file = await evidenceFile(tx, ctx, existing);
-            if (existing.status === "ready") return presentEvidence(existing, file);
+            if (existing.status === "ready") {
+                const audit = await evidenceAudit(tx, ctx, existing.publicId, "prepared");
+                return withEvidenceAudit(presentEvidence(existing, file), audit, ctx);
+            }
             await lockMutableParent(ctx, parent.group.id, parent.event.id, tx);
             const signed = await gateway.preparePut({
                 bucket: file.bucket,
@@ -264,7 +305,7 @@ export async function prepareTransferEvidence(
                 eq(intermediatedTransferEvidenceIntents.status, "pending"),
             )).returning().then((rows) => rows[0]);
             if (!refreshed) throw new DomainError("EVIDENCE_PREPARE_CONFLICT", "Evidence can no longer be prepared", 409);
-            await createAuditLog(tx, {
+            const audit = await createAuditLog(tx, {
                 ...auditContext(ctx),
                 entityType: "intermediated_transfer_evidence",
                 entityId: refreshed.publicId,
@@ -276,6 +317,8 @@ export async function prepareTransferEvidence(
                 uploadUrl: signed.uploadUrl,
                 expiresAt: signed.expiresAt.toISOString(),
                 requiredHeaders: signed.requiredHeaders ?? {},
+                auditPublicId: audit.publicId,
+                correlationId: ctx.correlationId,
             };
         }
 
@@ -312,7 +355,7 @@ export async function prepareTransferEvidence(
             updatedByUserId: ctx.actorUserId,
         }).returning().then((rows) => rows[0]!);
         await staleEvidencePreviews(tx, ctx, parent.group.id);
-        await createAuditLog(tx, {
+        const audit = await createAuditLog(tx, {
             ...auditContext(ctx),
             entityType: "intermediated_transfer_evidence",
             entityId: intent.publicId,
@@ -324,6 +367,8 @@ export async function prepareTransferEvidence(
             uploadUrl: signed.uploadUrl,
             expiresAt: signed.expiresAt.toISOString(),
             requiredHeaders: signed.requiredHeaders ?? {},
+            auditPublicId: audit.publicId,
+            correlationId: ctx.correlationId,
         };
     });
 }
@@ -344,7 +389,10 @@ export async function finalizeTransferEvidence(
     ) });
     if (!intent) throw new DomainError("EVIDENCE_NOT_FOUND", "Transfer evidence not found", 404);
     const file = await evidenceFile(db, ctx, intent);
-    if (intent.status === "ready") return presentEvidence(intent, file);
+    if (intent.status === "ready") {
+        const audit = await evidenceAudit(db, ctx, intent.publicId, "finalized");
+        return withEvidenceAudit(presentEvidence(intent, file), audit, ctx);
+    }
     assertMutableParent(parent.group.status, parent.event.status);
     if (intent.uploadExpiresAt.getTime() <= Date.now()) {
         throw new DomainError("EVIDENCE_UPLOAD_EXPIRED", "Evidence upload intent has expired", 409);
@@ -373,7 +421,10 @@ export async function finalizeTransferEvidence(
             eq(intermediatedTransferEvidenceIntents.eventId, parent.event.id),
         ) });
         if (!locked) throw new DomainError("EVIDENCE_NOT_FOUND", "Transfer evidence not found", 404);
-        if (locked.status === "ready") return presentEvidence(locked, file);
+        if (locked.status === "ready") {
+            const audit = await evidenceAudit(tx, ctx, locked.publicId, "finalized");
+            return withEvidenceAudit(presentEvidence(locked, file), audit, ctx);
+        }
         if (locked.uploadExpiresAt.getTime() <= Date.now()) {
             throw new DomainError("EVIDENCE_UPLOAD_EXPIRED", "Evidence upload intent has expired", 409);
         }
@@ -394,14 +445,14 @@ export async function finalizeTransferEvidence(
             fileId: file.id,
             createdByUserId: ctx.actorUserId,
         });
-        await createAuditLog(tx, {
+        const audit = await createAuditLog(tx, {
             ...auditContext(ctx),
             entityType: "intermediated_transfer_evidence",
             entityId: updated.publicId,
             action: "finalized",
             payload: auditPayload(groupPublicId, eventPublicId, updated, file),
         });
-        return presentEvidence(updated, file);
+        return withEvidenceAudit(presentEvidence(updated, file), audit, ctx);
     });
 }
 

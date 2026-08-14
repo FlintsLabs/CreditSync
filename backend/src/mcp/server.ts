@@ -87,6 +87,10 @@ export interface CreateMcpHttpPluginInput {
 }
 
 const uuid = z.uuid();
+const writeAuditMetadata = {
+    auditPublicId: uuid,
+    correlationId: uuid,
+};
 const money = z.string().regex(/^(0|[1-9]\d*)\.\d{2}$/).max(32);
 const signedMoney = z.string().regex(/^-?(0|[1-9]\d*)\.\d{2}$/).max(33);
 const date = z.iso.date();
@@ -697,10 +701,10 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
         bankAccounts: z.array(intermediaryBankAccountOutput),
         assignments: z.array(intermediaryAssignmentOutput),
     }).strict(),
-    "intermediary.bank-account.save": intermediaryBankAccountOutput,
+    "intermediary.bank-account.save": intermediaryBankAccountOutput.extend(writeAuditMetadata).strict(),
     "intermediary.managed-loan.list": z.object({ items: z.array(intermediaryManagedLoanOutput) }).strict(),
-    "intermediary.assignment.create": intermediaryAssignmentOutput,
-    "intermediary.assignment.end": intermediaryAssignmentOutput,
+    "intermediary.assignment.create": intermediaryAssignmentOutput.extend(writeAuditMetadata).strict(),
+    "intermediary.assignment.end": intermediaryAssignmentOutput.extend(writeAuditMetadata).strict(),
     "intermediary.disbursement.list": z.object({ items: z.array(intermediatedGroupInspectionOutput) }).strict(),
     "intermediary.disbursement.get": intermediatedGroupInspectionOutput.extend({
         latestPreview: intermediatedPreviewOutput.nullable(),
@@ -711,8 +715,9 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
         uploadUrl: z.url().optional(),
         expiresAt: isoDateTime.optional(),
         requiredHeaders: z.record(z.string(), z.string()).optional(),
+        ...writeAuditMetadata,
     }).strict(),
-    "intermediary.disbursement.evidence.finalize": intermediatedEvidenceOutput,
+    "intermediary.disbursement.evidence.finalize": intermediatedEvidenceOutput.extend(writeAuditMetadata).strict(),
     "intermediary.disbursement.preview": intermediatedPreviewResultOutput,
     "intermediary.disbursement.post": intermediatedPostOutput,
     "intermediary.disbursement.reverse": intermediatedReverseOutput,
