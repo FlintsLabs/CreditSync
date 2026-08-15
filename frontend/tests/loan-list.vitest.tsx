@@ -151,4 +151,34 @@ describe("LoanList", () => {
         expect(overflow).toHaveAttribute("aria-label", "ป้ายกำกับลูกหนี้เพิ่มเติม 1 รายการ");
         expect(screen.getByText("ลูกหนี้")).toBeInTheDocument();
     });
+
+    test("shows a localized load error instead of the empty state and retries", async () => {
+        vi.mocked(api.get)
+            .mockRejectedValueOnce(new Error("unavailable"))
+            .mockResolvedValueOnce({ data: [{
+                id: "retry-loan",
+                publicId: "retry-loan",
+                borrowerName: "Retry Borrower",
+                principal: "1000.00",
+                outstandingPrincipal: "1000.00",
+                status: "active",
+                repaymentType: "daily",
+                installmentAmount: "100.00",
+                totalInstallments: 10,
+                startDate: "2026-08-01",
+                createdAt: "2026-08-10T07:30:00.000Z",
+                paymentHealth: { status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00", overdueItemCount: 0, maxOverdueDays: 0 },
+            }] });
+
+        render(<MemoryRouter><LoanList /></MemoryRouter>);
+
+        expect(await screen.findByText("Unable to load loans")).toBeInTheDocument();
+        expect(screen.queryByText("No Active Loans")).not.toBeInTheDocument();
+
+        await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+        expect(await screen.findByText("Retry Borrower")).toBeInTheDocument();
+        expect(screen.queryByText("Unable to load loans")).not.toBeInTheDocument();
+        expect(vi.mocked(api.get)).toHaveBeenCalledTimes(2);
+    });
 });
