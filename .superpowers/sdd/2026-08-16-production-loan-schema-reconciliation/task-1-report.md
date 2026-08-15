@@ -49,4 +49,4 @@ Added the closed loan-origination schema manifest, catalog-only inspector, fail-
 
 ### Fix commit
 
-To be filled after creating the new fix commit.
+`dbe98fd fix(db): reconcile loan schema checker catalog handling`
