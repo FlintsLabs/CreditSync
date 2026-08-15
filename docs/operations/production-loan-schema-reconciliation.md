@@ -34,7 +34,6 @@ docker inspect creditsync-backend-prod creditsync-frontend-prod creditsync-postg
   --format '{{.Name}} image={{.Config.Image}} imageId={{.Image}} status={{.State.Status}} started={{.State.StartedAt}}'
 export CREDITSYNC_BASELINE_CHECKER_OUT="$CREDITSYNC_LOG_DIR/baseline-checker.out"
 export CREDITSYNC_BASELINE_CHECKER_ERR="$CREDITSYNC_LOG_DIR/baseline-checker.err"
-docker logs creditsync-backend-prod > "$CREDITSYNC_LOG_DIR/baseline-backend.log" 2>&1
 set +e
 docker exec creditsync-backend-prod bun run schema:check:loan-origination \
   > "$CREDITSYNC_BASELINE_CHECKER_OUT" 2> "$CREDITSYNC_BASELINE_CHECKER_ERR"
@@ -47,13 +46,13 @@ chmod 600 "$CREDITSYNC_LOG_DIR"/*
 Do not print the baseline output or diagnostics. The expected non-zero result
 is compared against the restored copy in Section 4. The historical app
 containers have different Compose projects, so all baseline runtime checks use
-their exact validated names (`docker exec`, `docker inspect`, and `docker
-logs`), never `compose exec`. The protected standalone deployment file in
-Section 6 is the only app Compose file validated for deployment.
+their exact validated names (`docker exec` and `docker inspect`), never
+`compose exec`. The protected standalone deployment file in Section 7 is the
+only app Compose file validated for deployment.
 
 ## 2. Create and verify a recoverable backup
 
-The dump is streamed to the operator host. The only database variables expanded inside the container are its own environment variables.
+The dump is streamed to the operator host. The only database variables expanded inside the container are its own environment variables. Use the exact fixed PostgreSQL container name; do not use Compose project ownership for database access.
 
 ```bash
 set -eu
@@ -62,7 +61,7 @@ export CREDITSYNC_BACKUP_PATH=/secure/creditsync-backups/creditsync-postgres-YYY
 export CREDITSYNC_BACKUP_PARTIAL_PATH="${CREDITSYNC_BACKUP_PATH}.partial"
 test ! -e "$CREDITSYNC_BACKUP_PATH" && test ! -e "$CREDITSYNC_BACKUP_PARTIAL_PATH"
 mkdir -p "$(dirname "$CREDITSYNC_BACKUP_PATH")"
-docker compose --env-file "$CREDITSYNC_COMPOSE_ENV_FILE" -f "$CREDITSYNC_INFRA_COMPOSE_FILE" exec -T postgres sh -eu -c \
+docker exec creditsync-postgres-prod sh -eu -c \
   'pg_dump --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --format=custom --no-owner --file=-' \
   > "$CREDITSYNC_BACKUP_PARTIAL_PATH"
 test -s "$CREDITSYNC_BACKUP_PARTIAL_PATH"
@@ -98,7 +97,7 @@ docker run --detach --rm --name "$CREDITSYNC_RESTORE_CONTAINER" \
   -e POSTGRES_PASSWORD="$CREDITSYNC_RESTORE_PASSWORD" \
   -e POSTGRES_DB="$CREDITSYNC_RESTORE_DB" \
   -p "127.0.0.1:${CREDITSYNC_RESTORE_PORT}:5432" postgres:18
-trap 'docker rm --force "$CREDITSYNC_RESTORE_CONTAINER" >/dev/null 2>&1 || true' EXIT
+trap 'docker rm --force "$CREDITSYNC_RESTORE_CONTAINER" >/dev/null 2>&1' EXIT
 for CREDITSYNC_RESTORE_ATTEMPT in $(seq 1 60); do
   if docker exec "$CREDITSYNC_RESTORE_CONTAINER" pg_isready -U "$CREDITSYNC_RESTORE_USER" -d "$CREDITSYNC_RESTORE_DB" >/dev/null 2>&1; then break; fi
   test "$CREDITSYNC_RESTORE_ATTEMPT" -lt 60 || { echo 'restore database readiness timeout' >&2; exit 1; }
@@ -246,12 +245,12 @@ cd ../frontend && bun test && bun run lint && bun run build
 ## 6. Validate production constraints before replacing app containers
 
 Invoke this gate from Section 7 at its explicit `STOP HERE` marker, only after
-the production migration, journal check, and reviewed-image checker have
-passed. Run the same nine zero-violation checks
-against the live database. The `VALIDATE CONSTRAINT` statements are safe when
-a constraint is already validated, and all nine must succeed before app
-replacement. Stop if any count is non-zero or any `convalidated` value is
-false.
+the production migration and journal check have passed. It runs the same nine
+zero-violation checks against the live database, validates all nine constraints,
+and then runs the reviewed-image checker. The `VALIDATE CONSTRAINT` statements
+are safe when a constraint is already validated, and all nine checks plus the
+reviewed-image checker must succeed before app replacement. Stop if any count
+is non-zero or any `convalidated` value is false.
 
 ```bash
 set -eu
@@ -367,9 +366,38 @@ grep -Fx "$CREDITSYNC_REVIEWED_BACKEND_TAG" "$CREDITSYNC_LOG_DIR/reviewed-compos
 grep -Fx "$CREDITSYNC_REVIEWED_FRONTEND_TAG" "$CREDITSYNC_LOG_DIR/reviewed-compose-images.out"
 ```
 
-After a fresh backup and writer freeze, use the reviewed backend image tag for the one-off migration. Do not run this section during documentation review.
+After the fresh backup, freeze the exact live app containers before the migration. Stop the public ingress first, then stop the backend writer, and verify that the backend is no longer running before touching the database. Keep both stopped and intact until every production schema gate in Section 6 has passed; do not remove or recreate the reviewed replacement containers earlier.
 
 ```bash
+set -eu
+export CREDITSYNC_BACKEND_CONTAINER=creditsync-backend-prod
+export CREDITSYNC_FRONTEND_CONTAINER=creditsync-frontend-prod
+test "$(docker inspect "$CREDITSYNC_BACKEND_CONTAINER" --format '{{.State.Status}}')" = running
+test "$(docker inspect "$CREDITSYNC_FRONTEND_CONTAINER" --format '{{.State.Status}}')" = running
+docker stop "$CREDITSYNC_FRONTEND_CONTAINER"
+docker stop "$CREDITSYNC_BACKEND_CONTAINER"
+test "$(docker inspect "$CREDITSYNC_BACKEND_CONTAINER" --format '{{.State.Status}}')" = exited
+test "$(docker inspect "$CREDITSYNC_FRONTEND_CONTAINER" --format '{{.State.Status}}')" = exited
+test -z "$(docker ps --filter "name=^/${CREDITSYNC_BACKEND_CONTAINER}$" --filter status=running --quiet)"
+test -z "$(docker ps --filter "name=^/${CREDITSYNC_FRONTEND_CONTAINER}$" --filter status=running --quiet)"
+```
+
+If the migration, journal check, reviewed-image checker, or any Section 6 gate stops, do not remove either stopped container and do not deploy the reviewed images. Preserve the bounded evidence, investigate, and—after the incident decision—unfreeze the existing app with the exact names:
+
+```bash
+set -eu
+docker start "$CREDITSYNC_BACKEND_CONTAINER"
+docker start "$CREDITSYNC_FRONTEND_CONTAINER"
+test "$(docker inspect "$CREDITSYNC_BACKEND_CONTAINER" --format '{{.State.Status}}')" = running
+test "$(docker inspect "$CREDITSYNC_FRONTEND_CONTAINER" --format '{{.State.Status}}')" = running
+```
+
+This recovery starts the pre-existing images only; it never rolls back the additive schema. If the backend cannot safely restart, leave ingress stopped and escalate without removing the containers. Do not run this recovery after the reviewed replacement has been created; use Section 9 for a failed replacement.
+
+Use the reviewed backend image tag for the one-off migration. Do not run this section during documentation review.
+
+```bash
+set -eu
 export CREDITSYNC_PRODUCTION_MIGRATION_CONTAINER=creditsync-backend-schema-migrate-YYYYMMDDHHMM
 docker run --rm --name "$CREDITSYNC_PRODUCTION_MIGRATION_CONTAINER" \
   --network creditsync_runtime --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" \
@@ -379,10 +407,11 @@ docker run --rm --name "$CREDITSYNC_PRODUCTION_MIGRATION_CONTAINER" \
 Verify the journal using its actual columns (`id`, `hash`, `created_at`), never `tag`, and verify all contract objects:
 
 ```bash
-docker compose --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" -f "$CREDITSYNC_INFRA_COMPOSE_FILE" \
-  exec -T -e "CREDITSYNC_0038_SHA256=$CREDITSYNC_0038_SHA256" postgres sh -eu -c \
+set -eu
+docker exec -i -e "CREDITSYNC_0038_SHA256=$CREDITSYNC_0038_SHA256" creditsync-postgres-prod sh -eu -c \
   'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -X -v ON_ERROR_STOP=1 -At \
-    -c "SELECT count(*), min(created_at), max(created_at) FROM drizzle.__drizzle_migrations WHERE hash = '\''$CREDITSYNC_0038_SHA256'\''"' \
+    -v "creditsync_0038_sha256=$CREDITSYNC_0038_SHA256" \
+    -c "SELECT count(*), min(created_at), max(created_at) FROM drizzle.__drizzle_migrations WHERE hash = :'creditsync_0038_sha256'"' \
   > "$CREDITSYNC_LOG_DIR/production-0038-journal.out"
 test "$(cut -d'|' -f1 "$CREDITSYNC_LOG_DIR/production-0038-journal.out")" -eq 1
 test "$(cut -d'|' -f2 "$CREDITSYNC_LOG_DIR/production-0038-journal.out")" = "$CREDITSYNC_EXPECTED_0038_CREATED_AT"
@@ -397,33 +426,28 @@ grep -Fx "$CREDITSYNC_REVIEWED_FRONTEND_TAG" "$CREDITSYNC_LOG_DIR/deploy-compose
 docker inspect creditsync-backend-prod creditsync-frontend-prod --format '{{.Name}} imageId={{.Image}} status={{.State.Status}}' > "$CREDITSYNC_LOG_DIR/pre-stop-app-containers.out"
 test "$(docker inspect creditsync-backend-prod --format '{{.Image}}')" = "$CREDITSYNC_CURRENT_BACKEND_ID"
 test "$(docker inspect creditsync-frontend-prod --format '{{.Image}}')" = "$CREDITSYNC_CURRENT_FRONTEND_ID"
-test "$(docker inspect creditsync-backend-prod --format '{{.State.Status}}')" = running
-test "$(docker inspect creditsync-frontend-prod --format '{{.State.Status}}')" = running
-docker stop creditsync-frontend-prod
-docker stop creditsync-backend-prod
+# The writer freeze above remains in force. Only after the journal, reviewed-image
+# checker, nine zero-violation checks, and nine convalidated checks pass may the
+# stopped historical containers be removed and recreated.
+test "$(docker inspect creditsync-backend-prod --format '{{.State.Status}}')" = exited
+test "$(docker inspect creditsync-frontend-prod --format '{{.State.Status}}')" = exited
 docker rm creditsync-frontend-prod
 docker rm creditsync-backend-prod
 docker compose --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" -f "$CREDITSYNC_DEPLOY_COMPOSE_FILE" up -d --no-build backend frontend
 ```
 
-Capture startup logs without emitting them. Inspect the restricted file only
-locally; stop if it contains a token or other sensitive material. Do not rely
-on a partial redaction regex.
-
-```bash
-set -eu
-export CREDITSYNC_STARTUP_LOG="$CREDITSYNC_LOG_DIR/backend-startup.log"
-docker compose --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" -f "$CREDITSYNC_DEPLOY_COMPOSE_FILE" \
-  logs --no-color --tail=120 backend > "$CREDITSYNC_STARTUP_LOG" 2>&1
-chmod 600 "$CREDITSYNC_STARTUP_LOG"
-test -s "$CREDITSYNC_STARTUP_LOG"
-```
+Do not capture full backend history or startup logs. The migration journal result,
+bounded checker output, nine constraint counts, nine validation results, and
+exact health JSON are the migration evidence. If incident response requires
+logs, collect only an approved, bounded, sanitized slice outside this runbook;
+never store or commit historical logs.
 
 ## 8. Health and MCP application verification
 
 ```bash
+set -eu
 docker exec creditsync-backend-prod \
-  bun -e 'const r=await fetch("http://127.0.0.1:3000/mcp/health"); const body=await r.json(); if (!r.ok || body.status !== "ok" || body.service !== "creditsync-mcp" || body.schemaVersion !== "1.0") process.exit(1)'
+  bun -e 'const r=await fetch("http://127.0.0.1:3000/mcp/health"); const body=await r.json(); const expected={status:"ok",service:"creditsync-mcp",schemaVersion:"1.0"}; if (!r.ok || JSON.stringify(body) !== JSON.stringify(expected)) process.exit(1)'
 curl --fail --silent --show-error http://127.0.0.1:8088/ > /dev/null
 ```
 
@@ -454,6 +478,7 @@ constraints, indexes, or run a down migration.
 
 ```bash
 set -eu
+umask 077
 export CREDITSYNC_BACKEND_IMAGE_TAG="$CREDITSYNC_ROLLBACK_BACKEND_TAG"
 export CREDITSYNC_FRONTEND_IMAGE_TAG="$CREDITSYNC_ROLLBACK_FRONTEND_TAG"
 sed -i "0,/^    image: .*$/s|^    image: .*|    image: $CREDITSYNC_BACKEND_IMAGE_TAG|" "$CREDITSYNC_DEPLOY_COMPOSE_FILE"
@@ -462,10 +487,20 @@ docker compose --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" -f "$CREDITSYNC_DEPLOY_C
 docker compose --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" -f "$CREDITSYNC_DEPLOY_COMPOSE_FILE" config --images > "$CREDITSYNC_LOG_DIR/rollback-compose-images.out"
 grep -Fx "$CREDITSYNC_ROLLBACK_BACKEND_TAG" "$CREDITSYNC_LOG_DIR/rollback-compose-images.out"
 grep -Fx "$CREDITSYNC_ROLLBACK_FRONTEND_TAG" "$CREDITSYNC_LOG_DIR/rollback-compose-images.out"
-docker stop creditsync-frontend-prod 2>/dev/null || true
-docker stop creditsync-backend-prod 2>/dev/null || true
-docker rm creditsync-frontend-prod 2>/dev/null || true
-docker rm creditsync-backend-prod 2>/dev/null || true
+export CREDITSYNC_ROLLBACK_INSPECT_ERROR="$CREDITSYNC_LOG_DIR/rollback-container-inspect.err"
+for CREDITSYNC_APP_CONTAINER in creditsync-frontend-prod creditsync-backend-prod; do
+  if docker inspect "$CREDITSYNC_APP_CONTAINER" >/dev/null 2>"$CREDITSYNC_ROLLBACK_INSPECT_ERROR"; then
+    docker stop "$CREDITSYNC_APP_CONTAINER"
+    docker rm "$CREDITSYNC_APP_CONTAINER"
+  else
+    if grep -Fq 'No such object' "$CREDITSYNC_ROLLBACK_INSPECT_ERROR" || grep -Fq 'No such container' "$CREDITSYNC_ROLLBACK_INSPECT_ERROR"; then
+      :
+    else
+      cat "$CREDITSYNC_ROLLBACK_INSPECT_ERROR" >&2
+      exit 1
+    fi
+  fi
+done
 docker compose --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" -f "$CREDITSYNC_DEPLOY_COMPOSE_FILE" up -d --no-build backend frontend
 ```
 
