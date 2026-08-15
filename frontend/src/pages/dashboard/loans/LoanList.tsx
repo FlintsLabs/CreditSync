@@ -12,6 +12,7 @@ import { formatMoneyExact } from "../../../lib/workflow-model";
 import { LoanPaymentHealthBadge, type LoanPaymentHealth } from "./LoanPaymentHealthBadge";
 import { Badge } from "../../../components/ui/badge";
 import { getVisibleBorrowerLabels, loanMatchesSearch, type BorrowerLabelLoan } from "./loan-list-model";
+import { loanListHeaderActionsClassName, loanListHeaderClassName } from "./loan-list-layout";
 
 const currentPaymentHealth: LoanPaymentHealth = {
     status: "current",
@@ -76,12 +77,12 @@ export default function LoanList() {
 
     return (
         <div className="space-y-6">
-            <div className="flex items-center justify-between">
-                <div>
+            <div className={loanListHeaderClassName}>
+                <div className="min-w-0">
                     <h2 className="text-3xl font-bold tracking-tight">{t("loans.title", "Loan Agreements")}</h2>
                     <p className="text-muted-foreground">{t("loans.description", "Manage active contracts and track repayments.")}</p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className={loanListHeaderActionsClassName}>
                     <Link to="/loans/new">
                         <Button>
                             <Plus className="mr-2 h-4 w-4" /> {t("loans.new", "New Loan")}

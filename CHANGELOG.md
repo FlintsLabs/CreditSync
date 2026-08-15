@@ -13,6 +13,7 @@
 - Added loan card borrower-label rendering with up to three visible badges and a localized overflow count, with search matching across hidden labels.
 
 ### Fixed
+- Allowed the Loan List heading actions to wrap below the title when horizontal space is constrained and return inline when space is available.
 - Made confirmed borrower aliases deterministic in creation order and kept the new borrower-label regression files whitespace-clean.
 
 ## v0.3.12 - 2026-08-14
