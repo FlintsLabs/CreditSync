@@ -16,10 +16,10 @@ export type LoanOriginationSchemaReport = {
 export type SchemaCatalogExecutor = (
     strings: TemplateStringsArray,
     ...values: unknown[]
-) => PromiseLike<unknown>;
+) => unknown;
 
-type ColumnCatalogRow = { table_name?: string; column_name?: string; data_type?: string; is_nullable?: string; table?: string; name?: string; type?: string; nullable?: boolean };
-type ConstraintCatalogRow = { table_name?: string; constraint_name?: string; definition: string; table?: string; name?: string };
+type ColumnCatalogRow = { table_name?: string; column_name?: string; data_type?: string; is_nullable?: string; numeric_precision?: number | null; numeric_scale?: number | null; table?: string; name?: string; type?: string; nullable?: boolean; numericPrecision?: number | null; numericScale?: number | null };
+type ConstraintCatalogRow = { conname?: string; definition: string; table?: string; name?: string };
 type IndexCatalogRow = { tablename?: string; indexname?: string; indexdef?: string; predicate?: string | null; table?: string; name?: string; definition?: string };
 
 type ContractEntry = {
@@ -95,25 +95,34 @@ const normalizeSql = (value: string): string => value
     .toLowerCase()
     .replaceAll('"', "")
     .replaceAll("public.", "")
+    .replaceAll("loans.", "")
+    .replace(/::[a-z_ ]+/g, "")
+    .replace(/=\s*any\s*\(\s*array\s*\[([^\]]+)\]\s*\)/g, "in ($1)")
+    .replace(/\bwhere\s*\(([^()]*)\)\s*$/g, "where $1")
     .replace(/\s+/g, " ")
-    .replace(/\(\s*\(/g, "(")
-    .replace(/\)\s*\)/g, ")")
+    .replace(/\(([^()]*\s(?:is null|is not null|<>|>=|<=|=|>)\s*[^()]*)\)/g, "$1")
     .trim();
+
+const normalizeConstraint = (value: string): string => {
+    let normalized = normalizeSql(value);
+    normalized = normalized.replace(/\bin\s*\(([^()]*)\)/g, "in $1");
+    return normalized.replaceAll("(", "").replaceAll(")", "").replace(/\s+/g, " ").trim();
+};
 
 const classify = (entry: ContractEntry, actual: string | null): SchemaObjectResult => ({
     ...entry,
-    state: actual === null ? "missing" : normalizeSql(actual) === normalizeSql(entry.expected) ? "compatible" : "incompatible",
+    state: actual === null ? "missing" : (entry.kind === "constraint" ? normalizeConstraint(actual) : normalizeSql(actual)) === (entry.kind === "constraint" ? normalizeConstraint(entry.expected) : normalizeSql(entry.expected)) ? "compatible" : "incompatible",
     actual,
 });
 
 export async function inspectLoanOriginationSchema(executor: SchemaCatalogExecutor): Promise<LoanOriginationSchemaReport> {
     const columns = (await executor`
-        SELECT table_name, column_name, data_type, is_nullable
+        SELECT table_name, column_name, data_type, is_nullable, numeric_precision, numeric_scale
         FROM information_schema.columns
         WHERE table_schema = 'public' AND table_name = 'loans'
     `) as ColumnCatalogRow[];
     const constraints = (await executor`
-        SELECT table_name, constraint_name, pg_get_constraintdef(oid) AS definition
+        SELECT conname, pg_get_constraintdef(oid) AS definition
         FROM pg_constraint
         WHERE conrelid = 'public.loans'::regclass
     `) as ConstraintCatalogRow[];
@@ -133,10 +142,15 @@ export async function inspectLoanOriginationSchema(executor: SchemaCatalogExecut
         const name = row.column_name ?? row.name!;
         const type = row.data_type ?? row.type!;
         const nullable = row.is_nullable ? row.is_nullable === "YES" : row.nullable === true;
-        return [name, `${type}, ${nullable ? "nullable" : "not nullable"}`];
+        const precision = row.numeric_precision ?? row.numericPrecision;
+        const scale = row.numeric_scale ?? row.numericScale;
+        const typeDescription = type === "numeric" && (precision !== null && precision !== undefined || scale !== null && scale !== undefined)
+            ? `numeric(${precision ?? ""},${scale ?? ""})`
+            : type;
+        return [name, `${typeDescription}, ${nullable ? "nullable" : "not nullable"}`];
     }));
-    const constraintMap = new Map(constraints.map((row) => [row.constraint_name ?? row.name!, row.definition]));
-    const indexMap = new Map(indexes.map((row) => [row.indexname ?? row.name!, row.indexdef ?? `${row.definition ?? ""}${row.predicate ? ` WHERE ${row.predicate}` : ""}`]));
+    const constraintMap = new Map(constraints.map((row) => [row.conname ?? row.name!, row.definition]));
+    const indexMap = new Map(indexes.map((row) => [row.indexname ?? row.name!, row.indexdef ?? row.definition ?? (row.predicate ? `WHERE ${row.predicate}` : "")]));
     const objects = [...loanColumns, ...loanConstraints, loanIndex].map((entry) => {
         const actual = entry.kind === "column" ? columnMap.get(entry.actualKey) ?? null : entry.kind === "constraint" ? constraintMap.get(entry.actualKey) ?? null : indexMap.get(entry.actualKey) ?? null;
         return classify(entry, actual);

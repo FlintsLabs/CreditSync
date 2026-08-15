@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test";
+import postgres from "postgres";
+import { drizzle } from "drizzle-orm/postgres-js";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
+import { resolve } from "node:path";
 import {
     assertCompatibleLoanOriginationSchema,
     inspectLoanOriginationSchema,
@@ -6,7 +10,7 @@ import {
 } from "./loan-origination-schema-contract";
 
 type Catalog = {
-    columns?: Array<{ table: string; name: string; type: string; nullable: boolean }>;
+    columns?: Array<{ table: string; name: string; type: string; nullable: boolean; numericPrecision?: number | null; numericScale?: number | null }>;
     constraints?: Array<{ table: string; name: string; definition: string }>;
     indexes?: Array<{ table: string; name: string; definition: string; predicate: string | null }>;
 };
@@ -23,6 +27,49 @@ const fakeCatalog = (catalog: Catalog): SchemaCatalogExecutor => {
         return Promise.resolve([]);
     };
 };
+
+test("accepts PostgreSQL canonical constraint and partial-index definitions", async () => {
+    const report = await inspectLoanOriginationSchema(fakeCatalog({
+        columns: [
+            { table: "loans", name: "activation_idempotency_key", type: "text", nullable: true },
+            { table: "loans", name: "activation_result", type: "jsonb", nullable: true },
+        ],
+        constraints: [
+            { table: "loans", name: "loans_interest_period_unit_check", definition: `CHECK ((interest_period_unit IS NULL) OR (interest_period_unit = ANY (ARRAY['day'::text, 'week'::text])))` },
+        ],
+        indexes: [
+            { table: "loans", name: "loans_tenant_activation_idempotency_unique", definition: "CREATE UNIQUE INDEX loans_tenant_activation_idempotency_unique ON public.loans USING btree (tenant_id, activation_idempotency_key) WHERE (activation_idempotency_key IS NOT NULL)", predicate: "(activation_idempotency_key IS NOT NULL)" },
+        ],
+    }));
+
+    expect(report.objects.find((item) => item.name === "loans.loans_interest_period_unit_check")?.state).toBe("compatible");
+    expect(report.objects.find((item) => item.name === "loans.loans_tenant_activation_idempotency_unique")?.state).toBe("compatible");
+});
+
+test("rejects materially different canonical constraints and indexes", async () => {
+    const report = await inspectLoanOriginationSchema(fakeCatalog({
+        columns: [
+            { table: "loans", name: "activation_idempotency_key", type: "text", nullable: true },
+            { table: "loans", name: "activation_result", type: "jsonb", nullable: true },
+        ],
+        constraints: [
+            { table: "loans", name: "loans_interest_period_unit_check", definition: "CHECK (interest_period_unit IS NULL OR interest_period_unit IN ('day', 'month'))" },
+        ],
+        indexes: [
+            { table: "loans", name: "loans_tenant_activation_idempotency_unique", definition: "CREATE UNIQUE INDEX loans_tenant_activation_idempotency_unique ON public.loans USING btree (tenant_id, activation_idempotency_key)", predicate: null },
+        ],
+    }));
+
+    expect(report.objects.find((item) => item.name === "loans.loans_interest_period_unit_check")?.state).toBe("incompatible");
+    expect(report.objects.find((item) => item.name === "loans.loans_tenant_activation_idempotency_unique")?.state).toBe("incompatible");
+});
+
+test("distinguishes constrained numeric columns from unconstrained numeric columns", async () => {
+    const constrained = await inspectLoanOriginationSchema(fakeCatalog({
+        columns: [{ table: "loans", name: "single_payment_fixed_agreed_interest", type: "numeric", nullable: true, numericPrecision: 10, numericScale: 2 }],
+    }));
+    expect(constrained.objects.find((item) => item.name === "loans.single_payment_fixed_agreed_interest")?.state).toBe("incompatible");
+});
 
 test("classifies missing and incompatible loan columns without exposing row data", async () => {
     const report = await inspectLoanOriginationSchema(fakeCatalog({
@@ -79,4 +126,18 @@ test("classifies required loan constraints and activation index as missing", asy
 test("assertCompatibleLoanOriginationSchema fails closed", () => {
     expect(() => assertCompatibleLoanOriginationSchema({ compatible: false, objects: [] })).toThrow();
     expect(() => assertCompatibleLoanOriginationSchema({ compatible: true, objects: [] })).not.toThrow();
+});
+
+const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
+integrationTest("inspects every contract object after applying the current migrations", async () => {
+    const databaseUrl = process.env.TEST_DATABASE_URL!;
+    const sql = postgres(databaseUrl, { max: 1 });
+    try {
+        await migrate(drizzle(sql), { migrationsFolder: resolve(import.meta.dir, "../../drizzle") });
+        const report = await inspectLoanOriginationSchema(sql);
+        expect(report.compatible).toBe(true);
+        expect(report.objects.every((object) => object.state === "compatible")).toBe(true);
+    } finally {
+        await sql.end();
+    }
 });
