@@ -3,6 +3,7 @@
 ## v0.3.14 - 2026-08-16
 
 ### Added
+- Added the approved production loan-schema reconciliation design, covering guarded forward-only drift repair, production-shaped rehearsal, lifecycle and idempotency verification, and separate 4,000.00 THB actual-disbursement tracking for a 7,500.00 THB zero-interest agreement.
 - Added the approved production loan-list schema-compatibility design and TDD implementation plan.
 
 ### Fixed
