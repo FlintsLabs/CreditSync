@@ -56,7 +56,8 @@ test("registers the additive accrual immutability trigger migration", async () =
         Bun.file(new URL("../../drizzle/0036_floating_weekly_intermediary_integration.sql", import.meta.url)).text(),
     ]);
 
-    expect(JSON.parse(journal).entries.at(-1)?.tag).toBe("0036_floating_weekly_intermediary_integration");
+    expect(JSON.parse(journal).entries.map((entry: { tag: string }) => entry.tag))
+        .toContain("0036_floating_weekly_intermediary_integration");
     expect(migration).toContain("enforce_loan_interest_accrual_immutability");
     expect(migration).toContain("BEFORE UPDATE OR DELETE ON loan_interest_accruals");
     expect(migration).toContain("to_jsonb(NEW) - 'status' - 'paid_amount'");

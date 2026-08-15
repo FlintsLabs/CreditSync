@@ -3,6 +3,7 @@
 ## v0.3.14 - 2026-08-16
 
 ### Added
+- Added hardened prerequisite 0037 as a fail-closed, pending-only borrower ID-card upload-intent lifecycle with tenant foreign keys, tenant-scoped apply idempotency, immutable post-finalization records, and PostgreSQL migration/transition tests; no borrower ID-card service behavior is implemented here.
 - Added the reviewed Task 4 runbook correction with executable checker exit comparison, bounded credential-safe restore, migration hash verification, exact production fingerprints, Compose artifact selection/rollback, full catalog verification, and strict MCP payload/confirmation boundaries.
 - Added the production loan-schema reconciliation runbook with fail-safe backup/restore rehearsal, exact drift gates, migration/deployment checks, rollback guidance, and inspect-first post-deploy financial workflow.
 - Added a read-only loan-origination schema contract and Bun checker that classifies required columns, constraints, and the activation idempotency index without reading loan data.

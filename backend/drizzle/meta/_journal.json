@@ -260,6 +260,13 @@
       "when": 1786701660000,
       "tag": "0036_floating_weekly_intermediary_integration",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1786713592281,
+      "tag": "0037_borrower_id_card_upload_intents",
+      "breakpoints": true
     }
   ]
 }
