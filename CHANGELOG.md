@@ -12,6 +12,9 @@
 - Added confirmed borrower aliases and borrower tags to loan-list DTOs and a locale-aware model for label normalization, deduplication, overflow, and search matching.
 - Added loan card borrower-label rendering with up to three visible badges and a localized overflow count, with search matching across hidden labels.
 
+### Changed
+- Simplified desktop and mobile sidebar chrome to app mark plus navigation toggle, moved the account menu into the sidebar footer, and removed duplicate theme and language controls now available on the Settings page.
+
 ### Fixed
 - Allowed the Loan List heading actions to wrap below the title when horizontal space is constrained and return inline when space is available.
 - Made confirmed borrower aliases deterministic in creation order and kept the new borrower-label regression files whitespace-clean.

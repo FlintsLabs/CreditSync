@@ -61,13 +61,14 @@ describe("compact dashboard sidebar", () => {
         expect(sidebar).toHaveAttribute("data-sidebar-state", "expanded");
         expect(sidebar).toHaveClass("w-64");
         expect(screen.getByRole("button", { name: "Collapse sidebar" })).toHaveAttribute("aria-expanded", "true");
-        const brandHeading = within(sidebar).getByRole("heading", { level: 1, name: "CreditSync" });
-        expect(brandHeading).toHaveClass("text-lg");
-        const brandSection = brandHeading.closest("div.flex-1.min-w-0");
-        expect(brandSection).not.toBeNull();
-        expect(brandSection).toHaveClass("min-w-0");
-        expect(brandSection).toHaveClass("flex-1");
         expect(screen.getAllByRole("link", { name: "Loans" })[0]).toHaveAttribute("aria-current", "page");
+        const header = within(sidebar).getByTestId("sidebar-header");
+        expect(within(header).getByTestId("sidebar-brand-mark")).toBeInTheDocument();
+        expect(within(header).getByRole("button", { name: "Collapse sidebar" })).toBeInTheDocument();
+        expect(within(header).queryByRole("button", { name: "Toggle theme" })).not.toBeInTheDocument();
+        expect(within(sidebar).queryByRole("button", { name: "Switch language" })).not.toBeInTheDocument();
+        const accountFooter = within(sidebar).getByTestId("sidebar-account-footer");
+        expect(within(accountFooter).getByRole("button", { name: "Open account menu for Mali" })).toBeInTheDocument();
 
         await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
 
@@ -125,5 +126,30 @@ describe("compact dashboard sidebar", () => {
         );
 
         expect(screen.getByRole("button", { name: "Open navigation" })).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Toggle theme" })).not.toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Switch language" })).not.toBeInTheDocument();
+        const mobileHeader = screen.getByTestId("mobile-header");
+        expect(within(mobileHeader).queryByRole("button", { name: "Open account menu for Mali" })).not.toBeInTheDocument();
+    });
+
+    it("places the account menu in the mobile drawer footer without theme or language controls", async () => {
+        const user = userEvent.setup();
+        render(
+            <MemoryRouter initialEntries={["/loans"]}>
+                <Routes>
+                    <Route path="/" element={<DashboardLayout />}>
+                        <Route path="loans" element={<LocationProbe />} />
+                    </Route>
+                </Routes>
+            </MemoryRouter>,
+        );
+
+        await user.click(screen.getByRole("button", { name: "Open navigation" }));
+
+        const drawer = screen.getByTestId("mobile-sidebar");
+        const accountFooter = within(drawer).getByTestId("sidebar-account-footer");
+        expect(within(accountFooter).getByRole("button", { name: "Open account menu for Mali" })).toBeInTheDocument();
+        expect(within(drawer).queryByRole("button", { name: "Toggle theme" })).not.toBeInTheDocument();
+        expect(within(drawer).queryByRole("button", { name: "Switch language" })).not.toBeInTheDocument();
     });
 });

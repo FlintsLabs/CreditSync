@@ -2,7 +2,6 @@ import { useState } from "react";
 import { Outlet, Link, useLocation } from "react-router-dom";
 import { LayoutDashboard, Users, Wallet, FileText, Settings, Activity, Menu, X, ArrowRightLeft, ScanSearch, Inbox, HandCoins } from "lucide-react";
 import { cn } from "../lib/utils";
-import { LanguageSwitcher } from "../components/LanguageSwitcher";
 import AppBar, { type AppBarProps } from "../components/AppBar";
 import { UserAccountMenu } from "../components/AppBar";
 import { useTranslation } from "react-i18next";
@@ -94,10 +93,9 @@ export default function DashboardLayout() {
                     </TooltipProvider>
                 </div>
 
-                <div className="mt-auto border-t p-4">
-                    <div className={cn("flex items-center", isSidebarCollapsed ? "justify-center" : "justify-between")}>
-                        {!isSidebarCollapsed && <span className="text-xs font-medium text-muted-foreground">{t("nav.language", "Language")}</span>}
-                        <LanguageSwitcher />
+                <div data-testid="sidebar-account-footer" className="mt-auto border-t p-4">
+                    <div className={cn("flex items-center", isSidebarCollapsed ? "justify-center" : "justify-start")}>
+                        <UserAccountMenu dropdownAlign="start" />
                     </div>
                 </div>
             </aside>
@@ -105,7 +103,7 @@ export default function DashboardLayout() {
             {/* Main Content Area */}
             <div className="flex flex-1 flex-col min-w-0">
                 {/* Mobile Header (Visible only on Mobile) */}
-                <header className="sticky top-0 z-30 flex h-16 items-center border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 md:hidden">
+                <header data-testid="mobile-header" className="sticky top-0 z-30 flex h-16 items-center border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 md:hidden">
                     <Button
                         aria-label={isMobileMenuOpen ? t("nav.closeNavigation") : t("nav.openNavigation")}
                         variant="ghost"
@@ -119,7 +117,6 @@ export default function DashboardLayout() {
                         <img aria-hidden="true" className="h-7 w-7 shrink-0 rounded-md" src="/favicon.svg" />
                         <span className="truncate text-lg font-bold">CreditSync</span>
                     </div>
-                    <UserAccountMenu />
                 </header>
 
                 {/* Mobile Sidebar Overlay (Slide-in) */}
@@ -132,9 +129,9 @@ export default function DashboardLayout() {
                         />
 
                         {/* Sidebar Panel */}
-                        <div className="relative flex w-[80%] max-w-xs flex-col bg-card shadow-2xl animate-in slide-in-from-left duration-300">
+                        <div data-testid="mobile-sidebar" className="relative flex w-[80%] max-w-xs flex-col bg-card shadow-2xl animate-in slide-in-from-left duration-300">
                             <div className="p-4 border-b">
-                                <AppBar showAccount={false} />
+                                <AppBar />
                             </div>
 
                             <div className="flex-1 overflow-y-auto p-4">
@@ -160,11 +157,8 @@ export default function DashboardLayout() {
                                 </nav>
                             </div>
 
-                            <div className="border-t p-4">
-                                <div className="flex items-center justify-between">
-                                    <span className="text-sm font-medium text-muted-foreground">{t("nav.language", "Language")}</span>
-                                    <LanguageSwitcher />
-                                </div>
+                            <div data-testid="sidebar-account-footer" className="border-t p-4">
+                                <UserAccountMenu dropdownAlign="start" />
                             </div>
                         </div>
                     </div>

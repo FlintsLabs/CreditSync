@@ -9,7 +9,6 @@ import {
     TooltipProvider,
     TooltipTrigger,
 } from "./ui/tooltip";
-import { ModeToggle } from "./theme-toggle";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { Button } from "./ui/Button";
 import { getStoredUser } from "../lib/session";
@@ -25,7 +24,6 @@ import {
 } from "./ui/dropdown-menu";
 
 export type AppBarProps = {
-    showAccount?: boolean;
     compact?: boolean;
     sidebarToggle?: {
         collapsed: boolean;
@@ -36,9 +34,10 @@ export type AppBarProps = {
 
 export type UserAccountMenuProps = {
     buttonClassName?: string;
+    dropdownAlign?: "start" | "end";
 };
 
-export function UserAccountMenu({ buttonClassName }: UserAccountMenuProps = {}) {
+export function UserAccountMenu({ buttonClassName, dropdownAlign = "end" }: UserAccountMenuProps = {}) {
     const { t } = useTranslation();
     const navigate = useNavigate();
     const user = getStoredUser();
@@ -59,7 +58,7 @@ export function UserAccountMenu({ buttonClassName }: UserAccountMenuProps = {}) 
                 </Avatar>
             </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent className="w-56" align="end" forceMount>
+        <DropdownMenuContent className="w-56" align={dropdownAlign} forceMount>
             <DropdownMenuLabel className="font-normal">
                 <div className="flex flex-col space-y-1">
                     <p className="text-sm font-medium leading-none">{user?.name}</p>
@@ -87,20 +86,18 @@ export function UserAccountMenu({ buttonClassName }: UserAccountMenuProps = {}) 
 }
 
 export default function AppBar({
-    showAccount = true,
     compact = false,
     sidebarToggle,
 }: AppBarProps) {
     const compactControlClass = compact ? "h-8 w-8" : "h-10 w-10";
-    const brand = compact ? (
+    const brand = (
         <img
+            data-testid="sidebar-brand-mark"
             aria-hidden="true"
-            className="h-6 w-6 shrink-0 rounded-md"
+            className={compact ? "h-6 w-6 shrink-0 rounded-md" : "h-8 w-8 shrink-0 rounded-md"}
             src="/favicon.svg"
             alt=""
         />
-    ) : (
-        <h1 className="text-lg font-bold ml-2">CreditSync</h1>
     );
 
     const sidebarToggleButton = sidebarToggle && (
@@ -128,30 +125,12 @@ export default function AppBar({
     );
 
     return (
-        <div className={`flex h-16 items-center border-b ${compact ? "px-1" : "px-4"} ${compact ? "justify-start" : "justify-between"}`}>
-            {compact ? (
-                <div className="grid w-full grid-cols-2 gap-1">
-                    <div className="flex h-8 items-center justify-center">{brand}</div>
-                    <div className="flex h-8 items-center justify-center">{sidebarToggleButton}</div>
-                    <div className="flex h-8 items-center justify-center">
-                        <ModeToggle compactButtonClass={compactControlClass} />
-                    </div>
-                    <div className="flex h-8 items-center justify-center">
-                        {showAccount ? <UserAccountMenu buttonClassName={compactControlClass} /> : null}
-                    </div>
-                </div>
-            ) : (
-                <>
-                    <div className="min-w-0 flex-1">
-                        <div className="whitespace-nowrap">{brand}</div>
-                    </div>
-                    <div className="flex items-center gap-0">
-                        <ModeToggle />
-                        {sidebarToggleButton}
-                        {showAccount && <UserAccountMenu />}
-                    </div>
-                </>
-            )}
+        <div
+            data-testid="sidebar-header"
+            className={`flex h-16 items-center justify-between border-b ${compact ? "px-1" : "px-4"}`}
+        >
+            <div className="flex items-center justify-center">{brand}</div>
+            <div className="flex items-center justify-center">{sidebarToggleButton}</div>
         </div>
     );
 }
