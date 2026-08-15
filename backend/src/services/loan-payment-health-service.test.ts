@@ -15,7 +15,7 @@ import {
 } from "../db/schema";
 import { loansRoute } from "../modules/loans";
 import type { CommandContext } from "./command-context";
-import { getLoanPaymentHealth } from "./loan-payment-health-service";
+import { getLoanListLegacyPaymentHealth, getLoanPaymentHealth } from "./loan-payment-health-service";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
@@ -82,6 +82,63 @@ describe("loan payment-health service", () => {
             status: "overdue", dueTodayAmount: "50.10", overdueAmount: "125.25",
             overdueItemCount: 1, maxOverdueDays: 1,
         });
+    });
+
+    // Break caught: Loan List floating health selects generalized production-incompatible
+    // columns, loses exact decimal strings, or reads another tenant/loan's accruals.
+    integrationTest("loads exact tenant-bound legacy daily accrual health for Loan List", async () => {
+        setSystemTime(new Date("2026-08-11T12:00:00+07:00"));
+        const { actor, borrower } = await seedActorAndBorrower("tenant-legacy-list");
+        const [loan, otherLoan] = await db.insert(loans).values([
+            {
+                tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id,
+                principalAmount: "12345678901234567890123456789.25", interestRate: "0.00", repaymentType: "floating",
+                outstandingPrincipal: "12345678901234567890123456789.25", status: "active",
+            },
+            {
+                tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id,
+                principalAmount: "1.00", interestRate: "0.00", repaymentType: "floating",
+                outstandingPrincipal: "1.00", status: "active",
+            },
+        ]).returning();
+        await db.insert(loanInterestAccruals).values([
+            {
+                tenantId: actor.tenantId, loanId: loan!.id, accrualDate: "2026-08-10",
+                openingPrincipal: "12345678901234567890123456789.25", rateMode: "percent", rate: "1.0000",
+                interestAmount: "12345678901234567890123456789.15", paidAmount: "0.00", status: "accrued", createdByUserId: actor.id,
+            },
+            {
+                tenantId: actor.tenantId, loanId: loan!.id, accrualDate: "2026-08-11",
+                openingPrincipal: "1.00", rateMode: "percent", rate: "1.0000",
+                interestAmount: "0.20", paidAmount: "0.00", status: "accrued", createdByUserId: actor.id,
+            },
+            {
+                tenantId: "tenant-other", loanId: loan!.id, accrualDate: "2026-08-09",
+                openingPrincipal: "999.00", rateMode: "percent", rate: "1.0000",
+                interestAmount: "999.00", paidAmount: "0.00", status: "accrued", createdByUserId: actor.id,
+            },
+            {
+                tenantId: actor.tenantId, loanId: otherLoan!.id, accrualDate: "2026-08-09",
+                openingPrincipal: "888.00", rateMode: "percent", rate: "1.0000",
+                interestAmount: "888.00", paidAmount: "0.00", status: "accrued", createdByUserId: actor.id,
+            },
+        ]);
+
+        const expectedHealth = {
+            status: "overdue",
+            dueTodayAmount: "0.20",
+            overdueAmount: "12345678901234567890123456789.15",
+            overdueItemCount: 1,
+            maxOverdueDays: 1,
+        } as const;
+        expect(await getLoanListLegacyPaymentHealth(db, loan!, { asOf: new Date() })).toEqual(expectedHealth);
+
+        const response = await new Elysia().use(loansRoute).handle(new Request("http://localhost/loans", {
+            headers: { authorization: `Bearer ${await authToken(actor)}` },
+        }));
+        const body = await response.json() as Array<{ publicId: string; paymentHealth: unknown }>;
+        expect(response.status).toBe(200);
+        expect(body.find((row) => row.publicId === loan!.publicId)?.paymentHealth).toEqual(expectedHealth);
     });
 
     // Break caught: today's floating interest is overdue immediately, partial history uses gross,

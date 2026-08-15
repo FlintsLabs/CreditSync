@@ -1,11 +1,20 @@
 import { and, eq } from "drizzle-orm";
 import type Decimal from "decimal.js";
 import { db } from "../db";
-import { loanSchedules, loans } from "../db/schema";
+import { loanInterestAccruals, loanSchedules, loans } from "../db/schema";
 import { FinancialDecimal } from "../lib/financial-decimal";
 import { computeLoanPaymentHealth, type LoanPaymentHealth } from "../lib/loan-payment-health";
 import type { CommandContext } from "./command-context";
 import { floatingInterestBalances } from "./floating-interest-service";
+
+export const loanListLegacyAccrualProjection = {
+    tenantId: loanInterestAccruals.tenantId,
+    loanId: loanInterestAccruals.loanId,
+    accrualDate: loanInterestAccruals.accrualDate,
+    interestAmount: loanInterestAccruals.interestAmount,
+    paidAmount: loanInterestAccruals.paidAmount,
+    status: loanInterestAccruals.status,
+};
 
 export function bangkokBusinessDate(value: Date) {
     const parts = new Intl.DateTimeFormat("en-CA", {
@@ -16,6 +25,37 @@ export function bangkokBusinessDate(value: Date) {
     }).formatToParts(value);
     const read = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value;
     return `${read("year")}-${read("month")}-${read("day")}`;
+}
+
+export async function getLoanListLegacyPaymentHealth(
+    executor: typeof db,
+    loan: typeof loans.$inferSelect,
+    input: { asOf: Date },
+): Promise<LoanPaymentHealth> {
+    const rows = await executor.select(loanListLegacyAccrualProjection)
+        .from(loanInterestAccruals)
+        .where(and(
+            eq(loanInterestAccruals.tenantId, loan.tenantId),
+            eq(loanInterestAccruals.loanId, loan.id),
+        ));
+
+    return computeLoanPaymentHealth({
+        lifecycleStatus: loan.status ?? "draft",
+        repaymentType: loan.repaymentType,
+        businessDate: bangkokBusinessDate(input.asOf),
+        gracePeriodDays: loan.gracePeriodDays,
+        lateFeeMode: loan.lateFeeMode,
+        lateFeeAmount: loan.lateFeeAmount,
+        schedules: [],
+        accruals: rows.map((row) => ({
+            accrualDate: row.accrualDate,
+            dueDate: row.accrualDate,
+            interestAmount: row.interestAmount,
+            paidAmount: row.paidAmount,
+            penaltyDue: "0.00",
+            status: row.status,
+        })),
+    });
 }
 
 export async function getLoanPaymentHealth(
