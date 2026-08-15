@@ -311,6 +311,8 @@ The frontend uses `/api` as the API base path and expects Vite proxy configurati
 
 Protected app navigation now keeps the dashboard overview at `/dashboard`, while resource sections live at first-level routes such as `/funds/:id`, `/borrowers/:id`, and `/loans/:id`. URL-facing resource identifiers are moving to `uuidv7`-style public IDs, while internal numeric IDs remain in the database for joins and accounting logic.
 
+In the authenticated layout, desktop users can collapse the sidebar to a 72px compact rail and expand it again. The collapsed rail keeps icon navigation, theme/account controls, and language actions reachable while preserving localized tooltips and accessible names, and the preference is remembered in browser-local storage.
+
 The tenant-admin dashboard is a Daily Command Center: it leads with exact cash due today, ranks only actionable exceptions by operational urgency, and shows compact borrower/fund repayment queues. Funding, reconciliation, and profitability remain available as secondary details. Each API-backed section loads and retries independently so one unavailable signal does not hide the rest of the operational picture.
 
 Floating daily-interest arrears appear in the Dashboard as one borrower row per loan. The row aggregates exact interest payable, reports the number of overdue daily accruals and their maximum age, and opens repayment capture without inventing a fixed schedule.

@@ -62,6 +62,8 @@
     "appbar": {
         "account": "Open account menu",
         "accountFor": "Open account menu for {{name}}",
+        "toggleTheme": "Toggle theme",
+        "languageSwitcher": "Switch language",
         "profile": "Profile",
         "settings": "Settings",
         "logout": "Log out"
@@ -114,6 +116,8 @@
         "intermediaries": "Intermediaries",
         "settings": "Settings",
         "language": "Language",
+        "collapseSidebar": "Collapse sidebar",
+        "expandSidebar": "Expand sidebar",
         "openNavigation": "Open navigation",
         "closeNavigation": "Close navigation"
     },

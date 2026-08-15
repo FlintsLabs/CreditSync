@@ -13,14 +13,17 @@ const dashboardSource = readFileSync(
 );
 
 describe("authenticated responsive page layout", () => {
-  it("uses compact mobile page edges without adding a second Dashboard inset", () => {
-    expect(layoutSource).toContain(
-      'className="flex-1 overflow-x-hidden p-4 md:p-8"',
-    );
-    expect(dashboardSource).toContain(
-      'className="flex-1 space-y-6 pb-10"',
-    );
-  });
+    it("uses compact mobile page edges without adding a second Dashboard inset", () => {
+        expect(layoutSource).toContain(
+            'className="flex-1 overflow-x-hidden p-4 md:p-8"',
+        );
+        expect(dashboardSource).toContain(
+            'className="flex-1 space-y-6 pb-10"',
+        );
+        expect(layoutSource).toContain('data-sidebar-state={isSidebarCollapsed ? "collapsed" : "expanded"}');
+        expect(layoutSource).toContain("w-[72px]");
+        expect(layoutSource).toContain('motion-reduce:transition-none');
+    });
 
   it("presents Dashboard cash metrics as divided cells in one card", () => {
     expect(dashboardSource).toContain(

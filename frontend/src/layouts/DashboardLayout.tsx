@@ -3,11 +3,19 @@ import { Outlet, Link, useLocation } from "react-router-dom";
 import { LayoutDashboard, Users, Wallet, FileText, Settings, Activity, Menu, X, ArrowRightLeft, ScanSearch, Inbox, HandCoins } from "lucide-react";
 import { cn } from "../lib/utils";
 import { LanguageSwitcher } from "../components/LanguageSwitcher";
-import AppBar, { UserAccountMenu } from "../components/AppBar";
+import AppBar, { type AppBarProps } from "../components/AppBar";
+import { UserAccountMenu } from "../components/AppBar";
 import { useTranslation } from "react-i18next";
 import { Button } from "../components/ui/Button";
 import { getStoredUser, isTenantAdminUser } from "../lib/session";
 import { SETTINGS_PATH } from "../lib/account";
+import { useSidebarCollapsed } from "../hooks/useSidebarCollapsed";
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
+} from "../components/ui/tooltip";
 
 export default function DashboardLayout() {
     const location = useLocation();
@@ -15,6 +23,13 @@ export default function DashboardLayout() {
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
     const currentUser = getStoredUser();
     const isTenantAdmin = isTenantAdminUser(currentUser);
+    const [isSidebarCollapsed, toggleSidebar] = useSidebarCollapsed();
+
+    const sidebarToggle: AppBarProps["sidebarToggle"] = {
+        collapsed: isSidebarCollapsed,
+        onToggle: toggleSidebar,
+        label: t(isSidebarCollapsed ? "nav.expandSidebar" : "nav.collapseSidebar"),
+    };
 
     const navigation = [
         ...(isTenantAdmin ? [{ name: t("nav.dashboard", "Dashboard"), href: "/dashboard", icon: LayoutDashboard }] : []),
@@ -33,35 +48,59 @@ export default function DashboardLayout() {
 
     return (
         <div className="flex min-h-screen bg-background text-foreground transition-colors duration-300">
-            {/* Desktop Sidebar (Hidden on Mobile) */}
-            <div className="hidden w-64 flex-col border-r bg-card md:flex sticky top-0 h-screen overflow-y-auto">
-                <AppBar />
+            <aside
+                data-testid="desktop-sidebar"
+                data-sidebar-state={isSidebarCollapsed ? "collapsed" : "expanded"}
+                className={cn(
+                    "sticky top-0 hidden h-screen shrink-0 flex-col overflow-y-auto border-r bg-card transition-[width] duration-200 motion-reduce:transition-none md:flex",
+                    isSidebarCollapsed ? "w-[72px]" : "w-64",
+                )}
+            >
+                <AppBar compact={isSidebarCollapsed} sidebarToggle={sidebarToggle} />
+
                 <div className="flex flex-1 flex-col gap-1 p-4">
-                    {navigation.map((item) => {
-                        const Icon = item.icon;
-                        const isActive = location.pathname === item.href || (item.href === "/intermediaries" && location.pathname.startsWith("/intermediaries/"));
-                        return (
-                            <Link
-                                key={item.href}
-                                to={item.href}
-                                className={cn(
-                                    "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
-                                    isActive ? "bg-accent text-accent-foreground" : "text-muted-foreground"
-                                )}
-                            >
-                                <Icon className="h-4 w-4" />
-                                {item.name}
-                            </Link>
-                        );
-                    })}
+                    <TooltipProvider>
+                        {navigation.map((item) => {
+                            const Icon = item.icon;
+                            const isActive = location.pathname === item.href || (item.href === "/intermediaries" && location.pathname.startsWith("/intermediaries/"));
+                            const link = (
+                                <Link
+                                    key={item.href}
+                                    to={item.href}
+                                    aria-label={item.name}
+                                    aria-current={isActive ? "page" : undefined}
+                                    className={cn(
+                                        "flex items-center gap-2 rounded-md text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground",
+                                        isSidebarCollapsed ? "size-10 justify-center p-0 mx-auto" : "px-3 py-2",
+                                        isActive ? "bg-accent text-accent-foreground" : "text-muted-foreground",
+                                    )}
+                                >
+                                    <Icon className="h-4 w-4 shrink-0" />
+                                    {!isSidebarCollapsed && item.name}
+                                </Link>
+                            );
+
+                            if (!isSidebarCollapsed) {
+                                return <div key={item.href}>{link}</div>;
+                            }
+
+                            return (
+                                <Tooltip key={item.href}>
+                                    <TooltipTrigger asChild>{link}</TooltipTrigger>
+                                    <TooltipContent side="right">{item.name}</TooltipContent>
+                                </Tooltip>
+                            );
+                        })}
+                    </TooltipProvider>
                 </div>
-                <div className="p-4 mt-auto border-t">
-                    <div className="flex items-center justify-between">
-                        <span className="text-xs font-medium text-muted-foreground">{t("nav.language", "Language")}</span>
+
+                <div className="mt-auto border-t p-4">
+                    <div className={cn("flex items-center", isSidebarCollapsed ? "justify-center" : "justify-between")}>
+                        {!isSidebarCollapsed && <span className="text-xs font-medium text-muted-foreground">{t("nav.language", "Language")}</span>}
                         <LanguageSwitcher />
                     </div>
                 </div>
-            </div>
+            </aside>
 
             {/* Main Content Area */}
             <div className="flex flex-1 flex-col min-w-0">

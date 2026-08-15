@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -27,6 +27,7 @@ describe("account navigation", () => {
     afterEach(() => {
         vi.unstubAllEnvs();
         vi.unstubAllGlobals();
+        delete (window as Window & { matchMedia?: typeof window.matchMedia }).matchMedia;
         window.history.pushState({}, "", "/");
     });
 
@@ -106,6 +107,23 @@ describe("account navigation", () => {
         </MemoryRouter>);
 
         expect(screen.getAllByRole("link", { name: "Settings" })[0]).toHaveAttribute("href", "/settings");
+    });
+
+    it("keeps Settings accessible on collapsed desktop sidebar", () => {
+        localStorage.setItem("user", JSON.stringify({ id: 7, name: "Mali", email: "mali@example.com", role: "owner" }));
+        localStorage.setItem("creditsync:sidebar-collapsed", "true");
+
+        render(<MemoryRouter initialEntries={["/loans"]}>
+            <Routes>
+                <Route path="/" element={<DashboardLayout />}>
+                    <Route path="loans" element={<output>loans</output>} />
+                </Route>
+            </Routes>
+        </MemoryRouter>);
+
+        const sidebar = screen.getByTestId("desktop-sidebar");
+        expect(sidebar).toHaveClass("w-[72px]");
+        expect(within(sidebar).getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
     });
 
     it("redirects the legacy protected settings URL to the canonical page", async () => {
