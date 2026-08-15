@@ -3,6 +3,7 @@
 ## v0.3.13 - 2026-08-15
 
 ### Added
+- Added the approved Compact Rail sidebar design, preserving desktop navigation as a localized, accessible 72px icon rail with remembered collapse state while leaving the mobile drawer unchanged.
 - Added the approved design and TDD implementation plan for Loan List borrower labels, combining confirmed aliases and borrower tags in compact cards with label-aware search, tenant/portfolio scope, and immediate cache freshness after alias changes.
 - Added the TDD implementation plan for the approved revolving funding ledger, covering additive immutable event schema, exact fee/VAT/interest previews, manual repayments and corrections, active-loan allocation, localized Web workflows, synchronized MCP/plugin delivery, dry-run setup, and full verification.
 - Added the approved design for an append-only revolving funding ledger covering credit-card and personal-loan drawdowns, fee-only VAT, manual provider charges and repayments, exact funding allocations, compensating corrections, and synchronized Web/MCP workflows.
