@@ -5,6 +5,7 @@ const backendRoot = `${import.meta.dir}/../../`;
 const mainParent = "5268363";
 const integrationTag = "0036_floating_weekly_intermediary_integration";
 const borrowerUploadIntentMigrationTag = "0037_borrower_id_card_upload_intents";
+const productionLoanSchemaReconciliationMigrationTag = "0038_production_loan_schema_reconciliation";
 const removedBranchTags = [
     "0027_floating_interest_period_policy",
     "0028_intermediary_assignments_disbursement_groups",
@@ -88,19 +89,21 @@ async function assertBorrowerUploadIntentContract(sql: any) {
 }
 
 describe("floating weekly and intermediary integration migration lineage", () => {
-    test("keeps immutable main 0027 through 0035 followed by one monotonic 0036–0037 tail", async () => {
+    test("keeps immutable main 0027 through 0035 followed by one monotonic 0036–0038 tail", async () => {
         // Break caught: a deployed main migration is replaced/reordered, or Drizzle skips 0036 because its timestamp predates 0035.
         const entries = (await journal()).entries;
         expect(entries.slice(27).map((entry) => entry.tag)).toEqual([
             ...authoritativeMainTail,
             integrationTag,
             borrowerUploadIntentMigrationTag,
+            productionLoanSchemaReconciliationMigrationTag,
         ]);
-        expect(entries.slice(27).map((entry) => entry.idx)).toEqual([27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37]);
+        expect(entries.slice(27).map((entry) => entry.idx)).toEqual([27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38]);
         const integrationEntry = entries.at(-1)!;
-        expect(integrationEntry.when).toBeGreaterThan(Math.max(...entries.slice(0, -1).map((entry) => entry.when)));
+        expect(integrationEntry.when).toBeGreaterThan(entries.at(-2)!.when);
         expect(entries.filter((entry) => entry.tag === integrationTag)).toHaveLength(1);
         expect(entries.filter((entry) => entry.tag === borrowerUploadIntentMigrationTag)).toHaveLength(1);
+        expect(entries.filter((entry) => entry.tag === productionLoanSchemaReconciliationMigrationTag)).toHaveLength(1);
     });
 
     test("removes the branch-local migration lineage instead of replaying it", async () => {
@@ -129,7 +132,7 @@ describe("floating weekly and intermediary integration migration lineage", () =>
         }
     });
 
-    test("chains the 0036 integration snapshot from main 0035 and chains 0037 from 0036", async () => {
+    test("chains the 0036 integration snapshot from main 0035, 0037 from 0036, and 0038 from 0037", async () => {
         // Break caught: generated metadata describes the removed branch lineage or a schema before main 0035.
         const [mainSnapshot, integrationSnapshot] = await Promise.all([
             Bun.file(`${backendRoot}drizzle/meta/0035_snapshot.json`).json(),
@@ -139,6 +142,8 @@ describe("floating weekly and intermediary integration migration lineage", () =>
 
         const idCardUploadIntentSnapshot = await Bun.file(`${backendRoot}drizzle/meta/0037_snapshot.json`).json();
         expect(idCardUploadIntentSnapshot.prevId).toBe(integrationSnapshot.id);
+        const reconciliationSnapshot = await Bun.file(`${backendRoot}drizzle/meta/0038_snapshot.json`).json();
+        expect(reconciliationSnapshot.prevId).toBe(idCardUploadIntentSnapshot.id);
         const settlementPreview = integrationSnapshot.tables["public.loan_settlement_previews"];
         expect(settlementPreview).toBeDefined();
         expect(settlementPreview.columns.original_outstanding_interest).toMatchObject({
@@ -303,7 +308,7 @@ if (!testDatabaseUrl) {
             const before = await capture();
 
             for (const entry of entries.filter((candidate) =>
-                candidate.tag === integrationTag || candidate.tag === borrowerUploadIntentMigrationTag
+                candidate.tag === integrationTag || candidate.tag === borrowerUploadIntentMigrationTag || candidate.tag === productionLoanSchemaReconciliationMigrationTag
             )) {
                 await applySqlFile(`${backendRoot}drizzle/${entry.tag}.sql`);
             }
@@ -369,7 +374,7 @@ if (!testDatabaseUrl) {
         }
     });
 
-    test("applies the complete journal through 0037 to an empty database", async () => {
+    test("applies the complete journal through 0038 to an empty database", async () => {
         // Break caught: the consolidated migration only upgrades a seeded database but fails a clean install.
         const postgres = (await import("postgres")).default;
         const sql = postgres(testDatabaseUrl, { max: 1 });

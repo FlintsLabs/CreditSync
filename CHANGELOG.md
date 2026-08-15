@@ -12,6 +12,7 @@
 - Added the approved production loan-list schema-compatibility design and TDD implementation plan.
 
 ### Fixed
+- Reconciled the production-shaped loan schema through guarded, repeatable migration 0038 with fail-closed exact type/nullable, constraint, and activation-index preflight, zero-violation validation, catalog-preservation fixtures, idempotency indexing, and byte-preserving financial-row tests.
 - Corrected the Task 4 round-3 reconciliation runbook to use exact historical app and PostgreSQL container names, a concrete verifiable writer freeze with recovery, a standalone protected deployment Compose file, production zero-violation and `convalidated` gates, unmasked app stop/remove and rollback recovery, bounded migration evidence, and exact JSON MCP health validation.
 - Corrected the Task 4 production reconciliation runbook to capture checker stderr safely, use executable stdin/heredoc journal verification with intact PostgreSQL literal substitution, deploy explicit reviewed/rollback image tags through a protected temporary Compose override, run the post-migration checker from the reviewed image, enumerate all `NOT VALID` constraint checks, protect logs, and document the frozen MCP draft/idempotency boundary.
 - Made loan-origination constraint compatibility fail closed when either definition is malformed, including when both malformed definitions share the same invalid normalization sentinel.
