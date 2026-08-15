@@ -201,6 +201,8 @@ This supports a traceability model where funding can originate from a bank profi
 
 ## Local Development
 
+For the production loan-schema reconciliation procedure, including backup/restore rehearsal, the approved future `0038` migration gate, deployment health checks, rollback rules, and the inspect-first daily-loan/disbursement workflow, use [the production reconciliation runbook](./docs/operations/production-loan-schema-reconciliation.md). It is an operator procedure: do not run its production mutation steps without the required approvals and stop conditions.
+
 ### Prerequisites
 
 - Bun 1.x
