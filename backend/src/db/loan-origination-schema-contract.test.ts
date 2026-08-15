@@ -64,6 +64,20 @@ test("rejects materially different canonical constraints and indexes", async () 
     expect(report.objects.find((item) => item.name === "loans.loans_tenant_activation_idempotency_unique")?.state).toBe("incompatible");
 });
 
+test("rejects the same Boolean operands with different grouping", async () => {
+    const report = await inspectLoanOriginationSchema(fakeCatalog({
+        constraints: [
+            {
+                table: "loans",
+                name: "loans_interest_period_policy_completeness_check",
+                definition: "CHECK (((interest_period_unit IS NULL AND interest_period_length IS NULL AND advance_interest_periods IS NULL AND advance_interest_refund_policy IS NULL) AND (interest_period_anchor_date IS NULL OR interest_period_unit IS NOT NULL)) AND interest_period_length IS NOT NULL AND advance_interest_periods IS NOT NULL AND advance_interest_refund_policy IS NOT NULL AND interest_period_anchor_date IS NOT NULL)",
+            },
+        ],
+    }));
+
+    expect(report.objects.find((item) => item.name === "loans.loans_interest_period_policy_completeness_check")?.state).toBe("incompatible");
+});
+
 test("distinguishes constrained numeric columns from unconstrained numeric columns", async () => {
     const constrained = await inspectLoanOriginationSchema(fakeCatalog({
         columns: [{ table: "loans", name: "single_payment_fixed_agreed_interest", type: "numeric", nullable: true, numericPrecision: 10, numericScale: 2 }],

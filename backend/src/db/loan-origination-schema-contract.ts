@@ -104,9 +104,70 @@ const normalizeSql = (value: string): string => value
     .trim();
 
 const normalizeConstraint = (value: string): string => {
-    let normalized = normalizeSql(value);
-    normalized = normalized.replace(/\bin\s*\(([^()]*)\)/g, "in $1");
-    return normalized.replaceAll("(", "").replaceAll(")", "").replace(/\s+/g, " ").trim();
+    const normalized = value
+        .toLowerCase()
+        .replaceAll('"', "")
+        .replaceAll("public.", "")
+        .replaceAll("loans.", "")
+        .replace(/::[a-z_][a-z0-9_ ]*/g, "")
+        .replace(/=\s*any\s*\(\s*array\s*\[([^\]]+)\]\s*\)/g, "in ($1)")
+        .replace(/\s+/g, " ")
+        .trim();
+    const expression = normalized.match(/^check\s*\((.*)\)$/)?.[1] ?? normalized;
+    const tokens = expression.match(/>=|<=|<>|=|>|<|\(|\)|,|'[^']*'|[a-z_][a-z0-9_]*|\d+(?:\.\d+)?/g);
+    if (!tokens) return "!invalid";
+
+    let position = 0;
+    const parseOr = (): string | null => {
+        const terms: string[] = [];
+        const first = parseAnd();
+        if (first === null) return null;
+        terms.push(first);
+        while (tokens[position] === "or") {
+            position += 1;
+            const next = parseAnd();
+            if (next === null) return null;
+            terms.push(next);
+        }
+        return terms.length === 1 ? terms[0] : `or(${terms.join(",")})`;
+    };
+    const parseAnd = (): string | null => {
+        const terms: string[] = [];
+        const first = parseFactor();
+        if (first === null) return null;
+        terms.push(first);
+        while (tokens[position] === "and") {
+            position += 1;
+            const next = parseFactor();
+            if (next === null) return null;
+            terms.push(next);
+        }
+        return terms.length === 1 ? terms[0] : `and(${terms.join(",")})`;
+    };
+    const parseFactor = (): string | null => {
+        if (tokens[position] === "(") {
+            position += 1;
+            const nested = parseOr();
+            if (nested === null || tokens[position] !== ")") return null;
+            position += 1;
+            return nested;
+        }
+        const atom: string[] = [];
+        let nestedParentheses = 0;
+        while (position < tokens.length) {
+            const token = tokens[position];
+            if (nestedParentheses === 0 && (token === "and" || token === "or" || token === ")")) break;
+            atom.push(token);
+            position += 1;
+            if (token === "(") nestedParentheses += 1;
+            if (token === ")") nestedParentheses -= 1;
+        }
+        if (!atom.length || nestedParentheses !== 0) return null;
+        return atom.join(" ").replace(/\(\s*(\d+(?:\.\d+)?|'[^']*'|[a-z_][a-z0-9_]*)\s*\)/g, "$1");
+    };
+
+    const parsed = parseOr();
+    return parsed !== null && position === tokens.length ? parsed : "!invalid";
 };
 
 const classify = (entry: ContractEntry, actual: string | null): SchemaObjectResult => ({

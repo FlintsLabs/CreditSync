@@ -50,3 +50,26 @@ Added the closed loan-origination schema manifest, catalog-only inspector, fail-
 ### Fix commit
 
 `dbe98fd fix(db): reconcile loan schema checker catalog handling`
+
+## Fix round 2
+
+### RED evidence
+
+Added `rejects the same Boolean operands with different grouping`, using the exact same operand/operator token sequence as `loans_interest_period_policy_completeness_check` but a materially different `AND`/`OR` grouping. Before the implementation correction:
+
+`cd /home/flintstone/github/CreditSync/.worktrees/production-loan-schema-reconciliation/backend && bun test src/db/loan-origination-schema-contract.test.ts`
+
+Result: failed as required: `6 pass, 1 fail, 1 skip`; the new assertion expected `incompatible` but current production normalization returned `compatible`.
+
+### GREEN evidence
+
+- Focused unit test: `bun test src/db/loan-origination-schema-contract.test.ts` — `7 pass, 0 fail, 1 skip`.
+- Disposable PostgreSQL gate: `./scripts/test-disposable-postgres.sh src/db/loan-origination-schema-contract.test.ts` — `8 pass, 0 fail`, including the migration-backed live catalog test.
+- Backend typecheck: `bun run typecheck` — passed.
+- Whitespace validation: `git diff --check` — passed.
+
+### Round-2 correction and scope
+
+Replaced lossy all-parenthesis removal for constraints with a small fail-closed Boolean parser that preserves `AND`/`OR` grouping, flattens only associative same-operator nesting and redundant grouping, and retains canonical handling for PostgreSQL casts, redundant scalar parentheses, and `IN`/`= ANY (ARRAY[...])`. Index normalization and the valid catalog queries remain unchanged. The checker remains catalog-only and emits no row or sensitive data.
+
+Changed only `backend/src/db/loan-origination-schema-contract.ts`, `backend/src/db/loan-origination-schema-contract.test.ts`, `CHANGELOG.md`, and this report. No migration, schema, lifecycle, disbursement, production, or unrelated files were touched.
