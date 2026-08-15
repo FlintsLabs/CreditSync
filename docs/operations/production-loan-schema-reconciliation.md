@@ -6,7 +6,7 @@ Repository facts used below: `docker-compose.infra.yml` provides `postgres`, `mi
 
 ## Safety gates
 
-Use only task-specific variables. Never use `HOME`, print `.env.production`, passwords, bearer tokens, identity values, QR payloads, signed URLs, evidence, or customer rows. Keep evidence to hashes, object states, counts, exact decimal totals, public operation IDs, and sanitized logs.
+Use only task-specific variables. Never use `HOME`, print an environment file, passwords, bearer tokens, identity values, QR payloads, signed URLs, evidence, or customer rows. Keep evidence to hashes, object states, counts, exact decimal totals, public operation IDs, and restricted local log files. Never paste raw logs into chat or committed evidence.
 
 Stop and preserve evidence if a backup/restore/readiness check fails; a checker state is unexpected or `incompatible`; a migration or journal check fails; any constraint-violation query returns a row; any fingerprint changes; catalog/MCP/frontend health fails; a borrower match is ambiguous; terms, idempotency, or financial values differ; or the disbursement variance is not exactly `-3500.00`.
 
@@ -14,33 +14,41 @@ The approved pre-repair drift is exactly 16 missing nullable columns, 9 missing 
 
 ## 1. Capture a read-only baseline
 
-Run from the reviewed clean checkout. The image refs below are discovered from the actual Compose project; do not invent registry tags.
+Run from the reviewed clean checkout. Capture exact image IDs from the fixed live container names; do not assume a Compose project or use legacy image-discovery commands.
 
 ```bash
 set -eu
-export CREDITSYNC_COMPOSE_ENV_FILE=.env.production
+export CREDITSYNC_COMPOSE_ENV_FILE=/secure/creditsync/env/production.env
 export CREDITSYNC_INFRA_COMPOSE_FILE=docker-compose.infra.yml
 export CREDITSYNC_APP_COMPOSE_FILE=docker-compose.app.yml
-export CREDITSYNC_EXPECTED_BACKEND_IMAGE='<reviewed-current-backend-image-ref>'
+export CREDITSYNC_LOG_DIR=/secure/creditsync/reconciliation-logs
+mkdir -p "$CREDITSYNC_LOG_DIR"
+chmod 700 "$CREDITSYNC_LOG_DIR"
+test -r "$CREDITSYNC_COMPOSE_ENV_FILE"
 
 git status --short --branch
+test -z "$(git status --porcelain)"
 git rev-parse HEAD
 git log -1 --format='%H %cI %s'
 docker compose --env-file "$CREDITSYNC_COMPOSE_ENV_FILE" -f "$CREDITSYNC_INFRA_COMPOSE_FILE" config --services
 docker compose --env-file "$CREDITSYNC_COMPOSE_ENV_FILE" -f "$CREDITSYNC_APP_COMPOSE_FILE" config --services
 docker inspect creditsync-backend-prod creditsync-frontend-prod creditsync-postgres-prod \
   --format '{{.Name}} image={{.Config.Image}} imageId={{.Image}} status={{.State.Status}} started={{.State.StartedAt}}'
-docker image inspect "$CREDITSYNC_EXPECTED_BACKEND_IMAGE" --format '{{.RepoTags}} digest={{index .RepoDigests 0}}'
-docker compose --env-file "$CREDITSYNC_COMPOSE_ENV_FILE" -f "$CREDITSYNC_APP_COMPOSE_FILE" logs --no-color --tail=80 backend \
-  | sed -E 's/(Authorization:|Bearer )[[:space:]]*[^[:space:]]+/[REDACTED]/Ig'
-```
-
-Run the checker and record its object-state output. A non-zero result is expected only when the exact approved pre-repair drift is being compared in Section 4; do not treat it as a successful compatibility check.
-
-```bash
+export CREDITSYNC_BASELINE_CHECKER_OUT="$CREDITSYNC_LOG_DIR/baseline-checker.out"
+export CREDITSYNC_BASELINE_CHECKER_ERR="$CREDITSYNC_LOG_DIR/baseline-checker.err"
+set +e
 docker compose --env-file "$CREDITSYNC_COMPOSE_ENV_FILE" -f "$CREDITSYNC_APP_COMPOSE_FILE" exec -T backend \
-  bun run schema:check:loan-origination
+  bun run schema:check:loan-origination \
+  > "$CREDITSYNC_BASELINE_CHECKER_OUT" 2> "$CREDITSYNC_BASELINE_CHECKER_ERR"
+CREDITSYNC_BASELINE_CHECKER_STATUS=$?
+set -e
+printf 'checker_exit=%s\n' "$CREDITSYNC_BASELINE_CHECKER_STATUS" > "$CREDITSYNC_LOG_DIR/baseline-checker-status.out"
+chmod 600 "$CREDITSYNC_LOG_DIR"/*
 ```
+
+Do not print the baseline output or diagnostics. The expected non-zero result
+is compared against the restored copy in Section 4. Validate the Compose files
+read-only with `docker compose ... config --quiet` before continuing.
 
 ## 2. Create and verify a recoverable backup
 
@@ -102,7 +110,11 @@ docker exec "$CREDITSYNC_RESTORE_CONTAINER" sh -eu -c \
 
 ## 4. Prove the exact pre-repair drift
 
-The checker intentionally exits `1` for this approved drift. Capture the exit status without `set -e`, extract only checker state lines, and compare the complete exact set. Any extra line, missing line, `compatible`/`incompatible` mismatch, or stderr output is a stop.
+The checker intentionally exits `1` for this approved drift. Bun diagnostics
+may be present on stderr; retain them in a restricted local file and do not
+require stderr to be empty. Compare the complete stdout state set, not a
+subset. The direct invocation is outside `set -e` so its expected exit cannot
+abort the comparison.
 
 ```bash
 set -eu
@@ -110,8 +122,9 @@ export CREDITSYNC_DRIFT_DIR="$(mktemp -d /tmp/creditsync-schema-drift.XXXXXX)"
 chmod 700 "$CREDITSYNC_DRIFT_DIR"
 export CREDITSYNC_CHECKER_OUTPUT="$CREDITSYNC_DRIFT_DIR/checker.out"
 export CREDITSYNC_CHECKER_ERROR="$CREDITSYNC_DRIFT_DIR/checker.err"
-export CREDITSYNC_APPROVED_DRIFT="$CREDITSYNC_DRIFT_DIR/approved-missing.out"
-export CREDITSYNC_OBSERVED_DRIFT="$CREDITSYNC_DRIFT_DIR/observed-missing.out"
+export CREDITSYNC_APPROVED_DRIFT="$CREDITSYNC_DRIFT_DIR/approved-states.out"
+export CREDITSYNC_OBSERVED_DRIFT="$CREDITSYNC_DRIFT_DIR/observed-states.out"
+export CREDITSYNC_UNEXPECTED_STDOUT="$CREDITSYNC_DRIFT_DIR/unexpected-stdout.out"
 cat > "$CREDITSYNC_APPROVED_DRIFT" <<'EOF'
 loans.interest_period_unit: missing
 loans.interest_period_length: missing
@@ -149,9 +162,10 @@ set +e
 CREDITSYNC_CHECKER_STATUS=$?
 set -e
 test "$CREDITSYNC_CHECKER_STATUS" -eq 1
-test ! -s "$CREDITSYNC_CHECKER_ERROR"
-sed -nE '/^loans\.[a-z0-9_]+: (missing|compatible|incompatible)$/p' "$CREDITSYNC_CHECKER_OUTPUT" \
-  | sort > "$CREDITSYNC_OBSERVED_DRIFT"
+chmod 600 "$CREDITSYNC_CHECKER_OUTPUT" "$CREDITSYNC_CHECKER_ERROR"
+if grep -Ev '^loans\.[a-z0-9_]+: (missing|compatible|incompatible)$' "$CREDITSYNC_CHECKER_OUTPUT" > "$CREDITSYNC_UNEXPECTED_STDOUT"; then :; fi
+test ! -s "$CREDITSYNC_UNEXPECTED_STDOUT"
+sort "$CREDITSYNC_CHECKER_OUTPUT" > "$CREDITSYNC_OBSERVED_DRIFT"
 ! grep -q ': incompatible$' "$CREDITSYNC_OBSERVED_DRIFT"
 cmp -s "$CREDITSYNC_APPROVED_DRIFT" "$CREDITSYNC_OBSERVED_DRIFT"
 test "$(wc -l < "$CREDITSYNC_OBSERVED_DRIFT")" -eq 28
@@ -194,7 +208,33 @@ psql "$CREDITSYNC_RESTORE_DATABASE_URL" -X -v ON_ERROR_STOP=1 -At -f "$CREDITSYN
 cmp -s "$CREDITSYNC_FINGERPRINT_BEFORE" "$CREDITSYNC_FINGERPRINT_AFTER"
 ```
 
-Run the approved read-only constraint-violation queries from the migration review and require zero rows. Inspect every checker object, not only two columns and the index. Then run, serially, the disposable database code gates:
+Run the following executable read-only queries for every new constraint that
+may be installed `NOT VALID`; require all nine counts to be zero before
+continuation. `loans_term_months_check` and
+`loans_one_funding_source_check` are compatible and are intentionally absent.
+
+```bash
+set -eu
+export CREDITSYNC_CONSTRAINT_SQL="$CREDITSYNC_DRIFT_DIR/constraint-violations.sql"
+export CREDITSYNC_CONSTRAINT_OUT="$CREDITSYNC_DRIFT_DIR/constraint-violations.out"
+cat > "$CREDITSYNC_CONSTRAINT_SQL" <<'SQL'
+SELECT 'loans_single_payment_terms_check', count(*) FROM loans WHERE NOT ((repayment_type <> 'single_payment' AND single_payment_due_date IS NULL AND single_payment_fixed_agreed_interest IS NULL AND single_payment_interest_policy IS NULL AND single_payment_retroactive_rate_type IS NULL AND single_payment_retroactive_rate IS NULL AND single_payment_late_penalty_mode IS NULL AND single_payment_late_penalty_amount_per_day IS NULL AND single_payment_late_penalty_grace_days IS NULL) OR (repayment_type = 'single_payment' AND start_date IS NOT NULL AND single_payment_due_date > start_date AND single_payment_fixed_agreed_interest IS NOT NULL AND ((single_payment_interest_policy = 'fixed_only' AND single_payment_retroactive_rate_type IS NULL AND single_payment_retroactive_rate IS NULL) OR (single_payment_interest_policy = 'greater_of_fixed_or_retroactive' AND single_payment_retroactive_rate_type IN ('percent_per_day', 'per_thousand_per_day') AND single_payment_retroactive_rate IS NOT NULL)) AND ((single_payment_late_penalty_mode = 'none' AND single_payment_late_penalty_amount_per_day IS NULL AND single_payment_late_penalty_grace_days IS NULL) OR (single_payment_late_penalty_mode = 'fixed_amount_per_day' AND single_payment_late_penalty_amount_per_day IS NOT NULL AND single_payment_late_penalty_grace_days >= 0))));
+SELECT 'loans_floating_accrual_cycle_check', count(*) FROM loans WHERE NOT ((repayment_type = 'floating' AND floating_accrual_cycle IN ('daily', 'weekly')) OR (repayment_type <> 'floating' AND floating_accrual_cycle IS NULL));
+SELECT 'loans_single_payment_money_check', count(*) FROM loans WHERE NOT ((single_payment_fixed_agreed_interest IS NULL OR (single_payment_fixed_agreed_interest >= 0 AND scale(single_payment_fixed_agreed_interest) <= 2)) AND (single_payment_retroactive_rate IS NULL OR (single_payment_retroactive_rate >= 0 AND scale(single_payment_retroactive_rate) <= 4)) AND (single_payment_late_penalty_amount_per_day IS NULL OR (single_payment_late_penalty_amount_per_day >= 0 AND scale(single_payment_late_penalty_amount_per_day) <= 2)));
+SELECT 'loans_interest_period_unit_check', count(*) FROM loans WHERE NOT (interest_period_unit IS NULL OR interest_period_unit IN ('day', 'week'));
+SELECT 'loans_interest_period_length_check', count(*) FROM loans WHERE NOT (interest_period_length IS NULL OR interest_period_length = 1);
+SELECT 'loans_advance_interest_periods_check', count(*) FROM loans WHERE NOT (advance_interest_periods IS NULL OR advance_interest_periods IN (0, 1));
+SELECT 'loans_advance_interest_refund_policy_check', count(*) FROM loans WHERE NOT (advance_interest_refund_policy IS NULL OR advance_interest_refund_policy = 'non_refundable');
+SELECT 'loans_interest_period_policy_completeness_check', count(*) FROM loans WHERE NOT ((interest_period_unit IS NULL AND interest_period_length IS NULL AND advance_interest_periods IS NULL AND advance_interest_refund_policy IS NULL AND interest_period_anchor_date IS NULL) OR (interest_period_unit IS NOT NULL AND interest_period_length IS NOT NULL AND advance_interest_periods IS NOT NULL AND advance_interest_refund_policy IS NOT NULL AND interest_period_anchor_date IS NOT NULL));
+SELECT 'loans_activation_command_completeness_check', count(*) FROM loans WHERE NOT ((activation_idempotency_key IS NULL AND activation_result IS NULL) OR (activation_idempotency_key IS NOT NULL AND activation_result IS NOT NULL));
+SQL
+psql "$CREDITSYNC_RESTORE_DATABASE_URL" -X -v ON_ERROR_STOP=1 -At -f "$CREDITSYNC_CONSTRAINT_SQL" > "$CREDITSYNC_CONSTRAINT_OUT"
+test "$(wc -l < "$CREDITSYNC_CONSTRAINT_OUT")" -eq 9
+awk -F'|' '$2 != "0" {bad=1} END {exit bad}' "$CREDITSYNC_CONSTRAINT_OUT"
+```
+
+Inspect every checker object, not only two columns and the index. Then run,
+serially, the disposable database code gates:
 
 ```bash
 ./backend/scripts/test-disposable-postgres.sh
@@ -204,71 +244,101 @@ cd ../frontend && bun test && bun run lint && bun run build
 
 ## 6. Build, migrate production, and deploy the reviewed artifact
 
-Compose is build-only, so first capture current service image IDs and exact Compose refs, tag those IDs as rollback artifacts, build from this reviewed clean checkout, and capture the new IDs. Verify the project and refs before using them.
+Compose is build-only. Capture image IDs from the exact fixed-name live
+containers, tag those IDs as rollback artifacts before building, then build
+deterministic reviewed tags from this clean checkout. A temporary protected
+override selects the images; it does not depend on historical Compose project
+ownership.
 
 ```bash
 set -eu
-export CREDITSYNC_COMPOSE_PROJECT='creditsync-production'
 export CREDITSYNC_ROLLBACK_BACKEND_TAG='creditsync-backend-rollback:YYYYMMDDHHMM'
 export CREDITSYNC_ROLLBACK_FRONTEND_TAG='creditsync-frontend-rollback:YYYYMMDDHHMM'
-export CREDITSYNC_APP_COMPOSE_ARGS="--project-name $CREDITSYNC_COMPOSE_PROJECT --env-file $CREDITSYNC_COMPOSE_ENV_FILE -f $CREDITSYNC_APP_COMPOSE_FILE"
-docker compose $CREDITSYNC_APP_COMPOSE_ARGS config --services
-export CREDITSYNC_BACKEND_COMPOSE_REF="$(docker compose $CREDITSYNC_APP_COMPOSE_ARGS images --format '{{.Repository}}:{{.Tag}}' backend)"
-export CREDITSYNC_FRONTEND_COMPOSE_REF="$(docker compose $CREDITSYNC_APP_COMPOSE_ARGS images --format '{{.Repository}}:{{.Tag}}' frontend)"
-test -n "$CREDITSYNC_BACKEND_COMPOSE_REF" && test -n "$CREDITSYNC_FRONTEND_COMPOSE_REF"
-export CREDITSYNC_CURRENT_BACKEND_ID="$(docker compose $CREDITSYNC_APP_COMPOSE_ARGS images -q backend)"
-export CREDITSYNC_CURRENT_FRONTEND_ID="$(docker compose $CREDITSYNC_APP_COMPOSE_ARGS images -q frontend)"
-docker image inspect "$CREDITSYNC_BACKEND_COMPOSE_REF" "$CREDITSYNC_FRONTEND_COMPOSE_REF" \
-  --format '{{.Id}} {{.RepoTags}}'
+export CREDITSYNC_REVIEWED_BACKEND_TAG='creditsync-backend-reviewed:YYYYMMDDHHMM'
+export CREDITSYNC_REVIEWED_FRONTEND_TAG='creditsync-frontend-reviewed:YYYYMMDDHHMM'
+export CREDITSYNC_BACKEND_IMAGE_TAG="$CREDITSYNC_REVIEWED_BACKEND_TAG"
+export CREDITSYNC_FRONTEND_IMAGE_TAG="$CREDITSYNC_REVIEWED_FRONTEND_TAG"
+export CREDITSYNC_DEPLOY_ENV_FILE=/secure/creditsync/env/production.env
+export CREDITSYNC_OVERRIDE_FILE="$(mktemp /tmp/creditsync-app-override.XXXXXX.yml)"
+chmod 600 "$CREDITSYNC_OVERRIDE_FILE"
+set -a
+. "$CREDITSYNC_DEPLOY_ENV_FILE"
+set +a
+export CREDITSYNC_VITE_GOOGLE_CLIENT_ID="${VITE_GOOGLE_CLIENT_ID:?missing frontend build argument}"
+export CREDITSYNC_CURRENT_BACKEND_ID="$(docker inspect creditsync-backend-prod --format '{{.Image}}')"
+export CREDITSYNC_CURRENT_FRONTEND_ID="$(docker inspect creditsync-frontend-prod --format '{{.Image}}')"
+docker image inspect "$CREDITSYNC_CURRENT_BACKEND_ID" "$CREDITSYNC_CURRENT_FRONTEND_ID" --format '{{.Id}}'
 docker image tag "$CREDITSYNC_CURRENT_BACKEND_ID" "$CREDITSYNC_ROLLBACK_BACKEND_TAG"
 docker image tag "$CREDITSYNC_CURRENT_FRONTEND_ID" "$CREDITSYNC_ROLLBACK_FRONTEND_TAG"
-docker compose $CREDITSYNC_APP_COMPOSE_ARGS build backend frontend
-export CREDITSYNC_REVIEWED_BACKEND_ID="$(docker image inspect "$CREDITSYNC_BACKEND_COMPOSE_REF" --format '{{.Id}}')"
-export CREDITSYNC_REVIEWED_FRONTEND_ID="$(docker image inspect "$CREDITSYNC_FRONTEND_COMPOSE_REF" --format '{{.Id}}')"
-test -n "$CREDITSYNC_REVIEWED_BACKEND_ID" && test -n "$CREDITSYNC_REVIEWED_FRONTEND_ID"
-docker image inspect "$CREDITSYNC_REVIEWED_BACKEND_ID" "$CREDITSYNC_REVIEWED_FRONTEND_ID" --format '{{.Id}} {{.RepoTags}}'
+docker build --pull=false --tag "$CREDITSYNC_REVIEWED_BACKEND_TAG" ./backend
+docker build --pull=false --tag "$CREDITSYNC_REVIEWED_FRONTEND_TAG" \
+  --build-arg "VITE_GOOGLE_CLIENT_ID=$CREDITSYNC_VITE_GOOGLE_CLIENT_ID" ./frontend
+cat > "$CREDITSYNC_OVERRIDE_FILE" <<'YAML'
+services:
+  backend:
+    image: ${CREDITSYNC_BACKEND_IMAGE_TAG:?missing backend image tag}
+  frontend:
+    image: ${CREDITSYNC_FRONTEND_IMAGE_TAG:?missing frontend image tag}
+YAML
+docker compose --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" -f "$CREDITSYNC_APP_COMPOSE_FILE" -f "$CREDITSYNC_OVERRIDE_FILE" config --quiet
+docker compose --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" -f "$CREDITSYNC_APP_COMPOSE_FILE" -f "$CREDITSYNC_OVERRIDE_FILE" config --images > "$CREDITSYNC_LOG_DIR/reviewed-compose-images.out"
+grep -Fx "$CREDITSYNC_REVIEWED_BACKEND_TAG" "$CREDITSYNC_LOG_DIR/reviewed-compose-images.out"
+grep -Fx "$CREDITSYNC_REVIEWED_FRONTEND_TAG" "$CREDITSYNC_LOG_DIR/reviewed-compose-images.out"
 ```
 
-After a fresh backup and writer freeze, use the reviewed backend image ID for the one-off migration. Do not run this section during documentation review.
+After a fresh backup and writer freeze, use the reviewed backend image tag for the one-off migration. Do not run this section during documentation review.
 
 ```bash
 export CREDITSYNC_PRODUCTION_MIGRATION_CONTAINER=creditsync-backend-schema-migrate-YYYYMMDDHHMM
 docker run --rm --name "$CREDITSYNC_PRODUCTION_MIGRATION_CONTAINER" \
-  --network creditsync_runtime --env-file .env.production \
-  "$CREDITSYNC_REVIEWED_BACKEND_ID" bun run migrate
+  --network creditsync_runtime --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" \
+  "$CREDITSYNC_REVIEWED_BACKEND_TAG" bun run migrate
 ```
 
 Verify the journal using its actual columns (`id`, `hash`, `created_at`), never `tag`, and verify all contract objects:
 
 ```bash
-docker compose --env-file "$CREDITSYNC_COMPOSE_ENV_FILE" -f "$CREDITSYNC_INFRA_COMPOSE_FILE" exec -T postgres sh -eu -c \
-  -e "CREDITSYNC_0038_SHA256=$CREDITSYNC_0038_SHA256" \
-  'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -X -v ON_ERROR_STOP=1 \
+docker compose --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" -f "$CREDITSYNC_INFRA_COMPOSE_FILE" \
+  exec -T -e "CREDITSYNC_0038_SHA256=$CREDITSYNC_0038_SHA256" postgres sh -eu -c \
+  'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -X -v ON_ERROR_STOP=1 -At \
     -c "SELECT count(*), min(created_at), max(created_at) FROM drizzle.__drizzle_migrations WHERE hash = '\''$CREDITSYNC_0038_SHA256'\''"' \
-  > "$CREDITSYNC_DRIFT_DIR/production-0038-journal.out"
-test "$(cut -d'|' -f1 "$CREDITSYNC_DRIFT_DIR/production-0038-journal.out")" -eq 1
-test "$(cut -d'|' -f2 "$CREDITSYNC_DRIFT_DIR/production-0038-journal.out")" = "$CREDITSYNC_EXPECTED_0038_CREATED_AT"
-test "$(cut -d'|' -f3 "$CREDITSYNC_DRIFT_DIR/production-0038-journal.out")" = "$CREDITSYNC_EXPECTED_0038_CREATED_AT"
-docker compose $CREDITSYNC_APP_COMPOSE_ARGS exec -T backend bun run schema:check:loan-origination
-docker compose $CREDITSYNC_APP_COMPOSE_ARGS up -d --no-build --force-recreate backend frontend
+  > "$CREDITSYNC_LOG_DIR/production-0038-journal.out"
+test "$(cut -d'|' -f1 "$CREDITSYNC_LOG_DIR/production-0038-journal.out")" -eq 1
+test "$(cut -d'|' -f2 "$CREDITSYNC_LOG_DIR/production-0038-journal.out")" = "$CREDITSYNC_EXPECTED_0038_CREATED_AT"
+test "$(cut -d'|' -f3 "$CREDITSYNC_LOG_DIR/production-0038-journal.out")" = "$CREDITSYNC_EXPECTED_0038_CREATED_AT"
+docker run --rm --name creditsync-backend-schema-check-YYYYMMDDHHMM \
+  --network creditsync_runtime --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" \
+  "$CREDITSYNC_REVIEWED_BACKEND_TAG" bun run schema:check:loan-origination
+
+docker compose --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" -f "$CREDITSYNC_APP_COMPOSE_FILE" -f "$CREDITSYNC_OVERRIDE_FILE" config --quiet
+docker compose --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" -f "$CREDITSYNC_APP_COMPOSE_FILE" -f "$CREDITSYNC_OVERRIDE_FILE" config --images > "$CREDITSYNC_LOG_DIR/deploy-compose-images.out"
+grep -Fx "$CREDITSYNC_REVIEWED_BACKEND_TAG" "$CREDITSYNC_LOG_DIR/deploy-compose-images.out"
+grep -Fx "$CREDITSYNC_REVIEWED_FRONTEND_TAG" "$CREDITSYNC_LOG_DIR/deploy-compose-images.out"
+docker compose --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" -f "$CREDITSYNC_APP_COMPOSE_FILE" -f "$CREDITSYNC_OVERRIDE_FILE" up -d --no-build --force-recreate backend frontend
 ```
 
-Sanitize and inspect startup logs; redact authorization/bearer material and stop rather than copying logs containing sensitive data:
+Capture startup logs without emitting them. Inspect the restricted file only
+locally; stop if it contains a token or other sensitive material. Do not rely
+on a partial redaction regex.
 
 ```bash
-docker compose $CREDITSYNC_APP_COMPOSE_ARGS logs --no-color --tail=120 backend \
-  | sed -E 's/(Authorization:|Bearer )[[:space:]]*[^[:space:]]+/[REDACTED]/Ig'
+set -eu
+export CREDITSYNC_STARTUP_LOG="$CREDITSYNC_LOG_DIR/backend-startup.log"
+docker compose --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" -f "$CREDITSYNC_APP_COMPOSE_FILE" -f "$CREDITSYNC_OVERRIDE_FILE" \
+  logs --no-color --tail=120 backend > "$CREDITSYNC_STARTUP_LOG" 2>&1
+chmod 600 "$CREDITSYNC_STARTUP_LOG"
+test -s "$CREDITSYNC_STARTUP_LOG"
 ```
 
 ## 7. Health and MCP application verification
 
 ```bash
-docker compose $CREDITSYNC_APP_COMPOSE_ARGS exec -T backend \
-  bun -e 'const r=await fetch("http://127.0.0.1:3000/mcp/health"); console.log(await r.text()); process.exit(r.ok?0:1)'
+docker compose --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" -f "$CREDITSYNC_APP_COMPOSE_FILE" -f "$CREDITSYNC_OVERRIDE_FILE" exec -T backend \
+  bun -e 'const r=await fetch("http://127.0.0.1:3000/mcp/health"); const body=await r.text(); if (!r.ok || !body.includes("status") || !body.includes("ok")) process.exit(1)'
 curl --fail --silent --show-error http://127.0.0.1:8088/ > /dev/null
 ```
 
-Health must be `status: ok`, service `creditsync-mcp`, schema version `1.0`. Use the registered authenticated MCP client. The following strict JSON payloads are schema-bound templates; replace only returned public UUIDs and the ISO timestamp, never add credentials or identity data:
+Health must be `status: ok`, service `creditsync-mcp`, schema version `1.0`. Use the registered authenticated MCP client. The frozen schema has no idempotency input for `loan.draft`; only commands whose schemas support it receive stable idempotency keys. The following strict JSON payloads are schema-bound templates; replace only returned public UUIDs and the ISO timestamp, never add credentials or identity data:
 
 ```json
 {"name":"loan.preview","arguments":{"principal":"7500.00","interestRate":"0.00","termMonths":1,"repaymentType":"daily","startDate":"2026-08-16","dailyEntry":{"durationUnit":"days","durationValue":75,"entryMode":"daily_payment","dailyPayment":"100.00"}}}
@@ -288,15 +358,20 @@ Health must be `status: ok`, service `creditsync-mcp`, schema version `1.0`. Use
 
 ## 8. Roll back only application images
 
-If the reviewed image fails health or accounting verification, retain the additive schema and retag the saved rollback IDs onto the exact Compose refs captured in Section 6, then recreate without building. Do not drop columns, constraints, indexes, or run a down migration.
+If the reviewed image fails health or accounting verification, retain the
+additive schema and select the saved rollback tags through the same temporary
+override. Verify the resolved tags before recreation. Do not drop columns,
+constraints, indexes, or run a down migration.
 
 ```bash
 set -eu
-docker image tag "$CREDITSYNC_ROLLBACK_BACKEND_TAG" "$CREDITSYNC_BACKEND_COMPOSE_REF"
-docker image tag "$CREDITSYNC_ROLLBACK_FRONTEND_TAG" "$CREDITSYNC_FRONTEND_COMPOSE_REF"
-docker compose $CREDITSYNC_APP_COMPOSE_ARGS up -d --no-build --force-recreate backend frontend
-docker compose $CREDITSYNC_APP_COMPOSE_ARGS exec -T backend \
-  bun -e 'const r=await fetch("http://127.0.0.1:3000/mcp/health"); console.log(await r.text()); process.exit(r.ok?0:1)'
+export CREDITSYNC_BACKEND_IMAGE_TAG="$CREDITSYNC_ROLLBACK_BACKEND_TAG"
+export CREDITSYNC_FRONTEND_IMAGE_TAG="$CREDITSYNC_ROLLBACK_FRONTEND_TAG"
+docker compose --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" -f "$CREDITSYNC_APP_COMPOSE_FILE" -f "$CREDITSYNC_OVERRIDE_FILE" config --quiet
+docker compose --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" -f "$CREDITSYNC_APP_COMPOSE_FILE" -f "$CREDITSYNC_OVERRIDE_FILE" config --images > "$CREDITSYNC_LOG_DIR/rollback-compose-images.out"
+grep -Fx "$CREDITSYNC_ROLLBACK_BACKEND_TAG" "$CREDITSYNC_LOG_DIR/rollback-compose-images.out"
+grep -Fx "$CREDITSYNC_ROLLBACK_FRONTEND_TAG" "$CREDITSYNC_LOG_DIR/rollback-compose-images.out"
+docker compose --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" -f "$CREDITSYNC_APP_COMPOSE_FILE" -f "$CREDITSYNC_OVERRIDE_FILE" up -d --no-build --force-recreate backend frontend
 ```
 
 Record only sanitized Git SHA, image IDs/digests, Compose states/refs, backup checksum/path, restore result, exact schema states, journal hash/timestamp result, fingerprint comparison, health responses, and public operation IDs. Never attach dumps, env files, tokens, identity values, evidence, or full rows.
