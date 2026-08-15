@@ -6,7 +6,7 @@
 - Added the approved production loan-list schema-compatibility design and TDD implementation plan.
 
 ### Fixed
-- Made the loan list use a deployed-compatible explicit projection, deriving payment health only from the persisted legacy daily-interest policy, while preserving access scope, borrower labels, exact money strings, and replacing failed loads with a localized retryable error state.
+- Made the loan list use deployed-compatible explicit loan and legacy floating-accrual projections, deriving floating payment health from tenant-bound persisted daily accruals without generalized balance projection or financial writes, while preserving scheduled-loan health, borrower labels, exact money strings, and the localized retryable error state.
 
 ## v0.3.13 - 2026-08-15
 
