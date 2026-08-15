@@ -9,6 +9,7 @@
 - Added the approved production loan-list schema-compatibility design and TDD implementation plan.
 
 ### Fixed
+- Made loan-origination constraint compatibility fail closed when either definition is malformed, including when both malformed definitions share the same invalid normalization sentinel.
 - Hardened loan-origination constraint normalization with a full-consumption lexer, bounded PostgreSQL cast handling, and associative same-operator Boolean AST flattening while rejecting unsupported operators and characters.
 - Fixed the loan-origination schema checker to use valid PostgreSQL catalogs, tolerate canonical constraint/index rendering, and reject constrained numeric columns where unconstrained numeric is required.
 - Preserved Boolean grouping while canonicalizing PostgreSQL loan-constraint output, including redundant parser parentheses, casts, and `IN`/`ANY (ARRAY[...])` rendering.

@@ -4,6 +4,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { resolve } from "node:path";
 import {
+    areConstraintDefinitionsCompatible,
     assertCompatibleLoanOriginationSchema,
     inspectLoanOriginationSchema,
     type SchemaCatalogExecutor,
@@ -88,6 +89,13 @@ test("rejects unsupported operators instead of dropping their characters", async
 
     expect(report.objects.find((item) => item.name === "loans.loans_interest_period_length_check")?.state).toBe("incompatible");
     expect(report.objects.find((item) => item.name === "loans.loans_interest_period_unit_check")?.state).toBe("incompatible");
+});
+
+test("never treats two malformed constraint definitions as compatible", () => {
+    expect(areConstraintDefinitionsCompatible(
+        "CHECK (interest_period_length = @1)",
+        "CHECK (interest_period_length = @2)",
+    )).toBe(false);
 });
 
 test("bounds PostgreSQL cast recognition to the type name", async () => {

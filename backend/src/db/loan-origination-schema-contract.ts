@@ -109,6 +109,11 @@ type BooleanExpression =
 
 const invalidExpression = "!invalid";
 
+type NormalizedConstraint = {
+    valid: boolean;
+    value: string;
+};
+
 const lexConstraint = (value: string): string[] | null => {
     const tokens: string[] = [];
     let position = 0;
@@ -174,7 +179,7 @@ const lexConstraint = (value: string): string[] | null => {
     return tokens;
 };
 
-const normalizeConstraint = (value: string): string => {
+const normalizeConstraint = (value: string): NormalizedConstraint => {
     const normalized = value
         .toLowerCase()
         .replaceAll('"', "")
@@ -184,7 +189,7 @@ const normalizeConstraint = (value: string): string => {
         .trim();
     const expression = normalized.match(/^check\s*\((.*)\)$/)?.[1] ?? normalized;
     const tokens = lexConstraint(expression);
-    if (!tokens?.length) return invalidExpression;
+    if (!tokens?.length) return { valid: false, value: invalidExpression };
 
     let position = 0;
     const flatten = (kind: "and" | "or", children: BooleanExpression[]): BooleanExpression => {
@@ -255,14 +260,29 @@ const normalizeConstraint = (value: string): string => {
         ? node.value
         : `${node.kind}(${node.children.map(stringify).join(",")})`;
     const parsed = parseOr();
-    return parsed && position === tokens.length ? stringify(parsed) : invalidExpression;
+    return parsed && position === tokens.length
+        ? { valid: true, value: stringify(parsed) }
+        : { valid: false, value: invalidExpression };
 };
 
-const classify = (entry: ContractEntry, actual: string | null): SchemaObjectResult => ({
-    ...entry,
-    state: actual === null ? "missing" : (entry.kind === "constraint" ? normalizeConstraint(actual) : normalizeSql(actual)) === (entry.kind === "constraint" ? normalizeConstraint(entry.expected) : normalizeSql(entry.expected)) ? "compatible" : "incompatible",
-    actual,
-});
+export const areConstraintDefinitionsCompatible = (expected: string, actual: string): boolean => {
+    const normalizedExpected = normalizeConstraint(expected);
+    const normalizedActual = normalizeConstraint(actual);
+    return normalizedExpected.valid
+        && normalizedActual.valid
+        && normalizedExpected.value === normalizedActual.value;
+};
+
+const classify = (entry: ContractEntry, actual: string | null): SchemaObjectResult => {
+    const compatible = actual !== null && (entry.kind === "constraint"
+        ? areConstraintDefinitionsCompatible(entry.expected, actual)
+        : normalizeSql(entry.expected) === normalizeSql(actual));
+    return {
+        ...entry,
+        state: actual === null ? "missing" : compatible ? "compatible" : "incompatible",
+        actual,
+    };
+};
 
 export async function inspectLoanOriginationSchema(executor: SchemaCatalogExecutor): Promise<LoanOriginationSchemaReport> {
     const columns = (await executor`

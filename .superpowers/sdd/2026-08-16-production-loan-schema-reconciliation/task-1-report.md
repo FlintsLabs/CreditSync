@@ -100,3 +100,26 @@ Changed only `backend/src/db/loan-origination-schema-contract.ts`, `backend/src/
 ### Honest limitations
 
 The normalizer intentionally supports the closed Boolean/check-expression subset represented by this catalog contract; it is not a general SQL parser. It accepts unquoted PostgreSQL type identifiers after casts and the existing canonical `IN`/`ANY` form. Any syntax outside the supported lexer vocabulary, including unknown characters or operators, fails closed as incompatible.
+
+## Fix round 4
+
+### RED evidence
+
+Added `never treats two malformed constraint definitions as compatible` at the smallest testable comparator seam. Against the round-3 implementation:
+
+`cd /home/flintstone/github/CreditSync/.worktrees/production-loan-schema-reconciliation/backend && bun test src/db/loan-origination-schema-contract.test.ts`
+
+Result: failed as required before implementation because the test imported the not-yet-exported comparator: `0 pass, 1 fail, 1 error`; Bun reported `Export named 'areConstraintDefinitionsCompatible' not found`.
+
+### GREEN evidence
+
+- Focused test: `bun test src/db/loan-origination-schema-contract.test.ts` — `11 pass, 1 skip, 0 fail`.
+- Disposable PostgreSQL test: `./scripts/test-disposable-postgres.sh src/db/loan-origination-schema-contract.test.ts` — `12 pass, 0 fail`, including the migration-backed contract inspection.
+- Backend typecheck: `bun run typecheck` — passed.
+- Whitespace validation: `git diff --check` — passed.
+
+### Round-4 correction and scope
+
+Constraint normalization now returns `{ valid, value }`; the exported `areConstraintDefinitionsCompatible` comparator requires both sides to be valid before comparing normalized values, and internal classification uses the same fail-closed comparator. The strict lexer, bounded casts, AST grouping, associative flattening, and closed manifest are unchanged.
+
+Changed only `backend/src/db/loan-origination-schema-contract.ts`, `backend/src/db/loan-origination-schema-contract.test.ts`, `CHANGELOG.md`, and this report. No migrations (`0037`/`0038`), `schema.ts`, financial flows, production state, lifecycle/disbursement code, or unrelated files were touched.
