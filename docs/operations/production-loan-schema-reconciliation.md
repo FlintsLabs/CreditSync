@@ -411,8 +411,12 @@ set -eu
 docker exec -i -e "CREDITSYNC_0038_SHA256=$CREDITSYNC_0038_SHA256" creditsync-postgres-prod sh -eu -c \
   'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -X -v ON_ERROR_STOP=1 -At \
     -v "creditsync_0038_sha256=$CREDITSYNC_0038_SHA256" \
-    -c "SELECT count(*), min(created_at), max(created_at) FROM drizzle.__drizzle_migrations WHERE hash = :'creditsync_0038_sha256'"' \
-  > "$CREDITSYNC_LOG_DIR/production-0038-journal.out"
+    -f -' \
+  > "$CREDITSYNC_LOG_DIR/production-0038-journal.out" <<'SQL'
+SELECT count(*), min(created_at), max(created_at)
+FROM drizzle.__drizzle_migrations
+WHERE hash = :'creditsync_0038_sha256';
+SQL
 test "$(cut -d'|' -f1 "$CREDITSYNC_LOG_DIR/production-0038-journal.out")" -eq 1
 test "$(cut -d'|' -f2 "$CREDITSYNC_LOG_DIR/production-0038-journal.out")" = "$CREDITSYNC_EXPECTED_0038_CREATED_AT"
 test "$(cut -d'|' -f3 "$CREDITSYNC_LOG_DIR/production-0038-journal.out")" = "$CREDITSYNC_EXPECTED_0038_CREATED_AT"
