@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/Button";
 import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/Card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../../components/ui/dropdown-menu";
-import { Plus, FileText, Calendar, MoreHorizontal, DollarSign, ArrowRightLeft } from "lucide-react";
+import { Plus, FileText, Calendar, MoreHorizontal, DollarSign, ArrowRightLeft, AlertCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { cn } from "../../../lib/utils";
 import { LoanClosingModal } from "./LoanClosingModal";
@@ -42,22 +42,42 @@ interface LoanRow {
 export default function LoanList() {
     const { t, i18n } = useTranslation();
     const [loans, setLoans] = useState<LoanRow[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [loadError, setLoadError] = useState(false);
     const [closingLoanId, setClosingLoanId] = useState<string | null>(null);
     const [search, setSearch] = useState("");
     const [statusFilter, setStatusFilter] = useState("all");
     const [fundingFilter, setFundingFilter] = useState("all");
     const [sortBy, setSortBy] = useState("newest");
 
+    const retryLoans = useCallback(async () => {
+        setIsLoading(true);
+        setLoadError(false);
+        try {
+            const res = await api.get("/loans");
+            setLoans(res.data ?? []);
+        } catch {
+            setLoadError(true);
+        } finally {
+            setIsLoading(false);
+        }
+    }, []);
+
     useEffect(() => {
-        const fetchLoans = async () => {
-            try {
-                const res = await api.get("/loans");
-                setLoans(res.data ?? []);
-            } catch (error) {
-                console.error("Failed to load loans");
-            }
+        let active = true;
+        void api.get("/loans")
+            .then((res) => {
+                if (active) setLoans(res.data ?? []);
+            })
+            .catch(() => {
+                if (active) setLoadError(true);
+            })
+            .finally(() => {
+                if (active) setIsLoading(false);
+            });
+        return () => {
+            active = false;
         };
-        fetchLoans();
     }, []);
 
     const visibleLoans = useMemo(() => {
@@ -223,7 +243,28 @@ export default function LoanList() {
                 ))}
             </div>
 
-            {visibleLoans.length === 0 && (
+            {isLoading && (
+                <div className="py-16 text-center text-muted-foreground" role="status">
+                    {t("loans.loading", "Loading loans...")}
+                </div>
+            )}
+
+            {loadError && !isLoading && (
+                <div className="flex flex-col items-center justify-center py-16 text-center border-2 border-dashed rounded-xl bg-muted/20" role="alert">
+                    <div className="bg-background p-4 rounded-full shadow-sm mb-4">
+                        <AlertCircle className="h-12 w-12 text-destructive" />
+                    </div>
+                    <h3 className="text-xl font-semibold">{t("loans.loadErrorTitle", "Unable to load loans")}</h3>
+                    <p className="text-muted-foreground mt-2 max-w-sm mx-auto">
+                        {t("loans.loadErrorDescription", "Check your connection and try again.")}
+                    </p>
+                    <Button className="mt-6" variant="outline" onClick={() => void retryLoans()}>
+                        {t("loans.retry", "Try again")}
+                    </Button>
+                </div>
+            )}
+
+            {!isLoading && !loadError && visibleLoans.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-16 text-center border-2 border-dashed rounded-xl bg-muted/20">
                     <div className="bg-background p-4 rounded-full shadow-sm mb-4">
                         <FileText className="h-12 w-12 text-muted-foreground/50" />

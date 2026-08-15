@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.14 - 2026-08-16
+
+### Added
+- Added the approved production loan-list schema-compatibility design and TDD implementation plan.
+
+### Fixed
+- Made the loan list use a deployed-compatible explicit projection, deriving payment health only from the persisted legacy daily-interest policy, while preserving access scope, borrower labels, exact money strings, and replacing failed loads with a localized retryable error state.
+
 ## v0.3.13 - 2026-08-15
 
 ### Added

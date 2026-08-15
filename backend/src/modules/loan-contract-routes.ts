@@ -18,6 +18,46 @@ import { DomainError } from "../services/domain-error";
 import { loanCommandContext, loanDomainFailure, loanUnauthorized } from "./loan-http-support";
 import { loanDraftBody, loanDraftUpdateBody, loanTermsBody } from "./loan-route-schemas";
 
+export const loanListLoanProjection = {
+    id: loans.id,
+    publicId: loans.publicId,
+    tenantId: loans.tenantId,
+    principalAmount: loans.principalAmount,
+    interestRate: loans.interestRate,
+    repaymentType: loans.repaymentType,
+    installmentAmount: loans.installmentAmount,
+    totalInstallments: loans.totalInstallments,
+    gracePeriodDays: loans.gracePeriodDays,
+    lateFeeMode: loans.lateFeeMode,
+    lateFeeAmount: loans.lateFeeAmount,
+    startDate: loans.startDate,
+    outstandingPrincipal: loans.outstandingPrincipal,
+    status: loans.status,
+    createdAt: loans.createdAt,
+    dailyInterestMode: loans.dailyInterestMode,
+    dailyInterestRate: loans.dailyInterestRate,
+    firstDayTreatment: loans.firstDayTreatment,
+    interestStartDate: loans.interestStartDate,
+};
+
+type LoanListProjectedLoan = Pick<typeof loans.$inferSelect, keyof typeof loanListLoanProjection>;
+
+function loanListPaymentHealthLoan(loan: LoanListProjectedLoan): typeof loans.$inferSelect {
+    const hasLegacyDailyPolicy = loan.repaymentType === "floating"
+        && (loan.dailyInterestMode === "percent" || loan.dailyInterestMode === "per_thousand")
+        && loan.dailyInterestRate !== null
+        && (loan.firstDayTreatment === "deduct" || loan.firstDayTreatment === "start_next_day")
+        && loan.interestStartDate !== null;
+    return {
+        ...loan,
+        interestPeriodUnit: hasLegacyDailyPolicy ? "day" : null,
+        interestPeriodLength: hasLegacyDailyPolicy ? 1 : null,
+        advanceInterestPeriods: hasLegacyDailyPolicy ? loan.firstDayTreatment === "deduct" ? 1 : 0 : null,
+        advanceInterestRefundPolicy: hasLegacyDailyPolicy ? "non_refundable" : null,
+        interestPeriodAnchorDate: hasLegacyDailyPolicy ? loan.interestStartDate : null,
+    } as typeof loans.$inferSelect;
+}
+
 function assertKnownKeys(value: Record<string, unknown>, allowedKeys: readonly string[], path = "body") {
     const unexpected = Object.keys(value).filter((key) => !allowedKeys.includes(key));
     if (unexpected.length) {
@@ -97,7 +137,7 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
             ttlSeconds: 30,
             loader: async () => {
                 const rows = await db.select({
-                    loan: loans,
+                    loan: loanListLoanProjection,
                     borrowerPublicId: borrowers.publicId,
                     borrowerName: borrowers.name,
                     borrowerId: borrowers.id,
@@ -140,7 +180,7 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                     installmentAmount: loan.installmentAmount === null ? null : serializeMoney(loan.installmentAmount),
                     totalInstallments: loan.totalInstallments,
                     startDate: loan.startDate,
-                    paymentHealth: await getLoanPaymentHealth(db, loan, { asOf, context: ctx }),
+                    paymentHealth: await getLoanPaymentHealth(db, loanListPaymentHealthLoan(loan), { asOf, context: ctx }),
                 })));
             },
         });

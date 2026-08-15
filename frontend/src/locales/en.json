@@ -557,6 +557,10 @@
         "calculateClosingBalance": "Calculate Closing Balance",
         "emptyTitle": "No Active Loans",
         "emptyDescription": "Create your first loan agreement to start tracking principal, interest, and repayments.",
+        "loading": "Loading loans...",
+        "loadErrorTitle": "Unable to load loans",
+        "loadErrorDescription": "Check your connection and try again.",
+        "retry": "Try again",
         "filters": {
             "allStatuses": "All statuses",
             "allFundingStates": "All funding states"
