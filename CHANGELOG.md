@@ -9,6 +9,7 @@
 - Added the approved production loan-list schema-compatibility design and TDD implementation plan.
 
 ### Fixed
+- Hardened loan-origination constraint normalization with a full-consumption lexer, bounded PostgreSQL cast handling, and associative same-operator Boolean AST flattening while rejecting unsupported operators and characters.
 - Fixed the loan-origination schema checker to use valid PostgreSQL catalogs, tolerate canonical constraint/index rendering, and reject constrained numeric columns where unconstrained numeric is required.
 - Preserved Boolean grouping while canonicalizing PostgreSQL loan-constraint output, including redundant parser parentheses, casts, and `IN`/`ANY (ARRAY[...])` rendering.
 - Made the loan list use deployed-compatible explicit loan and legacy floating-accrual projections, deriving floating payment health from tenant-bound persisted daily accruals without generalized balance projection or financial writes, while preserving scheduled-loan health, borrower labels, exact money strings, and the localized retryable error state.

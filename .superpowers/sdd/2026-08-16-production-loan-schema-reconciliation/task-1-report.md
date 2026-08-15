@@ -73,3 +73,30 @@ Result: failed as required: `6 pass, 1 fail, 1 skip`; the new assertion expected
 Replaced lossy all-parenthesis removal for constraints with a small fail-closed Boolean parser that preserves `AND`/`OR` grouping, flattens only associative same-operator nesting and redundant grouping, and retains canonical handling for PostgreSQL casts, redundant scalar parentheses, and `IN`/`= ANY (ARRAY[...])`. Index normalization and the valid catalog queries remain unchanged. The checker remains catalog-only and emits no row or sensitive data.
 
 Changed only `backend/src/db/loan-origination-schema-contract.ts`, `backend/src/db/loan-origination-schema-contract.test.ts`, `CHANGELOG.md`, and this report. No migration, schema, lifecycle, disbursement, production, or unrelated files were touched.
+
+## Fix round 3
+
+### RED evidence
+
+Added all four required regression cases: unsupported `!=`, unsupported `@`, a cast followed by an extra `AND` expression, and an equivalent nested same-operator `AND` regrouping. Against the round-2 production code:
+
+`cd /home/flintstone/github/CreditSync/.worktrees/production-loan-schema-reconciliation/backend && bun test src/db/loan-origination-schema-contract.test.ts`
+
+Result: failed as required — `7 pass, 3 fail, 1 skip`. The two unsupported-operator assertions, the cast-boundary assertion, and the associative-regrouping assertion exposed the reported fail-open behavior.
+
+### GREEN evidence
+
+- Focused unit tests: `bun test src/db/loan-origination-schema-contract.test.ts` — `10 pass, 0 fail, 1 skip`.
+- Disposable PostgreSQL gate: `./scripts/test-disposable-postgres.sh src/db/loan-origination-schema-contract.test.ts` — `11 pass, 0 fail`, including the migration-backed catalog inspection.
+- Backend typecheck: `bun run typecheck` — passed.
+- Whitespace validation: `git diff --check` — passed.
+
+### Round-3 correction and scope
+
+Replaced regex token extraction with a strict lexer that consumes every character or returns an invalid sentinel. Unsupported operators/characters therefore cannot compare equal to a valid expression. Cast handling now consumes only a `::` token and one bounded type identifier. Boolean expressions are parsed into an AST and recursively flatten only associative children with the same operator, preserving mixed `AND`/`OR` grouping. Existing acceptance for PostgreSQL casts, redundant parentheses, and `IN` versus `= ANY (ARRAY[...])` remains covered.
+
+Changed only `backend/src/db/loan-origination-schema-contract.ts`, `backend/src/db/loan-origination-schema-contract.test.ts`, `CHANGELOG.md`, and this report. No migrations (`0037`/`0038`), schema, lifecycle/disbursement code, production state, or unrelated files were touched.
+
+### Honest limitations
+
+The normalizer intentionally supports the closed Boolean/check-expression subset represented by this catalog contract; it is not a general SQL parser. It accepts unquoted PostgreSQL type identifiers after casts and the existing canonical `IN`/`ANY` form. Any syntax outside the supported lexer vocabulary, including unknown characters or operators, fails closed as incompatible.

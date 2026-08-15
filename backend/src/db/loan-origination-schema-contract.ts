@@ -103,71 +103,159 @@ const normalizeSql = (value: string): string => value
     .replace(/\(([^()]*\s(?:is null|is not null|<>|>=|<=|=|>)\s*[^()]*)\)/g, "$1")
     .trim();
 
+type BooleanExpression =
+    | { kind: "atom"; value: string }
+    | { kind: "and" | "or"; children: BooleanExpression[] };
+
+const invalidExpression = "!invalid";
+
+const lexConstraint = (value: string): string[] | null => {
+    const tokens: string[] = [];
+    let position = 0;
+    while (position < value.length) {
+        const character = value[position]!;
+        if (/\s/.test(character)) {
+            position += 1;
+            continue;
+        }
+        if (value.startsWith("::", position)) {
+            tokens.push("::");
+            position += 2;
+            continue;
+        }
+        const twoCharacterOperator = value.slice(position, position + 2);
+        if ([">=", "<=", "<>"].includes(twoCharacterOperator)) {
+            tokens.push(twoCharacterOperator);
+            position += 2;
+            continue;
+        }
+        if (["=", ">", "<", "(", ")", ","].includes(character)) {
+            tokens.push(character);
+            position += 1;
+            continue;
+        }
+        if (character === "'") {
+            const start = position;
+            position += 1;
+            let closed = false;
+            while (position < value.length) {
+                if (value[position] !== "'") {
+                    position += 1;
+                    continue;
+                }
+                if (value[position + 1] === "'") {
+                    position += 2;
+                    continue;
+                }
+                position += 1;
+                closed = true;
+                break;
+            }
+            if (!closed) return null;
+            tokens.push(value.slice(start, position));
+            continue;
+        }
+        if (/\d/.test(character)) {
+            const match = value.slice(position).match(/^\d+(?:\.\d+)?/);
+            if (!match) return null;
+            tokens.push(match[0]);
+            position += match[0].length;
+            continue;
+        }
+        if (/[a-z_]/i.test(character)) {
+            const match = value.slice(position).match(/^[a-z_][a-z0-9_]*/i);
+            if (!match) return null;
+            tokens.push(match[0].toLowerCase());
+            position += match[0].length;
+            continue;
+        }
+        return null;
+    }
+    return tokens;
+};
+
 const normalizeConstraint = (value: string): string => {
     const normalized = value
         .toLowerCase()
         .replaceAll('"', "")
         .replaceAll("public.", "")
         .replaceAll("loans.", "")
-        .replace(/::[a-z_][a-z0-9_ ]*/g, "")
         .replace(/=\s*any\s*\(\s*array\s*\[([^\]]+)\]\s*\)/g, "in ($1)")
-        .replace(/\s+/g, " ")
         .trim();
     const expression = normalized.match(/^check\s*\((.*)\)$/)?.[1] ?? normalized;
-    const tokens = expression.match(/>=|<=|<>|=|>|<|\(|\)|,|'[^']*'|[a-z_][a-z0-9_]*|\d+(?:\.\d+)?/g);
-    if (!tokens) return "!invalid";
+    const tokens = lexConstraint(expression);
+    if (!tokens?.length) return invalidExpression;
 
     let position = 0;
-    const parseOr = (): string | null => {
-        const terms: string[] = [];
+    const flatten = (kind: "and" | "or", children: BooleanExpression[]): BooleanExpression => {
+        const flattened = children.flatMap((child) => child.kind === kind ? child.children : [child]);
+        return flattened.length === 1 ? flattened[0]! : { kind, children: flattened };
+    };
+    const parseOr = (): BooleanExpression | null => {
+        const terms: BooleanExpression[] = [];
         const first = parseAnd();
-        if (first === null) return null;
+        if (!first) return null;
         terms.push(first);
         while (tokens[position] === "or") {
             position += 1;
             const next = parseAnd();
-            if (next === null) return null;
+            if (!next) return null;
             terms.push(next);
         }
-        return terms.length === 1 ? terms[0] : `or(${terms.join(",")})`;
+        return flatten("or", terms);
     };
-    const parseAnd = (): string | null => {
-        const terms: string[] = [];
+    const parseAnd = (): BooleanExpression | null => {
+        const terms: BooleanExpression[] = [];
         const first = parseFactor();
-        if (first === null) return null;
+        if (!first) return null;
         terms.push(first);
         while (tokens[position] === "and") {
             position += 1;
             const next = parseFactor();
-            if (next === null) return null;
+            if (!next) return null;
             terms.push(next);
         }
-        return terms.length === 1 ? terms[0] : `and(${terms.join(",")})`;
+        return flatten("and", terms);
     };
-    const parseFactor = (): string | null => {
+    const parseFactor = (): BooleanExpression | null => {
         if (tokens[position] === "(") {
             position += 1;
             const nested = parseOr();
-            if (nested === null || tokens[position] !== ")") return null;
+            if (!nested || tokens[position] !== ")") return null;
             position += 1;
             return nested;
         }
         const atom: string[] = [];
         let nestedParentheses = 0;
         while (position < tokens.length) {
-            const token = tokens[position];
+            const token = tokens[position]!;
             if (nestedParentheses === 0 && (token === "and" || token === "or" || token === ")")) break;
             atom.push(token);
             position += 1;
             if (token === "(") nestedParentheses += 1;
-            if (token === ")") nestedParentheses -= 1;
+            if (token === ")") {
+                nestedParentheses -= 1;
+                if (nestedParentheses < 0) return null;
+            }
         }
         if (!atom.length || nestedParentheses !== 0) return null;
-        return atom.join(" ").replace(/\(\s*(\d+(?:\.\d+)?|'[^']*'|[a-z_][a-z0-9_]*)\s*\)/g, "$1");
+        const withoutCasts: string[] = [];
+        for (let index = 0; index < atom.length; index += 1) {
+            if (atom[index] === "::") {
+                if (!withoutCasts.length || !/^[a-z_][a-z0-9_]*$/i.test(atom[index + 1] ?? "")) return null;
+                index += 1;
+                continue;
+            }
+            withoutCasts.push(atom[index]!);
+        }
+        if (!withoutCasts.length) return null;
+        return { kind: "atom", value: withoutCasts.join(" ").replace(/\(\s*(\d+(?:\.\d+)?|'[^']*'|[a-z_][a-z0-9_]*)\s*\)/g, "$1") };
     };
-
+    const stringify = (node: BooleanExpression): string => node.kind === "atom"
+        ? node.value
+        : `${node.kind}(${node.children.map(stringify).join(",")})`;
     const parsed = parseOr();
-    return parsed !== null && position === tokens.length ? parsed : "!invalid";
+    return parsed && position === tokens.length ? stringify(parsed) : invalidExpression;
 };
 
 const classify = (entry: ContractEntry, actual: string | null): SchemaObjectResult => ({
