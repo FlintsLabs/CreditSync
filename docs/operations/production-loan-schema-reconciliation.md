@@ -1,43 +1,27 @@
-# Production Loan-Schema Reconciliation Runbook
+# Production loan-schema reconciliation runbook
 
-This runbook covers the approved forward-only repair of production loan-origination schema drift. It is an operator procedure, not a migration script, and does not authorize production financial writes. Use it only with an approved maintenance window, a current rollback image, and an operator who can stop at every gate.
+This is a read-first, forward-only operator procedure for the approved `0038_production_loan_schema_reconciliation` release. It does not authorize production financial writes. Run it only during an approved maintenance window, with a protected rehearsal env file and an explicit stop decision at every gate.
 
-Repository conventions used here:
+Repository facts used below: `docker-compose.infra.yml` provides `postgres`, `minio`, `dragonfly`, and `tunnel`; `docker-compose.app.yml` provides build-only `backend` and `frontend`; the shared network is `creditsync_runtime`; and the checker is `cd backend && bun run schema:check:loan-origination`.
 
-- infrastructure: `docker-compose.infra.yml` (`postgres`, `minio`, `dragonfly`, `tunnel`)
-- application: `docker-compose.app.yml` (`backend`, `frontend`)
-- shared network: `creditsync_runtime`
-- production configuration: root `.env.production` (never print or commit it)
-- checker/migrations: `backend` package scripts
+## Safety gates
 
-Task 2's approved migration tag is `0038_production_loan_schema_reconciliation`. At this writing it is a future release artifact. Do not invent a hash, copy a migration into production, or claim that it is installed until the approved migration and metadata have been independently reviewed and shipped.
+Use only task-specific variables. Never use `HOME`, print `.env.production`, passwords, bearer tokens, identity values, QR payloads, signed URLs, evidence, or customer rows. Keep evidence to hashes, object states, counts, exact decimal totals, public operation IDs, and sanitized logs.
 
-## Safety rules and stop conditions
+Stop and preserve evidence if a backup/restore/readiness check fails; a checker state is unexpected or `incompatible`; a migration or journal check fails; any constraint-violation query returns a row; any fingerprint changes; catalog/MCP/frontend health fails; a borrower match is ambiguous; terms, idempotency, or financial values differ; or the disbursement variance is not exactly `-3500.00`.
 
-Use task-specific variables for paths, containers, databases, and images. Do not use `HOME`, inline passwords, bearer tokens, identity-card values, QR payloads, signed URLs, or evidence contents. Keep output to object names, states, counts, and sanitized health/log lines; do not paste customer rows into tickets or chat.
+The approved pre-repair drift is exactly 16 missing nullable columns, 9 missing constraints, and 1 missing partial unique index. `loans_term_months_check` and `loans_one_funding_source_check` are compatible and must not be listed as missing.
 
-Stop and preserve evidence if:
+## 1. Capture a read-only baseline
 
-- backup fails, is empty/truncated, cannot be listed by `pg_restore`, or has no recorded checksum;
-- isolated restore cannot start, restore, or connect;
-- the checker reports an object outside the exact approved drift set, or reports an approved object as `incompatible` rather than `missing`;
-- a migration errors, the migration log is ambiguous, or `drizzle.__drizzle_migrations` does not advance through the approved tag exactly once;
-- a constraint-violation query returns any row, a preservation query changes a public ID/status/principal/accrual value, or counts/totals do not reconcile;
-- catalog inspection is incompatible, backend/MCP/frontend health fails, or authenticated preview returns different terms;
-- any borrower match is ambiguous, any financial value differs, an idempotency replay duplicates a record, or variance is not exactly `-3500.00`.
-
-Never repair unexpected drift manually. Do not drop additive columns or down-migrate during application rollback. Financial corrections use the existing append-only compensating workflows after separate approval.
-
-## 1. Capture a read-only release baseline
-
-Run from the checked-out release worktree. Confirm the intended branch/image and Compose files:
+Run from the reviewed clean checkout. The image refs below are discovered from the actual Compose project; do not invent registry tags.
 
 ```bash
 set -eu
 export CREDITSYNC_COMPOSE_ENV_FILE=.env.production
 export CREDITSYNC_INFRA_COMPOSE_FILE=docker-compose.infra.yml
 export CREDITSYNC_APP_COMPOSE_FILE=docker-compose.app.yml
-export CREDITSYNC_EXPECTED_BACKEND_IMAGE='<approved-backend-image-before-release>'
+export CREDITSYNC_EXPECTED_BACKEND_IMAGE='<reviewed-current-backend-image-ref>'
 
 git status --short --branch
 git rev-parse HEAD
@@ -51,32 +35,25 @@ docker compose --env-file "$CREDITSYNC_COMPOSE_ENV_FILE" -f "$CREDITSYNC_APP_COM
   | sed -E 's/(Authorization:|Bearer )[[:space:]]*[^[:space:]]+/[REDACTED]/Ig'
 ```
 
-Record Git SHA, image digest, container state, Compose files, UTC timestamp, and the schema report. If logs contain sensitive material, stop and protect the source rather than copying it.
-
-Run the shipped read-only checker. It inspects PostgreSQL catalogs and the migration journal, not loan rows:
+Run the checker and record its object-state output. A non-zero result is expected only when the exact approved pre-repair drift is being compared in Section 4; do not treat it as a successful compatibility check.
 
 ```bash
 docker compose --env-file "$CREDITSYNC_COMPOSE_ENV_FILE" -f "$CREDITSYNC_APP_COMPOSE_FILE" exec -T backend \
   bun run schema:check:loan-origination
 ```
 
-The backend's protected runtime must provide `DATABASE_URL`; never type or print the resolved URL. A non-zero checker exit is a gate failure.
+## 2. Create and verify a recoverable backup
 
-## 2. Create and verify a recoverable PostgreSQL backup
-
-The archive is written on the operator host, not in the PostgreSQL container. Compose supplies `POSTGRES_USER` and `POSTGRES_DB` inside the container, so no password is placed in the command line:
+The dump is streamed to the operator host. The only database variables expanded inside the container are its own environment variables.
 
 ```bash
 set -eu
 umask 077
 export CREDITSYNC_BACKUP_PATH=/secure/creditsync-backups/creditsync-postgres-YYYYMMDD-HHMM.dump
 export CREDITSYNC_BACKUP_PARTIAL_PATH="${CREDITSYNC_BACKUP_PATH}.partial"
-
-test ! -e "$CREDITSYNC_BACKUP_PATH"
-test ! -e "$CREDITSYNC_BACKUP_PARTIAL_PATH"
+test ! -e "$CREDITSYNC_BACKUP_PATH" && test ! -e "$CREDITSYNC_BACKUP_PARTIAL_PATH"
 mkdir -p "$(dirname "$CREDITSYNC_BACKUP_PATH")"
-docker compose --env-file "$CREDITSYNC_COMPOSE_ENV_FILE" -f "$CREDITSYNC_INFRA_COMPOSE_FILE" \
-  exec -T postgres sh -eu -c \
+docker compose --env-file "$CREDITSYNC_COMPOSE_ENV_FILE" -f "$CREDITSYNC_INFRA_COMPOSE_FILE" exec -T postgres sh -eu -c \
   'pg_dump --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --format=custom --no-owner --file=-' \
   > "$CREDITSYNC_BACKUP_PARTIAL_PATH"
 test -s "$CREDITSYNC_BACKUP_PARTIAL_PATH"
@@ -87,11 +64,11 @@ stat --format='path=%n bytes=%s mode=%a' "$CREDITSYNC_BACKUP_PATH"
 sha256sum "$CREDITSYNC_BACKUP_PATH"
 ```
 
-Copy the final archive and checksum to approved external storage. Verify the copy with `pg_restore --list` and `sha256sum -c` through the protected operator process. Do not delete the verified local copy until the external copy is independently readable. This procedure creates no container-side temporary dump.
+Copy the archive and checksum through the protected external-storage process, then independently run `pg_restore --list` and `sha256sum -c` against the copy. Do not delete the verified local archive first.
 
-## 3. Restore into an isolated disposable PostgreSQL instance
+## 3. Restore into an isolated disposable database
 
-Use a new disposable container and a protected env file containing only temporary database settings. The env file is an operator placeholder and must not be committed:
+The protected rehearsal file must define `CREDITSYNC_REHEARSAL_DB_USER` and `CREDITSYNC_REHEARSAL_DB_PASSWORD`. It is shell-compatible, mode `600`, and is never printed. These are host variables; no container-only `POSTGRES_USER` is expanded on the host.
 
 ```bash
 set -eu
@@ -100,177 +77,226 @@ export CREDITSYNC_RESTORE_CONTAINER=creditsync-postgres-rehearsal-YYYYMMDDHHMM
 export CREDITSYNC_RESTORE_DB=creditsync_rehearsal
 export CREDITSYNC_RESTORE_PORT=55432
 test -r "$CREDITSYNC_RESTORE_ENV_FILE"
+set -a
+. "$CREDITSYNC_RESTORE_ENV_FILE"
+set +a
+export CREDITSYNC_RESTORE_USER="${CREDITSYNC_REHEARSAL_DB_USER:?missing rehearsal user}"
+export CREDITSYNC_RESTORE_PASSWORD="${CREDITSYNC_REHEARSAL_DB_PASSWORD:?missing rehearsal password}"
+export CREDITSYNC_RESTORE_DATABASE_URL="postgresql://${CREDITSYNC_RESTORE_USER}:${CREDITSYNC_RESTORE_PASSWORD}@127.0.0.1:${CREDITSYNC_RESTORE_PORT}/${CREDITSYNC_RESTORE_DB}"
 
 docker run --detach --rm --name "$CREDITSYNC_RESTORE_CONTAINER" \
-  --env-file "$CREDITSYNC_RESTORE_ENV_FILE" \
+  -e POSTGRES_USER="$CREDITSYNC_RESTORE_USER" \
+  -e POSTGRES_PASSWORD="$CREDITSYNC_RESTORE_PASSWORD" \
   -e POSTGRES_DB="$CREDITSYNC_RESTORE_DB" \
   -p "127.0.0.1:${CREDITSYNC_RESTORE_PORT}:5432" postgres:18
 trap 'docker rm --force "$CREDITSYNC_RESTORE_CONTAINER" >/dev/null 2>&1 || true' EXIT
-until docker exec "$CREDITSYNC_RESTORE_CONTAINER" pg_isready -U "$POSTGRES_USER" -d "$CREDITSYNC_RESTORE_DB"; do sleep 2; done
+for CREDITSYNC_RESTORE_ATTEMPT in $(seq 1 60); do
+  if docker exec "$CREDITSYNC_RESTORE_CONTAINER" pg_isready -U "$CREDITSYNC_RESTORE_USER" -d "$CREDITSYNC_RESTORE_DB" >/dev/null 2>&1; then break; fi
+  test "$CREDITSYNC_RESTORE_ATTEMPT" -lt 60 || { echo 'restore database readiness timeout' >&2; exit 1; }
+  sleep 2
+done
 docker cp "$CREDITSYNC_BACKUP_PATH" "$CREDITSYNC_RESTORE_CONTAINER:/tmp/restore.dump"
 docker exec "$CREDITSYNC_RESTORE_CONTAINER" sh -eu -c \
   'pg_restore --clean --if-exists --no-owner --dbname="$POSTGRES_DB" /tmp/restore.dump'
 ```
 
-Set the isolated URL only in the current process; do not echo it:
+## 4. Prove the exact pre-repair drift
+
+The checker intentionally exits `1` for this approved drift. Capture the exit status without `set -e`, extract only checker state lines, and compare the complete exact set. Any extra line, missing line, `compatible`/`incompatible` mismatch, or stderr output is a stop.
 
 ```bash
-export CREDITSYNC_RESTORE_DATABASE_URL="postgresql://${CREDITSYNC_RESTORE_USER}:${CREDITSYNC_RESTORE_PASSWORD}@127.0.0.1:${CREDITSYNC_RESTORE_PORT}/${CREDITSYNC_RESTORE_DB}"
+set -eu
+export CREDITSYNC_DRIFT_DIR="$(mktemp -d /tmp/creditsync-schema-drift.XXXXXX)"
+chmod 700 "$CREDITSYNC_DRIFT_DIR"
+export CREDITSYNC_CHECKER_OUTPUT="$CREDITSYNC_DRIFT_DIR/checker.out"
+export CREDITSYNC_CHECKER_ERROR="$CREDITSYNC_DRIFT_DIR/checker.err"
+export CREDITSYNC_APPROVED_DRIFT="$CREDITSYNC_DRIFT_DIR/approved-missing.out"
+export CREDITSYNC_OBSERVED_DRIFT="$CREDITSYNC_DRIFT_DIR/observed-missing.out"
+cat > "$CREDITSYNC_APPROVED_DRIFT" <<'EOF'
+loans.interest_period_unit: missing
+loans.interest_period_length: missing
+loans.advance_interest_periods: missing
+loans.advance_interest_refund_policy: missing
+loans.interest_period_anchor_date: missing
+loans.single_payment_due_date: missing
+loans.single_payment_fixed_agreed_interest: missing
+loans.single_payment_interest_policy: missing
+loans.single_payment_retroactive_rate_type: missing
+loans.single_payment_retroactive_rate: missing
+loans.single_payment_late_penalty_mode: missing
+loans.single_payment_late_penalty_amount_per_day: missing
+loans.single_payment_late_penalty_grace_days: missing
+loans.floating_accrual_cycle: missing
+loans.activation_idempotency_key: missing
+loans.activation_result: missing
+loans.loans_single_payment_terms_check: missing
+loans.loans_floating_accrual_cycle_check: missing
+loans.loans_single_payment_money_check: missing
+loans.loans_interest_period_unit_check: missing
+loans.loans_interest_period_length_check: missing
+loans.loans_advance_interest_periods_check: missing
+loans.loans_advance_interest_refund_policy_check: missing
+loans.loans_interest_period_policy_completeness_check: missing
+loans.loans_activation_command_completeness_check: missing
+loans.loans_tenant_activation_idempotency_unique: missing
+loans.loans_one_funding_source_check: compatible
+loans.loans_term_months_check: compatible
+EOF
+sort -o "$CREDITSYNC_APPROVED_DRIFT" "$CREDITSYNC_APPROVED_DRIFT"
+set +e
+(cd backend && DATABASE_URL="$CREDITSYNC_RESTORE_DATABASE_URL" bun run schema:check:loan-origination) \
+  > "$CREDITSYNC_CHECKER_OUTPUT" 2> "$CREDITSYNC_CHECKER_ERROR"
+CREDITSYNC_CHECKER_STATUS=$?
+set -e
+test "$CREDITSYNC_CHECKER_STATUS" -eq 1
+test ! -s "$CREDITSYNC_CHECKER_ERROR"
+sed -nE '/^loans\.[a-z0-9_]+: (missing|compatible|incompatible)$/p' "$CREDITSYNC_CHECKER_OUTPUT" \
+  | sort > "$CREDITSYNC_OBSERVED_DRIFT"
+! grep -q ': incompatible$' "$CREDITSYNC_OBSERVED_DRIFT"
+cmp -s "$CREDITSYNC_APPROVED_DRIFT" "$CREDITSYNC_OBSERVED_DRIFT"
+test "$(wc -l < "$CREDITSYNC_OBSERVED_DRIFT")" -eq 28
 ```
 
-`CREDITSYNC_RESTORE_USER` and `CREDITSYNC_RESTORE_PASSWORD` come from the protected rehearsal env file. If required extensions/roles are unavailable, stop and fix the rehearsal environment rather than weakening restore commands.
+## 5. Fingerprint rows, rehearse the repair, and compare
 
-## 4. Confirm the exact pre-migration drift
-
-Against the restored copy, before applying repair:
+Before migration, store only server-side hashes, counts, exact decimal totals, and a hash of representative public-ID/status/value tuples. This is separate from `backend/scripts/test-disposable-postgres.sh`, which resets a disposable database and does not verify rows restored from production.
 
 ```bash
-cd backend
-DATABASE_URL="$CREDITSYNC_RESTORE_DATABASE_URL" bun run schema:check:loan-origination
-```
+set -eu
+export CREDITSYNC_FINGERPRINT_BEFORE="$CREDITSYNC_DRIFT_DIR/fingerprint.before"
+export CREDITSYNC_FINGERPRINT_AFTER="$CREDITSYNC_DRIFT_DIR/fingerprint.after"
+export CREDITSYNC_FINGERPRINT_SQL="$CREDITSYNC_DRIFT_DIR/fingerprint.sql"
+cat > "$CREDITSYNC_FINGERPRINT_SQL" <<'SQL'
+SELECT 'loans', count(*), coalesce(sum(principal_amount), 0), md5(coalesce(string_agg(public_id::text || ':' || status || ':' || principal_amount::text || ':' || interest_rate::text, '|' ORDER BY public_id), '')) FROM loans;
+SELECT 'loan_interest_accruals', count(*), coalesce(sum(interest_amount), 0), md5(coalesce(string_agg(public_id::text || ':' || status || ':' || interest_amount::text, '|' ORDER BY public_id), '')) FROM loan_interest_accruals;
+SELECT 'loan_schedules', count(*), coalesce(sum(scheduled_total), 0), md5(coalesce(string_agg(public_id::text || ':' || status || ':' || scheduled_principal::text || ':' || scheduled_interest::text, '|' ORDER BY public_id), '')) FROM loan_schedules;
+SELECT 'posted_loan_disbursement_events', count(*), coalesce(sum(loan_attributed_amount), 0), md5(coalesce(string_agg(public_id::text || ':' || status || ':' || loan_attributed_amount::text, '|' ORDER BY public_id), '')) FROM loan_disbursement_events WHERE status = 'posted';
+SELECT 'fund_ledger_entries', count(*), coalesce(sum(amount), 0), md5(coalesce(string_agg(public_id::text || ':' || entry_type || ':' || amount::text, '|' ORDER BY public_id), '')) FROM fund_ledger_entries;
+SQL
+psql "$CREDITSYNC_RESTORE_DATABASE_URL" -X -v ON_ERROR_STOP=1 -At -f "$CREDITSYNC_FINGERPRINT_SQL" > "$CREDITSYNC_FINGERPRINT_BEFORE"
 
-The report must contain exactly these 16 missing nullable columns, these 11 missing constraints, and this one missing partial unique index, with every other contract object `compatible`:
-
-```text
-loans.interest_period_unit
-loans.interest_period_length
-loans.advance_interest_periods
-loans.advance_interest_refund_policy
-loans.interest_period_anchor_date
-loans.single_payment_due_date
-loans.single_payment_fixed_agreed_interest
-loans.single_payment_interest_policy
-loans.single_payment_retroactive_rate_type
-loans.single_payment_retroactive_rate
-loans.single_payment_late_penalty_mode
-loans.single_payment_late_penalty_amount_per_day
-loans.single_payment_late_penalty_grace_days
-loans.floating_accrual_cycle
-loans.activation_idempotency_key
-loans.activation_result
-loans.loans_term_months_check
-loans.loans_one_funding_source_check
-loans.loans_single_payment_terms_check
-loans.loans_floating_accrual_cycle_check
-loans.loans_single_payment_money_check
-loans.loans_interest_period_unit_check
-loans.loans_interest_period_length_check
-loans.loans_advance_interest_periods_check
-loans.loans_advance_interest_refund_policy_check
-loans.loans_interest_period_policy_completeness_check
-loans.loans_activation_command_completeness_check
-loans.loans_tenant_activation_idempotency_unique
-```
-
-The first 16 names are columns, the next 11 are constraints, and the final name is the index. A present object with wrong type, nullability, definition, predicate, or index definition is `incompatible` and is a hard stop. Do not accept a merely similar report.
-
-## 5. Apply and verify the repair on the restored copy
-
-Only use the approved release checkout containing Task 1 and the reviewed future `0038_production_loan_schema_reconciliation` migration. Verify lineage before running it:
-
-```bash
 test -f backend/drizzle/0038_production_loan_schema_reconciliation.sql
 test -f backend/drizzle/meta/0038_snapshot.json
 rg -n '0038_production_loan_schema_reconciliation' backend/drizzle/meta/_journal.json
-git diff -- backend/drizzle/0037_borrower_id_card_upload_intents.sql backend/drizzle/meta/0037_snapshot.json
-```
-
-The first two paths and journal entry are future release prerequisites, not claims about the current branch. The `0037` diff is user-owned work and must be reviewed separately.
-
-Apply the complete ordered chain to the restored copy:
-
-```bash
+export CREDITSYNC_0038_SHA256="$(sha256sum backend/drizzle/0038_production_loan_schema_reconciliation.sql | awk '{print $1}')"
+export CREDITSYNC_EXPECTED_0038_CREATED_AT='<recorded-created-at-from-reviewed-rehearsal>'
 cd backend
 DATABASE_URL="$CREDITSYNC_RESTORE_DATABASE_URL" bun run migrate
+cd ..
+psql "$CREDITSYNC_RESTORE_DATABASE_URL" -X -v ON_ERROR_STOP=1 -At -c \
+  "SELECT count(*), min(created_at), max(created_at) FROM drizzle.__drizzle_migrations WHERE hash = '$CREDITSYNC_0038_SHA256'" \
+  > "$CREDITSYNC_DRIFT_DIR/0038-journal.out"
+test "$(cut -d'|' -f1 "$CREDITSYNC_DRIFT_DIR/0038-journal.out")" -eq 1
+test "$(cut -d'|' -f2 "$CREDITSYNC_DRIFT_DIR/0038-journal.out")" = "$CREDITSYNC_EXPECTED_0038_CREATED_AT"
+test "$(cut -d'|' -f3 "$CREDITSYNC_DRIFT_DIR/0038-journal.out")" = "$CREDITSYNC_EXPECTED_0038_CREATED_AT"
 DATABASE_URL="$CREDITSYNC_RESTORE_DATABASE_URL" bun run schema:check:loan-origination
-./scripts/test-disposable-postgres.sh
-bun run typecheck
+psql "$CREDITSYNC_RESTORE_DATABASE_URL" -X -v ON_ERROR_STOP=1 -At -f "$CREDITSYNC_FINGERPRINT_SQL" > "$CREDITSYNC_FINGERPRINT_AFTER"
+cmp -s "$CREDITSYNC_FINGERPRINT_BEFORE" "$CREDITSYNC_FINGERPRINT_AFTER"
 ```
 
-The disposable test script resets a shared database; run it serially. Before/after read-only queries must compare counts and exact Decimal string totals for active-loan principal, floating accruals, schedules, and posted ledgers, plus representative public IDs and statuses. Do not print full rows. Example aggregate checks:
+Run the approved read-only constraint-violation queries from the migration review and require zero rows. Inspect every checker object, not only two columns and the index. Then run, serially, the disposable database code gates:
 
 ```bash
-psql "$CREDITSYNC_RESTORE_DATABASE_URL" -X -v ON_ERROR_STOP=1 \
-  -c "SELECT status, count(*) FROM loans GROUP BY status ORDER BY status" \
-  -c "SELECT count(*) AS active_loans, coalesce(sum(principal_amount), 0) AS principal_total FROM loans WHERE status = 'active'" \
-  -c "SELECT count(*) AS accrual_rows, coalesce(sum(accrued_amount), 0) AS accrual_total FROM floating_interest_accruals"
+./backend/scripts/test-disposable-postgres.sh
+cd backend && bun run typecheck
+cd ../frontend && bun test && bun run lint && bun run build
 ```
 
-Run the approved constraint-violation queries from migration review before validation. Any violation, changed seeded principal/accrual/status/public ID, duplicate migration application, or checker mismatch is a stop. Do not backfill unknown historical floating policy metadata.
+## 6. Build, migrate production, and deploy the reviewed artifact
 
-## 6. Production migration, then application replacement
-
-Stop or route away production writers. Re-capture the baseline and make a fresh backup immediately before this section. Do not use `up --build` as the first migration action when the current image does not contain the approved migration.
-
-Use a reviewed image containing the approved migration and immutable metadata; record its digest first:
+Compose is build-only, so first capture current service image IDs and exact Compose refs, tag those IDs as rollback artifacts, build from this reviewed clean checkout, and capture the new IDs. Verify the project and refs before using them.
 
 ```bash
-export CREDITSYNC_APPROVED_BACKEND_IMAGE='<approved-backend-image-with-0038>'
+set -eu
+export CREDITSYNC_COMPOSE_PROJECT='creditsync-production'
+export CREDITSYNC_ROLLBACK_BACKEND_TAG='creditsync-backend-rollback:YYYYMMDDHHMM'
+export CREDITSYNC_ROLLBACK_FRONTEND_TAG='creditsync-frontend-rollback:YYYYMMDDHHMM'
+export CREDITSYNC_APP_COMPOSE_ARGS="--project-name $CREDITSYNC_COMPOSE_PROJECT --env-file $CREDITSYNC_COMPOSE_ENV_FILE -f $CREDITSYNC_APP_COMPOSE_FILE"
+docker compose $CREDITSYNC_APP_COMPOSE_ARGS config --services
+export CREDITSYNC_BACKEND_COMPOSE_REF="$(docker compose $CREDITSYNC_APP_COMPOSE_ARGS images --format '{{.Repository}}:{{.Tag}}' backend)"
+export CREDITSYNC_FRONTEND_COMPOSE_REF="$(docker compose $CREDITSYNC_APP_COMPOSE_ARGS images --format '{{.Repository}}:{{.Tag}}' frontend)"
+test -n "$CREDITSYNC_BACKEND_COMPOSE_REF" && test -n "$CREDITSYNC_FRONTEND_COMPOSE_REF"
+export CREDITSYNC_CURRENT_BACKEND_ID="$(docker compose $CREDITSYNC_APP_COMPOSE_ARGS images -q backend)"
+export CREDITSYNC_CURRENT_FRONTEND_ID="$(docker compose $CREDITSYNC_APP_COMPOSE_ARGS images -q frontend)"
+docker image inspect "$CREDITSYNC_BACKEND_COMPOSE_REF" "$CREDITSYNC_FRONTEND_COMPOSE_REF" \
+  --format '{{.Id}} {{.RepoTags}}'
+docker image tag "$CREDITSYNC_CURRENT_BACKEND_ID" "$CREDITSYNC_ROLLBACK_BACKEND_TAG"
+docker image tag "$CREDITSYNC_CURRENT_FRONTEND_ID" "$CREDITSYNC_ROLLBACK_FRONTEND_TAG"
+docker compose $CREDITSYNC_APP_COMPOSE_ARGS build backend frontend
+export CREDITSYNC_REVIEWED_BACKEND_ID="$(docker image inspect "$CREDITSYNC_BACKEND_COMPOSE_REF" --format '{{.Id}}')"
+export CREDITSYNC_REVIEWED_FRONTEND_ID="$(docker image inspect "$CREDITSYNC_FRONTEND_COMPOSE_REF" --format '{{.Id}}')"
+test -n "$CREDITSYNC_REVIEWED_BACKEND_ID" && test -n "$CREDITSYNC_REVIEWED_FRONTEND_ID"
+docker image inspect "$CREDITSYNC_REVIEWED_BACKEND_ID" "$CREDITSYNC_REVIEWED_FRONTEND_ID" --format '{{.Id}} {{.RepoTags}}'
+```
+
+After a fresh backup and writer freeze, use the reviewed backend image ID for the one-off migration. Do not run this section during documentation review.
+
+```bash
 export CREDITSYNC_PRODUCTION_MIGRATION_CONTAINER=creditsync-backend-schema-migrate-YYYYMMDDHHMM
-
 docker run --rm --name "$CREDITSYNC_PRODUCTION_MIGRATION_CONTAINER" \
   --network creditsync_runtime --env-file .env.production \
-  "$CREDITSYNC_APPROVED_BACKEND_IMAGE" bun run migrate
+  "$CREDITSYNC_REVIEWED_BACKEND_ID" bun run migrate
 ```
 
-This is an operator placeholder and was intentionally not run for this documentation task. Do not continue on a non-zero result. Inspect the journal and catalog with protected credentials, using metadata only:
+Verify the journal using its actual columns (`id`, `hash`, `created_at`), never `tag`, and verify all contract objects:
 
 ```bash
-docker compose --env-file "$CREDITSYNC_COMPOSE_ENV_FILE" -f "$CREDITSYNC_INFRA_COMPOSE_FILE" \
-  exec -T postgres sh -eu -c \
+docker compose --env-file "$CREDITSYNC_COMPOSE_ENV_FILE" -f "$CREDITSYNC_INFRA_COMPOSE_FILE" exec -T postgres sh -eu -c \
+  -e "CREDITSYNC_0038_SHA256=$CREDITSYNC_0038_SHA256" \
   'psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -X -v ON_ERROR_STOP=1 \
-    -c "SELECT tag FROM drizzle.__drizzle_migrations ORDER BY created_at DESC LIMIT 3" \
-    -c "SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = '\''public'\'' AND table_name = '\''loans'\'' AND column_name IN ('\''interest_period_unit'\'', '\''activation_result'\'') ORDER BY column_name" \
-    -c "SELECT indexname FROM pg_indexes WHERE schemaname = '\''public'\'' AND indexname = '\''loans_tenant_activation_idempotency_unique'\''"'
+    -c "SELECT count(*), min(created_at), max(created_at) FROM drizzle.__drizzle_migrations WHERE hash = '\''$CREDITSYNC_0038_SHA256'\''"' \
+  > "$CREDITSYNC_DRIFT_DIR/production-0038-journal.out"
+test "$(cut -d'|' -f1 "$CREDITSYNC_DRIFT_DIR/production-0038-journal.out")" -eq 1
+test "$(cut -d'|' -f2 "$CREDITSYNC_DRIFT_DIR/production-0038-journal.out")" = "$CREDITSYNC_EXPECTED_0038_CREATED_AT"
+test "$(cut -d'|' -f3 "$CREDITSYNC_DRIFT_DIR/production-0038-journal.out")" = "$CREDITSYNC_EXPECTED_0038_CREATED_AT"
+docker compose $CREDITSYNC_APP_COMPOSE_ARGS exec -T backend bun run schema:check:loan-origination
+docker compose $CREDITSYNC_APP_COMPOSE_ARGS up -d --no-build --force-recreate backend frontend
 ```
 
-Review migration logs for successful `0038` and no error/rollback. Then replace only app containers:
+Sanitize and inspect startup logs; redact authorization/bearer material and stop rather than copying logs containing sensitive data:
 
 ```bash
-docker compose --env-file "$CREDITSYNC_COMPOSE_ENV_FILE" -f "$CREDITSYNC_APP_COMPOSE_FILE" up -d --no-deps backend
-docker compose --env-file "$CREDITSYNC_COMPOSE_ENV_FILE" -f "$CREDITSYNC_APP_COMPOSE_FILE" up -d frontend
+docker compose $CREDITSYNC_APP_COMPOSE_ARGS logs --no-color --tail=120 backend \
+  | sed -E 's/(Authorization:|Bearer )[[:space:]]*[^[:space:]]+/[REDACTED]/Ig'
 ```
 
-The backend command also runs `bun run migrate && bun run src/index.ts`; after the explicit migration this should be idempotent. Do not recreate infrastructure or expose PostgreSQL on a new public port.
-
-## 7. Health and authenticated application verification
-
-Check internal MCP health from the backend container and the public frontend on the configured host port. Deployment notes use `8088` for `FRONTEND_PORT`; use the protected actual value if different:
+## 7. Health and MCP application verification
 
 ```bash
-docker compose --env-file "$CREDITSYNC_COMPOSE_ENV_FILE" -f "$CREDITSYNC_APP_COMPOSE_FILE" exec -T backend \
-  bun -e 'const response = await fetch("http://127.0.0.1:3000/mcp/health"); console.log(await response.text()); process.exit(response.ok ? 0 : 1)'
+docker compose $CREDITSYNC_APP_COMPOSE_ARGS exec -T backend \
+  bun -e 'const r=await fetch("http://127.0.0.1:3000/mcp/health"); console.log(await r.text()); process.exit(r.ok?0:1)'
 curl --fail --silent --show-error http://127.0.0.1:8088/ > /dev/null
-docker compose --env-file "$CREDITSYNC_COMPOSE_ENV_FILE" -f "$CREDITSYNC_APP_COMPOSE_FILE" logs --no-color --tail=120 backend
 ```
 
-Health must report only `status: ok`, service `creditsync-mcp`, schema version `1.0`; logs must be sanitized. Authenticated workflow uses the registered private MCP client or Web UI with protected credentials and non-secret request/correlation IDs.
+Health must be `status: ok`, service `creditsync-mcp`, schema version `1.0`. Use the registered authenticated MCP client. The following strict JSON payloads are schema-bound templates; replace only returned public UUIDs and the ISO timestamp, never add credentials or identity data:
 
-Perform this inspect-first sequence, recording only public IDs and exact money/status results:
+```json
+{"name":"loan.preview","arguments":{"principal":"7500.00","interestRate":"0.00","termMonths":1,"repaymentType":"daily","startDate":"2026-08-16","dailyEntry":{"durationUnit":"days","durationValue":75,"entryMode":"daily_payment","dailyPayment":"100.00"}}}
+{"name":"loan.draft","arguments":{"borrowerPublicId":"<confirmed-borrower-public-uuid>","principal":"7500.00","interestRate":"0.00","termMonths":1,"repaymentType":"daily","startDate":"2026-08-16","dailyEntry":{"durationUnit":"days","durationValue":75,"entryMode":"daily_payment","dailyPayment":"100.00"}}}
+{"name":"loan.activate","arguments":{"loanPublicId":"<draft-loan-public-uuid>","idempotencyKey":"loan-p-nam-activate-20260816"}}
+{"name":"loan.disbursement.list","arguments":{"loanPublicId":"<activated-loan-public-uuid>"}}
+{"name":"loan.disbursement.draft","arguments":{"loanPublicId":"<activated-loan-public-uuid>","grossAmount":"4000.00","loanAttributedAmount":"4000.00","channel":"bank_transfer","disbursedAt":"2026-08-16T00:00:00+07:00"}}
+{"name":"loan.disbursement.list","arguments":{"loanPublicId":"<activated-loan-public-uuid>"}}
+{"name":"loan.disbursement.post","arguments":{"disbursementPublicId":"<draft-disbursement-public-uuid>","idempotencyKey":"loan-p-nam-disbursement-post-20260816"}}
+```
 
-1. Search canonical names and confirmed aliases for `พี่น้ำ`; inspect every candidate and stop on ambiguity. Reuse the confirmed borrower; do not create a duplicate or attach identity-card data.
-2. Call `loan.preview` for principal `7500.00`, interest `0.00`, daily repayment, 75 days/installments, `100.00` daily payment, and the approved Bangkok start date. Require 75 installments, `0.00` interest, first due date `2026-08-17`, and last due date `2026-10-30`.
-3. Call `loan.draft` with the confirmed borrower public UUID. Inspect the draft and schedule before activation.
-4. Call `loan.activate` with idempotency key `loan-p-nam-activate-20260816`, then replay it. Require exactly 75 schedule rows, each `100.00` principal and `0.00` interest, total principal `7500.00`.
-5. Call `loan.disbursement.draft` with `grossAmount: "4000.00"`, `loanAttributedAmount: "4000.00"`, `channel: "bank_transfer"`, and the returned loan public UUID. Create only; do not post.
-6. Call `loan.disbursement.list` and the registered detail/inspection operation; re-list the draft and show intended post-state: net disbursed `4000.00`, variance `-3500.00`, warning `under_disbursed`. Principal and schedules must be unchanged.
-7. Pause for a new explicit human confirmation after inspecting this exact draft and variance. Loan confirmation cannot be reused for disbursement posting.
-8. Only after that separate approval may the operator call `loan.disbursement.post` with a unique idempotency key, then re-list and verify `posted`, `under_disbursed`, `netDisbursed = "4000.00"`, and `variance = "-3500.00"`. Without confirmation, leave the draft unposted.
+1. Search canonical names and confirmed aliases for `พี่น้ำ`; stop on ambiguity and reuse only the confirmed borrower.
+2. Call `loan.preview`; require 75 installments, `0.00` interest, first due date `2026-08-17`, last due date `2026-10-30`. Preview supplies the schedule; it is not persisted yet.
+3. After approval, call `loan.draft`, inspect the draft and preview schedule, then call `loan.activate` with the stable key and replay the identical request. Verify 75 persisted schedules, each `100.00` principal and `0.00` interest, total `7500.00`.
+4. Call `loan.disbursement.draft` only with the required ISO `disbursedAt`. Call `loan.disbursement.list` to inspect the exact draft. Before posting, authoritative list truth remains `netDisbursed=0.00`, `variance=-7500.00`; separately label the inspected draft's intended post-state as `netDisbursed=4000.00`, `variance=-3500.00`, `under_disbursed`. Do not describe projected values as current list values.
+5. Pause for a new explicit confirmation after showing that exact draft and intended variance. Only then call `loan.disbursement.post`, re-list, and verify `posted`, `under_disbursed`, `netDisbursed="4000.00"`, and `variance="-3500.00"`. Never mutate principal or schedules to remove the variance.
 
-## 8. Application-image rollback
+## 8. Roll back only application images
 
-If the new image fails health or accounting verification, keep the repaired schema and roll back only to a previously deployed image compatible with additive columns. This repository's Compose file builds from source, so image pinning is an operator/deployment-system placeholder:
+If the reviewed image fails health or accounting verification, retain the additive schema and retag the saved rollback IDs onto the exact Compose refs captured in Section 6, then recreate without building. Do not drop columns, constraints, indexes, or run a down migration.
 
 ```bash
-export CREDITSYNC_ROLLBACK_BACKEND_IMAGE='<previous-compatible-backend-image>'
-# Use the deployment system's approved image-pinning/rollback mechanism here.
-docker compose --env-file "$CREDITSYNC_COMPOSE_ENV_FILE" -f "$CREDITSYNC_APP_COMPOSE_FILE" up -d --no-deps backend frontend
-docker compose --env-file "$CREDITSYNC_COMPOSE_ENV_FILE" -f "$CREDITSYNC_APP_COMPOSE_FILE" exec -T backend \
-  bun -e 'const response = await fetch("http://127.0.0.1:3000/mcp/health"); console.log(await response.text()); process.exit(response.ok ? 0 : 1)'
+set -eu
+docker image tag "$CREDITSYNC_ROLLBACK_BACKEND_TAG" "$CREDITSYNC_BACKEND_COMPOSE_REF"
+docker image tag "$CREDITSYNC_ROLLBACK_FRONTEND_TAG" "$CREDITSYNC_FRONTEND_COMPOSE_REF"
+docker compose $CREDITSYNC_APP_COMPOSE_ARGS up -d --no-build --force-recreate backend frontend
+docker compose $CREDITSYNC_APP_COMPOSE_ARGS exec -T backend \
+  bun -e 'const r=await fetch("http://127.0.0.1:3000/mcp/health"); console.log(await r.text()); process.exit(r.ok?0:1)'
 ```
 
-Do not drop `0038` columns, constraints, or indexes and do not run a down migration. If the previous image cannot start with the additive schema, keep writes blocked and obtain a compatible image.
-
-## Operator evidence and completion record
-
-Attach only sanitized Git SHA, image digests, Compose service states, backup path/checksum, restore result, schema states, migration/log result, aggregate preservation totals, health responses, and public operation IDs. Never attach dumps, env files, bearer tokens, identity values, raw QR/evidence data, or full customer rows.
+Record only sanitized Git SHA, image IDs/digests, Compose states/refs, backup checksum/path, restore result, exact schema states, journal hash/timestamp result, fingerprint comparison, health responses, and public operation IDs. Never attach dumps, env files, tokens, identity values, evidence, or full rows.

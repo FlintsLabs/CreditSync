@@ -3,6 +3,7 @@
 ## v0.3.14 - 2026-08-16
 
 ### Added
+- Added the reviewed Task 4 runbook correction with executable checker exit comparison, bounded credential-safe restore, migration hash verification, exact production fingerprints, Compose artifact selection/rollback, full catalog verification, and strict MCP payload/confirmation boundaries.
 - Added the production loan-schema reconciliation runbook with fail-safe backup/restore rehearsal, exact drift gates, migration/deployment checks, rollback guidance, and inspect-first post-deploy financial workflow.
 - Added a read-only loan-origination schema contract and Bun checker that classifies required columns, constraints, and the activation idempotency index without reading loan data.
 - Added the TDD implementation plan for production loan-schema reconciliation, covering a read-only schema contract checker, guarded `0038` repair migration, production-shaped rehearsal, zero-interest daily-loan lifecycle verification, deployment gates, and post-draft disbursement confirmation.
