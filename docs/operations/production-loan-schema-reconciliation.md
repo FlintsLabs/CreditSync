@@ -32,23 +32,14 @@ git log -1 --format='%H %cI %s'
 docker compose --env-file "$CREDITSYNC_COMPOSE_ENV_FILE" -f "$CREDITSYNC_INFRA_COMPOSE_FILE" config --services
 docker inspect creditsync-backend-prod creditsync-frontend-prod creditsync-postgres-prod \
   --format '{{.Name}} image={{.Config.Image}} imageId={{.Image}} status={{.State.Status}} started={{.State.StartedAt}}'
-export CREDITSYNC_BASELINE_CHECKER_OUT="$CREDITSYNC_LOG_DIR/baseline-checker.out"
-export CREDITSYNC_BASELINE_CHECKER_ERR="$CREDITSYNC_LOG_DIR/baseline-checker.err"
-set +e
-docker exec creditsync-backend-prod bun run schema:check:loan-origination \
-  > "$CREDITSYNC_BASELINE_CHECKER_OUT" 2> "$CREDITSYNC_BASELINE_CHECKER_ERR"
-CREDITSYNC_BASELINE_CHECKER_STATUS=$?
-set -e
-printf 'checker_exit=%s\n' "$CREDITSYNC_BASELINE_CHECKER_STATUS" > "$CREDITSYNC_LOG_DIR/baseline-checker-status.out"
-chmod 600 "$CREDITSYNC_LOG_DIR"/*
+find "$CREDITSYNC_LOG_DIR" -maxdepth 1 -type f -exec chmod 600 {} +
 ```
 
-Do not print the baseline output or diagnostics. The expected non-zero result
-is compared against the restored copy in Section 4. The historical app
-containers have different Compose projects, so all baseline runtime checks use
-their exact validated names (`docker exec` and `docker inspect`), never
-`compose exec`. The protected standalone deployment file in Section 7 is the
-only app Compose file validated for deployment.
+The historical app image is not used as schema evidence. The bounded catalog
+evidence and reviewed-image checker in Sections 4 and 6 are the authoritative
+schema checks. The historical app containers have different Compose projects,
+so runtime checks use their exact validated names (`docker exec` and
+`docker inspect`), never `compose exec`.
 
 ## 2. Create and verify a recoverable backup
 
@@ -193,7 +184,7 @@ test -f backend/drizzle/0038_production_loan_schema_reconciliation.sql
 test -f backend/drizzle/meta/0038_snapshot.json
 rg -n '0038_production_loan_schema_reconciliation' backend/drizzle/meta/_journal.json
 export CREDITSYNC_0038_SHA256="$(sha256sum backend/drizzle/0038_production_loan_schema_reconciliation.sql | awk '{print $1}')"
-export CREDITSYNC_EXPECTED_0038_CREATED_AT='<recorded-created-at-from-reviewed-rehearsal>'
+export CREDITSYNC_EXPECTED_0038_CREATED_AT=1786713600000
 cd backend
 DATABASE_URL="$CREDITSYNC_RESTORE_DATABASE_URL" bun run migrate
 cd ..
@@ -203,7 +194,7 @@ psql "$CREDITSYNC_RESTORE_DATABASE_URL" -X -v ON_ERROR_STOP=1 -At -c \
 test "$(cut -d'|' -f1 "$CREDITSYNC_DRIFT_DIR/0038-journal.out")" -eq 1
 test "$(cut -d'|' -f2 "$CREDITSYNC_DRIFT_DIR/0038-journal.out")" = "$CREDITSYNC_EXPECTED_0038_CREATED_AT"
 test "$(cut -d'|' -f3 "$CREDITSYNC_DRIFT_DIR/0038-journal.out")" = "$CREDITSYNC_EXPECTED_0038_CREATED_AT"
-DATABASE_URL="$CREDITSYNC_RESTORE_DATABASE_URL" bun run schema:check:loan-origination
+(cd backend && DATABASE_URL="$CREDITSYNC_RESTORE_DATABASE_URL" bun run schema:check:loan-origination)
 psql "$CREDITSYNC_RESTORE_DATABASE_URL" -X -v ON_ERROR_STOP=1 -At -f "$CREDITSYNC_FINGERPRINT_SQL" > "$CREDITSYNC_FINGERPRINT_AFTER"
 cmp -s "$CREDITSYNC_FINGERPRINT_BEFORE" "$CREDITSYNC_FINGERPRINT_AFTER"
 ```
@@ -244,8 +235,8 @@ cd ../frontend && bun test && bun run lint && bun run build
 
 ## 6. Validate production constraints before replacing app containers
 
-Invoke this gate from Section 7 at its explicit `STOP HERE` marker, only after
-the production migration and journal check have passed. It runs the same nine
+Invoke this gate from Section 7 after the production migration and journal
+check have passed. It runs the same nine
 zero-violation checks against the live database, validates all nine constraints,
 and then runs the reviewed-image checker. The `VALIDATE CONSTRAINT` statements
 are safe when a constraint is already validated, and all nine checks plus the
@@ -254,6 +245,8 @@ is non-zero or any `convalidated` value is false.
 
 ```bash
 set -eu
+export CREDITSYNC_PRODUCTION_GATE_FILE="$CREDITSYNC_LOG_DIR/production-gates.ok"
+rm -f -- "$CREDITSYNC_PRODUCTION_GATE_FILE" "$CREDITSYNC_PRODUCTION_GATE_FILE.tmp"
 export CREDITSYNC_PRODUCTION_CONSTRAINT_SQL="$CREDITSYNC_LOG_DIR/production-constraint-checks.sql"
 export CREDITSYNC_PRODUCTION_CONSTRAINT_OUT="$CREDITSYNC_LOG_DIR/production-constraint-checks.out"
 cat > "$CREDITSYNC_PRODUCTION_CONSTRAINT_SQL" <<'SQL'
@@ -294,6 +287,11 @@ awk -F'|' '$2 != "t" {bad=1} END {exit bad}' "$CREDITSYNC_LOG_DIR/production-con
 docker run --rm --name creditsync-backend-schema-check-post-migration-YYYYMMDDHHMM \
   --network creditsync_runtime --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" \
   "$CREDITSYNC_REVIEWED_BACKEND_TAG" bun run schema:check:loan-origination
+printf 'sha256=%s\nbackend=%s\nfrontend=%s\n' \
+  "$CREDITSYNC_0038_SHA256" "$CREDITSYNC_REVIEWED_BACKEND_TAG" "$CREDITSYNC_REVIEWED_FRONTEND_TAG" \
+  > "$CREDITSYNC_PRODUCTION_GATE_FILE.tmp"
+mv -- "$CREDITSYNC_PRODUCTION_GATE_FILE.tmp" "$CREDITSYNC_PRODUCTION_GATE_FILE"
+chmod 600 "$CREDITSYNC_PRODUCTION_GATE_FILE"
 ```
 
 ## 7. Build, migrate production, and deploy the reviewed artifact
@@ -398,6 +396,8 @@ Use the reviewed backend image tag for the one-off migration. Do not run this se
 
 ```bash
 set -eu
+export CREDITSYNC_PRODUCTION_GATE_FILE="$CREDITSYNC_LOG_DIR/production-gates.ok"
+rm -f -- "$CREDITSYNC_PRODUCTION_GATE_FILE" "$CREDITSYNC_PRODUCTION_GATE_FILE.tmp"
 export CREDITSYNC_PRODUCTION_MIGRATION_CONTAINER=creditsync-backend-schema-migrate-YYYYMMDDHHMM
 docker run --rm --name "$CREDITSYNC_PRODUCTION_MIGRATION_CONTAINER" \
   --network creditsync_runtime --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" \
@@ -420,8 +420,10 @@ SQL
 test "$(cut -d'|' -f1 "$CREDITSYNC_LOG_DIR/production-0038-journal.out")" -eq 1
 test "$(cut -d'|' -f2 "$CREDITSYNC_LOG_DIR/production-0038-journal.out")" = "$CREDITSYNC_EXPECTED_0038_CREATED_AT"
 test "$(cut -d'|' -f3 "$CREDITSYNC_LOG_DIR/production-0038-journal.out")" = "$CREDITSYNC_EXPECTED_0038_CREATED_AT"
-# STOP HERE: execute Section 6 now. Return here only after every production
-# constraint count is zero and every `convalidated` result is true.
+test -s "$CREDITSYNC_PRODUCTION_GATE_FILE"
+grep -Fx "sha256=$CREDITSYNC_0038_SHA256" "$CREDITSYNC_PRODUCTION_GATE_FILE"
+grep -Fx "backend=$CREDITSYNC_REVIEWED_BACKEND_TAG" "$CREDITSYNC_PRODUCTION_GATE_FILE"
+grep -Fx "frontend=$CREDITSYNC_REVIEWED_FRONTEND_TAG" "$CREDITSYNC_PRODUCTION_GATE_FILE"
 
 docker compose --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" -f "$CREDITSYNC_DEPLOY_COMPOSE_FILE" config --quiet
 docker compose --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" -f "$CREDITSYNC_DEPLOY_COMPOSE_FILE" config --images > "$CREDITSYNC_LOG_DIR/deploy-compose-images.out"
@@ -430,9 +432,6 @@ grep -Fx "$CREDITSYNC_REVIEWED_FRONTEND_TAG" "$CREDITSYNC_LOG_DIR/deploy-compose
 docker inspect creditsync-backend-prod creditsync-frontend-prod --format '{{.Name}} imageId={{.Image}} status={{.State.Status}}' > "$CREDITSYNC_LOG_DIR/pre-stop-app-containers.out"
 test "$(docker inspect creditsync-backend-prod --format '{{.Image}}')" = "$CREDITSYNC_CURRENT_BACKEND_ID"
 test "$(docker inspect creditsync-frontend-prod --format '{{.Image}}')" = "$CREDITSYNC_CURRENT_FRONTEND_ID"
-# The writer freeze above remains in force. Only after the journal, reviewed-image
-# checker, nine zero-violation checks, and nine convalidated checks pass may the
-# stopped historical containers be removed and recreated.
 test "$(docker inspect creditsync-backend-prod --format '{{.State.Status}}')" = exited
 test "$(docker inspect creditsync-frontend-prod --format '{{.State.Status}}')" = exited
 docker rm creditsync-frontend-prod

@@ -1,4 +1,6 @@
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
+import { drizzle } from "drizzle-orm/postgres-js";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
 import { inspectLoanOriginationSchema } from "./loan-origination-schema-contract";
 
@@ -24,8 +26,6 @@ const expectedMissingObjects = [
     "loans.floating_accrual_cycle",
     "loans.activation_idempotency_key",
     "loans.activation_result",
-    "loans.loans_term_months_check",
-    "loans.loans_one_funding_source_check",
     "loans.loans_single_payment_terms_check",
     "loans.loans_floating_accrual_cycle_check",
     "loans.loans_single_payment_money_check",
@@ -59,7 +59,6 @@ async function resetAndApplyThrough0030(sql: ReturnType<typeof postgres>) {
         DECLARE name text;
         BEGIN
             FOREACH name IN ARRAY ARRAY[
-                'loans_term_months_check', 'loans_one_funding_source_check',
                 'loans_single_payment_terms_check', 'loans_floating_accrual_cycle_check',
                 'loans_single_payment_money_check', 'loans_interest_period_unit_check',
                 'loans_interest_period_length_check', 'loans_advance_interest_periods_check',
@@ -96,6 +95,22 @@ async function resetAndApplyThrough0030(sql: ReturnType<typeof postgres>) {
     `);
     await sql.unsafe("DROP FUNCTION IF EXISTS public.validate_floating_interest_paid_cache() CASCADE");
 }
+
+async function restoreFullyMigratedSchema() {
+    const sql = postgres(databaseUrl!, { max: 1 });
+    try {
+        await sql.unsafe("DROP SCHEMA public CASCADE");
+        await sql.unsafe("DROP SCHEMA IF EXISTS drizzle CASCADE");
+        await sql.unsafe("CREATE SCHEMA public");
+        await migrate(drizzle(sql), { migrationsFolder: `${backendRoot}drizzle` });
+    } finally {
+        await sql.end();
+    }
+}
+
+afterAll(async () => {
+    if (databaseUrl) await restoreFullyMigratedSchema();
+});
 
 async function seedHistoricalFloatingLoan(sql: ReturnType<typeof postgres>) {
     await sql`INSERT INTO users (tenant_id, email, role) VALUES ('tenant-production-drift', 'owner@production-drift.test', 'owner')`;
@@ -190,6 +205,13 @@ integrationTest("reconciles the production-shaped 2026-08-16 drift repeatably wi
         const seeded = await seedHistoricalFloatingLoan(sql);
         const before = await inspectLoanOriginationSchema(sql);
         expect(before.objects.filter((object) => object.state !== "compatible").map((object) => object.name)).toEqual(expectedMissingObjects);
+        expect(before.objects
+            .filter((object) => object.name === "loans.loans_term_months_check" || object.name === "loans.loans_one_funding_source_check")
+            .map((object) => `${object.name}:${object.state}`))
+            .toEqual([
+                "loans.loans_term_months_check:compatible",
+                "loans.loans_one_funding_source_check:compatible",
+            ]);
 
         const financialBefore = await sql`
             SELECT public_id, principal_amount, outstanding_principal, outstanding_interest, status
