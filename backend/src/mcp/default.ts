@@ -111,6 +111,22 @@ import {
     type PrepareTransferEvidenceInput,
     type TransferEvidenceStorageGateway,
 } from "../services/transfer-evidence-service";
+import {
+    addLoanCommissionParticipant,
+    endLoanCommissionParticipant,
+    listLoanCommissionParticipants,
+    previewLoanCommission,
+    updateLoanCommissionParticipant,
+    type AddLoanCommissionParticipantInput,
+    type EndLoanCommissionParticipantInput,
+    type UpdateLoanCommissionParticipantInput,
+} from "../services/loan-commission-service";
+import {
+    createPaymentAttribution,
+    listPaymentAttributions,
+    reversePaymentAttribution,
+    type CreatePaymentAttributionInput,
+} from "../services/payment-attribution-service";
 
 type ToolInput = Record<string, unknown>;
 
@@ -243,6 +259,39 @@ export function createDefaultMcpToolHandlers(
     "loan.disbursement.evidence.finalize": (ctx, input) => finalizeDisbursementEvidence(ctx, asString(input, "disbursementPublicId"), asString(input, "evidencePublicId"), dependencies.disbursementEvidenceGateway),
     "loan.disbursement.post": (ctx, input) => postDisbursement(ctx, asString(input, "disbursementPublicId")),
     "loan.disbursement.reverse": (ctx, input) => reverseDisbursement(ctx, asString(input, "disbursementPublicId"), asString(input, "reason")),
+    "loan.commission-participant.list": async (ctx, input) => ({ items: await listLoanCommissionParticipants(ctx, asString(input, "loanPublicId")) }),
+    "loan.commission-participant.add": (ctx, input) => {
+        const { confirmed: _confirmed, ...participant } = input;
+        return addLoanCommissionParticipant(ctx, participant as unknown as AddLoanCommissionParticipantInput);
+    },
+    "loan.commission-participant.update": (ctx, input) => {
+        const { confirmed: _confirmed, ...participant } = input;
+        return updateLoanCommissionParticipant(ctx, participant as unknown as UpdateLoanCommissionParticipantInput);
+    },
+    "loan.commission-participant.end": (ctx, input) => {
+        const { confirmed: _confirmed, ...participant } = input;
+        return endLoanCommissionParticipant(ctx, participant as unknown as EndLoanCommissionParticipantInput);
+    },
+    "loan.commission.preview": (ctx, input) => previewLoanCommission(ctx, {
+        loanPublicId: asString(input, "loanPublicId"), paymentPublicIds: input.paymentPublicIds as string[],
+    }),
+    "loan.commission.list": (ctx, input) => previewLoanCommission(ctx, {
+        loanPublicId: asString(input, "loanPublicId"), paymentPublicIds: input.paymentPublicIds as string[],
+    }),
+    "loan.commission.calculate": (ctx, input) => previewLoanCommission(ctx, {
+        loanPublicId: asString(input, "loanPublicId"), paymentPublicIds: input.paymentPublicIds as string[],
+    }),
+    "loan.commission.reverse": (ctx, input) => previewLoanCommission(ctx, {
+        loanPublicId: asString(input, "loanPublicId"), paymentPublicIds: input.paymentPublicIds as string[],
+    }),
+    "payment.intermediary-attribution.create": (ctx, input) => {
+        const { confirmed: _confirmed, ...attribution } = input;
+        return createPaymentAttribution(ctx, attribution as unknown as CreatePaymentAttributionInput);
+    },
+    "payment.intermediary-attribution.list": async (ctx, input) => ({ items: await listPaymentAttributions(ctx, asString(input, "paymentPublicId")) }),
+    "payment.intermediary-attribution.reverse": (ctx, input) => reversePaymentAttribution(ctx, {
+        attributionPublicId: asString(input, "attributionPublicId"), reason: asString(input, "reason"),
+    }),
     "intermediary.search": async (ctx, input) => ({ items: await searchIntermediaries(ctx, asString(input, "query")) }),
     "intermediary.create": (ctx, input) => createIntermediary(ctx, input as { name: string; aliases?: string[]; notes?: string | null }),
     "intermediary.profile.get": (ctx, input) => getIntermediaryProfile(ctx, asString(input, "intermediaryPublicId")),
@@ -361,6 +410,11 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "loan.settlement.reverse": { entityType: "loan_settlement", action: "reversed" },
     "loan.disbursement.post": { entityType: "loan_disbursement", action: "posted" },
     "loan.disbursement.reverse": { entityType: "loan_disbursement", action: "reversed" },
+    "loan.commission-participant.add": { entityType: "loan_commission_participant", action: "added" },
+    "loan.commission-participant.update": { entityType: "loan_commission_participant", action: "updated" },
+    "loan.commission-participant.end": { entityType: "loan_commission_participant", action: "ended" },
+    "payment.intermediary-attribution.create": { entityType: "payment_intermediary_attribution", action: "created" },
+    "payment.intermediary-attribution.reverse": { entityType: "payment_intermediary_attribution", action: "reversed" },
     "intermediary.disbursement.post": { entityType: "intermediated_disbursement_group", action: "posted" },
     "intermediary.disbursement.reverse": { entityType: "intermediated_disbursement_group", action: "reversed" },
     "intermediary.remittance.post": { entityType: "intermediary_remittance", action: "posted" },

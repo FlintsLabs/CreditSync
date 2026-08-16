@@ -16,6 +16,13 @@ import { bangkokBusinessDate, getLoanListLegacyPaymentHealth, getLoanPaymentHeal
 import { getLoanReceiptSummaries } from "../services/loan-receipt-summary-service";
 import { floatingInterestBalances } from "../services/floating-interest-service";
 import { DomainError } from "../services/domain-error";
+import {
+    addLoanCommissionParticipant,
+    endLoanCommissionParticipant,
+    listLoanCommissionParticipants,
+    previewLoanCommission,
+    updateLoanCommissionParticipant,
+} from "../services/loan-commission-service";
 import { loanCommandContext, loanDomainFailure, loanUnauthorized } from "./loan-http-support";
 import { loanDraftBody, loanDraftUpdateBody, loanTermsBody } from "./loan-route-schemas";
 
@@ -183,6 +190,73 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
             },
         });
     }, { query: t.Object({ borrowerId: t.Optional(t.String()) }) })
+    .get("/:id/commission-participants", async ({ params, user, request, set }) => {
+        if (!user) return loanUnauthorized(set);
+        try { return await listLoanCommissionParticipants(loanCommandContext(user, request), params.id); }
+        catch (error) { return loanDomainFailure(error, set); }
+    }, { params: t.Object({ id: t.String({ format: "uuid" }) }) })
+    .post("/:id/commission-participants", async ({ params, body, user, request, set }) => {
+        if (!user) return loanUnauthorized(set);
+        try {
+            const { confirmed: _confirmed, ...input } = body;
+            return await addLoanCommissionParticipant(loanCommandContext(user, request), { loanPublicId: params.id, ...input });
+        } catch (error) { return loanDomainFailure(error, set); }
+    }, {
+        params: t.Object({ id: t.String({ format: "uuid" }) }),
+        body: t.Object({
+            intermediaryPublicId: t.String({ format: "uuid" }), commissionRate: t.String({ pattern: "^(?:0|[1-9]\\d{0,2})(?:\\.\\d{1,4})?$", maxLength: 8 }),
+            role: t.String({ minLength: 1, maxLength: 500 }), effectiveFrom: t.String({ format: "date-time" }),
+            note: t.Optional(t.Nullable(t.String({ maxLength: 2_000 }))), confirmed: t.Literal(true),
+        }, { additionalProperties: t.Never() }),
+    })
+    .patch("/:id/commission-participants/:participantId", async ({ params, body, user, request, set }) => {
+        if (!user) return loanUnauthorized(set);
+        try {
+            const ctx = loanCommandContext(user, request);
+            const participants = await listLoanCommissionParticipants(ctx, params.id);
+            if (!participants.some((participant) => participant.publicId === params.participantId)) throw new DomainError("COMMISSION_PARTICIPANT_NOT_FOUND", "Commission participant not found", 404);
+            const { confirmed: _confirmed, ...input } = body;
+            return await updateLoanCommissionParticipant(ctx, { participantPublicId: params.participantId, ...input });
+        } catch (error) { return loanDomainFailure(error, set); }
+    }, {
+        params: t.Object({ id: t.String({ format: "uuid" }), participantId: t.String({ format: "uuid" }) }),
+        body: t.Object({
+            commissionRate: t.String({ pattern: "^(?:0|[1-9]\\d{0,2})(?:\\.\\d{1,4})?$", maxLength: 8 }),
+            role: t.String({ minLength: 1, maxLength: 500 }), effectiveFrom: t.String({ format: "date-time" }),
+            note: t.Optional(t.Nullable(t.String({ maxLength: 2_000 }))), confirmed: t.Literal(true),
+        }, { additionalProperties: t.Never() }),
+    })
+    .post("/:id/commission-participants/:participantId/end", async ({ params, body, user, request, set }) => {
+        if (!user) return loanUnauthorized(set);
+        try {
+            const ctx = loanCommandContext(user, request);
+            const participants = await listLoanCommissionParticipants(ctx, params.id);
+            if (!participants.some((participant) => participant.publicId === params.participantId)) throw new DomainError("COMMISSION_PARTICIPANT_NOT_FOUND", "Commission participant not found", 404);
+            const { confirmed: _confirmed, ...input } = body;
+            return await endLoanCommissionParticipant(ctx, { participantPublicId: params.participantId, ...input });
+        } catch (error) { return loanDomainFailure(error, set); }
+    }, {
+        params: t.Object({ id: t.String({ format: "uuid" }), participantId: t.String({ format: "uuid" }) }),
+        body: t.Object({ effectiveTo: t.String({ format: "date-time" }), reason: t.String({ minLength: 1, maxLength: 500 }), confirmed: t.Literal(true) }, { additionalProperties: t.Never() }),
+    })
+    .post("/:id/commission/preview", async ({ params, body, user, request, set }) => {
+        if (!user) return loanUnauthorized(set);
+        try { return await previewLoanCommission(loanCommandContext(user, request), { loanPublicId: params.id, paymentPublicIds: body.paymentPublicIds }); }
+        catch (error) { return loanDomainFailure(error, set); }
+    }, {
+        params: t.Object({ id: t.String({ format: "uuid" }) }),
+        body: t.Object({ paymentPublicIds: t.Array(t.String({ format: "uuid" }), { minItems: 1, maxItems: 1_000 }) }, { additionalProperties: t.Never() }),
+    })
+    .get("/:id/commissions", async ({ params, query, user, request, set }) => {
+        if (!user) return loanUnauthorized(set);
+        try {
+            const paymentPublicIds = query.paymentPublicIds.split(",").map((value) => value.trim()).filter(Boolean);
+            return await previewLoanCommission(loanCommandContext(user, request), { loanPublicId: params.id, paymentPublicIds });
+        } catch (error) { return loanDomainFailure(error, set); }
+    }, {
+        params: t.Object({ id: t.String({ format: "uuid" }) }),
+        query: t.Object({ paymentPublicIds: t.String({ minLength: 36, maxLength: 37_000 }) }, { additionalProperties: t.Never() }),
+    })
     .get("/:id", async ({ params, user, request, set }) => {
         if (!user) return loanUnauthorized(set);
         const scopeKey = getAccessScopeCacheKey(user);
@@ -192,7 +266,14 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                 namespace: "loans",
                 key: `detail:${params.id}:${scopeKey}`,
                 ttlSeconds: 30,
-                loader: async () => getLoanApplication(loanCommandContext(user, request), params.id),
+                loader: async () => {
+                    const ctx = loanCommandContext(user, request);
+                    const [loan, commissionParticipants] = await Promise.all([
+                        getLoanApplication(ctx, params.id),
+                        listLoanCommissionParticipants(ctx, params.id),
+                    ]);
+                    return { ...loan, commissionParticipantCount: commissionParticipants.length, commissionParticipants };
+                },
             });
         } catch (error) {
             return loanDomainFailure(error, set);

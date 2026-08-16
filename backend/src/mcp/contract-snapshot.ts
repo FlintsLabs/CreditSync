@@ -1,9 +1,7 @@
-import { createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { Elysia } from "elysia";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
-    createMcpHttpPlugin,
+    createMcpProtocolServer,
     MCP_TOOL_NAMES,
     type McpToolHandler,
     type McpToolName,
@@ -48,14 +46,14 @@ function noopHandlers(): Record<McpToolName, McpToolHandler> {
 }
 
 /**
- * Capture the public contract through the same initialize/tools-list exchange a
- * remote client uses. This deliberately does not import private schema constants
- * from the server, so registration drift changes the committed snapshot.
+ * Capture the public contract through an actual MCP initialize/tools-list
+ * exchange. In-memory transport keeps contract validation independent of a
+ * listening socket while exercising the same registered protocol server.
  */
 export async function captureAdvertisedMcpContract(): Promise<FrozenMcpContract> {
-    const app = new Elysia().use(createMcpHttpPlugin({
+    const input = {
         config: {
-            tokenHashes: [createHash("sha256").update(CONTRACT_TOKEN).digest("hex")],
+            tokenHashes: [CONTRACT_TOKEN],
             allowedHosts: ["127.0.0.1"],
             tenantId: "contract-snapshot-tenant",
             actorEmail: "contract-snapshot@example.test",
@@ -67,19 +65,22 @@ export async function captureAdvertisedMcpContract(): Promise<FrozenMcpContract>
         consumeRateLimit: async () => ({ allowed: true, remaining: 99, retryAfterSeconds: 0 }),
         findAuditPublicIds: async () => ["0198c481-3e2b-7000-8000-000000000001"],
         logger: () => undefined,
-    })).listen({ hostname: "127.0.0.1", port: 0 });
+    } satisfies Parameters<typeof createMcpProtocolServer>[0];
+    const ctx = {
+        tenantId: "contract-snapshot-tenant", actorUserId: 1, actorSource: "mcp" as const,
+        requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(),
+    };
+    const server = createMcpProtocolServer(input, ctx);
     const client = new Client({ name: "creditsync-plugin-contract", version: "1.0.0" });
-    const transport = new StreamableHTTPClientTransport(
-        new URL(`http://127.0.0.1:${app.server!.port}/mcp`),
-        { requestInit: { headers: { Authorization: `Bearer ${CONTRACT_TOKEN}` } } },
-    );
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
     try {
-        await client.connect(transport);
+        await server.connect(serverTransport);
+        await client.connect(clientTransport);
         const response = await client.listTools();
         return {
             schemaVersion: "1.0",
-            sourceOfTruth: "Authenticated local MCP SDK Client tools/list response from backend/src/mcp/server.ts",
+            sourceOfTruth: "Local MCP SDK Client tools/list response from backend/src/mcp/server.ts",
             compatibility: "Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 7.0.0; breaking changes require plugin 8.0.0.",
             tools: response.tools.map((tool) => ({
                 name: tool.name,
@@ -92,6 +93,6 @@ export async function captureAdvertisedMcpContract(): Promise<FrozenMcpContract>
         };
     } finally {
         await client.close().catch(() => undefined);
-        await app.stop();
+        await server.close().catch(() => undefined);
     }
 }

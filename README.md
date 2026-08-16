@@ -347,7 +347,7 @@ CreditSync serves a private stateless Streamable HTTP MCP endpoint at `/mcp` in 
 
 All MCP requests are bound to the server-side `MCP_TENANT_ID` and `MCP_ACTOR_EMAIL`. A client cannot submit or override tenant or actor identity. The configured actor must already exist in that tenant, and its normal CreditSync role/portfolio permissions still apply. Funding sources are list-only; the MCP surface has no generic SQL, arbitrary fetch, or funding mutation tool.
 
-The backend schema-version `1.0` exposes 47 frozen tools, including:
+The backend schema-version `1.0` exposes 75 frozen tools, including:
 
 ```text
 borrower.search       borrower.portfolio    borrower.create
@@ -362,6 +362,13 @@ loan.disbursement.list       loan.disbursement.draft
 loan.disbursement.update
 loan.disbursement.evidence.prepare  loan.disbursement.evidence.finalize
 loan.disbursement.post       loan.disbursement.reverse
+loan.commission-participant.list  loan.commission-participant.add
+loan.commission-participant.update  loan.commission-participant.end
+loan.commission.preview      loan.commission.list
+loan.commission.calculate    loan.commission.reverse
+payment.intermediary-attribution.create
+payment.intermediary-attribution.list
+payment.intermediary-attribution.reverse
 intermediary.search          intermediary.create
 intermediary.profile.get     intermediary.bank-account.save
 intermediary.managed-loan.list
@@ -384,7 +391,7 @@ renewal.preview       renewal.execute
 renewal.reverse       funding-source.list
 ```
 
-Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Disbursement drafts support strict non-empty PATCH updates to editable metadata; each update retains finalized evidence and requires a re-list plus fresh confirmation before posting. Payment posting/reversal, idempotent loan activation, floating-interest execution and settlement/reversal, renewal execution/reversal, direct and intermediary-routed disbursement post/reverse, intermediary remittance posting, single-payment restructuring, and component waivers follow explicit confirmation and audit boundaries. Settlement and intermediated-disbursement previews persist short-lived versioned command artifacts; execution accepts only the exact current preview and returns safe audit/correlation identifiers. Intermediary bank-account save, assignment create/end, and transfer-evidence prepare/finalize MCP results also return their audit public UUID and correlation UUID while their existing REST DTOs remain unchanged. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces. The bundled Plugin `7.0.0` freezes the matching 64-tool backend contract.
+Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Loan commission participants are effective-dated immutable versions; updates append a successor, while payment-source attribution corrections append reasoned compensating entries. Commission outputs are derived by backend services from posted interest components and never by MCP arithmetic. These writes require explicit confirmation and stable idempotency keys and return safe audit/correlation identifiers. Disbursement drafts support strict non-empty PATCH updates to editable metadata; each update retains finalized evidence and requires a re-list plus fresh confirmation before posting. Payment posting/reversal, idempotent loan activation, floating-interest execution and settlement/reversal, renewal execution/reversal, direct and intermediary-routed disbursement post/reverse, intermediary remittance posting, single-payment restructuring, and component waivers follow explicit confirmation and audit boundaries. Settlement and intermediated-disbursement previews persist short-lived versioned command artifacts; execution accepts only the exact current preview. Intermediary bank-account save, assignment create/end, and transfer-evidence prepare/finalize MCP results also return their audit public UUID and correlation UUID while their existing REST DTOs remain unchanged. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces. The bundled Plugin `7.0.0` freezes the matching 75-tool backend contract.
 
 ### Configure and rotate the bearer token
 

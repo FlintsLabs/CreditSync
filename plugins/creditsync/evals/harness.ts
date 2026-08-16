@@ -57,6 +57,39 @@ const INTERMEDIATED_AUDIT = "0198c481-3e2b-7000-8000-000000000096";
 const INTERMEDIATED_CORRELATION = "0198c481-3e2b-7000-8000-000000000097";
 const INTERMEDIATED_LOAN_DISBURSEMENT = "0198c481-3e2b-7000-8000-000000000098";
 const INTERMEDIATED_ADVANCE_PROJECTION = "0198c481-3e2b-7000-8000-000000000099";
+const COMMISSION_PARTICIPANT_A = "0198c481-3e2b-7000-8000-000000000401";
+const COMMISSION_PARTICIPANT_B = "0198c481-3e2b-7000-8000-000000000402";
+const COMMISSION_AUDIT = "0198c481-3e2b-7000-8000-000000000403";
+const COMMISSION_CORRELATION = "0198c481-3e2b-7000-8000-000000000404";
+const PAYMENT_A = "0198c481-3e2b-7000-8000-000000000405";
+const PAYMENT_B = "0198c481-3e2b-7000-8000-000000000406";
+const ATTRIBUTION_A = "0198c481-3e2b-7000-8000-000000000407";
+const ATTRIBUTION_B = "0198c481-3e2b-7000-8000-000000000408";
+const ATTRIBUTION_REVERSAL = "0198c481-3e2b-7000-8000-000000000409";
+
+function commissionParticipant(publicId: string, intermediaryPublicId: string, rate: string) {
+    return {
+        publicId, loanPublicId: LOAN_A, intermediaryPublicId, previousParticipantPublicId: null,
+        commissionRate: rate, role: "collector", note: null, effectiveFrom: "2026-08-16T00:00:00.000Z",
+        effectiveTo: null, status: "active", auditPublicId: COMMISSION_AUDIT,
+        correlationId: COMMISSION_CORRELATION, createdAt: "2026-08-16T00:00:00.000Z",
+    };
+}
+
+function attribution(publicId: string, amount: string, sourceKind: "direct" | "intermediary", intermediaryPublicId: string | null, reversedAttributionPublicId: string | null = null) {
+    return {
+        publicId, paymentPublicId: PAYMENT_A, transactionPublicId: PAYMENT_A, sourceKind,
+        intermediaryPublicId, amount, reason: reversedAttributionPublicId ? "Correct source attribution" : null,
+        reversedAttributionPublicId, auditPublicId: COMMISSION_AUDIT,
+        correlationId: COMMISSION_CORRELATION, createdAt: "2026-08-16T00:00:00.000Z",
+    };
+}
+
+const commissionPreview = {
+    loanPublicId: LOAN_A, paymentPublicIds: [PAYMENT_A, PAYMENT_B], interestAmount: "300.00",
+    totalCommission: "90.00", participants: [{ participantPublicId: COMMISSION_PARTICIPANT_A,
+        intermediaryPublicId: INTERMEDIARY, commissionRate: "30.00", commissionAmount: "90.00" }],
+};
 
 export type ToolCall = { name: McpToolName; arguments: Record<string, unknown> };
 type ScriptedError = { code: string; message: string; retryable: boolean; reviewRequired: boolean; details: Record<string, unknown> };
@@ -1169,6 +1202,50 @@ type Scenario = {
 };
 
 const SCENARIOS: Record<string, Scenario> = {
+    "commission-no-agent-activation": {
+        script: [{ name: "loan.commission-participant.list", arguments: { loanPublicId: LOAN_A }, result: { items: [] } }],
+        run: async (mcp) => { await mcp.call("loan.commission-participant.list", { loanPublicId: LOAN_A }); return { outcome: "completed" } as const; },
+    },
+    "commission-add-after-payment": {
+        script: [
+            { name: "payment.intermediary-attribution.list", arguments: { paymentPublicId: PAYMENT_A }, result: { items: [] } },
+            { name: "loan.commission-participant.add", arguments: { loanPublicId: LOAN_A, intermediaryPublicId: INTERMEDIARY, commissionRate: "30.00", role: "collector", effectiveFrom: "2026-08-16T00:00:00.000Z", confirmed: true, idempotencyKey: "commission-add-after-payment-1" }, result: commissionParticipant(COMMISSION_PARTICIPANT_A, INTERMEDIARY, "30.00") },
+        ],
+        run: async (mcp) => { await mcp.call("payment.intermediary-attribution.list", { paymentPublicId: PAYMENT_A }); await mcp.call("loan.commission-participant.add", { loanPublicId: LOAN_A, intermediaryPublicId: INTERMEDIARY, commissionRate: "30.00", role: "collector", effectiveFrom: "2026-08-16T00:00:00.000Z", confirmed: true, idempotencyKey: "commission-add-after-payment-1" }); return { outcome: "completed" } as const; },
+    },
+    "commission-two-agent-split": {
+        script: [{ name: "loan.commission-participant.list", arguments: { loanPublicId: LOAN_A }, result: { items: [commissionParticipant(COMMISSION_PARTICIPANT_A, INTERMEDIARY, "30.00"), commissionParticipant(COMMISSION_PARTICIPANT_B, INTERMEDIARY_B, "20.00")] } }],
+        run: async (mcp) => { await mcp.call("loan.commission-participant.list", { loanPublicId: LOAN_A }); return { outcome: "completed" } as const; },
+    },
+    "payment-direct-attribution": {
+        script: [{ name: "payment.intermediary-attribution.create", arguments: { paymentPublicId: PAYMENT_A, sourceKind: "direct", amount: "20.00", confirmed: true, idempotencyKey: "direct-attribution-1" }, result: attribution(ATTRIBUTION_A, "20.00", "direct", null) }],
+        run: async (mcp) => { await mcp.call("payment.intermediary-attribution.create", { paymentPublicId: PAYMENT_A, sourceKind: "direct", amount: "20.00", confirmed: true, idempotencyKey: "direct-attribution-1" }); return { outcome: "completed" } as const; },
+    },
+    "payment-multi-source-attribution": {
+        script: [
+            { name: "payment.intermediary-attribution.create", arguments: { paymentPublicId: PAYMENT_A, sourceKind: "direct", amount: "20.00", confirmed: true, idempotencyKey: "multi-direct-1" }, result: attribution(ATTRIBUTION_A, "20.00", "direct", null) },
+            { name: "payment.intermediary-attribution.create", arguments: { paymentPublicId: PAYMENT_A, sourceKind: "intermediary", intermediaryPublicId: INTERMEDIARY, amount: "80.00", confirmed: true, idempotencyKey: "multi-agent-1" }, result: attribution(ATTRIBUTION_B, "80.00", "intermediary", INTERMEDIARY) },
+        ],
+        run: async (mcp) => { await mcp.call("payment.intermediary-attribution.create", { paymentPublicId: PAYMENT_A, sourceKind: "direct", amount: "20.00", confirmed: true, idempotencyKey: "multi-direct-1" }); await mcp.call("payment.intermediary-attribution.create", { paymentPublicId: PAYMENT_A, sourceKind: "intermediary", intermediaryPublicId: INTERMEDIARY, amount: "80.00", confirmed: true, idempotencyKey: "multi-agent-1" }); return { outcome: "completed" } as const; },
+    },
+    "commission-exact-preview": {
+        script: [{ name: "loan.commission.preview", arguments: { loanPublicId: LOAN_A, paymentPublicIds: [PAYMENT_A, PAYMENT_B] }, result: commissionPreview }],
+        run: async (mcp) => { await mcp.call("loan.commission.preview", { loanPublicId: LOAN_A, paymentPublicIds: [PAYMENT_A, PAYMENT_B] }); return { outcome: "completed" } as const; },
+    },
+    "payment-attribution-idempotency-replay": {
+        script: [
+            { name: "payment.intermediary-attribution.create", arguments: { paymentPublicId: PAYMENT_A, sourceKind: "direct", amount: "20.00", confirmed: true, idempotencyKey: "replay-attribution-1" }, result: attribution(ATTRIBUTION_A, "20.00", "direct", null) },
+            { name: "payment.intermediary-attribution.create", arguments: { paymentPublicId: PAYMENT_A, sourceKind: "direct", amount: "20.00", confirmed: true, idempotencyKey: "replay-attribution-1" }, result: attribution(ATTRIBUTION_A, "20.00", "direct", null) },
+        ],
+        run: async (mcp) => { const args = { paymentPublicId: PAYMENT_A, sourceKind: "direct", amount: "20.00", confirmed: true, idempotencyKey: "replay-attribution-1" }; await mcp.call("payment.intermediary-attribution.create", args); await mcp.call("payment.intermediary-attribution.create", args); return { outcome: "completed" } as const; },
+    },
+    "payment-attribution-compensating-reversal": {
+        script: [
+            { name: "payment.intermediary-attribution.create", arguments: { paymentPublicId: PAYMENT_A, sourceKind: "intermediary", intermediaryPublicId: INTERMEDIARY, amount: "40.00", confirmed: true, idempotencyKey: "reversal-create-1" }, result: attribution(ATTRIBUTION_A, "40.00", "intermediary", INTERMEDIARY) },
+            { name: "payment.intermediary-attribution.reverse", arguments: { attributionPublicId: ATTRIBUTION_A, reason: "Correct source attribution", confirmed: true, idempotencyKey: "reversal-compensate-1" }, result: attribution(ATTRIBUTION_REVERSAL, "-40.00", "intermediary", INTERMEDIARY, ATTRIBUTION_A) },
+        ],
+        run: async (mcp) => { await mcp.call("payment.intermediary-attribution.create", { paymentPublicId: PAYMENT_A, sourceKind: "intermediary", intermediaryPublicId: INTERMEDIARY, amount: "40.00", confirmed: true, idempotencyKey: "reversal-create-1" }); await mcp.call("payment.intermediary-attribution.reverse", { attributionPublicId: ATTRIBUTION_A, reason: "Correct source attribution", confirmed: true, idempotencyKey: "reversal-compensate-1" }); return { outcome: "completed" } as const; },
+    },
     "borrower-create-alias": {
         script: [
             { name: "borrower.search", arguments: { query: "นก (Nok)" }, result: { resolution: "none", candidates: [] } },

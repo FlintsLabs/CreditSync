@@ -92,12 +92,12 @@ describe("CreditSync plugin 7.0.0 contract", () => {
         expect(skill).not.toContain("report those blockers");
     });
 
-    test("frozen full MCP metadata matches an actual authenticated tools/list response", async () => {
+    test("frozen full MCP metadata matches an actual MCP tools/list response", async () => {
         const contract = await json("references/mcp-tool-contract.json") as unknown as FrozenMcpContract;
         expect(contract.schemaVersion).toBe("1.0");
         expect(contract.compatibility).toBe("Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 7.0.0; breaking changes require plugin 8.0.0.");
         expect(contract.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
-        expect(contract.tools).toHaveLength(64);
+        expect(contract.tools).toHaveLength(75);
         expect(contract.tools.every((tool) => tool.inputSchema && tool.outputSchema && tool.annotations)).toBe(true);
         const advertised = await captureAdvertisedMcpContract();
         expect(canonicalContractJson(contract)).toBe(canonicalContractJson(advertised));
@@ -220,7 +220,7 @@ describe("CreditSync plugin 7.0.0 contract", () => {
             "waiver-missing-reason",
             "restructure-unsafe-reversal",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
-        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(20);
+        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(28);
         expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(45);
     });
 
