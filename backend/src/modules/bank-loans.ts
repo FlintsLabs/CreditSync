@@ -378,16 +378,16 @@ export const bankLoansRoute = new Elysia({ prefix: "/bank-loans" })
 
             if (scheduleAffectingChange && !hasRepayments) {
                 regeneratedSchedule = generateBankLoanSchedule({
-                    amount: nextAmount,
-                    interestRate: nextInterestRate,
+                    amount: nextAmount.toFixed(2),
+                    interestRate: nextInterestRate.toFixed(2),
                     startDate: nextStartDate,
                     termMonths: nextTermMonths,
                     repaymentCycle: nextRepaymentCycle,
                     totalInstallments: nextTotalInstallments,
-                    installmentAmount: nextInstallmentAmount,
-                    processingFeeAmount: nextProcessingFeeAmount,
-                    utilizationFeeAmount: nextUtilizationFeeAmount,
-                    vatRate: nextVatRate,
+                    installmentAmount: nextInstallmentAmount?.toFixed(2),
+                    processingFeeAmount: nextProcessingFeeAmount.toFixed(2),
+                    utilizationFeeAmount: nextUtilizationFeeAmount.toFixed(2),
+                    vatRate: nextVatRate.toFixed(2),
                 });
 
                 nextDueDate = regeneratedSchedule[0]?.dueDate ?? null;
@@ -530,16 +530,16 @@ export const bankLoansRoute = new Elysia({ prefix: "/bank-loans" })
         }
 
         const schedule = generateBankLoanSchedule({
-            amount: body.amount,
-            interestRate: body.interestRate,
+            amount: body.amount.toFixed(2),
+            interestRate: body.interestRate.toFixed(2),
             startDate: body.startDate,
             termMonths: body.termMonths,
             repaymentCycle: body.repaymentCycle,
             totalInstallments: body.totalInstallments,
-            installmentAmount: body.installmentAmount,
-            processingFeeAmount: body.processingFeeAmount,
-            utilizationFeeAmount: body.utilizationFeeAmount,
-            vatRate: body.vatRate,
+            installmentAmount: body.installmentAmount?.toFixed(2),
+            processingFeeAmount: body.processingFeeAmount?.toFixed(2),
+            utilizationFeeAmount: body.utilizationFeeAmount?.toFixed(2),
+            vatRate: body.vatRate?.toFixed(2),
         });
 
         const outstandingPrincipal = body.amount;

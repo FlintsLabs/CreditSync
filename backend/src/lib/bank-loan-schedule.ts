@@ -1,21 +1,23 @@
 import dayjs from "dayjs";
+import { FinancialDecimal } from "./financial-decimal";
+import { serializeMoney } from "./money";
 
 export type RepaymentCycle = "daily" | "weekly" | "monthly" | "custom";
 
-interface GenerateBankLoanScheduleInput {
-    amount: number;
-    interestRate: number;
+export interface BankLoanScheduleInput {
+    amount: string;
+    interestRate: string;
     startDate?: string;
     termMonths?: number;
     repaymentCycle?: RepaymentCycle;
     totalInstallments?: number;
-    installmentAmount?: number;
-    processingFeeAmount?: number;
-    utilizationFeeAmount?: number;
-    vatRate?: number;
+    installmentAmount?: string;
+    processingFeeAmount?: string;
+    utilizationFeeAmount?: string;
+    vatRate?: string;
 }
 
-interface BankLoanScheduleRow {
+export interface BankLoanScheduleRow {
     installmentNo: number;
     dueDate: string;
     scheduledPrincipal: string;
@@ -26,100 +28,57 @@ interface BankLoanScheduleRow {
     remainingDue: string;
 }
 
-const periodsPerYear: Record<RepaymentCycle, number> = {
-    daily: 365,
-    weekly: 52,
-    monthly: 12,
-    custom: 12,
-};
+const periodsPerYear: Record<RepaymentCycle, number> = { daily: 365, weekly: 52, monthly: 12, custom: 12 };
 
-function roundMoney(value: number) {
-    return Number(value.toFixed(2));
-}
-
-function inferInstallmentCount(input: GenerateBankLoanScheduleInput) {
-    if (input.totalInstallments && input.totalInstallments > 0) {
-        return input.totalInstallments;
-    }
-
+function inferInstallmentCount(input: BankLoanScheduleInput) {
+    if (input.totalInstallments && input.totalInstallments > 0) return input.totalInstallments;
     const termMonths = input.termMonths && input.termMonths > 0 ? input.termMonths : 1;
-
-    switch (input.repaymentCycle) {
-        case "daily":
-            return termMonths * 30;
-        case "weekly":
-            return termMonths * 4;
-        case "monthly":
-        case "custom":
-        default:
-            return termMonths;
-    }
+    return input.repaymentCycle === "daily" ? termMonths * 30 : input.repaymentCycle === "weekly" ? termMonths * 4 : termMonths;
 }
 
 function addInterval(baseDate: dayjs.Dayjs, cycle: RepaymentCycle, step: number) {
-    switch (cycle) {
-        case "daily":
-            return baseDate.add(step, "day");
-        case "weekly":
-            return baseDate.add(step, "week");
-        case "monthly":
-        case "custom":
-        default:
-            return baseDate.add(step, "month");
-    }
+    return cycle === "daily" ? baseDate.add(step, "day") : cycle === "weekly" ? baseDate.add(step, "week") : baseDate.add(step, "month");
 }
 
-export function generateBankLoanSchedule(input: GenerateBankLoanScheduleInput): BankLoanScheduleRow[] {
+export function generateBankLoanSchedule(input: BankLoanScheduleInput): BankLoanScheduleRow[] {
     const cycle = input.repaymentCycle ?? "monthly";
     const totalInstallments = inferInstallmentCount(input);
-    const principal = roundMoney(input.amount);
-    const annualRate = (input.interestRate ?? 0) / 100;
-    const periodicRate = annualRate / periodsPerYear[cycle];
-    const fixedFee = roundMoney((input.processingFeeAmount ?? 0) + (input.utilizationFeeAmount ?? 0));
-    const vatRate = (input.vatRate ?? 0) / 100;
+    const principal = new FinancialDecimal(input.amount);
+    const periodicRate = new FinancialDecimal(input.interestRate).div(100).div(periodsPerYear[cycle]);
+    const fixedFee = new FinancialDecimal(input.processingFeeAmount ?? "0").plus(input.utilizationFeeAmount ?? "0");
+    const vatRate = new FinancialDecimal(input.vatRate ?? "0").div(100);
     const baseDate = dayjs(input.startDate || new Date()).startOf("day");
+    let installment = input.installmentAmount ? new FinancialDecimal(input.installmentAmount) : undefined;
 
-    const scheduledRows: BankLoanScheduleRow[] = [];
-    let outstandingPrincipal = principal;
-
-    let installmentAmount = input.installmentAmount;
-    if (!installmentAmount || installmentAmount <= 0) {
-        if (periodicRate === 0) {
-            installmentAmount = principal / totalInstallments;
-        } else {
-            installmentAmount =
-                (principal * periodicRate) /
-                (1 - Math.pow(1 + periodicRate, -totalInstallments));
-        }
+    if (!installment || installment.isZero()) {
+        installment = periodicRate.isZero()
+            ? principal.div(totalInstallments)
+            : principal.mul(periodicRate).div(new FinancialDecimal(1).minus(new FinancialDecimal(1).plus(periodicRate).pow(-totalInstallments)));
     }
+    installment = installment.toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
 
-    installmentAmount = roundMoney(installmentAmount);
-
+    const rows: BankLoanScheduleRow[] = [];
+    let outstandingPrincipal = principal;
     for (let index = 0; index < totalInstallments; index += 1) {
-        const interest = roundMoney(outstandingPrincipal * periodicRate);
-        let principalComponent = roundMoney(installmentAmount - interest);
-        if (index === totalInstallments - 1) {
-            principalComponent = roundMoney(outstandingPrincipal);
-        }
-        principalComponent = Math.max(0, Math.min(principalComponent, outstandingPrincipal));
-
-        const fee = fixedFee;
-        const vat = roundMoney((interest + fee) * vatRate);
-        const total = roundMoney(principalComponent + interest + fee + vat);
-
-        outstandingPrincipal = roundMoney(outstandingPrincipal - principalComponent);
-
-        scheduledRows.push({
+        const interest = outstandingPrincipal.mul(periodicRate).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
+        let principalComponent = index === totalInstallments - 1
+            ? outstandingPrincipal
+            : installment.minus(interest).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
+        principalComponent = FinancialDecimal.max(new FinancialDecimal(0), FinancialDecimal.min(principalComponent, outstandingPrincipal));
+        const fee = fixedFee.toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
+        const vat = interest.plus(fee).mul(vatRate).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
+        const total = principalComponent.plus(interest).plus(fee).plus(vat);
+        outstandingPrincipal = outstandingPrincipal.minus(principalComponent);
+        rows.push({
             installmentNo: index + 1,
             dueDate: addInterval(baseDate, cycle, index + 1).format("YYYY-MM-DD"),
-            scheduledPrincipal: principalComponent.toFixed(2),
-            scheduledInterest: interest.toFixed(2),
-            scheduledFee: fee.toFixed(2),
-            scheduledVat: vat.toFixed(2),
-            scheduledTotal: total.toFixed(2),
-            remainingDue: total.toFixed(2),
+            scheduledPrincipal: serializeMoney(principalComponent),
+            scheduledInterest: serializeMoney(interest),
+            scheduledFee: serializeMoney(fee),
+            scheduledVat: serializeMoney(vat),
+            scheduledTotal: serializeMoney(total),
+            remainingDue: serializeMoney(total),
         });
     }
-
-    return scheduledRows;
+    return rows;
 }
