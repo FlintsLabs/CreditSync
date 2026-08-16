@@ -1,0 +1,11 @@
+ALTER TABLE "bank_loans" ADD COLUMN IF NOT EXISTS "idempotency_key" text;
+ALTER TABLE "bank_loans" ADD COLUMN IF NOT EXISTS "request_id" text;
+ALTER TABLE "bank_loans" ADD COLUMN IF NOT EXISTS "correlation_id" text;
+ALTER TABLE "bank_loans" ADD COLUMN IF NOT EXISTS "created_by_user_id" integer;
+ALTER TABLE "bank_loans" ADD COLUMN IF NOT EXISTS "updated_by_user_id" integer;
+ALTER TABLE "bank_loans" ALTER COLUMN "status" SET DEFAULT 'draft';
+ALTER TABLE "bank_loans" ADD CONSTRAINT "bank_loans_status_check" CHECK ("status" IN ('draft', 'active', 'closed'));
+ALTER TABLE "bank_loans" ADD CONSTRAINT "bank_loans_created_by_user_id_users_id_fk" FOREIGN KEY ("created_by_user_id") REFERENCES "users"("id");
+ALTER TABLE "bank_loans" ADD CONSTRAINT "bank_loans_updated_by_user_id_users_id_fk" FOREIGN KEY ("updated_by_user_id") REFERENCES "users"("id");
+CREATE UNIQUE INDEX IF NOT EXISTS "bank_loans_tenant_idempotency_unique" ON "bank_loans" ("tenant_id", "idempotency_key") WHERE "idempotency_key" IS NOT NULL;
+CREATE INDEX IF NOT EXISTS "bank_loans_tenant_profile_status_idx" ON "bank_loans" ("tenant_id", "bank_profile_id", "status");

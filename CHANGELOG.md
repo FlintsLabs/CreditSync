@@ -3,6 +3,7 @@
 ## v0.3.16 - 2026-08-16
 
 ### Added
+- Added the tenant-scoped bank drawdown draft/activate command service with Decimal schedules, lifecycle metadata, idempotent retries, credit-limit checks, and audit context.
 - Added the implementation plan for Decimal-safe bank funding drawdowns, funding allocation, REST/MCP lifecycle commands, and atomic drawdown-and-allocate workflows.
 - Added the approved design for Decimal-safe bank funding drawdowns, funding allocation, REST/MCP lifecycle commands, and atomic drawdown-and-allocate workflows.
 - Added the approved design for append-only payment unallocated balances, later allocation previews, and compensating reversals.

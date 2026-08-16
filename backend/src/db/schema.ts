@@ -92,12 +92,23 @@ export const bankLoans = pgTable("bank_loans", {
     outstandingInterest: numeric("outstanding_interest").default("0"),
     outstandingFees: numeric("outstanding_fees").default("0"),
     outstandingPenalties: numeric("outstanding_penalties").default("0"),
-    status: text("status").default("active"), // active, closed
+    status: text("status").default("active"), // draft, active, closed
+    idempotencyKey: text("idempotency_key"),
+    requestId: text("request_id"),
+    correlationId: text("correlation_id"),
+    createdByUserId: integer("created_by_user_id").references(() => users.id),
+    updatedByUserId: integer("updated_by_user_id").references(() => users.id),
     closedAt: timestamp("closed_at"),
     note: text("note"),
     createdAt: timestamp("created_at").defaultNow(),
     updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => [
+    uniqueIndex("bank_loans_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("bank_loans_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey)
+        .where(sql`${table.idempotencyKey} IS NOT NULL`),
+    index("bank_loans_tenant_profile_status_idx").on(table.tenantId, table.bankProfileId, table.status),
+    check("bank_loans_status_check", sql`${table.status} IN ('draft', 'active', 'closed')`),
+]);
 
 export const bankLoanSchedules = pgTable("bank_loan_schedules", {
     id: serial("id").primaryKey(),

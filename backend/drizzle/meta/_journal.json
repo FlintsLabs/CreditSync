@@ -281,6 +281,13 @@
       "when": 1786870800000,
       "tag": "0039_loan_agents_commission_attribution",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1786874400000,
+      "tag": "0040_bank_drawdown_command_hardening",
+      "breakpoints": true
     }
   ]
 }
