@@ -4,6 +4,8 @@ import { describe, expect, test } from "bun:test";
 const backendRoot = `${import.meta.dir}/../../`;
 const mainParent = "5268363";
 const integrationTag = "0036_floating_weekly_intermediary_integration";
+const borrowerUploadIntentMigrationTag = "0037_borrower_id_card_upload_intents";
+const productionLoanSchemaReconciliationMigrationTag = "0038_production_loan_schema_reconciliation";
 const removedBranchTags = [
     "0027_floating_interest_period_policy",
     "0028_intermediary_assignments_disbursement_groups",
@@ -42,18 +44,66 @@ function sha256(value: string | Uint8Array) {
     return createHash("sha256").update(value).digest("hex");
 }
 
+async function assertBorrowerUploadIntentContract(sql: any) {
+    const table = await sql<{ exists: boolean }[]>`SELECT to_regclass('public.borrower_id_card_upload_intents') IS NOT NULL AS exists`;
+    expect(table[0]?.exists).toBe(true);
+    const constraints: Array<{ name: string; validated: boolean; definition: string }> = await sql`
+        SELECT conname AS name, convalidated AS validated, pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint
+        WHERE conrelid = 'public.borrower_id_card_upload_intents'::regclass
+          AND conname IN (
+            'borrower_id_card_upload_intents_status_check',
+            'borrower_id_card_upload_intents_evidence_metadata_check',
+            'borrower_id_card_upload_intents_lifecycle_check',
+            'borrower_id_card_upload_intents_tenant_borrower_fk',
+            'borrower_id_card_upload_intents_tenant_file_fk',
+            'borrower_id_card_upload_intents_tenant_created_by_fk',
+            'borrower_id_card_upload_intents_tenant_updated_by_fk'
+          ) ORDER BY conname`;
+    expect(constraints).toHaveLength(7);
+    expect(constraints.every((constraint) => constraint.validated)).toBe(true);
+    expect(constraints.find((constraint) => constraint.name === "borrower_id_card_upload_intents_status_check")?.definition).toContain("pending");
+    expect(constraints.find((constraint) => constraint.name === "borrower_id_card_upload_intents_evidence_metadata_check")?.definition).toContain("declared_size");
+    expect(constraints.find((constraint) => constraint.name === "borrower_id_card_upload_intents_lifecycle_check")?.definition).toContain("idempotency_key");
+    const indexes: Array<{ name: string }> = await sql`
+        SELECT indexrelid::regclass::text AS name FROM pg_index
+        WHERE indrelid = 'public.borrower_id_card_upload_intents'::regclass AND indisunique
+          AND indexrelid::regclass::text IN (
+            'borrower_id_card_upload_intents_tenant_public_id_unique',
+            'borrower_id_card_upload_intents_tenant_hash_unique',
+            'borrower_id_card_upload_intents_tenant_idempotency_unique'
+          ) ORDER BY 1`;
+    expect(indexes.map((index) => index.name)).toEqual([
+        "borrower_id_card_upload_intents_tenant_hash_unique",
+        "borrower_id_card_upload_intents_tenant_idempotency_unique",
+        "borrower_id_card_upload_intents_tenant_public_id_unique",
+    ]);
+    const functionRows = await sql<{ name: string }[]>`
+        SELECT p.proname AS name FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'public' AND p.proname = 'enforce_borrower_id_card_upload_intent_lifecycle'`;
+    expect(functionRows).toHaveLength(1);
+    const triggers = await sql<{ name: string; enabled: string; type: number }[]>`
+        SELECT tgname AS name, tgenabled AS enabled, tgtype AS type
+        FROM pg_trigger WHERE tgrelid = 'public.borrower_id_card_upload_intents'::regclass AND NOT tgisinternal`;
+    expect(triggers).toEqual([{ name: "borrower_id_card_upload_intents_lifecycle_guard", enabled: "O", type: 31 }]);
+}
+
 describe("floating weekly and intermediary integration migration lineage", () => {
-    test("keeps immutable main 0027 through 0035 followed by one monotonic 0036 tail", async () => {
+    test("keeps immutable main 0027 through 0035 followed by one monotonic 0036–0038 tail", async () => {
         // Break caught: a deployed main migration is replaced/reordered, or Drizzle skips 0036 because its timestamp predates 0035.
         const entries = (await journal()).entries;
         expect(entries.slice(27).map((entry) => entry.tag)).toEqual([
             ...authoritativeMainTail,
             integrationTag,
+            borrowerUploadIntentMigrationTag,
+            productionLoanSchemaReconciliationMigrationTag,
         ]);
-        expect(entries.slice(27).map((entry) => entry.idx)).toEqual([27, 28, 29, 30, 31, 32, 33, 34, 35, 36]);
+        expect(entries.slice(27).map((entry) => entry.idx)).toEqual([27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38]);
         const integrationEntry = entries.at(-1)!;
-        expect(integrationEntry.when).toBeGreaterThan(Math.max(...entries.slice(0, -1).map((entry) => entry.when)));
+        expect(integrationEntry.when).toBeGreaterThan(entries.at(-2)!.when);
         expect(entries.filter((entry) => entry.tag === integrationTag)).toHaveLength(1);
+        expect(entries.filter((entry) => entry.tag === borrowerUploadIntentMigrationTag)).toHaveLength(1);
+        expect(entries.filter((entry) => entry.tag === productionLoanSchemaReconciliationMigrationTag)).toHaveLength(1);
     });
 
     test("removes the branch-local migration lineage instead of replaying it", async () => {
@@ -82,13 +132,18 @@ describe("floating weekly and intermediary integration migration lineage", () =>
         }
     });
 
-    test("chains the integration snapshot directly from main 0035", async () => {
+    test("chains the 0036 integration snapshot from main 0035, 0037 from 0036, and 0038 from 0037", async () => {
         // Break caught: generated metadata describes the removed branch lineage or a schema before main 0035.
         const [mainSnapshot, integrationSnapshot] = await Promise.all([
             Bun.file(`${backendRoot}drizzle/meta/0035_snapshot.json`).json(),
             Bun.file(`${backendRoot}drizzle/meta/0036_snapshot.json`).json(),
         ]);
         expect(integrationSnapshot.prevId).toBe(mainSnapshot.id);
+
+        const idCardUploadIntentSnapshot = await Bun.file(`${backendRoot}drizzle/meta/0037_snapshot.json`).json();
+        expect(idCardUploadIntentSnapshot.prevId).toBe(integrationSnapshot.id);
+        const reconciliationSnapshot = await Bun.file(`${backendRoot}drizzle/meta/0038_snapshot.json`).json();
+        expect(reconciliationSnapshot.prevId).toBe(idCardUploadIntentSnapshot.id);
         const settlementPreview = integrationSnapshot.tables["public.loan_settlement_previews"];
         expect(settlementPreview).toBeDefined();
         expect(settlementPreview.columns.original_outstanding_interest).toMatchObject({
@@ -115,7 +170,7 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 if (!testDatabaseUrl) {
     test.skip("main-through-0035 PostgreSQL upgrade boundary (TEST_DATABASE_URL is not set)", () => {});
 } else {
-    test("upgrades a seeded main-through-0035 database with only 0036 and preserves financial rows", async () => {
+        test("upgrades a seeded main-through-0035 database with 0036/0037 and preserves financial rows", async () => {
         // Break caught: 0036 cannot follow deployed main, mutates posted money/snapshots, or omits an integration table.
         const postgres = (await import("postgres")).default;
         const sql = postgres(testDatabaseUrl, { max: 1 });
@@ -252,7 +307,13 @@ if (!testDatabaseUrl) {
             });
             const before = await capture();
 
-            await applySqlFile(`${backendRoot}drizzle/${integrationTag}.sql`);
+            for (const entry of entries.filter((candidate) =>
+                candidate.tag === integrationTag || candidate.tag === borrowerUploadIntentMigrationTag || candidate.tag === productionLoanSchemaReconciliationMigrationTag
+            )) {
+                await applySqlFile(`${backendRoot}drizzle/${entry.tag}.sql`);
+            }
+
+            await assertBorrowerUploadIntentContract(sql);
 
             const after = await capture();
             expect(after.transactions).toEqual(before.transactions);
@@ -313,7 +374,7 @@ if (!testDatabaseUrl) {
         }
     });
 
-    test("applies the complete journal through 0036 to an empty database", async () => {
+    test("applies the complete journal through 0038 to an empty database", async () => {
         // Break caught: the consolidated migration only upgrades a seeded database but fails a clean install.
         const postgres = (await import("postgres")).default;
         const sql = postgres(testDatabaseUrl, { max: 1 });
@@ -327,6 +388,7 @@ if (!testDatabaseUrl) {
                     if (statement.trim()) await sql.unsafe(statement);
                 }
             }
+            await assertBorrowerUploadIntentContract(sql);
             const tables = await sql<{ table_name: string }[]>`
                 SELECT table_name FROM information_schema.tables
                 WHERE table_schema = 'public' AND table_name IN ('loan_settlement_previews', 'intermediated_disbursement_groups')

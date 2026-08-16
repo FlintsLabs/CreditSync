@@ -908,6 +908,64 @@ export const loanDisbursementEvidenceIntents = pgTable("loan_disbursement_eviden
     }),
 ]);
 
+export const borrowerIdCardUploadIntents = pgTable("borrower_id_card_upload_intents", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    borrowerId: integer("borrower_id").notNull(),
+    fileId: integer("file_id").notNull(),
+    status: text("status").default("pending").notNull(),
+    evidenceHash: text("evidence_hash").notNull(),
+    mimeType: text("mime_type").notNull(),
+    declaredSize: integer("declared_size").notNull(),
+    uploadExpiresAt: timestamp("upload_expires_at"),
+    finalizedAt: timestamp("finalized_at"),
+    appliedAt: timestamp("applied_at"),
+    applyRequestHash: text("apply_request_hash"),
+    idempotencyKey: text("idempotency_key"),
+    createdByUserId: integer("created_by_user_id").references(() => users.id),
+    updatedByUserId: integer("updated_by_user_id").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+    uniqueIndex("borrower_id_card_upload_intents_tenant_public_id_unique").on(table.tenantId, table.publicId),
+    uniqueIndex("borrower_id_card_upload_intents_tenant_hash_unique").on(table.tenantId, table.evidenceHash),
+    uniqueIndex("borrower_id_card_upload_intents_tenant_idempotency_unique")
+        .on(table.tenantId, table.idempotencyKey)
+        .where(sql`${table.idempotencyKey} IS NOT NULL`),
+    check("borrower_id_card_upload_intents_status_check", sql`${table.status} IN ('pending', 'ready', 'applied')`),
+    check("borrower_id_card_upload_intents_evidence_metadata_check", sql`
+        ${table.evidenceHash} ~ '^[0-9a-f]{64}$'
+        AND ${table.mimeType} IN ('image/jpeg', 'image/png')
+        AND ${table.declaredSize} > 0
+    `),
+    check("borrower_id_card_upload_intents_lifecycle_check", sql`
+        (${table.status} = 'pending' AND ${table.finalizedAt} IS NULL AND ${table.appliedAt} IS NULL AND ${table.applyRequestHash} IS NULL AND ${table.idempotencyKey} IS NULL)
+        OR (${table.status} = 'ready' AND ${table.finalizedAt} IS NOT NULL AND ${table.appliedAt} IS NULL AND ${table.applyRequestHash} IS NULL AND ${table.idempotencyKey} IS NULL)
+        OR (${table.status} = 'applied' AND ${table.finalizedAt} IS NOT NULL AND ${table.appliedAt} IS NOT NULL AND ${table.applyRequestHash} ~ '^[0-9a-f]{64}$' AND ${table.idempotencyKey} IS NOT NULL AND btrim(${table.idempotencyKey}) <> '')
+    `),
+    foreignKey({
+        name: "borrower_id_card_upload_intents_tenant_borrower_fk",
+        columns: [table.tenantId, table.borrowerId],
+        foreignColumns: [borrowers.tenantId, borrowers.id],
+    }),
+    foreignKey({
+        name: "borrower_id_card_upload_intents_tenant_file_fk",
+        columns: [table.tenantId, table.fileId],
+        foreignColumns: [files.tenantId, files.id],
+    }),
+    foreignKey({
+        name: "borrower_id_card_upload_intents_tenant_created_by_fk",
+        columns: [table.tenantId, table.createdByUserId],
+        foreignColumns: [users.tenantId, users.id],
+    }),
+    foreignKey({
+        name: "borrower_id_card_upload_intents_tenant_updated_by_fk",
+        columns: [table.tenantId, table.updatedByUserId],
+        foreignColumns: [users.tenantId, users.id],
+    }),
+]);
+
 // Bot Uploads (Unprocessed images from Webhooks)
 export const botUploads = pgTable("bot_uploads", {
     id: serial("id").primaryKey(),

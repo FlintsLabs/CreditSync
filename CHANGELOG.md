@@ -3,11 +3,23 @@
 ## v0.3.14 - 2026-08-16
 
 ### Added
+- Added hardened prerequisite 0037 as a fail-closed, pending-only borrower ID-card upload-intent lifecycle with tenant foreign keys, tenant-scoped apply idempotency, immutable post-finalization records, and PostgreSQL migration/transition tests; no borrower ID-card service behavior is implemented here.
+- Added the reviewed Task 4 runbook correction with executable checker exit comparison, bounded credential-safe restore, migration hash verification, exact production fingerprints, Compose artifact selection/rollback, full catalog verification, and strict MCP payload/confirmation boundaries.
+- Added the production loan-schema reconciliation runbook with fail-safe backup/restore rehearsal, exact drift gates, migration/deployment checks, rollback guidance, and inspect-first post-deploy financial workflow.
+- Added a read-only loan-origination schema contract and Bun checker that classifies required columns, constraints, and the activation idempotency index without reading loan data.
 - Added the TDD implementation plan for production loan-schema reconciliation, covering a read-only schema contract checker, guarded `0038` repair migration, production-shaped rehearsal, zero-interest daily-loan lifecycle verification, deployment gates, and post-draft disbursement confirmation.
 - Added the approved production loan-schema reconciliation design, covering guarded forward-only drift repair, production-shaped rehearsal, lifecycle and idempotency verification, and separate 4,000.00 THB actual-disbursement tracking for a 7,500.00 THB zero-interest agreement.
 - Added the approved production loan-list schema-compatibility design and TDD implementation plan.
 
 ### Fixed
+- Added Task 3 database-backed regression coverage for the authenticated loan-detail schema repair and the exact zero-interest 75-day daily-loan lifecycle, including loan/disbursement draft audits, activation and posting replay, the posted `4000.00` under-disbursement with exact `-3500.00` variance, and Decimal-checked ledger invariants.
+- Reconciled the production-shaped loan schema through guarded, repeatable migration 0038 with fail-closed exact type/nullable, constraint, and activation-index preflight, zero-violation validation, catalog-preservation fixtures, idempotency indexing, and byte-preserving financial-row tests.
+- Corrected the Task 4 round-3 reconciliation runbook to use exact historical app and PostgreSQL container names, a concrete verifiable writer freeze with recovery, a standalone protected deployment Compose file, production zero-violation and `convalidated` gates, unmasked app stop/remove and rollback recovery, bounded migration evidence, and exact JSON MCP health validation.
+- Corrected the Task 4 production reconciliation runbook to capture checker stderr safely, use executable stdin/heredoc journal verification with intact PostgreSQL literal substitution, deploy explicit reviewed/rollback image tags through a protected temporary Compose override, run the post-migration checker from the reviewed image, enumerate all `NOT VALID` constraint checks, protect logs, and document the frozen MCP draft/idempotency boundary.
+- Made loan-origination constraint compatibility fail closed when either definition is malformed, including when both malformed definitions share the same invalid normalization sentinel.
+- Hardened loan-origination constraint normalization with a full-consumption lexer, bounded PostgreSQL cast handling, and associative same-operator Boolean AST flattening while rejecting unsupported operators and characters.
+- Fixed the loan-origination schema checker to use valid PostgreSQL catalogs, tolerate canonical constraint/index rendering, and reject constrained numeric columns where unconstrained numeric is required.
+- Preserved Boolean grouping while canonicalizing PostgreSQL loan-constraint output, including redundant parser parentheses, casts, and `IN`/`ANY (ARRAY[...])` rendering.
 - Made the loan list use deployed-compatible explicit loan and legacy floating-accrual projections, deriving floating payment health from tenant-bound persisted daily accruals without generalized balance projection or financial writes, while preserving scheduled-loan health, borrower labels, exact money strings, and the localized retryable error state.
 
 ## v0.3.13 - 2026-08-15
