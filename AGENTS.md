@@ -115,7 +115,7 @@ When the user says `ใช้ tmux implement`, `implement ด้วย tmux`, or
 - Mark reads with `readOnlyHint`; mark financial post, activation, renewal, and reversal as destructive. Every write returns audit public ID and correlation ID.
 - Agent orchestration must inspect before writing. It may post only a clearly valid `ready` payment/disbursement result; ambiguity, duplicate, stale state, mismatch, missing confirmation, or idempotency conflict must stop for human review.
 - Disbursement agent workflow is: create draft, optionally prepare evidence, PUT only when a current signed URL is present, finalize, inspect/list the draft, show variance, obtain explicit confirmation, then post. On evidence `ready` retry, do not upload/finalize again. Before reversal, re-list and select the exact posted event, ask for reason/confirmation, then reverse.
-- Keep the frozen MCP contract, plugin manifest/version, skills, eval scenarios, and validator synchronized whenever tools change. The current private CreditSync plugin is `2.1.0` and has six skills.
+- Keep the frozen MCP contract, plugin manifest/version, skills, eval scenarios, and validator synchronized whenever tools change. The current private CreditSync plugin is `7.0.0` and has eleven skills.
 
 ## Verification and Deployment
 

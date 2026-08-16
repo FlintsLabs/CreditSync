@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.15 - 2026-08-16
+
+### Changed
+- Updated `AGENTS.md` to state the current private CreditSync plugin version `7.0.0` with eleven skills, replacing the outdated `2.1.0`/six-skills reference to match the plugin manifest and validator output.
+
 ## v0.3.14 - 2026-08-16
 
 ### Added
