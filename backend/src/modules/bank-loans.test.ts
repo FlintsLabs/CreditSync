@@ -120,3 +120,35 @@ describe("bank-loan allocation state", () => {
         });
     });
 });
+
+describe("bank-loan schedule rollups", () => {
+    if (integrationEnabled) beforeEach(resetTables);
+
+    integrationTest("persists exact Decimal schedule totals", async () => {
+        const tenantId = "tenant-bank-loan-rollup";
+        const owner = await db.insert(users).values({ tenantId, email: "bank-loan-rollup@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const response = await app.handle(new Request("http://localhost/bank-loans/", {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${await authToken(owner)}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                amount: 36000,
+                interestRate: 25,
+                startDate: "2026-01-01",
+                totalInstallments: 10,
+                repaymentCycle: "monthly",
+                processingFeeAmount: 10,
+                utilizationFeeAmount: 5,
+                vatRate: 7,
+            }),
+        }));
+
+        expect(response.status).toBe(200);
+        const createdLoan = await response.json() as { id: number; outstandingInterest: string; outstandingFees: string };
+        expect(createdLoan).toMatchObject({ outstandingInterest: "4252.49", outstandingFees: "458.17" });
+        expect(await db.query.bankLoans.findFirst({ where: (table, { eq }) => eq(table.id, createdLoan.id) }))
+            .toMatchObject({ outstandingInterest: "4252.49", outstandingFees: "458.17" });
+    });
+});

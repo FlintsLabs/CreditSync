@@ -21,6 +21,7 @@
 - Localized the Loan List empty state to match the selected Active, Done, or All tab scope.
 
 ### Fixed
+- Aggregated bank-loan schedule interest, fees, and VAT with Decimal-safe rollups when creating or regenerating loans.
 - Calculated bank-loan schedules with Decimal string arithmetic and exact final-principal reconciliation.
 - Enforced canonical posted-payment and owner-scope authorization across payment attribution and commission reads, interpreted agent agreement times in Asia/Bangkok, added backend-authoritative exact commission amounts to repayment-schedule rows, and ordered the commission-participant self-reference after its supporting unique index so fresh database migrations bootstrap successfully.
 - Made confirmed agent and payment-attribution retries reuse command-scoped idempotency keys, removed unsupported per-installment commission placeholders, projected effective current agents in the tenant-scoped Loan List query without frontend fan-out, and preserved inactive intermediary display data for participant history.

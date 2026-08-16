@@ -20,7 +20,7 @@ import { deriveProfitabilityMetrics, getBankLoanSettlementSummary } from "../lib
 import { computeOverdueSnapshot } from "../lib/overdue";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
 import { findBankLoanByPublicId, findBankLoanScheduleByPublicId, findBankProfileByPublicId } from "../lib/public-id";
-import { serializeMoney } from "../lib/money";
+import { serializeMoney, sumMoney } from "../lib/money";
 import { FinancialDecimal } from "../lib/financial-decimal";
 
 export const bankLoansRoute = new Elysia({ prefix: "/bank-loans" })
@@ -392,12 +392,8 @@ export const bankLoansRoute = new Elysia({ prefix: "/bank-loans" })
 
                 nextDueDate = regeneratedSchedule[0]?.dueDate ?? null;
                 outstandingPrincipal = nextAmount.toFixed(2);
-                outstandingInterest = regeneratedSchedule
-                    .reduce((sum, row) => sum + Number(row.scheduledInterest), 0)
-                    .toFixed(2);
-                outstandingFees = regeneratedSchedule
-                    .reduce((sum, row) => sum + Number(row.scheduledFee) + Number(row.scheduledVat), 0)
-                    .toFixed(2);
+                outstandingInterest = sumMoney(regeneratedSchedule.map((row) => row.scheduledInterest)).toFixed(2);
+                outstandingFees = sumMoney(regeneratedSchedule.flatMap((row) => [row.scheduledFee, row.scheduledVat])).toFixed(2);
                 outstandingPenalties = "0.00";
             }
 
@@ -543,8 +539,8 @@ export const bankLoansRoute = new Elysia({ prefix: "/bank-loans" })
         });
 
         const outstandingPrincipal = body.amount;
-        const outstandingInterest = schedule.reduce((sum, row) => sum + Number(row.scheduledInterest), 0);
-        const outstandingFees = schedule.reduce((sum, row) => sum + Number(row.scheduledFee) + Number(row.scheduledVat), 0);
+        const outstandingInterest = sumMoney(schedule.map((row) => row.scheduledInterest));
+        const outstandingFees = sumMoney(schedule.flatMap((row) => [row.scheduledFee, row.scheduledVat]));
         const nextDueDate = schedule[0]?.dueDate;
 
         const createdLoan = await db.transaction(async (tx) => {
