@@ -3,6 +3,7 @@
 ## v0.3.16 - 2026-08-16
 
 ### Added
+- Added the approved design for append-only payment unallocated balances, later allocation previews, and compensating reversals.
 - Added the `creditsync-slip-ocr` ZCode agent skill: a Bun/Tesseract.js workflow that OCRs Thai payment slip images (full image plus zoomed date/sender/receiver crops), parses candidate fields, and cross-checks them against borrower payment history and loan schedules before any human-confirmed MCP payment write.
 - Added tabbed Loan Detail views for information, agent commission agreements, payment-source attribution history, and repayment schedule, plus localized agent badges/search on Loan List.
 - Added tenant-scoped REST and a frozen 75-tool MCP/plugin contract for effective-dated loan commission participants, read-only exact commission and reversal previews, and confirmed idempotent append-only payment source attributions with audit/correlation metadata.
