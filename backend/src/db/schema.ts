@@ -94,6 +94,10 @@ export const bankLoans = pgTable("bank_loans", {
     outstandingPenalties: numeric("outstanding_penalties").default("0"),
     status: text("status").default("active"), // draft, active, closed
     idempotencyKey: text("idempotency_key"),
+    requestHash: text("request_hash"),
+    activationIdempotencyKey: text("activation_idempotency_key"),
+    activationRequestHash: text("activation_request_hash"),
+    activationResult: jsonb("activation_result"),
     requestId: text("request_id"),
     correlationId: text("correlation_id"),
     createdByUserId: integer("created_by_user_id").references(() => users.id),
@@ -106,6 +110,8 @@ export const bankLoans = pgTable("bank_loans", {
     uniqueIndex("bank_loans_tenant_id_id_unique").on(table.tenantId, table.id),
     uniqueIndex("bank_loans_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey)
         .where(sql`${table.idempotencyKey} IS NOT NULL`),
+    uniqueIndex("bank_loans_tenant_activation_idempotency_unique").on(table.tenantId, table.activationIdempotencyKey)
+        .where(sql`${table.activationIdempotencyKey} IS NOT NULL`),
     index("bank_loans_tenant_profile_status_idx").on(table.tenantId, table.bankProfileId, table.status),
     check("bank_loans_status_check", sql`${table.status} IN ('draft', 'active', 'closed')`),
 ]);

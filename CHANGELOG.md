@@ -22,6 +22,7 @@
 - Localized the Loan List empty state to match the selected Active, Done, or All tab scope.
 
 ### Fixed
+- Hardened bank drawdown lifecycle commands with tenant-admin authorization, Decimal aggregate credit-limit enforcement, strict input validation, payload-safe draft/activation idempotency, note preservation, and repeatable lifecycle constraints.
 - Aggregated bank-loan schedule interest, fees, and VAT with Decimal-safe rollups when creating or regenerating loans.
 - Calculated bank-loan schedules with Decimal string arithmetic and exact final-principal reconciliation.
 - Enforced canonical posted-payment and owner-scope authorization across payment attribution and commission reads, interpreted agent agreement times in Asia/Bangkok, added backend-authoritative exact commission amounts to repayment-schedule rows, and ordered the commission-participant self-reference after its supporting unique index so fresh database migrations bootstrap successfully.
