@@ -3,6 +3,7 @@
 ## v0.3.14 - 2026-08-16
 
 ### Added
+- Corrected Task 1 recovered-cash regression expectations for Decimal cent rounding and added coverage that negative-only source allocations do not contribute usage or linked cash.
 - Added RED integration regressions for source-linked borrower cash recovery, partial source-share attribution, unlinked-loan exclusion, and external-liability capacity behavior.
 - Added the TDD implementation plan for recycling all borrower cash collected from source-linked loans into available own-capital capacity while excluding unlinked loans and keeping ROI semantics separate.
 - Added the approved design for recycling all borrower cash collected from source-linked loans into available own-capital capacity while excluding unlinked loans and keeping ROI principal/revenue semantics separate.
