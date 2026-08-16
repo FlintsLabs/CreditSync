@@ -4,15 +4,16 @@
 
 ### Added
 
+- Added eleven closed commission-participant, exact commission, and payment source-attribution tools; actual writes carry confirmation, idempotency, audit, and append-only compensation boundaries, while commission reversal remains an explicitly read-only preview.
 - Added the closed-schema destructive `loan.settlement.reverse` tool and synchronized settlement orchestration for explicit reason/confirmation, stable idempotency, append-only negative provenance, and downstream-activity stops.
 
 ### Changed
 
-- Froze the actual authenticated 64-tool contract while retaining all 11 orchestration skills.
+- Froze the actual 75-tool MCP `tools/list` contract while retaining all 11 orchestration skills.
 
 ### Compatibility
 
-- Released a new major plugin because the frozen catalogue grows from 63 to 64 tools. MCP payload schema version remains `1.0`.
+- Retained MCP payload schema version `1.0`; the additive catalogue now contains 75 tools and existing tool schemas remain frozen.
 
 ## 6.0.0 - 2026-08-14
 

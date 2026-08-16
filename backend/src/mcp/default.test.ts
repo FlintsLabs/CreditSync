@@ -1050,17 +1050,48 @@ describe("default MCP adapter integration", () => {
             paymentIntakePublicId: intakePublicId,
             allocations: [{ borrowerPublicId, loanPublicId, amount: "40.00" }],
         })).data;
-        await call("payment.post", {
+        const postedPayment = (await call("payment.post", {
             paymentIntakePublicId: intakePublicId,
             proposalPublicId: proposal.publicId,
-        });
-        await call("payment.reverse", {
+        })).data;
+        const paymentPublicId = String((postedPayment.transactions as Array<{ publicId: string }>)[0]!.publicId);
+        const reversedPayment = (await call("payment.reverse", {
             paymentIntakePublicId: intakePublicId,
             reason: "Correct duplicate transfer",
-        });
+        })).data;
+        const reversalPaymentPublicId = String((reversedPayment.transactions as Array<{ publicId: string }>).at(-1)!.publicId);
 
         await call("intermediary.search", { query: "MCP all-tools collector" });
         const intermediary = (await call("intermediary.create", { name: "MCP all-tools collector" })).data;
+        await call("loan.commission-participant.list", { loanPublicId });
+        const participant = (await call("loan.commission-participant.add", {
+            loanPublicId, intermediaryPublicId: intermediary.publicId, commissionRate: "30.00", role: "collector",
+            effectiveFrom: "2026-08-01T00:00:00.000Z", confirmed: true, idempotencyKey: "mcp-all-tools-participant-add",
+        })).data;
+        const updatedParticipant = (await call("loan.commission-participant.update", {
+            participantPublicId: participant.publicId, commissionRate: "25.00", role: "collector",
+            effectiveFrom: "2026-08-11T00:00:00.000Z", confirmed: true, idempotencyKey: "mcp-all-tools-participant-update",
+        })).data;
+        await call("loan.commission-participant.end", {
+            participantPublicId: updatedParticipant.publicId, effectiveTo: "2026-08-12T00:00:00.000Z",
+            reason: "MCP all-tools participant end", confirmed: true, idempotencyKey: "mcp-all-tools-participant-end",
+        });
+        const commissionArgs = { loanPublicId, paymentPublicIds: [paymentPublicId] };
+        await call("loan.commission.preview", commissionArgs);
+        await call("loan.commission.list", commissionArgs);
+        await call("loan.commission.calculate", commissionArgs);
+        await call("loan.commission.reverse", {
+            loanPublicId, paymentPublicIds: [reversalPaymentPublicId],
+        });
+        const attribution = (await call("payment.intermediary-attribution.create", {
+            paymentPublicId, sourceKind: "direct", amount: "20.00", confirmed: true,
+            idempotencyKey: "mcp-all-tools-attribution-create",
+        })).data;
+        await call("payment.intermediary-attribution.list", { paymentPublicId });
+        await call("payment.intermediary-attribution.reverse", {
+            attributionPublicId: attribution.publicId, reason: "MCP all-tools attribution reversal",
+            confirmed: true, idempotencyKey: "mcp-all-tools-attribution-reverse",
+        });
         const bankAccount = (await call("intermediary.bank-account.save", {
             intermediaryPublicId: intermediary.publicId,
             bankCode: "BBL",

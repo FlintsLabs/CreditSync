@@ -1,8 +1,8 @@
 import { Elysia, t } from "elysia";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import Decimal from "decimal.js";
 import { db } from "../db";
-import { borrowerAliases, borrowers, loanSchedules, loans, transactions } from "../db/schema";
+import { borrowerAliases, borrowers, loanSchedules, loans, paymentIntakes, transactions } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
 import { calculateLoanClosingSummary } from "../lib/calculator";
 import { createAuditLog } from "../lib/audit-log";
@@ -268,11 +268,28 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                 ttlSeconds: 30,
                 loader: async () => {
                     const ctx = loanCommandContext(user, request);
-                    const [loan, commissionParticipants] = await Promise.all([
+                    const accessibleLoan = await findAccessibleLoanByPublicId(user, params.id);
+                    if (!accessibleLoan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+                    const [loan, commissionParticipants, paymentRows] = await Promise.all([
                         getLoanApplication(ctx, params.id),
                         listLoanCommissionParticipants(ctx, params.id),
+                        db.select({ publicId: transactions.publicId }).from(transactions).where(and(
+                            eq(transactions.tenantId, user.tenantId), eq(transactions.loanId, accessibleLoan.id),
+                            isNotNull(transactions.postedAt), inArray(transactions.entryType, ["repayment", "reversal"]),
+                            inArray(transactions.type, ["repayment", "close_account", "reversal"]),
+                            sql`(${transactions.paymentIntakeId} IS NULL OR EXISTS (
+                                SELECT 1 FROM ${paymentIntakes}
+                                WHERE ${paymentIntakes.tenantId} = ${user.tenantId}
+                                  AND ${paymentIntakes.id} = ${transactions.paymentIntakeId}
+                                  AND ${paymentIntakes.status} = 'posted'
+                                  AND ${paymentIntakes.postedAt} IS NOT NULL
+                            ))`,
+                        )),
                     ]);
-                    return { ...loan, commissionParticipantCount: commissionParticipants.length, commissionParticipants };
+                    const commissionSummary = paymentRows.length > 0
+                        ? await previewLoanCommission(ctx, { loanPublicId: params.id, paymentPublicIds: paymentRows.map((row) => row.publicId) })
+                        : { loanPublicId: params.id, paymentPublicIds: [], interestAmount: "0.00", totalCommission: "0.00", participants: [] };
+                    return { ...loan, commissionParticipantCount: commissionParticipants.length, commissionParticipants, commissionSummary };
                 },
             });
         } catch (error) {

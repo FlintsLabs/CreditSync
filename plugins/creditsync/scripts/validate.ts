@@ -106,6 +106,33 @@ export async function validatePlugin() {
         const contents = await readFile(skillPath, "utf8");
         if (!contents.startsWith(`---\nname: ${skill}\ndescription: Use when`)) errors.push(`invalid discovery frontmatter for ${skill}`);
     }
+    const requiredSkillToolGuidance: Record<string, string[]> = {
+        creditsync: [
+            "loan.commission-participant.list", "loan.commission-participant.add", "loan.commission-participant.update",
+            "loan.commission-participant.end", "loan.commission.preview", "loan.commission.list", "loan.commission.calculate",
+            "loan.commission.reverse", "payment.intermediary-attribution.create", "payment.intermediary-attribution.list",
+            "payment.intermediary-attribution.reverse",
+        ],
+        "manage-loans": [
+            "loan.commission-participant.list", "loan.commission-participant.add", "loan.commission-participant.update",
+            "loan.commission-participant.end", "loan.commission.preview", "loan.commission.list", "loan.commission.calculate",
+            "loan.commission.reverse",
+        ],
+        "reconcile-payments": [
+            "loan.commission-participant.list", "loan.commission.preview", "loan.commission.reverse",
+            "payment.intermediary-attribution.create", "payment.intermediary-attribution.list",
+            "payment.intermediary-attribution.reverse",
+        ],
+    };
+    for (const [skill, toolNames] of Object.entries(requiredSkillToolGuidance)) {
+        const contents = await readFile(resolve(pluginRoot, "skills", skill, "SKILL.md"), "utf8");
+        for (const toolName of toolNames) {
+            if (!contents.includes(`\`${toolName}\``)) errors.push(`${skill} skill must document ${toolName}`);
+        }
+        for (const boundary of ["explicit confirmation", "stable idempotency key", "append-only", "read-only compensating preview", "unattributed", "multi-agent"]) {
+            if (!contents.includes(boundary)) errors.push(`${skill} skill must document the ${boundary} boundary`);
+        }
+    }
     for (const reference of expectedReferences) {
         if (!existsSync(resolve(pluginRoot, "references", reference))) errors.push(`missing reference ${reference}`);
     }

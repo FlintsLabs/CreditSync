@@ -1107,10 +1107,7 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
     "loan.commission.preview": z.object({ loanPublicId: uuid, paymentPublicIds: z.array(uuid).min(1).max(1_000) }).strict(),
     "loan.commission.list": z.object({ loanPublicId: uuid, paymentPublicIds: z.array(uuid).min(1).max(1_000) }).strict(),
     "loan.commission.calculate": z.object({ loanPublicId: uuid, paymentPublicIds: z.array(uuid).min(1).max(1_000) }).strict(),
-    "loan.commission.reverse": z.object({
-        loanPublicId: uuid, paymentPublicIds: z.array(uuid).min(1).max(1_000), reason: shortText,
-        confirmed: z.literal(true), idempotencyKey: z.string().trim().min(1).max(200),
-    }).strict(),
+    "loan.commission.reverse": z.object({ loanPublicId: uuid, paymentPublicIds: z.array(uuid).min(1).max(1_000) }).strict(),
     "payment.intermediary-attribution.create": z.object({
         paymentPublicId: uuid, transactionPublicId: uuid.optional(), sourceKind: z.enum(["direct", "intermediary"]),
         intermediaryPublicId: uuid.optional(), amount: money, confirmed: z.literal(true),
@@ -1325,6 +1322,7 @@ const readOnlyTools = new Set<McpToolName>([
     "loan.commission.preview",
     "loan.commission.list",
     "loan.commission.calculate",
+    "loan.commission.reverse",
     "payment.intermediary-attribution.list",
     "intermediary.search",
     "intermediary.profile.get",
@@ -1353,7 +1351,6 @@ const destructiveTools = new Set<McpToolName>([
     "loan.commission-participant.add",
     "loan.commission-participant.update",
     "loan.commission-participant.end",
-    "loan.commission.reverse",
     "payment.intermediary-attribution.create",
     "payment.intermediary-attribution.reverse",
     "intermediary.bank-account.save",
@@ -1396,7 +1393,7 @@ const financialTools = new Set<McpToolName>([
     "loan.waiver.reverse",
 ]);
 const idempotentTools = new Set<McpToolName>([
-    ...readOnlyTools,
+    ...[...readOnlyTools].filter((toolName) => toolName !== "loan.commission.reverse"),
     "intake.create",
     "payment.post",
     "payment.reverse",
@@ -1409,7 +1406,6 @@ const idempotentTools = new Set<McpToolName>([
     "loan.commission-participant.add",
     "loan.commission-participant.update",
     "loan.commission-participant.end",
-    "loan.commission.reverse",
     "payment.intermediary-attribution.create",
     "payment.intermediary-attribution.reverse",
     "intermediary.bank-account.save",
@@ -1467,7 +1463,7 @@ const toolDescriptions: Record<McpToolName, string> = {
     "loan.commission.preview": "Preview exact commission derived only from posted payment interest components.",
     "loan.commission.list": "List exact derived commission for supplied posted payment public UUIDs.",
     "loan.commission.calculate": "Calculate exact derived commission for supplied posted payment public UUIDs.",
-    "loan.commission.reverse": "Calculate a confirmed compensating commission result from supplied posted reversal payments.",
+    "loan.commission.reverse": "Preview the exact compensating commission effect of supplied posted reversal payments read-only; this never writes financial records or returns audit identifiers.",
     "payment.intermediary-attribution.create": "Create a confirmed exact payment-source attribution idempotently.",
     "payment.intermediary-attribution.list": "List append-only payment-source attribution entries for one accessible payment.",
     "payment.intermediary-attribution.reverse": "Create a confirmed reasoned compensating attribution idempotently.",
@@ -1513,6 +1509,7 @@ function titleFor(toolName: McpToolName) {
 }
 
 function completionText(toolName: McpToolName) {
+    if (toolName === "loan.commission.reverse") return "Loan commission reversal preview completed.";
     const words = toolName.replace(/[.-]/gu, " ");
     return `${words[0]!.toUpperCase()}${words.slice(1)} completed.`;
 }

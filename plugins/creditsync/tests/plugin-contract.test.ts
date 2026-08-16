@@ -78,6 +78,34 @@ describe("CreditSync plugin 7.0.0 contract", () => {
         expect(await readFile(resolve(pluginRoot, "scripts/validate.ts"), "utf8")).toContain('"restructure-loan"');
     });
 
+    test("commission and attribution skills bind named tools to write and reversal safety guidance", async () => {
+        const required: Record<string, string[]> = {
+            creditsync: [
+                "loan.commission-participant.list", "loan.commission-participant.add", "loan.commission-participant.update",
+                "loan.commission-participant.end", "loan.commission.preview", "loan.commission.list", "loan.commission.calculate",
+                "loan.commission.reverse", "payment.intermediary-attribution.create", "payment.intermediary-attribution.list",
+                "payment.intermediary-attribution.reverse",
+            ],
+            "manage-loans": [
+                "loan.commission-participant.list", "loan.commission-participant.add", "loan.commission-participant.update",
+                "loan.commission-participant.end", "loan.commission.preview", "loan.commission.list", "loan.commission.calculate",
+                "loan.commission.reverse",
+            ],
+            "reconcile-payments": [
+                "loan.commission-participant.list", "loan.commission.preview", "loan.commission.reverse",
+                "payment.intermediary-attribution.create", "payment.intermediary-attribution.list",
+                "payment.intermediary-attribution.reverse",
+            ],
+        };
+        for (const [skillName, toolNames] of Object.entries(required)) {
+            const skill = await readFile(resolve(pluginRoot, "skills", skillName, "SKILL.md"), "utf8");
+            for (const toolName of toolNames) expect(skill, `${skillName} guidance for ${toolName}`).toContain(`\`${toolName}\``);
+            for (const boundary of ["explicit confirmation", "stable idempotency key", "append-only", "read-only compensating preview", "unattributed", "multi-agent"]) {
+                expect(skill, `${skillName} ${boundary} boundary`).toContain(boundary);
+            }
+        }
+    });
+
     test("renewal reversal skill states only capabilities exposed by MCP 1.0", async () => {
         const skill = await readFile(resolve(pluginRoot, "skills/renew-daily-loan/SKILL.md"), "utf8");
         expect(skill).toContain("borrower public UUID retained from the same-task pre-execution resolution");
@@ -220,7 +248,7 @@ describe("CreditSync plugin 7.0.0 contract", () => {
             "waiver-missing-reason",
             "restructure-unsafe-reversal",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
-        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(28);
+        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(29);
         expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(45);
     });
 

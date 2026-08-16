@@ -21,6 +21,14 @@ Loan creation is `preview → draft → activate`. Terms become immutable after 
 
 If requested terms change at any point, start again at `loan.preview`; do not activate a draft based on a different preview.
 
+## Commission participants
+
+Before activation or any participant change, call `loan.commission-participant.list`. Having no commission participant is valid; never invent one. For an approved agreement, `loan.commission-participant.add`, `loan.commission-participant.update`, and `loan.commission-participant.end` are effective-dated append-only writes. Show the exact intermediary, rate, role, effective boundary, and reason where applicable, then require explicit confirmation and a stable idempotency key for the actual write. Reuse a key only for an identical retry, and never rewrite historical participant versions or auto-apply a new agreement to old payments.
+
+Use `loan.commission.preview`, `loan.commission.list`, and `loan.commission.calculate` only for exact backend-derived results over selected posted payments. `loan.commission.reverse` is a read-only compensating preview over selected posted reversal payments; it performs no financial write, needs no confirmation/reason/idempotency key, and returns no audit identifiers. Actual payment or attribution correction must use its supported append-only write workflow.
+
+Payment source attribution is independent from the participant agreement. Inspect it with `payment.intermediary-attribution.list`; leaving a payment unattributed, recording `direct` funding, or recording a confirmed multi-agent split are distinct operator choices. Route actual append-only attribution writes and corrections through `payment.intermediary-attribution.create` and `payment.intermediary-attribution.reverse` under the `reconcile-payments` workflow.
+
 ## Existing loans
 
 - Draft: inspect it in `borrower.portfolio`; if the required edit tool is unavailable, report that limitation rather than activating incorrect terms.
@@ -35,6 +43,9 @@ If requested terms change at any point, start again at `loan.preview`; do not ac
 | Preview only | `borrower.search` → `borrower.portfolio` → `loan.preview` | No persisted loan |
 | New agreement | above → approval → `loan.draft` → activation approval → `loan.activate` | Terms must remain identical |
 | View funding | `funding-source.list` | Read-only |
+| View commission | `loan.commission-participant.list` → `loan.commission.preview` | Read-only backend calculation |
+| Change participant | list → approval → `loan.commission-participant.add` / `loan.commission-participant.update` / `loan.commission-participant.end` | Confirmed, idempotent, effective-dated append |
+| Preview reversal commission | `loan.commission.reverse` with posted reversal payment UUIDs | Read-only; no audit IDs |
 | Edit active terms | inspect and refuse direct edit | Use supported new/correcting flow |
 
 ## Common mistakes

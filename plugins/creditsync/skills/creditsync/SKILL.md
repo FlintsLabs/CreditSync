@@ -18,6 +18,13 @@ Use CreditSync as an orchestration surface over its private MCP app. The backend
 5. Re-read or re-preview after state changes. After a disbursement draft update, re-list it and obtain fresh confirmation because any earlier confirmation is invalid. Post only the latest inspected backend result.
 6. For a supplied payment-slip image, require verified evidence to be `ready` before `payment.preview` or `payment.post`; if no image is supplied, data-only payment capture may skip evidence.
 
+## Commission participants and payment attribution
+
+- Inspect effective loan participants with `loan.commission-participant.list` before any participant write. Use `loan.commission-participant.add`, `loan.commission-participant.update`, or `loan.commission-participant.end` only after the operator confirms the exact intermediary, rate, role, effective time, and any reason. Each actual write requires `confirmed: true` and a stable idempotency key; reuse a key only for the identical command.
+- Use backend-derived `loan.commission.preview`, `loan.commission.list`, or `loan.commission.calculate` results without recreating commission arithmetic. `loan.commission.reverse` is only a read-only compensating preview for selected posted reversal payments: it accepts no confirmation, reason, or idempotency key, writes nothing, and returns no audit identifiers.
+- Inspect a posted payment with `payment.intermediary-attribution.list` before attribution. The operator may leave it unattributed, mark an exact amount as `direct`, or create one or more explicit `intermediary` entries for a multi-agent split. Never infer an intermediary from a later participant agreement or silently force attribution totals to fit.
+- `payment.intermediary-attribution.create` is an actual append-only write and requires the exact payment/source/amount, explicit confirmation, and a stable idempotency key. Corrections use `payment.intermediary-attribution.reverse` with the exact existing attribution, a non-blank reason, separate explicit confirmation, and a new idempotency key; never edit or delete attribution history.
+
 ## State decisions
 
 | Backend state | Required action |
@@ -28,7 +35,7 @@ Use CreditSync as an orchestration surface over its private MCP app. The backend
 | stale/expired/not-latest | Re-inspect and request a new preview; never reuse the old hash or proposal. |
 | unauthorized/forbidden | Stop without retrying under another identity. |
 
-Every activation, post, reversal, and renewal uses explicit public IDs. Supply confirmation, reason, or a stable idempotency key exactly when that named tool schema requires it; never invent unsupported fields. Reversals create compensating records, not deletion.
+Every activation, post, write reversal, and renewal uses explicit public IDs. Supply confirmation, reason, or a stable idempotency key exactly when that named tool schema requires it; never invent unsupported fields. Write reversals create compensating records, not deletion; a tool explicitly documented as a reversal preview remains read-only.
 
 ## Routing
 

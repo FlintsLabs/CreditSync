@@ -84,6 +84,25 @@ describe("loan agent REST contracts", () => {
         });
         expect(preview.response.status).toBe(200);
         expect(preview.body).toMatchObject({ interestAmount: "20.00", totalCommission: "6.00", participants: [{ commissionRate: "30.00", commissionAmount: "6.00" }] });
+        const detail = await jsonRequest(app, `/loans/${loan.publicId}`, token);
+        expect(detail.response.status).toBe(200);
+        expect(detail.body).toMatchObject({
+            commissionParticipantCount: 1,
+            commissionParticipants: [{ commissionRate: "30.00" }],
+            commissionSummary: { interestAmount: "20.00", totalCommission: "6.00" },
+        });
+        const updated = await jsonRequest(app, `/loans/${loan.publicId}/commission-participants/${added.body.publicId}`, token, {
+            method: "PATCH", headers: { "idempotency-key": "participant-update" },
+            body: JSON.stringify({ commissionRate: "25.00", role: "collector", effectiveFrom: "2026-08-18T00:00:00.000Z", confirmed: true }),
+        });
+        expect(updated.response.status).toBe(200);
+        expect(updated.body).toMatchObject({ previousParticipantPublicId: added.body.publicId, commissionRate: "25.00", status: "active" });
+        const ended = await jsonRequest(app, `/loans/${loan.publicId}/commission-participants/${updated.body.publicId}/end`, token, {
+            method: "POST", headers: { "idempotency-key": "participant-end" },
+            body: JSON.stringify({ effectiveTo: "2026-08-19T00:00:00.000Z", reason: "Agreement ended", confirmed: true }),
+        });
+        expect(ended.response.status).toBe(200);
+        expect(ended.body).toMatchObject({ previousParticipantPublicId: updated.body.publicId, status: "ended" });
 
         const foreignList = await jsonRequest(app, `/loans/${loan.publicId}/commission-participants`, await authToken(foreign));
         expect(foreignList.response.status).toBe(404);

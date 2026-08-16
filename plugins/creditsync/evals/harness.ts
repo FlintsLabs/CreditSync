@@ -1232,6 +1232,10 @@ const SCENARIOS: Record<string, Scenario> = {
         script: [{ name: "loan.commission.preview", arguments: { loanPublicId: LOAN_A, paymentPublicIds: [PAYMENT_A, PAYMENT_B] }, result: commissionPreview }],
         run: async (mcp) => { await mcp.call("loan.commission.preview", { loanPublicId: LOAN_A, paymentPublicIds: [PAYMENT_A, PAYMENT_B] }); return { outcome: "completed" } as const; },
     },
+    "commission-reversal-read-only-preview": {
+        script: [{ name: "loan.commission.reverse", arguments: { loanPublicId: LOAN_A, paymentPublicIds: [PAYMENT_A, PAYMENT_B] }, result: commissionPreview }],
+        run: async (mcp) => { await mcp.call("loan.commission.reverse", { loanPublicId: LOAN_A, paymentPublicIds: [PAYMENT_A, PAYMENT_B] }); return { outcome: "completed" } as const; },
+    },
     "payment-attribution-idempotency-replay": {
         script: [
             { name: "payment.intermediary-attribution.create", arguments: { paymentPublicId: PAYMENT_A, sourceKind: "direct", amount: "20.00", confirmed: true, idempotencyKey: "replay-attribution-1" }, result: attribution(ATTRIBUTION_A, "20.00", "direct", null) },
