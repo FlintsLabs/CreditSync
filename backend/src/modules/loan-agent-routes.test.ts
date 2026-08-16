@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { borrowers, intermediaries, loans, transactions, users } from "../db/schema";
+import { borrowers, intermediaries, loanSchedules, loans, transactions, users } from "../db/schema";
 import { intermediariesRoute } from "./intermediaries";
 import { loansRoute } from "./loans";
 
@@ -60,8 +60,12 @@ describe("loan agent REST contracts", () => {
         const foreign = await db.insert(users).values({ tenantId: "loan-agent-routes-foreign", email: "foreign@loan-agent-routes.test", role: "owner" }).returning().then((rows) => rows[0]!);
         const borrower = await db.insert(borrowers).values({ tenantId: actor.tenantId, ownerUserId: actor.id, name: "Route Borrower" }).returning().then((rows) => rows[0]!);
         const loan = await db.insert(loans).values({ tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "100.00", interestRate: "0.00", repaymentType: "floating", status: "active" }).returning().then((rows) => rows[0]!);
+        const scheduleRows = await db.insert(loanSchedules).values([
+            { tenantId: actor.tenantId, loanId: loan.id, installmentNo: 1, dueDate: "2026-08-17", scheduledPrincipal: "80.00", scheduledInterest: "20.00", scheduledTotal: "100.00", paidTotal: "100.00", remainingDue: "0.00", status: "paid" },
+            { tenantId: actor.tenantId, loanId: loan.id, installmentNo: 2, dueDate: "2026-08-18", scheduledPrincipal: "80.00", scheduledInterest: "20.00", scheduledTotal: "100.00", paidTotal: "0.00", remainingDue: "100.00", status: "pending" },
+        ]).returning();
         const intermediary = await db.insert(intermediaries).values({ tenantId: actor.tenantId, ownerUserId: actor.id, name: "Route Agent", normalizedName: "route-agent", createdByUserId: actor.id, updatedByUserId: actor.id }).returning().then((rows) => rows[0]!);
-        const payment = await db.insert(transactions).values({ tenantId: actor.tenantId, ownerUserId: actor.id, loanId: loan.id, amount: "100.00", principalComponent: "80.00", interestComponent: "20.00", type: "repayment", entryType: "repayment", idempotencyKey: "route-payment", postedAt: new Date("2026-08-17T00:00:00.000Z") }).returning().then((rows) => rows[0]!);
+        const payment = await db.insert(transactions).values({ tenantId: actor.tenantId, ownerUserId: actor.id, loanId: loan.id, scheduleId: scheduleRows[0]!.id, amount: "100.00", principalComponent: "80.00", interestComponent: "20.00", type: "repayment", entryType: "repayment", idempotencyKey: "route-payment", postedAt: new Date("2026-08-17T00:00:00.000Z") }).returning().then((rows) => rows[0]!);
         const app = new Elysia().use(loansRoute).use(intermediariesRoute);
         const token = await authToken(actor);
 
@@ -91,6 +95,12 @@ describe("loan agent REST contracts", () => {
             commissionParticipants: [{ commissionRate: "30.00" }],
             commissionSummary: { interestAmount: "20.00", totalCommission: "6.00" },
         });
+        const schedule = await jsonRequest(app, `/loans/${loan.publicId}/schedule`, token);
+        expect(schedule.response.status).toBe(200);
+        expect(schedule.body).toEqual([
+            expect.objectContaining({ publicId: scheduleRows[0]!.publicId, commissionAmount: "6.00" }),
+            expect.objectContaining({ publicId: scheduleRows[1]!.publicId, commissionAmount: "0.00" }),
+        ]);
         const updated = await jsonRequest(app, `/loans/${loan.publicId}/commission-participants/${added.body.publicId}`, token, {
             method: "PATCH", headers: { "idempotency-key": "participant-update" },
             body: JSON.stringify({ commissionRate: "25.00", role: "collector", effectiveFrom: "2026-08-18T00:00:00.000Z", confirmed: true }),

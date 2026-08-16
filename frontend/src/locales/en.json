@@ -1214,6 +1214,7 @@
             "installment": "Installment",
             "dueDate": "Due date",
             "remainingDue": "Remaining due",
+            "commission": "Commission",
             "status": "Status"
         },
         "noRepaymentSchedule": "No repayment schedule available for this loan.",

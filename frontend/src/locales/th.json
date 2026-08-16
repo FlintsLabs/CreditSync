@@ -1147,6 +1147,7 @@
             "installment": "งวด",
             "dueDate": "วันครบกำหนด",
             "remainingDue": "ยอดคงค้าง",
+            "commission": "ค่าคอมมิชชัน",
             "status": "สถานะ"
         },
         "noRepaymentSchedule": "ยังไม่มีตารางผ่อนสำหรับสัญญานี้",

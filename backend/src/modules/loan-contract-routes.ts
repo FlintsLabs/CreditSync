@@ -23,6 +23,7 @@ import {
     previewLoanCommission,
     updateLoanCommissionParticipant,
 } from "../services/loan-commission-service";
+import { listCanonicalPostedPaymentsForLoan } from "../services/posted-payment-access";
 import { loanCommandContext, loanDomainFailure, loanUnauthorized } from "./loan-http-support";
 import { loanDraftBody, loanDraftUpdateBody, loanTermsBody } from "./loan-route-schemas";
 
@@ -344,7 +345,7 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
             return loanDomainFailure(error, set);
         }
     }, { params: t.Object({ id: t.String() }) })
-    .get("/:id/schedule", async ({ params, user, set }) => {
+    .get("/:id/schedule", async ({ params, user, request, set }) => {
         if (!user) return loanUnauthorized(set);
         const loan = await findAccessibleLoanByPublicId(user, params.id);
         if (!loan) return loanDomainFailure(new DomainError("LOAN_NOT_FOUND", "Loan not found", 404), set);
@@ -356,11 +357,26 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
             key: `schedule:${loan.id}:${scopeKey}`,
             ttlSeconds: 20,
             loader: async () => {
-                const scheduleRows = await db.select().from(loanSchedules).where(and(
-                    eq(loanSchedules.loanId, loan.id),
-                    eq(loanSchedules.tenantId, user.tenantId),
-                )).orderBy(loanSchedules.installmentNo);
-                return scheduleRows.map((row) => {
+                const [scheduleRows, paymentRows] = await Promise.all([
+                    db.select().from(loanSchedules).where(and(
+                        eq(loanSchedules.loanId, loan.id),
+                        eq(loanSchedules.tenantId, user.tenantId),
+                    )).orderBy(loanSchedules.installmentNo),
+                    listCanonicalPostedPaymentsForLoan(user.tenantId, loan.id),
+                ]);
+                const paymentIdsBySchedule = new Map<number, string[]>();
+                for (const payment of paymentRows) {
+                    if (payment.scheduleId === null) continue;
+                    const ids = paymentIdsBySchedule.get(payment.scheduleId) ?? [];
+                    ids.push(payment.publicId);
+                    paymentIdsBySchedule.set(payment.scheduleId, ids);
+                }
+                const ctx = loanCommandContext(user, request);
+                return Promise.all(scheduleRows.map(async (row) => {
+                    const paymentPublicIds = paymentIdsBySchedule.get(row.id) ?? [];
+                    const commissionAmount = paymentPublicIds.length === 0
+                        ? "0.00"
+                        : (await previewLoanCommission(ctx, { loanPublicId: loan.publicId, paymentPublicIds })).totalCommission;
                     const overdue = computeOverdueSnapshot({
                         dueDate: row.dueDate,
                         remainingDue: row.remainingDue,
@@ -383,6 +399,7 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                         paidTotal: serializeMoney(row.paidTotal),
                         paidPenalty: serializeMoney(row.paidPenalty),
                         remainingDue: serializeMoney(row.remainingDue),
+                        commissionAmount,
                         overdueDays: overdue.overdueDays,
                         penaltyDue: overdue.penaltyDue.toFixed(2),
                         totalDueNow: overdue.totalDueNow.toFixed(2),
@@ -390,7 +407,7 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                         createdAt: row.createdAt,
                         updatedAt: row.updatedAt,
                     };
-                });
+                }));
             },
         });
     }, { params: t.Object({ id: t.String() }) })

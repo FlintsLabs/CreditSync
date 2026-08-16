@@ -61,8 +61,8 @@ describe("loan commission participant ledger", () => {
 
         const audit = await db.query.auditLogs.findFirst({ where: eq(auditLogs.publicId, ended.auditPublicId) });
         expect(audit).toMatchObject({ tenantId: seeded.actor.tenantId, actorUserId: seeded.actor.id, actorSource: "web", requestId: "req-end", correlationId: "corr-end", entityId: ended.publicId, action: "ended" });
-        await expect(db.update(loanCommissionParticipants).set({ note: "mutated" }).where(eq(loanCommissionParticipants.publicId, added.publicId))).rejects.toThrow(/append-only/);
-        await expect(db.delete(loanCommissionParticipants).where(eq(loanCommissionParticipants.publicId, added.publicId))).rejects.toThrow(/append-only/);
+        await expect(db.update(loanCommissionParticipants).set({ note: "mutated" }).where(eq(loanCommissionParticipants.publicId, added.publicId)).execute()).rejects.toMatchObject({ cause: { code: "P0001", message: expect.stringMatching(/append-only/) } });
+        await expect(db.delete(loanCommissionParticipants).where(eq(loanCommissionParticipants.publicId, added.publicId)).execute()).rejects.toMatchObject({ cause: { code: "P0001", message: expect.stringMatching(/append-only/) } });
     });
 
     integrationTest("authorizes idempotent participant replay and requires strict ISO timestamps", async () => {
@@ -97,6 +97,21 @@ describe("loan commission participant ledger", () => {
         await expect(updateLoanCommissionParticipant(ctx(caller, "caller-update"), { participantPublicId: participant.publicId, commissionRate: "25.00", role: "collector", effectiveFrom: "2026-08-10T00:00:00.000Z" })).rejects.toMatchObject({ code: "COMMISSION_PARTICIPANT_NOT_FOUND", status: 404 });
         await expect(endLoanCommissionParticipant(ctx(caller, "caller-end"), { participantPublicId: participant.publicId, effectiveTo: "2026-08-20T00:00:00.000Z", reason: "agreement ended" })).rejects.toMatchObject({ code: "COMMISSION_PARTICIPANT_NOT_FOUND", status: 404 });
         expect(await db.select().from(loanCommissionParticipants)).toHaveLength(1);
+    });
+
+    integrationTest("isolates participant list and preview when the intermediary is outside owner scope", async () => {
+        const tenantId = "commission-read-owner-scope";
+        const admin = await db.insert(users).values({ tenantId, email: "admin-read@commission.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const caller = await db.insert(users).values({ tenantId, email: "caller-read@commission.test", role: "collector" }).returning().then((rows) => rows[0]!);
+        const intermediaryOwner = await db.insert(users).values({ tenantId, email: "hidden-agent-read@commission.test", role: "collector" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId, ownerUserId: caller.id, name: "Caller Read Borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({ tenantId, ownerUserId: caller.id, borrowerId: borrower.id, principalAmount: "1000.00", interestRate: "0.00", repaymentType: "floating", status: "active" }).returning().then((rows) => rows[0]!);
+        const intermediary = await db.insert(intermediaries).values({ tenantId, ownerUserId: intermediaryOwner.id, name: "Hidden Read Agent", normalizedName: "hidden-read-agent", createdByUserId: intermediaryOwner.id, updatedByUserId: intermediaryOwner.id }).returning().then((rows) => rows[0]!);
+        await addLoanCommissionParticipant(ctx(admin, "admin-read-add"), { loanPublicId: loan.publicId, intermediaryPublicId: intermediary.publicId, commissionRate: "30.00", role: "collector", effectiveFrom: "2026-08-01T00:00:00.000Z" });
+        const payment = await db.insert(transactions).values({ tenantId, ownerUserId: caller.id, loanId: loan.id, amount: "100.00", interestComponent: "20.00", type: "repayment", entryType: "repayment", idempotencyKey: "commission-hidden-read-payment", postedAt: new Date("2026-08-16T00:00:00.000Z") }).returning().then((rows) => rows[0]!);
+
+        expect(await listLoanCommissionParticipants(ctx(caller), loan.publicId)).toEqual([]);
+        await expect(previewLoanCommission(ctx(caller), { loanPublicId: loan.publicId, paymentPublicIds: [payment.publicId] })).rejects.toMatchObject({ code: "INTERMEDIARY_NOT_FOUND", status: 404 });
     });
 
     integrationTest("previews exact commission from signed interest components only", async () => {

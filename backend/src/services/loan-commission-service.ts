@@ -1,13 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import type Decimal from "decimal.js";
-import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
-import { auditLogs, intermediaries, loanCommissionParticipants, loans, paymentIntakes, transactions, users } from "../db/schema";
-import { canAccessTenantWideData } from "../lib/access";
+import { auditLogs, intermediaries, loanCommissionParticipants, loans, transactions, users } from "../db/schema";
 import { FinancialDecimal } from "../lib/financial-decimal";
 import { signedPublicMoneyPattern } from "../lib/financial-decimal";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
+import { canAccessOwnedRecord, canonicalPostedPaymentPredicate } from "./posted-payment-access";
 
 type Participant = typeof loanCommissionParticipants.$inferSelect;
 type Actor = typeof users.$inferSelect;
@@ -89,7 +89,7 @@ async function actorFor(ctx: CommandContext, executor: any = db): Promise<Actor 
 }
 
 function accessible(actor: Actor | null, ownerUserId: number | null) {
-    return actor === null || canAccessTenantWideData({ role: actor.role ?? "viewer" }) || actor.id === ownerUserId;
+    return canAccessOwnedRecord(actor, ownerUserId);
 }
 
 async function loanFor(ctx: CommandContext, publicId: string, actor: Actor | null, executor: any = db) {
@@ -256,7 +256,14 @@ export async function listLoanCommissionParticipants(ctx: CommandContext, loanPu
     const actor = await actorFor(ctx);
     const loan = await loanFor(ctx, loanPublicId, actor);
     const rows = await headRows(db, ctx.tenantId, loan.id);
-    return Promise.all(rows.map((row) => present(db, ctx, row)));
+    const authorizedRows = await Promise.all(rows.map(async (row) => {
+        try { await authorizeParticipant(db, ctx, actor, row); return row; }
+        catch (error) {
+            if (error instanceof DomainError && error.code === "COMMISSION_PARTICIPANT_NOT_FOUND") return null;
+            throw error;
+        }
+    }));
+    return Promise.all(authorizedRows.filter((row): row is Participant => row !== null).map((row) => present(db, ctx, row)));
 }
 
 export async function previewLoanCommission(ctx: CommandContext, input: { loanPublicId: string; paymentPublicIds: string[] }) {
@@ -265,19 +272,9 @@ export async function previewLoanCommission(ctx: CommandContext, input: { loanPu
     if (!Array.isArray(input.paymentPublicIds) || input.paymentPublicIds.length === 0) throw new DomainError("PAYMENTS_REQUIRED", "At least one paymentPublicId is required", 400);
     const uniqueIds = [...new Set(input.paymentPublicIds)];
     const payments = await db.select().from(transactions).where(and(
-        eq(transactions.tenantId, ctx.tenantId),
+        canonicalPostedPaymentPredicate(ctx.tenantId),
         eq(transactions.loanId, loan.id),
         inArray(transactions.publicId, uniqueIds),
-        isNotNull(transactions.postedAt),
-        inArray(transactions.entryType, ["repayment", "reversal"]),
-        inArray(transactions.type, ["repayment", "close_account", "reversal"]),
-        sql`(${transactions.paymentIntakeId} IS NULL OR EXISTS (
-            SELECT 1 FROM ${paymentIntakes}
-            WHERE ${paymentIntakes.tenantId} = ${ctx.tenantId}
-              AND ${paymentIntakes.id} = ${transactions.paymentIntakeId}
-              AND ${paymentIntakes.status} = 'posted'
-              AND ${paymentIntakes.postedAt} IS NOT NULL
-        ))`,
     ));
     if (payments.length !== uniqueIds.length) throw new DomainError("PAYMENT_NOT_FOUND", "Payment not found", 404);
     const interest = payments.reduce((sum, payment) => sum.plus(payment.interestComponent), new FinancialDecimal("0"));
@@ -295,7 +292,7 @@ export async function previewLoanCommission(ctx: CommandContext, input: { loanPu
     const participants = await Promise.all(chains.map(async (chain) => {
         const head = chain[chain.length - 1]!;
         const intermediary = await db.query.intermediaries.findFirst({ where: and(eq(intermediaries.tenantId, ctx.tenantId), eq(intermediaries.id, head.intermediaryId)) });
-        if (!intermediary) throw new DomainError("INTERMEDIARY_NOT_FOUND", "Intermediary not found", 404);
+        if (!intermediary || !accessible(actor, intermediary.ownerUserId)) throw new DomainError("INTERMEDIARY_NOT_FOUND", "Intermediary not found", 404);
         const amount = payments.reduce((sum, payment) => {
             const occurredAt = payment.postedAt;
             const applicable = chain.find((version, index) => version.effectiveFrom <= occurredAt

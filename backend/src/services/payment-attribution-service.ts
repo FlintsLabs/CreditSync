@@ -2,11 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import type Decimal from "decimal.js";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { auditLogs, intermediaries, loans, paymentIntermediaryAttributions, transactions, users } from "../db/schema";
-import { canAccessTenantWideData } from "../lib/access";
+import { auditLogs, intermediaries, paymentIntermediaryAttributions, transactions, users } from "../db/schema";
 import { FinancialDecimal, signedPublicMoneyPattern, unsignedPublicMoneyPattern } from "../lib/financial-decimal";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
+import { authorizedPostedPayment, canAccessOwnedRecord } from "./posted-payment-access";
 
 type Attribution = typeof paymentIntermediaryAttributions.$inferSelect;
 type Actor = typeof users.$inferSelect;
@@ -48,13 +48,11 @@ async function actorFor(ctx: CommandContext, executor: any = db): Promise<Actor 
 }
 
 function accessible(actor: Actor | null, ownerUserId: number | null) {
-    return actor === null || canAccessTenantWideData({ role: actor.role ?? "viewer" }) || actor.id === ownerUserId;
+    return canAccessOwnedRecord(actor, ownerUserId);
 }
 
 async function paymentFor(ctx: CommandContext, publicId: string, actor: Actor | null, executor: any = db) {
-    const payment = await executor.query.transactions.findFirst({ where: and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.publicId, publicId)) });
-    if (!payment || !accessible(actor, payment.ownerUserId)) throw new DomainError("PAYMENT_NOT_FOUND", "Payment not found", 404);
-    return payment;
+    return authorizedPostedPayment(executor, ctx, actor, { publicId });
 }
 
 async function intermediaryFor(ctx: CommandContext, publicId: string, actor: Actor | null, executor: any = db) {
@@ -63,28 +61,26 @@ async function intermediaryFor(ctx: CommandContext, publicId: string, actor: Act
     return row;
 }
 
-async function present(executor: any, ctx: CommandContext, row: Attribution) {
+async function attributionRelations(executor: any, ctx: CommandContext, actor: Actor | null, row: Attribution) {
     const [payment, linkedTransaction, intermediary, reversed] = await Promise.all([
-        executor.query.transactions.findFirst({ where: and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.id, row.paymentId)) }),
-        row.transactionId ? executor.query.transactions.findFirst({ where: and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.id, row.transactionId)) }) : null,
+        authorizedPostedPayment(executor, ctx, actor, { id: row.paymentId }, "PAYMENT_ATTRIBUTION_NOT_FOUND"),
+        row.transactionId ? authorizedPostedPayment(executor, ctx, actor, { id: row.transactionId }, "PAYMENT_ATTRIBUTION_NOT_FOUND") : null,
         row.intermediaryId ? executor.query.intermediaries.findFirst({ where: and(eq(intermediaries.tenantId, ctx.tenantId), eq(intermediaries.id, row.intermediaryId)) }) : null,
         row.reversedAttributionId ? executor.query.paymentIntermediaryAttributions.findFirst({ where: and(eq(paymentIntermediaryAttributions.tenantId, ctx.tenantId), eq(paymentIntermediaryAttributions.id, row.reversedAttributionId)) }) : null,
     ]);
-    if (!payment || (row.transactionId !== null && !linkedTransaction)) throw new DomainError("PAYMENT_ATTRIBUTION_NOT_FOUND", "Payment attribution not found", 404);
+    if ((row.intermediaryId !== null && !intermediary) || (intermediary && !accessible(actor, intermediary.ownerUserId))) {
+        throw new DomainError("PAYMENT_ATTRIBUTION_NOT_FOUND", "Payment attribution not found", 404);
+    }
+    return { payment, linkedTransaction, intermediary, reversed };
+}
+
+async function present(executor: any, ctx: CommandContext, actor: Actor | null, row: Attribution) {
+    const { payment, linkedTransaction, intermediary, reversed } = await attributionRelations(executor, ctx, actor, row);
     return { publicId: row.publicId, paymentPublicId: payment.publicId, transactionPublicId: linkedTransaction?.publicId ?? null, sourceKind: row.sourceKind as "direct" | "intermediary", intermediaryPublicId: intermediary?.publicId ?? null, amount: signedMoney(new FinancialDecimal(row.attributedAmount)), reason: row.reason, reversedAttributionPublicId: reversed?.publicId ?? null, auditPublicId: row.auditPublicId, correlationId: row.correlationId, createdAt: row.createdAt.toISOString() };
 }
 
 async function authorizeAttribution(executor: any, ctx: CommandContext, actor: Actor | null, row: Attribution) {
-    const payment = await executor.query.transactions.findFirst({ where: and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.id, row.paymentId)) });
-    if (!payment || !accessible(actor, payment.ownerUserId)) throw new DomainError("PAYMENT_ATTRIBUTION_NOT_FOUND", "Payment attribution not found", 404);
-    if (row.transactionId !== null) {
-        const linked = await executor.query.transactions.findFirst({ where: and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.id, row.transactionId)) });
-        if (!linked || !accessible(actor, linked.ownerUserId)) throw new DomainError("PAYMENT_ATTRIBUTION_NOT_FOUND", "Payment attribution not found", 404);
-    }
-    if (row.intermediaryId !== null) {
-        const intermediary = await executor.query.intermediaries.findFirst({ where: and(eq(intermediaries.tenantId, ctx.tenantId), eq(intermediaries.id, row.intermediaryId)) });
-        if (!intermediary || !accessible(actor, intermediary.ownerUserId)) throw new DomainError("PAYMENT_ATTRIBUTION_NOT_FOUND", "Payment attribution not found", 404);
-    }
+    await attributionRelations(executor, ctx, actor, row);
 }
 
 async function replay(executor: any, ctx: CommandContext, actor: Actor | null, key: string, expected: string) {
@@ -94,7 +90,7 @@ async function replay(executor: any, ctx: CommandContext, actor: Actor | null, k
     const audit = await executor.query.auditLogs.findFirst({ where: and(eq(auditLogs.tenantId, ctx.tenantId), eq(auditLogs.publicId, row.auditPublicId)) });
     const stored = audit?.payload && typeof audit.payload === "object" && !Array.isArray(audit.payload) ? (audit.payload as Record<string, unknown>).requestFingerprint : null;
     if (stored !== expected) throw new DomainError("IDEMPOTENCY_KEY_CONFLICT", "Idempotency key was already used for a different payment attribution command", 409);
-    return present(executor, ctx, row);
+    return present(executor, ctx, actor, row);
 }
 
 async function insertAttribution(executor: any, ctx: CommandContext, input: { publicId: string; paymentId: number; transactionId: number | null; intermediaryId: number | null; sourceKind: string; amount: string; reason: string | null; reversedAttributionId: number | null; key: string; requestFingerprint: string; action: string }) {
@@ -126,7 +122,7 @@ export async function createPaymentAttribution(ctx: CommandContext, input: Creat
         if (!capacity.gt(0)) throw new DomainError("PAYMENT_NOT_ATTRIBUTABLE", "Only positive payments may be attributed", 409);
         if (attributed.plus(amount).gt(capacity)) throw new DomainError("PAYMENT_ATTRIBUTION_EXCEEDS_PAYMENT", "Attribution split exceeds the payment amount", 409, { remainingAmount: signedMoney(FinancialDecimal.max("0", capacity.minus(attributed))) });
         const row = await insertAttribution(tx, ctx, { publicId: randomUUID(), paymentId: payment.id, transactionId: linkedTransaction.id, intermediaryId: intermediary?.id ?? null, sourceKind: input.sourceKind, amount: amount.toFixed(2), reason: null, reversedAttributionId: null, key, requestFingerprint, action: "created" });
-        return present(tx, ctx, row);
+        return present(tx, ctx, actor, row);
     });
 }
 
@@ -134,7 +130,14 @@ export async function listPaymentAttributions(ctx: CommandContext, paymentPublic
     const actor = await actorFor(ctx);
     const payment = await paymentFor(ctx, paymentPublicId, actor);
     const rows = await db.select().from(paymentIntermediaryAttributions).where(and(eq(paymentIntermediaryAttributions.tenantId, ctx.tenantId), eq(paymentIntermediaryAttributions.paymentId, payment.id))).orderBy(paymentIntermediaryAttributions.id);
-    return Promise.all(rows.map((row) => present(db, ctx, row)));
+    const visible = await Promise.all(rows.map(async (row) => {
+        try { return await present(db, ctx, actor, row); }
+        catch (error) {
+            if (error instanceof DomainError && error.code === "PAYMENT_ATTRIBUTION_NOT_FOUND") return null;
+            throw error;
+        }
+    }));
+    return visible.filter((row) => row !== null);
 }
 
 export async function reversePaymentAttribution(ctx: CommandContext, input: { attributionPublicId: string; reason: string }) {
@@ -149,14 +152,12 @@ export async function reversePaymentAttribution(ctx: CommandContext, input: { at
         if (existing) return existing;
         const original = await tx.query.paymentIntermediaryAttributions.findFirst({ where: and(eq(paymentIntermediaryAttributions.tenantId, ctx.tenantId), eq(paymentIntermediaryAttributions.publicId, input.attributionPublicId)) });
         if (!original) throw new DomainError("PAYMENT_ATTRIBUTION_NOT_FOUND", "Payment attribution not found", 404);
-        const payment = await tx.query.transactions.findFirst({ where: and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.id, original.paymentId)) });
-        const loan = payment ? await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, payment.loanId)) }) : null;
-        if (!payment || !loan || !accessible(actor, loan.ownerUserId)) throw new DomainError("PAYMENT_ATTRIBUTION_NOT_FOUND", "Payment attribution not found", 404);
+        await authorizeAttribution(tx, ctx, actor, original);
         if (new FinancialDecimal(original.attributedAmount).lt(0)) throw new DomainError("PAYMENT_ATTRIBUTION_NOT_REVERSIBLE", "A reversal entry cannot be reversed", 409);
         await tx.execute(sql`SELECT id FROM payment_intermediary_attributions WHERE tenant_id = ${ctx.tenantId} AND id = ${original.id} FOR UPDATE`);
         const priorReversal = await tx.query.paymentIntermediaryAttributions.findFirst({ where: and(eq(paymentIntermediaryAttributions.tenantId, ctx.tenantId), eq(paymentIntermediaryAttributions.reversedAttributionId, original.id)) });
         if (priorReversal) throw new DomainError("PAYMENT_ATTRIBUTION_ALREADY_REVERSED", "Payment attribution has already been reversed", 409);
         const row = await insertAttribution(tx, ctx, { publicId: randomUUID(), paymentId: original.paymentId, transactionId: original.transactionId, intermediaryId: original.intermediaryId, sourceKind: original.sourceKind, amount: new FinancialDecimal(original.attributedAmount).negated().toFixed(2), reason, reversedAttributionId: original.id, key, requestFingerprint, action: "reversed" });
-        return present(tx, ctx, row);
+        return present(tx, ctx, actor, row);
     });
 }

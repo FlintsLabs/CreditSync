@@ -25,12 +25,13 @@ CREATE TABLE "loan_commission_participants" (
     CONSTRAINT "loan_commission_participants_dates_check" CHECK (("status" = 'active' AND "effective_to" IS NULL) OR ("status" = 'ended' AND "effective_to" IS NOT NULL AND "effective_to" > "effective_from")),
     CONSTRAINT "loan_commission_participants_tenant_loan_fk" FOREIGN KEY ("tenant_id", "loan_id") REFERENCES "loans"("tenant_id", "id"),
     CONSTRAINT "loan_commission_participants_tenant_intermediary_fk" FOREIGN KEY ("tenant_id", "intermediary_id") REFERENCES "intermediaries"("tenant_id", "id"),
-    CONSTRAINT "loan_commission_participants_tenant_previous_fk" FOREIGN KEY ("tenant_id", "previous_participant_id") REFERENCES "loan_commission_participants"("tenant_id", "id"),
     CONSTRAINT "loan_commission_participants_tenant_audit_fk" FOREIGN KEY ("tenant_id", "audit_public_id") REFERENCES "audit_logs"("tenant_id", "public_id"),
     CONSTRAINT "loan_commission_participants_tenant_actor_fk" FOREIGN KEY ("tenant_id", "created_by_user_id") REFERENCES "users"("tenant_id", "id")
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX "loan_commission_participants_tenant_id_id_unique" ON "loan_commission_participants" ("tenant_id", "id");
+--> statement-breakpoint
+ALTER TABLE "loan_commission_participants" ADD CONSTRAINT "loan_commission_participants_tenant_previous_fk" FOREIGN KEY ("tenant_id", "previous_participant_id") REFERENCES "loan_commission_participants"("tenant_id", "id");
 --> statement-breakpoint
 CREATE UNIQUE INDEX "loan_commission_participants_tenant_idempotency_unique" ON "loan_commission_participants" ("tenant_id", "idempotency_key");
 --> statement-breakpoint

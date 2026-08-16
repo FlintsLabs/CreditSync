@@ -3,6 +3,7 @@ import Decimal from "decimal.js";
 import { Loader2, Pencil, Plus, XCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../../lib/api";
+import { bangkokLocalDateTimeToIso } from "../../../lib/bangkok-time";
 import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
 import { Badge } from "../../../components/ui/badge";
@@ -105,7 +106,7 @@ export function LoanAgentsTab({ loanPublicId }: { loanPublicId: string }) {
         setSaving(true);
         setError("");
         try {
-            const effectiveAt = new Date(form.effectiveAt).toISOString();
+            const effectiveAt = bangkokLocalDateTimeToIso(form.effectiveAt);
             const command = mode === "add" ? {
                 method: "post" as const,
                 url: `/loans/${loanPublicId}/commission-participants`,

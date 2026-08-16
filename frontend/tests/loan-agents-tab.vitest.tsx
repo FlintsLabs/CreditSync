@@ -99,4 +99,23 @@ describe("LoanAgentsTab", () => {
         await waitFor(() => expect(api.post).toHaveBeenCalledTimes(3));
         expect(vi.mocked(api.post).mock.calls[2]?.[2]?.headers?.["Idempotency-Key"]).not.toBe(firstKey);
     });
+
+    it("submits datetime-local as an explicit Asia/Bangkok timestamp", async () => {
+        vi.mocked(api.get).mockImplementation(async (url) => url === "/intermediaries?status=active"
+            ? { data: [{ publicId: "agent-a", name: "Agent A", aliases: [] }] }
+            : { data: [] });
+        vi.mocked(api.post).mockResolvedValue({ data: {} });
+        render(<LoanAgentsTab loanPublicId="loan-1" />);
+        await screen.findByText("No agents assigned");
+        await userEvent.click(screen.getByRole("button", { name: "Add agent" }));
+        await userEvent.selectOptions(screen.getByLabelText("Agent"), "agent-a");
+        await userEvent.type(screen.getByLabelText("Commission rate (%)"), "10.00");
+        await userEvent.type(screen.getByLabelText("Role"), "collector");
+        fireEvent.change(screen.getByLabelText("Effective from"), { target: { value: "2026-08-16T10:30" } });
+        await userEvent.click(screen.getByLabelText("I confirm this commission agreement"));
+        await userEvent.click(screen.getByRole("button", { name: "Confirm add" }));
+
+        await waitFor(() => expect(api.post).toHaveBeenCalled());
+        expect(vi.mocked(api.post).mock.calls[0]?.[1]).toMatchObject({ effectiveFrom: "2026-08-16T03:30:00.000Z" });
+    });
 });
