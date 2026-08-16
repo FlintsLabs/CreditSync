@@ -560,6 +560,8 @@
         "unrealizedSpread": "Unrealized spread",
         "calculateClosingBalance": "Calculate Closing Balance",
         "emptyTitle": "No Active Loans",
+        "emptyDoneTitle": "No Done Loans",
+        "tabs": { "label": "Loan status tabs", "active": "Active", "done": "Done" },
         "emptyDescription": "Create your first loan agreement to start tracking principal, interest, and repayments.",
         "loading": "Loading loans...",
         "loadErrorTitle": "Unable to load loans",

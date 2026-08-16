@@ -60,7 +60,9 @@ describe("LoanList", () => {
         expect(within(activeOutstanding.parentElement!).getByText(/Original principal.*THB\s*5,000\.00/)).toBeInTheDocument();
         expect(within(activeCard).getByText(/Interest received.*THB\s*200\.25.*Paid to date.*THB\s*1,450\.25/)).toBeInTheDocument();
 
-        const paidCard = screen.getByText("Paid Summary").closest("a")!;
+        expect(screen.queryByText("Paid Summary")).not.toBeInTheDocument();
+        await userEvent.click(screen.getByRole("tab", { name: "Done" }));
+        const paidCard = await screen.findByText("Paid Summary").then((node) => node.closest("a")!);
         const paidStatus = within(paidCard).getByText("PAID");
         expect(paidStatus.parentElement?.querySelector("svg.lucide-circle-check")).not.toBeNull();
         expect(within(paidCard).queryByText(/THB\s*0\.00/)).not.toBeInTheDocument();
@@ -104,6 +106,7 @@ describe("LoanList", () => {
         expect(await screen.findByText("ค้างชำระ 3 วัน")).toBeInTheDocument();
         expect(screen.getByText(/ค้างสูงสุด 3 วัน/)).toBeInTheDocument();
         expect(screen.getByText(/ดอกเบี้ยรับแล้ว.*฿50\.25.*จ่ายแล้ว.*฿250\.25/)).toBeInTheDocument();
+        await userEvent.click(screen.getByRole("tab", { name: "เสร็จสิ้น" }));
         const paidCard = screen.getByText("ลูกค้าปิดบัญชี").closest("a")!;
         expect(within(paidCard).getByText("PAID")).toBeInTheDocument();
         expect(within(paidCard).getByText(/เงินต้นตั้งต้น.*฿2,000\.00.*ดอกเบี้ยรับแล้ว.*฿300\.00/)).toBeInTheDocument();

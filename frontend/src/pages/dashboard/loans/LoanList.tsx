@@ -48,6 +48,7 @@ export default function LoanList() {
     const [loadError, setLoadError] = useState(false);
     const [closingLoanId, setClosingLoanId] = useState<string | null>(null);
     const [search, setSearch] = useState("");
+    const [loanTab, setLoanTab] = useState<"active" | "done">("active");
     const [statusFilter, setStatusFilter] = useState("all");
     const [fundingFilter, setFundingFilter] = useState("all");
     const [sortBy, setSortBy] = useState("newest");
@@ -84,10 +85,12 @@ export default function LoanList() {
 
     const visibleLoans = useMemo(() => {
         const filtered = loans.filter((loan) => {
+            const isDone = loan.status === "paid" || loan.status === "closed";
+            const matchesTab = loanTab === "done" ? isDone : !isDone;
             const matchesSearch = loanMatchesSearch(loan as BorrowerLabelLoan, search);
             const matchesStatus = statusFilter === "all" || loan.status === statusFilter;
             const matchesFunding = fundingFilter === "all";
-            return matchesSearch && matchesStatus && matchesFunding;
+            return matchesTab && matchesSearch && matchesStatus && matchesFunding;
         });
 
         return filtered.sort((a, b) => {
@@ -95,7 +98,7 @@ export default function LoanList() {
             if (sortBy === "oldest") return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
             return 0;
         });
-    }, [fundingFilter, loans, search, sortBy, statusFilter]);
+    }, [fundingFilter, loanTab, loans, search, sortBy, statusFilter]);
 
     return (
         <div className="space-y-6">
@@ -116,6 +119,21 @@ export default function LoanList() {
                         </Button>
                     </Link>
                 </div>
+            </div>
+
+            <div className="inline-flex rounded-lg border bg-muted/30 p-1" role="tablist" aria-label={t("loans.tabs.label", "Loan status tabs")}>
+                {(["active", "done"] as const).map((tab) => (
+                    <button
+                        key={tab}
+                        type="button"
+                        role="tab"
+                        aria-selected={loanTab === tab}
+                        className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${loanTab === tab ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                        onClick={() => setLoanTab(tab)}
+                    >
+                        {t(`loans.tabs.${tab}`, tab === "active" ? "Active" : "Done")}
+                    </button>
+                ))}
             </div>
 
             <Card>
@@ -268,7 +286,7 @@ export default function LoanList() {
                     <div className="bg-background p-4 rounded-full shadow-sm mb-4">
                         <FileText className="h-12 w-12 text-muted-foreground/50" />
                     </div>
-                    <h3 className="text-xl font-semibold">{t("loans.emptyTitle", "No Active Loans")}</h3>
+                    <h3 className="text-xl font-semibold">{loanTab === "done" ? t("loans.emptyDoneTitle", "No Done Loans") : t("loans.emptyTitle", "No Active Loans")}</h3>
                     <p className="text-muted-foreground mt-2 max-w-sm mx-auto">
                         {t("loans.emptyDescription", "Create your first loan agreement to start tracking principal, interest, and repayments.")}
                     </p>
