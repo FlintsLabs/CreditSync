@@ -24,7 +24,7 @@ type ActiveLedgerRead = { controller: AbortController; supersede: () => void };
 
 export type LoanDisbursementsHandle = { refresh: () => Promise<void> };
 
-export const LoanDisbursements = forwardRef<LoanDisbursementsHandle, { loanPublicId: string }>(function LoanDisbursements({ loanPublicId }, ref) {
+export const LoanDisbursements = forwardRef<LoanDisbursementsHandle, { loanPublicId: string; onSummaryChange?: (summary: DisbursementSummaryInput) => void }>(function LoanDisbursements({ loanPublicId, onSummaryChange }, ref) {
     const { t, i18n } = useTranslation();
     const [ledgerState, setLedger] = useState<Ledger | null>(null);
     const [draft, setDraft] = useState<Draft | null>(null);
@@ -67,6 +67,7 @@ export const LoanDisbursements = forwardRef<LoanDisbursementsHandle, { loanPubli
             const next = response.data as Ledger;
             if (generation !== readGeneration.current || activeRead.current !== current || next.loanPublicId !== scope) throw new SupersededLedgerReadError();
             setLedger(next);
+            onSummaryChange?.(next.summary);
             setMessage("");
             setSelected((selectedEvent) => selectedEvent ? next.events.find((event) => event.publicId === selectedEvent.publicId) ?? null : null);
         } catch (error) {

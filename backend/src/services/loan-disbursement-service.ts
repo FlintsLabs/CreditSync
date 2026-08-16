@@ -396,15 +396,16 @@ export async function listLoanDisbursements(ctx: CommandContext, loanPublicId: s
     const loan = await accessibleLoan(ctx, loanPublicId);
     const rows = await db.select().from(loanDisbursementEvents).where(and(eq(loanDisbursementEvents.tenantId, ctx.tenantId), eq(loanDisbursementEvents.loanId, loan.id))).orderBy(desc(loanDisbursementEvents.createdAt));
     const reversalIds = new Set(rows.filter((row) => row.reversedEventId !== null).map((row) => row.reversedEventId));
-    const netDisbursed = rows.filter((row) => row.status === "posted" && !reversalIds.has(row.id))
-        .reduce((total, row) => total.plus(row.loanAttributedAmount), new Decimal(0));
+    const effectivePostedRows = rows.filter((row) => row.status === "posted" && !reversalIds.has(row.id));
+    const postedGrossAmount = effectivePostedRows.reduce((total, row) => total.plus(row.grossAmount), new Decimal(0));
+    const netDisbursed = effectivePostedRows.reduce((total, row) => total.plus(row.loanAttributedAmount), new Decimal(0));
     const approvedPrincipal = new Decimal(loan.principalAmount);
     const variance = netDisbursed.minus(approvedPrincipal);
     const evidenceByEvent = new Map<number, string[]>();
     for (const row of rows) evidenceByEvent.set(row.id, await evidenceIds(ctx, row.id));
     return {
         loanPublicId: loan.publicId,
-        summary: { approvedPrincipal: serializeMoney(approvedPrincipal), netDisbursed: serializeMoney(netDisbursed), variance: variance.toFixed(2), status: variance.isZero() ? "matched" : variance.isNegative() ? "under_disbursed" : "over_disbursed" },
+        summary: { approvedPrincipal: serializeMoney(approvedPrincipal), postedGrossAmount: serializeMoney(postedGrossAmount), postedEventCount: effectivePostedRows.length, netDisbursed: serializeMoney(netDisbursed), variance: variance.toFixed(2), status: variance.isZero() ? "matched" : variance.isNegative() ? "under_disbursed" : "over_disbursed" },
         events: await Promise.all(rows.map((row) => presentEvent(row, evidenceByEvent.get(row.id) ?? []))),
     };
 }

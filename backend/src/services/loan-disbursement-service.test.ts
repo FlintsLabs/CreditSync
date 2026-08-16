@@ -70,7 +70,7 @@ integrationTest("lists tenant-scoped attributed disbursement totals and variance
 
     const result = await listLoanDisbursements(ctx, loan.publicId);
 
-    expect(result.summary).toMatchObject({ approvedPrincipal: "5000.00", netDisbursed: "5200.00", variance: "200.00", status: "over_disbursed" });
+    expect(result.summary).toMatchObject({ approvedPrincipal: "5000.00", postedGrossAmount: "5300.00", postedEventCount: 2, netDisbursed: "5200.00", variance: "200.00", status: "over_disbursed" });
     expect(result.events).toHaveLength(2);
 });
 

@@ -1,4 +1,4 @@
-export type DisbursementSummaryInput = { approvedPrincipal: string; netDisbursed: string; variance: string; status?: string };
+export type DisbursementSummaryInput = { approvedPrincipal: string; postedGrossAmount?: string; postedEventCount?: number; netDisbursed: string; variance: string; status?: string };
 
 export function formatDisbursementSummary(summary: DisbursementSummaryInput) {
     const normalized = summary.variance.replace(/^[-+]?0+(?:\.0+)?$/, "0.00");

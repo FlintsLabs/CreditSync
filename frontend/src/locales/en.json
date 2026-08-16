@@ -1120,7 +1120,8 @@
             "periodDays": "Days in period",
             "periodStart": "First period starts",
             "periodDue": "First period due",
-            "nonRefundableWarning": "Advance interest is non-refundable and is shown as history; it is not deducted again from settlement."
+            "nonRefundableWarning": "Advance interest is non-refundable and is shown as history; it is not deducted again from settlement.",
+            "payoutMismatch": "Posted borrower payout {{actual}} differs from the contract net payout {{contract}}. Review the disbursement history; this warning does not change the loan balance."
         },
         "settlement": {
             "date": "Settlement date",

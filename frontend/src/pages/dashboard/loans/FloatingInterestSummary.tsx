@@ -3,6 +3,7 @@ import { AlertTriangle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/Card";
 import { formatMoneyExact } from "../../../lib/workflow-model";
+import { normalizeMoney } from "../../../lib/workflow-api";
 
 export interface FloatingInterestPolicyView {
     periodUnit: "day" | "week";
@@ -21,6 +22,8 @@ interface FloatingInterestSummaryProps {
     firstPeriodStartDate?: string | null;
     firstPeriodDueDate?: string | null;
     periodDays?: number | null;
+    postedGrossAmount?: string | null;
+    postedEventCount?: number | null;
     dueInterest?: string | null;
     accruedNotDueInterest?: string | null;
     children?: ReactNode;
@@ -34,6 +37,8 @@ export function FloatingInterestSummary({
     firstPeriodStartDate,
     firstPeriodDueDate,
     periodDays,
+    postedGrossAmount,
+    postedEventCount,
     dueInterest,
     accruedNotDueInterest,
     children,
@@ -43,6 +48,14 @@ export function FloatingInterestSummary({
     const rate = policy.rateMode === "percent"
         ? t("loanDetail.floatingSummary.percentRate", { rate: policy.rate, period: t(`loanDetail.floatingSummary.period.${policy.periodUnit}`) })
         : t("loanDetail.floatingSummary.perThousandRate", { rate: policy.rate, period: t(`loanDetail.floatingSummary.period.${policy.periodUnit}`) });
+    const payoutMismatch = Boolean(
+        postedEventCount
+        && postedGrossAmount !== null
+        && postedGrossAmount !== undefined
+        && netBorrowerPayout !== null
+        && netBorrowerPayout !== undefined
+        && normalizeMoney(postedGrossAmount) !== normalizeMoney(netBorrowerPayout),
+    );
 
     return (
         <section role="region" aria-label={t("loanDetail.floatingSummary.title")}>
@@ -85,6 +98,13 @@ export function FloatingInterestSummary({
                         <div className="flex items-start gap-2 rounded border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200">
                             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                             <span>{t("loanDetail.floatingSummary.nonRefundableWarning")}</span>
+                        </div>
+                    )}
+
+                    {payoutMismatch && (
+                        <div role="status" className="flex items-start gap-2 rounded border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200">
+                            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                            <span>{t("loanDetail.floatingSummary.payoutMismatch", { actual: money(postedGrossAmount!), contract: money(netBorrowerPayout!) })}</span>
                         </div>
                     )}
 

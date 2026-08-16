@@ -28,6 +28,7 @@ import {
 import { formatMoneyExact } from "../../../lib/workflow-model";
 import { LoanRenewalPanel } from "./LoanRenewalPanel";
 import { LoanDisbursements, type LoanDisbursementsHandle } from "./LoanDisbursements";
+import type { DisbursementSummaryInput } from "../../../lib/disbursement-view";
 import { LoanRepaymentHistory } from "./LoanRepaymentHistory";
 import { FloatingInterestRateCard } from "./FloatingInterestRateCard";
 import { FloatingInterestSummary, type FloatingInterestPolicyView } from "./FloatingInterestSummary";
@@ -54,6 +55,14 @@ interface LoanDetailData {
     bankProfilePublicId?: string | null;
     bankLoanPublicId?: string | null;
     floatingInterestPolicy?: FloatingInterestPolicyView | null;
+    floatingPayoutSummary?: {
+        fullPeriodInterest: string;
+        advanceInterest: string;
+        netBorrowerPayout: string;
+        periodDays: number;
+        firstPeriodStartDate: string;
+        firstPeriodDueDate: string;
+    } | null;
     dailyLoanCalculation?: {
         durationUnit: "days" | "weeks" | "months";
         durationValue: number;
@@ -194,6 +203,7 @@ export default function LoanDetail() {
     const [allocations, setAllocations] = useState<AllocationRow[]>([]);
     const [profitability, setProfitability] = useState<LoanProfitability | null>(null);
     const [allocationState, setAllocationState] = useState<LoanAllocationState | null>(null);
+    const [disbursementSummary, setDisbursementSummary] = useState<DisbursementSummaryInput | null>(null);
     const [activationOpen, setActivationOpen] = useState(false);
     const [activating, setActivating] = useState(false);
     const activationIntentRef = useRef<{ loanPublicId: string; key: string } | null>(null);
@@ -226,6 +236,7 @@ export default function LoanDetail() {
 
             try {
                 setLoading(true);
+                setDisbursementSummary(null);
                 const [loanRes, scheduleRes, allocationsRes, allocationStateRes] = await Promise.all([
                     api.get(`/loans/${id}`),
                     api.get(`/loans/${id}/schedule`),
@@ -565,6 +576,14 @@ export default function LoanDetail() {
                     {loan.repaymentType === "floating" && loan.floatingInterestPolicy && (
                         <FloatingInterestSummary
                             policy={loan.floatingInterestPolicy}
+                            fullPeriodInterest={loan.floatingPayoutSummary?.fullPeriodInterest}
+                            advanceInterest={loan.floatingPayoutSummary?.advanceInterest}
+                            netBorrowerPayout={loan.floatingPayoutSummary?.netBorrowerPayout}
+                            periodDays={loan.floatingPayoutSummary?.periodDays}
+                            firstPeriodStartDate={loan.floatingPayoutSummary?.firstPeriodStartDate}
+                            firstPeriodDueDate={loan.floatingPayoutSummary?.firstPeriodDueDate}
+                            postedGrossAmount={disbursementSummary?.postedGrossAmount}
+                            postedEventCount={disbursementSummary?.postedEventCount}
                             dueInterest={loan.status === "active" ? settlementPreview?.dueInterest ?? loan.outstandingInterest : undefined}
                             accruedNotDueInterest={loan.status === "active" ? settlementPreview?.accruedNotDueInterest : undefined}
                         >
@@ -695,7 +714,7 @@ export default function LoanDetail() {
                     <LoanOpeningBalances loanPublicId={loan.publicId} lineage={loan.restructureLineage} components={loan.openingBalanceComponents} waivers={loan.restructureWaivers} />
                     <LoanRestructurePanel loan={loan} onExecuted={() => window.location.reload()} />
 
-                    <LoanDisbursements ref={disbursementsRef} loanPublicId={loan.publicId ?? loan.id} />
+                    <LoanDisbursements ref={disbursementsRef} loanPublicId={loan.publicId ?? loan.id} onSummaryChange={setDisbursementSummary} />
 
                     <IntermediatedDisbursementPanel loanPublicId={loan.publicId ?? loan.id} onPosted={async () => {
                         if (!disbursementsRef.current) throw new Error("Disbursement ledger is unavailable");

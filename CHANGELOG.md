@@ -3,6 +3,7 @@
 ## v0.3.14 - 2026-08-16
 
 ### Added
+- Added localized floating-loan detail fields for advance interest and net payout, plus a non-mutating warning when the backend-owned effective posted gross payout differs from the contract net payout.
 - Added a backend-owned floating-loan payout summary with exact first-period interest, advance deduction, net borrower payout, and contract dates for loan-detail consumers.
 - Added the TDD implementation plan for floating advance-interest loan details, covering a backend-owned payout summary, posted-payout mismatch presentation, locale parity, and full backend/frontend verification.
 - Added the approved floating advance-interest loan-detail design, keeping contract calculations in the backend and presenting advance interest, net borrower payout, first-period dates, and non-mutating payout mismatch warnings in the Web UI.
