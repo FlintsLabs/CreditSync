@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.17 - 2026-08-17
+
+### Added
+- Added the approved design for an atomic, reversible scheduled-loan replacement workflow with a `replaced` terminal status, exact correction records, existing-draft activation, funding linkage, lineage, synchronized MCP/REST interfaces, and fail-closed downstream checks.
+
 ## v0.3.16 - 2026-08-16
 
 ### Added
