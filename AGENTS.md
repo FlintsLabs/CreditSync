@@ -21,6 +21,22 @@ This project is optimized for **Bun**. Agents should prefer using Bun for all de
 - Treat worker completion as untrusted until independently verified. Before reporting success, confirm the expected commits, no unexplained tracked changes, all required gates at the reported HEAD, preserved user changes, and requested target integration. When merge was requested, run `git merge-base --is-ancestor <feature> <target>` and do not say merged unless it succeeds. Distinguish branch completion, integration, push, and deployment in status reports.
 - If tmux or Codex CLI is unavailable, report that limitation and continue locally only when consistent with the user's request. If the worker conflicts with unrelated state, stop it and preserve recoverable evidence before repair.
 
+### Tmux Implementation Command
+
+When the user says `ใช้ tmux implement`, `implement ด้วย tmux`, or an equivalent instruction:
+
+- Treat the latest user-approved specification and implementation plan as the authorized implementation scope.
+- Create an appropriate isolated Git worktree and a branch prefixed with `codex/`.
+- Start a descriptively named tmux session and delegate implementation to Codex CLI using model `gpt-5.3-codex-spark`.
+- Pass the worker the repository/worktree path, branch, integration target, approved spec and plan paths, acceptance criteria, ordered implementation steps, verification gates, financial/data-safety requirements, dirty-file ownership, and explicit scope exclusions.
+- Supervise the worker continuously. Inspect tmux output, approval prompts, Git state, commits, tests, and repeated unchanged waits.
+- Require test-driven implementation where applicable and run all verification gates defined by the approved plan.
+- Treat worker completion as untrusted until independently verifying the final diff, commit contents, expected tests, lint/typecheck/build, changelog discipline, and preservation of unrelated user changes.
+- If `gpt-5.3-codex-spark` is unavailable, rejected, or exhausted, fall back to the model selected for the current task and report the fallback and reason.
+- Do not push, deploy, perform production actions, or broaden scope unless the user explicitly authorizes them.
+- By default, complete and verify the work on the isolated feature branch but do not merge it.
+- Merge into the stated integration target only when the user explicitly includes `merge`, `รวมกลับ`, or equivalent authorization. After merging, verify with `git merge-base --is-ancestor <feature-branch> <target-branch>`.
+
 ## Docker Compose Layout
 - `docker-compose.yml` is the local development infra file.
 - `docker-compose.infra.yml` is the production-style infra file for `postgres`, `minio`, and `dragonfly`.
