@@ -18,6 +18,7 @@
 - Added the approved production loan-list schema-compatibility design and TDD implementation plan.
 
 ### Changed
+- Added the implementation plan for conditional CreditSync payment-slip evidence ordering, including data-only compatibility, unchanged-byte upload checks, fail-closed evidence stops, and executable MCP eval coverage.
 - Documented the floating-loan detail contract summary and posted-payout mismatch behavior, including its non-mutating and posted-only boundaries.
 
 ### Fixed
