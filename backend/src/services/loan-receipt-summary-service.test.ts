@@ -88,7 +88,7 @@ describe("getLoanReceiptSummaries", () => {
         });
     });
 
-    integrationTest("returns exact zero for an empty requested loan without leaking another tenant", async () => {
+    integrationTest("returns exact zero only for requested loans owned by the tenant", async () => {
         const visible = await seedLoan("tenant-visible", "empty");
         const foreign = await seedLoan("tenant-foreign", "foreign");
         await db.insert(loanDisbursements).values({
@@ -100,9 +100,31 @@ describe("getLoanReceiptSummaries", () => {
             createdByUserId: foreign.owner.id,
         });
 
-        const summaries = await getLoanReceiptSummaries(db, visible.owner.tenantId, [visible.loan.id]);
+        const summaries = await getLoanReceiptSummaries(db, visible.owner.tenantId, [
+            visible.loan.id,
+            foreign.loan.id,
+        ]);
         expect(summaries.get(visible.loan.id)).toEqual({ interestReceived: "0.00", paidToDate: "0.00" });
         expect(summaries.has(foreign.loan.id)).toBe(false);
+    });
+
+    integrationTest("uses only immutable activation disbursements with required disbursedAt", async () => {
+        const columns = await db.execute<{
+            column_name: string;
+            is_nullable: "YES" | "NO";
+        }>(sql`
+            SELECT column_name, is_nullable
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'loan_disbursements'
+              AND column_name IN ('disbursed_at', 'posted_at')
+            ORDER BY column_name
+        `);
+
+        expect([...columns]).toEqual([{
+            column_name: "disbursed_at",
+            is_nullable: "NO",
+        }]);
     });
 
     integrationTest("retains exact cents for 29-integer-digit components", async () => {

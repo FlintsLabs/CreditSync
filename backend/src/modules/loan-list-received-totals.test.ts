@@ -103,16 +103,13 @@ describe("GET /loans received totals", () => {
             createdByUserId: foreignOwner.id,
         });
 
-        let requestCount = 0;
         const app = new Elysia().use(loansRoute);
-        requestCount += 1;
         const response = await app.handle(new Request("http://localhost/loans", {
             headers: { authorization: `Bearer ${await tokenFor(owner)}` },
         }));
         const body = await response.json() as Array<Record<string, unknown>>;
 
         expect(response.status).toBe(200);
-        expect(requestCount).toBe(1);
         expect(body.find((row) => row.publicId === visibleLoan.publicId)).toMatchObject({
             publicId: visibleLoan.publicId,
             interestReceived: "125.00",

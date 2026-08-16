@@ -1,10 +1,11 @@
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
-import { loanDisbursements, transactions } from "../db/schema";
+import { db } from "../db";
+import { loanDisbursements, loans, transactions } from "../db/schema";
 import { FinancialDecimal } from "../lib/financial-decimal";
 import { serializeMoney } from "../lib/money";
 import { DomainError } from "./domain-error";
 
-type Executor = any;
+type Executor = Pick<typeof db, "select">;
 
 export type LoanReceiptSummary = {
     interestReceived: string;
@@ -18,11 +19,18 @@ export async function getLoanReceiptSummaries(
 ): Promise<Map<number, LoanReceiptSummary>> {
     if (loanIds.length === 0) return new Map();
 
+    const authorizedLoans = await executor.select({ id: loans.id }).from(loans).where(and(
+        eq(loans.tenantId, tenantId),
+        inArray(loans.id, loanIds),
+    ));
+    const authorizedLoanIds = authorizedLoans.map(({ id }) => id);
+    if (authorizedLoanIds.length === 0) return new Map();
+
     const summaries = new Map<number, {
         interestReceived: InstanceType<typeof FinancialDecimal>;
         paidToDate: InstanceType<typeof FinancialDecimal>;
     }>();
-    for (const loanId of loanIds) {
+    for (const loanId of authorizedLoanIds) {
         summaries.set(loanId, {
             interestReceived: new FinancialDecimal("0"),
             paidToDate: new FinancialDecimal("0"),
@@ -34,7 +42,11 @@ export async function getLoanReceiptSummaries(
         advanceInterest: sql<string>`coalesce(sum(${loanDisbursements.firstDayInterestDeducted}), 0)`,
     }).from(loanDisbursements).where(and(
         eq(loanDisbursements.tenantId, tenantId),
-        inArray(loanDisbursements.loanId, loanIds),
+        inArray(loanDisbursements.loanId, authorizedLoanIds),
+        // loan_disbursements is the immutable activation snapshot. Unlike the
+        // draft-capable loan_disbursement_events ledger, it has no postedAt;
+        // its required disbursedAt is the applicable finalized-state predicate.
+        isNotNull(loanDisbursements.disbursedAt),
     )).groupBy(loanDisbursements.loanId);
 
     for (const row of advanceRows) {
@@ -56,7 +68,7 @@ export async function getLoanReceiptSummaries(
         ), 0)`,
     }).from(transactions).where(and(
         eq(transactions.tenantId, tenantId),
-        inArray(transactions.loanId, loanIds),
+        inArray(transactions.loanId, authorizedLoanIds),
         isNotNull(transactions.postedAt),
         inArray(transactions.entryType, ["repayment", "reversal"]),
     )).groupBy(transactions.loanId);

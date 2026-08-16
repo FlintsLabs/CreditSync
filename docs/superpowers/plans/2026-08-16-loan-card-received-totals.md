@@ -16,6 +16,12 @@
 - Posted reversal components reduce both totals; payment-intake drafts and unrelated ledger activity never count.
 - Paid accrual snapshots are not receipt inputs because they can duplicate advance interest or transaction allocations.
 - Reads are tenant-bound and restricted to loan IDs already authorized by the existing Loan List access filter.
+- The receipt service independently selects requested IDs from tenant-owned `loans`
+  before creating result entries, so direct callers cannot obtain summaries for
+  foreign IDs.
+- `loan_disbursements` is an immutable activation-time snapshot with required
+  `disbursedAt` and no `postedAt`; require `disbursedAt IS NOT NULL` for that grouped
+  read. Draft actual payouts belong to `loan_disbursement_events` and are not inputs.
 - Missing grouped rows become exact `0.00`; a negative cumulative result raises a financial-invariant error and is never clamped.
 - Use `Asia/Bangkok` for existing date behavior; this feature does not change dates.
 - Update `frontend/src/locales/en.json` and `frontend/src/locales/th.json` together.
@@ -135,7 +141,12 @@ paidFromPayments = sum(
 )
 ```
 
-Both reads must filter `tenantId`, `inArray(loanId, loanIds)`, `postedAt IS NOT NULL`, and transaction `entryType IN ('repayment', 'reversal')`. Initialize every requested ID to exact zero, combine SQL numeric strings with `FinancialDecimal`, reject either negative total with:
+First select tenant-owned requested IDs from `loans` and initialize only those IDs to
+exact zero. Both grouped reads must filter `tenantId` and that authorized ID set. The
+activation snapshot read must require `loan_disbursements.disbursedAt IS NOT NULL`;
+the transaction read must require `postedAt IS NOT NULL` and `entryType IN
+('repayment', 'reversal')`. Combine SQL numeric strings with `FinancialDecimal` and
+reject either negative total with:
 
 ```ts
 throw new DomainError(
