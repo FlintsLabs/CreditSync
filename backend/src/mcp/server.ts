@@ -1456,6 +1456,14 @@ function dataRecord(value: unknown): Record<string, unknown> {
 
 function frozenToolData(toolName: McpToolName, value: unknown): Record<string, unknown> {
     const data = dataRecord(value);
+    if (toolName === "loan.disbursement.list") {
+        const summary = data.summary;
+        if (summary && typeof summary === "object" && !Array.isArray(summary)) {
+            const { postedGrossAmount: _postedGrossAmount, postedEventCount: _postedEventCount, ...contractSummary } = summary as Record<string, unknown>;
+            data.summary = contractSummary;
+        }
+        return data;
+    }
     if (toolName !== "loan.preview" && toolName !== "loan.draft" && toolName !== "loan.activate") return data;
     const projectLoanFields = (record: Record<string, unknown>) => {
         const legacy = record;
