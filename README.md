@@ -70,7 +70,7 @@ Account identity and tenant role are read-only values supplied by the authorized
 
 ### 3. Loan Management
 
-- filter the Loan List between Active and Done agreements while retaining search, status, funding, and sort controls
+- filter the Loan List between Active, Done, and All agreements while retaining search, status, funding, and sort controls
 - calculate repayment schedules before saving
 - support `single_payment`, `daily`, `weekly`, `monthly`, and `floating` repayment types
 - preview and persist exact single-payment due dates, agreed fixed-interest floors, optional greater-of retroactive interest, and contracted late penalties before activation creates one immutable maturity row

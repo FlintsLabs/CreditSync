@@ -41,6 +41,8 @@ interface LoanRow {
     paymentHealth?: LoanPaymentHealth;
 }
 
+type LoanTab = "active" | "done" | "all";
+
 export default function LoanList() {
     const { t, i18n } = useTranslation();
     const [loans, setLoans] = useState<LoanRow[]>([]);
@@ -48,7 +50,7 @@ export default function LoanList() {
     const [loadError, setLoadError] = useState(false);
     const [closingLoanId, setClosingLoanId] = useState<string | null>(null);
     const [search, setSearch] = useState("");
-    const [loanTab, setLoanTab] = useState<"active" | "done">("active");
+    const [loanTab, setLoanTab] = useState<LoanTab>("active");
     const [statusFilter, setStatusFilter] = useState("all");
     const [fundingFilter, setFundingFilter] = useState("all");
     const [sortBy, setSortBy] = useState("newest");
@@ -86,7 +88,7 @@ export default function LoanList() {
     const visibleLoans = useMemo(() => {
         const filtered = loans.filter((loan) => {
             const isDone = loan.status === "paid" || loan.status === "closed";
-            const matchesTab = loanTab === "done" ? isDone : !isDone;
+            const matchesTab = loanTab === "all" || (loanTab === "done" ? isDone : !isDone);
             const matchesSearch = loanMatchesSearch(loan as BorrowerLabelLoan, search);
             const matchesStatus = statusFilter === "all" || loan.status === statusFilter;
             const matchesFunding = fundingFilter === "all";
@@ -122,16 +124,19 @@ export default function LoanList() {
             </div>
 
             <div className="inline-flex rounded-lg border bg-muted/30 p-1" role="tablist" aria-label={t("loans.tabs.label", "Loan status tabs")}>
-                {(["active", "done"] as const).map((tab) => (
+                {(["active", "done", "all"] as const).map((tab) => (
                     <button
                         key={tab}
                         type="button"
                         role="tab"
                         aria-selected={loanTab === tab}
                         className={`rounded-md px-4 py-2 text-sm font-medium transition-colors ${loanTab === tab ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-                        onClick={() => setLoanTab(tab)}
+                        onClick={() => {
+                            setLoanTab(tab);
+                            setStatusFilter("all");
+                        }}
                     >
-                        {t(`loans.tabs.${tab}`, tab === "active" ? "Active" : "Done")}
+                        {t(`loans.tabs.${tab}`, tab === "active" ? "Active" : tab === "done" ? "Done" : "All")}
                     </button>
                 ))}
             </div>
@@ -151,10 +156,9 @@ export default function LoanList() {
                         <label className="text-sm font-medium">{t("common.status", "Status")}</label>
                         <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
                             <option value="all">{t("loans.filters.allStatuses", "All statuses")}</option>
-                            <option value="active">{t("loans.status.active", "Active")}</option>
-                            <option value="draft">{t("loans.status.draft", "Draft")}</option>
-                            <option value="paid">{t("loans.status.paid", "Paid")}</option>
-                            <option value="defaulted">{t("loans.status.defaulted", "Defaulted")}</option>
+                            {(loanTab === "all" ? ["active", "draft", "paid", "closed", "defaulted", "pending", "problem"] : loanTab === "done" ? ["paid", "closed"] : ["active", "draft", "defaulted"]).map((status) => (
+                                <option key={status} value={status}>{t(`loans.status.${status}`, status)}</option>
+                            ))}
                         </select>
                     </div>
                     <div className="grid gap-1.5">

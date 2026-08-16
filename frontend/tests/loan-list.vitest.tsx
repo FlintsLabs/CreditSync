@@ -68,6 +68,10 @@ describe("LoanList", () => {
         expect(within(paidCard).queryByText(/THB\s*0\.00/)).not.toBeInTheDocument();
         expect(within(paidCard).getByText(/Original principal.*THB\s*10,000\.00.*Interest received.*THB\s*2,000\.00/)).toBeInTheDocument();
         expect(within(paidCard).queryByText(/Paid to date/)).not.toBeInTheDocument();
+        await userEvent.click(screen.getByRole("tab", { name: "All" }));
+        expect(screen.getByText("Active Summary")).toBeInTheDocument();
+        expect(screen.getByText("Paid Summary")).toBeInTheDocument();
+        expect(screen.getByRole("option", { name: "Closed" })).toBeInTheDocument();
         expect(vi.mocked(api.get).mock.calls.map(([url]) => url)).toEqual(["/loans"]);
     });
 

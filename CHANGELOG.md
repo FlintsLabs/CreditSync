@@ -3,10 +3,10 @@
 ## v0.3.16 - 2026-08-16
 
 ### Added
-- Added Active and Done tabs to Loan List with English/Thai labels and client-side status filtering that reuses the existing loan query.
+- Added Active, Done, and All tabs to Loan List with English/Thai labels and client-side status filtering that reuses the existing loan query.
 
 ### Changed
-- Localized the Loan List empty state to match the selected Active or Done tab.
+- Localized the Loan List empty state to match the selected Active, Done, or All tab scope.
 
 ## v0.3.15 - 2026-08-16
 
