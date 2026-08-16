@@ -6,6 +6,7 @@
         "dev": "bun run --watch src/index.ts",
         "typecheck": "tsc --noEmit",
         "schema:check:loan-origination": "bun run scripts/check-loan-origination-schema.ts",
+        "schema:reconcile:production-mixed-lineage": "bun run scripts/reconcile-production-mixed-lineage.ts",
         "generate": "drizzle-kit generate",
         "migrate": "drizzle-kit migrate"
     },
