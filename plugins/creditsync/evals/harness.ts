@@ -8,6 +8,7 @@ const ALIAS = "0198c481-3e2b-7000-8000-000000000013";
 const INTAKE = "0198c481-3e2b-7000-8000-000000000021";
 const ORIGINAL_INTAKE = "0198c481-3e2b-7000-8000-000000000022";
 const EVIDENCE = "0198c481-3e2b-7000-8000-000000000023";
+const EVIDENCE_FILE = "0198c481-3e2b-7000-8000-000000000025";
 const PROPOSAL = "0198c481-3e2b-7000-8000-000000000024";
 const LOAN_A = "0198c481-3e2b-7000-8000-000000000031";
 const LOAN_B = "0198c481-3e2b-7000-8000-000000000032";
@@ -269,32 +270,45 @@ async function paymentFlow(mcp: ScriptedMcp, options: {
         return { outcome: "stopped", stopReason: "duplicate" } as const;
     }
     if (options.evidence) {
-        const prepared = await mcp.call("evidence.prepare", {
-            paymentIntakePublicId: INTAKE,
-            mimeType: "image/jpeg",
-            size: PAYMENT_EVIDENCE_BYTES.byteLength,
-            sha256: FILE_HASH,
-            evidenceType: "slip",
-        });
-        if (prepared.duplicate === true) {
-            await mcp.call("intake.get", { paymentIntakePublicId: prepared.intakePublicId });
-            return { outcome: "stopped", stopReason: "duplicate-evidence" } as const;
+        try {
+            const prepared = await mcp.call("evidence.prepare", {
+                paymentIntakePublicId: INTAKE,
+                mimeType: "image/jpeg",
+                size: PAYMENT_EVIDENCE_BYTES.byteLength,
+                sha256: FILE_HASH,
+                evidenceType: "slip",
+            });
+            if (prepared.duplicate === true) {
+                await mcp.call("intake.get", { paymentIntakePublicId: prepared.intakePublicId });
+                return { outcome: "stopped", stopReason: "duplicate-evidence" } as const;
+            }
+            if (typeof prepared.uploadUrl !== "string" || !prepared.requiredHeaders) {
+                return { outcome: "stopped", stopReason: "evidence-upload-unavailable" } as const;
+            }
+            mcp.uploadEvidence({
+                name: "evidence.put",
+                uploadUrl: prepared.uploadUrl,
+                requiredHeaders: prepared.requiredHeaders as Record<string, string>,
+                bytes: PAYMENT_EVIDENCE_BYTES,
+                declaredSize: PAYMENT_EVIDENCE_BYTES.byteLength,
+                declaredSha256: FILE_HASH,
+            });
+            const finalized = await mcp.call("evidence.finalize", {
+                paymentIntakePublicId: INTAKE,
+                evidencePublicId: prepared.publicId,
+            });
+            if (finalized.status !== "ready"
+                || finalized.publicId !== prepared.publicId
+                || (prepared.filePublicId !== undefined && finalized.filePublicId !== prepared.filePublicId)
+                || (finalized.mimeType !== undefined && finalized.mimeType !== "image/jpeg")
+                || (finalized.size !== undefined && finalized.size !== PAYMENT_EVIDENCE_BYTES.byteLength)
+                || (finalized.sha256 !== undefined && finalized.sha256 !== FILE_HASH)) {
+                return { outcome: "stopped", stopReason: "evidence-binding-mismatch" } as const;
+            }
+        } catch (error) {
+            if (error instanceof ScriptedMcpError) return { outcome: "stopped", stopReason: "evidence-failure" } as const;
+            throw error;
         }
-        if (typeof prepared.uploadUrl !== "string" || !prepared.requiredHeaders) {
-            return { outcome: "stopped", stopReason: "evidence-upload-unavailable" } as const;
-        }
-        mcp.uploadEvidence({
-            name: "evidence.put",
-            uploadUrl: prepared.uploadUrl,
-            requiredHeaders: prepared.requiredHeaders as Record<string, string>,
-            bytes: PAYMENT_EVIDENCE_BYTES,
-            declaredSize: PAYMENT_EVIDENCE_BYTES.byteLength,
-            declaredSha256: FILE_HASH,
-        });
-        await mcp.call("evidence.finalize", {
-            paymentIntakePublicId: INTAKE,
-            evidencePublicId: prepared.publicId,
-        });
     }
     for (let attempt = 0; attempt < 2; attempt += 1) {
         const proposal = await mcp.call("payment.preview", {
@@ -1176,8 +1190,8 @@ const SCENARIOS: Record<string, Scenario> = {
     "payment-slip": {
         script: [
             { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null } },
-            { name: "evidence.prepare", arguments: { paymentIntakePublicId: INTAKE, mimeType: "image/jpeg", size: PAYMENT_EVIDENCE_BYTES.byteLength, sha256: FILE_HASH, evidenceType: "slip" }, result: { publicId: EVIDENCE, duplicate: false, uploadUrl: "https://storage.example/payment-upload", requiredHeaders: {} } },
-            { name: "evidence.finalize", arguments: { paymentIntakePublicId: INTAKE, evidencePublicId: EVIDENCE }, result: { publicId: "0198c481-3e2b-7000-8000-000000000203", status: "fixture", sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", filePublicId: "0198c481-3e2b-7000-8000-000000000204" } },
+            { name: "evidence.prepare", arguments: { paymentIntakePublicId: INTAKE, mimeType: "image/jpeg", size: PAYMENT_EVIDENCE_BYTES.byteLength, sha256: FILE_HASH, evidenceType: "slip" }, result: { publicId: EVIDENCE, filePublicId: EVIDENCE_FILE, duplicate: false, uploadUrl: "https://storage.example/payment-upload", requiredHeaders: {} } },
+            { name: "evidence.finalize", arguments: { paymentIntakePublicId: INTAKE, evidencePublicId: EVIDENCE }, result: { publicId: EVIDENCE, status: "ready", sha256: FILE_HASH, filePublicId: EVIDENCE_FILE } },
             { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: PROPOSAL, status: "ready", version: -9007199254740991, warnings: [], totalAllocated: "0.00", allocations: [] } },
             { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, result: { publicId: "0198c481-3e2b-7000-8000-000000000205", status: "fixture", transactions: [] } },
         ],
@@ -1377,6 +1391,21 @@ const SCENARIOS: Record<string, Scenario> = {
             { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null } },
             { name: "evidence.prepare", arguments: { paymentIntakePublicId: INTAKE, mimeType: "image/jpeg", size: PAYMENT_EVIDENCE_BYTES.byteLength, sha256: FILE_HASH, evidenceType: "slip" }, result: { publicId: EVIDENCE, duplicate: true, intakePublicId: ORIGINAL_INTAKE } },
             { name: "intake.get", arguments: { paymentIntakePublicId: ORIGINAL_INTAKE }, result: { publicId: "0198c481-3e2b-7000-8000-000000000296", status: "fixture", evidence: [], latestProposal: { publicId: "0198c481-3e2b-7000-8000-000000000297", version: -9007199254740991, status: "fixture", warnings: [], totalAllocated: "0.00", allocations: [] } } },
+        ],
+        run: (mcp) => paymentFlow(mcp, { evidence: true }),
+    },
+    "payment-evidence-upload-unavailable": {
+        script: [
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null } },
+            { name: "evidence.prepare", arguments: { paymentIntakePublicId: INTAKE, mimeType: "image/jpeg", size: PAYMENT_EVIDENCE_BYTES.byteLength, sha256: FILE_HASH, evidenceType: "slip" }, result: { publicId: EVIDENCE, filePublicId: EVIDENCE_FILE, duplicate: false } },
+        ],
+        run: (mcp) => paymentFlow(mcp, { evidence: true }),
+    },
+    "payment-evidence-finalize-mismatch": {
+        script: [
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null } },
+            { name: "evidence.prepare", arguments: { paymentIntakePublicId: INTAKE, mimeType: "image/jpeg", size: PAYMENT_EVIDENCE_BYTES.byteLength, sha256: FILE_HASH, evidenceType: "slip" }, result: { publicId: EVIDENCE, filePublicId: EVIDENCE_FILE, duplicate: false, uploadUrl: "https://storage.example/payment-upload", requiredHeaders: {} } },
+            { name: "evidence.finalize", arguments: { paymentIntakePublicId: INTAKE, evidencePublicId: EVIDENCE }, result: { publicId: EVIDENCE, status: "ready", sha256: FILE_HASH, filePublicId: ORIGINAL_INTAKE } },
         ],
         run: (mcp) => paymentFlow(mcp, { evidence: true }),
     },

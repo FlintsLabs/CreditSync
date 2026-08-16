@@ -221,7 +221,7 @@ describe("CreditSync plugin 7.0.0 contract", () => {
             "restructure-unsafe-reversal",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
         expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(20);
-        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(43);
+        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(45);
     });
 
     test("floating settlement skill preserves exact composition and all execution stop gates", async () => {

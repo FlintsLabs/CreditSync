@@ -400,6 +400,18 @@ describe("CreditSync executable orchestration evals", () => {
         expect(result.effects).toEqual([]);
     });
 
+    test("payment slip evidence failures stop before matching and posting", async () => {
+        const unavailable = await runEvalScenario("payment-evidence-upload-unavailable");
+        expect(unavailable).toMatchObject({ outcome: "stopped", stopReason: "evidence-upload-unavailable", effects: [] });
+        expect(unavailable.calls.map((call) => call.name)).toEqual(["intake.create", "evidence.prepare"]);
+
+        const mismatch = await runEvalScenario("payment-evidence-finalize-mismatch");
+        expect(mismatch).toMatchObject({ outcome: "stopped", stopReason: "evidence-binding-mismatch" });
+        expect(mismatch.calls.map((call) => call.name)).toEqual(["intake.create", "evidence.prepare", "evidence.finalize"]);
+        expect(mismatch.effects).toHaveLength(1);
+        expect(mismatch.calls.some((call) => call.name === "payment.preview" || call.name === "payment.post")).toBe(false);
+    });
+
     test("stale payment state is inspected and re-previewed before posting the new proposal", async () => {
         const result = await runEvalScenario("payment-stale-repreview");
         expect(result.outcome).toBe("completed");
