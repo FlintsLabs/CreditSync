@@ -3,6 +3,7 @@
 ## v0.3.14 - 2026-08-16
 
 ### Added
+- Added a backend-owned floating-loan payout summary with exact first-period interest, advance deduction, net borrower payout, and contract dates for loan-detail consumers.
 - Added the TDD implementation plan for floating advance-interest loan details, covering a backend-owned payout summary, posted-payout mismatch presentation, locale parity, and full backend/frontend verification.
 - Added the approved floating advance-interest loan-detail design, keeping contract calculations in the backend and presenting advance interest, net borrower payout, first-period dates, and non-mutating payout mismatch warnings in the Web UI.
 - Added the fail-closed production mixed-lineage reconciliation tool with dry-run default, explicit `--apply`, one outer PostgreSQL transaction, top-level migration statement boundaries, legacy table quarantine/OID preservation, exact journal state machine, and idx30 Bangkok due-group capture.

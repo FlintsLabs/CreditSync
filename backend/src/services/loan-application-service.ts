@@ -254,6 +254,21 @@ export async function presentLoan(row: LoanRow) {
     const principal = serializeMoney(row.principalAmount);
     const interestRate = serializeMoney(row.interestRate);
     const floatingInterestPolicy = floatingPolicyForRow(row);
+    const floatingPayoutSummary = floatingInterestPolicy && row.startDate
+        ? (() => {
+            const fullPeriodInterest = calculatePeriodInterest(principal, floatingInterestPolicy);
+            const advanceInterest = floatingInterestPolicy.advanceInterestPeriods === 1 ? fullPeriodInterest : "0.00";
+            const firstPeriod = interestPeriodFor(row.startDate, row.startDate, floatingInterestPolicy);
+            return {
+                fullPeriodInterest,
+                advanceInterest,
+                netBorrowerPayout: serializeMoney(new FinancialDecimal(principal).minus(advanceInterest)),
+                periodDays: firstPeriod.periodDays,
+                firstPeriodStartDate: firstPeriod.periodStart,
+                firstPeriodDueDate: firstPeriod.nextPeriodStart,
+            };
+        })()
+        : null;
     const dailyEntry: DailyLoanEntryMetadata | null = row.dailyEntryMode && row.dailyTermUnit && row.dailyTermValue && row.dailyFlatRatePercent
         ? {
             durationUnit: row.dailyTermUnit as DailyLoanEntryMetadata["durationUnit"],
@@ -286,6 +301,7 @@ export async function presentLoan(row: LoanRow) {
         principalAmount: principal,
         interestRate,
         floatingInterestPolicy,
+        floatingPayoutSummary,
         floatingDailyInterest: floatingInterestPolicy ? floatingDailyInterestForPolicy(floatingInterestPolicy) : null,
         singlePayment: singlePaymentFor(row),
         dailyEntry,

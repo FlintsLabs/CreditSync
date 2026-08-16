@@ -176,6 +176,14 @@ describe("loan application service", () => {
             floatingDailyInterest: {
                 mode: "percent", rate: "12.0000", firstDayTreatment: "deduct", accrualCycle: "weekly",
             },
+            floatingPayoutSummary: {
+                fullPeriodInterest: "600.00",
+                advanceInterest: "600.00",
+                netBorrowerPayout: "4400.00",
+                periodDays: 7,
+                firstPeriodStartDate: "2026-08-13",
+                firstPeriodDueDate: "2026-08-20",
+            },
         });
 
         const stored = await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) });
@@ -313,6 +321,14 @@ describe("loan application service", () => {
                 rateMode: "per_thousand",
                 rate: "25.0000",
                 advanceInterestPeriods: 0,
+            },
+            floatingPayoutSummary: {
+                fullPeriodInterest: "125.00",
+                advanceInterest: "0.00",
+                netBorrowerPayout: "5000.00",
+                periodDays: 7,
+                firstPeriodStartDate: "2026-08-14",
+                firstPeriodDueDate: "2026-08-21",
             },
         });
 
