@@ -624,3 +624,7 @@
 ### Added
 
 - Add the append-only atomic loan replacement ledger and terminal `replaced` loan status.
+
+### Fixed
+
+- Create the tenant-scoped replacement parent unique key before child foreign keys and preserve all legacy loan statuses alongside `replaced`.

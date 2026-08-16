@@ -28,6 +28,7 @@ CREATE TABLE "loan_replacements" (
   CONSTRAINT "loan_replacements_tenant_executed_by_fk" FOREIGN KEY (tenant_id, executed_by_user_id) REFERENCES users(tenant_id, id),
   CONSTRAINT "loan_replacements_tenant_reversed_by_fk" FOREIGN KEY (tenant_id, reversed_by_user_id) REFERENCES users(tenant_id, id)
 );--> statement-breakpoint
+CREATE UNIQUE INDEX "loan_replacements_tenant_id_id_unique" ON "loan_replacements" (tenant_id, id);--> statement-breakpoint
 CREATE TABLE "loan_replacement_corrections" (
   "id" serial PRIMARY KEY NOT NULL,
   "public_id" uuid DEFAULT uuidv7() NOT NULL UNIQUE,
@@ -46,7 +47,6 @@ CREATE TABLE "loan_replacement_corrections" (
   CONSTRAINT "loan_replacement_corrections_tenant_loan_fk" FOREIGN KEY (tenant_id, loan_id) REFERENCES loans(tenant_id, id),
   CONSTRAINT "loan_replacement_corrections_tenant_created_by_fk" FOREIGN KEY (tenant_id, created_by_user_id) REFERENCES users(tenant_id, id)
 );--> statement-breakpoint
-CREATE UNIQUE INDEX "loan_replacements_tenant_id_id_unique" ON "loan_replacements" (tenant_id, id);--> statement-breakpoint
 CREATE UNIQUE INDEX "loan_replacements_tenant_execute_key_unique" ON "loan_replacements" (tenant_id, execute_idempotency_key) WHERE execute_idempotency_key IS NOT NULL;--> statement-breakpoint
 CREATE UNIQUE INDEX "loan_replacements_tenant_reversal_key_unique" ON "loan_replacements" (tenant_id, reversal_idempotency_key) WHERE reversal_idempotency_key IS NOT NULL;--> statement-breakpoint
 CREATE UNIQUE INDEX "loan_replacements_tenant_old_executed_unique" ON "loan_replacements" (tenant_id, old_loan_id) WHERE status = 'executed';--> statement-breakpoint

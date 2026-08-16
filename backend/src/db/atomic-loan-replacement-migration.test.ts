@@ -13,6 +13,9 @@ describe("atomic loan replacement migration contract", () => {
     expect(sql).toContain("'replaced'");
     expect(sql).toContain("loan_replacements_tenant_old_loan_fk");
     expect(sql).toContain("loan_replacements_tenant_replacement_loan_fk");
+    expect(sql).toContain("'draft', 'active', 'paid', 'defaulted', 'replaced'");
+    expect(sql.indexOf('CREATE UNIQUE INDEX "loan_replacements_tenant_id_id_unique"'))
+      .toBeLessThan(sql.indexOf('CREATE TABLE "loan_replacement_corrections"'));
   });
 
   test("is journaled after migration 0041", () => {
