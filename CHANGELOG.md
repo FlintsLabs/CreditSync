@@ -5,6 +5,9 @@
 ### Changed
 - Updated `AGENTS.md` to state the current private CreditSync plugin version `7.0.0` with eleven skills, replacing the outdated `2.1.0`/six-skills reference to match the plugin manifest and validator output.
 
+### Fixed
+- Prevented REST-only floating-loan payout summary fields from breaking the frozen MCP `loan.draft` output contract, with regression coverage for weekly floating drafts.
+
 ## v0.3.14 - 2026-08-16
 
 ### Added

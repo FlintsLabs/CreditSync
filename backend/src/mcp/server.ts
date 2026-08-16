@@ -1459,6 +1459,7 @@ function frozenToolData(toolName: McpToolName, value: unknown): Record<string, u
     if (toolName !== "loan.preview" && toolName !== "loan.draft" && toolName !== "loan.activate") return data;
     const projectLoanFields = (record: Record<string, unknown>) => {
         const legacy = record;
+        delete legacy.floatingPayoutSummary;
         const floating = legacy.floatingDailyInterest;
         if (floating && typeof floating === "object" && !Array.isArray(floating)) {
             const { accrualCycle: _accrualCycle, ...legacyFloating } = floating as Record<string, unknown>;

@@ -418,6 +418,7 @@ describe("default MCP adapter integration", () => {
             status: "draft",
             floatingInterestPolicy: { periodUnit: "week", rate: "12.0000", advanceInterestRefundPolicy: "non_refundable" },
         });
+        expect(draft).not.toHaveProperty("floatingPayoutSummary");
         const loanPublicId = String(draft.publicId);
         const activationArgs = { loanPublicId, idempotencyKey: "mcp-weekly-activation-1" };
         const activated = resultData(await client.callTool({ name: "loan.activate", arguments: activationArgs }));
