@@ -11,6 +11,9 @@
 ### Changed
 - Localized the Loan List empty state to match the selected Active, Done, or All tab scope.
 
+### Fixed
+- Hardened commission and payment-attribution ledgers by authorizing idempotent replays before disclosure, returning persisted linked transaction IDs, restricting previews to canonical posted payments, validating strict ISO timestamps, and covering audit context and append-only database guards.
+
 ## v0.3.15 - 2026-08-16
 
 ### Changed

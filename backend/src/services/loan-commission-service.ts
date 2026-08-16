@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import type Decimal from "decimal.js";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "../db";
-import { auditLogs, intermediaries, loanCommissionParticipants, loans, transactions, users } from "../db/schema";
+import { auditLogs, intermediaries, loanCommissionParticipants, loans, paymentIntakes, transactions, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import { FinancialDecimal } from "../lib/financial-decimal";
 import { signedPublicMoneyPattern } from "../lib/financial-decimal";
@@ -48,8 +48,15 @@ function text(value: string, code: string, message: string) {
 }
 
 function timestamp(value: string, field: string) {
+    const match = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(value);
+    if (!match) throw new DomainError("INVALID_COMMISSION_DATE", `${field} must be a valid ISO 8601 timestamp`, 400);
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    if (day > daysInMonth) throw new DomainError("INVALID_COMMISSION_DATE", `${field} must be a valid ISO 8601 timestamp`, 400);
     const parsed = new Date(value);
-    if (!value || Number.isNaN(parsed.getTime())) throw new DomainError("INVALID_COMMISSION_DATE", `${field} must be a valid ISO 8601 timestamp`, 400);
+    if (Number.isNaN(parsed.getTime())) throw new DomainError("INVALID_COMMISSION_DATE", `${field} must be a valid ISO 8601 timestamp`, 400);
     return parsed;
 }
 
@@ -126,9 +133,16 @@ async function present(executor: any, ctx: CommandContext, row: Participant) {
     };
 }
 
-async function replay(executor: any, ctx: CommandContext, key: string, expectedFingerprint: string) {
+async function authorizeParticipant(executor: any, ctx: CommandContext, actor: Actor | null, row: Participant) {
+    const related = await participantRelations(executor, ctx, row);
+    if (!related.loan || !accessible(actor, related.loan.ownerUserId)) throw new DomainError("COMMISSION_PARTICIPANT_NOT_FOUND", "Commission participant not found", 404);
+    if (!related.intermediary || !accessible(actor, related.intermediary.ownerUserId)) throw new DomainError("COMMISSION_PARTICIPANT_NOT_FOUND", "Commission participant not found", 404);
+}
+
+async function replay(executor: any, ctx: CommandContext, actor: Actor | null, key: string, expectedFingerprint: string) {
     const row = await executor.query.loanCommissionParticipants.findFirst({ where: and(eq(loanCommissionParticipants.tenantId, ctx.tenantId), eq(loanCommissionParticipants.idempotencyKey, key)) });
     if (!row) return null;
+    await authorizeParticipant(executor, ctx, actor, row);
     const audit = await executor.query.auditLogs.findFirst({ where: and(eq(auditLogs.tenantId, ctx.tenantId), eq(auditLogs.publicId, row.auditPublicId)) });
     const stored = audit?.payload && typeof audit.payload === "object" && !Array.isArray(audit.payload) ? (audit.payload as Record<string, unknown>).requestFingerprint : null;
     if (stored !== expectedFingerprint) throw new DomainError("IDEMPOTENCY_KEY_CONFLICT", "Idempotency key was already used for a different commission command", 409);
@@ -178,7 +192,7 @@ export async function addLoanCommissionParticipant(ctx: CommandContext, input: A
     const actor = await actorFor(ctx);
     return db.transaction(async (tx) => {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${ctx.tenantId}:loan-commission:${key}`}, 0))`);
-        const existing = await replay(tx, ctx, key, requestFingerprint);
+        const existing = await replay(tx, ctx, actor, key, requestFingerprint);
         if (existing) return existing;
         const [loan, intermediary] = await Promise.all([loanFor(ctx, input.loanPublicId, actor, tx), intermediaryFor(ctx, input.intermediaryPublicId, actor, tx)]);
         if (intermediary.status !== "active") throw new DomainError("INTERMEDIARY_INACTIVE", "Inactive intermediaries cannot receive commission agreements", 409);
@@ -208,7 +222,7 @@ export async function updateLoanCommissionParticipant(ctx: CommandContext, input
     const actor = await actorFor(ctx);
     return db.transaction(async (tx) => {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${ctx.tenantId}:loan-commission:${key}`}, 0))`);
-        const existing = await replay(tx, ctx, key, requestFingerprint);
+        const existing = await replay(tx, ctx, actor, key, requestFingerprint);
         if (existing) return existing;
         const prior = await currentParticipant(ctx, input.participantPublicId, actor, tx);
         if (prior.status !== "active") throw new DomainError("COMMISSION_PARTICIPANT_ENDED", "Ended commission participation cannot be updated", 409);
@@ -227,7 +241,7 @@ export async function endLoanCommissionParticipant(ctx: CommandContext, input: E
     const actor = await actorFor(ctx);
     return db.transaction(async (tx) => {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${ctx.tenantId}:loan-commission:${key}`}, 0))`);
-        const existing = await replay(tx, ctx, key, requestFingerprint);
+        const existing = await replay(tx, ctx, actor, key, requestFingerprint);
         if (existing) return existing;
         const prior = await currentParticipant(ctx, input.participantPublicId, actor, tx);
         if (prior.status !== "active") throw new DomainError("COMMISSION_PARTICIPANT_ENDED", "Commission participant has already ended", 409);
@@ -249,7 +263,21 @@ export async function previewLoanCommission(ctx: CommandContext, input: { loanPu
     const loan = await loanFor(ctx, input.loanPublicId, actor);
     if (!Array.isArray(input.paymentPublicIds) || input.paymentPublicIds.length === 0) throw new DomainError("PAYMENTS_REQUIRED", "At least one paymentPublicId is required", 400);
     const uniqueIds = [...new Set(input.paymentPublicIds)];
-    const payments = await db.select().from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.loanId, loan.id), inArray(transactions.publicId, uniqueIds)));
+    const payments = await db.select().from(transactions).where(and(
+        eq(transactions.tenantId, ctx.tenantId),
+        eq(transactions.loanId, loan.id),
+        inArray(transactions.publicId, uniqueIds),
+        isNotNull(transactions.postedAt),
+        inArray(transactions.entryType, ["repayment", "reversal"]),
+        inArray(transactions.type, ["repayment", "close_account", "reversal"]),
+        sql`(${transactions.paymentIntakeId} IS NULL OR EXISTS (
+            SELECT 1 FROM ${paymentIntakes}
+            WHERE ${paymentIntakes.tenantId} = ${ctx.tenantId}
+              AND ${paymentIntakes.id} = ${transactions.paymentIntakeId}
+              AND ${paymentIntakes.status} = 'posted'
+              AND ${paymentIntakes.postedAt} IS NOT NULL
+        ))`,
+    ));
     if (payments.length !== uniqueIds.length) throw new DomainError("PAYMENT_NOT_FOUND", "Payment not found", 404);
     const interest = payments.reduce((sum, payment) => sum.plus(payment.interestComponent), new FinancialDecimal("0"));
     const versions = await db.select().from(loanCommissionParticipants).where(and(eq(loanCommissionParticipants.tenantId, ctx.tenantId), eq(loanCommissionParticipants.loanId, loan.id))).orderBy(loanCommissionParticipants.id);

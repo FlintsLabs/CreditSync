@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, intermediaries, loanCommissionParticipants, loans, transactions, users } from "../db/schema";
+import { auditLogs, borrowers, intermediaries, loanCommissionParticipants, loans, paymentIntakes, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import {
     addLoanCommissionParticipant,
@@ -58,6 +58,30 @@ describe("loan commission participant ledger", () => {
         expect(ended).toMatchObject({ commissionRate: "25.00", status: "ended", previousParticipantPublicId: updated.publicId, effectiveTo: "2026-08-20T00:00:00.000Z" });
         expect(await db.select().from(loanCommissionParticipants)).toHaveLength(3);
         expect(await listLoanCommissionParticipants(ctx(seeded.actor), seeded.loan.publicId)).toEqual([ended]);
+
+        const audit = await db.query.auditLogs.findFirst({ where: eq(auditLogs.publicId, ended.auditPublicId) });
+        expect(audit).toMatchObject({ tenantId: seeded.actor.tenantId, actorUserId: seeded.actor.id, actorSource: "web", requestId: "req-end", correlationId: "corr-end", entityId: ended.publicId, action: "ended" });
+        await expect(db.update(loanCommissionParticipants).set({ note: "mutated" }).where(eq(loanCommissionParticipants.publicId, added.publicId))).rejects.toThrow(/append-only/);
+        await expect(db.delete(loanCommissionParticipants).where(eq(loanCommissionParticipants.publicId, added.publicId))).rejects.toThrow(/append-only/);
+    });
+
+    integrationTest("authorizes idempotent participant replay and requires strict ISO timestamps", async () => {
+        const seeded = await seedTenant("commission-replay", "replay");
+        const peer = await db.insert(users).values({ tenantId: seeded.actor.tenantId, email: "peer@commission.test", role: "collector" }).returning().then((rows) => rows[0]!);
+        const input = { loanPublicId: seeded.loan.publicId, intermediaryPublicId: seeded.intermediary.publicId, commissionRate: "30.00", role: "collector", effectiveFrom: "2026-08-01T00:00:00.000Z" };
+        const first = await addLoanCommissionParticipant(ctx(seeded.actor, "scoped-replay"), input);
+
+        await expect(addLoanCommissionParticipant(ctx(peer, "scoped-replay"), input)).rejects.toMatchObject({ code: "COMMISSION_PARTICIPANT_NOT_FOUND", status: 404 });
+        expect((await addLoanCommissionParticipant(ctx(seeded.actor, "scoped-replay"), input)).publicId).toBe(first.publicId);
+        const updateInput = { participantPublicId: first.publicId, commissionRate: "25.00", role: "collector", effectiveFrom: "2026-08-10T00:00:00.000Z" };
+        const updated = await updateLoanCommissionParticipant(ctx(seeded.actor, "scoped-update-replay"), updateInput);
+        await expect(updateLoanCommissionParticipant(ctx(peer, "scoped-update-replay"), updateInput)).rejects.toMatchObject({ code: "COMMISSION_PARTICIPANT_NOT_FOUND", status: 404 });
+        const endInput = { participantPublicId: updated.publicId, effectiveTo: "2026-08-20T00:00:00.000Z", reason: "agreement ended" };
+        await endLoanCommissionParticipant(ctx(seeded.actor, "scoped-end-replay"), endInput);
+        await expect(endLoanCommissionParticipant(ctx(peer, "scoped-end-replay"), endInput)).rejects.toMatchObject({ code: "COMMISSION_PARTICIPANT_NOT_FOUND", status: 404 });
+        await expect(addLoanCommissionParticipant(ctx(seeded.actor, "invalid-date"), { ...input, effectiveFrom: "August 1, 2026" })).rejects.toMatchObject({ code: "INVALID_COMMISSION_DATE", status: 400 });
+        await expect(addLoanCommissionParticipant(ctx(seeded.actor, "invalid-zone"), { ...input, effectiveFrom: "2026-08-01T00:00:00" })).rejects.toMatchObject({ code: "INVALID_COMMISSION_DATE", status: 400 });
+        await expect(addLoanCommissionParticipant(ctx(seeded.actor, "invalid-calendar"), { ...input, effectiveFrom: "2026-02-30T00:00:00.000Z" })).rejects.toMatchObject({ code: "INVALID_COMMISSION_DATE", status: 400 });
     });
 
     integrationTest("previews exact commission from signed interest components only", async () => {
@@ -72,5 +96,16 @@ describe("loan commission participant ledger", () => {
         expect(original).toMatchObject({ interestAmount: "300.00", totalCommission: "90.00", participants: [{ commissionAmount: "90.00" }] });
         expect(compensating).toMatchObject({ interestAmount: "-99.75", totalCommission: "-29.93", participants: [{ commissionAmount: "-29.93" }] });
         expect((await previewLoanCommission(ctx(seeded.actor), { loanPublicId: seeded.loan.publicId, paymentPublicIds: [paymentA.publicId, paymentB.publicId] })).totalCommission).toBe("90.00");
+    });
+
+    integrationTest("rejects transaction rows that are not canonical posted payments", async () => {
+        const seeded = await seedTenant("commission-posted-only", "posted-only");
+        await addLoanCommissionParticipant(ctx(seeded.actor, "add"), { loanPublicId: seeded.loan.publicId, intermediaryPublicId: seeded.intermediary.publicId, commissionRate: "30.00", role: "collector", effectiveFrom: "2026-08-01T00:00:00.000Z" });
+        const draftIntake = await db.insert(paymentIntakes).values({ tenantId: seeded.actor.tenantId, ownerUserId: seeded.actor.id, amount: "100.00", status: "draft", originLoanId: seeded.loan.id }).returning().then((rows) => rows[0]!);
+        const intakeLinkedDraft = await db.insert(transactions).values({ tenantId: seeded.actor.tenantId, ownerUserId: seeded.actor.id, loanId: seeded.loan.id, paymentIntakeId: draftIntake.id, amount: "100.00", interestComponent: "100.00", type: "repayment", entryType: "repayment", idempotencyKey: "draft-intake-transaction" }).returning().then((rows) => rows[0]!);
+        const nonPayment = await db.insert(transactions).values({ tenantId: seeded.actor.tenantId, ownerUserId: seeded.actor.id, loanId: seeded.loan.id, amount: "100.00", interestComponent: "100.00", type: "draft", entryType: "repayment", idempotencyKey: "non-payment-transaction" }).returning().then((rows) => rows[0]!);
+
+        await expect(previewLoanCommission(ctx(seeded.actor), { loanPublicId: seeded.loan.publicId, paymentPublicIds: [intakeLinkedDraft.publicId] })).rejects.toMatchObject({ code: "PAYMENT_NOT_FOUND", status: 404 });
+        await expect(previewLoanCommission(ctx(seeded.actor), { loanPublicId: seeded.loan.publicId, paymentPublicIds: [nonPayment.publicId] })).rejects.toMatchObject({ code: "PAYMENT_NOT_FOUND", status: 404 });
     });
 });
