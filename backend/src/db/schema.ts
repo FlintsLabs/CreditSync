@@ -226,7 +226,7 @@ export const loans = pgTable("loans", {
     outstandingPrincipal: numeric("outstanding_principal").default("0"),
     outstandingInterest: numeric("outstanding_interest").default("0"),
     outstandingFees: numeric("outstanding_fees").default("0"),
-    status: text("status").default("draft"), // draft, active, paid, defaulted
+    status: text("status").default("draft"), // draft, active, paid, defaulted, replaced
     activationIdempotencyKey: text("activation_idempotency_key"),
     activationResult: jsonb("activation_result").$type<Record<string, unknown>>(),
     clonedFromLoanId: integer("cloned_from_loan_id"), // traceability for Refinance/Top-up
@@ -346,6 +346,7 @@ export const loanInterestRatePeriods = pgTable("loan_interest_rate_periods", {
     publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
     tenantId: tenantId,
     loanId: integer("loan_id").notNull(),
+    status: text("status").default("posted").notNull(),
     effectiveDate: date("effective_date").notNull(),
     expiryDate: date("expiry_date"),
     rateType: text("rate_type").notNull(),
@@ -667,6 +668,63 @@ export const fundRolloverEntries = pgTable("fund_rollover_entries", {
     createdByUserId: integer("created_by_user_id").references(() => users.id),
     createdAt: timestamp("created_at").defaultNow(),
 });
+
+export const loanReplacements = pgTable("loan_replacements", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    oldLoanId: integer("old_loan_id").notNull(),
+    replacementLoanId: integer("replacement_loan_id").notNull(),
+    status: text("status").default("preview").notNull(),
+    reason: text("reason").notNull(),
+    oldBalanceVersion: text("old_balance_version").notNull(),
+    replacementDraftVersion: text("replacement_draft_version").notNull(),
+    previewHash: text("preview_hash").notNull(),
+    requestHash: text("request_hash").notNull(),
+    preExecutionSnapshot: jsonb("pre_execution_snapshot").$type<Record<string, unknown>>(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    executeIdempotencyKey: text("execute_idempotency_key"),
+    reversalIdempotencyKey: text("reversal_idempotency_key"),
+    createdByUserId: integer("created_by_user_id"),
+    executedByUserId: integer("executed_by_user_id"),
+    reversedByUserId: integer("reversed_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("loan_replacements_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("loan_replacements_tenant_execute_key_unique").on(table.tenantId, table.executeIdempotencyKey).where(sql`${table.executeIdempotencyKey} IS NOT NULL`),
+    uniqueIndex("loan_replacements_tenant_reversal_key_unique").on(table.tenantId, table.reversalIdempotencyKey).where(sql`${table.reversalIdempotencyKey} IS NOT NULL`),
+    uniqueIndex("loan_replacements_tenant_old_executed_unique").on(table.tenantId, table.oldLoanId).where(sql`${table.status} = 'executed'`),
+    uniqueIndex("loan_replacements_tenant_replacement_executed_unique").on(table.tenantId, table.replacementLoanId).where(sql`${table.status} = 'executed'`),
+    foreignKey({ name: "loan_replacements_tenant_old_loan_fk", columns: [table.tenantId, table.oldLoanId], foreignColumns: [loans.tenantId, loans.id] }),
+    foreignKey({ name: "loan_replacements_tenant_replacement_loan_fk", columns: [table.tenantId, table.replacementLoanId], foreignColumns: [loans.tenantId, loans.id] }),
+    foreignKey({ name: "loan_replacements_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+    foreignKey({ name: "loan_replacements_tenant_executed_by_fk", columns: [table.tenantId, table.executedByUserId], foreignColumns: [users.tenantId, users.id] }),
+    foreignKey({ name: "loan_replacements_tenant_reversed_by_fk", columns: [table.tenantId, table.reversedByUserId], foreignColumns: [users.tenantId, users.id] }),
+    check("loan_replacements_status_check", sql`${table.status} IN ('preview', 'executed', 'reversed', 'expired')`),
+]);
+
+export const loanReplacementCorrections = pgTable("loan_replacement_corrections", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    replacementId: integer("replacement_id").notNull(),
+    loanId: integer("loan_id").notNull(),
+    status: text("status").default("posted").notNull(),
+    principal: numeric("principal").default("0").notNull(),
+    interest: numeric("interest").default("0").notNull(),
+    fee: numeric("fee").default("0").notNull(),
+    penalty: numeric("penalty").default("0").notNull(),
+    reason: text("reason").notNull(),
+    createdByUserId: integer("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("loan_replacement_corrections_tenant_id_id_unique").on(table.tenantId, table.id),
+    foreignKey({ name: "loan_replacement_corrections_tenant_replacement_fk", columns: [table.tenantId, table.replacementId], foreignColumns: [loanReplacements.tenantId, loanReplacements.id] }),
+    foreignKey({ name: "loan_replacement_corrections_tenant_loan_fk", columns: [table.tenantId, table.loanId], foreignColumns: [loans.tenantId, loans.id] }),
+    foreignKey({ name: "loan_replacement_corrections_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
 
 export const loanDisbursementEvents = pgTable("loan_disbursement_events", {
     id: serial("id").primaryKey(),

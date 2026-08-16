@@ -617,3 +617,10 @@
 ### Fixed
 
 - Hardened funding allocation idempotency, exact money validation, source resolution, locking, and read ordering.
+# Changelog
+
+## v7.1.0 - 2026-08-17
+
+### Added
+
+- Add the append-only atomic loan replacement ledger and terminal `replaced` loan status.
