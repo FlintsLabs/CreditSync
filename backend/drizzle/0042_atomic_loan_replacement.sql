@@ -1,5 +1,5 @@
 ALTER TABLE "loans" DROP CONSTRAINT IF EXISTS "loans_status_check";--> statement-breakpoint
-ALTER TABLE "loans" ADD CONSTRAINT "loans_status_check" CHECK ("status" IN ('draft', 'active', 'paid', 'defaulted', 'replaced'));--> statement-breakpoint
+ALTER TABLE "loans" ADD CONSTRAINT "loans_status_check" CHECK ("status" IN ('draft', 'active', 'paid', 'defaulted', 'closed', 'renewed', 'restructured', 'cancelled', 'settled', 'reversed', 'replaced'));--> statement-breakpoint
 CREATE TABLE "loan_replacements" (
   "id" serial PRIMARY KEY NOT NULL,
   "public_id" uuid DEFAULT uuidv7() NOT NULL UNIQUE,

@@ -628,3 +628,4 @@
 ### Fixed
 
 - Create the tenant-scoped replacement parent unique key before child foreign keys and preserve all legacy loan statuses alongside `replaced`.
+- Preserve every loan lifecycle status used by application workflows, including `closed`, `renewed`, `restructured`, `cancelled`, `settled`, and `reversed`.
