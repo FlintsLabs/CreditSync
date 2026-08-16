@@ -3,6 +3,7 @@
 ## v0.3.14 - 2026-08-16
 
 ### Added
+- Added the TDD implementation plan for status-aware Loan List receipt summaries, covering tenant-bound grouped Decimal aggregation, advance-interest deductions, signed payment reversals, responsive active cards, checked paid cards, locale parity, and full backend/frontend verification.
 - Added the approved status-aware Loan List card received-totals design: non-paid cards keep outstanding and original principal on one responsive row with exact interest-received and paid-to-date summaries, while paid cards replace the zero balance with a checked `PAID` state and show only original principal and interest received; receipt totals include advance-interest deductions and signed posted-payment reversals.
 - Added the approved Loan Detail borrower-tags, repayment-schedule-table, and repayment-history-table designs and implementation plans for the corresponding frontend presentation work.
 - Added the approved CreditSync Plugin design for conditional payment-slip evidence: supplied images must be checksum-verified, uploaded, finalized, and ready before payment preview/post, while data-only payments remain supported without evidence.
