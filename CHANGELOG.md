@@ -22,6 +22,7 @@
 - Localized the Loan List empty state to match the selected Active, Done, or All tab scope.
 
 ### Fixed
+- Fixed bank drawdown activation idempotency hashing, draft status defaults, profile-locked credit-limit rechecks, and explicit fixed-installment repayment mode persistence.
 - Hardened bank drawdown lifecycle commands with tenant-admin authorization, Decimal aggregate credit-limit enforcement, strict input validation, payload-safe draft/activation idempotency, note preservation, and repeatable lifecycle constraints.
 - Aggregated bank-loan schedule interest, fees, and VAT with Decimal-safe rollups when creating or regenerating loans.
 - Calculated bank-loan schedules with Decimal string arithmetic and exact final-principal reconciliation.

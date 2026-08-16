@@ -92,7 +92,7 @@ export const bankLoans = pgTable("bank_loans", {
     outstandingInterest: numeric("outstanding_interest").default("0"),
     outstandingFees: numeric("outstanding_fees").default("0"),
     outstandingPenalties: numeric("outstanding_penalties").default("0"),
-    status: text("status").default("active"), // draft, active, closed
+    status: text("status").default("draft"), // draft, active, closed
     idempotencyKey: text("idempotency_key"),
     requestHash: text("request_hash"),
     activationIdempotencyKey: text("activation_idempotency_key"),

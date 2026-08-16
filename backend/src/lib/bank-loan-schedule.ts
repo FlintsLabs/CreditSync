@@ -3,6 +3,7 @@ import { FinancialDecimal } from "./financial-decimal";
 import { serializeMoney } from "./money";
 
 export type RepaymentCycle = "daily" | "weekly" | "monthly" | "custom";
+export type RepaymentMode = "fixed_installment";
 
 export interface BankLoanScheduleInput {
     amount: string;
@@ -10,6 +11,7 @@ export interface BankLoanScheduleInput {
     startDate?: string;
     termMonths?: number;
     repaymentCycle?: RepaymentCycle;
+    repaymentMode?: RepaymentMode;
     totalInstallments?: number;
     installmentAmount?: string;
     processingFeeAmount?: string;
@@ -42,6 +44,7 @@ function addInterval(baseDate: dayjs.Dayjs, cycle: RepaymentCycle, step: number)
 
 export function generateBankLoanSchedule(input: BankLoanScheduleInput): BankLoanScheduleRow[] {
     const cycle = input.repaymentCycle ?? "monthly";
+    if ((input.repaymentMode ?? "fixed_installment") !== "fixed_installment") throw new Error("Unsupported repayment mode");
     const totalInstallments = inferInstallmentCount(input);
     const principal = new FinancialDecimal(input.amount);
     const periodicRate = new FinancialDecimal(input.interestRate).div(100).div(periodsPerYear[cycle]);
