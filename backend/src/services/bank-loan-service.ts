@@ -15,7 +15,7 @@ export type BankDrawdownInput = BankLoanScheduleInput & { bankProfilePublicId: s
 export type BankDrawdownPreview = { input: BankDrawdownInput; schedule: BankLoanScheduleRow[]; totalInterest: string; totalFees: string; totalVat: string; firstDueDate: string; lastDueDate: string };
 
 function decimal(value: string | undefined, name: string, positive = false) {
-    try { const d = new FinancialDecimal(value ?? "0"); if (d.isNegative() || (positive && d.isZero())) throw new Error(); return d; } catch { throw new DomainError("INVALID_BANK_DRAWDOWN", `${name} must be a valid ${positive ? "positive" : "nonnegative"} decimal`, 400); }
+    try { const d = new FinancialDecimal(value ?? "0"); if (!d.isFinite() || d.isNegative() || (positive && d.isZero())) throw new Error(); return d; } catch { throw new DomainError("INVALID_BANK_DRAWDOWN", `${name} must be a valid ${positive ? "positive" : "nonnegative"} decimal`, 400); }
 }
 function normalized(input: BankDrawdownInput): BankDrawdownInput {
     const cycles = ["daily", "weekly", "monthly", "custom"];
@@ -26,8 +26,14 @@ function normalized(input: BankDrawdownInput): BankDrawdownInput {
     const amount = decimal(input.amount, "Amount", true), rate = decimal(input.interestRate, "Interest rate");
     if (input.termMonths !== undefined && (!Number.isInteger(input.termMonths) || input.termMonths < 1 || input.termMonths > 1200)) throw new DomainError("INVALID_TERM", "Term must be between 1 and 1200 months", 400);
     if (input.totalInstallments !== undefined && (!Number.isInteger(input.totalInstallments) || input.totalInstallments < 1 || input.totalInstallments > 10000)) throw new DomainError("INVALID_INSTALLMENTS", "Installments must be a positive bounded integer", 400);
-    if (input.installmentAmount !== undefined) decimal(input.installmentAmount, "Installment", true);
-    return { ...input, amount: amount.toFixed(2), interestRate: rate.toFixed(4), processingFeeAmount: decimal(input.processingFeeAmount, "Processing fee").toFixed(2), utilizationFeeAmount: decimal(input.utilizationFeeAmount, "Utilization fee").toFixed(2), vatRate: decimal(input.vatRate, "VAT rate").toFixed(4) };
+    const installmentAmount = input.installmentAmount === undefined ? undefined : decimal(input.installmentAmount, "Installment", true).toFixed(2);
+    return { ...input, amount: amount.toFixed(2), interestRate: rate.toFixed(4), installmentAmount, processingFeeAmount: decimal(input.processingFeeAmount, "Processing fee").toFixed(2), utilizationFeeAmount: decimal(input.utilizationFeeAmount, "Utilization fee").toFixed(2), vatRate: decimal(input.vatRate, "VAT rate").toFixed(4) };
+}
+
+function requiredIdempotencyKey(ctx: CommandContext) {
+    const key = ctx.idempotencyKey?.trim();
+    if (!key) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Idempotency key is required", 400);
+    return key;
 }
 
 function fingerprint(input: unknown) { return createHash("sha256").update(JSON.stringify(input)).digest("hex"); }
@@ -53,8 +59,8 @@ export async function previewBankDrawdown(ctx: CommandContext, raw: BankDrawdown
 }
 
 export async function createBankDrawdownDraft(ctx: CommandContext, raw: BankDrawdownInput) {
-    if (!ctx.idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Idempotency key is required", 400);
-    await authorize(ctx); const input = normalized(raw); const key = ctx.idempotencyKey; const hash = fingerprint(input);
+    const key = requiredIdempotencyKey(ctx);
+    await authorize(ctx); const input = normalized(raw); const hash = fingerprint(input);
     return db.transaction(async (tx) => {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`bank-drawdown:${ctx.tenantId}:${key}`}, 0))`);
         const existing = (await tx.select().from(bankLoans).where(and(eq(bankLoans.tenantId, ctx.tenantId), eq(bankLoans.idempotencyKey, key))).limit(1))[0];
@@ -72,8 +78,7 @@ export async function createBankDrawdownDraft(ctx: CommandContext, raw: BankDraw
 }
 
 export async function activateBankDrawdown(ctx: CommandContext, input: { bankLoanPublicId: string }) {
-    if (!ctx.idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Idempotency key is required", 400);
-    const activationKey = ctx.idempotencyKey;
+    const activationKey = requiredIdempotencyKey(ctx);
     await authorize(ctx);
     return db.transaction(async (tx) => {
         const activationHash = fingerprint(input);
@@ -92,7 +97,7 @@ export async function activateBankDrawdown(ctx: CommandContext, input: { bankLoa
         const schedule = generateBankLoanSchedule({ amount: row.amount, interestRate: row.interestRate ?? "0", startDate: row.startDate ?? undefined, termMonths: row.termMonths ?? undefined, repaymentCycle: row.repaymentCycle as BankLoanScheduleInput["repaymentCycle"], repaymentMode: row.repaymentMode as BankLoanScheduleInput["repaymentMode"], totalInstallments: row.totalInstallments ?? undefined, installmentAmount: row.installmentAmount ?? undefined, processingFeeAmount: row.processingFeeAmount ?? undefined, utilizationFeeAmount: row.utilizationFeeAmount ?? undefined, vatRate: row.vatRate ?? undefined });
         for (const s of schedule) await tx.insert(bankLoanSchedules).values({ tenantId: ctx.tenantId, bankLoanId: row.id, ...s });
         const active = (await tx.update(bankLoans).set({ status: "active", activationIdempotencyKey: activationKey, activationRequestHash: activationHash, activationResult: { publicId: row.publicId, status: "active" }, nextDueDate: schedule[0]?.dueDate, outstandingPrincipal: row.amount, outstandingInterest: schedule.reduce((v, s) => v.plus(s.scheduledInterest), new FinancialDecimal(0)).toFixed(2), outstandingFees: schedule.reduce((v, s) => v.plus(s.scheduledFee).plus(s.scheduledVat), new FinancialDecimal(0)).toFixed(2), updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(eq(bankLoans.id, row.id)).returning())[0]!;
-        await createAuditLog(tx, { tenantId: ctx.tenantId, actorUserId: ctx.actorUserId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, entityType: "bank_loan", entityId: row.id, action: "activated", payload: { idempotencyKey: ctx.idempotencyKey } });
+        await createAuditLog(tx, { tenantId: ctx.tenantId, actorUserId: ctx.actorUserId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, entityType: "bank_loan", entityId: row.id, action: "activated", payload: { idempotencyKey: activationKey } });
         return active;
     });
 }

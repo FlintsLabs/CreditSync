@@ -29,6 +29,10 @@ describe("bank drawdown service contract", () => {
     test("requires an idempotency key for writes", async () => {
         expect(ctx.idempotencyKey).toBeUndefined();
     });
+    test("rejects whitespace-only write idempotency keys", async () => {
+        await expect(createBankDrawdownDraft({ ...ctx, idempotencyKey: "   " }, input("profile"))).rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_REQUIRED" });
+        await expect(activateBankDrawdown({ ...ctx, idempotencyKey: "\t" }, { bankLoanPublicId: "loan" })).rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_REQUIRED" });
+    });
     test("exports Decimal schedule preview contract", () => {
         expect(previewBankDrawdown).toBeFunction();
     });
@@ -59,6 +63,14 @@ describe("bank drawdown service contract", () => {
         await expect(createBankDrawdownDraft(command(actor, "draft-1"), input(profile.publicId, "60.00", "different"))).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
         await expect(createBankDrawdownDraft(command(actor, "draft-2"), input(profile.publicId, "40.00"))).rejects.toMatchObject({ code: "CREDIT_LIMIT_EXCEEDED" });
         expect(await db.select().from(bankLoans)).toHaveLength(1);
+    });
+
+    integrationTest("rejects non-finite decimals and canonicalizes installment amounts", async () => {
+        const { actor, profile } = await seed();
+        await expect(previewBankDrawdown(command(actor, "preview-nan"), input(profile.publicId, "NaN"))).rejects.toMatchObject({ code: "INVALID_BANK_DRAWDOWN" });
+        await expect(previewBankDrawdown(command(actor, "preview-infinity"), input(profile.publicId, "Infinity"))).rejects.toMatchObject({ code: "INVALID_BANK_DRAWDOWN" });
+        const draft = await createBankDrawdownDraft(command(actor, "draft-installment"), { ...input(profile.publicId), installmentAmount: "12.5" });
+        expect(draft.installmentAmount).toBe("12.50");
     });
 
     integrationTest("activates once, persists schedule and audit context, and detects replay conflict", async () => {
