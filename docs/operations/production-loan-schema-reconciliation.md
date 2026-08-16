@@ -508,3 +508,62 @@ docker compose --env-file "$CREDITSYNC_DEPLOY_ENV_FILE" -f "$CREDITSYNC_DEPLOY_C
 ```
 
 Record only sanitized Git SHA, image IDs/digests, Compose states/refs, backup checksum/path, restore result, exact schema states, journal hash/timestamp result, fingerprint comparison, health responses, and public operation IDs. Never attach dumps, env files, tokens, identity values, evidence, or full rows.
+# Mixed-lineage journal reconciliation
+
+For the 2026-08-16 rehearsal shape, run the new reconciler from the reviewed
+backend checkout. It is dry-run by default; only an explicit `--apply` permits
+writes. The tool accepts only the exact 30-row journal lineage (26 current
+rows, two obsolete rows, the current 0026 hash, and the obsolete alternate
+funding row), or exact completed states of 40 and 42 rows. Partial or suffix
+states stop.
+
+```bash
+cd backend
+DATABASE_URL="$CREDITSYNC_REHEARSAL_DATABASE_URL" bun run schema:reconcile:production-mixed-lineage
+DATABASE_URL="$CREDITSYNC_REHEARSAL_DATABASE_URL" bun run schema:reconcile:production-mixed-lineage -- --apply
+```
+
+Every invocation acquires the reconciliation advisory lock and deterministic
+`ACCESS EXCLUSIVE` locks on the journal and all existing source, financial,
+collision, and referenced tables before reading journal state, cardinalities,
+or catalog fingerprints. The apply path performs one outer `BEGIN` only. It quarantines the incompatible
+legacy `intermediary_bank_accounts` with `ALTER TABLE ... SET SCHEMA`, then
+replays authoritative journal idx27–36 in frozen array order. Every migration
+breakpoint and every journal insert is sent as a separate top-level client
+statement inside that transaction. Migration 0030 creates the deferred
+`loan_interest_accruals_floating_paid_cache_consistent` constraint trigger;
+after the pinned 0036 accrual backfill statement, the reconciler changes that
+specific schema-qualified constraint to `IMMEDIATE`. This validates and drains
+its queued events before later `ALTER TABLE` statements, while preserving the
+single atomic rollback boundary. Preflight and postflight are separate DO
+statements; no dynamic replay loop, subtransaction, per-file commit, or idx36
+autocommit is allowed.
+
+Immediately after idx29 and before idx30, the tool stores the exact Bangkok due
+groups in an `ON COMMIT DROP` temporary table. The rehearsal gate expects 43
+snapshot groups and five legacy cutover/audit rows, preserving the pre-0036
+`COALESCE(period_end_date, accrual_date)` result. After idx30/idx36 verify 40
+journal rows, the normalized catalog, 0036 backfills, zero rows in all eight
+new tables, ten disbursements with `restructure_id IS NULL`, and the eight
+allocations/two previews. Stock migration then brings the journal to exactly
+42 rows; an already-complete 40/42 state is a no-op only after the same exact
+catalog and lineage checks pass. That completed-state gate reconstructs and
+two-way compares all five 0030 cutover rows, 43 snapshot rows, and five linked
+audit records, including their deterministic request/correlation IDs and
+payloads.
+
+The reconciler requires the quarantine schema to be absent, creates it with the
+current database owner, revokes all `PUBLIC` privileges, and rejects every
+schema privilege granted to any non-owner role. It verifies the exact
+owner, ACL, table, owned sequence, indexes, constraints, and dependent foreign
+key before proceeding. The reconciler also pins the exact production cardinality fingerprint (5
+floating loans, 5 rate periods, 50 accruals, 43 due groups, 10 disbursements,
+8 allocations, and 2 funding previews) and the normalized authoritative
+catalog fingerprints for both the 40-row reconciled state and the distinct
+42-row stock-migrated state. These fingerprints cover exact columns/defaults,
+constraints, indexes, triggers, function bodies/signatures, and owned
+sequences, including increment/min/max/start/cache/cycle parameters. Both
+apply and completed no-op verification require the exact preserved 10/8/2
+disbursement/allocation/funding-preview counts. The old `protect_loan_interest_accrual_history` function may remain as an
+orphan after idx36. The old trigger may not remain. Any fault rolls back the
+quarantine, all DDL/DML, and journal inserts together.
