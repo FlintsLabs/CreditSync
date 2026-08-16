@@ -3,6 +3,7 @@
 ## v0.3.16 - 2026-08-16
 
 ### Added
+- Added the `creditsync-slip-ocr` ZCode agent skill: a Bun/Tesseract.js workflow that OCRs Thai payment slip images (full image plus zoomed date/sender/receiver crops), parses candidate fields, and cross-checks them against borrower payment history and loan schedules before any human-confirmed MCP payment write.
 - Added Active, Done, and All tabs to Loan List with English/Thai labels and client-side status filtering that reuses the existing loan query.
 - Added the approved design for optional loan commission participants, post-payment source attribution, MCP commands, and Information/Agents/Payment History/Repayment Schedule tabs.
 - Added the implementation plan for loan agent commission participants, post-payment attribution, MCP contracts, and tabbed Loan Detail delivery.
