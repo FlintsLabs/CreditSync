@@ -22,7 +22,8 @@ describe("LoanList", () => {
 
         render(<MemoryRouter><LoanList /></MemoryRouter>);
 
-        expect(await screen.findByText("Daily")).toBeInTheDocument();
+        const dailyCard = (await screen.findByText("Daily")).closest("a")!;
+        expect(within(dailyCard).getByText(/Interest received.*THB\s*0\.00.*Paid to date.*THB\s*0\.00/)).toBeInTheDocument();
         expect(screen.getByText(/THB\s*3,750\.00/)).toBeInTheDocument();
         expect(screen.getByText(/Original principal.*THB\s*5,000\.00/)).toBeInTheDocument();
         expect(screen.getByText(/250\.00/)).toBeInTheDocument();

@@ -28,6 +28,7 @@
 - Documented the floating-loan detail contract summary and posted-payout mismatch behavior, including its non-mutating and posted-only boundaries.
 
 ### Fixed
+- Added a Loan List regression assertion that keeps zero interest-received and paid-to-date totals visible for non-paid loans.
 - Restricted loan receipt-summary map membership to tenant-owned requested loans and documented the immutable activation-disbursement predicate, with database regressions for foreign IDs and schema state.
 - Added regression coverage proving draft and compensating-reversed payouts are excluded from effective posted-gross summaries and superseded loan-route reads cannot leak a mismatch warning into the next loan.
 - Added Task 3 database-backed regression coverage for the authenticated loan-detail schema repair and the exact zero-interest 75-day daily-loan lifecycle, including loan/disbursement draft audits, activation and posting replay, the posted `4000.00` under-disbursement with exact `-3500.00` variance, and Decimal-checked ledger invariants.
