@@ -5,6 +5,7 @@
 ### Added
 - Added Active, Done, and All tabs to Loan List with English/Thai labels and client-side status filtering that reuses the existing loan query.
 - Added the approved design for optional loan commission participants, post-payment source attribution, MCP commands, and Information/Agents/Payment History/Repayment Schedule tabs.
+- Added the implementation plan for loan agent commission participants, post-payment attribution, MCP contracts, and tabbed Loan Detail delivery.
 
 ### Changed
 - Localized the Loan List empty state to match the selected Active, Done, or All tab scope.
