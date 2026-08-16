@@ -3,6 +3,7 @@
 ## v0.3.14 - 2026-08-16
 
 ### Added
+- Added the TDD implementation plan for floating advance-interest loan details, covering a backend-owned payout summary, posted-payout mismatch presentation, locale parity, and full backend/frontend verification.
 - Added the approved floating advance-interest loan-detail design, keeping contract calculations in the backend and presenting advance interest, net borrower payout, first-period dates, and non-mutating payout mismatch warnings in the Web UI.
 - Added the fail-closed production mixed-lineage reconciliation tool with dry-run default, explicit `--apply`, one outer PostgreSQL transaction, top-level migration statement boundaries, legacy table quarantine/OID preservation, exact journal state machine, and idx30 Bangkok due-group capture.
 - Added hardened prerequisite 0037 as a fail-closed, pending-only borrower ID-card upload-intent lifecycle with tenant foreign keys, tenant-scoped apply idempotency, immutable post-finalization records, and PostgreSQL migration/transition tests; no borrower ID-card service behavior is implemented here.
