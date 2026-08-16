@@ -288,7 +288,7 @@
       "when": 1786874400000,
       "tag": "0040_bank_drawdown_command_hardening",
       "breakpoints": true
-    }
+    },
     {
       "idx": 41,
       "version": "7",

@@ -24,6 +24,7 @@
 - Localized the Loan List empty state to match the selected Active, Done, or All tab scope.
 
 ### Fixed
+- Fixed invalid Drizzle migration journal JSON by restoring the separator between funding migrations 0040 and 0041, with a regression check for their ordered metadata.
 - Rejected non-finite bank drawdown decimals and blank idempotency keys, and persisted installment amounts in canonical two-decimal form.
 - Fixed bank drawdown draft credit-limit enforcement to validate and use the bank profile row after acquiring its transaction lock.
 - Fixed bank drawdown activation idempotency hashing, draft status defaults, profile-locked credit-limit rechecks, and explicit fixed-installment repayment mode persistence.
