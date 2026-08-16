@@ -363,6 +363,35 @@ describe("CreditSync executable orchestration evals", () => {
         });
     });
 
+    test("payment data-only and slip flows keep evidence conditional and ordered", async () => {
+        const dataOnly = await runEvalScenario("payment-data-only");
+        expect(dataOnly).toMatchObject({ outcome: "completed", effects: [] });
+        expect(dataOnly.calls.map((call) => call.name)).toEqual([
+            "intake.create",
+            "payment.preview",
+            "payment.post",
+        ]);
+
+        const slip = await runEvalScenario("payment-slip");
+        expect(slip).toMatchObject({ outcome: "completed" });
+        expect(slip.calls.map((call) => call.name)).toEqual([
+            "intake.create",
+            "evidence.prepare",
+            "evidence.finalize",
+            "payment.preview",
+            "payment.post",
+        ]);
+        const bytes = Buffer.from("payment-slip-fixture-bytes", "utf8");
+        expect(slip.effects).toEqual([{
+            name: "evidence.put",
+            uploadUrl: "https://storage.example/payment-upload",
+            requiredHeaders: {},
+            byteLength: bytes.byteLength,
+            sha256: sha256(bytes),
+            bytesUnchanged: true,
+        }]);
+    });
+
     test("duplicate evidence stops before finalize, preview, and financial posting", async () => {
         const result = await runEvalScenario("duplicate-evidence-hash");
         expect(result.outcome).toBe("stopped");
