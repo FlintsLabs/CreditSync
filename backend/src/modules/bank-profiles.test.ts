@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { Elysia } from "elysia";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { bankLoans, bankProfiles, borrowers, fundLedgerEntries, loanFundingAllocations, loans, transactions, users } from "../db/schema";
 import { invalidateTenantCache } from "../lib/cache";
@@ -52,6 +52,105 @@ async function seedLoan(input: { tenantId: string; borrowerId: number; outstandi
 
 describe("bank profile funding usage", () => {
     if (integrationEnabled) beforeEach(resetTables);
+
+    integrationTest("recycles only linked borrower cash into a capital-pool source", async () => {
+        const owner = await db.insert(users).values({ tenantId: "tenant-a", email: "recovered-cash@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const profile = await db.insert(bankProfiles).values({ tenantId: "tenant-a", name: "Owner capital", type: "personal", accountingMode: "capital_pool", creditLimit: "60000.00" }).returning().then((rows) => rows[0]!);
+        const [linkedBorrower, unlinkedBorrower] = await db.insert(borrowers).values([
+            { tenantId: "tenant-a", name: "Linked borrower" },
+            { tenantId: "tenant-a", name: "Unlinked borrower" },
+        ]).returning();
+        const linkedLoan = await seedLoan({ tenantId: "tenant-a", borrowerId: linkedBorrower!.id, outstandingPrincipal: "5000.00" });
+        const unlinkedLoan = await seedLoan({ tenantId: "tenant-a", borrowerId: unlinkedBorrower!.id, outstandingPrincipal: "5000.00" });
+        await db.insert(loanFundingAllocations).values({
+            tenantId: "tenant-a", bankProfileId: profile.id, loanId: linkedLoan.id, allocatedAmount: "7000.00", allocationDate: "2026-08-07", allocationType: "initial",
+        });
+        await db.insert(transactions).values([
+            { tenantId: "tenant-a", ownerUserId: owner.id, loanId: linkedLoan.id, amount: "1200.00", principalComponent: "1200.00", entryType: "repayment", idempotencyKey: "linked-cash" },
+            { tenantId: "tenant-a", ownerUserId: owner.id, loanId: unlinkedLoan.id, amount: "900.00", principalComponent: "900.00", entryType: "repayment", idempotencyKey: "unlinked-cash" },
+        ]);
+
+        const result = await request(`/bank-profiles/${profile.publicId}/funding-usage`, await authToken(owner));
+
+        expect(result.response.status).toBe(200);
+        expect(result.body).toMatchObject({
+            linkedBorrowerCashCollected: "1200.00",
+            availableAmount: "54200.00",
+            allocations: [expect.objectContaining({ loanPublicId: linkedLoan.publicId, linkedBorrowerCashCollected: "1200.00" })],
+        });
+        expect(result.body.allocations).toHaveLength(1);
+    });
+
+    integrationTest("attributes recovered borrower cash by each source's positive allocation share", async () => {
+        const owner = await db.insert(users).values({ tenantId: "tenant-a", email: "partial-recovery@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const [firstProfile, secondProfile, negativeProfile] = await db.insert(bankProfiles).values([
+            { tenantId: "tenant-a", name: "First capital", type: "personal", accountingMode: "capital_pool", creditLimit: "100.00" },
+            { tenantId: "tenant-a", name: "Second capital", type: "personal", accountingMode: "capital_pool", creditLimit: "100.00" },
+            { tenantId: "tenant-a", name: "Reallocated capital", type: "personal", accountingMode: "capital_pool", creditLimit: "100.00" },
+        ]).returning();
+        const borrower = await db.insert(borrowers).values({ tenantId: "tenant-a", name: "Partially funded borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await seedLoan({ tenantId: "tenant-a", borrowerId: borrower.id, outstandingPrincipal: "80.00" });
+        await db.insert(loanFundingAllocations).values([
+            { tenantId: "tenant-a", bankProfileId: firstProfile!.id, loanId: loan.id, allocatedAmount: "60.00", allocationDate: "2026-08-07", allocationType: "initial" },
+            { tenantId: "tenant-a", bankProfileId: secondProfile!.id, loanId: loan.id, allocatedAmount: "40.00", allocationDate: "2026-08-07", allocationType: "initial" },
+            { tenantId: "tenant-a", bankProfileId: negativeProfile!.id, loanId: loan.id, allocatedAmount: "-10.00", allocationDate: "2026-08-08", allocationType: "reallocation_out" },
+        ]);
+        await db.insert(transactions).values({
+            tenantId: "tenant-a", ownerUserId: owner.id, loanId: loan.id, amount: "99.99", principalComponent: "99.99", entryType: "repayment", idempotencyKey: "partial-recovered-cash",
+        });
+
+        const first = await request(`/bank-profiles/${firstProfile!.publicId}/funding-usage`, await authToken(owner));
+        const second = await request(`/bank-profiles/${secondProfile!.publicId}/funding-usage`, await authToken(owner));
+        const negative = await request(`/bank-profiles/${negativeProfile!.publicId}/funding-usage`, await authToken(owner));
+
+        expect(first.response.status).toBe(200);
+        expect(second.response.status).toBe(200);
+        expect(negative.response.status).toBe(200);
+        expect(first.body).toMatchObject({ linkedBorrowerCashCollected: "59.99", allocations: [expect.objectContaining({ linkedBorrowerCashCollected: "59.99" })] });
+        expect(second.body).toMatchObject({ linkedBorrowerCashCollected: "40.00", allocations: [expect.objectContaining({ linkedBorrowerCashCollected: "40.00" })] });
+        expect(negative.body).toMatchObject({ linkedBorrowerCashCollected: "0.00", allocations: [] });
+    });
+
+    integrationTest("does not recycle borrower cash into an external-liability source", async () => {
+        const owner = await db.insert(users).values({ tenantId: "tenant-a", email: "external-recovery@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const profile = await db.insert(bankProfiles).values({ tenantId: "tenant-a", name: "Bank source", type: "bank", accountingMode: "external_liability", creditLimit: "60000.00" }).returning().then((rows) => rows[0]!);
+        const drawdown = await db.insert(bankLoans).values({ tenantId: "tenant-a", bankProfileId: profile.id, amount: "10000.00" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId: "tenant-a", name: "External borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await seedLoan({ tenantId: "tenant-a", borrowerId: borrower.id, outstandingPrincipal: "7000.00" });
+        await db.insert(loanFundingAllocations).values({ tenantId: "tenant-a", bankProfileId: profile.id, bankLoanId: drawdown.id, loanId: loan.id, allocatedAmount: "7000.00", allocationDate: "2026-08-07", allocationType: "initial" });
+        await db.insert(transactions).values({ tenantId: "tenant-a", ownerUserId: owner.id, loanId: loan.id, amount: "1200.00", principalComponent: "1200.00", entryType: "repayment", idempotencyKey: "external-cash" });
+
+        const result = await request(`/bank-profiles/${profile.publicId}/funding-usage`, await authToken(owner));
+
+        expect(result.response.status).toBe(200);
+        expect(result.body).toMatchObject({ accountingMode: "external_liability", availableAmount: "50000.00", linkedBorrowerCashCollected: "0.00", allocations: [expect.objectContaining({ linkedBorrowerCashCollected: "0.00" })] });
+    });
+
+    integrationTest("preserves large mixed-component recovered cash at a fractional funding share", async () => {
+        const owner = await db.insert(users).values({ tenantId: "tenant-a", email: "large-recovered-cash@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const [profile, otherProfile] = await db.insert(bankProfiles).values([
+            { tenantId: "tenant-a", name: "Large owner capital", type: "personal", accountingMode: "capital_pool", creditLimit: "99999999999999999999999999999.99" },
+            { tenantId: "tenant-a", name: "Large other capital", type: "personal", accountingMode: "capital_pool", creditLimit: "99999999999999999999999999999.99" },
+        ]).returning();
+        const borrower = await db.insert(borrowers).values({ tenantId: "tenant-a", name: "Large-value borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await seedLoan({ tenantId: "tenant-a", borrowerId: borrower.id, outstandingPrincipal: "1.00" });
+        await db.insert(loanFundingAllocations).values([
+            { tenantId: "tenant-a", bankProfileId: profile.id, loanId: loan.id, allocatedAmount: "10000000000000000000000000000.00", allocationDate: "2026-08-07", allocationType: "initial" },
+            { tenantId: "tenant-a", bankProfileId: otherProfile.id, loanId: loan.id, allocatedAmount: "20000000000000000000000000000.00", allocationDate: "2026-08-07", allocationType: "initial" },
+        ]);
+        await db.insert(transactions).values([
+            { tenantId: "tenant-a", ownerUserId: owner.id, loanId: loan.id, amount: "10000000000000000000000000000.00", principalComponent: "9999999999999999999999999999.00", interestComponent: "1.00", entryType: "repayment", idempotencyKey: "large-principal-interest" },
+            { tenantId: "tenant-a", ownerUserId: owner.id, loanId: loan.id, amount: "10000000000000000000000000000.00", feeComponent: "9999999999999999999999999999.00", penaltyComponent: "1.00", entryType: "repayment", idempotencyKey: "large-fee-penalty" },
+        ]);
+        const original = await db.select().from(transactions).where(eq(transactions.loanId, loan.id)).orderBy(transactions.id).then((rows) => rows[0]!);
+        await db.insert(transactions).values({ tenantId: "tenant-a", ownerUserId: owner.id, loanId: loan.id, amount: "-1.00", principalComponent: "-1.00", entryType: "reversal", reversedTransactionId: original.id, idempotencyKey: "large-reversal" });
+
+        const result = await request(`/bank-profiles/${profile.publicId}/funding-usage`, await authToken(owner));
+
+        expect(result.response.status).toBe(200);
+        expect(result.body.linkedBorrowerCashCollected).toBe("6666666666666666666666666666.33");
+        expect(result.body.allocations[0].linkedBorrowerCashCollected).toBe("6666666666666666666666666666.33");
+    });
 
     // Break caught: capital-pool usage ignores direct allocations, leaving the full limit available.
     integrationTest("returns exact net capital usage and current borrower-loan rows", async () => {

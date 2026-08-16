@@ -8,6 +8,9 @@
 ## v0.3.14 - 2026-08-16
 
 ### Added
+- Added localized Fund Detail helper text clarifying that available own capital includes cash collected from linked loans and excludes cash from unlinked loans.
+- Corrected Task 1 recovered-cash regression expectations for Decimal cent rounding and added coverage that negative-only source allocations do not contribute usage or linked cash.
+- Added RED integration regressions for source-linked borrower cash recovery, partial source-share attribution, unlinked-loan exclusion, and external-liability capacity behavior.
 - Added the TDD implementation plan for recycling all borrower cash collected from source-linked loans into available own-capital capacity while excluding unlinked loans and keeping ROI semantics separate.
 - Added the approved design for recycling all borrower cash collected from source-linked loans into available own-capital capacity while excluding unlinked loans and keeping ROI principal/revenue semantics separate.
 - Added the approved Loan Detail borrower-tags, repayment-schedule-table, and repayment-history-table designs and implementation plans for the corresponding frontend presentation work.
@@ -26,11 +29,13 @@
 - Added the approved production loan-list schema-compatibility design and TDD implementation plan.
 
 ### Changed
+- Implemented exact source-share attribution of linked borrower cash collected in capital-pool funding usage, while preserving external-liability capacity and settlement/ROI behavior.
 - Enforced conditional payment-slip evidence ordering in the CreditSync plugin guidance: supplied images must be uploaded and finalized before payment preview/post, while no-image data-only capture remains supported.
 - Added the implementation plan for conditional CreditSync payment-slip evidence ordering, including data-only compatibility, unchanged-byte upload checks, fail-closed evidence stops, and executable MCP eval coverage.
 - Documented the floating-loan detail contract summary and posted-payout mismatch behavior, including its non-mutating and posted-only boundaries.
 
 ### Fixed
+- Preserved high-precision recovered-cash attribution and invalidated tenant funding caches after intermediary remittance posting, manual approval, and reversal.
 - Added regression coverage proving draft and compensating-reversed payouts are excluded from effective posted-gross summaries and superseded loan-route reads cannot leak a mismatch warning into the next loan.
 - Added Task 3 database-backed regression coverage for the authenticated loan-detail schema repair and the exact zero-interest 75-day daily-loan lifecycle, including loan/disbursement draft audits, activation and posting replay, the posted `4000.00` under-disbursement with exact `-3500.00` variance, and Decimal-checked ledger invariants.
 - Reconciled the production-shaped loan schema through guarded, repeatable migration 0038 with fail-closed exact type/nullable, constraint, and activation-index preflight, zero-violation validation, catalog-preservation fixtures, idempotency indexing, and byte-preserving financial-row tests.

@@ -620,6 +620,11 @@ export default function FundDetail() {
                                     </div>
                                     <div data-testid="funding-available-amount" className="min-w-0 text-2xl font-bold tabular-nums sm:text-3xl">{formatMoneyExact(availableAmount, i18n.language)}</div>
                                 </div>
+                                {fund.accountingMode === "capital_pool" && (
+                                    <p className="mt-2 text-xs text-muted-foreground">
+                                        {t("fundDetail.availableOwnCapitalExplanation", "Includes all cash collected from loans linked to this source; cash from unlinked loans is excluded.")}
+                                    </p>
+                                )}
                                 <div className="mt-3 text-xs text-muted-foreground">
                                     {t("funds.limit")}: {formatMoneyExact(fundLimit, i18n.language)}
                                 </div>

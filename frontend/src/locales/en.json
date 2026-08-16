@@ -462,6 +462,7 @@
             "readOnlyNote": "This status does not alter financial records."
         },
         "availableOwnCapital": "Available own capital",
+        "availableOwnCapitalExplanation": "Includes all cash collected from loans linked to this source; cash from unlinked loans is excluded.",
         "allocatedToLoans": "Allocated to borrower loans",
         "fundingUsageTitle": "Loans using this funding source",
         "fundingUsageDescription": "Net funding allocated to each borrower loan.",
