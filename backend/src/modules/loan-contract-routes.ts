@@ -13,6 +13,7 @@ import { invalidateTenantCache, withTenantCache } from "../lib/cache";
 import { findAccessibleBorrowerByPublicId, findAccessibleLoanByPublicId } from "../lib/public-id";
 import { activateLoan, createLoanDraft, getLoanApplication, presentLoan, previewLoan, updateLoanDraft } from "../services/loan-application-service";
 import { bangkokBusinessDate, getLoanListLegacyPaymentHealth, getLoanPaymentHealth } from "../services/loan-payment-health-service";
+import { getLoanReceiptSummaries } from "../services/loan-receipt-summary-service";
 import { floatingInterestBalances } from "../services/floating-interest-service";
 import { DomainError } from "../services/domain-error";
 import { loanCommandContext, loanDomainFailure, loanUnauthorized } from "./loan-http-support";
@@ -144,28 +145,41 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                     aliasesByBorrower.set(aliasRow.borrowerId, [...(aliasesByBorrower.get(aliasRow.borrowerId) ?? []), aliasRow.alias]);
                 }
 
+                const receiptSummaries = await getLoanReceiptSummaries(
+                    db,
+                    user.tenantId,
+                    rows.map(({ loan }) => loan.id),
+                );
                 const asOf = new Date();
-                return Promise.all(rows.map(async ({ loan, borrowerPublicId, borrowerName, borrowerId, borrowerTags }) => ({
-                    id: loan.publicId,
-                    publicId: loan.publicId,
-                    borrowerId: borrowerPublicId,
-                    borrowerPublicId,
-                    borrowerName,
-                    borrowerAliases: borrowerId == null ? [] : aliasesByBorrower.get(borrowerId) ?? [],
-                    borrowerTags: borrowerTags ?? [],
-                    principal: serializeMoney(loan.principalAmount),
-                    outstandingPrincipal: serializeMoney(loan.outstandingPrincipal ?? "0"),
-                    status: loan.status,
-                    createdAt: loan.createdAt,
-                    repaymentType: loan.repaymentType,
-                    interestRate: serializeMoney(loan.interestRate),
-                    installmentAmount: loan.installmentAmount === null ? null : serializeMoney(loan.installmentAmount),
-                    totalInstallments: loan.totalInstallments,
-                    startDate: loan.startDate,
-                    paymentHealth: loan.repaymentType === "floating"
-                        ? await getLoanListLegacyPaymentHealth(db, loan as typeof loans.$inferSelect, { asOf })
-                        : await getLoanPaymentHealth(db, loan as typeof loans.$inferSelect, { asOf, context: ctx }),
-                })));
+                return Promise.all(rows.map(async ({ loan, borrowerPublicId, borrowerName, borrowerId, borrowerTags }) => {
+                    const receipts = receiptSummaries.get(loan.id) ?? {
+                        interestReceived: "0.00",
+                        paidToDate: "0.00",
+                    };
+                    return {
+                        id: loan.publicId,
+                        publicId: loan.publicId,
+                        borrowerId: borrowerPublicId,
+                        borrowerPublicId,
+                        borrowerName,
+                        borrowerAliases: borrowerId == null ? [] : aliasesByBorrower.get(borrowerId) ?? [],
+                        borrowerTags: borrowerTags ?? [],
+                        principal: serializeMoney(loan.principalAmount),
+                        outstandingPrincipal: serializeMoney(loan.outstandingPrincipal ?? "0"),
+                        interestReceived: receipts.interestReceived,
+                        paidToDate: receipts.paidToDate,
+                        status: loan.status,
+                        createdAt: loan.createdAt,
+                        repaymentType: loan.repaymentType,
+                        interestRate: serializeMoney(loan.interestRate),
+                        installmentAmount: loan.installmentAmount === null ? null : serializeMoney(loan.installmentAmount),
+                        totalInstallments: loan.totalInstallments,
+                        startDate: loan.startDate,
+                        paymentHealth: loan.repaymentType === "floating"
+                            ? await getLoanListLegacyPaymentHealth(db, loan as typeof loans.$inferSelect, { asOf })
+                            : await getLoanPaymentHealth(db, loan as typeof loans.$inferSelect, { asOf, context: ctx }),
+                    };
+                }));
             },
         });
     }, { query: t.Object({ borrowerId: t.Optional(t.String()) }) })

@@ -5,7 +5,6 @@ import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../../components/ui/dropdown-menu";
 import { Plus, FileText, Calendar, MoreHorizontal, DollarSign, ArrowRightLeft, AlertCircle } from "lucide-react";
 import { Link } from "react-router-dom";
-import { cn } from "../../../lib/utils";
 import { LoanClosingModal } from "./LoanClosingModal";
 import { useTranslation } from "react-i18next";
 import { formatMoneyExact } from "../../../lib/workflow-model";
@@ -13,6 +12,7 @@ import { LoanPaymentHealthBadge, type LoanPaymentHealth } from "./LoanPaymentHea
 import { Badge } from "../../../components/ui/badge";
 import { getVisibleBorrowerLabels, loanMatchesSearch, type BorrowerLabelLoan } from "./loan-list-model";
 import { loanListHeaderActionsClassName, loanListHeaderClassName } from "./loan-list-layout";
+import { LoanCardFinancialSummary } from "./LoanCardFinancialSummary";
 
 const currentPaymentHealth: LoanPaymentHealth = {
     status: "current",
@@ -30,6 +30,8 @@ interface LoanRow {
     borrowerTags?: string[] | null;
     principal: string;
     outstandingPrincipal: string;
+    interestReceived: string;
+    paidToDate: string;
     status: string;
     createdAt: string;
     repaymentType: string;
@@ -210,16 +212,13 @@ export default function LoanList() {
                         </CardHeader>
                         <CardContent className="flex-grow flex flex-col justify-between">
                             <div className="space-y-3">
-                                <div>
-                                    <div className="text-2xl font-bold">{formatMoneyExact(loan.outstandingPrincipal, i18n.language)}</div>
-                                    <p className="mt-1 mb-2 text-xs text-muted-foreground">
-                                        / {t("loans.originalPrincipal", "Original principal")} {formatMoneyExact(loan.principal, i18n.language)}
-                                    </p>
-                                    <p className={cn(
-                                        "text-xs font-semibold uppercase",
-                                        loan.status === "active" ? "text-green-600" : "text-gray-500"
-                                    )}>{loan.status}</p>
-                                </div>
+                                <LoanCardFinancialSummary
+                                    status={loan.status}
+                                    outstandingPrincipal={loan.outstandingPrincipal}
+                                    originalPrincipal={loan.principal}
+                                    interestReceived={loan.interestReceived}
+                                    paidToDate={loan.paidToDate}
+                                />
 
                                 <LoanPaymentHealthBadge
                                     health={loan.paymentHealth ?? currentPaymentHealth}

@@ -81,6 +81,7 @@ Account identity and tenant role are read-only values supplied by the authorized
 - distinguish due-now and overdue scheduled or floating daily-interest obligations directly on the loan-agreement list before opening details
 - show up to three borrower labels under each loan card name, using confirmed aliases first and borrower tags after, with a localized `+N` overflow when more labels exist
 - search loan lists by borrower name, loan ID, aliases, and tags, including hidden overflow labels
+- scan exact Loan List financial summaries: non-paid cards keep outstanding and original principal together with backend-owned interest-received and paid-to-date totals, while paid cards show a checked completion state with original principal and interest received
 - preview installment breakdown
 - calculate floating closing obligations from current outstanding principal, unpaid due and accruing interest, outstanding fees, and applicable penalties while reporting payment history separately
 - record actual borrower cash, bank-transfer, or adjustment disbursements independently of approved loan terms

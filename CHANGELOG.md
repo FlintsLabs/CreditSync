@@ -13,6 +13,9 @@
 - Added RED integration regressions for source-linked borrower cash recovery, partial source-share attribution, unlinked-loan exclusion, and external-liability capacity behavior.
 - Added the TDD implementation plan for recycling all borrower cash collected from source-linked loans into available own-capital capacity while excluding unlinked loans and keeping ROI semantics separate.
 - Added the approved design for recycling all borrower cash collected from source-linked loans into available own-capital capacity while excluding unlinked loans and keeping ROI principal/revenue semantics separate.
+- Added backend-owned exact Loan List receipt summaries using tenant-scoped grouped reads, combining advance-interest deductions with signed repayment and reversal components for interest received and paid-to-date totals.
+- Added the TDD implementation plan for status-aware Loan List receipt summaries, covering tenant-bound grouped Decimal aggregation, advance-interest deductions, signed payment reversals, responsive active cards, checked paid cards, locale parity, and full backend/frontend verification.
+- Added the approved status-aware Loan List card received-totals design: non-paid cards keep outstanding and original principal on one responsive row with exact interest-received and paid-to-date summaries, while paid cards replace the zero balance with a checked `PAID` state and show only original principal and interest received; receipt totals include advance-interest deductions and signed posted-payment reversals.
 - Added the approved Loan Detail borrower-tags, repayment-schedule-table, and repayment-history-table designs and implementation plans for the corresponding frontend presentation work.
 - Added the approved CreditSync Plugin design for conditional payment-slip evidence: supplied images must be checksum-verified, uploaded, finalized, and ready before payment preview/post, while data-only payments remain supported without evidence.
 - Added localized floating-loan detail fields for advance interest and net payout, plus a non-mutating warning when the backend-owned effective posted gross payout differs from the contract net payout.
@@ -30,12 +33,15 @@
 
 ### Changed
 - Implemented exact source-share attribution of linked borrower cash collected in capital-pool funding usage, while preserving external-liability capacity and settlement/ROI behavior.
+- Updated Loan List cards with a responsive non-paid principal row and backend-owned received totals, while paid loans now show a checked `PAID` summary without a zero outstanding balance or paid-to-date total.
 - Enforced conditional payment-slip evidence ordering in the CreditSync plugin guidance: supplied images must be uploaded and finalized before payment preview/post, while no-image data-only capture remains supported.
 - Added the implementation plan for conditional CreditSync payment-slip evidence ordering, including data-only compatibility, unchanged-byte upload checks, fail-closed evidence stops, and executable MCP eval coverage.
 - Documented the floating-loan detail contract summary and posted-payout mismatch behavior, including its non-mutating and posted-only boundaries.
 
 ### Fixed
 - Preserved high-precision recovered-cash attribution and invalidated tenant funding caches after intermediary remittance posting, manual approval, and reversal.
+- Added a Loan List regression assertion that keeps zero interest-received and paid-to-date totals visible for non-paid loans.
+- Restricted loan receipt-summary map membership to tenant-owned requested loans and documented the immutable activation-disbursement predicate, with database regressions for foreign IDs and schema state.
 - Added regression coverage proving draft and compensating-reversed payouts are excluded from effective posted-gross summaries and superseded loan-route reads cannot leak a mismatch warning into the next loan.
 - Added Task 3 database-backed regression coverage for the authenticated loan-detail schema repair and the exact zero-interest 75-day daily-loan lifecycle, including loan/disbursement draft audits, activation and posting replay, the posted `4000.00` under-disbursement with exact `-3500.00` variance, and Decimal-checked ledger invariants.
 - Reconciled the production-shaped loan schema through guarded, repeatable migration 0038 with fail-closed exact type/nullable, constraint, and activation-index preflight, zero-violation validation, catalog-preservation fixtures, idempotency indexing, and byte-preserving financial-row tests.
