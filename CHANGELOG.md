@@ -24,12 +24,12 @@
 - Added the approved production loan-list schema-compatibility design and TDD implementation plan.
 
 ### Changed
+- Implemented exact source-share attribution of linked borrower cash collected in capital-pool funding usage, while preserving external-liability capacity and settlement/ROI behavior.
 - Enforced conditional payment-slip evidence ordering in the CreditSync plugin guidance: supplied images must be uploaded and finalized before payment preview/post, while no-image data-only capture remains supported.
 - Added the implementation plan for conditional CreditSync payment-slip evidence ordering, including data-only compatibility, unchanged-byte upload checks, fail-closed evidence stops, and executable MCP eval coverage.
 - Documented the floating-loan detail contract summary and posted-payout mismatch behavior, including its non-mutating and posted-only boundaries.
 
 ### Fixed
-- Implemented exact source-share attribution of linked borrower cash collected in capital-pool funding usage, while preserving external-liability capacity and settlement/ROI behavior.
 - Added regression coverage proving draft and compensating-reversed payouts are excluded from effective posted-gross summaries and superseded loan-route reads cannot leak a mismatch warning into the next loan.
 - Added Task 3 database-backed regression coverage for the authenticated loan-detail schema repair and the exact zero-interest 75-day daily-loan lifecycle, including loan/disbursement draft audits, activation and posting replay, the posted `4000.00` under-disbursement with exact `-3500.00` variance, and Decimal-checked ledger invariants.
 - Reconciled the production-shaped loan schema through guarded, repeatable migration 0038 with fail-closed exact type/nullable, constraint, and activation-index preflight, zero-violation validation, catalog-preservation fixtures, idempotency indexing, and byte-preserving financial-row tests.
