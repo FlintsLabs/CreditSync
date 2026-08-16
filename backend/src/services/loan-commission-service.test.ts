@@ -84,6 +84,21 @@ describe("loan commission participant ledger", () => {
         await expect(addLoanCommissionParticipant(ctx(seeded.actor, "invalid-calendar"), { ...input, effectiveFrom: "2026-02-30T00:00:00.000Z" })).rejects.toMatchObject({ code: "INVALID_COMMISSION_DATE", status: 400 });
     });
 
+    integrationTest("denies direct participant update and end when the caller cannot access the intermediary", async () => {
+        const tenantId = "commission-participant-owner-scope";
+        const admin = await db.insert(users).values({ tenantId, email: "admin@commission.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const caller = await db.insert(users).values({ tenantId, email: "caller@commission.test", role: "collector" }).returning().then((rows) => rows[0]!);
+        const intermediaryOwner = await db.insert(users).values({ tenantId, email: "intermediary-owner@commission.test", role: "collector" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId, ownerUserId: caller.id, name: "Caller Borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({ tenantId, ownerUserId: caller.id, borrowerId: borrower.id, principalAmount: "1000.00", interestRate: "0.00", repaymentType: "floating", status: "active" }).returning().then((rows) => rows[0]!);
+        const intermediary = await db.insert(intermediaries).values({ tenantId, ownerUserId: intermediaryOwner.id, name: "Peer Agent", normalizedName: "peer-agent", createdByUserId: intermediaryOwner.id, updatedByUserId: intermediaryOwner.id }).returning().then((rows) => rows[0]!);
+        const participant = await addLoanCommissionParticipant(ctx(admin, "admin-add"), { loanPublicId: loan.publicId, intermediaryPublicId: intermediary.publicId, commissionRate: "30.00", role: "collector", effectiveFrom: "2026-08-01T00:00:00.000Z" });
+
+        await expect(updateLoanCommissionParticipant(ctx(caller, "caller-update"), { participantPublicId: participant.publicId, commissionRate: "25.00", role: "collector", effectiveFrom: "2026-08-10T00:00:00.000Z" })).rejects.toMatchObject({ code: "COMMISSION_PARTICIPANT_NOT_FOUND", status: 404 });
+        await expect(endLoanCommissionParticipant(ctx(caller, "caller-end"), { participantPublicId: participant.publicId, effectiveTo: "2026-08-20T00:00:00.000Z", reason: "agreement ended" })).rejects.toMatchObject({ code: "COMMISSION_PARTICIPANT_NOT_FOUND", status: 404 });
+        expect(await db.select().from(loanCommissionParticipants)).toHaveLength(1);
+    });
+
     integrationTest("previews exact commission from signed interest components only", async () => {
         const seeded = await seedTenant("commission-preview", "preview");
         await addLoanCommissionParticipant(ctx(seeded.actor, "add"), { loanPublicId: seeded.loan.publicId, intermediaryPublicId: seeded.intermediary.publicId, commissionRate: "30.00", role: "collector", effectiveFrom: "2026-08-01T00:00:00.000Z" });

@@ -205,8 +205,7 @@ export async function addLoanCommissionParticipant(ctx: CommandContext, input: A
 async function currentParticipant(ctx: CommandContext, publicId: string, actor: Actor | null, executor: any) {
     const row = await executor.query.loanCommissionParticipants.findFirst({ where: and(eq(loanCommissionParticipants.tenantId, ctx.tenantId), eq(loanCommissionParticipants.publicId, publicId)) });
     if (!row) throw new DomainError("COMMISSION_PARTICIPANT_NOT_FOUND", "Commission participant not found", 404);
-    const loan = await executor.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, row.loanId)) });
-    if (!loan || !accessible(actor, loan.ownerUserId)) throw new DomainError("COMMISSION_PARTICIPANT_NOT_FOUND", "Commission participant not found", 404);
+    await authorizeParticipant(executor, ctx, actor, row);
     const successor = await executor.query.loanCommissionParticipants.findFirst({ where: and(eq(loanCommissionParticipants.tenantId, ctx.tenantId), eq(loanCommissionParticipants.previousParticipantId, row.id)) });
     if (successor) throw new DomainError("COMMISSION_PARTICIPANT_SUPERSEDED", "Commission participant version is no longer current", 409);
     return row;

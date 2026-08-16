@@ -13,6 +13,7 @@
 
 ### Fixed
 - Hardened commission and payment-attribution ledgers by authorizing idempotent replays before disclosure, returning persisted linked transaction IDs, restricting previews to canonical posted payments, validating strict ISO timestamps, and covering audit context and append-only database guards.
+- Required direct loan commission participant updates and endings to authorize both the loan and linked intermediary within the caller's tenant and owner scope.
 
 ## v0.3.15 - 2026-08-16
 
