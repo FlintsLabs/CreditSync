@@ -3,6 +3,7 @@
 ## v0.3.14 - 2026-08-16
 
 ### Added
+- Added the approved design for recycling all borrower cash collected from source-linked loans into available own-capital capacity while excluding unlinked loans and keeping ROI principal/revenue semantics separate.
 - Added the approved Loan Detail borrower-tags, repayment-schedule-table, and repayment-history-table designs and implementation plans for the corresponding frontend presentation work.
 - Added the approved CreditSync Plugin design for conditional payment-slip evidence: supplied images must be checksum-verified, uploaded, finalized, and ready before payment preview/post, while data-only payments remain supported without evidence.
 - Added localized floating-loan detail fields for advance interest and net payout, plus a non-mutating warning when the backend-owned effective posted gross payout differs from the contract net payout.
