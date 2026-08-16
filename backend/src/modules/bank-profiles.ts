@@ -143,15 +143,22 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
 
                 const allocatedLoans = [...byLoan.values()].filter((row) => row.netAllocatedAmount.gt(0));
                 const allocatedLoanIds = allocatedLoans.map((row) => row.loanId);
-                const [totalAllocationRows, interestRows] = allocatedLoanIds.length > 0
+                const [totalAllocationRows, transactionRows, interestRows] = allocatedLoanIds.length > 0
                     ? await Promise.all([
                         db.select({
                             loanId: loanFundingAllocations.loanId,
-                            total: sql<string>`coalesce(sum(${loanFundingAllocations.allocatedAmount}), 0)`,
+                            total: sql<string>`coalesce(sum(${loanFundingAllocations.allocatedAmount}) filter (where ${loanFundingAllocations.allocatedAmount} > 0), 0)`,
                         }).from(loanFundingAllocations).where(and(
                             eq(loanFundingAllocations.tenantId, user.tenantId),
                             inArray(loanFundingAllocations.loanId, allocatedLoanIds),
                         )).groupBy(loanFundingAllocations.loanId),
+                        db.select({
+                            loanId: transactions.loanId,
+                            total: sql<string>`coalesce(sum(${transactions.amount}), 0)`,
+                        }).from(transactions).where(and(
+                            eq(transactions.tenantId, user.tenantId),
+                            inArray(transactions.loanId, allocatedLoanIds),
+                        )).groupBy(transactions.loanId),
                         db.select({
                             loanId: transactions.loanId,
                             total: sql<string>`coalesce(sum(${transactions.interestComponent}), 0)`,
@@ -160,15 +167,27 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
                             inArray(transactions.loanId, allocatedLoanIds),
                         )).groupBy(transactions.loanId),
                     ])
-                    : [[], []];
+                    : [[], [], []];
                 const totalAllocationByLoan = new Map(totalAllocationRows.map((row) => [row.loanId, new Decimal(row.total)]));
+                const transactionTotalByLoan = new Map(transactionRows.map((row) => [row.loanId, new Decimal(row.total)]));
                 const netInterestByLoan = new Map(interestRows.map((row) => [row.loanId, new Decimal(row.total)]));
                 const netAllocatedPrincipal = allocatedLoans.reduce((total, row) => total.plus(row.netAllocatedAmount), new Decimal(0));
                 const drawdownTotal = drawdowns.reduce((total, row) => total.plus(row.amount), new Decimal(0));
                 const creditLimit = new Decimal(profile.creditLimit ?? 0);
                 const capitalPool = profile.accountingMode === "capital_pool";
                 const utilizedAmount = capitalPool ? netAllocatedPrincipal : drawdownTotal;
-                const availableAmount = creditLimit.minus(utilizedAmount);
+                const linkedBorrowerCashCollected = capitalPool
+                    ? allocatedLoans.reduce((total, row) => {
+                        const totalAllocation = totalAllocationByLoan.get(row.loanId) ?? new Decimal(0);
+                        const fundingShare = totalAllocation.gt(0)
+                            ? Decimal.max(row.netAllocatedAmount, 0).div(totalAllocation)
+                            : new Decimal(0);
+                        return total.plus((transactionTotalByLoan.get(row.loanId) ?? new Decimal(0)).times(fundingShare));
+                    }, new Decimal(0))
+                    : new Decimal(0);
+                const availableAmount = capitalPool
+                    ? creditLimit.minus(netAllocatedPrincipal).plus(linkedBorrowerCashCollected)
+                    : creditLimit.minus(utilizedAmount);
                 const utilizationPercent = creditLimit.gt(0)
                     ? utilizedAmount.times(100).div(creditLimit).toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
                     : new Decimal(0);
@@ -181,6 +200,9 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
                         const fundingShare = totalAllocation.gt(0)
                             ? Decimal.max(row.netAllocatedAmount, 0).div(totalAllocation)
                             : new Decimal(0);
+                        const linkedCash = capitalPool
+                            ? (transactionTotalByLoan.get(row.loanId) ?? new Decimal(0)).times(fundingShare)
+                            : new Decimal(0);
                         return {
                         loanPublicId: row.loanPublicId,
                         borrowerPublicId: row.borrowerPublicId,
@@ -189,6 +211,7 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
                         principalAmount: serializeMoney(row.principalAmount),
                         outstandingPrincipal: serializeMoney(row.outstandingPrincipal),
                         netAllocatedAmount: serializeMoney(row.netAllocatedAmount),
+                        linkedBorrowerCashCollected: serializeMoney(linkedCash),
                         collectedInterest: serializeMoney(netInterest.times(fundingShare)),
                         latestAllocationDate: row.latestAllocationDate,
                         fundingRoutes: [...row.routes.values()]
@@ -206,6 +229,7 @@ export const bankProfilesRoute = new Elysia({ prefix: "/bank-profiles" })
                     creditLimit: serializeMoney(creditLimit),
                     netAllocatedPrincipal: serializeMoney(netAllocatedPrincipal),
                     availableAmount: serializeSignedMoney(availableAmount),
+                    linkedBorrowerCashCollected: serializeMoney(linkedBorrowerCashCollected),
                     utilizationPercent: utilizationPercent.toFixed(2),
                     allocations,
                 };
