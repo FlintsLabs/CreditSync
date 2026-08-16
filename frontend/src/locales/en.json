@@ -540,6 +540,7 @@
         "new": "New Loan",
         "create": "Create Loan",
         "search": "Name, nickname, tag, or loan #",
+        "agent": { "label": "Agent", "unassigned": "Unassigned" },
         "borrowerLabels": {
             "more_one": "1 more borrower label",
             "more_other": "{{count}} more borrower labels"
@@ -1017,6 +1018,18 @@
     },
     "loanDetail": {
         "title": "Loan agreement",
+        "tabs": { "label": "Loan detail sections", "information": "Information", "agents": "Agents", "payments": "Payment History", "schedule": "Repayment Schedule" },
+        "agents": {
+            "title": "Agents", "description": "Effective-dated agent commission agreements for this loan.", "add": "Add agent", "empty": "No agents assigned", "agent": "Agent", "choose": "Choose an agent", "role": "Role", "rate": "Commission rate", "rateInput": "Commission rate (%)", "effective": "Effective dates", "effectiveFrom": "Effective from", "effectiveTo": "Effective to", "note": "Note", "reason": "Reason", "confirmation": "I confirm this commission agreement", "total": "Active total", "update": "Update agent", "end": "End agent",
+            "status": { "active": "Active", "ended": "Ended" },
+            "dialog": { "description": "Changes create an effective-dated participant version and require confirmation.", "add": { "title": "Add agent", "confirm": "Confirm add" }, "update": { "title": "Update agent", "confirm": "Confirm update" }, "end": { "title": "End agent", "confirm": "Confirm end" } },
+            "errors": { "load": "Unable to load agents.", "confirm": "Confirm this change before saving.", "date": "Choose an effective date and time.", "rate": "Commission rate must be greater than 0 and at most 100 with up to four decimals.", "required": "Agent and role are required.", "reason": "An end reason is required.", "save": "Unable to save the agent agreement." }
+        },
+        "paymentHistory": {
+            "title": "Payment History", "description": "Posted payments, explicit source attribution, and authoritative commission.", "empty": "No posted payments.", "totalCommission": "Total commission", "date": "Posted date", "amountLabel": "Amount", "interest": "Interest", "commission": "Commission", "attribution": "Attribution", "unattributed": "Unattributed", "direct": "Direct payment", "agent": "Agent", "edit": "Attribute", "editorTitle": "Attribute payment", "source": "Source", "confirmation": "I confirm this payment source attribution",
+            "errors": { "load": "Unable to load payment history.", "confirm": "Confirm the attribution before saving.", "amount": "Enter a positive amount with exactly two decimals.", "agent": "Choose an agent.", "save": "Unable to save payment attribution." }
+        },
+        "scheduleTab": { "totalCommission": "Commission generated from collected interest", "errors": { "load": "Unable to load repayment schedule." } },
         "restructureBalances": {
             "title": "Restructure opening balances", "lineage": "Restructure lineage", "from": "Restructured from", "to": "Restructured to", "waivers": "Recorded waivers", "payoutStatus": "Payout status", "payoutSeparate": "Tracked separately in the disbursement ledger", "noRelatedPayout": "No related payout record yet", "payoutLoading": "Loading related payout…", "payoutError": "Unable to load the related payout ledger", "reversedHistory": "Reversed opening-balance history",
             "kinds": { "carried_principal": "Carried principal", "additional_principal": "Additional principal", "carried_interest": "Carried interest", "carried_fee": "Carried fee", "carried_penalty": "Carried penalty", "new_contract_interest": "New contract interest" },
@@ -1201,7 +1214,8 @@
             "installment": "Installment",
             "dueDate": "Due date",
             "remainingDue": "Remaining due",
-            "status": "Status"
+            "status": "Status",
+            "commission": "Commission generated"
         },
         "noRepaymentSchedule": "No repayment schedule available for this loan.",
         "installmentLabel": "Installment #{{id}}",

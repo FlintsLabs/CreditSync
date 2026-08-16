@@ -10,14 +10,6 @@ import { Input } from "../../../components/ui/Input";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/Card";
 import { Badge } from "../../../components/ui/badge";
 import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-} from "../../../components/ui/table";
-import {
     Dialog,
     DialogContent,
     DialogDescription,
@@ -29,12 +21,16 @@ import { formatMoneyExact } from "../../../lib/workflow-model";
 import { LoanRenewalPanel } from "./LoanRenewalPanel";
 import { LoanDisbursements, type LoanDisbursementsHandle } from "./LoanDisbursements";
 import type { DisbursementSummaryInput } from "../../../lib/disbursement-view";
-import { LoanRepaymentHistory } from "./LoanRepaymentHistory";
 import { FloatingInterestRateCard } from "./FloatingInterestRateCard";
 import { FloatingInterestSummary, type FloatingInterestPolicyView } from "./FloatingInterestSummary";
 import { IntermediatedDisbursementPanel } from "./IntermediatedDisbursementPanel";
 import { LoanRestructurePanel } from "./LoanRestructurePanel";
 import { LoanOpeningBalances, type OpeningBalanceComponent, type RestructureLineage, type RestructureWaiver } from "./LoanOpeningBalances";
+import { LoanDetailTabs, type LoanDetailTab } from "./LoanDetailTabs";
+import { LoanInformationTab } from "./LoanInformationTab";
+import { LoanAgentsTab } from "./LoanAgentsTab";
+import { LoanPaymentHistoryTab } from "./LoanPaymentHistoryTab";
+import { LoanRepaymentScheduleTab } from "./LoanRepaymentScheduleTab";
 
 interface LoanDetailData {
     id: string;
@@ -83,16 +79,6 @@ interface BorrowerData {
     name: string;
     phone?: string | null;
     tags?: string[] | null;
-}
-
-interface LoanScheduleRow {
-    id: string;
-    publicId: string;
-    installmentNo: number;
-    dueDate: string;
-    scheduledTotal: string;
-    remainingDue: string;
-    status: string;
 }
 
 interface AllocationRow {
@@ -195,11 +181,11 @@ export default function LoanDetail() {
     const currentUser = getStoredUser();
     const isTenantAdmin = isTenantAdminUser(currentUser);
     const [loading, setLoading] = useState(true);
+    const [activeTab, setActiveTab] = useState<LoanDetailTab>("information");
     const [errorMessage, setErrorMessage] = useState("");
     const [copiedLoanId, setCopiedLoanId] = useState(false);
     const [loan, setLoan] = useState<LoanDetailData | null>(null);
     const [borrower, setBorrower] = useState<BorrowerData | null>(null);
-    const [schedule, setSchedule] = useState<LoanScheduleRow[]>([]);
     const [allocations, setAllocations] = useState<AllocationRow[]>([]);
     const [profitability, setProfitability] = useState<LoanProfitability | null>(null);
     const [allocationState, setAllocationState] = useState<LoanAllocationState | null>(null);
@@ -237,9 +223,8 @@ export default function LoanDetail() {
             try {
                 setLoading(true);
                 setDisbursementSummary(null);
-                const [loanRes, scheduleRes, allocationsRes, allocationStateRes] = await Promise.all([
+                const [loanRes, allocationsRes, allocationStateRes] = await Promise.all([
                     api.get(`/loans/${id}`),
-                    api.get(`/loans/${id}/schedule`),
                     api.get(`/loans/${id}/funding-allocations`),
                     api.get(`/loans/${id}/allocation-state`),
                 ]);
@@ -249,7 +234,6 @@ export default function LoanDetail() {
 
                 const loanData = loanRes.data ?? null;
                 setLoan(loanData);
-                setSchedule(scheduleRes.data ?? []);
                 setAllocations(allocationsRes.data ?? []);
                 setProfitability(profitabilityRes.data ?? null);
                 setAllocationState(allocationStateRes.data ?? null);
@@ -272,8 +256,6 @@ export default function LoanDetail() {
 
         run();
     }, [id, isTenantAdmin, t]);
-
-    const nextDueRow = schedule.find((row) => isPositiveMoney(row.remainingDue)) ?? null;
 
     const activateDraft = async () => {
         if (!loan || loan.status !== "draft" || activating) return;
@@ -558,6 +540,13 @@ export default function LoanDetail() {
                     </CardContent>
                 </Card>
             ) : (
+                <LoanDetailTabs value={activeTab} onChange={setActiveTab} renderPanel={(tab) => tab === "agents"
+                    ? <LoanAgentsTab loanPublicId={loan.publicId} />
+                    : tab === "payments"
+                        ? <LoanPaymentHistoryTab loanPublicId={loan.publicId} />
+                        : tab === "schedule"
+                            ? <LoanRepaymentScheduleTab loanPublicId={loan.publicId} />
+                            : <LoanInformationTab>
                 <>
                     {loan.repaymentType === "daily" && loan.dailyLoanCalculation && (
                         <Card>
@@ -690,17 +679,13 @@ export default function LoanDetail() {
                                 <CardTitle className="text-sm font-medium text-muted-foreground">{t("loanWizard.nextDue", "Next Due")}</CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-2 text-sm">
-                                {nextDueRow ? (
+                                {loan.nextDueDate ? (
                                     <>
                                         <div className="flex items-center gap-2">
                                             <CalendarDays className="h-4 w-4 text-muted-foreground" />
-                                            <span className="font-medium">{nextDueRow.dueDate}</span>
+                                            <span className="font-medium">{loan.nextDueDate}</span>
                                         </div>
-                                        <div className="flex justify-between">
-                                            <span>{t("loanDetail.remainingDue", "Remaining due")}</span>
-                                            <span className="font-medium">{money(nextDueRow.remainingDue)}</span>
-                                        </div>
-                                        <Link to={`/transactions/new?loanId=${loan.publicId ?? loan.id}&scheduleId=${nextDueRow.publicId ?? nextDueRow.id}`} className="text-primary text-xs hover:underline">
+                                        <Link to={`/transactions/new?loanId=${loan.publicId ?? loan.id}`} className="text-primary text-xs hover:underline">
                                             {t("dashboardPage.actions.recordThisPayment", "Record this payment")}
                                         </Link>
                                     </>
@@ -720,13 +705,6 @@ export default function LoanDetail() {
                         if (!disbursementsRef.current) throw new Error("Disbursement ledger is unavailable");
                         await disbursementsRef.current.refresh();
                     }} />
-
-                    <LoanRepaymentHistory
-                        key={loan.publicId ?? loan.id}
-                        loanPublicId={loan.publicId ?? loan.id}
-                        borrowerName={borrower?.name ?? t("loanDetail.unknownBorrower", "Unknown borrower")}
-                        borrowerPublicId={loan.borrowerPublicId}
-                    />
 
                     <Card>
                         <CardHeader>
@@ -819,45 +797,6 @@ export default function LoanDetail() {
                             </CardContent>
                         </Card>
 
-                        <Card>
-                            <CardHeader>
-                                <CardTitle>{t("loanDetail.repaymentSchedule", "Repayment Schedule")}</CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                                {schedule.length === 0 ? (
-                                    <div className="rounded border border-dashed p-4 text-sm text-muted-foreground">
-                                        {t("loanDetail.noRepaymentSchedule", "No repayment schedule available for this loan.")}
-                                    </div>
-                                ) : (
-                                    <Table className="min-w-[32rem]">
-                                        <TableHeader>
-                                            <TableRow className="hover:bg-transparent">
-                                                <TableHead>{t("loanDetail.scheduleColumns.installment")}</TableHead>
-                                                <TableHead>{t("loanDetail.scheduleColumns.dueDate")}</TableHead>
-                                                <TableHead className="text-right">{t("loanDetail.scheduleColumns.remainingDue")}</TableHead>
-                                                <TableHead className="text-right">{t("loanDetail.scheduleColumns.status")}</TableHead>
-                                            </TableRow>
-                                        </TableHeader>
-                                        <TableBody>
-                                            {schedule.slice(0, 8).map((row) => (
-                                                <TableRow key={row.id}>
-                                                    <TableCell className="font-medium">
-                                                        {t("loanDetail.installmentLabel", { defaultValue: "Installment #{{id}}", id: row.installmentNo })}
-                                                    </TableCell>
-                                                    <TableCell className="whitespace-nowrap text-muted-foreground">{row.dueDate}</TableCell>
-                                                    <TableCell className="whitespace-nowrap text-right font-medium tabular-nums">{money(row.remainingDue)}</TableCell>
-                                                    <TableCell className="text-right">
-                                                        <Badge variant={row.status === "overdue" ? "destructive" : row.status === "paid" ? "secondary" : "outline"}>
-                                                            {t(`loans.paymentHealth.scheduleStatus.${row.status}`, { defaultValue: row.status })}
-                                                        </Badge>
-                                                    </TableCell>
-                                                </TableRow>
-                                            ))}
-                                        </TableBody>
-                                    </Table>
-                                )}
-                            </CardContent>
-                        </Card>
                     </div>
 
                     <Card>
@@ -898,6 +837,7 @@ export default function LoanDetail() {
                         <LoanRenewalPanel loan={loan} />
                     )}
                 </>
+                </LoanInformationTab>} />
             )}
         </div>
     );

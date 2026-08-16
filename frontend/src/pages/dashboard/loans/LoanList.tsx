@@ -39,9 +39,45 @@ interface LoanRow {
     totalInstallments: number | null;
     startDate: string | null;
     paymentHealth?: LoanPaymentHealth;
+    currentAgent?: { name?: string | null; aliases?: string[] | null } | null;
+    currentAgentName?: string | null;
+    currentAgentAliases?: string[] | null;
 }
 
 type LoanTab = "active" | "done" | "all";
+
+interface AgentListRow { publicId: string; name: string; aliases?: string[] | null }
+interface ParticipantListRow { intermediaryPublicId: string; status: "active" | "ended" }
+
+async function loadLoansWithAgents(): Promise<LoanRow[]> {
+    const response = await api.get("/loans");
+    const rows = response.data ?? [];
+    if (rows.length === 0 || rows.every((loan: LoanRow) => "currentAgent" in loan || "currentAgentName" in loan)) return rows;
+
+    try {
+        const [intermediaryResponse, participantResponses] = await Promise.all([
+            api.get("/intermediaries?status=all"),
+            Promise.all(rows.map((loan: LoanRow) => api.get(`/loans/${loan.publicId}/commission-participants`))),
+        ]);
+        const intermediaries = (intermediaryResponse.data?.items ?? intermediaryResponse.data ?? []) as AgentListRow[];
+        const intermediaryById = new Map(intermediaries.map((agent) => [agent.publicId, agent]));
+        return rows.map((loan: LoanRow, index: number) => {
+            const active = ((participantResponses[index]?.data ?? []) as ParticipantListRow[])
+                .filter((participant) => participant.status === "active")
+                .map((participant) => intermediaryById.get(participant.intermediaryPublicId))
+                .filter((agent): agent is AgentListRow => Boolean(agent));
+            return {
+                ...loan,
+                currentAgent: active.length === 0 ? null : {
+                    name: active.map((agent) => agent.name).join(", "),
+                    aliases: active.flatMap((agent) => agent.aliases ?? []),
+                },
+            };
+        });
+    } catch {
+        return rows;
+    }
+}
 
 export default function LoanList() {
     const { t, i18n } = useTranslation();
@@ -59,8 +95,7 @@ export default function LoanList() {
         setIsLoading(true);
         setLoadError(false);
         try {
-            const res = await api.get("/loans");
-            setLoans(res.data ?? []);
+            setLoans(await loadLoansWithAgents());
         } catch {
             setLoadError(true);
         } finally {
@@ -70,9 +105,9 @@ export default function LoanList() {
 
     useEffect(() => {
         let active = true;
-        void api.get("/loans")
-            .then((res) => {
-                if (active) setLoans(res.data ?? []);
+        void loadLoansWithAgents()
+            .then((rows) => {
+                if (active) setLoans(rows);
             })
             .catch(() => {
                 if (active) setLoadError(true);
@@ -246,6 +281,11 @@ export default function LoanList() {
                                     health={loan.paymentHealth ?? currentPaymentHealth}
                                     repaymentType={loan.repaymentType}
                                 />
+
+                                <Badge variant="outline" className="w-fit max-w-full gap-1 text-xs">
+                                    <span className="text-muted-foreground">{t("loans.agent.label", "Agent")}</span>
+                                    <span className="truncate">{loan.currentAgent?.name ?? loan.currentAgentName ?? t("loans.agent.unassigned", "Unassigned")}</span>
+                                </Badge>
 
                                 <div className="space-y-2 text-xs">
                                     <div><div className="text-muted-foreground">{t("loans.repaymentType", "Repayment type")}</div><div className="font-medium">{t(`loanWizard.repaymentOptions.${loan.repaymentType}`)}</div></div>

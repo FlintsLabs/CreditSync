@@ -4,6 +4,9 @@ export interface BorrowerLabelLoan {
     borrowerName: string;
     borrowerAliases?: (string | null)[] | null;
     borrowerTags?: (string | null)[] | null;
+    currentAgent?: { name?: string | null; aliases?: (string | null)[] | null } | null;
+    currentAgentName?: string | null;
+    currentAgentAliases?: (string | null)[] | null;
 }
 
 function normalizeLabel(value: string) {
@@ -50,6 +53,10 @@ export function loanMatchesSearch(loan: BorrowerLabelLoan, query: string): boole
         loan.publicId,
         ...((loan.borrowerAliases ?? []) as (string | null | undefined)[]),
         ...((loan.borrowerTags ?? []) as (string | null | undefined)[]),
+        loan.currentAgent?.name,
+        ...((loan.currentAgent?.aliases ?? []) as (string | null | undefined)[]),
+        loan.currentAgentName,
+        ...((loan.currentAgentAliases ?? []) as (string | null | undefined)[]),
     ]
         .filter((value): value is string => Boolean(value))
         .map((value) => normalizeLabel(value));

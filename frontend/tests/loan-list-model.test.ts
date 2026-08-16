@@ -35,4 +35,10 @@ describe("loan list label model", () => {
         expect(loanMatchesSearch(loan, "กข")).toBe(false);
         expect(getBorrowerLabels({ ...loan, borrowerAliases: [" ｎｋ "], borrowerTags: ["ＮＫ"] })).toEqual(["ｎｋ"]);
     });
+
+    test("searches the current agent name and confirmed aliases from the loan DTO", () => {
+        const loan = { id: "loan-agent", publicId: "loan-agent", borrowerName: "Borrower", currentAgent: { name: "Suda Collector", aliases: ["P' Da", "พี่ดา"] } };
+        expect(loanMatchesSearch(loan, "suda")).toBe(true);
+        expect(loanMatchesSearch(loan, "พี่ดา")).toBe(true);
+    });
 });

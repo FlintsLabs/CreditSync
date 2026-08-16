@@ -1,4 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LoanDetail from "../src/pages/dashboard/loans/LoanDetail";
@@ -68,6 +69,7 @@ describe("Loan detail repayment schedule table", () => {
 
     it("renders a localized compact semantic table with the first eight rows", async () => {
         renderLoanDetail();
+        await userEvent.click(await screen.findByRole("tab", { name: "ตารางผ่อน" }));
 
         const section = (await screen.findByRole("heading", { name: "ตารางผ่อน" })).closest("div.rounded-lg");
         expect(section).not.toBeNull();

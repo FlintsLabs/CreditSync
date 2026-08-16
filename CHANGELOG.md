@@ -3,6 +3,7 @@
 ## v0.3.16 - 2026-08-16
 
 ### Added
+- Added tabbed Loan Detail views for information, agent commission agreements, payment-source attribution history, and repayment schedule, plus localized agent badges/search on Loan List.
 - Added tenant-scoped REST and a frozen 75-tool MCP/plugin contract for effective-dated loan commission participants, read-only exact commission and reversal previews, and confirmed idempotent append-only payment source attributions with audit/correlation metadata.
 - Added tenant-scoped append-only loan commission participant versions and exact payment source-attribution ledgers, including Decimal-only commission previews, payload-safe idempotency, compensating reversals, and audit-linked immutable database records.
 - Added Active, Done, and All tabs to Loan List with English/Thai labels and client-side status filtering that reuses the existing loan query.

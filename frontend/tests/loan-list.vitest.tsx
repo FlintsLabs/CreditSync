@@ -32,7 +32,7 @@ describe("LoanList", () => {
         expect(screen.getAllByText(/^Created at:/)).toHaveLength(2);
         expect(screen.getByText("Floating repayment has no fixed schedule")).toBeInTheDocument();
         expect(screen.getByText("Not set")).toBeInTheDocument();
-        expect(vi.mocked(api.get).mock.calls.map(([url]) => url)).toEqual(["/loans"]);
+        expect(vi.mocked(api.get).mock.calls.map(([url]) => url)).toEqual(["/loans", "/intermediaries?status=all", "/loans/daily/commission-participants", "/loans/floating/commission-participants"]);
     });
 
     test("renders status-aware exact financial summaries without extra requests", async () => {
@@ -72,7 +72,7 @@ describe("LoanList", () => {
         expect(screen.getByText("Active Summary")).toBeInTheDocument();
         expect(screen.getByText("Paid Summary")).toBeInTheDocument();
         expect(screen.getByRole("option", { name: "Closed" })).toBeInTheDocument();
-        expect(vi.mocked(api.get).mock.calls.map(([url]) => url)).toEqual(["/loans"]);
+        expect(vi.mocked(api.get).mock.calls.map(([url]) => url)).toEqual(["/loans", "/intermediaries?status=all", "/loans/active-summary/commission-participants", "/loans/paid-summary/commission-participants"]);
     });
 
     // Break caught: payment health is invisible, imprecisely formatted, or replaces lifecycle status/navigation.
@@ -94,7 +94,7 @@ describe("LoanList", () => {
         expect(screen.queryByText("Current")).not.toBeInTheDocument();
         expect(screen.getAllByText("active")).toHaveLength(4);
         expect(screen.getByText("Scheduled Overdue").closest("a")).toHaveAttribute("href", "/loans/scheduled-overdue");
-        expect(vi.mocked(api.get).mock.calls.map(([url]) => url)).toEqual(["/loans"]);
+        expect(vi.mocked(api.get).mock.calls.map(([url]) => url)).toEqual(["/loans", "/intermediaries?status=all", "/loans/scheduled-overdue/commission-participants", "/loans/floating-overdue/commission-participants", "/loans/due-now/commission-participants", "/loans/current/commission-participants"]);
     });
 
     // Break caught: Thai floating cards reuse English or installment-specific overdue copy.
@@ -204,6 +204,21 @@ describe("LoanList", () => {
         const overflow = await screen.findByText("+1");
         expect(overflow).toHaveAttribute("aria-label", "ป้ายกำกับลูกหนี้เพิ่มเติม 1 รายการ");
         expect(screen.getByText("ลูกหนี้")).toBeInTheDocument();
+    });
+
+    test("shows current agents on overdue cards and searches confirmed agent aliases", async () => {
+        vi.mocked(api.get).mockResolvedValue({ data: [{
+            id: "agent-loan", publicId: "agent-loan", borrowerName: "Borrower A", principal: "1000.00", outstandingPrincipal: "900.00", interestReceived: "20.00", paidToDate: "120.00", status: "active", repaymentType: "daily", installmentAmount: "100.00", totalInstallments: 10, startDate: "2026-08-01", createdAt: "2026-08-10T07:30:00.000Z", paymentHealth: { status: "overdue", dueTodayAmount: "0.00", overdueAmount: "100.00", overdueItemCount: 1, maxOverdueDays: 2 }, currentAgent: { name: "Agent Alpha", aliases: ["พี่เอ"] },
+        }] });
+
+        render(<MemoryRouter><LoanList /></MemoryRouter>);
+
+        const card = (await screen.findByText("Borrower A")).closest("a")!;
+        expect(within(card).getByText("Agent Alpha")).toBeInTheDocument();
+        expect(within(card).getByText("Overdue 1 installment")).toBeInTheDocument();
+        await userEvent.type(screen.getByPlaceholderText("Name, nickname, tag, or loan #"), "พี่เอ");
+        expect(screen.getByText("Borrower A")).toBeInTheDocument();
+        expect(vi.mocked(api.get).mock.calls.map(([url]) => url)).toEqual(["/loans"]);
     });
 
     test("shows a localized load error instead of the empty state and retries", async () => {
