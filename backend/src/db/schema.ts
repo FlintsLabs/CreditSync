@@ -1915,6 +1915,83 @@ export const loanIntermediaryAssignments = pgTable("loan_intermediary_assignment
     foreignKey({ name: "loan_intermediary_assignments_tenant_updated_by_fk", columns: [table.tenantId, table.updatedByUserId], foreignColumns: [users.tenantId, users.id] }),
 ]);
 
+// Commission agreements are immutable effective-dated versions. A newer row
+// supersedes the prior head; the prior row remains the historical agreement.
+export const loanCommissionParticipants = pgTable("loan_commission_participants", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId,
+    loanId: integer("loan_id").notNull(),
+    intermediaryId: integer("intermediary_id").notNull(),
+    previousParticipantId: integer("previous_participant_id"),
+    commissionRate: numeric("commission_rate", { precision: 7, scale: 4 }).notNull(),
+    role: text("role").notNull(),
+    note: text("note"),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull(),
+    effectiveTo: timestamp("effective_to", { withTimezone: true }),
+    status: text("status").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    auditPublicId: uuid("audit_public_id").notNull(),
+    actorSource: text("actor_source").notNull(),
+    requestId: text("request_id").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    createdByUserId: integer("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("loan_commission_participants_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("loan_commission_participants_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
+    uniqueIndex("loan_commission_participants_tenant_previous_unique").on(table.tenantId, table.previousParticipantId).where(sql`${table.previousParticipantId} IS NOT NULL`),
+    index("loan_commission_participants_tenant_loan_effective_idx").on(table.tenantId, table.loanId, table.effectiveFrom),
+    check("loan_commission_participants_rate_check", sql`${table.commissionRate} > 0 AND ${table.commissionRate} <= 100 AND scale(${table.commissionRate}) <= 4`),
+    check("loan_commission_participants_status_check", sql`${table.status} IN ('active', 'ended')`),
+    check("loan_commission_participants_role_check", sql`${table.role} ~ '[^[:space:]]'`),
+    check("loan_commission_participants_idempotency_check", sql`${table.idempotencyKey} ~ '[^[:space:]]'`),
+    check("loan_commission_participants_dates_check", sql`(${table.status} = 'active' AND ${table.effectiveTo} IS NULL) OR (${table.status} = 'ended' AND ${table.effectiveTo} IS NOT NULL AND ${table.effectiveTo} > ${table.effectiveFrom})`),
+    foreignKey({ name: "loan_commission_participants_tenant_loan_fk", columns: [table.tenantId, table.loanId], foreignColumns: [loans.tenantId, loans.id] }),
+    foreignKey({ name: "loan_commission_participants_tenant_intermediary_fk", columns: [table.tenantId, table.intermediaryId], foreignColumns: [intermediaries.tenantId, intermediaries.id] }),
+    foreignKey({ name: "loan_commission_participants_tenant_previous_fk", columns: [table.tenantId, table.previousParticipantId], foreignColumns: [table.tenantId, table.id] }),
+    foreignKey({ name: "loan_commission_participants_tenant_audit_fk", columns: [table.tenantId, table.auditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
+    foreignKey({ name: "loan_commission_participants_tenant_actor_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
+
+// Exact post-payment source attribution. Reversals are signed compensating
+// rows, so posted attribution history is never edited or deleted.
+export const paymentIntermediaryAttributions = pgTable("payment_intermediary_attributions", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId,
+    paymentId: integer("payment_id").notNull(),
+    transactionId: integer("transaction_id"),
+    intermediaryId: integer("intermediary_id"),
+    sourceKind: text("source_kind").notNull(),
+    attributedAmount: numeric("attributed_amount", { precision: 31, scale: 2 }).notNull(),
+    reason: text("reason"),
+    reversedAttributionId: integer("reversed_attribution_id"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    auditPublicId: uuid("audit_public_id").notNull(),
+    actorSource: text("actor_source").notNull(),
+    requestId: text("request_id").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    createdByUserId: integer("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_intermediary_attributions_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("payment_intermediary_attributions_tenant_payment_id_unique").on(table.tenantId, table.paymentId, table.id),
+    uniqueIndex("payment_intermediary_attributions_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
+    uniqueIndex("payment_intermediary_attributions_tenant_reversed_unique").on(table.tenantId, table.reversedAttributionId).where(sql`${table.reversedAttributionId} IS NOT NULL`),
+    index("payment_intermediary_attributions_tenant_payment_idx").on(table.tenantId, table.paymentId, table.id),
+    check("payment_intermediary_attributions_source_check", sql`(${table.sourceKind} = 'direct' AND ${table.intermediaryId} IS NULL) OR (${table.sourceKind} = 'intermediary' AND ${table.intermediaryId} IS NOT NULL)`),
+    check("payment_intermediary_attributions_amount_check", sql`scale(${table.attributedAmount}) <= 2 AND ${table.attributedAmount} <> 0`),
+    check("payment_intermediary_attributions_reversal_check", sql`(${table.attributedAmount} > 0 AND ${table.reversedAttributionId} IS NULL AND ${table.reason} IS NULL) OR (${table.attributedAmount} < 0 AND ${table.reversedAttributionId} IS NOT NULL AND ${table.reason} IS NOT NULL AND ${table.reason} ~ '[^[:space:]]')`),
+    check("payment_intermediary_attributions_idempotency_check", sql`${table.idempotencyKey} ~ '[^[:space:]]'`),
+    foreignKey({ name: "payment_intermediary_attributions_tenant_payment_fk", columns: [table.tenantId, table.paymentId], foreignColumns: [transactions.tenantId, transactions.id] }),
+    foreignKey({ name: "payment_intermediary_attributions_tenant_transaction_fk", columns: [table.tenantId, table.transactionId], foreignColumns: [transactions.tenantId, transactions.id] }),
+    foreignKey({ name: "payment_intermediary_attributions_tenant_intermediary_fk", columns: [table.tenantId, table.intermediaryId], foreignColumns: [intermediaries.tenantId, intermediaries.id] }),
+    foreignKey({ name: "payment_intermediary_attributions_tenant_reversed_fk", columns: [table.tenantId, table.paymentId, table.reversedAttributionId], foreignColumns: [table.tenantId, table.paymentId, table.id] }),
+    foreignKey({ name: "payment_intermediary_attributions_tenant_audit_fk", columns: [table.tenantId, table.auditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
+    foreignKey({ name: "payment_intermediary_attributions_tenant_actor_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
+
 export const intermediatedDisbursementGroups = pgTable("intermediated_disbursement_groups", {
     id: serial("id").primaryKey(),
     publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
