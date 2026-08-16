@@ -54,8 +54,8 @@ test("binds reversal replay hashes to target and reason and expires persisted up
     expect(evidenceIntentExpired({ uploadExpiresAt: new Date(Date.now() + 60_000), createdAt: new Date() })).toBe(false);
 });
 
-// Break caught: netting gross rather than attributed amounts, or including reversed postings, reports a false loan payout.
-integrationTest("lists tenant-scoped attributed disbursement totals and variance", async () => {
+// Break caught: netting gross rather than attributed amounts, or including draft/reversed postings, reports a false loan payout.
+integrationTest("lists only effective posted gross and attributed disbursement totals", async () => {
     const owner = await actor();
     const loan = await loanFor(owner);
     const ctx = context(owner);
@@ -67,11 +67,19 @@ integrationTest("lists tenant-scoped attributed disbursement totals and variance
         grossAmount: "200.00", loanAttributedAmount: "200.00", channel: "cash", disbursedAt: "2026-08-10T11:00:00.000Z",
     });
     await postDisbursement(context(owner, "post-two"), second.publicId);
+    const reversed = await createDisbursementDraft(ctx, loan.publicId, {
+        grossAmount: "900.00", loanAttributedAmount: "800.00", channel: "bank_transfer", note: "Wrong recipient", disbursedAt: "2026-08-10T12:00:00.000Z",
+    });
+    await postDisbursement(context(owner, "post-reversed"), reversed.publicId);
+    await reverseDisbursement(context(owner, "reverse-reversed"), reversed.publicId, "Wrong recipient");
+    await createDisbursementDraft(ctx, loan.publicId, {
+        grossAmount: "700.00", loanAttributedAmount: "700.00", channel: "cash", disbursedAt: "2026-08-10T13:00:00.000Z",
+    });
 
     const result = await listLoanDisbursements(ctx, loan.publicId);
 
     expect(result.summary).toMatchObject({ approvedPrincipal: "5000.00", postedGrossAmount: "5300.00", postedEventCount: 2, netDisbursed: "5200.00", variance: "200.00", status: "over_disbursed" });
-    expect(result.events).toHaveLength(2);
+    expect(result.events).toHaveLength(5);
 });
 
 // Break caught: a posted row remains editable, allowing payout history to be silently rewritten.

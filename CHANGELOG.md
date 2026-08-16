@@ -20,6 +20,7 @@
 - Documented the floating-loan detail contract summary and posted-payout mismatch behavior, including its non-mutating and posted-only boundaries.
 
 ### Fixed
+- Added regression coverage proving draft and compensating-reversed payouts are excluded from effective posted-gross summaries and superseded loan-route reads cannot leak a mismatch warning into the next loan.
 - Added Task 3 database-backed regression coverage for the authenticated loan-detail schema repair and the exact zero-interest 75-day daily-loan lifecycle, including loan/disbursement draft audits, activation and posting replay, the posted `4000.00` under-disbursement with exact `-3500.00` variance, and Decimal-checked ledger invariants.
 - Reconciled the production-shaped loan schema through guarded, repeatable migration 0038 with fail-closed exact type/nullable, constraint, and activation-index preflight, zero-violation validation, catalog-preservation fixtures, idempotency indexing, and byte-preserving financial-row tests.
 - Corrected the Task 4 round-3 reconciliation runbook to use exact historical app and PostgreSQL container names, a concrete verifiable writer freeze with recovery, a standalone protected deployment Compose file, production zero-violation and `convalidated` gates, unmasked app stop/remove and rollback recovery, bounded migration evidence, and exact JSON MCP health validation.
