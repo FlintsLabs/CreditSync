@@ -2,17 +2,19 @@ import { Elysia, t } from "elysia";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { bankProfiles, bankLoans, loanFundingAllocations, loans } from "../db/schema";
-import { createAuditLog } from "../lib/audit-log";
 import { canAccessTenantWideData, getAccessScopeCacheKey, loanAccessFilters } from "../lib/access";
+import { createAuditLog } from "../lib/audit-log";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
 import { serializeMoney } from "../lib/money";
 import { getLoanProfitabilitySummary } from "../lib/fund-settlement";
-import { findAccessibleLoanByPublicId, findBankLoanByPublicId, findBankProfileByPublicId } from "../lib/public-id";
+import { findAccessibleLoanByPublicId } from "../lib/public-id";
 import { authPlugin } from "../middleware/auth";
 import { DomainError } from "../services/domain-error";
 import { loanDomainFailure, loanForbidden, loanMoneyInput, loanUnauthorized } from "./loan-http-support";
 import { isMutableFundingLoan, presentFundingAllocation, presentLoanProfitability } from "./loan-funding-presenters";
 import { FinancialDecimal } from "../lib/financial-decimal";
+import { createFundingAllocation, listLoanFundingAllocations } from "../services/loan-funding-service";
+import { loanCommandContext } from "./loan-http-support";
 
 function assertMutableFundingLoan(loan: typeof loans.$inferSelect) {
     if (!isMutableFundingLoan(loan.status)) {
@@ -21,7 +23,7 @@ function assertMutableFundingLoan(loan: typeof loans.$inferSelect) {
 }
 
 export const loanFundingRoutes = new Elysia().use(authPlugin)
-    .get("/:id/funding-allocations", async ({ params, user, set }) => {
+    .get("/:id/funding-allocations", async ({ params, user, set, request }) => {
         if (!user) return loanUnauthorized(set);
         const loan = await findAccessibleLoanByPublicId(user, params.id);
         if (!loan) return loanDomainFailure(new DomainError("LOAN_NOT_FOUND", "Loan not found", 404), set);
@@ -33,16 +35,7 @@ export const loanFundingRoutes = new Elysia().use(authPlugin)
             key: `funding-allocations:${loan.id}:${scopeKey}`,
             ttlSeconds: 20,
             loader: async () => {
-                const rows = await db.select().from(loanFundingAllocations).where(and(
-                    eq(loanFundingAllocations.loanId, loan.id),
-                    eq(loanFundingAllocations.tenantId, user.tenantId),
-                )).orderBy(desc(loanFundingAllocations.createdAt));
-                return Promise.all(rows.map(async (row) => ({
-                    ...await presentFundingAllocation(row),
-                    bankProfileName: row.bankProfileId === null ? null : await db.query.bankProfiles.findFirst({
-                        where: and(eq(bankProfiles.id, row.bankProfileId), eq(bankProfiles.tenantId, user.tenantId)),
-                    }).then((profile) => profile?.name ?? null),
-                })));
+                return listLoanFundingAllocations(loanCommandContext(user, request), params.id);
             },
         });
     }, { params: t.Object({ id: t.String() }) })
@@ -97,18 +90,14 @@ export const loanFundingRoutes = new Elysia().use(authPlugin)
             },
         });
     }, { params: t.Object({ id: t.String() }) })
-    .post("/:id/funding-allocations", async ({ params, body, user, set }) => {
+    .post("/:id/funding-allocations", async ({ params, body, user, set, request }) => {
         if (!user) return loanUnauthorized(set);
         if (!canAccessTenantWideData(user)) return loanForbidden(set);
         try {
-            const amount = loanMoneyInput(body.allocatedAmount, "allocatedAmount");
-            const created = await db.transaction(async (tx) => {
-                const resolvedLoan = await findAccessibleLoanByPublicId(user, params.id);
-                if (!resolvedLoan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
-                await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${user.tenantId} AND id = ${resolvedLoan.id} FOR UPDATE`);
-                const loan = await tx.select().from(loans).where(and(eq(loans.id, resolvedLoan.id), ...loanAccessFilters(user))).then((rows) => rows[0]);
-                if (!loan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
-                assertMutableFundingLoan(loan);
+            const created = await createFundingAllocation(loanCommandContext(user, request), {
+                loanPublicId: params.id, bankProfilePublicId: body.bankProfilePublicId, bankLoanPublicId: body.bankLoanPublicId, allocatedAmount: body.allocatedAmount, allocationDate: body.allocationDate, allocationType: body.allocationType, note: body.note,
+            });
+            /*
 
                 const requestedProfile = body.bankProfilePublicId ? await findBankProfileByPublicId(user.tenantId, body.bankProfilePublicId) : null;
                 if (body.bankProfilePublicId && !requestedProfile) throw new DomainError("BANK_PROFILE_NOT_FOUND", "Bank profile not found", 404);
@@ -146,6 +135,7 @@ export const loanFundingRoutes = new Elysia().use(authPlugin)
                 await createAuditLog(tx, { tenantId: user.tenantId, actorUserId: user.id, entityType: "loan_funding_allocation", entityId: created.publicId, action: "created", payload: await presentFundingAllocation(created) });
                 return presentFundingAllocation(created);
             });
+            */
             await invalidateTenantCache(user.tenantId);
             return created;
         } catch (error) {

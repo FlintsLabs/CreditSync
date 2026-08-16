@@ -3,6 +3,7 @@
 ## v0.3.16 - 2026-08-16
 
 ### Added
+- Added the tenant-authorized append-only loan funding allocation service with Decimal-safe previews, source/loan capacity checks, stable locking, audit context, and REST delegation.
 - Added DB-gated bank drawdown service and migration execution coverage for authorization, Decimal credit limits, idempotent lifecycle commands, schedules, notes, and audit context.
 - Added the tenant-scoped bank drawdown draft/activate command service with Decimal schedules, lifecycle metadata, idempotent retries, credit-limit checks, and audit context.
 - Added the implementation plan for Decimal-safe bank funding drawdowns, funding allocation, REST/MCP lifecycle commands, and atomic drawdown-and-allocate workflows.
