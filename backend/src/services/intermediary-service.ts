@@ -7,6 +7,7 @@ import { createAuditLog } from "../lib/audit-log";
 import { canAccessTenantWideData } from "../lib/access";
 import { FinancialDecimal } from "../lib/financial-decimal";
 import { parseMoney, serializeMoney } from "../lib/money";
+import { invalidateTenantCache } from "../lib/cache";
 import { BUCKET_NAME, createSignedPutUrl, headStoredObject, toStorageReference, type SignedPutRequest, type StoredObjectHead } from "../lib/storage";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
@@ -456,6 +457,7 @@ export async function postIntermediaryRemittance(ctx: CommandContext, publicId: 
         const audit = await createAuditLog(tx, { ...auditContext(ctx), entityType: "intermediary_remittance", entityId: posted.publicId, action: "posted", payload: { proposalPublicId: proposal.publicId, collectionPublicIds: selection.collections.map((row: typeof intermediaryCollections.$inferSelect) => row.publicId), amount: serializeMoney(posted.grossAmount) } });
         return { ...presentRemittance(posted, selection.selected), auditPublicId: audit.publicId, correlationId: ctx.correlationId };
     });
+    await invalidateTenantCache(ctx.tenantId);
     return result;
 }
 
@@ -466,7 +468,7 @@ export async function manualApproveIntermediaryCollection(ctx: CommandContext, p
     if (!ctx.idempotencyKey?.trim()) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Idempotency key is required", 400);
     const actor = await actorFor(ctx);
     if (!actor || !canAccessTenantWideData({ role: actor.role ?? "viewer" })) throw new DomainError("TENANT_ADMIN_REQUIRED", "Tenant owner or manager permission is required", 403);
-    return db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
         const collection = await tx.query.intermediaryCollections.findFirst({ where: and(eq(intermediaryCollections.tenantId, ctx.tenantId), eq(intermediaryCollections.publicId, publicId)) });
         if (!collection) throw new DomainError("INTERMEDIARY_COLLECTION_NOT_FOUND", "Intermediary collection not found", 404);
         await tx.execute(sql`SELECT id FROM intermediary_collections WHERE id = ${collection.id} FOR UPDATE`);
@@ -488,6 +490,8 @@ export async function manualApproveIntermediaryCollection(ctx: CommandContext, p
         await createAuditLog(tx, { ...auditContext(ctx), entityType: "intermediary_collection", entityId: approved.publicId, action: "manual_approved", payload: { reason, paymentIntakePublicId: intake.publicId, amount: serializeMoney(approved.amount), borrowerPaidAt: approved.borrowerPaidAt.toISOString() } });
         return presentCollection(approved);
     });
+    await invalidateTenantCache(ctx.tenantId);
+    return result;
 }
 
 export async function reverseIntermediaryRemittance(ctx: CommandContext, publicId: string, input: { reason: string }) {
@@ -497,7 +501,7 @@ export async function reverseIntermediaryRemittance(ctx: CommandContext, publicI
     if (!reversalKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Idempotency key is required", 400);
     const actor = await actorFor(ctx);
     if (!actor || !canAccessTenantWideData({ role: actor.role ?? "viewer" })) throw new DomainError("TENANT_ADMIN_REQUIRED", "Tenant owner or manager permission is required", 403);
-    return db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
         const remittance = await tx.query.intermediaryRemittances.findFirst({ where: and(eq(intermediaryRemittances.tenantId, ctx.tenantId), eq(intermediaryRemittances.publicId, publicId)) });
         if (!remittance) throw new DomainError("INTERMEDIARY_REMITTANCE_NOT_FOUND", "Remittance not found", 404);
         await tx.execute(sql`SELECT id FROM intermediary_remittances WHERE id = ${remittance.id} FOR UPDATE`);
@@ -524,4 +528,6 @@ export async function reverseIntermediaryRemittance(ctx: CommandContext, publicI
         await createAuditLog(tx, { ...auditContext(ctx), entityType: "intermediary_remittance", entityId: reversed.publicId, action: "reversed", payload: { reason, collectionPublicIds: ordered.map((row) => row.publicId), amount: serializeMoney(reversed.grossAmount) } });
         return { ...presentRemittance(reversed), reversalReason: reversed.reversalReason };
     });
+    await invalidateTenantCache(ctx.tenantId);
+    return result;
 }
