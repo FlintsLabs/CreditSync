@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { borrowers, loans, users } from "../db/schema";
+import { borrowers, intermediaries, loans, users } from "../db/schema";
 import { addBorrowerAlias, confirmBorrowerAlias, deactivateBorrowerAlias } from "../services/borrower-service";
+import { addLoanCommissionParticipant, endLoanCommissionParticipant } from "../services/loan-commission-service";
 import { loansRoute } from "./loans";
 
 type TestUser = {
@@ -58,7 +59,7 @@ function asTestUser(user: typeof users.$inferSelect): TestUser {
 }
 
 async function resetApplicationTables() {
-    await db.execute(sql`TRUNCATE TABLE audit_logs, borrower_aliases, loan_schedules, loans, borrowers, users RESTART IDENTITY CASCADE`);
+    await db.execute(sql`TRUNCATE TABLE audit_logs, loan_commission_participants, intermediaries, borrower_aliases, loan_schedules, loans, borrowers, users RESTART IDENTITY CASCADE`);
 }
 
 describe("loan list borrower labels", () => {
@@ -177,6 +178,52 @@ describe("loan list borrower labels", () => {
         expect(collectorRows.response.status).toBe(200);
         expect(collectorRows.body.map((row: { publicId: string }) => row.publicId)).toEqual([collectorLoan.publicId]);
         expect(JSON.stringify(collectorRows.body)).not.toContain("hidden-alias");
+    });
+
+    integrationTest("returns only agents effective at the current Bangkok instant in one loan-list DTO", async () => {
+        const actor = await db.insert(users).values({ tenantId: "tenant-agent-list", email: "agent-list-owner@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId: actor.tenantId, ownerUserId: actor.id, name: "Agent List Borrower" }).returning().then((rows) => rows[0]!);
+        const makeLoan = () => db.insert(loans).values({
+            tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id,
+            principalAmount: "1000.00", interestRate: "1.00", repaymentType: "floating", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        const [currentLoan, futureLoan, endedLoan, scheduledEndLoan] = await Promise.all([
+            makeLoan(), makeLoan(), makeLoan(), makeLoan(),
+        ]);
+        const makeAgent = (name: string, aliases: string[]) => db.insert(intermediaries).values({
+            tenantId: actor.tenantId, ownerUserId: actor.id, name, normalizedName: name.toLocaleLowerCase().replaceAll(" ", "-"), aliases,
+            createdByUserId: actor.id, updatedByUserId: actor.id,
+        }).returning().then((rows) => rows[0]!);
+        const [currentAgent, futureAgent, endedAgent, scheduledEndAgent] = await Promise.all([
+            makeAgent("Current Agent", ["Current Alias"]), makeAgent("Future Agent", ["Future Alias"]),
+            makeAgent("Ended Agent", ["Ended Alias"]), makeAgent("Scheduled End Agent", ["Scheduled Alias"]),
+        ]);
+        const now = Date.now();
+        const past = new Date(now - 86_400_000).toISOString();
+        const pastEnd = new Date(now - 3_600_000).toISOString();
+        const future = new Date(now + 86_400_000).toISOString();
+        const current = await addLoanCommissionParticipant(commandContext(actor.tenantId, actor.id), {
+            loanPublicId: currentLoan.publicId, intermediaryPublicId: currentAgent.publicId, commissionRate: "10.00", role: "collector", effectiveFrom: past,
+        });
+        await addLoanCommissionParticipant(commandContext(actor.tenantId, actor.id), {
+            loanPublicId: futureLoan.publicId, intermediaryPublicId: futureAgent.publicId, commissionRate: "10.00", role: "collector", effectiveFrom: future,
+        });
+        const ended = await addLoanCommissionParticipant(commandContext(actor.tenantId, actor.id), {
+            loanPublicId: endedLoan.publicId, intermediaryPublicId: endedAgent.publicId, commissionRate: "10.00", role: "collector", effectiveFrom: past,
+        });
+        await endLoanCommissionParticipant(commandContext(actor.tenantId, actor.id), { participantPublicId: ended.publicId, effectiveTo: pastEnd, reason: "ended" });
+        const scheduledEnd = await addLoanCommissionParticipant(commandContext(actor.tenantId, actor.id), {
+            loanPublicId: scheduledEndLoan.publicId, intermediaryPublicId: scheduledEndAgent.publicId, commissionRate: "10.00", role: "collector", effectiveFrom: past,
+        });
+        await endLoanCommissionParticipant(commandContext(actor.tenantId, actor.id), { participantPublicId: scheduledEnd.publicId, effectiveTo: future, reason: "scheduled" });
+        expect(current.publicId).toBeTruthy();
+
+        const result = await call(new Elysia().use(loansRoute), "/loans", await tokenFor(asTestUser(actor)));
+        const byId = new Map(result.body.map((row: { publicId: string; currentAgent: unknown }) => [row.publicId, row]));
+        expect(byId.get(currentLoan.publicId)).toMatchObject({ currentAgent: { name: "Current Agent", aliases: ["Current Alias"] } });
+        expect(byId.get(futureLoan.publicId)).toMatchObject({ currentAgent: null });
+        expect(byId.get(endedLoan.publicId)).toMatchObject({ currentAgent: null });
+        expect(byId.get(scheduledEndLoan.publicId)).toMatchObject({ currentAgent: { name: "Scheduled End Agent", aliases: ["Scheduled Alias"] } });
     });
 
     cacheIntegrationTest("refreshes cached loan-list rows after alias confirmation and deactivation", async () => {

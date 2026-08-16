@@ -1,8 +1,8 @@
 import { Elysia, t } from "elysia";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import Decimal from "decimal.js";
 import { db } from "../db";
-import { borrowerAliases, borrowers, loanSchedules, loans, transactions } from "../db/schema";
+import { borrowerAliases, borrowers, intermediaries, loanCommissionParticipants, loanSchedules, loans, paymentIntakes, transactions } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
 import { calculateLoanClosingSummary } from "../lib/calculator";
 import { createAuditLog } from "../lib/audit-log";
@@ -16,6 +16,14 @@ import { bangkokBusinessDate, getLoanListLegacyPaymentHealth, getLoanPaymentHeal
 import { getLoanReceiptSummaries } from "../services/loan-receipt-summary-service";
 import { floatingInterestBalances } from "../services/floating-interest-service";
 import { DomainError } from "../services/domain-error";
+import {
+    addLoanCommissionParticipant,
+    endLoanCommissionParticipant,
+    listLoanCommissionParticipants,
+    previewLoanCommission,
+    updateLoanCommissionParticipant,
+} from "../services/loan-commission-service";
+import { listCanonicalPostedPaymentsForLoan } from "../services/posted-payment-access";
 import { loanCommandContext, loanDomainFailure, loanUnauthorized } from "./loan-http-support";
 import { loanDraftBody, loanDraftUpdateBody, loanTermsBody } from "./loan-route-schemas";
 
@@ -40,6 +48,33 @@ export const loanListLoanProjection = {
     firstDayTreatment: loans.firstDayTreatment,
     interestStartDate: loans.interestStartDate,
 };
+
+const bangkokCurrentInstant = sql`((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Bangkok') AT TIME ZONE 'Asia/Bangkok')`;
+
+export function buildCurrentLoanAgentRowsQuery(tenantId: string, loanIds: number[]) {
+    return db.select({
+        loanId: loanCommissionParticipants.loanId,
+        name: intermediaries.name,
+        aliases: intermediaries.aliases,
+    }).from(loanCommissionParticipants)
+        .innerJoin(intermediaries, and(
+            eq(intermediaries.tenantId, tenantId),
+            eq(intermediaries.id, loanCommissionParticipants.intermediaryId),
+        ))
+        .where(and(
+            eq(loanCommissionParticipants.tenantId, tenantId),
+            inArray(loanCommissionParticipants.loanId, loanIds),
+            sql`${loanCommissionParticipants.effectiveFrom} <= ${bangkokCurrentInstant}`,
+            sql`(${loanCommissionParticipants.effectiveTo} IS NULL OR ${loanCommissionParticipants.effectiveTo} > ${bangkokCurrentInstant})`,
+            sql`NOT EXISTS (
+                SELECT 1 FROM loan_commission_participants successor
+                WHERE successor.tenant_id = ${tenantId}
+                  AND successor.previous_participant_id = ${loanCommissionParticipants.id}
+                  AND successor.effective_from <= ${bangkokCurrentInstant}
+            )`,
+        ))
+        .orderBy(loanCommissionParticipants.id);
+}
 
 function assertKnownKeys(value: Record<string, unknown>, allowedKeys: readonly string[], path = "body") {
     const unexpected = Object.keys(value).filter((key) => !allowedKeys.includes(key));
@@ -150,12 +185,23 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                     user.tenantId,
                     rows.map(({ loan }) => loan.id),
                 );
+                const currentAgentRows = rows.length === 0
+                    ? []
+                    : await buildCurrentLoanAgentRowsQuery(user.tenantId, rows.map(({ loan }) => loan.id));
+                const currentAgentsByLoan = new Map<number, { name: string; aliases: string[] }[]>();
+                for (const agentRow of currentAgentRows) {
+                    currentAgentsByLoan.set(agentRow.loanId, [
+                        ...(currentAgentsByLoan.get(agentRow.loanId) ?? []),
+                        { name: agentRow.name, aliases: agentRow.aliases },
+                    ]);
+                }
                 const asOf = new Date();
                 return Promise.all(rows.map(async ({ loan, borrowerPublicId, borrowerName, borrowerId, borrowerTags }) => {
                     const receipts = receiptSummaries.get(loan.id) ?? {
                         interestReceived: "0.00",
                         paidToDate: "0.00",
                     };
+                    const currentAgents = currentAgentsByLoan.get(loan.id) ?? [];
                     return {
                         id: loan.publicId,
                         publicId: loan.publicId,
@@ -175,6 +221,10 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                         installmentAmount: loan.installmentAmount === null ? null : serializeMoney(loan.installmentAmount),
                         totalInstallments: loan.totalInstallments,
                         startDate: loan.startDate,
+                        currentAgent: currentAgents.length === 0 ? null : {
+                            name: currentAgents.map((agent) => agent.name).join(", "),
+                            aliases: [...new Set(currentAgents.flatMap((agent) => agent.aliases))],
+                        },
                         paymentHealth: loan.repaymentType === "floating"
                             ? await getLoanListLegacyPaymentHealth(db, loan as typeof loans.$inferSelect, { asOf })
                             : await getLoanPaymentHealth(db, loan as typeof loans.$inferSelect, { asOf, context: ctx }),
@@ -183,6 +233,79 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
             },
         });
     }, { query: t.Object({ borrowerId: t.Optional(t.String()) }) })
+    .get("/:id/commission-participants", async ({ params, user, request, set }) => {
+        if (!user) return loanUnauthorized(set);
+        try { return await listLoanCommissionParticipants(loanCommandContext(user, request), params.id); }
+        catch (error) { return loanDomainFailure(error, set); }
+    }, { params: t.Object({ id: t.String({ format: "uuid" }) }) })
+    .post("/:id/commission-participants", async ({ params, body, user, request, set }) => {
+        if (!user) return loanUnauthorized(set);
+        try {
+            const { confirmed: _confirmed, ...input } = body;
+            const participant = await addLoanCommissionParticipant(loanCommandContext(user, request), { loanPublicId: params.id, ...input });
+            await invalidateTenantCache(user.tenantId);
+            return participant;
+        } catch (error) { return loanDomainFailure(error, set); }
+    }, {
+        params: t.Object({ id: t.String({ format: "uuid" }) }),
+        body: t.Object({
+            intermediaryPublicId: t.String({ format: "uuid" }), commissionRate: t.String({ pattern: "^(?:0|[1-9]\\d{0,2})(?:\\.\\d{1,4})?$", maxLength: 8 }),
+            role: t.String({ minLength: 1, maxLength: 500 }), effectiveFrom: t.String({ format: "date-time" }),
+            note: t.Optional(t.Nullable(t.String({ maxLength: 2_000 }))), confirmed: t.Literal(true),
+        }, { additionalProperties: t.Never() }),
+    })
+    .patch("/:id/commission-participants/:participantId", async ({ params, body, user, request, set }) => {
+        if (!user) return loanUnauthorized(set);
+        try {
+            const ctx = loanCommandContext(user, request);
+            const participants = await listLoanCommissionParticipants(ctx, params.id);
+            if (!participants.some((participant) => participant.publicId === params.participantId)) throw new DomainError("COMMISSION_PARTICIPANT_NOT_FOUND", "Commission participant not found", 404);
+            const { confirmed: _confirmed, ...input } = body;
+            const participant = await updateLoanCommissionParticipant(ctx, { participantPublicId: params.participantId, ...input });
+            await invalidateTenantCache(user.tenantId);
+            return participant;
+        } catch (error) { return loanDomainFailure(error, set); }
+    }, {
+        params: t.Object({ id: t.String({ format: "uuid" }), participantId: t.String({ format: "uuid" }) }),
+        body: t.Object({
+            commissionRate: t.String({ pattern: "^(?:0|[1-9]\\d{0,2})(?:\\.\\d{1,4})?$", maxLength: 8 }),
+            role: t.String({ minLength: 1, maxLength: 500 }), effectiveFrom: t.String({ format: "date-time" }),
+            note: t.Optional(t.Nullable(t.String({ maxLength: 2_000 }))), confirmed: t.Literal(true),
+        }, { additionalProperties: t.Never() }),
+    })
+    .post("/:id/commission-participants/:participantId/end", async ({ params, body, user, request, set }) => {
+        if (!user) return loanUnauthorized(set);
+        try {
+            const ctx = loanCommandContext(user, request);
+            const participants = await listLoanCommissionParticipants(ctx, params.id);
+            if (!participants.some((participant) => participant.publicId === params.participantId)) throw new DomainError("COMMISSION_PARTICIPANT_NOT_FOUND", "Commission participant not found", 404);
+            const { confirmed: _confirmed, ...input } = body;
+            const participant = await endLoanCommissionParticipant(ctx, { participantPublicId: params.participantId, ...input });
+            await invalidateTenantCache(user.tenantId);
+            return participant;
+        } catch (error) { return loanDomainFailure(error, set); }
+    }, {
+        params: t.Object({ id: t.String({ format: "uuid" }), participantId: t.String({ format: "uuid" }) }),
+        body: t.Object({ effectiveTo: t.String({ format: "date-time" }), reason: t.String({ minLength: 1, maxLength: 500 }), confirmed: t.Literal(true) }, { additionalProperties: t.Never() }),
+    })
+    .post("/:id/commission/preview", async ({ params, body, user, request, set }) => {
+        if (!user) return loanUnauthorized(set);
+        try { return await previewLoanCommission(loanCommandContext(user, request), { loanPublicId: params.id, paymentPublicIds: body.paymentPublicIds }); }
+        catch (error) { return loanDomainFailure(error, set); }
+    }, {
+        params: t.Object({ id: t.String({ format: "uuid" }) }),
+        body: t.Object({ paymentPublicIds: t.Array(t.String({ format: "uuid" }), { minItems: 1, maxItems: 1_000 }) }, { additionalProperties: t.Never() }),
+    })
+    .get("/:id/commissions", async ({ params, query, user, request, set }) => {
+        if (!user) return loanUnauthorized(set);
+        try {
+            const paymentPublicIds = query.paymentPublicIds.split(",").map((value) => value.trim()).filter(Boolean);
+            return await previewLoanCommission(loanCommandContext(user, request), { loanPublicId: params.id, paymentPublicIds });
+        } catch (error) { return loanDomainFailure(error, set); }
+    }, {
+        params: t.Object({ id: t.String({ format: "uuid" }) }),
+        query: t.Object({ paymentPublicIds: t.String({ minLength: 36, maxLength: 37_000 }) }, { additionalProperties: t.Never() }),
+    })
     .get("/:id", async ({ params, user, request, set }) => {
         if (!user) return loanUnauthorized(set);
         const scopeKey = getAccessScopeCacheKey(user);
@@ -192,13 +315,37 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                 namespace: "loans",
                 key: `detail:${params.id}:${scopeKey}`,
                 ttlSeconds: 30,
-                loader: async () => getLoanApplication(loanCommandContext(user, request), params.id),
+                loader: async () => {
+                    const ctx = loanCommandContext(user, request);
+                    const accessibleLoan = await findAccessibleLoanByPublicId(user, params.id);
+                    if (!accessibleLoan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+                    const [loan, commissionParticipants, paymentRows] = await Promise.all([
+                        getLoanApplication(ctx, params.id),
+                        listLoanCommissionParticipants(ctx, params.id),
+                        db.select({ publicId: transactions.publicId }).from(transactions).where(and(
+                            eq(transactions.tenantId, user.tenantId), eq(transactions.loanId, accessibleLoan.id),
+                            isNotNull(transactions.postedAt), inArray(transactions.entryType, ["repayment", "reversal"]),
+                            inArray(transactions.type, ["repayment", "close_account", "reversal"]),
+                            sql`(${transactions.paymentIntakeId} IS NULL OR EXISTS (
+                                SELECT 1 FROM ${paymentIntakes}
+                                WHERE ${paymentIntakes.tenantId} = ${user.tenantId}
+                                  AND ${paymentIntakes.id} = ${transactions.paymentIntakeId}
+                                  AND ${paymentIntakes.status} = 'posted'
+                                  AND ${paymentIntakes.postedAt} IS NOT NULL
+                            ))`,
+                        )),
+                    ]);
+                    const commissionSummary = paymentRows.length > 0
+                        ? await previewLoanCommission(ctx, { loanPublicId: params.id, paymentPublicIds: paymentRows.map((row) => row.publicId) })
+                        : { loanPublicId: params.id, paymentPublicIds: [], interestAmount: "0.00", totalCommission: "0.00", participants: [] };
+                    return { ...loan, commissionParticipantCount: commissionParticipants.length, commissionParticipants, commissionSummary };
+                },
             });
         } catch (error) {
             return loanDomainFailure(error, set);
         }
     }, { params: t.Object({ id: t.String() }) })
-    .get("/:id/schedule", async ({ params, user, set }) => {
+    .get("/:id/schedule", async ({ params, user, request, set }) => {
         if (!user) return loanUnauthorized(set);
         const loan = await findAccessibleLoanByPublicId(user, params.id);
         if (!loan) return loanDomainFailure(new DomainError("LOAN_NOT_FOUND", "Loan not found", 404), set);
@@ -210,11 +357,26 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
             key: `schedule:${loan.id}:${scopeKey}`,
             ttlSeconds: 20,
             loader: async () => {
-                const scheduleRows = await db.select().from(loanSchedules).where(and(
-                    eq(loanSchedules.loanId, loan.id),
-                    eq(loanSchedules.tenantId, user.tenantId),
-                )).orderBy(loanSchedules.installmentNo);
-                return scheduleRows.map((row) => {
+                const [scheduleRows, paymentRows] = await Promise.all([
+                    db.select().from(loanSchedules).where(and(
+                        eq(loanSchedules.loanId, loan.id),
+                        eq(loanSchedules.tenantId, user.tenantId),
+                    )).orderBy(loanSchedules.installmentNo),
+                    listCanonicalPostedPaymentsForLoan(user.tenantId, loan.id),
+                ]);
+                const paymentIdsBySchedule = new Map<number, string[]>();
+                for (const payment of paymentRows) {
+                    if (payment.scheduleId === null) continue;
+                    const ids = paymentIdsBySchedule.get(payment.scheduleId) ?? [];
+                    ids.push(payment.publicId);
+                    paymentIdsBySchedule.set(payment.scheduleId, ids);
+                }
+                const ctx = loanCommandContext(user, request);
+                return Promise.all(scheduleRows.map(async (row) => {
+                    const paymentPublicIds = paymentIdsBySchedule.get(row.id) ?? [];
+                    const commissionAmount = paymentPublicIds.length === 0
+                        ? "0.00"
+                        : (await previewLoanCommission(ctx, { loanPublicId: loan.publicId, paymentPublicIds })).totalCommission;
                     const overdue = computeOverdueSnapshot({
                         dueDate: row.dueDate,
                         remainingDue: row.remainingDue,
@@ -237,6 +399,7 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                         paidTotal: serializeMoney(row.paidTotal),
                         paidPenalty: serializeMoney(row.paidPenalty),
                         remainingDue: serializeMoney(row.remainingDue),
+                        commissionAmount,
                         overdueDays: overdue.overdueDays,
                         penaltyDue: overdue.penaltyDue.toFixed(2),
                         totalDueNow: overdue.totalDueNow.toFixed(2),
@@ -244,7 +407,7 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                         createdAt: row.createdAt,
                         updatedAt: row.updatedAt,
                     };
-                });
+                }));
             },
         });
     }, { params: t.Object({ id: t.String() }) })

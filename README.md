@@ -82,6 +82,7 @@ Account identity and tenant role are read-only values supplied by the authorized
 - distinguish due-now and overdue scheduled or floating daily-interest obligations directly on the loan-agreement list before opening details
 - show up to three borrower labels under each loan card name, using confirmed aliases first and borrower tags after, with a localized `+N` overflow when more labels exist
 - search loan lists by borrower name, loan ID, aliases, and tags, including hidden overflow labels
+- show the current loan agent (or localized unassigned state) on Loan List cards and include confirmed agent aliases in search
 - scan exact Loan List financial summaries: non-paid cards keep outstanding and original principal together with backend-owned interest-received and paid-to-date totals, while paid cards show a checked completion state with original principal and interest received
 - preview installment breakdown
 - calculate floating closing obligations from current outstanding principal, unpaid due and accruing interest, outstanding fees, and applicable penalties while reporting payment history separately
@@ -90,6 +91,8 @@ Account identity and tenant role are read-only values supplied by the authorized
 Single-payment contracts keep principal, agreed interest, fees, and late penalties as separate exact components. A contract can use the agreed fixed interest only, or the greater of that fixed amount and retroactive interest calculated from actual posted-disbursement exposure; those two interest candidates are alternatives and are never added together. When contracted, the daily late penalty accrues concurrently after the due date and grace period. The localized wizard shows the authoritative one-row maturity preview before a draft is saved and activated.
 
 Loan Detail can settle and restructure an eligible contract into a new `single_payment`, `daily`, `weekly`, `monthly`, or `floating` contract. The backend preview shows gross, waived, externally paid, and carried balances independently. Waiving interest, fees, or penalties requires a component-specific reason and preserves the forgiven amount in the append-only ledger; an external payment is different because it is allocated as real settlement value in `penalty -> fee -> interest -> principal` order. Outstanding principal plus optional newly approved principal becomes the replacement principal—carried interest, fees, and penalties are opening components and are not capitalized. Additional approved principal is not itself proof of cash sent: execution creates a linked disbursement draft whose normal evidence/post lifecycle remains authoritative for the payout.
+
+Loan Detail keeps the existing agreement route and back navigation while separating Information, Agents, Payment History, and Repayment Schedule into accessible, localized tabs. Agent agreements are effective-dated in the Asia/Bangkok business timezone and confirmation-gated; posted payment sources remain `Unattributed` until explicitly assigned as direct or split among agents, and displayed total and per-schedule commissions come from backend-authoritative previews rather than client-side accounting.
 
 Restructure is `preview -> review exact totals and cash direction -> explicit confirmation -> execute`. Preview expiry, a stale balance version/hash, an idempotency conflict, an unallocated external credit, or unexpected cash stops execution. A safely repeated request with the same key and payload returns the original result. Reversal writes compensating history and is blocked after downstream payments, posted payout events, later waivers/restructures/renewals, or other dependent records make reversal unsafe. Later eligible carried interest/fee/penalty can be waived through its own preview/confirmed execute/reverse workflow; principal cannot be waived.
 
@@ -347,7 +350,7 @@ CreditSync serves a private stateless Streamable HTTP MCP endpoint at `/mcp` in 
 
 All MCP requests are bound to the server-side `MCP_TENANT_ID` and `MCP_ACTOR_EMAIL`. A client cannot submit or override tenant or actor identity. The configured actor must already exist in that tenant, and its normal CreditSync role/portfolio permissions still apply. Funding sources are list-only; the MCP surface has no generic SQL, arbitrary fetch, or funding mutation tool.
 
-The backend schema-version `1.0` exposes 47 frozen tools, including:
+The backend schema-version `1.0` exposes 75 frozen tools, including:
 
 ```text
 borrower.search       borrower.portfolio    borrower.create
@@ -362,6 +365,13 @@ loan.disbursement.list       loan.disbursement.draft
 loan.disbursement.update
 loan.disbursement.evidence.prepare  loan.disbursement.evidence.finalize
 loan.disbursement.post       loan.disbursement.reverse
+loan.commission-participant.list  loan.commission-participant.add
+loan.commission-participant.update  loan.commission-participant.end
+loan.commission.preview      loan.commission.list
+loan.commission.calculate    loan.commission.reverse
+payment.intermediary-attribution.create
+payment.intermediary-attribution.list
+payment.intermediary-attribution.reverse
 intermediary.search          intermediary.create
 intermediary.profile.get     intermediary.bank-account.save
 intermediary.managed-loan.list
@@ -384,7 +394,7 @@ renewal.preview       renewal.execute
 renewal.reverse       funding-source.list
 ```
 
-Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Disbursement drafts support strict non-empty PATCH updates to editable metadata; each update retains finalized evidence and requires a re-list plus fresh confirmation before posting. Payment posting/reversal, idempotent loan activation, floating-interest execution and settlement/reversal, renewal execution/reversal, direct and intermediary-routed disbursement post/reverse, intermediary remittance posting, single-payment restructuring, and component waivers follow explicit confirmation and audit boundaries. Settlement and intermediated-disbursement previews persist short-lived versioned command artifacts; execution accepts only the exact current preview and returns safe audit/correlation identifiers. Intermediary bank-account save, assignment create/end, and transfer-evidence prepare/finalize MCP results also return their audit public UUID and correlation UUID while their existing REST DTOs remain unchanged. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces. The bundled Plugin `7.0.0` freezes the matching 64-tool backend contract.
+Tool inputs use public UUIDs and two-decimal money strings. Results include concise text plus structured content with `schemaVersion: "1.0"`. Loan commission participants are effective-dated immutable versions; updates append a successor, while payment-source attribution corrections append reasoned compensating entries. Commission outputs are derived by backend services from posted interest components and never by MCP arithmetic; `loan.commission.reverse` is a read-only preview for posted reversal payments and never returns write audit metadata. Actual commission-participant and payment-attribution writes require explicit confirmation and stable idempotency keys and return safe audit/correlation identifiers. Disbursement drafts support strict non-empty PATCH updates to editable metadata; each update retains finalized evidence and requires a re-list plus fresh confirmation before posting. Payment posting/reversal, idempotent loan activation, floating-interest execution and settlement/reversal, renewal execution/reversal, direct and intermediary-routed disbursement post/reverse, intermediary remittance posting, single-payment restructuring, and component waivers follow explicit confirmation and audit boundaries. Settlement and intermediated-disbursement previews persist short-lived versioned command artifacts; execution accepts only the exact current preview. Intermediary bank-account save, assignment create/end, and transfer-evidence prepare/finalize MCP results also return their audit public UUID and correlation UUID while their existing REST DTOs remain unchanged. Tool failures use the stable shape `{code,message,retryable,reviewRequired,details}` without internal stack traces. The bundled Plugin `7.0.0` freezes the matching 75-tool backend contract.
 
 ### Configure and rotate the bearer token
 

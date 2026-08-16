@@ -4,12 +4,24 @@
 
 ### Added
 - Added the `creditsync-slip-ocr` ZCode agent skill: a Bun/Tesseract.js workflow that OCRs Thai payment slip images (full image plus zoomed date/sender/receiver crops), parses candidate fields, and cross-checks them against borrower payment history and loan schedules before any human-confirmed MCP payment write.
+- Added tabbed Loan Detail views for information, agent commission agreements, payment-source attribution history, and repayment schedule, plus localized agent badges/search on Loan List.
+- Added tenant-scoped REST and a frozen 75-tool MCP/plugin contract for effective-dated loan commission participants, read-only exact commission and reversal previews, and confirmed idempotent append-only payment source attributions with audit/correlation metadata.
+- Added tenant-scoped append-only loan commission participant versions and exact payment source-attribution ledgers, including Decimal-only commission previews, payload-safe idempotency, compensating reversals, and audit-linked immutable database records.
+- Added tabbed Loan Detail views for information, agent commission agreements, payment-source attribution history, and repayment schedule, plus localized agent badges/search on Loan List.
+- Added tenant-scoped REST and a frozen 75-tool MCP/plugin contract for effective-dated loan commission participants, read-only exact commission and reversal previews, and confirmed idempotent append-only payment source attributions with audit/correlation metadata.
+- Added tenant-scoped append-only loan commission participant versions and exact payment source-attribution ledgers, including Decimal-only commission previews, payload-safe idempotency, compensating reversals, and audit-linked immutable database records.
 - Added Active, Done, and All tabs to Loan List with English/Thai labels and client-side status filtering that reuses the existing loan query.
 - Added the approved design for optional loan commission participants, post-payment source attribution, MCP commands, and Information/Agents/Payment History/Repayment Schedule tabs.
 - Added the implementation plan for loan agent commission participants, post-payment attribution, MCP contracts, and tabbed Loan Detail delivery.
 
 ### Changed
 - Localized the Loan List empty state to match the selected Active, Done, or All tab scope.
+
+### Fixed
+- Enforced canonical posted-payment and owner-scope authorization across payment attribution and commission reads, interpreted agent agreement times in Asia/Bangkok, added backend-authoritative exact commission amounts to repayment-schedule rows, and ordered the commission-participant self-reference after its supporting unique index so fresh database migrations bootstrap successfully.
+- Made confirmed agent and payment-attribution retries reuse command-scoped idempotency keys, removed unsupported per-installment commission placeholders, projected effective current agents in the tenant-scoped Loan List query without frontend fan-out, and preserved inactive intermediary display data for participant history.
+- Hardened commission and payment-attribution ledgers by authorizing idempotent replays before disclosure, returning persisted linked transaction IDs, restricting previews to canonical posted payments, validating strict ISO timestamps, and covering audit context and append-only database guards.
+- Required direct loan commission participant updates and endings to authorize both the loan and linked intermediary within the caller's tenant and owner scope.
 
 ## v0.3.15 - 2026-08-16
 

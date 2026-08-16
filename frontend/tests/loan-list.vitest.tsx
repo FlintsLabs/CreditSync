@@ -206,6 +206,21 @@ describe("LoanList", () => {
         expect(screen.getByText("ลูกหนี้")).toBeInTheDocument();
     });
 
+    test("shows current agents on overdue cards and searches confirmed agent aliases", async () => {
+        vi.mocked(api.get).mockResolvedValue({ data: [{
+            id: "agent-loan", publicId: "agent-loan", borrowerName: "Borrower A", principal: "1000.00", outstandingPrincipal: "900.00", interestReceived: "20.00", paidToDate: "120.00", status: "active", repaymentType: "daily", installmentAmount: "100.00", totalInstallments: 10, startDate: "2026-08-01", createdAt: "2026-08-10T07:30:00.000Z", paymentHealth: { status: "overdue", dueTodayAmount: "0.00", overdueAmount: "100.00", overdueItemCount: 1, maxOverdueDays: 2 }, currentAgent: { name: "Agent Alpha", aliases: ["พี่เอ"] },
+        }] });
+
+        render(<MemoryRouter><LoanList /></MemoryRouter>);
+
+        const card = (await screen.findByText("Borrower A")).closest("a")!;
+        expect(within(card).getByText("Agent Alpha")).toBeInTheDocument();
+        expect(within(card).getByText("Overdue 1 installment")).toBeInTheDocument();
+        await userEvent.type(screen.getByPlaceholderText("Name, nickname, tag, or loan #"), "พี่เอ");
+        expect(screen.getByText("Borrower A")).toBeInTheDocument();
+        expect(vi.mocked(api.get).mock.calls.map(([url]) => url)).toEqual(["/loans"]);
+    });
+
     test("shows a localized load error instead of the empty state and retries", async () => {
         vi.mocked(api.get)
             .mockRejectedValueOnce(new Error("unavailable"))

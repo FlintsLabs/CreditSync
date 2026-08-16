@@ -36,6 +36,17 @@ export const MCP_TOOL_NAMES = [
     "loan.disbursement.evidence.finalize",
     "loan.disbursement.post",
     "loan.disbursement.reverse",
+    "loan.commission-participant.list",
+    "loan.commission-participant.add",
+    "loan.commission-participant.update",
+    "loan.commission-participant.end",
+    "loan.commission.preview",
+    "loan.commission.list",
+    "loan.commission.calculate",
+    "loan.commission.reverse",
+    "payment.intermediary-attribution.create",
+    "payment.intermediary-attribution.list",
+    "payment.intermediary-attribution.reverse",
     "intermediary.search",
     "intermediary.create",
     "intermediary.profile.get",
@@ -731,6 +742,27 @@ const intermediatedReverseOutput = intermediatedGroupOutput.extend({
     correlationId: uuid,
 }).strict();
 
+const commissionRate = z.string().regex(/^(?:0|[1-9]\d{0,2})(?:\.\d{1,4})?$/).max(8);
+const commissionParticipantOutput = z.object({
+    publicId: uuid, loanPublicId: uuid, intermediaryPublicId: uuid,
+    previousParticipantPublicId: uuid.nullable(), commissionRate, role: shortText,
+    note: z.string().nullable(), effectiveFrom: isoDateTime, effectiveTo: isoDateTime.nullable(),
+    status: z.enum(["active", "ended"]), auditPublicId: uuid, correlationId: uuid, createdAt: isoDateTime,
+}).strict();
+const commissionPreviewOutput = z.object({
+    loanPublicId: uuid, paymentPublicIds: z.array(uuid).min(1), interestAmount: signedMoney,
+    totalCommission: signedMoney,
+    participants: z.array(z.object({
+        participantPublicId: uuid, intermediaryPublicId: uuid, commissionRate, commissionAmount: signedMoney,
+    }).strict()),
+}).strict();
+const paymentAttributionOutput = z.object({
+    publicId: uuid, paymentPublicId: uuid, transactionPublicId: uuid.nullable(),
+    sourceKind: z.enum(["direct", "intermediary"]), intermediaryPublicId: uuid.nullable(), amount: signedMoney,
+    reason: z.string().nullable(), reversedAttributionPublicId: uuid.nullable(),
+    auditPublicId: uuid, correlationId: uuid, createdAt: isoDateTime,
+}).strict();
+
 const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
     "borrower.search": z.object({
         resolution: z.enum(["none", "unique", "ambiguous", "candidates"]),
@@ -871,6 +903,17 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "loan.disbursement.reverse": disbursementEventOutput.extend({
         reversedEventPublicId: uuid, duplicate: z.boolean(), auditPublicId: uuid.nullable(), correlationId: uuid,
     }).strict(),
+    "loan.commission-participant.list": z.object({ items: z.array(commissionParticipantOutput) }).strict(),
+    "loan.commission-participant.add": commissionParticipantOutput,
+    "loan.commission-participant.update": commissionParticipantOutput,
+    "loan.commission-participant.end": commissionParticipantOutput,
+    "loan.commission.preview": commissionPreviewOutput,
+    "loan.commission.list": commissionPreviewOutput,
+    "loan.commission.calculate": commissionPreviewOutput,
+    "loan.commission.reverse": commissionPreviewOutput,
+    "payment.intermediary-attribution.create": paymentAttributionOutput,
+    "payment.intermediary-attribution.list": z.object({ items: z.array(paymentAttributionOutput) }).strict(),
+    "payment.intermediary-attribution.reverse": paymentAttributionOutput,
     "intermediary.search": z.object({ items: z.array(intermediaryBaseOutput) }).strict(),
     "intermediary.create": intermediaryBaseOutput,
     "intermediary.profile.get": intermediaryBaseOutput.extend({
@@ -1047,6 +1090,37 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
     "loan.disbursement.evidence.finalize": z.object({ disbursementPublicId: uuid, evidencePublicId: uuid }).strict(),
     "loan.disbursement.post": z.object({ disbursementPublicId: uuid, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
     "loan.disbursement.reverse": z.object({ disbursementPublicId: uuid, reason: shortText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
+    "loan.commission-participant.list": z.object({ loanPublicId: uuid }).strict(),
+    "loan.commission-participant.add": z.object({
+        loanPublicId: uuid, intermediaryPublicId: uuid, commissionRate, role: shortText,
+        effectiveFrom: isoDateTime, note: optionalNullableText, confirmed: z.literal(true),
+        idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict(),
+    "loan.commission-participant.update": z.object({
+        participantPublicId: uuid, commissionRate, role: shortText, effectiveFrom: isoDateTime,
+        note: optionalNullableText, confirmed: z.literal(true), idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict(),
+    "loan.commission-participant.end": z.object({
+        participantPublicId: uuid, effectiveTo: isoDateTime, reason: shortText,
+        confirmed: z.literal(true), idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict(),
+    "loan.commission.preview": z.object({ loanPublicId: uuid, paymentPublicIds: z.array(uuid).min(1).max(1_000) }).strict(),
+    "loan.commission.list": z.object({ loanPublicId: uuid, paymentPublicIds: z.array(uuid).min(1).max(1_000) }).strict(),
+    "loan.commission.calculate": z.object({ loanPublicId: uuid, paymentPublicIds: z.array(uuid).min(1).max(1_000) }).strict(),
+    "loan.commission.reverse": z.object({ loanPublicId: uuid, paymentPublicIds: z.array(uuid).min(1).max(1_000) }).strict(),
+    "payment.intermediary-attribution.create": z.object({
+        paymentPublicId: uuid, transactionPublicId: uuid.optional(), sourceKind: z.enum(["direct", "intermediary"]),
+        intermediaryPublicId: uuid.optional(), amount: money, confirmed: z.literal(true),
+        idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict().superRefine((value, ctx) => {
+        if (value.sourceKind === "direct" && value.intermediaryPublicId) ctx.addIssue({ code: "custom", message: "direct attribution cannot include intermediaryPublicId" });
+        if (value.sourceKind === "intermediary" && !value.intermediaryPublicId) ctx.addIssue({ code: "custom", message: "intermediary attribution requires intermediaryPublicId" });
+    }),
+    "payment.intermediary-attribution.list": z.object({ paymentPublicId: uuid }).strict(),
+    "payment.intermediary-attribution.reverse": z.object({
+        attributionPublicId: uuid, reason: shortText, confirmed: z.literal(true),
+        idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict(),
     "intermediary.search": z.object({ query: shortText }).strict(),
     "intermediary.create": z.object({ name: shortText, aliases: z.array(shortText).optional(), notes: optionalNullableText }).strict(),
     "intermediary.profile.get": z.object({ intermediaryPublicId: uuid }).strict(),
@@ -1244,6 +1318,12 @@ const readOnlyTools = new Set<McpToolName>([
     "loan.preview",
     "loan.interest-rate.list",
     "loan.disbursement.list",
+    "loan.commission-participant.list",
+    "loan.commission.preview",
+    "loan.commission.list",
+    "loan.commission.calculate",
+    "loan.commission.reverse",
+    "payment.intermediary-attribution.list",
     "intermediary.search",
     "intermediary.profile.get",
     "intermediary.managed-loan.list",
@@ -1268,6 +1348,11 @@ const destructiveTools = new Set<McpToolName>([
     "loan.disbursement.update",
     "loan.disbursement.post",
     "loan.disbursement.reverse",
+    "loan.commission-participant.add",
+    "loan.commission-participant.update",
+    "loan.commission-participant.end",
+    "payment.intermediary-attribution.create",
+    "payment.intermediary-attribution.reverse",
     "intermediary.bank-account.save",
     "intermediary.assignment.end",
     "intermediary.disbursement.evidence.prepare",
@@ -1292,6 +1377,11 @@ const financialTools = new Set<McpToolName>([
     "loan.settlement.reverse",
     "loan.disbursement.post",
     "loan.disbursement.reverse",
+    "loan.commission-participant.add",
+    "loan.commission-participant.update",
+    "loan.commission-participant.end",
+    "payment.intermediary-attribution.create",
+    "payment.intermediary-attribution.reverse",
     "intermediary.disbursement.post",
     "intermediary.disbursement.reverse",
     "intermediary.remittance.post",
@@ -1303,7 +1393,7 @@ const financialTools = new Set<McpToolName>([
     "loan.waiver.reverse",
 ]);
 const idempotentTools = new Set<McpToolName>([
-    ...readOnlyTools,
+    ...[...readOnlyTools].filter((toolName) => toolName !== "loan.commission.reverse"),
     "intake.create",
     "payment.post",
     "payment.reverse",
@@ -1313,6 +1403,11 @@ const idempotentTools = new Set<McpToolName>([
     "loan.settlement.reverse",
     "loan.disbursement.post",
     "loan.disbursement.reverse",
+    "loan.commission-participant.add",
+    "loan.commission-participant.update",
+    "loan.commission-participant.end",
+    "payment.intermediary-attribution.create",
+    "payment.intermediary-attribution.reverse",
     "intermediary.bank-account.save",
     "intermediary.assignment.create",
     "intermediary.assignment.end",
@@ -1361,6 +1456,17 @@ const toolDescriptions: Record<McpToolName, string> = {
     "loan.disbursement.evidence.finalize": "Verify and finalize loan disbursement evidence.",
     "loan.disbursement.post": "Post an actual loan disbursement idempotently.",
     "loan.disbursement.reverse": "Reverse a posted loan disbursement with a reason.",
+    "loan.commission-participant.list": "List current effective-dated commission participants for an accessible loan.",
+    "loan.commission-participant.add": "Add a confirmed effective-dated commission participant idempotently.",
+    "loan.commission-participant.update": "End the current participant version and append a confirmed replacement version.",
+    "loan.commission-participant.end": "End a commission participant through a confirmed immutable successor version.",
+    "loan.commission.preview": "Preview exact commission derived only from posted payment interest components.",
+    "loan.commission.list": "List exact derived commission for supplied posted payment public UUIDs.",
+    "loan.commission.calculate": "Calculate exact derived commission for supplied posted payment public UUIDs.",
+    "loan.commission.reverse": "Preview the exact compensating commission effect of supplied posted reversal payments read-only; this never writes financial records or returns audit identifiers.",
+    "payment.intermediary-attribution.create": "Create a confirmed exact payment-source attribution idempotently.",
+    "payment.intermediary-attribution.list": "List append-only payment-source attribution entries for one accessible payment.",
+    "payment.intermediary-attribution.reverse": "Create a confirmed reasoned compensating attribution idempotently.",
     "intermediary.search": "Search active intermediaries before creating a new record.",
     "intermediary.create": "Create an intermediary after canonical-name review.",
     "intermediary.profile.get": "Inspect one intermediary profile, masked bank accounts, and assignment history.",
@@ -1403,8 +1509,26 @@ function titleFor(toolName: McpToolName) {
 }
 
 function completionText(toolName: McpToolName) {
+    if (toolName === "loan.commission.reverse") return "Loan commission reversal preview completed.";
     const words = toolName.replace(/[.-]/gu, " ");
     return `${words[0]!.toUpperCase()}${words.slice(1)} completed.`;
+}
+
+/** Test/validator view of the exact schemas and annotations used by registerTool. */
+export function advertisedMcpToolMetadata() {
+    return MCP_TOOL_NAMES.map((name) => ({
+        name,
+        description: toolDescriptions[name],
+        inputSchema: z.toJSONSchema(toolInputSchemas[name]) as Record<string, unknown>,
+        outputSchema: z.toJSONSchema(advertisedOutputSchema(name)) as Record<string, unknown>,
+        annotations: {
+            title: titleFor(name),
+            readOnlyHint: readOnlyTools.has(name),
+            destructiveHint: destructiveTools.has(name),
+            idempotentHint: idempotentTools.has(name),
+            openWorldHint: false,
+        },
+    }));
 }
 
 function sanitizeDetails(details: Record<string, unknown> | undefined): Record<string, unknown> {
@@ -1500,7 +1624,7 @@ function frozenToolData(toolName: McpToolName, value: unknown): Record<string, u
     return projected;
 }
 
-function createServer(input: CreateMcpHttpPluginInput, ctx: CommandContext) {
+export function createMcpProtocolServer(input: CreateMcpHttpPluginInput, ctx: CommandContext) {
     const server = new McpServer({ name: "creditsync", version: "1.0.0" }, {
         capabilities: { tools: {} },
         instructions: "CreditSync private tenant-scoped financial workflow tools. Preview before posting financial changes.",
@@ -1653,7 +1777,7 @@ export function createMcpHttpPlugin(input: CreateMcpHttpPluginInput) {
                     requestId: requestIdValue,
                     correlationId: correlationIdValue,
                 };
-                const server = createServer(input, ctx);
+            const server = createMcpProtocolServer(input, ctx);
                 const transport = new WebStandardStreamableHTTPServerTransport({
                     sessionIdGenerator: undefined,
                     enableJsonResponse: true,

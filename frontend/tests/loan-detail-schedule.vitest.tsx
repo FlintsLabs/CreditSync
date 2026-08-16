@@ -1,4 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LoanDetail from "../src/pages/dashboard/loans/LoanDetail";
@@ -68,6 +69,7 @@ describe("Loan detail repayment schedule table", () => {
 
     it("renders a localized compact semantic table with the first eight rows", async () => {
         renderLoanDetail();
+        await userEvent.click(await screen.findByRole("tab", { name: "ตารางผ่อน" }));
 
         const section = (await screen.findByRole("heading", { name: "ตารางผ่อน" })).closest("div.rounded-lg");
         expect(section).not.toBeNull();
@@ -77,6 +79,8 @@ describe("Loan detail repayment schedule table", () => {
         expect(within(table).getByRole("columnheader", { name: "วันครบกำหนด" })).toBeInTheDocument();
         expect(within(table).getByRole("columnheader", { name: "ยอดคงค้าง" })).toBeInTheDocument();
         expect(within(table).getByRole("columnheader", { name: "สถานะ" })).toBeInTheDocument();
+        expect(within(table).queryByRole("columnheader", { name: "ค่าคอมมิชชันที่เกิดขึ้น" })).not.toBeInTheDocument();
+        expect(within(section as HTMLElement).getByText("ค่าคอมมิชชันจากดอกเบี้ยที่เก็บได้")).toBeInTheDocument();
         expect(within(table).getAllByRole("row")).toHaveLength(9);
         expect(within(table).getByText("งวด #1")).toBeInTheDocument();
         expect(within(table).getByText("2026-07-01")).toBeInTheDocument();

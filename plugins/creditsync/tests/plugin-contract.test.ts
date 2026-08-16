@@ -78,6 +78,34 @@ describe("CreditSync plugin 7.0.0 contract", () => {
         expect(await readFile(resolve(pluginRoot, "scripts/validate.ts"), "utf8")).toContain('"restructure-loan"');
     });
 
+    test("commission and attribution skills bind named tools to write and reversal safety guidance", async () => {
+        const required: Record<string, string[]> = {
+            creditsync: [
+                "loan.commission-participant.list", "loan.commission-participant.add", "loan.commission-participant.update",
+                "loan.commission-participant.end", "loan.commission.preview", "loan.commission.list", "loan.commission.calculate",
+                "loan.commission.reverse", "payment.intermediary-attribution.create", "payment.intermediary-attribution.list",
+                "payment.intermediary-attribution.reverse",
+            ],
+            "manage-loans": [
+                "loan.commission-participant.list", "loan.commission-participant.add", "loan.commission-participant.update",
+                "loan.commission-participant.end", "loan.commission.preview", "loan.commission.list", "loan.commission.calculate",
+                "loan.commission.reverse",
+            ],
+            "reconcile-payments": [
+                "loan.commission-participant.list", "loan.commission.preview", "loan.commission.reverse",
+                "payment.intermediary-attribution.create", "payment.intermediary-attribution.list",
+                "payment.intermediary-attribution.reverse",
+            ],
+        };
+        for (const [skillName, toolNames] of Object.entries(required)) {
+            const skill = await readFile(resolve(pluginRoot, "skills", skillName, "SKILL.md"), "utf8");
+            for (const toolName of toolNames) expect(skill, `${skillName} guidance for ${toolName}`).toContain(`\`${toolName}\``);
+            for (const boundary of ["explicit confirmation", "stable idempotency key", "append-only", "read-only compensating preview", "unattributed", "multi-agent"]) {
+                expect(skill, `${skillName} ${boundary} boundary`).toContain(boundary);
+            }
+        }
+    });
+
     test("renewal reversal skill states only capabilities exposed by MCP 1.0", async () => {
         const skill = await readFile(resolve(pluginRoot, "skills/renew-daily-loan/SKILL.md"), "utf8");
         expect(skill).toContain("borrower public UUID retained from the same-task pre-execution resolution");
@@ -92,12 +120,12 @@ describe("CreditSync plugin 7.0.0 contract", () => {
         expect(skill).not.toContain("report those blockers");
     });
 
-    test("frozen full MCP metadata matches an actual authenticated tools/list response", async () => {
+    test("frozen full MCP metadata matches an actual MCP tools/list response", async () => {
         const contract = await json("references/mcp-tool-contract.json") as unknown as FrozenMcpContract;
         expect(contract.schemaVersion).toBe("1.0");
         expect(contract.compatibility).toBe("Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 7.0.0; breaking changes require plugin 8.0.0.");
         expect(contract.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
-        expect(contract.tools).toHaveLength(64);
+        expect(contract.tools).toHaveLength(75);
         expect(contract.tools.every((tool) => tool.inputSchema && tool.outputSchema && tool.annotations)).toBe(true);
         const advertised = await captureAdvertisedMcpContract();
         expect(canonicalContractJson(contract)).toBe(canonicalContractJson(advertised));
@@ -220,7 +248,7 @@ describe("CreditSync plugin 7.0.0 contract", () => {
             "waiver-missing-reason",
             "restructure-unsafe-reversal",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
-        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(20);
+        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(29);
         expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(45);
     });
 

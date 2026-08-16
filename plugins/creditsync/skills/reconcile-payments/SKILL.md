@@ -37,6 +37,14 @@ If no image is supplied, data-only capture is valid and skips all evidence calls
 
 One transfer may allocate across many loans and borrowers. Never force an allocation to make totals fit; let the backend validate the sum and outstanding obligations.
 
+## Attribute payment sources and commission
+
+After posting, call `payment.intermediary-attribution.list` for the exact payment before any source-attribution write and inspect current effective agents with `loan.commission-participant.list` when an intermediary is proposed. Present the operator with explicit choices: leave the amount unattributed, create a `direct` entry without an intermediary UUID, or create one or more `intermediary` entries for a confirmed multi-agent split. Do not infer attribution from payer hints, participant history, or fuzzy identity, and do not silently fill any remainder.
+
+Call `payment.intermediary-attribution.create` only for the exact confirmed payment, optional transaction, source kind, intermediary when required, and amount. It is an actual append-only write requiring `confirmed: true` and a stable idempotency key; each split entry is a separate confirmed command, and the same key may be reused only for an identical retry. Re-list after changes and report the backend result and audit/correlation identifiers.
+
+To correct attribution, re-list, select the exact existing entry, obtain a non-blank reason and separate explicit confirmation, then call `payment.intermediary-attribution.reverse` with a new stable idempotency key. This appends compensation and never edits or deletes the original. To show commission before or after payment reversal, use `loan.commission.preview` for posted payments and `loan.commission.reverse` only as a read-only compensating preview for posted reversal payments. The latter is not a financial write, accepts no confirmation/reason/idempotency key, and returns no audit identifiers.
+
 ## Reverse
 
 Inspect the posted intake and show the entries that will be compensated. Obtain a non-blank reason, then call `payment.reverse` with both `{ paymentIntakePublicId, reason }`. The frozen 1.0 tool has no client idempotency-key field; the backend makes repeat reversal of that intake idempotent. Report the resulting audit/correlation identifiers. A reversal does not delete the original transaction.

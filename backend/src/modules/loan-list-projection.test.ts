@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "../db";
 import { loanInterestAccruals, loans } from "../db/schema";
 import { loanListLegacyAccrualProjection } from "../services/loan-payment-health-service";
-import { loanListLoanProjection } from "./loan-contract-routes";
+import { buildCurrentLoanAgentRowsQuery, loanListLoanProjection } from "./loan-contract-routes";
 
 describe("loan list projection", () => {
     test("selects only deployed-compatible list and payment-health columns", () => {
@@ -20,6 +20,18 @@ describe("loan list projection", () => {
         expect(query).not.toContain('"advance_interest_periods"');
         expect(query).not.toContain('"advance_interest_refund_policy"');
         expect(query).not.toContain('"interest_period_anchor_date"');
+    });
+
+    test("builds one tenant-scoped effective-current agent projection for visible loan IDs", () => {
+        const query = buildCurrentLoanAgentRowsQuery("tenant-a", [41, 42]).toSQL();
+
+        expect(query.params).toEqual(expect.arrayContaining(["tenant-a", 41, 42]));
+        expect(query.sql).toContain('inner join "intermediaries"');
+        expect(query.sql).toContain('"loan_commission_participants"."tenant_id"');
+        expect(query.sql).toContain('"loan_commission_participants"."loan_id" in');
+        expect(query.sql).toContain("AT TIME ZONE 'Asia/Bangkok'");
+        expect(query.sql).toContain("successor.previous_participant_id");
+        expect(query.sql).toContain("successor.effective_from <=");
     });
 
     test("selects only deployed legacy daily-interest columns for floating list health", () => {

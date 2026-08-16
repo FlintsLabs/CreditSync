@@ -17,6 +17,11 @@ import {
     listManagedLoans,
     saveIntermediaryBankAccount,
 } from "../services/intermediary-profile-service";
+import {
+    createPaymentAttribution,
+    listPaymentAttributions,
+    reversePaymentAttribution,
+} from "../services/payment-attribution-service";
 
 type RouteUser = { id: number; tenantId: string };
 const context = (user: RouteUser, request: Request): CommandContext => {
@@ -87,6 +92,30 @@ const intermediaryProfileRoutes = new Elysia({ normalize: false })
         }, { additionalProperties: t.Never() }),
     });
 
+const paymentAttributionRoutes = new Elysia({ normalize: false })
+    .use(authPlugin)
+    .get("/payments/:id/intermediary-attributions", ({ params, user, request, set }) => invoke(user, request, set, (ctx) => listPaymentAttributions(ctx, params.id)), uuidParam)
+    .post("/payments/:id/intermediary-attributions", ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => {
+        const { confirmed: _confirmed, ...input } = body;
+        return createPaymentAttribution(ctx, { paymentPublicId: params.id, ...input });
+    }), {
+        ...uuidParam,
+        body: t.Object({
+            transactionPublicId: t.Optional(t.String({ format: "uuid" })),
+            sourceKind: t.Union([t.Literal("direct"), t.Literal("intermediary")]),
+            intermediaryPublicId: t.Optional(t.String({ format: "uuid" })),
+            amount: t.String({ pattern: "^(0|[1-9]\\d*)\\.\\d{2}$", maxLength: 32 }),
+            confirmed: t.Literal(true),
+        }, { additionalProperties: t.Never() }),
+    })
+    .post("/payment-intermediary-attributions/:id/reverse", ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => {
+        const { confirmed: _confirmed, ...input } = body;
+        return reversePaymentAttribution(ctx, { attributionPublicId: params.id, ...input });
+    }), {
+        ...uuidParam,
+        body: t.Object({ reason: t.String({ minLength: 1, maxLength: 500 }), confirmed: t.Literal(true) }, { additionalProperties: t.Never() }),
+    });
+
 export const intermediariesRoute = new Elysia()
     .use(authPlugin)
     .get("/intermediaries", ({ query, user, request, set }) => invoke(user, request, set, (ctx) => query.q ? searchIntermediaries(ctx, query.q, query.status) : listIntermediaries(ctx, query.status)), { query: t.Object({ q: t.Optional(t.String()), status: t.Optional(t.Union([t.Literal("active"), t.Literal("inactive"), t.Literal("all")])) }) })
@@ -105,4 +134,5 @@ export const intermediariesRoute = new Elysia()
     .post("/intermediary-remittances/:id/preview", ({ params, user, request, set }) => invoke(user, request, set, (ctx) => previewIntermediaryRemittance(ctx, params.id)), uuidParam)
     .post("/intermediary-remittances/:id/post", ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => postIntermediaryRemittance(ctx, params.id, body)), { ...uuidParam, body: t.Object({ proposalPublicId: t.String({ format: "uuid" }), confirmed: t.Literal(true) }) })
     .post("/intermediary-remittances/:id/reverse", ({ params, body, user, request, set }) => invoke(user, request, set, (ctx) => reverseIntermediaryRemittance(ctx, params.id, body)), { ...uuidParam, body: t.Object({ reason: t.String() }) })
-    .use(intermediaryProfileRoutes);
+    .use(intermediaryProfileRoutes)
+    .use(paymentAttributionRoutes);

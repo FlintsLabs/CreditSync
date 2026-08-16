@@ -39,9 +39,17 @@ interface LoanRow {
     totalInstallments: number | null;
     startDate: string | null;
     paymentHealth?: LoanPaymentHealth;
+    currentAgent?: { name?: string | null; aliases?: string[] | null } | null;
+    currentAgentName?: string | null;
+    currentAgentAliases?: string[] | null;
 }
 
 type LoanTab = "active" | "done" | "all";
+
+async function loadLoans(): Promise<LoanRow[]> {
+    const response = await api.get("/loans");
+    return response.data ?? [];
+}
 
 export default function LoanList() {
     const { t, i18n } = useTranslation();
@@ -59,8 +67,7 @@ export default function LoanList() {
         setIsLoading(true);
         setLoadError(false);
         try {
-            const res = await api.get("/loans");
-            setLoans(res.data ?? []);
+            setLoans(await loadLoans());
         } catch {
             setLoadError(true);
         } finally {
@@ -70,9 +77,9 @@ export default function LoanList() {
 
     useEffect(() => {
         let active = true;
-        void api.get("/loans")
-            .then((res) => {
-                if (active) setLoans(res.data ?? []);
+        void loadLoans()
+            .then((rows) => {
+                if (active) setLoans(rows);
             })
             .catch(() => {
                 if (active) setLoadError(true);
@@ -246,6 +253,11 @@ export default function LoanList() {
                                     health={loan.paymentHealth ?? currentPaymentHealth}
                                     repaymentType={loan.repaymentType}
                                 />
+
+                                <Badge variant="outline" className="w-fit max-w-full gap-1 text-xs">
+                                    <span className="text-muted-foreground">{t("loans.agent.label", "Agent")}</span>
+                                    <span className="truncate">{loan.currentAgent?.name ?? loan.currentAgentName ?? t("loans.agent.unassigned", "Unassigned")}</span>
+                                </Badge>
 
                                 <div className="space-y-2 text-xs">
                                     <div><div className="text-muted-foreground">{t("loans.repaymentType", "Repayment type")}</div><div className="font-medium">{t(`loanWizard.repaymentOptions.${loan.repaymentType}`)}</div></div>
