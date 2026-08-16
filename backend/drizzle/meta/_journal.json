@@ -289,5 +289,12 @@
       "tag": "0040_bank_drawdown_command_hardening",
       "breakpoints": true
     }
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1786880000000,
+      "tag": "0041_funding_allocation_idempotency",
+      "breakpoints": true
+    }
   ]
 }

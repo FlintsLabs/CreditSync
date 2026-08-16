@@ -582,8 +582,11 @@ export const loanFundingAllocations = pgTable("loan_funding_allocations", {
     note: text("note"),
     createdByUserId: integer("created_by_user_id").references(() => users.id),
     createdAt: timestamp("created_at").defaultNow(),
+    idempotencyKey: text("idempotency_key"),
+    requestHash: text("request_hash"),
 }, (table) => [
     uniqueIndex("loan_funding_allocations_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("loan_funding_allocations_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey).where(sql`${table.idempotencyKey} IS NOT NULL`),
     uniqueIndex("loan_funding_allocations_tenant_reversed_allocation_unique")
         .on(table.tenantId, table.reversedAllocationId)
         .where(sql`${table.reversedAllocationId} IS NOT NULL`),

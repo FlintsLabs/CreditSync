@@ -605,3 +605,8 @@
 - Reconciliation dashboard semantics aligned with actual bank repayment records.
 - Fund detail deep-link behavior no longer forces users back to the originally targeted drawdown.
 - Cache usage is fallback-safe when Dragonfly is unavailable.
+## v7.0.0 - 2026-08-16
+
+### Fixed
+
+- Hardened funding allocation idempotency, exact money validation, source resolution, locking, and read ordering.
