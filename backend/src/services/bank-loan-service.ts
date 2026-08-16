@@ -60,8 +60,9 @@ export async function createBankDrawdownDraft(ctx: CommandContext, raw: BankDraw
         const existing = (await tx.select().from(bankLoans).where(and(eq(bankLoans.tenantId, ctx.tenantId), eq(bankLoans.idempotencyKey, key))).limit(1))[0];
         const payload = JSON.stringify(input);
         if (existing) { if (existing.requestHash !== hash) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key payload differs", 409); return existing; }
-        const p = await profile(ctx, input.bankProfilePublicId, tx);
-        await tx.execute(sql`SELECT id FROM bank_profiles WHERE id = ${p.id} AND tenant_id = ${ctx.tenantId} FOR UPDATE`);
+        const p = (await tx.select().from(bankProfiles).where(and(eq(bankProfiles.tenantId, ctx.tenantId), eq(bankProfiles.publicId, input.bankProfilePublicId))).for("update").limit(1))[0];
+        if (!p) throw new DomainError("BANK_PROFILE_NOT_FOUND", "Bank profile not found", 404);
+        if (p.status !== "active") throw new DomainError("BANK_PROFILE_INACTIVE", "Bank profile is inactive", 409);
         const totals = await tx.select({ total: sql<string>`coalesce(sum(${bankLoans.amount}), 0)` }).from(bankLoans).where(and(eq(bankLoans.tenantId, ctx.tenantId), eq(bankLoans.bankProfileId, p.id), sql`${bankLoans.status} IN ('draft','active')`));
         if (p.creditLimit && new FinancialDecimal(totals[0]?.total ?? "0").plus(input.amount).gt(p.creditLimit)) throw new DomainError("CREDIT_LIMIT_EXCEEDED", "Drawdown exceeds credit limit", 409);
         const row = (await tx.insert(bankLoans).values({ tenantId: ctx.tenantId, bankProfileId: p.id, amount: input.amount, interestRate: input.interestRate, startDate: input.startDate, termMonths: input.termMonths, repaymentCycle: input.repaymentCycle ?? "monthly", repaymentMode: input.repaymentMode, installmentAmount: input.installmentAmount, totalInstallments: input.totalInstallments, processingFeeAmount: input.processingFeeAmount, utilizationFeeAmount: input.utilizationFeeAmount, vatRate: input.vatRate, status: "draft", idempotencyKey: key, requestHash: hash, requestId: ctx.requestId, correlationId: ctx.correlationId, createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId, note: input.note ?? null }).returning())[0]!;
