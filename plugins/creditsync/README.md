@@ -59,6 +59,7 @@ Publishing to Git does not hot-reload an installed copy. Start a new Codex task 
 ## Operational behavior
 
 - Inspect before every write and use backend previews instead of conversation arithmetic.
+- When a payment request includes a supplied image, upload and finalize its unchanged slip evidence, verify `ready`, and complete that evidence step before `payment.preview` or `payment.post`; when no image is supplied, data-only payment capture remains supported.
 - A latest `ready` payment may be posted by the agent after its exact allocations are shown.
 - `needs_review`, fuzzy identity, allocation mismatch, stale preview, and unresolved renewal charges stop for human input.
 - Hard duplicates return the original intake and never create a second payment.

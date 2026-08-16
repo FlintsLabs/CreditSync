@@ -6,6 +6,26 @@ import { resolve } from "node:path";
 const repositoryRoot = resolve(import.meta.dir, "../../..");
 
 describe("CreditSync MCP operational safety documentation", () => {
+    test("conditional payment-slip evidence is a hard prerequisite while data-only remains supported", async () => {
+        const paymentSkill = await readFile(resolve(repositoryRoot, "plugins/creditsync/skills/reconcile-payments/SKILL.md"), "utf8");
+        const rootSkill = await readFile(resolve(repositoryRoot, "plugins/creditsync/skills/creditsync/SKILL.md"), "utf8");
+        const pluginReadme = await readFile(resolve(repositoryRoot, "plugins/creditsync/README.md"), "utf8");
+        expect(paymentSkill).toContain("supplied image");
+        expect(paymentSkill).toContain("before `payment.preview` or `payment.post`");
+        expect(paymentSkill).toContain("data-only");
+        expect(paymentSkill).toContain("stop");
+        expect(paymentSkill).toContain("signed URL");
+        expect(paymentSkill).toContain("evidence is `ready`");
+        expect(paymentSkill).toContain("SHA-256");
+        expect(rootSkill).toContain("supplied payment-slip image");
+        expect(rootSkill).toContain("before `payment.preview` or `payment.post`");
+        expect(rootSkill).toContain("data-only");
+        expect(rootSkill).toContain("stop");
+        expect(pluginReadme).toContain("supplied image");
+        expect(pluginReadme).toContain("before `payment.preview` or `payment.post`");
+        expect(pluginReadme).toContain("data-only");
+    });
+
     test("Git marketplace installation and updates are documented consistently", async () => {
         const rootReadme = await readFile(resolve(repositoryRoot, "README.md"), "utf8");
         const pluginReadme = await readFile(resolve(repositoryRoot, "plugins/creditsync/README.md"), "utf8");

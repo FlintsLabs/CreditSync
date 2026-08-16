@@ -16,6 +16,7 @@ Use CreditSync as an orchestration surface over its private MCP app. The backend
 3. Use `payment.preview`, `loan.preview`, `loan.interest-rate.preview`, `loan.settlement.preview`, `renewal.preview`, `loan.disbursement.list`, or `intermediary.disbursement.preview` for accounting outcomes. Never replace backend results with agent arithmetic.
 4. Present exact money strings, targets, warnings, expiry, cash direction, and proposal/preview identity before a financial write.
 5. Re-read or re-preview after state changes. After a disbursement draft update, re-list it and obtain fresh confirmation because any earlier confirmation is invalid. Post only the latest inspected backend result.
+6. For a supplied payment-slip image, require verified evidence to be `ready` before `payment.preview` or `payment.post`; if no image is supplied, data-only payment capture may skip evidence.
 
 ## State decisions
 
@@ -47,6 +48,7 @@ Use the plugin references for the frozen tool contract, matching policy, financi
 ## Common mistakes
 
 - Treating preview tools as harmless reads: they can persist workflow state, so avoid speculative calls.
+- Posting a payment after a supplied image was not uploaded/finalized: stop when evidence is missing, unavailable, duplicate, mismatched, or not ready. Data-only requests without a supplied image remain valid.
 - Creating a borrower to escape an ambiguous nickname: resolve candidates first.
 - Editing posted transactions or active terms: use a supported reversal, renewal, or new draft flow.
 - Logging or echoing raw QR payloads, evidence contents, bearer tokens, or sensitive identity fields.

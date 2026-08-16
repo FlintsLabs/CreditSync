@@ -16,14 +16,15 @@ Treat intake, evidence, matching, posting, and reversal as separate stages. A sl
 3. If the result is `duplicate`, inspect its returned public UUID with `intake.get`, report the original, and stop before matching or posting.
 4. For a new intake, show semantic warnings. They are review signals, not hard duplicates.
 
-For image-first capture, calculate the file SHA-256 locally. After intake creation:
+For image-first capture, when the user supplies an image, treat it as a supplied image, calculate its exact byte size and SHA-256 locally, and require evidence before `payment.preview` or `payment.post`. After intake creation:
 
 1. Call `evidence.prepare` with intake public UUID, MIME type, byte size, SHA-256, and evidence type.
 2. Inspect the prepare result **before any PUT**. If it reports `duplicate`, call `intake.get` with the returned original `intakePublicId`, report the original, and stop. Do not upload, finalize, preview, or post.
 3. Only for a non-duplicate prepare result, PUT the unchanged bytes to its returned signed URL using exactly its required headers before expiry.
 4. Call `evidence.finalize` with the evidence public UUID.
+5. Verify the finalized evidence is `ready` and remains bound to the prepared evidence/file UUID, MIME type, byte size, and SHA-256. If upload data is missing/expired, the PUT fails, or finalize returns a mismatch/non-ready state, stop before `payment.preview` or `payment.post`.
 
-Do not send evidence when data-only capture is sufficient. Do not log or repeat raw QR payloads or signed upload URLs.
+If no image is supplied, data-only capture is valid and skips all evidence calls. Do not manufacture evidence. Do not log or repeat raw QR payloads or signed upload URLs.
 
 ## Match and post
 
