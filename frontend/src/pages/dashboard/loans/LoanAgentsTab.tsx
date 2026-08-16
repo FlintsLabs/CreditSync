@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Decimal from "decimal.js";
 import { Loader2, Pencil, Plus, XCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -13,6 +13,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 interface Participant {
     publicId: string;
     intermediaryPublicId: string;
+    intermediaryName?: string;
+    intermediaryAliases?: string[] | null;
     commissionRate: string;
     role: string;
     note?: string | null;
@@ -42,6 +44,7 @@ export function LoanAgentsTab({ loanPublicId }: { loanPublicId: string }) {
     const [selected, setSelected] = useState<Participant | null>(null);
     const [form, setForm] = useState(initialForm);
     const [saving, setSaving] = useState(false);
+    const commandIntentRef = useRef<{ fingerprint: string; idempotencyKey: string } | null>(null);
 
     const load = async () => {
         setLoading(true);
@@ -53,8 +56,10 @@ export function LoanAgentsTab({ loanPublicId }: { loanPublicId: string }) {
             ]);
             setParticipants(participantsResponse.data ?? []);
             setIntermediaries(intermediariesResponse.data?.items ?? intermediariesResponse.data ?? []);
+            return true;
         } catch (loadError) {
             setError(domainMessage(loadError, t("loanDetail.agents.errors.load", "Unable to load agents.")));
+            return false;
         } finally {
             setLoading(false);
         }
@@ -99,19 +104,33 @@ export function LoanAgentsTab({ loanPublicId }: { loanPublicId: string }) {
 
         setSaving(true);
         setError("");
-        const headers = { "Idempotency-Key": crypto.randomUUID() };
         try {
-            if (mode === "add") await api.post(`/loans/${loanPublicId}/commission-participants`, {
-                intermediaryPublicId: form.intermediaryPublicId, commissionRate: form.commissionRate, role: form.role.trim(), effectiveFrom: new Date(form.effectiveAt).toISOString(), note: form.note.trim() || null, confirmed: true,
-            }, { headers });
-            if (mode === "update" && selected) await api.patch(`/loans/${loanPublicId}/commission-participants/${selected.publicId}`, {
-                commissionRate: form.commissionRate, role: form.role.trim(), effectiveFrom: new Date(form.effectiveAt).toISOString(), note: form.note.trim() || null, confirmed: true,
-            }, { headers });
-            if (mode === "end" && selected) await api.post(`/loans/${loanPublicId}/commission-participants/${selected.publicId}/end`, {
-                effectiveTo: new Date(form.effectiveAt).toISOString(), reason: form.note.trim(), confirmed: true,
-            }, { headers });
-            setMode(null);
-            await load();
+            const effectiveAt = new Date(form.effectiveAt).toISOString();
+            const command = mode === "add" ? {
+                method: "post" as const,
+                url: `/loans/${loanPublicId}/commission-participants`,
+                body: { intermediaryPublicId: form.intermediaryPublicId, commissionRate: form.commissionRate, role: form.role.trim(), effectiveFrom: effectiveAt, note: form.note.trim() || null, confirmed: true },
+            } : mode === "update" && selected ? {
+                method: "patch" as const,
+                url: `/loans/${loanPublicId}/commission-participants/${selected.publicId}`,
+                body: { commissionRate: form.commissionRate, role: form.role.trim(), effectiveFrom: effectiveAt, note: form.note.trim() || null, confirmed: true },
+            } : mode === "end" && selected ? {
+                method: "post" as const,
+                url: `/loans/${loanPublicId}/commission-participants/${selected.publicId}/end`,
+                body: { effectiveTo: effectiveAt, reason: form.note.trim(), confirmed: true },
+            } : null;
+            if (!command) return;
+            const fingerprint = JSON.stringify(command);
+            if (commandIntentRef.current?.fingerprint !== fingerprint) {
+                commandIntentRef.current = { fingerprint, idempotencyKey: crypto.randomUUID() };
+            }
+            const headers = { "Idempotency-Key": commandIntentRef.current.idempotencyKey };
+            if (command.method === "patch") await api.patch(command.url, command.body, { headers });
+            else await api.post(command.url, command.body, { headers });
+            if (await load()) {
+                commandIntentRef.current = null;
+                setMode(null);
+            }
         } catch (saveError) {
             setError(domainMessage(saveError, t("loanDetail.agents.errors.save", "Unable to save the agent agreement.")));
         } finally { setSaving(false); }
@@ -131,7 +150,7 @@ export function LoanAgentsTab({ loanPublicId }: { loanPublicId: string }) {
                         <TableHead>{t("loanDetail.agents.agent", "Agent")}</TableHead><TableHead>{t("loanDetail.agents.role", "Role")}</TableHead><TableHead className="text-right">{t("loanDetail.agents.rate", "Commission rate")}</TableHead><TableHead>{t("loanDetail.agents.effective", "Effective dates")}</TableHead><TableHead>{t("common.status", "Status")}</TableHead><TableHead><span className="sr-only">{t("common.actions", "Actions")}</span></TableHead>
                     </TableRow></TableHeader><TableBody>
                         {participants.map((participant) => { const intermediary = intermediaryById.get(participant.intermediaryPublicId); return <TableRow key={participant.publicId}>
-                            <TableCell><div className="font-medium">{intermediary?.name ?? participant.intermediaryPublicId}</div>{intermediary?.aliases?.length ? <div className="text-xs text-muted-foreground">{intermediary.aliases.join(", ")}</div> : null}</TableCell>
+                            <TableCell><div className="font-medium">{participant.intermediaryName ?? intermediary?.name ?? participant.intermediaryPublicId}</div>{(participant.intermediaryAliases ?? intermediary?.aliases)?.length ? <div className="text-xs text-muted-foreground">{(participant.intermediaryAliases ?? intermediary?.aliases)?.join(", ")}</div> : null}</TableCell>
                             <TableCell>{participant.role}</TableCell><TableCell className="text-right font-medium tabular-nums">{participant.commissionRate}%</TableCell><TableCell className="whitespace-nowrap text-sm">{formatDate(participant.effectiveFrom)} – {formatDate(participant.effectiveTo)}</TableCell><TableCell><Badge variant={participant.status === "active" ? "default" : "outline"}>{t(`loanDetail.agents.status.${participant.status}`, participant.status)}</Badge></TableCell>
                             <TableCell className="text-right">{participant.status === "active" && <div className="flex justify-end gap-1"><Button size="sm" variant="outline" onClick={() => open("update", participant)} aria-label={t("loanDetail.agents.update", "Update agent")}><Pencil className="h-4 w-4" /></Button><Button size="sm" variant="outline" onClick={() => open("end", participant)} aria-label={t("loanDetail.agents.end", "End agent")}><XCircle className="h-4 w-4" /></Button></div>}</TableCell>
                         </TableRow>; })}

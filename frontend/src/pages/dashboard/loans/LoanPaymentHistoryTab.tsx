@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Decimal from "decimal.js";
 import { Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -32,6 +32,7 @@ export function LoanPaymentHistoryTab({ loanPublicId }: { loanPublicId: string }
     const [editing, setEditing] = useState<string | null>(null);
     const [form, setForm] = useState({ sourceKind: "direct" as "direct" | "intermediary", intermediaryPublicId: "", amount: "", confirmed: false });
     const [saving, setSaving] = useState(false);
+    const commandIntentRef = useRef<{ fingerprint: string; idempotencyKey: string } | null>(null);
 
     const load = async () => {
         setLoading(true); setError("");
@@ -56,7 +57,8 @@ export function LoanPaymentHistoryTab({ loanPublicId }: { loanPublicId: string }
             setIntermediaries(intermediaryResponse.data?.items ?? intermediaryResponse.data ?? []);
             setCommission(commissionResponse.data);
             setCommissionByPayment(Object.fromEntries(paymentCommissionEntries));
-        } catch (loadError) { setError(errorMessage(loadError, t("loanDetail.paymentHistory.errors.load", "Unable to load payment history."))); }
+            return true;
+        } catch (loadError) { setError(errorMessage(loadError, t("loanDetail.paymentHistory.errors.load", "Unable to load payment history."))); return false; }
         finally { setLoading(false); }
     };
     useEffect(() => {
@@ -73,8 +75,19 @@ export function LoanPaymentHistoryTab({ loanPublicId }: { loanPublicId: string }
         if (form.sourceKind === "intermediary" && !form.intermediaryPublicId) { setError(t("loanDetail.paymentHistory.errors.agent", "Choose an agent.")); return; }
         setSaving(true); setError("");
         try {
-            await api.post(`/payments/${editing}/intermediary-attributions`, { sourceKind: form.sourceKind, ...(form.sourceKind === "intermediary" ? { intermediaryPublicId: form.intermediaryPublicId } : {}), amount: form.amount, confirmed: true }, { headers: { "Idempotency-Key": crypto.randomUUID() } });
-            setEditing(null); await load();
+            const command = {
+                url: `/payments/${editing}/intermediary-attributions`,
+                body: { sourceKind: form.sourceKind, ...(form.sourceKind === "intermediary" ? { intermediaryPublicId: form.intermediaryPublicId } : {}), amount: form.amount, confirmed: true },
+            };
+            const fingerprint = JSON.stringify(command);
+            if (commandIntentRef.current?.fingerprint !== fingerprint) {
+                commandIntentRef.current = { fingerprint, idempotencyKey: crypto.randomUUID() };
+            }
+            await api.post(command.url, command.body, { headers: { "Idempotency-Key": commandIntentRef.current.idempotencyKey } });
+            if (await load()) {
+                commandIntentRef.current = null;
+                setEditing(null);
+            }
         } catch (saveError) { setError(errorMessage(saveError, t("loanDetail.paymentHistory.errors.save", "Unable to save payment attribution."))); }
         finally { setSaving(false); }
     };

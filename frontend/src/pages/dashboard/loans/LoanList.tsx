@@ -46,37 +46,9 @@ interface LoanRow {
 
 type LoanTab = "active" | "done" | "all";
 
-interface AgentListRow { publicId: string; name: string; aliases?: string[] | null }
-interface ParticipantListRow { intermediaryPublicId: string; status: "active" | "ended" }
-
-async function loadLoansWithAgents(): Promise<LoanRow[]> {
+async function loadLoans(): Promise<LoanRow[]> {
     const response = await api.get("/loans");
-    const rows = response.data ?? [];
-    if (rows.length === 0 || rows.every((loan: LoanRow) => "currentAgent" in loan || "currentAgentName" in loan)) return rows;
-
-    try {
-        const [intermediaryResponse, participantResponses] = await Promise.all([
-            api.get("/intermediaries?status=all"),
-            Promise.all(rows.map((loan: LoanRow) => api.get(`/loans/${loan.publicId}/commission-participants`))),
-        ]);
-        const intermediaries = (intermediaryResponse.data?.items ?? intermediaryResponse.data ?? []) as AgentListRow[];
-        const intermediaryById = new Map(intermediaries.map((agent) => [agent.publicId, agent]));
-        return rows.map((loan: LoanRow, index: number) => {
-            const active = ((participantResponses[index]?.data ?? []) as ParticipantListRow[])
-                .filter((participant) => participant.status === "active")
-                .map((participant) => intermediaryById.get(participant.intermediaryPublicId))
-                .filter((agent): agent is AgentListRow => Boolean(agent));
-            return {
-                ...loan,
-                currentAgent: active.length === 0 ? null : {
-                    name: active.map((agent) => agent.name).join(", "),
-                    aliases: active.flatMap((agent) => agent.aliases ?? []),
-                },
-            };
-        });
-    } catch {
-        return rows;
-    }
+    return response.data ?? [];
 }
 
 export default function LoanList() {
@@ -95,7 +67,7 @@ export default function LoanList() {
         setIsLoading(true);
         setLoadError(false);
         try {
-            setLoans(await loadLoansWithAgents());
+            setLoans(await loadLoans());
         } catch {
             setLoadError(true);
         } finally {
@@ -105,7 +77,7 @@ export default function LoanList() {
 
     useEffect(() => {
         let active = true;
-        void loadLoansWithAgents()
+        void loadLoans()
             .then((rows) => {
                 if (active) setLoans(rows);
             })

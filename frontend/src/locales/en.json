@@ -1214,8 +1214,7 @@
             "installment": "Installment",
             "dueDate": "Due date",
             "remainingDue": "Remaining due",
-            "status": "Status",
-            "commission": "Commission generated"
+            "status": "Status"
         },
         "noRepaymentSchedule": "No repayment schedule available for this loan.",
         "installmentLabel": "Installment #{{id}}",

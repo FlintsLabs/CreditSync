@@ -1,4 +1,5 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LoanPaymentHistoryTab } from "../src/pages/dashboard/loans/LoanPaymentHistoryTab";
 import { api } from "../src/lib/api";
@@ -49,5 +50,34 @@ describe("LoanPaymentHistoryTab", () => {
         expect(await screen.findByText("ค่าคอมมิชชันรวม")).toBeInTheDocument();
         expect(within(screen.getByTestId("payment-direct")).getByText("ชำระโดยตรง")).toBeInTheDocument();
         expect(within(screen.getByTestId("payment-none")).getByText("ยังไม่ระบุแหล่งที่มา")).toBeInTheDocument();
+    });
+
+    it("reuses an attribution idempotency key for unchanged retries and replaces it after a payload change", async () => {
+        vi.mocked(api.get).mockImplementation(async (url) => {
+            if (url === "/transactions") return { data: [{ publicId: "payment-a", loanPublicId: "loan-1", amount: "100.00", interestComponent: "20.00", date: "2026-08-16T00:00:00.000Z", type: "repayment" }] };
+            if (url === "/intermediaries?status=all") return { data: [] };
+            if (url === "/payments/payment-a/intermediary-attributions") return { data: [] };
+            if (url.startsWith("/loans/loan-1/commissions?")) return { data: { totalCommission: "0.00", participants: [] } };
+            throw new Error(`Unexpected GET ${url}`);
+        });
+        vi.mocked(api.post).mockRejectedValueOnce(new Error("lost response")).mockRejectedValueOnce(new Error("lost response again")).mockResolvedValue({ data: {} });
+        render(<LoanPaymentHistoryTab loanPublicId="loan-1" />);
+        await screen.findByTestId("payment-payment-a");
+        await userEvent.click(screen.getByRole("button", { name: "Attribute" }));
+        await userEvent.click(screen.getByLabelText("I confirm this payment source attribution"));
+
+        await userEvent.click(screen.getByRole("button", { name: "Save" }));
+        await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+        await userEvent.click(screen.getByRole("button", { name: "Save" }));
+        await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
+        const firstKey = vi.mocked(api.post).mock.calls[0]?.[2]?.headers?.["Idempotency-Key"];
+        expect(vi.mocked(api.post).mock.calls[1]?.[2]?.headers?.["Idempotency-Key"]).toBe(firstKey);
+
+        await userEvent.clear(screen.getByLabelText("Amount"));
+        await userEvent.type(screen.getByLabelText("Amount"), "90.00");
+        await userEvent.click(screen.getByLabelText("I confirm this payment source attribution"));
+        await userEvent.click(screen.getByRole("button", { name: "Save" }));
+        await waitFor(() => expect(api.post).toHaveBeenCalledTimes(3));
+        expect(vi.mocked(api.post).mock.calls[2]?.[2]?.headers?.["Idempotency-Key"]).not.toBe(firstKey);
     });
 });

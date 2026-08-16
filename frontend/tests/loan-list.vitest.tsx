@@ -32,7 +32,7 @@ describe("LoanList", () => {
         expect(screen.getAllByText(/^Created at:/)).toHaveLength(2);
         expect(screen.getByText("Floating repayment has no fixed schedule")).toBeInTheDocument();
         expect(screen.getByText("Not set")).toBeInTheDocument();
-        expect(vi.mocked(api.get).mock.calls.map(([url]) => url)).toEqual(["/loans", "/intermediaries?status=all", "/loans/daily/commission-participants", "/loans/floating/commission-participants"]);
+        expect(vi.mocked(api.get).mock.calls.map(([url]) => url)).toEqual(["/loans"]);
     });
 
     test("renders status-aware exact financial summaries without extra requests", async () => {
@@ -72,7 +72,7 @@ describe("LoanList", () => {
         expect(screen.getByText("Active Summary")).toBeInTheDocument();
         expect(screen.getByText("Paid Summary")).toBeInTheDocument();
         expect(screen.getByRole("option", { name: "Closed" })).toBeInTheDocument();
-        expect(vi.mocked(api.get).mock.calls.map(([url]) => url)).toEqual(["/loans", "/intermediaries?status=all", "/loans/active-summary/commission-participants", "/loans/paid-summary/commission-participants"]);
+        expect(vi.mocked(api.get).mock.calls.map(([url]) => url)).toEqual(["/loans"]);
     });
 
     // Break caught: payment health is invisible, imprecisely formatted, or replaces lifecycle status/navigation.
@@ -94,7 +94,7 @@ describe("LoanList", () => {
         expect(screen.queryByText("Current")).not.toBeInTheDocument();
         expect(screen.getAllByText("active")).toHaveLength(4);
         expect(screen.getByText("Scheduled Overdue").closest("a")).toHaveAttribute("href", "/loans/scheduled-overdue");
-        expect(vi.mocked(api.get).mock.calls.map(([url]) => url)).toEqual(["/loans", "/intermediaries?status=all", "/loans/scheduled-overdue/commission-participants", "/loans/floating-overdue/commission-participants", "/loans/due-now/commission-participants", "/loans/current/commission-participants"]);
+        expect(vi.mocked(api.get).mock.calls.map(([url]) => url)).toEqual(["/loans"]);
     });
 
     // Break caught: Thai floating cards reuse English or installment-specific overdue copy.

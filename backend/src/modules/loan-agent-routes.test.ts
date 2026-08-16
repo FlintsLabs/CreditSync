@@ -103,6 +103,11 @@ describe("loan agent REST contracts", () => {
         });
         expect(ended.response.status).toBe(200);
         expect(ended.body).toMatchObject({ previousParticipantPublicId: updated.body.publicId, status: "ended" });
+        await db.update(intermediaries).set({ status: "inactive" }).where(sql`${intermediaries.id} = ${intermediary.id}`);
+        const historicalParticipants = await jsonRequest(app, `/loans/${loan.publicId}/commission-participants`, token);
+        expect(historicalParticipants.body).toEqual([
+            expect.objectContaining({ publicId: ended.body.publicId, intermediaryName: "Route Agent", intermediaryAliases: [] }),
+        ]);
 
         const foreignList = await jsonRequest(app, `/loans/${loan.publicId}/commission-participants`, await authToken(foreign));
         expect(foreignList.response.status).toBe(404);

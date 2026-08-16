@@ -2,7 +2,7 @@ import { Elysia, t } from "elysia";
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import Decimal from "decimal.js";
 import { db } from "../db";
-import { borrowerAliases, borrowers, loanSchedules, loans, paymentIntakes, transactions } from "../db/schema";
+import { borrowerAliases, borrowers, intermediaries, loanCommissionParticipants, loanSchedules, loans, paymentIntakes, transactions } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
 import { calculateLoanClosingSummary } from "../lib/calculator";
 import { createAuditLog } from "../lib/audit-log";
@@ -47,6 +47,33 @@ export const loanListLoanProjection = {
     firstDayTreatment: loans.firstDayTreatment,
     interestStartDate: loans.interestStartDate,
 };
+
+const bangkokCurrentInstant = sql`((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Bangkok') AT TIME ZONE 'Asia/Bangkok')`;
+
+export function buildCurrentLoanAgentRowsQuery(tenantId: string, loanIds: number[]) {
+    return db.select({
+        loanId: loanCommissionParticipants.loanId,
+        name: intermediaries.name,
+        aliases: intermediaries.aliases,
+    }).from(loanCommissionParticipants)
+        .innerJoin(intermediaries, and(
+            eq(intermediaries.tenantId, tenantId),
+            eq(intermediaries.id, loanCommissionParticipants.intermediaryId),
+        ))
+        .where(and(
+            eq(loanCommissionParticipants.tenantId, tenantId),
+            inArray(loanCommissionParticipants.loanId, loanIds),
+            sql`${loanCommissionParticipants.effectiveFrom} <= ${bangkokCurrentInstant}`,
+            sql`(${loanCommissionParticipants.effectiveTo} IS NULL OR ${loanCommissionParticipants.effectiveTo} > ${bangkokCurrentInstant})`,
+            sql`NOT EXISTS (
+                SELECT 1 FROM loan_commission_participants successor
+                WHERE successor.tenant_id = ${tenantId}
+                  AND successor.previous_participant_id = ${loanCommissionParticipants.id}
+                  AND successor.effective_from <= ${bangkokCurrentInstant}
+            )`,
+        ))
+        .orderBy(loanCommissionParticipants.id);
+}
 
 function assertKnownKeys(value: Record<string, unknown>, allowedKeys: readonly string[], path = "body") {
     const unexpected = Object.keys(value).filter((key) => !allowedKeys.includes(key));
@@ -157,12 +184,23 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                     user.tenantId,
                     rows.map(({ loan }) => loan.id),
                 );
+                const currentAgentRows = rows.length === 0
+                    ? []
+                    : await buildCurrentLoanAgentRowsQuery(user.tenantId, rows.map(({ loan }) => loan.id));
+                const currentAgentsByLoan = new Map<number, { name: string; aliases: string[] }[]>();
+                for (const agentRow of currentAgentRows) {
+                    currentAgentsByLoan.set(agentRow.loanId, [
+                        ...(currentAgentsByLoan.get(agentRow.loanId) ?? []),
+                        { name: agentRow.name, aliases: agentRow.aliases },
+                    ]);
+                }
                 const asOf = new Date();
                 return Promise.all(rows.map(async ({ loan, borrowerPublicId, borrowerName, borrowerId, borrowerTags }) => {
                     const receipts = receiptSummaries.get(loan.id) ?? {
                         interestReceived: "0.00",
                         paidToDate: "0.00",
                     };
+                    const currentAgents = currentAgentsByLoan.get(loan.id) ?? [];
                     return {
                         id: loan.publicId,
                         publicId: loan.publicId,
@@ -182,6 +220,10 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                         installmentAmount: loan.installmentAmount === null ? null : serializeMoney(loan.installmentAmount),
                         totalInstallments: loan.totalInstallments,
                         startDate: loan.startDate,
+                        currentAgent: currentAgents.length === 0 ? null : {
+                            name: currentAgents.map((agent) => agent.name).join(", "),
+                            aliases: [...new Set(currentAgents.flatMap((agent) => agent.aliases))],
+                        },
                         paymentHealth: loan.repaymentType === "floating"
                             ? await getLoanListLegacyPaymentHealth(db, loan as typeof loans.$inferSelect, { asOf })
                             : await getLoanPaymentHealth(db, loan as typeof loans.$inferSelect, { asOf, context: ctx }),
@@ -199,7 +241,9 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
         if (!user) return loanUnauthorized(set);
         try {
             const { confirmed: _confirmed, ...input } = body;
-            return await addLoanCommissionParticipant(loanCommandContext(user, request), { loanPublicId: params.id, ...input });
+            const participant = await addLoanCommissionParticipant(loanCommandContext(user, request), { loanPublicId: params.id, ...input });
+            await invalidateTenantCache(user.tenantId);
+            return participant;
         } catch (error) { return loanDomainFailure(error, set); }
     }, {
         params: t.Object({ id: t.String({ format: "uuid" }) }),
@@ -216,7 +260,9 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
             const participants = await listLoanCommissionParticipants(ctx, params.id);
             if (!participants.some((participant) => participant.publicId === params.participantId)) throw new DomainError("COMMISSION_PARTICIPANT_NOT_FOUND", "Commission participant not found", 404);
             const { confirmed: _confirmed, ...input } = body;
-            return await updateLoanCommissionParticipant(ctx, { participantPublicId: params.participantId, ...input });
+            const participant = await updateLoanCommissionParticipant(ctx, { participantPublicId: params.participantId, ...input });
+            await invalidateTenantCache(user.tenantId);
+            return participant;
         } catch (error) { return loanDomainFailure(error, set); }
     }, {
         params: t.Object({ id: t.String({ format: "uuid" }), participantId: t.String({ format: "uuid" }) }),
@@ -233,7 +279,9 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
             const participants = await listLoanCommissionParticipants(ctx, params.id);
             if (!participants.some((participant) => participant.publicId === params.participantId)) throw new DomainError("COMMISSION_PARTICIPANT_NOT_FOUND", "Commission participant not found", 404);
             const { confirmed: _confirmed, ...input } = body;
-            return await endLoanCommissionParticipant(ctx, { participantPublicId: params.participantId, ...input });
+            const participant = await endLoanCommissionParticipant(ctx, { participantPublicId: params.participantId, ...input });
+            await invalidateTenantCache(user.tenantId);
+            return participant;
         } catch (error) { return loanDomainFailure(error, set); }
     }, {
         params: t.Object({ id: t.String({ format: "uuid" }), participantId: t.String({ format: "uuid" }) }),

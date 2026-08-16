@@ -120,6 +120,8 @@ async function present(executor: any, ctx: CommandContext, row: Participant) {
         publicId: row.publicId,
         loanPublicId: related.loan.publicId,
         intermediaryPublicId: related.intermediary.publicId,
+        intermediaryName: related.intermediary.name,
+        intermediaryAliases: related.intermediary.aliases,
         previousParticipantPublicId: related.previous?.publicId ?? null,
         commissionRate: exactRate(row.commissionRate),
         role: row.role,
