@@ -22,6 +22,7 @@
 - Added the approved production loan-list schema-compatibility design and TDD implementation plan.
 
 ### Changed
+- Updated Loan List cards with a responsive non-paid principal row and backend-owned received totals, while paid loans now show a checked `PAID` summary without a zero outstanding balance or paid-to-date total.
 - Enforced conditional payment-slip evidence ordering in the CreditSync plugin guidance: supplied images must be uploaded and finalized before payment preview/post, while no-image data-only capture remains supported.
 - Added the implementation plan for conditional CreditSync payment-slip evidence ordering, including data-only compatibility, unchanged-byte upload checks, fail-closed evidence stops, and executable MCP eval coverage.
 - Documented the floating-loan detail contract summary and posted-payout mismatch behavior, including its non-mutating and posted-only boundaries.

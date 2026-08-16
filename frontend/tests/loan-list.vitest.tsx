@@ -16,8 +16,8 @@ describe("LoanList", () => {
 
     test("shows agreed repayment details and clear dates without funding metric requests", async () => {
         vi.mocked(api.get).mockResolvedValue({ data: [
-            { id: "daily", publicId: "daily", borrowerName: "Daily", principal: "5000.00", outstandingPrincipal: "3750.00", status: "active", repaymentType: "daily", installmentAmount: "250.00", totalInstallments: 12, startDate: "2026-08-01", createdAt: "2026-08-10T07:30:00.000Z", paymentHealth: { status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00", overdueItemCount: 0, maxOverdueDays: 0 } },
-            { id: "floating", publicId: "floating", borrowerName: "Floating", principal: "900.00", outstandingPrincipal: "900.00", status: "draft", repaymentType: "floating", installmentAmount: null, totalInstallments: null, startDate: null, createdAt: "2026-08-10T07:30:00.000Z", paymentHealth: { status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00", overdueItemCount: 0, maxOverdueDays: 0 } },
+            { id: "daily", publicId: "daily", borrowerName: "Daily", principal: "5000.00", outstandingPrincipal: "3750.00", interestReceived: "0.00", paidToDate: "0.00", status: "active", repaymentType: "daily", installmentAmount: "250.00", totalInstallments: 12, startDate: "2026-08-01", createdAt: "2026-08-10T07:30:00.000Z", paymentHealth: { status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00", overdueItemCount: 0, maxOverdueDays: 0 } },
+            { id: "floating", publicId: "floating", borrowerName: "Floating", principal: "900.00", outstandingPrincipal: "900.00", interestReceived: "0.00", paidToDate: "0.00", status: "draft", repaymentType: "floating", installmentAmount: null, totalInstallments: null, startDate: null, createdAt: "2026-08-10T07:30:00.000Z", paymentHealth: { status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00", overdueItemCount: 0, maxOverdueDays: 0 } },
         ] });
 
         render(<MemoryRouter><LoanList /></MemoryRouter>);
@@ -34,13 +34,47 @@ describe("LoanList", () => {
         expect(vi.mocked(api.get).mock.calls.map(([url]) => url)).toEqual(["/loans"]);
     });
 
+    test("renders status-aware exact financial summaries without extra requests", async () => {
+        const active = {
+            id: "active-summary", publicId: "active-summary", borrowerName: "Active Summary",
+            principal: "5000.00", outstandingPrincipal: "3750.00",
+            interestReceived: "200.25", paidToDate: "1450.25",
+            status: "active", repaymentType: "daily", installmentAmount: "250.00",
+            totalInstallments: 20, startDate: "2026-08-01",
+            createdAt: "2026-08-10T07:30:00.000Z",
+            paymentHealth: { status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00", overdueItemCount: 0, maxOverdueDays: 0 },
+        };
+        const paid = {
+            ...active,
+            id: "paid-summary", publicId: "paid-summary", borrowerName: "Paid Summary",
+            principal: "10000.00", outstandingPrincipal: "0.00",
+            interestReceived: "2000.00", paidToDate: "12000.00", status: "paid",
+        };
+        vi.mocked(api.get).mockResolvedValue({ data: [active, paid] });
+
+        render(<MemoryRouter><LoanList /></MemoryRouter>);
+
+        const activeCard = (await screen.findByText("Active Summary")).closest("a")!;
+        const activeOutstanding = within(activeCard).getByText(/THB\s*3,750\.00/);
+        expect(within(activeOutstanding.parentElement!).getByText(/Original principal.*THB\s*5,000\.00/)).toBeInTheDocument();
+        expect(within(activeCard).getByText(/Interest received.*THB\s*200\.25.*Paid to date.*THB\s*1,450\.25/)).toBeInTheDocument();
+
+        const paidCard = screen.getByText("Paid Summary").closest("a")!;
+        const paidStatus = within(paidCard).getByText("PAID");
+        expect(paidStatus.parentElement?.querySelector("svg.lucide-circle-check")).not.toBeNull();
+        expect(within(paidCard).queryByText(/THB\s*0\.00/)).not.toBeInTheDocument();
+        expect(within(paidCard).getByText(/Original principal.*THB\s*10,000\.00.*Interest received.*THB\s*2,000\.00/)).toBeInTheDocument();
+        expect(within(paidCard).queryByText(/Paid to date/)).not.toBeInTheDocument();
+        expect(vi.mocked(api.get).mock.calls.map(([url]) => url)).toEqual(["/loans"]);
+    });
+
     // Break caught: payment health is invisible, imprecisely formatted, or replaces lifecycle status/navigation.
     test("shows accessible overdue and due-now indicators without extra requests", async () => {
         vi.mocked(api.get).mockResolvedValue({ data: [
-            { id: "scheduled-overdue", publicId: "scheduled-overdue", borrowerName: "Scheduled Overdue", principal: "9007199254740993.01", outstandingPrincipal: "9007199254740993.01", status: "active", repaymentType: "daily", installmentAmount: "500.00", totalInstallments: 20, startDate: "2026-08-01", createdAt: "2026-08-10T07:30:00.000Z", paymentHealth: { status: "overdue", dueTodayAmount: "0.00", overdueAmount: "9007199254740993.01", overdueItemCount: 2, maxOverdueDays: 3 } },
-            { id: "floating-overdue", publicId: "floating-overdue", borrowerName: "Floating Overdue", principal: "1000.00", outstandingPrincipal: "1000.00", status: "active", repaymentType: "floating", installmentAmount: null, totalInstallments: null, startDate: "2026-08-01", createdAt: "2026-08-10T07:30:00.000Z", paymentHealth: { status: "overdue", dueTodayAmount: "15.00", overdueAmount: "45.00", overdueItemCount: 3, maxOverdueDays: 3 } },
-            { id: "due-now", publicId: "due-now", borrowerName: "Due Now", principal: "500.00", outstandingPrincipal: "500.00", status: "active", repaymentType: "daily", installmentAmount: "50.00", totalInstallments: 10, startDate: "2026-08-11", createdAt: "2026-08-10T07:30:00.000Z", paymentHealth: { status: "due_today", dueTodayAmount: "50.00", overdueAmount: "0.00", overdueItemCount: 0, maxOverdueDays: 0 } },
-            { id: "current", publicId: "current", borrowerName: "Current Loan", principal: "400.00", outstandingPrincipal: "400.00", status: "active", repaymentType: "daily", installmentAmount: "40.00", totalInstallments: 10, startDate: "2026-08-12", createdAt: "2026-08-10T07:30:00.000Z", paymentHealth: { status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00", overdueItemCount: 0, maxOverdueDays: 0 } },
+            { id: "scheduled-overdue", publicId: "scheduled-overdue", borrowerName: "Scheduled Overdue", principal: "9007199254740993.01", outstandingPrincipal: "9007199254740993.01", interestReceived: "0.00", paidToDate: "0.00", status: "active", repaymentType: "daily", installmentAmount: "500.00", totalInstallments: 20, startDate: "2026-08-01", createdAt: "2026-08-10T07:30:00.000Z", paymentHealth: { status: "overdue", dueTodayAmount: "0.00", overdueAmount: "9007199254740993.01", overdueItemCount: 2, maxOverdueDays: 3 } },
+            { id: "floating-overdue", publicId: "floating-overdue", borrowerName: "Floating Overdue", principal: "1000.00", outstandingPrincipal: "1000.00", interestReceived: "0.00", paidToDate: "0.00", status: "active", repaymentType: "floating", installmentAmount: null, totalInstallments: null, startDate: "2026-08-01", createdAt: "2026-08-10T07:30:00.000Z", paymentHealth: { status: "overdue", dueTodayAmount: "15.00", overdueAmount: "45.00", overdueItemCount: 3, maxOverdueDays: 3 } },
+            { id: "due-now", publicId: "due-now", borrowerName: "Due Now", principal: "500.00", outstandingPrincipal: "500.00", interestReceived: "0.00", paidToDate: "0.00", status: "active", repaymentType: "daily", installmentAmount: "50.00", totalInstallments: 10, startDate: "2026-08-11", createdAt: "2026-08-10T07:30:00.000Z", paymentHealth: { status: "due_today", dueTodayAmount: "50.00", overdueAmount: "0.00", overdueItemCount: 0, maxOverdueDays: 0 } },
+            { id: "current", publicId: "current", borrowerName: "Current Loan", principal: "400.00", outstandingPrincipal: "400.00", interestReceived: "0.00", paidToDate: "0.00", status: "active", repaymentType: "daily", installmentAmount: "40.00", totalInstallments: 10, startDate: "2026-08-12", createdAt: "2026-08-10T07:30:00.000Z", paymentHealth: { status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00", overdueItemCount: 0, maxOverdueDays: 0 } },
         ] });
 
         render(<MemoryRouter><LoanList /></MemoryRouter>);
@@ -60,13 +94,19 @@ describe("LoanList", () => {
     test("localizes floating overdue days in Thai", async () => {
         await i18n.changeLanguage("th");
         vi.mocked(api.get).mockResolvedValue({ data: [
-            { id: "floating-th", publicId: "floating-th", borrowerName: "ลูกค้ารายวัน", principal: "1000.00", outstandingPrincipal: "1000.00", status: "active", repaymentType: "floating", installmentAmount: null, totalInstallments: null, startDate: "2026-08-01", createdAt: "2026-08-10T07:30:00.000Z", paymentHealth: { status: "overdue", dueTodayAmount: "15.00", overdueAmount: "45.00", overdueItemCount: 3, maxOverdueDays: 3 } },
+            { id: "floating-th", publicId: "floating-th", borrowerName: "ลูกค้ารายวัน", principal: "1000.00", outstandingPrincipal: "800.00", interestReceived: "50.25", paidToDate: "250.25", status: "active", repaymentType: "floating", installmentAmount: null, totalInstallments: null, startDate: "2026-08-01", createdAt: "2026-08-10T07:30:00.000Z", paymentHealth: { status: "overdue", dueTodayAmount: "15.00", overdueAmount: "45.00", overdueItemCount: 3, maxOverdueDays: 3 } },
+            { id: "paid-th", publicId: "paid-th", borrowerName: "ลูกค้าปิดบัญชี", principal: "2000.00", outstandingPrincipal: "0.00", interestReceived: "300.00", paidToDate: "2300.00", status: "paid", repaymentType: "daily", installmentAmount: "200.00", totalInstallments: 10, startDate: "2026-08-01", createdAt: "2026-08-10T07:30:00.000Z", paymentHealth: { status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00", overdueItemCount: 0, maxOverdueDays: 0 } },
         ] });
 
         render(<MemoryRouter><LoanList /></MemoryRouter>);
 
         expect(await screen.findByText("ค้างชำระ 3 วัน")).toBeInTheDocument();
         expect(screen.getByText(/ค้างสูงสุด 3 วัน/)).toBeInTheDocument();
+        expect(screen.getByText(/ดอกเบี้ยรับแล้ว.*฿50\.25.*จ่ายแล้ว.*฿250\.25/)).toBeInTheDocument();
+        const paidCard = screen.getByText("ลูกค้าปิดบัญชี").closest("a")!;
+        expect(within(paidCard).getByText("PAID")).toBeInTheDocument();
+        expect(within(paidCard).getByText(/เงินต้นตั้งต้น.*฿2,000\.00.*ดอกเบี้ยรับแล้ว.*฿300\.00/)).toBeInTheDocument();
+        expect(within(paidCard).queryByText(/จ่ายแล้ว/)).not.toBeInTheDocument();
     });
 
     test("renders borrower labels above overflow and searches aliases and tags", async () => {
@@ -80,6 +120,8 @@ describe("LoanList", () => {
                 borrowerTags: ["vip", "ตลาดเช้า", "เจ้าประจำ"],
                 principal: "5000.00",
                 outstandingPrincipal: "4900.00",
+                interestReceived: "0.00",
+                paidToDate: "0.00",
                 status: "active",
                 repaymentType: "daily",
                 installmentAmount: "250.00",
@@ -94,6 +136,8 @@ describe("LoanList", () => {
                 borrowerName: "แปะ",
                 principal: "1000.00",
                 outstandingPrincipal: "900.00",
+                interestReceived: "0.00",
+                paidToDate: "0.00",
                 status: "active",
                 repaymentType: "floating",
                 installmentAmount: null,
@@ -134,6 +178,8 @@ describe("LoanList", () => {
                 borrowerTags: ["แท็ก", "แผง"],
                 principal: "1200.00",
                 outstandingPrincipal: "1200.00",
+                interestReceived: "0.00",
+                paidToDate: "0.00",
                 status: "active",
                 repaymentType: "daily",
                 installmentAmount: "100.00",
@@ -161,6 +207,8 @@ describe("LoanList", () => {
                 borrowerName: "Retry Borrower",
                 principal: "1000.00",
                 outstandingPrincipal: "1000.00",
+                interestReceived: "0.00",
+                paidToDate: "0.00",
                 status: "active",
                 repaymentType: "daily",
                 installmentAmount: "100.00",
