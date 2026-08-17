@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { and, eq, sql } from "drizzle-orm";
+import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
 import { db } from ".";
 import { auditLogs, loanReplacementCorrections, loanReplacements } from "./schema";
 import { isLoanReplacementProposal } from "../lib/loan-replacement-proposal";
@@ -52,6 +53,28 @@ describe("atomic loan replacement migration contract", () => {
     expect(migration).toContain('loan_replacements_lifecycle_check');
     expect(migration).toContain('loan_replacements_immutable');
     expect(migration).toContain('loan_replacement_corrections_immutable');
+  });
+
+  // Break caught: the migration protects terminal replacement audit evidence, but the
+  // canonical Drizzle schema omits the constraint and can drift on reconciliation.
+  test("keeps terminal replacement audit evidence in Drizzle schema parity", () => {
+    const lifecycleCheck = getTableConfig(loanReplacements).checks
+      .find((candidate) => candidate.name === "loan_replacements_lifecycle_check");
+    const migration = readFileSync(join(root, "0044_atomic_loan_replacement_hardening.sql"), "utf8");
+    const migratedLifecycleCheck = migration.match(
+      /ADD CONSTRAINT "loan_replacements_lifecycle_check" CHECK \(([\s\S]*?)\);--> statement-breakpoint/,
+    );
+
+    expect(lifecycleCheck).toBeDefined();
+    expect(migratedLifecycleCheck).toBeDefined();
+    const checkSql = new PgDialect().sqlToQuery(lifecycleCheck!.value).sql;
+    const normalize = (value: string) => value
+      .replaceAll('"loan_replacements".', "")
+      .replace(/\s+/g, " ")
+      .replace(/\(\s+/g, "(")
+      .replace(/\s+\)/g, ")")
+      .trim();
+    expect(normalize(checkSql)).toBe(normalize(migratedLifecycleCheck![1]!));
   });
 
   // Break caught: the service returns a transient proposal that cannot be reproduced from the persisted command aggregate.

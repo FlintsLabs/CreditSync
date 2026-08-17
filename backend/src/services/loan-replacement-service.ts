@@ -26,6 +26,8 @@ import { activateLoanInTransaction } from "./loan-application-service";
 type Executor = DbExecutor;
 type Loan = typeof loans.$inferSelect;
 type Replacement = typeof loanReplacements.$inferSelect;
+type Schedule = typeof loanSchedules.$inferSelect;
+type ReplacementCorrection = typeof loanReplacementCorrections.$inferSelect;
 
 interface ReplacementExecutionSnapshot {
     old: {
@@ -605,6 +607,156 @@ function storedExecutionSnapshot(record: Replacement): ReplacementExecutionSnaps
         },
     };
 }
+
+function scheduleAuditSummary(row: Schedule) {
+    return {
+        schedulePublicId: row.publicId,
+        installmentNo: row.installmentNo,
+        dueDate: row.dueDate,
+        scheduledPrincipal: serializeMoney(row.scheduledPrincipal),
+        scheduledInterest: serializeMoney(row.scheduledInterest),
+        scheduledFee: serializeMoney(row.scheduledFee),
+        scheduledTotal: serializeMoney(row.scheduledTotal),
+        paidTotal: serializeMoney(row.paidTotal),
+        paidPenalty: serializeMoney(row.paidPenalty),
+        remainingDue: serializeMoney(row.remainingDue),
+        status: row.status,
+    };
+}
+
+function correctionAuditSummaries(rows: ReplacementCorrection[]) {
+    const publicIdByInternalId = new Map(rows.map((row) => [row.id, row.publicId]));
+    return rows.map((row) => ({
+        correctionPublicId: row.publicId,
+        status: row.status,
+        principal: signedMoney(new FinancialDecimal(row.principal)),
+        interest: signedMoney(new FinancialDecimal(row.interest)),
+        fee: signedMoney(new FinancialDecimal(row.fee)),
+        penalty: signedMoney(new FinancialDecimal(row.penalty)),
+        reason: row.reason,
+        reversedCorrectionPublicId: row.reversedCorrectionId === null
+            ? null
+            : publicIdByInternalId.get(row.reversedCorrectionId) ?? null,
+    }));
+}
+
+async function fundingAuditSummaries(
+    executor: Executor,
+    ctx: CommandContext,
+    loanId: number,
+    blockerPublicId: string,
+) {
+    const rows = await executor.select({
+        id: loanFundingAllocations.id,
+        publicId: loanFundingAllocations.publicId,
+        allocatedAmount: loanFundingAllocations.allocatedAmount,
+        allocationDate: loanFundingAllocations.allocationDate,
+        allocationType: loanFundingAllocations.allocationType,
+        reversedAllocationId: loanFundingAllocations.reversedAllocationId,
+        bankLoanPublicId: bankLoans.publicId,
+        bankProfilePublicId: bankProfiles.publicId,
+    }).from(loanFundingAllocations)
+        .leftJoin(bankLoans, and(
+            eq(bankLoans.tenantId, loanFundingAllocations.tenantId),
+            eq(bankLoans.id, loanFundingAllocations.bankLoanId),
+        ))
+        .leftJoin(bankProfiles, and(
+            eq(bankProfiles.tenantId, loanFundingAllocations.tenantId),
+            eq(bankProfiles.id, loanFundingAllocations.bankProfileId),
+        ))
+        .where(and(
+            eq(loanFundingAllocations.tenantId, ctx.tenantId),
+            eq(loanFundingAllocations.loanId, loanId),
+        ))
+        .orderBy(asc(loanFundingAllocations.id));
+    const publicIdByInternalId = new Map(rows.map((row) => [row.id, row.publicId]));
+    return rows.map((row) => {
+        const fundingSourceKind: "drawdown" | "own_capital" = row.bankLoanPublicId
+            ? "drawdown"
+            : "own_capital";
+        const fundingSourcePublicId = row.bankLoanPublicId ?? row.bankProfilePublicId;
+        const reversedAllocationPublicId = row.reversedAllocationId === null
+            ? null
+            : publicIdByInternalId.get(row.reversedAllocationId);
+        if (!fundingSourcePublicId
+            || (row.reversedAllocationId !== null && !reversedAllocationPublicId)) {
+            reviewRequired(
+                "REPLACEMENT_AUDIT_STATE_INVALID",
+                "Replacement funding provenance is unavailable for the reversal audit",
+                [blockerPublicId],
+            );
+        }
+        return {
+            allocationPublicId: row.publicId,
+            fundingSourceKind,
+            fundingSourcePublicId,
+            allocatedAmount: signedMoney(new FinancialDecimal(row.allocatedAmount)),
+            allocationDate: row.allocationDate,
+            allocationType: row.allocationType,
+            reversedAllocationPublicId: reversedAllocationPublicId ?? null,
+        };
+    });
+}
+
+function loanAuditSummary(loan: Loan, schedules: Schedule[], asOfDate: string) {
+    const penalty = computeScheduledOutstandingPenalty({
+        businessDate: asOfDate,
+        gracePeriodDays: loan.gracePeriodDays,
+        lateFeeMode: loan.lateFeeMode,
+        lateFeeAmount: loan.lateFeeAmount,
+        schedules: schedules.map((row) => ({
+            dueDate: row.dueDate,
+            remainingDue: row.remainingDue,
+            paidPenalty: row.paidPenalty,
+            baseStatus: row.status,
+        })),
+    });
+    return {
+        loanPublicId: loan.publicId,
+        status: loan.status,
+        collectible: {
+            principal: serializeMoney(loan.outstandingPrincipal ?? "0.00"),
+            interest: serializeMoney(loan.outstandingInterest ?? "0.00"),
+            fee: serializeMoney(loan.outstandingFees ?? "0.00"),
+            penalty: serializeMoney(penalty),
+            nextDueDate: loan.nextDueDate,
+        },
+    };
+}
+
+async function loadReversalAuditState(
+    executor: Executor,
+    ctx: CommandContext,
+    record: Replacement,
+    oldLoan: Loan,
+    replacementLoan: Loan,
+    asOfDate: string,
+) {
+    const [oldSchedules, replacementSchedules, replacementFunding, correctionRows] = await Promise.all([
+        executor.select().from(loanSchedules).where(and(
+            eq(loanSchedules.tenantId, ctx.tenantId),
+            eq(loanSchedules.loanId, oldLoan.id),
+        )).orderBy(asc(loanSchedules.installmentNo), asc(loanSchedules.id)),
+        executor.select().from(loanSchedules).where(and(
+            eq(loanSchedules.tenantId, ctx.tenantId),
+            eq(loanSchedules.loanId, replacementLoan.id),
+        )).orderBy(asc(loanSchedules.installmentNo), asc(loanSchedules.id)),
+        fundingAuditSummaries(executor, ctx, replacementLoan.id, record.publicId),
+        executor.select().from(loanReplacementCorrections).where(and(
+            eq(loanReplacementCorrections.tenantId, ctx.tenantId),
+            eq(loanReplacementCorrections.replacementId, record.id),
+        )).orderBy(asc(loanReplacementCorrections.id)),
+    ]);
+    return {
+        oldLoan: loanAuditSummary(oldLoan, oldSchedules, asOfDate),
+        replacementLoan: loanAuditSummary(replacementLoan, replacementSchedules, asOfDate),
+        oldLoanSchedules: oldSchedules.map(scheduleAuditSummary),
+        replacementLoanSchedules: replacementSchedules.map(scheduleAuditSummary),
+        replacementFunding,
+        corrections: correctionAuditSummaries(correctionRows),
+    };
+}
+
 function authoritativeReplacementSchedule(loan: Loan) {
     if (!loan.termMonths || !loan.startDate || !["daily", "weekly", "monthly"].includes(loan.repaymentType)) {
         throw new DomainError("REPLACEMENT_TERMS_INVALID", "Replacement draft does not contain complete scheduled-loan terms", 409, { reviewRequired: true, blockerPublicIds: [loan.publicId] });
@@ -680,6 +832,66 @@ async function replacementFor(ctx: CommandContext, executor: Executor, value: st
     if (!row) throw new DomainError("LOAN_REPLACEMENT_NOT_FOUND", "Loan replacement was not found", 404);
     return row as Replacement;
 }
+
+async function requireReplacementAudit(
+    executor: Executor,
+    ctx: CommandContext,
+    record: Replacement,
+    action: "executed" | "reversed",
+    expectedReason: string,
+) {
+    const auditPublicId = action === "executed"
+        ? record.executedAuditPublicId
+        : record.reversedAuditPublicId;
+    const expectedIdempotencyKey = action === "executed"
+        ? record.executeIdempotencyKey
+        : record.reversalIdempotencyKey;
+    const expectedRequestHash = action === "executed"
+        ? record.executeRequestHash
+        : record.reversalRequestHash;
+    if (!auditPublicId || !expectedIdempotencyKey || !expectedRequestHash) {
+        reviewRequired(
+            "REPLACEMENT_AUDIT_MISSING",
+            `The persisted replacement ${action} audit reference is missing`,
+            [record.publicId],
+        );
+    }
+    const audit = await executor.query.auditLogs.findFirst({ where: and(
+        eq(auditLogs.tenantId, ctx.tenantId),
+        eq(auditLogs.publicId, auditPublicId),
+    ) });
+    if (!audit) {
+        reviewRequired(
+            "REPLACEMENT_AUDIT_MISSING",
+            `The persisted replacement ${action} audit is unavailable`,
+            [record.publicId],
+        );
+    }
+    const payload = audit.payload;
+    const canonicalProposal = storedProposal(record);
+    const payloadProposal = isObject(payload) ? payload.proposal : null;
+    const correlationId = audit.correlationId;
+    const payloadMatches = isObject(payload)
+        && payload.idempotencyKey === expectedIdempotencyKey
+        && payload.requestHash === expectedRequestHash
+        && isLoanReplacementProposal(payloadProposal)
+        && sha(payloadProposal) === sha(canonicalProposal)
+        && (action === "executed" || payload.reason === expectedReason);
+    if (audit.entityType !== "loan_replacement"
+        || audit.entityId !== record.publicId
+        || audit.action !== action
+        || typeof correlationId !== "string"
+        || !correlationId.trim()
+        || !payloadMatches) {
+        reviewRequired(
+            "REPLACEMENT_AUDIT_MISMATCH",
+            `The persisted replacement ${action} audit does not match the command aggregate`,
+            [record.publicId],
+        );
+    }
+    return { ...audit, correlationId };
+}
+
 async function lockLoanReplacementGraph(tx: Executor, ctx: CommandContext, loanIds: number[]) {
     const ids = [...new Set(loanIds)].sort((left, right) => left - right);
     for (const loanId of ids) {
@@ -725,10 +937,10 @@ export async function executeLoanReplacement(ctx: CommandContext, input: { repla
         if (keyOwner && keyOwner.id !== record.id) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was used for another replacement execution", 409);
         if (record.status === "executed") {
             if (record.executeIdempotencyKey !== key || record.executeRequestHash !== requestHash) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was used with a different request", 409);
-            const audit = await tx.query.auditLogs.findFirst({ where: and(eq(auditLogs.tenantId, ctx.tenantId), eq(auditLogs.entityId, record.publicId), eq(auditLogs.action, "executed")) });
+            const audit = await requireReplacementAudit(tx, ctx, record, "executed", why);
             const oldLoan = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, record.oldLoanId)) });
             const draft = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, record.replacementLoanId)) });
-            return { replacementPublicId: record.publicId, oldLoanPublicId: oldLoan!.publicId, replacementLoanPublicId: draft!.publicId, status: "executed", auditPublicId: audit?.publicId ?? "", correlationId: audit?.correlationId ?? record.correlationId ?? ctx.correlationId };
+            return { replacementPublicId: record.publicId, oldLoanPublicId: oldLoan!.publicId, replacementLoanPublicId: draft!.publicId, status: "executed", auditPublicId: audit.publicId, correlationId: audit.correlationId };
         }
         assertExecutablePreviewFresh(record);
         if (record.previewHash !== input.previewHash || record.oldBalanceVersion !== input.expectedOldBalanceVersion || record.replacementDraftVersion !== input.expectedReplacementDraftVersion || record.reason !== why) reviewRequired("REPLACEMENT_PREVIEW_STALE", "Replacement preview does not match the confirmed request", [record.publicId]);
@@ -825,8 +1037,8 @@ export async function reverseLoanReplacement(ctx: CommandContext, input: { repla
         [oldLoan, draft] = await Promise.all([tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, record.oldLoanId)) }), tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, record.replacementLoanId)) })]);
         if (record.status === "reversed") {
             if (record.reversalIdempotencyKey !== key || record.reversalRequestHash !== requestHash) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was used with a different request", 409);
-            const audit = await tx.query.auditLogs.findFirst({ where: and(eq(auditLogs.tenantId, ctx.tenantId), eq(auditLogs.entityId, record.publicId), eq(auditLogs.action, "reversed")) });
-            return { replacementPublicId: record.publicId, oldLoanPublicId: oldLoan!.publicId, replacementLoanPublicId: draft!.publicId, status: "reversed", auditPublicId: audit?.publicId ?? "", correlationId: audit?.correlationId ?? record.correlationId ?? ctx.correlationId };
+            const audit = await requireReplacementAudit(tx, ctx, record, "reversed", why);
+            return { replacementPublicId: record.publicId, oldLoanPublicId: oldLoan!.publicId, replacementLoanPublicId: draft!.publicId, status: "reversed", auditPublicId: audit.publicId, correlationId: audit.correlationId };
         }
         if (record.status !== "executed" || !oldLoan || !draft) reviewRequired("REPLACEMENT_NOT_REVERSIBLE", "Only an executed replacement can be reversed", [record.publicId]);
         const lifecycleBlockers = [
@@ -865,15 +1077,63 @@ export async function reverseLoanReplacement(ctx: CommandContext, input: { repla
         if (blockers.length) reviewRequired("REPLACEMENT_REVERSAL_DOWNSTREAM_ACTIVITY", "Replacement has downstream activity and requires human review", blockers);
         const snapshot = storedExecutionSnapshot(record)?.old;
         if (!snapshot) reviewRequired("REPLACEMENT_SNAPSHOT_MISSING", "Replacement snapshot is unavailable for safe reversal", [record.publicId]);
-        const corrections = await tx.select().from(loanReplacementCorrections).where(and(eq(loanReplacementCorrections.tenantId, ctx.tenantId), eq(loanReplacementCorrections.replacementId, record.id), eq(loanReplacementCorrections.status, "posted")));
-        for (const item of corrections) await tx.insert(loanReplacementCorrections).values({ tenantId: ctx.tenantId, replacementId: record.id, loanId: oldLoan.id, status: "reversed", principal: signedMoney(new FinancialDecimal(item.principal).negated()), interest: signedMoney(new FinancialDecimal(item.interest).negated()), fee: signedMoney(new FinancialDecimal(item.fee).negated()), penalty: signedMoney(new FinancialDecimal(item.penalty).negated()), reason: why, reversedCorrectionId: item.id, createdByUserId: ctx.actorUserId });
-        const allocations = await tx.select().from(loanFundingAllocations).where(and(eq(loanFundingAllocations.tenantId, ctx.tenantId), eq(loanFundingAllocations.loanId, draft.id), eq(loanFundingAllocations.allocationType, "initial")));
-        for (const allocation of allocations) await tx.insert(loanFundingAllocations).values({ tenantId: ctx.tenantId, bankProfileId: allocation.bankProfileId, bankLoanId: allocation.bankLoanId, loanId: draft.id, allocatedAmount: signedMoney(new FinancialDecimal(allocation.allocatedAmount).negated()), allocationDate: draft.startDate ?? new Date().toISOString().slice(0, 10), allocationType: "reallocation_out", allocationGroupId: crypto.randomUUID(), reversedAllocationId: allocation.id, note: `Compensating replacement reversal ${record.publicId}`, createdByUserId: ctx.actorUserId, idempotencyKey: `replacement-reversal:${record.publicId}:${allocation.publicId}`, requestHash: sha({ replacementPublicId: record.publicId, allocationPublicId: allocation.publicId, why }) });
+        const proposal = storedProposal(record);
+        const reversalAsOfDate = bangkokBusinessDate(new Date());
+        const [beforeAuditState, corrections, allocations] = await Promise.all([
+            loadReversalAuditState(tx, ctx, record, oldLoan, draft, reversalAsOfDate),
+            tx.select().from(loanReplacementCorrections).where(and(
+                eq(loanReplacementCorrections.tenantId, ctx.tenantId),
+                eq(loanReplacementCorrections.replacementId, record.id),
+                eq(loanReplacementCorrections.status, "posted"),
+            )).orderBy(asc(loanReplacementCorrections.id)),
+            tx.select().from(loanFundingAllocations).where(and(
+                eq(loanFundingAllocations.tenantId, ctx.tenantId),
+                eq(loanFundingAllocations.loanId, draft.id),
+                eq(loanFundingAllocations.allocationType, "initial"),
+            )).orderBy(asc(loanFundingAllocations.id)),
+        ]);
+        const compensatingCorrections: ReplacementCorrection[] = [];
+        for (const item of corrections) {
+            compensatingCorrections.push(await tx.insert(loanReplacementCorrections).values({ tenantId: ctx.tenantId, replacementId: record.id, loanId: oldLoan.id, status: "reversed", principal: signedMoney(new FinancialDecimal(item.principal).negated()), interest: signedMoney(new FinancialDecimal(item.interest).negated()), fee: signedMoney(new FinancialDecimal(item.fee).negated()), penalty: signedMoney(new FinancialDecimal(item.penalty).negated()), reason: why, reversedCorrectionId: item.id, createdByUserId: ctx.actorUserId }).returning().then((rows: ReplacementCorrection[]) => rows[0]!));
+        }
+        const compensatingAllocations: Array<typeof loanFundingAllocations.$inferSelect> = [];
+        for (const allocation of allocations) {
+            compensatingAllocations.push(await tx.insert(loanFundingAllocations).values({ tenantId: ctx.tenantId, bankProfileId: allocation.bankProfileId, bankLoanId: allocation.bankLoanId, loanId: draft.id, allocatedAmount: signedMoney(new FinancialDecimal(allocation.allocatedAmount).negated()), allocationDate: draft.startDate ?? new Date().toISOString().slice(0, 10), allocationType: "reallocation_out", allocationGroupId: crypto.randomUUID(), reversedAllocationId: allocation.id, note: `Compensating replacement reversal ${record.publicId}`, createdByUserId: ctx.actorUserId, idempotencyKey: `replacement-reversal:${record.publicId}:${allocation.publicId}`, requestHash: sha({ replacementPublicId: record.publicId, allocationPublicId: allocation.publicId, why }) }).returning().then((rows: Array<typeof loanFundingAllocations.$inferSelect>) => rows[0]!));
+        }
         await tx.update(loanSchedules).set({ status: "cancelled", remainingDue: "0.00" }).where(and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.loanId, draft.id)));
         await tx.update(loans).set({ status: "cancelled", outstandingPrincipal: "0.00", outstandingInterest: "0.00", outstandingFees: "0.00", nextDueDate: null, updatedAt: new Date() }).where(and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, draft.id)));
         await tx.update(loans).set({ status: snapshot.loan.status, outstandingPrincipal: snapshot.loan.outstandingPrincipal, outstandingInterest: snapshot.loan.outstandingInterest, outstandingFees: snapshot.loan.outstandingFees, nextDueDate: snapshot.loan.nextDueDate, updatedAt: new Date() }).where(and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, oldLoan.id)));
         for (const schedule of snapshot.schedules) await tx.update(loanSchedules).set({ status: schedule.status, remainingDue: schedule.remainingDue, paidTotal: schedule.paidTotal, paidPenalty: schedule.paidPenalty }).where(and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.id, schedule.id)));
-        const audit = await createAuditLog(tx, { ...auditContext(ctx), entityType: "loan_replacement", entityId: record.publicId, action: "reversed", payload: { reason: why, before: { oldLoan: { status: "replaced" }, replacementLoan: { status: "active" } }, after: { oldLoan: snapshot.loan, replacementLoan: { status: "cancelled" } }, idempotencyKey: key } });
+        const [restoredOldLoan, cancelledReplacementLoan] = await Promise.all([
+            loanFor(ctx, tx, oldLoan.publicId),
+            loanFor(ctx, tx, draft.publicId),
+        ]);
+        const afterAuditState = await loadReversalAuditState(
+            tx,
+            ctx,
+            record,
+            restoredOldLoan,
+            cancelledReplacementLoan,
+            reversalAsOfDate,
+        );
+        const audit = await createAuditLog(tx, {
+            ...auditContext(ctx),
+            entityType: "loan_replacement",
+            entityId: record.publicId,
+            action: "reversed",
+            payload: {
+                proposal,
+                reason: why,
+                requestHash,
+                idempotencyKey: key,
+                before: beforeAuditState,
+                after: afterAuditState,
+                compensation: {
+                    correctionPublicIds: compensatingCorrections.map((row) => row.publicId),
+                    fundingAllocationPublicIds: compensatingAllocations.map((row) => row.publicId),
+                },
+            },
+        });
         await tx.update(loanReplacements).set({ status: "reversed", reversalIdempotencyKey: key, reversalRequestHash: requestHash, reversalActorSource: ctx.actorSource, reversedAuditPublicId: audit.publicId, reversedAt: new Date(), reversedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(eq(loanReplacements.tenantId, ctx.tenantId), eq(loanReplacements.id, record.id), eq(loanReplacements.status, "executed")));
         return { replacementPublicId: record.publicId, oldLoanPublicId: oldLoan.publicId, replacementLoanPublicId: draft.publicId, status: "reversed", auditPublicId: audit.publicId, correlationId: ctx.correlationId };
     });

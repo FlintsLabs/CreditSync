@@ -631,6 +631,80 @@ describe("loan replacement service database invariants", () => {
         expect(reversalReplay).toEqual(reversal);
     });
 
+    // Break caught: execution replay ignores the aggregate's persisted audit FK and returns a
+    // different generic audit with the same entity/action after the FK is corrupted.
+    integrationTest("fails closed when the persisted execution audit does not describe this execution", async () => {
+        const fixture = await seedReplacementFixture();
+        const preview = await fixture.preview();
+        const executed = await fixture.execute(preview);
+        const mismatchedAudit = await db.insert(auditLogs).values({
+            tenantId: fixture.tenantId,
+            entityType: "loan_replacement",
+            entityId: executed.replacementPublicId,
+            action: "executed",
+            actorSource: "system",
+            correlationId: "wrong-execution-audit",
+            payload: {
+                idempotencyKey: "wrong-execution-key",
+                requestHash: "0".repeat(64),
+                proposal: { schemaVersion: 0 },
+            },
+        }).returning().then((rows) => rows[0]!);
+
+        await db.transaction(async (tx) => {
+            await tx.execute(sql`SET LOCAL session_replication_role = replica`);
+            await tx.update(loanReplacements).set({
+                executedAuditPublicId: mismatchedAudit.publicId,
+            }).where(and(
+                eq(loanReplacements.tenantId, fixture.tenantId),
+                eq(loanReplacements.publicId, executed.replacementPublicId),
+            ));
+        });
+
+        await expect(fixture.execute(preview)).rejects.toMatchObject({
+            code: "REPLACEMENT_AUDIT_MISMATCH",
+            details: {
+                reviewRequired: true,
+                blockerPublicIds: [executed.replacementPublicId],
+            },
+        });
+    });
+
+    // Break caught: reversal replay silently returns an empty audit UUID when the exact audit
+    // referenced by the immutable aggregate is absent.
+    integrationTest("fails closed when the persisted reversal audit is missing", async () => {
+        const fixture = await seedReplacementFixture();
+        const preview = await fixture.preview();
+        const executed = await fixture.execute(preview);
+        const reversalKey = "missing-reversal-audit";
+        const reversalReason = "Restore the original agreement";
+        const reversed = await fixture.reverse(
+            executed.replacementPublicId,
+            reversalKey,
+            reversalReason,
+        );
+
+        await db.transaction(async (tx) => {
+            await tx.execute(sql`SET LOCAL session_replication_role = replica`);
+            await tx.delete(auditLogs).where(and(
+                eq(auditLogs.tenantId, fixture.tenantId),
+                eq(auditLogs.publicId, reversed.auditPublicId),
+            ));
+        });
+
+        await expect(fixture.reverse(
+            executed.replacementPublicId,
+            reversalKey,
+            reversalReason,
+        )).rejects.toMatchObject({
+            code: "REPLACEMENT_AUDIT_MISSING",
+            details: {
+                reviewRequired: true,
+                blockerPublicIds: [executed.replacementPublicId],
+            },
+        });
+    });
+
     // Break caught: an old-loan collectible rollup changes after confirmation without invalidating the preview.
     integrationTest("rejects execution when the old balance version is stale", async () => {
         const fixture = await seedReplacementFixture();
@@ -1608,6 +1682,317 @@ describe("loan replacement service database invariants", () => {
                 reversedAllocationId: expect.any(Number),
             },
         ]);
+    });
+
+    // Break caught: the reversal audit records only lifecycle labels and omits the exact public
+    // financial state, restored/cancelled schedules, funding compensation, and correction IDs.
+    integrationTest("audits the complete reversal with safe public before and after state", async () => {
+        const fixture = await seedReplacementFixture({
+            replacementDraft: {
+                termMonths: 1,
+                totalInstallments: 2,
+                installmentAmount: "18000.00",
+            },
+        });
+        const executionReason = "Correct the contract start date";
+        const preview = await fixture.preview(executionReason);
+        const executed = await fixture.execute(preview, "full-reversal-audit-execute", executionReason);
+        const persisted = await db.query.loanReplacements.findFirst({ where: and(
+            eq(loanReplacements.tenantId, fixture.tenantId),
+            eq(loanReplacements.publicId, executed.replacementPublicId),
+        ) });
+        expect(persisted).toBeDefined();
+        const [oldSchedulesBefore, replacementSchedulesBefore, correctionsBefore, fundingBefore] = await Promise.all([
+            db.select().from(loanSchedules).where(and(
+                eq(loanSchedules.tenantId, fixture.tenantId),
+                eq(loanSchedules.loanId, fixture.oldLoan.id),
+            )).orderBy(asc(loanSchedules.installmentNo)),
+            db.select().from(loanSchedules).where(and(
+                eq(loanSchedules.tenantId, fixture.tenantId),
+                eq(loanSchedules.loanId, fixture.replacementDraft.id),
+            )).orderBy(asc(loanSchedules.installmentNo)),
+            db.select().from(loanReplacementCorrections).where(and(
+                eq(loanReplacementCorrections.tenantId, fixture.tenantId),
+                eq(loanReplacementCorrections.replacementId, persisted!.id),
+            )).orderBy(asc(loanReplacementCorrections.id)),
+            db.select().from(loanFundingAllocations).where(and(
+                eq(loanFundingAllocations.tenantId, fixture.tenantId),
+                eq(loanFundingAllocations.loanId, fixture.replacementDraft.id),
+            )).orderBy(asc(loanFundingAllocations.id)),
+        ]);
+        expect(oldSchedulesBefore).toHaveLength(2);
+        expect(replacementSchedulesBefore).toHaveLength(2);
+        expect(correctionsBefore).toHaveLength(1);
+        expect(fundingBefore).toHaveLength(1);
+
+        const reversalKey = "full-reversal-audit-reverse";
+        const reversalReason = "Restore the original contract after review";
+        const reversed = await fixture.reverse(executed.replacementPublicId, reversalKey, reversalReason);
+        const [reversedAggregate, reversalAudit, oldSchedulesAfter, replacementSchedulesAfter, correctionsAfter, fundingAfter] = await Promise.all([
+            db.query.loanReplacements.findFirst({ where: and(
+                eq(loanReplacements.tenantId, fixture.tenantId),
+                eq(loanReplacements.publicId, executed.replacementPublicId),
+            ) }),
+            db.query.auditLogs.findFirst({ where: and(
+                eq(auditLogs.tenantId, fixture.tenantId),
+                eq(auditLogs.publicId, reversed.auditPublicId),
+            ) }),
+            db.select().from(loanSchedules).where(and(
+                eq(loanSchedules.tenantId, fixture.tenantId),
+                eq(loanSchedules.loanId, fixture.oldLoan.id),
+            )).orderBy(asc(loanSchedules.installmentNo)),
+            db.select().from(loanSchedules).where(and(
+                eq(loanSchedules.tenantId, fixture.tenantId),
+                eq(loanSchedules.loanId, fixture.replacementDraft.id),
+            )).orderBy(asc(loanSchedules.installmentNo)),
+            db.select().from(loanReplacementCorrections).where(and(
+                eq(loanReplacementCorrections.tenantId, fixture.tenantId),
+                eq(loanReplacementCorrections.replacementId, persisted!.id),
+            )).orderBy(asc(loanReplacementCorrections.id)),
+            db.select().from(loanFundingAllocations).where(and(
+                eq(loanFundingAllocations.tenantId, fixture.tenantId),
+                eq(loanFundingAllocations.loanId, fixture.replacementDraft.id),
+            )).orderBy(asc(loanFundingAllocations.id)),
+        ]);
+        expect(reversalAudit).toBeDefined();
+        expect(reversedAggregate?.reversalRequestHash).toMatch(/^[0-9a-f]{64}$/);
+        expect(correctionsAfter).toHaveLength(2);
+        expect(fundingAfter).toHaveLength(2);
+
+        expect(reversalAudit?.payload).toEqual({
+            proposal: persisted!.previewSnapshot,
+            reason: reversalReason,
+            requestHash: reversedAggregate!.reversalRequestHash,
+            idempotencyKey: reversalKey,
+            before: {
+                oldLoan: {
+                    loanPublicId: fixture.oldLoan.publicId,
+                    status: "replaced",
+                    collectible: {
+                        principal: "0.00",
+                        interest: "0.00",
+                        fee: "0.00",
+                        penalty: "0.00",
+                        nextDueDate: null,
+                    },
+                },
+                replacementLoan: {
+                    loanPublicId: fixture.replacementDraft.publicId,
+                    status: "active",
+                    collectible: {
+                        principal: "36000.00",
+                        interest: "0.00",
+                        fee: "0.00",
+                        penalty: "0.00",
+                        nextDueDate: "2026-07-12",
+                    },
+                },
+                oldLoanSchedules: [
+                    {
+                        schedulePublicId: oldSchedulesBefore[0]!.publicId,
+                        installmentNo: 1,
+                        dueDate: "2026-07-13",
+                        scheduledPrincipal: "180.00",
+                        scheduledInterest: "21.00",
+                        scheduledFee: "0.00",
+                        scheduledTotal: "201.00",
+                        paidTotal: "0.00",
+                        paidPenalty: "0.00",
+                        remainingDue: "0.00",
+                        status: "cancelled",
+                    },
+                    {
+                        schedulePublicId: oldSchedulesBefore[1]!.publicId,
+                        installmentNo: 2,
+                        dueDate: "2026-07-14",
+                        scheduledPrincipal: "180.00",
+                        scheduledInterest: "21.00",
+                        scheduledFee: "0.00",
+                        scheduledTotal: "201.00",
+                        paidTotal: "0.00",
+                        paidPenalty: "0.00",
+                        remainingDue: "0.00",
+                        status: "cancelled",
+                    },
+                ],
+                replacementLoanSchedules: [
+                    {
+                        schedulePublicId: replacementSchedulesBefore[0]!.publicId,
+                        installmentNo: 1,
+                        dueDate: "2026-07-12",
+                        scheduledPrincipal: "18000.00",
+                        scheduledInterest: "0.00",
+                        scheduledFee: "0.00",
+                        scheduledTotal: "18000.00",
+                        paidTotal: "0.00",
+                        paidPenalty: "0.00",
+                        remainingDue: "18000.00",
+                        status: "pending",
+                    },
+                    {
+                        schedulePublicId: replacementSchedulesBefore[1]!.publicId,
+                        installmentNo: 2,
+                        dueDate: "2026-07-13",
+                        scheduledPrincipal: "18000.00",
+                        scheduledInterest: "0.00",
+                        scheduledFee: "0.00",
+                        scheduledTotal: "18000.00",
+                        paidTotal: "0.00",
+                        paidPenalty: "0.00",
+                        remainingDue: "18000.00",
+                        status: "pending",
+                    },
+                ],
+                replacementFunding: [{
+                    allocationPublicId: fundingBefore[0]!.publicId,
+                    fundingSourceKind: "drawdown",
+                    fundingSourcePublicId: fixture.source.drawdown!.publicId,
+                    allocatedAmount: "36000.00",
+                    allocationDate: "2026-07-11",
+                    allocationType: "initial",
+                    reversedAllocationPublicId: null,
+                }],
+                corrections: [{
+                    correctionPublicId: correctionsBefore[0]!.publicId,
+                    status: "posted",
+                    principal: "36000.00",
+                    interest: "4200.00",
+                    fee: "0.00",
+                    penalty: "0.00",
+                    reason: executionReason,
+                    reversedCorrectionPublicId: null,
+                }],
+            },
+            after: {
+                oldLoan: {
+                    loanPublicId: fixture.oldLoan.publicId,
+                    status: "active",
+                    collectible: {
+                        principal: "36000.00",
+                        interest: "4200.00",
+                        fee: "0.00",
+                        penalty: "0.00",
+                        nextDueDate: "2026-07-13",
+                    },
+                },
+                replacementLoan: {
+                    loanPublicId: fixture.replacementDraft.publicId,
+                    status: "cancelled",
+                    collectible: {
+                        principal: "0.00",
+                        interest: "0.00",
+                        fee: "0.00",
+                        penalty: "0.00",
+                        nextDueDate: null,
+                    },
+                },
+                oldLoanSchedules: [
+                    {
+                        schedulePublicId: oldSchedulesAfter[0]!.publicId,
+                        installmentNo: 1,
+                        dueDate: "2026-07-13",
+                        scheduledPrincipal: "180.00",
+                        scheduledInterest: "21.00",
+                        scheduledFee: "0.00",
+                        scheduledTotal: "201.00",
+                        paidTotal: "0.00",
+                        paidPenalty: "0.00",
+                        remainingDue: "201.00",
+                        status: "pending",
+                    },
+                    {
+                        schedulePublicId: oldSchedulesAfter[1]!.publicId,
+                        installmentNo: 2,
+                        dueDate: "2026-07-14",
+                        scheduledPrincipal: "180.00",
+                        scheduledInterest: "21.00",
+                        scheduledFee: "0.00",
+                        scheduledTotal: "201.00",
+                        paidTotal: "0.00",
+                        paidPenalty: "0.00",
+                        remainingDue: "201.00",
+                        status: "pending",
+                    },
+                ],
+                replacementLoanSchedules: [
+                    {
+                        schedulePublicId: replacementSchedulesAfter[0]!.publicId,
+                        installmentNo: 1,
+                        dueDate: "2026-07-12",
+                        scheduledPrincipal: "18000.00",
+                        scheduledInterest: "0.00",
+                        scheduledFee: "0.00",
+                        scheduledTotal: "18000.00",
+                        paidTotal: "0.00",
+                        paidPenalty: "0.00",
+                        remainingDue: "0.00",
+                        status: "cancelled",
+                    },
+                    {
+                        schedulePublicId: replacementSchedulesAfter[1]!.publicId,
+                        installmentNo: 2,
+                        dueDate: "2026-07-13",
+                        scheduledPrincipal: "18000.00",
+                        scheduledInterest: "0.00",
+                        scheduledFee: "0.00",
+                        scheduledTotal: "18000.00",
+                        paidTotal: "0.00",
+                        paidPenalty: "0.00",
+                        remainingDue: "0.00",
+                        status: "cancelled",
+                    },
+                ],
+                replacementFunding: [
+                    {
+                        allocationPublicId: fundingAfter[0]!.publicId,
+                        fundingSourceKind: "drawdown",
+                        fundingSourcePublicId: fixture.source.drawdown!.publicId,
+                        allocatedAmount: "36000.00",
+                        allocationDate: "2026-07-11",
+                        allocationType: "initial",
+                        reversedAllocationPublicId: null,
+                    },
+                    {
+                        allocationPublicId: fundingAfter[1]!.publicId,
+                        fundingSourceKind: "drawdown",
+                        fundingSourcePublicId: fixture.source.drawdown!.publicId,
+                        allocatedAmount: "-36000.00",
+                        allocationDate: "2026-07-11",
+                        allocationType: "reallocation_out",
+                        reversedAllocationPublicId: fundingAfter[0]!.publicId,
+                    },
+                ],
+                corrections: [
+                    {
+                        correctionPublicId: correctionsAfter[0]!.publicId,
+                        status: "posted",
+                        principal: "36000.00",
+                        interest: "4200.00",
+                        fee: "0.00",
+                        penalty: "0.00",
+                        reason: executionReason,
+                        reversedCorrectionPublicId: null,
+                    },
+                    {
+                        correctionPublicId: correctionsAfter[1]!.publicId,
+                        status: "reversed",
+                        principal: "-36000.00",
+                        interest: "-4200.00",
+                        fee: "0.00",
+                        penalty: "0.00",
+                        reason: reversalReason,
+                        reversedCorrectionPublicId: correctionsAfter[0]!.publicId,
+                    },
+                ],
+            },
+            compensation: {
+                correctionPublicIds: [correctionsAfter[1]!.publicId],
+                fundingAllocationPublicIds: [fundingAfter[1]!.publicId],
+            },
+        });
+        expect(JSON.stringify(reversalAudit?.payload)).not.toMatch(
+            /"(?:id|loanId|scheduleId|bankProfileId|bankLoanId|replacementId|reversedCorrectionId|reversedAllocationId)":/,
+        );
     });
 
     // Break caught: compensated payment and disbursement history is mistaken for effective downstream activity.

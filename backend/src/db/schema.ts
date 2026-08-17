@@ -720,6 +720,39 @@ export const loanReplacements = pgTable("loan_replacements", {
     check("loan_replacements_status_check", sql`${table.status} IN ('preview', 'executed', 'reversed', 'expired')`),
     check("loan_replacements_actor_source_check", sql`${table.createdActorSource} IN ('web', 'mcp', 'system') AND (${table.executeActorSource} IS NULL OR ${table.executeActorSource} IN ('web', 'mcp', 'system')) AND (${table.reversalActorSource} IS NULL OR ${table.reversalActorSource} IN ('web', 'mcp', 'system'))`),
     check("loan_replacements_request_key_hash_check", sql`(${table.executeIdempotencyKey} IS NULL) = (${table.executeRequestHash} IS NULL) AND (${table.reversalIdempotencyKey} IS NULL) = (${table.reversalRequestHash} IS NULL)`),
+    check("loan_replacements_lifecycle_check", sql`
+        (
+            ${table.status} IN ('preview','expired') AND
+            ${table.executeIdempotencyKey} IS NULL AND
+            ${table.executeRequestHash} IS NULL AND
+            ${table.reversalIdempotencyKey} IS NULL AND
+            ${table.reversalRequestHash} IS NULL
+        )
+        OR (
+            ${table.status} = 'executed' AND
+            ${table.executeIdempotencyKey} IS NOT NULL AND
+            ${table.executeRequestHash} IS NOT NULL AND
+            ${table.executedAuditPublicId} IS NOT NULL AND
+            ${table.executedAt} IS NOT NULL AND
+            ${table.executeActorSource} IS NOT NULL AND
+            ${table.preExecutionSnapshot} IS NOT NULL AND
+            ${table.reversalIdempotencyKey} IS NULL AND
+            ${table.reversalRequestHash} IS NULL
+        )
+        OR (
+            ${table.status} = 'reversed' AND
+            ${table.executeIdempotencyKey} IS NOT NULL AND
+            ${table.executeRequestHash} IS NOT NULL AND
+            ${table.executedAuditPublicId} IS NOT NULL AND
+            ${table.executedAt} IS NOT NULL AND
+            ${table.reversalIdempotencyKey} IS NOT NULL AND
+            ${table.reversalRequestHash} IS NOT NULL AND
+            ${table.reversedAuditPublicId} IS NOT NULL AND
+            ${table.reversedAt} IS NOT NULL AND
+            ${table.reversalActorSource} IS NOT NULL AND
+            ${table.preExecutionSnapshot} IS NOT NULL
+        )
+    `),
     check("loan_replacements_preview_snapshot_check", sql`
         (
             jsonb_typeof(${table.previewSnapshot}) = 'object' AND
