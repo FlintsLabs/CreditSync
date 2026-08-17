@@ -3,6 +3,7 @@
 ## v0.3.17 - 2026-08-17
 
 ### Added
+- Extended replacement preview presentation with safe funding labels and complete localized review components for post-refresh reversal.
 - Added owner/manager-only localized Web replacement controls with an exact backend preview, explicit confirmation, stale/blocked errors, separate reasoned compensating reversal, public lineage links, and `Closed — Replaced` list lifecycle treatment.
 - Added frozen 78-tool MCP/plugin support for atomic scheduled-loan replacement preview, explicitly confirmed idempotent execution, and safe compensating reversal with public-only lineage, exact decimal proposal outputs, audit/correlation propagation, and executable stop-boundary evals.
 - Added authenticated, tenant-scoped loan replacement preview, execute, and reversal REST commands with closed public schemas, idempotency/correlation/audit responses, and replacement lineage across loan, list, and borrower-history projections.

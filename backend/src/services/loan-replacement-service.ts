@@ -57,6 +57,8 @@ const previewTtlMs = 15 * 60 * 1000;
 export interface LoanReplacementPreview extends LoanReplacementProposal {
     publicId: string; previewHash: string; oldBalanceVersion: string; replacementDraftVersion: string; expiresAt: Date;
     auditPublicId: string; correlationId: string;
+    /** Presentation-only safe funding label; canonical proposal remains immutable. */
+    fundingSourceName: string | null;
 }
 export interface LoanReplacementExecution {
     replacementPublicId: string; oldLoanPublicId: string; replacementLoanPublicId: string; status: "executed";
@@ -813,6 +815,9 @@ export async function previewLoanReplacement(ctx: CommandContext, input: { oldLo
                 previewHash: row.previewHash,
             },
         });
+        const fundingProfile = draft.bankLoanId
+            ? await tx.query.bankProfiles.findFirst({ where: and(eq(bankProfiles.tenantId, ctx.tenantId), eq(bankProfiles.id, draft.fundingBankProfileId!)) })
+            : null;
         return {
             ...proposal,
             publicId: row.publicId,
@@ -822,6 +827,7 @@ export async function previewLoanReplacement(ctx: CommandContext, input: { oldLo
             expiresAt: row.expiresAt,
             auditPublicId: audit.publicId,
             correlationId: ctx.correlationId,
+            fundingSourceName: fundingProfile?.providerName ?? fundingProfile?.name ?? (draft.bankLoanId ? null : (await tx.query.bankProfiles.findFirst({ where: and(eq(bankProfiles.tenantId, ctx.tenantId), eq(bankProfiles.id, draft.fundingBankProfileId!)) }))?.name ?? null),
         };
     });
 }

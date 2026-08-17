@@ -16,10 +16,11 @@ interface ReplacementPreview {
     expiresAt: string;
     asOfDate: string;
     reason: string;
+    fundingSourceName?: string | null;
     oldLoan: { loanPublicId: string; principal: string; collectibleBefore: { principal: string; interest: string; fee: string; penalty: string; nextDueDate: string | null }; collectibleAfter: { principal: string; interest: string; fee: string; penalty: string; nextDueDate: null } };
     cash: { direction: "none"; amount: string };
     correction: { principal: string; interest: string; fee: string; penalty: string };
-    replacement: { loanPublicId: string; principal: string; interestRate: string; repaymentType: string; termMonths: number; totalInstallments: number; installmentAmount: string; startDate: string; firstDueDate: string; lastDueDate: string; totalRepayment: string; fundingSourceKind: "drawdown" | "own_capital"; fundingSourcePublicId: string };
+    replacement: { loanPublicId: string; principal: string; interestRate: string; repaymentType: string; termMonths: number; totalInstallments: number; installmentAmount: string; startDate: string; firstDueDate: string; lastDueDate: string; totalRepayment: string; fundingSourceKind: "drawdown" | "own_capital"; fundingSourcePublicId: string; fundingSourceName?: string | null };
     warnings: string[];
 }
 
@@ -39,7 +40,7 @@ function errorKey(caught: unknown) {
 }
 
 /** Owner/manager replacement command surface. All financial values are supplied by the preview response. */
-export function LoanReplacementPanel({ oldLoanPublicId, onInvalidated }: { oldLoanPublicId: string; onInvalidated?: (loanPublicIds: string[]) => void }) {
+export function LoanReplacementPanel({ oldLoanPublicId, lineage, onInvalidated }: { oldLoanPublicId: string; lineage?: { replacementPublicId: string; status: "executed" | "reversed"; replacedFromPublicId: string | null; replacedToPublicId: string | null } | null; onInvalidated?: (loanPublicIds: string[]) => void }) {
     const { t, i18n } = useTranslation();
     const [draftLoanPublicId, setDraftLoanPublicId] = useState("");
     const [reason, setReason] = useState("");
@@ -64,7 +65,7 @@ export function LoanReplacementPanel({ oldLoanPublicId, onInvalidated }: { oldLo
     const previewReplacement = async () => {
         setBusy(true); setError(""); clearPreview();
         try {
-            const response = await api.post("/replacements/preview", { oldLoanPublicId, replacementDraftPublicId: draftLoanPublicId.trim(), reason: reason.trim() });
+            const response = await api.post("/loans/replacements/preview", { oldLoanPublicId, replacementDraftPublicId: draftLoanPublicId.trim(), reason: reason.trim() });
             setPreview(response.data as ReplacementPreview);
         } catch (caught) {
             const code = errorKey(caught);
@@ -76,7 +77,7 @@ export function LoanReplacementPanel({ oldLoanPublicId, onInvalidated }: { oldLo
         setBusy(true); setError("");
         try {
             executeKey.current ??= crypto.randomUUID();
-            const response = await api.post(`/replacements/${preview.publicId}/execute`, {
+            const response = await api.post(`/loans/replacements/${preview.publicId}/execute`, {
                 confirmed: true, previewHash: preview.previewHash, expectedOldBalanceVersion: preview.oldBalanceVersion,
                 expectedReplacementDraftVersion: preview.replacementDraftVersion, reason: preview.reason,
             }, { headers: { "Idempotency-Key": executeKey.current } });
@@ -85,15 +86,16 @@ export function LoanReplacementPanel({ oldLoanPublicId, onInvalidated }: { oldLo
         } catch (caught) {
             const code = errorKey(caught);
             setError(code ? t(`domainErrors.${code}`, { defaultValue: t("replacement.errors.execute") }) : t("replacement.errors.execute"));
-            if (code === "REPLACEMENT_PREVIEW_STALE" || code === "REPLACEMENT_PREVIEW_EXPIRED") clearPreview();
+            if (code === "REPLACEMENT_PREVIEW_STALE" || code === "REPLACEMENT_PREVIEW_EXPIRED" || (caught as { response?: { data?: { reviewRequired?: boolean } } }).response?.data?.reviewRequired) clearPreview();
         } finally { setBusy(false); }
     };
     const reverse = async () => {
-        if (!result || !reverseConfirmed || !reverseReason.trim()) return;
+        const current = result ?? (lineage?.status === "executed" ? { replacementPublicId: lineage.replacementPublicId, oldLoanPublicId: lineage.replacedFromPublicId ?? oldLoanPublicId, replacementLoanPublicId: lineage.replacedToPublicId ?? oldLoanPublicId, status: "executed" as const } : null);
+        if (!current || !reverseConfirmed || !reverseReason.trim()) return;
         setBusy(true); setError("");
         try {
             reverseKey.current ??= crypto.randomUUID();
-            const response = await api.post(`/replacements/${result.replacementPublicId}/reverse`, { reason: reverseReason.trim() }, { headers: { "Idempotency-Key": reverseKey.current } });
+            const response = await api.post(`/loans/replacements/${current.replacementPublicId}/reverse`, { reason: reverseReason.trim() }, { headers: { "Idempotency-Key": reverseKey.current } });
             const next = response.data as ReplacementResult;
             setResult(next); invalidate([next.oldLoanPublicId, next.replacementLoanPublicId]);
         } catch (caught) {
@@ -107,7 +109,7 @@ export function LoanReplacementPanel({ oldLoanPublicId, onInvalidated }: { oldLo
         <CardContent className="space-y-4">
             <p className="text-sm text-muted-foreground">{t("replacement.description")}</p>
             {error && <div role="alert" className="flex gap-2 rounded border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"><AlertTriangle className="h-4 w-4 shrink-0" />{error}</div>}
-            {!preview && !result && <div className="grid gap-3 sm:grid-cols-2">
+            {!preview && !result && !lineage?.replacementPublicId && <div className="grid gap-3 sm:grid-cols-2">
                 <label className="grid gap-1 text-sm" htmlFor="replacement-draft">{t("replacement.draftLoan")}<Input id="replacement-draft" value={draftLoanPublicId} onChange={(event) => { setDraftLoanPublicId(event.target.value); clearPreview(); }} /></label>
                 <label className="grid gap-1 text-sm" htmlFor="replacement-reason">{t("replacement.reason")}<Input id="replacement-reason" value={reason} onChange={(event) => { setReason(event.target.value); clearPreview(); }} /></label>
                 <Button className="sm:col-span-2 w-fit" disabled={busy || !draftLoanPublicId.trim() || !reason.trim()} onClick={() => void previewReplacement()}>{t("replacement.preview")}</Button>
@@ -116,19 +118,24 @@ export function LoanReplacementPanel({ oldLoanPublicId, onInvalidated }: { oldLo
                 <h3 className="font-semibold">{t("replacement.previewTitle")}</h3>
                 <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
                     {([
-                        ["oldPrincipal", preview.oldLoan.collectibleBefore.principal], ["correctedInterest", preview.correction.interest],
+                        ["oldPrincipal", preview.oldLoan.collectibleBefore.principal], ["oldInterest", preview.oldLoan.collectibleBefore.interest], ["oldFee", preview.oldLoan.collectibleBefore.fee], ["oldPenalty", preview.oldLoan.collectibleBefore.penalty],
+                        ["afterPrincipal", preview.oldLoan.collectibleAfter.principal], ["afterInterest", preview.oldLoan.collectibleAfter.interest], ["afterFee", preview.oldLoan.collectibleAfter.fee], ["afterPenalty", preview.oldLoan.collectibleAfter.penalty],
+                        ["correctedPrincipal", preview.correction.principal], ["correctedInterest", preview.correction.interest], ["correctedFee", preview.correction.fee], ["correctedPenalty", preview.correction.penalty],
                         ["noCash", preview.cash.amount], ["replacementPrincipal", preview.replacement.principal], ["installment", preview.replacement.installmentAmount], ["totalRepayment", preview.replacement.totalRepayment],
                     ] as const).map(([label, value]) => <div key={label}><dt className="text-muted-foreground">{t(`replacement.${label}`)}</dt><dd className="font-medium tabular-nums">{money(value)}</dd></div>)}
                     <div><dt className="text-muted-foreground">{t("replacement.startDate")}</dt><dd className="font-medium">{dateValue(preview.replacement.startDate, i18n.language)}</dd></div>
                     <div><dt className="text-muted-foreground">{t("replacement.firstDueDate")}</dt><dd className="font-medium">{dateValue(preview.replacement.firstDueDate, i18n.language)}</dd></div>
-                    <div><dt className="text-muted-foreground">{t("replacement.funding")}</dt><dd className="font-medium">{t(`replacement.fundingKinds.${preview.replacement.fundingSourceKind}`)}</dd></div>
+                    <div><dt className="text-muted-foreground">{t("replacement.lastDueDate")}</dt><dd className="font-medium">{dateValue(preview.replacement.lastDueDate, i18n.language)}</dd></div>
+                    <div><dt className="text-muted-foreground">{t("replacement.terms")}</dt><dd className="font-medium">{t(`loanWizard.repaymentOptions.${preview.replacement.repaymentType}`)} · {preview.replacement.termMonths} · {preview.replacement.totalInstallments}</dd></div>
+                    <div><dt className="text-muted-foreground">{t("replacement.funding")}</dt><dd className="font-medium">{t(`replacement.fundingKinds.${preview.replacement.fundingSourceKind}`)}{preview.fundingSourceName ? ` · ${preview.fundingSourceName}` : ""}</dd></div>
                 </dl>
+                <div className="text-sm"><span className="text-muted-foreground">{t("replacement.reason")}: </span>{preview.reason}</div><div className="text-sm"><span className="text-muted-foreground">{t("replacement.asOfDate")}: </span>{dateValue(preview.asOfDate, i18n.language)}</div>
                 <div className="text-xs text-muted-foreground">{t("replacement.expires", { value: new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Bangkok" }).format(new Date(preview.expiresAt)) })}</div>
-                {preview.warnings.length > 0 && <ul className="list-disc space-y-1 pl-5 text-sm text-amber-800 dark:text-amber-200">{preview.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}
+                {preview.warnings.length > 0 && <ul className="list-disc space-y-1 pl-5 text-sm text-amber-800 dark:text-amber-200">{preview.warnings.map((warning) => <li key={warning}>{t(`replacement.warnings.${warning}`, { defaultValue: t("replacement.warnings.generic") })}</li>)}</ul>}
                 <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /><span>{t("replacement.confirmation")}</span></label>
                 <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={busy} onClick={clearPreview}>{t("replacement.edit")}</Button><Button disabled={busy || !confirmed} onClick={() => void execute()}><CheckCircle2 className="mr-2 h-4 w-4" />{t("replacement.execute")}</Button></div>
             </section>}
-            {result?.status === "executed" && <section className="space-y-3 rounded border border-emerald-500/30 bg-emerald-500/10 p-4"><div role="status" className="font-medium text-emerald-700 dark:text-emerald-300">{t("replacement.executed")}</div><label className="grid gap-1 text-sm" htmlFor="replacement-reverse-reason">{t("replacement.reversalReason")}<Input id="replacement-reverse-reason" value={reverseReason} onChange={(event) => { setReverseReason(event.target.value); setReverseConfirmed(false); reverseKey.current = null; }} /></label><label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={reverseConfirmed} onChange={(event) => setReverseConfirmed(event.target.checked)} /><span>{t("replacement.reversalConfirmation")}</span></label><Button variant="destructive" disabled={busy || !reverseReason.trim() || !reverseConfirmed} onClick={() => void reverse()}><RotateCcw className="mr-2 h-4 w-4" />{t("replacement.reverse")}</Button></section>}
+            {(result?.status === "executed" || lineage?.status === "executed") && <section className="space-y-3 rounded border border-emerald-500/30 bg-emerald-500/10 p-4"><div role="status" className="font-medium text-emerald-700 dark:text-emerald-300">{t("replacement.executed")}</div><label className="grid gap-1 text-sm" htmlFor="replacement-reverse-reason">{t("replacement.reversalReason")}<Input id="replacement-reverse-reason" value={reverseReason} onChange={(event) => { setReverseReason(event.target.value); setReverseConfirmed(false); reverseKey.current = null; }} /></label><label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={reverseConfirmed} onChange={(event) => setReverseConfirmed(event.target.checked)} /><span>{t("replacement.reversalConfirmation")}</span></label><Button variant="destructive" disabled={busy || !reverseReason.trim() || !reverseConfirmed} onClick={() => void reverse()}><RotateCcw className="mr-2 h-4 w-4" />{t("replacement.reverse")}</Button></section>}
             {result?.status === "reversed" && <div role="status" className="rounded border p-3 text-sm">{t("replacement.reversed")}</div>}
         </CardContent>
     </Card>;

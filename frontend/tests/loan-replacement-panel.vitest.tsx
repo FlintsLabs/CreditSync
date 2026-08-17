@@ -21,6 +21,7 @@ const preview = {
     expiresAt: "2099-07-11T09:00:00.000Z",
     asOfDate: "2026-07-11",
     reason: "Correct duplicated agreement",
+    fundingSourceName: "TTB",
     oldLoan: {
         loanPublicId: OLD_LOAN_ID, statusBefore: "active", statusAfter: "replaced", principal: "36000.00",
         collectibleBefore: { principal: "36000.00", interest: "0.00", fee: "0.00", penalty: "0.00", nextDueDate: "2026-07-12" },
@@ -46,7 +47,7 @@ describe("LoanReplacementPanel", () => {
 
     // Break caught: UI derives replacement accounting itself or allows an unconfirmed preview to execute.
     it("renders backend-owned preview values and requires explicit confirmation of its latest preview", async () => {
-        vi.mocked(api.post).mockImplementation(async (url) => url === "/replacements/preview"
+        vi.mocked(api.post).mockImplementation(async (url) => url === "/loans/replacements/preview"
             ? { data: preview }
             : { data: { status: "executed", replacementPublicId: REPLACEMENT_ID, oldLoanPublicId: OLD_LOAN_ID, replacementLoanPublicId: DRAFT_LOAN_ID } });
         const user = userEvent.setup();
@@ -59,15 +60,15 @@ describe("LoanReplacementPanel", () => {
         expect((await screen.findAllByText(/36,000\.00/)).length).toBeGreaterThan(0);
         expect(screen.getByText(/4,200\.00/)).toBeInTheDocument();
         expect(screen.getByText(/cash movement/i).parentElement).toHaveTextContent(/0\.00/);
-        expect(screen.getByText("7/11/2026")).toBeInTheDocument();
+        expect(screen.getAllByText("7/11/2026")).toHaveLength(2);
         expect(screen.getByText("7/12/2026")).toBeInTheDocument();
-        expect(screen.getByText("Drawdown")).toBeInTheDocument();
+        expect(screen.getByText("Funding").parentElement).toHaveTextContent("Drawdown · TTB");
         const execute = screen.getByRole("button", { name: /execute replacement/i });
         expect(execute).toBeDisabled();
 
         await user.click(screen.getByLabelText(/confirm this exact replacement preview/i));
         await user.click(execute);
-        await waitFor(() => expect(api.post).toHaveBeenLastCalledWith(`/replacements/${REPLACEMENT_ID}/execute`, {
+        await waitFor(() => expect(api.post).toHaveBeenLastCalledWith(`/loans/replacements/${REPLACEMENT_ID}/execute`, {
             confirmed: true,
             previewHash: preview.previewHash,
             expectedOldBalanceVersion: preview.oldBalanceVersion,
@@ -93,7 +94,7 @@ describe("LoanReplacementPanel", () => {
     // Break caught: a posted replacement can be reversed without an explicit compensating reason and confirmation.
     it("requires a separate reason and confirmation before reversal", async () => {
         vi.mocked(api.post).mockImplementation(async (url) => {
-            if (url === "/replacements/preview") return { data: preview };
+            if (url === "/loans/replacements/preview") return { data: preview };
             if (String(url).endsWith("/execute")) return { data: { status: "executed", replacementPublicId: REPLACEMENT_ID, oldLoanPublicId: OLD_LOAN_ID, replacementLoanPublicId: DRAFT_LOAN_ID } };
             return { data: { status: "reversed", replacementPublicId: REPLACEMENT_ID, oldLoanPublicId: OLD_LOAN_ID, replacementLoanPublicId: DRAFT_LOAN_ID } };
         });
@@ -109,6 +110,6 @@ describe("LoanReplacementPanel", () => {
         await user.type(screen.getByLabelText(/reversal reason/i), "Undo duplicate replacement");
         await user.click(screen.getByLabelText(/confirm this compensating replacement reversal/i));
         await user.click(reverse);
-        await waitFor(() => expect(api.post).toHaveBeenLastCalledWith(`/replacements/${REPLACEMENT_ID}/reverse`, { reason: "Undo duplicate replacement" }, expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) })));
+        await waitFor(() => expect(api.post).toHaveBeenLastCalledWith(`/loans/replacements/${REPLACEMENT_ID}/reverse`, { reason: "Undo duplicate replacement" }, expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) })));
     });
 });

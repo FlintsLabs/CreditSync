@@ -71,6 +71,7 @@ interface LoanDetailData {
     } | null;
     restructureLineage?: RestructureLineage | null;
     replacementLineage?: {
+        replacementPublicId: string;
         status: "executed" | "reversed";
         replacedFromPublicId: string | null;
         replacedToPublicId: string | null;
@@ -712,7 +713,7 @@ export default function LoanDetail() {
                             <span className="text-muted-foreground">{t(`replacement.lineage.${loan.replacementLineage.status}`)}</span>
                         </nav></CardContent>
                     </Card>}
-                    {loan.status === "active" && <LoanReplacementPanel oldLoanPublicId={loan.publicId} onInvalidated={() => setReplacementRefreshToken((value) => value + 1)} />}
+                    {(loan.status === "active" || loan.status === "replaced") && <LoanReplacementPanel oldLoanPublicId={loan.publicId} lineage={loan.replacementLineage} onInvalidated={() => setReplacementRefreshToken((value) => value + 1)} />}
                     <LoanRestructurePanel loan={loan} onExecuted={() => window.location.reload()} />
 
                     <LoanDisbursements ref={disbursementsRef} loanPublicId={loan.publicId ?? loan.id} onSummaryChange={setDisbursementSummary} />
