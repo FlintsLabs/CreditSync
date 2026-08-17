@@ -585,6 +585,25 @@ const settlementReversalTransactionOutput = z.object({
 const replacementCollectibleOutput = z.object({
     principal: money, interest: money, fee: money, penalty: money, nextDueDate: date.nullable(),
 }).strict();
+const replacementWarningOutput = z.discriminatedUnion("code", [
+    z.object({
+        code: z.literal("OUTSTANDING_INTEREST_CORRECTED_TO_ZERO"),
+        details: z.object({
+            amount: money,
+            correctedAmount: z.literal("0.00"),
+            collected: z.literal(false),
+            carriedForward: z.literal(false),
+        }).strict(),
+    }).strict(),
+    z.object({
+        code: z.literal("OUTSTANDING_PENALTY_CORRECTED_TO_ZERO"),
+        details: z.object({
+            amount: money,
+            correctedAmount: z.literal("0.00"),
+            treatedAsBorrowerPayment: z.literal(false),
+        }).strict(),
+    }).strict(),
+]);
 const replacementPreviewOutput = z.object({
     publicId: uuid,
     previewHash: versionHash,
@@ -625,8 +644,9 @@ const replacementPreviewOutput = z.object({
         totalRepayment: money,
         fundingSourceKind: z.enum(["drawdown", "own_capital"]),
         fundingSourcePublicId: uuid,
+        fundingSourceName: z.string().min(1),
     }).strict(),
-    warnings: z.array(z.string()),
+    warnings: z.array(replacementWarningOutput),
 }).strict();
 const replacementExecutionOutput = z.object({
     replacementPublicId: uuid,

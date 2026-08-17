@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api } from "../../../lib/api";
 import { Button } from "../../../components/ui/Button";
 import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/Card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../../components/ui/dropdown-menu";
@@ -13,6 +12,7 @@ import { Badge } from "../../../components/ui/badge";
 import { getVisibleBorrowerLabels, isDoneLoanStatus, loanMatchesSearch, type BorrowerLabelLoan } from "./loan-list-model";
 import { loanListHeaderActionsClassName, loanListHeaderClassName } from "./loan-list-layout";
 import { LoanCardFinancialSummary } from "./LoanCardFinancialSummary";
+import { fetchLoanList, loanListQueryKey, useLoanQueryRevision } from "../../../lib/loan-query-invalidation";
 
 const currentPaymentHealth: LoanPaymentHealth = {
     status: "current",
@@ -46,11 +46,6 @@ interface LoanRow {
 
 type LoanTab = "active" | "done" | "all";
 
-async function loadLoans(): Promise<LoanRow[]> {
-    const response = await api.get("/loans");
-    return response.data ?? [];
-}
-
 export default function LoanList() {
     const { t, i18n } = useTranslation();
     const [loans, setLoans] = useState<LoanRow[]>([]);
@@ -62,12 +57,13 @@ export default function LoanList() {
     const [statusFilter, setStatusFilter] = useState("all");
     const [fundingFilter, setFundingFilter] = useState("all");
     const [sortBy, setSortBy] = useState("newest");
+    const loanListRevision = useLoanQueryRevision(loanListQueryKey);
 
     const retryLoans = useCallback(async () => {
         setIsLoading(true);
         setLoadError(false);
         try {
-            setLoans(await loadLoans());
+            setLoans(await fetchLoanList<LoanRow>());
         } catch {
             setLoadError(true);
         } finally {
@@ -77,9 +73,11 @@ export default function LoanList() {
 
     useEffect(() => {
         let active = true;
-        void loadLoans()
+        void fetchLoanList<LoanRow>()
             .then((rows) => {
-                if (active) setLoans(rows);
+                if (!active) return;
+                setLoans(rows);
+                setLoadError(false);
             })
             .catch(() => {
                 if (active) setLoadError(true);
@@ -87,16 +85,8 @@ export default function LoanList() {
             .finally(() => {
                 if (active) setIsLoading(false);
             });
-        return () => {
-            active = false;
-        };
-    }, []);
-
-    useEffect(() => {
-        const invalidate = () => { void retryLoans(); };
-        window.addEventListener("creditsync:loans-invalidated", invalidate);
-        return () => window.removeEventListener("creditsync:loans-invalidated", invalidate);
-    }, [retryLoans]);
+        return () => { active = false; };
+    }, [loanListRevision]);
 
     const visibleLoans = useMemo(() => {
         const filtered = loans.filter((loan) => {

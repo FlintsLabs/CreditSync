@@ -144,8 +144,17 @@ describe("loan replacement REST lifecycle", () => {
                 totalRepayment: "60000.00",
                 fundingSourceKind: "drawdown",
                 fundingSourcePublicId: fixture.source.drawdown!.publicId,
+                fundingSourceName: "TTB",
             },
-            warnings: ["Outstanding calculated interest of 4200.00 is corrected to zero and is neither collected nor carried forward."],
+            warnings: [{
+                code: "OUTSTANDING_INTEREST_CORRECTED_TO_ZERO",
+                details: {
+                    amount: "4200.00",
+                    correctedAmount: "0.00",
+                    collected: false,
+                    carriedForward: false,
+                },
+            }],
             publicId: previewPublicId,
             previewHash,
             oldBalanceVersion,
@@ -156,6 +165,7 @@ describe("loan replacement REST lifecycle", () => {
         });
         expect(preview.body).not.toHaveProperty("oldLoanId");
         expect(preview.body).not.toHaveProperty("replacementLoanId");
+        expect(preview.body).not.toHaveProperty("fundingSourceName");
 
         expect(previewHash).toMatch(/^v1:[0-9a-f]{64}$/);
         expect(oldBalanceVersion).toMatch(/^v1:[0-9a-f]{64}$/);
@@ -240,5 +250,30 @@ describe("loan replacement REST lifecycle", () => {
             auditPublicId: expect.any(String),
             correlationId: "corr-replacement-reverse",
         });
+    });
+
+    // Break caught: own-capital previews lose the public presentation label or
+    // accidentally resolve it through a bank drawdown that does not exist.
+    integrationTest("places the own-capital source name inside the closed replacement object", async () => {
+        const fixture = await seedReplacementFixture({ funding: "own_capital" });
+        const app = new Elysia().use(loansRoute);
+        const preview = await call(app, "/loans/replacements/preview", await tokenFor(fixture.actor), {
+            method: "POST",
+            body: JSON.stringify({
+                oldLoanPublicId: fixture.oldLoan.publicId,
+                replacementDraftPublicId: fixture.replacementDraft.publicId,
+                reason: "Corrected own-capital contract start date",
+            }),
+        });
+
+        expect(preview.response.status, preview.text).toBe(200);
+        expect(preview.body).toMatchObject({
+            replacement: {
+                fundingSourceKind: "own_capital",
+                fundingSourcePublicId: fixture.source.profile.publicId,
+                fundingSourceName: "Own Capital",
+            },
+        });
+        expect(preview.body).not.toHaveProperty("fundingSourceName");
     });
 });

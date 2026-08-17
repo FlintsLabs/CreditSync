@@ -32,6 +32,7 @@ import { LoanInformationTab } from "./LoanInformationTab";
 import { LoanAgentsTab } from "./LoanAgentsTab";
 import { LoanPaymentHistoryTab } from "./LoanPaymentHistoryTab";
 import { LoanRepaymentScheduleTab } from "./LoanRepaymentScheduleTab";
+import { fetchLoanDetail, loanDetailQueryKey, useLoanQueryRevision } from "../../../lib/loan-query-invalidation";
 
 interface LoanDetailData {
     id: string;
@@ -214,7 +215,7 @@ export default function LoanDetail() {
     const [settlementReversalReason, setSettlementReversalReason] = useState("");
     const [settlementReversalConfirmed, setSettlementReversalConfirmed] = useState(false);
     const [postSettlementRefreshStatus, setPostSettlementRefreshStatus] = useState<"idle" | "refreshing" | "failed">("idle");
-    const [replacementRefreshToken, setReplacementRefreshToken] = useState(0);
+    const loanDetailRevision = useLoanQueryRevision(loanDetailQueryKey(id ?? ""));
     const disbursementsRef = useRef<LoanDisbursementsHandle>(null);
     const money = (value: string | null | undefined) => formatMoneyExact(value ?? "0.00", i18n.language);
     const isPositiveMoney = (value: string | null | undefined) => new Decimal(value ?? "0").isPositive();
@@ -232,7 +233,7 @@ export default function LoanDetail() {
                 setLoading(true);
                 setDisbursementSummary(null);
                 const [loanRes, allocationsRes, allocationStateRes] = await Promise.all([
-                    api.get(`/loans/${id}`),
+                    fetchLoanDetail<LoanDetailData>(id).then((data) => ({ data })),
                     api.get(`/loans/${id}/funding-allocations`),
                     api.get(`/loans/${id}/allocation-state`),
                 ]);
@@ -263,7 +264,7 @@ export default function LoanDetail() {
         };
 
         run();
-    }, [id, isTenantAdmin, replacementRefreshToken, t]);
+    }, [id, isTenantAdmin, loanDetailRevision, t]);
 
     const activateDraft = async () => {
         if (!loan || loan.status !== "draft" || activating) return;
@@ -713,7 +714,7 @@ export default function LoanDetail() {
                             <span className="text-muted-foreground">{t(`replacement.lineage.${loan.replacementLineage.status}`)}</span>
                         </nav></CardContent>
                     </Card>}
-                    {(loan.status === "active" || loan.status === "replaced") && <LoanReplacementPanel oldLoanPublicId={loan.publicId} lineage={loan.replacementLineage} onInvalidated={() => setReplacementRefreshToken((value) => value + 1)} />}
+                    {(loan.status === "active" || loan.status === "replaced") && <LoanReplacementPanel oldLoanPublicId={loan.publicId} lineage={loan.replacementLineage} />}
                     <LoanRestructurePanel loan={loan} onExecuted={() => window.location.reload()} />
 
                     <LoanDisbursements ref={disbursementsRef} loanPublicId={loan.publicId ?? loan.id} onSummaryChange={setDisbursementSummary} />

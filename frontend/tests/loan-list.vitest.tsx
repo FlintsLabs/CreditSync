@@ -75,6 +75,28 @@ describe("LoanList", () => {
         expect(vi.mocked(api.get).mock.calls.map(([url]) => url)).toEqual(["/loans"]);
     });
 
+    test("shows replaced only in Done and All without the paid treatment", async () => {
+        vi.mocked(api.get).mockResolvedValue({ data: [{
+            id: "replaced-summary", publicId: "replaced-summary", borrowerName: "Replaced Summary",
+            principal: "36000.00", outstandingPrincipal: "0.00", interestReceived: "0.00", paidToDate: "0.00",
+            status: "replaced", repaymentType: "daily", installmentAmount: "300.00", totalInstallments: 200,
+            startDate: "2026-07-12", createdAt: "2026-08-10T07:30:00.000Z",
+            paymentHealth: { status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00", overdueItemCount: 0, maxOverdueDays: 0 },
+        }] });
+
+        render(<MemoryRouter><LoanList /></MemoryRouter>);
+
+        expect(await screen.findByText("No Active Loans")).toBeInTheDocument();
+        expect(screen.queryByText("Replaced Summary")).not.toBeInTheDocument();
+        await userEvent.click(screen.getByRole("tab", { name: "Done" }));
+        const doneCard = (await screen.findByText("Replaced Summary")).closest("a")!;
+        expect(within(doneCard).getByText("Closed — Replaced")).toBeInTheDocument();
+        expect(within(doneCard).queryByText("PAID")).not.toBeInTheDocument();
+        expect(doneCard.querySelector("svg.lucide-circle-check")).toBeNull();
+        await userEvent.click(screen.getByRole("tab", { name: "All" }));
+        expect(screen.getByText("Replaced Summary")).toBeInTheDocument();
+    });
+
     // Break caught: payment health is invisible, imprecisely formatted, or replaces lifecycle status/navigation.
     test("shows accessible overdue and due-now indicators without extra requests", async () => {
         vi.mocked(api.get).mockResolvedValue({ data: [

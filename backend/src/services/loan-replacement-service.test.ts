@@ -554,7 +554,17 @@ describe("loan replacement service database invariants", () => {
                 lastDueDate: "2027-01-27",
                 totalRepayment: "60000.00",
                 fundingSourcePublicId: fixture.source.drawdown!.publicId,
+                fundingSourceName: "TTB",
             },
+            warnings: [{
+                code: "OUTSTANDING_INTEREST_CORRECTED_TO_ZERO",
+                details: {
+                    amount: "4200.00",
+                    correctedAmount: "0.00",
+                    collected: false,
+                    carriedForward: false,
+                },
+            }],
         });
 
         const executed = await fixture.execute(preview);
@@ -2232,7 +2242,32 @@ describe("loan replacement service database invariants", () => {
             ],
         } satisfies LoanReplacementProposal;
 
-        expect(preview).toMatchObject(expectedProposal);
+        expect(preview).toMatchObject({
+            ...expectedProposal,
+            replacement: {
+                ...expectedProposal.replacement,
+                fundingSourceName: "TTB",
+            },
+            warnings: [
+                {
+                    code: "OUTSTANDING_INTEREST_CORRECTED_TO_ZERO",
+                    details: {
+                        amount: "4200.00",
+                        correctedAmount: "0.00",
+                        collected: false,
+                        carriedForward: false,
+                    },
+                },
+                {
+                    code: "OUTSTANDING_PENALTY_CORRECTED_TO_ZERO",
+                    details: {
+                        amount: "20.00",
+                        correctedAmount: "0.00",
+                        treatedAsBorrowerPayment: false,
+                    },
+                },
+            ],
+        });
         const persisted = await db.query.loanReplacements.findFirst({
             where: eq(loanReplacements.publicId, preview.publicId),
         });
@@ -2304,6 +2339,7 @@ describe("loan replacement service database invariants", () => {
             replacement: {
                 fundingSourceKind: "own_capital",
                 fundingSourcePublicId: fixture.source.profile.publicId,
+                fundingSourceName: "Own Capital",
             },
         });
         expect((await db.query.loanReplacements.findFirst({

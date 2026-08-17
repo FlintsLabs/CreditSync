@@ -148,6 +148,17 @@ describe("CreditSync plugin 7.1.0 contract", () => {
         expect(floatingInput?.properties.floatingDailyInterest.additionalProperties).toBe(false);
         expect(dailyInput?.properties.dailyEntry.additionalProperties).toBe(false);
         expect(dailyInput?.properties.dailyEntry.properties.interestInput.additionalProperties).toBe(false);
+
+        const atomicReplacement = contract.tools.find((tool) => tool.name === "loan.replacement.preview")?.outputSchema as any;
+        const atomicReplacementData = atomicReplacement.properties.data;
+        expect(atomicReplacementData.additionalProperties).toBe(false);
+        expect(atomicReplacementData.properties.replacement.required).toContain("fundingSourceName");
+        expect(atomicReplacementData.properties.replacement.properties.fundingSourceName).toMatchObject({ type: "string" });
+        expect(atomicReplacementData.properties.warnings.items.oneOf).toHaveLength(2);
+        expect(atomicReplacementData.properties.warnings.items.oneOf.every(
+            (variant: { additionalProperties?: boolean; properties?: { details?: { additionalProperties?: boolean } } }) =>
+                variant.additionalProperties === false && variant.properties?.details?.additionalProperties === false,
+        )).toBe(true);
     });
 
     test("requires audit and correlation UUIDs from every intermediary administrative and evidence write", async () => {

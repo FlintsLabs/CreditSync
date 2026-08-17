@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- Nested the canonical bank-profile name inside replacement preview outputs and replaced prose-only correction warnings with closed structured warning codes and exact financial details in the frozen contract and executable eval fixtures.
 - Added the closed public-only nullable `replacementLineage` field to `borrower.portfolio` loan items and made replacement evals derive active/draft IDs from inspected borrower-scoped portfolio state before previewing.
 
 ## 7.0.0 - 2026-08-14

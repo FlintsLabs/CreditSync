@@ -248,11 +248,24 @@ describe("default MCP adapter integration", () => {
                 loanPublicId: fixture.replacementDraft.publicId,
                 statusAfter: "active",
                 firstDueDate: "2026-07-12",
+                fundingSourceKind: "drawdown",
+                fundingSourcePublicId: fixture.source.drawdown!.publicId,
+                fundingSourceName: "TTB",
             },
+            warnings: [{
+                code: "OUTSTANDING_INTEREST_CORRECTED_TO_ZERO",
+                details: {
+                    amount: "4200.00",
+                    correctedAmount: "0.00",
+                    collected: false,
+                    carriedForward: false,
+                },
+            }],
             auditPublicId: expect.stringMatching(UUID_PATTERN),
             correlationId: expect.stringMatching(UUID_PATTERN),
         });
         expect(preview).not.toHaveProperty("id");
+        expect(preview).not.toHaveProperty("fundingSourceName");
 
         const executeArgs = {
             replacementPublicId: String(preview.publicId),

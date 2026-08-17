@@ -8490,6 +8490,10 @@
                     ],
                     "type": "string"
                   },
+                  "fundingSourceName": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
                   "fundingSourcePublicId": {
                     "format": "uuid",
                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
@@ -8572,7 +8576,8 @@
                   "lastDueDate",
                   "totalRepayment",
                   "fundingSourceKind",
-                  "fundingSourcePublicId"
+                  "fundingSourcePublicId",
+                  "fundingSourceName"
                 ],
                 "type": "object"
               },
@@ -8586,7 +8591,89 @@
               },
               "warnings": {
                 "items": {
-                  "type": "string"
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "const": "OUTSTANDING_INTEREST_CORRECTED_TO_ZERO",
+                          "type": "string"
+                        },
+                        "details": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "amount": {
+                              "maxLength": 32,
+                              "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                              "type": "string"
+                            },
+                            "carriedForward": {
+                              "const": false,
+                              "type": "boolean"
+                            },
+                            "collected": {
+                              "const": false,
+                              "type": "boolean"
+                            },
+                            "correctedAmount": {
+                              "const": "0.00",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "amount",
+                            "correctedAmount",
+                            "collected",
+                            "carriedForward"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "details"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "code": {
+                          "const": "OUTSTANDING_PENALTY_CORRECTED_TO_ZERO",
+                          "type": "string"
+                        },
+                        "details": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "amount": {
+                              "maxLength": 32,
+                              "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                              "type": "string"
+                            },
+                            "correctedAmount": {
+                              "const": "0.00",
+                              "type": "string"
+                            },
+                            "treatedAsBorrowerPayment": {
+                              "const": false,
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "amount",
+                            "correctedAmount",
+                            "treatedAsBorrowerPayment"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "details"
+                      ],
+                      "type": "object"
+                    }
+                  ]
                 },
                 "type": "array"
               }

@@ -317,8 +317,12 @@ function replacementPreviewResult() {
             installmentAmount: "300.00", startDate: "2026-07-11", firstDueDate: "2026-07-12",
             lastDueDate: "2027-01-27", totalRepayment: "60000.00", fundingSourceKind: "drawdown",
             fundingSourcePublicId: "0198c481-3e2b-7000-8000-000000000036",
+            fundingSourceName: "TTB",
         },
-        warnings: [],
+        warnings: [{
+            code: "OUTSTANDING_INTEREST_CORRECTED_TO_ZERO",
+            details: { amount: "4200.00", correctedAmount: "0.00", collected: false, carriedForward: false },
+        }],
     };
 }
 

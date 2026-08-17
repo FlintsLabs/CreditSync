@@ -21,7 +21,6 @@ const preview = {
     expiresAt: "2099-07-11T09:00:00.000Z",
     asOfDate: "2026-07-11",
     reason: "Correct duplicated agreement",
-    fundingSourceName: "TTB",
     oldLoan: {
         loanPublicId: OLD_LOAN_ID, statusBefore: "active", statusAfter: "replaced", principal: "36000.00",
         collectibleBefore: { principal: "36000.00", interest: "0.00", fee: "0.00", penalty: "0.00", nextDueDate: "2026-07-12" },
@@ -33,9 +32,12 @@ const preview = {
         loanPublicId: DRAFT_LOAN_ID, statusBefore: "draft", statusAfter: "active", principal: "36000.00", interestRate: "12.00",
         repaymentType: "daily", termMonths: 3, totalInstallments: 90, installmentAmount: "446.67",
         startDate: "2026-07-11", firstDueDate: "2026-07-12", lastDueDate: "2026-10-08", totalRepayment: "40200.00",
-        fundingSourceKind: "drawdown", fundingSourcePublicId: "019ff023-fd64-7d41-9aae-723d2a458a8d",
+        fundingSourceKind: "drawdown", fundingSourcePublicId: "019ff023-fd64-7d41-9aae-723d2a458a8d", fundingSourceName: "TTB",
     },
-    warnings: ["Funding allocation will move with the replacement draft."],
+    warnings: [{
+        code: "OUTSTANDING_INTEREST_CORRECTED_TO_ZERO",
+        details: { amount: "4200.00", correctedAmount: "0.00", collected: false, carriedForward: false },
+    }],
 };
 
 describe("LoanReplacementPanel", () => {
@@ -58,11 +60,13 @@ describe("LoanReplacementPanel", () => {
         await user.click(screen.getByRole("button", { name: /preview replacement/i }));
 
         expect((await screen.findAllByText(/36,000\.00/)).length).toBeGreaterThan(0);
-        expect(screen.getByText(/4,200\.00/)).toBeInTheDocument();
+        expect(screen.getByText("Corrected interest").parentElement).toHaveTextContent(/4,200\.00/);
         expect(screen.getByText(/cash movement/i).parentElement).toHaveTextContent(/0\.00/);
-        expect(screen.getAllByText("7/11/2026")).toHaveLength(2);
-        expect(screen.getByText("7/12/2026")).toBeInTheDocument();
+        expect(screen.getAllByText("11/07/2026")).toHaveLength(2);
+        expect(screen.getByText("12/07/2026")).toBeInTheDocument();
+        expect(screen.getByText("Preview expires 11/07/2099 16:00")).toBeInTheDocument();
         expect(screen.getByText("Funding").parentElement).toHaveTextContent("Drawdown · TTB");
+        expect(screen.getByText(/outstanding calculated interest.*4,200\.00.*0\.00.*not collected.*not carried forward/i)).toBeInTheDocument();
         const execute = screen.getByRole("button", { name: /execute replacement/i });
         expect(execute).toBeDisabled();
 
@@ -78,8 +82,12 @@ describe("LoanReplacementPanel", () => {
     });
 
     // Break caught: a stale/blocked lifecycle failure is hidden and an operator cannot safely recover.
-    it("surfaces backend review-required errors and invalidates confirmation", async () => {
-        vi.mocked(api.post).mockResolvedValueOnce({ data: preview }).mockRejectedValueOnce({ response: { data: { code: "REPLACEMENT_PREVIEW_STALE" } } });
+    it("reads nested review-required blockers and revokes the confirmed preview", async () => {
+        const blockerPublicId = "019ff023-fd64-7d41-9aae-723d2a458a8e";
+        vi.mocked(api.post).mockResolvedValueOnce({ data: preview }).mockRejectedValueOnce({ response: { data: {
+            code: "REPLACEMENT_DOWNSTREAM_ACTIVITY",
+            details: { reviewRequired: true, blockerPublicIds: [blockerPublicId] },
+        } } });
         const user = userEvent.setup();
         render(<MemoryRouter><LoanReplacementPanel oldLoanPublicId={OLD_LOAN_ID} /></MemoryRouter>);
         await user.type(screen.getByLabelText(/replacement draft/i), DRAFT_LOAN_ID);
@@ -87,8 +95,51 @@ describe("LoanReplacementPanel", () => {
         await user.click(screen.getByRole("button", { name: /preview replacement/i }));
         await user.click(await screen.findByLabelText(/confirm this exact replacement preview/i));
         await user.click(screen.getByRole("button", { name: /execute replacement/i }));
-        expect(await screen.findByRole("alert")).toHaveTextContent(/changed|stale/i);
+        expect(await screen.findByRole("alert")).toHaveTextContent(/posted payment|disbursement.*human review/i);
+        expect(screen.getByText(blockerPublicId)).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: /execute replacement/i })).not.toBeInTheDocument();
+    });
+
+    it("renders the exact structured warning and Gregorian DD/MM/YYYY dates in Thai", async () => {
+        await appI18n.changeLanguage("th");
+        vi.mocked(api.post).mockResolvedValueOnce({ data: preview });
+        const user = userEvent.setup();
+        render(<MemoryRouter><LoanReplacementPanel oldLoanPublicId={OLD_LOAN_ID} /></MemoryRouter>);
+
+        await user.type(screen.getByLabelText(/สัญญาฉบับร่างที่ใช้แทน/), DRAFT_LOAN_ID);
+        await user.type(screen.getByLabelText(/^เหตุผล$/), preview.reason);
+        await user.click(screen.getByRole("button", { name: /ดูพรีวิวการแทนที่/ }));
+
+        expect(await screen.findAllByText("11/07/2026")).toHaveLength(2);
+        expect(screen.getByText("12/07/2026")).toBeInTheDocument();
+        expect(screen.getByText("พรีวิวหมดอายุ 11/07/2099 16:00")).toBeInTheDocument();
+        expect(screen.getByText(/ดอกเบี้ยคำนวณคงค้าง.*4,200\.00.*0\.00.*ไม่เรียกเก็บ.*ไม่ยกยอดไป/i)).toBeInTheDocument();
+        expect(screen.queryByText(/Outstanding calculated interest/i)).not.toBeInTheDocument();
+    });
+
+    it.each(["owner", "manager"])("renders replacement controls for %s", (role) => {
+        localStorage.setItem("user", JSON.stringify({ id: 1, role }));
+        render(<MemoryRouter><LoanReplacementPanel oldLoanPublicId={OLD_LOAN_ID} /></MemoryRouter>);
+        expect(screen.getByRole("heading", { name: /replace loan/i })).toBeInTheDocument();
+    });
+
+    it.each(["collector", "viewer", null])("hides replacement controls for %s", (role) => {
+        if (role) localStorage.setItem("user", JSON.stringify({ id: 1, role }));
+        else localStorage.removeItem("user");
+        const { container } = render(<MemoryRouter><LoanReplacementPanel oldLoanPublicId={OLD_LOAN_ID} /></MemoryRouter>);
+        expect(container).toBeEmptyDOMElement();
+    });
+
+    it("allows a fresh replacement after reversed lineage is reloaded", () => {
+        render(<MemoryRouter><LoanReplacementPanel oldLoanPublicId={OLD_LOAN_ID} lineage={{
+            replacementPublicId: REPLACEMENT_ID,
+            status: "reversed",
+            replacedFromPublicId: null,
+            replacedToPublicId: DRAFT_LOAN_ID,
+        }} /></MemoryRouter>);
+
+        expect(screen.getByLabelText(/replacement draft/i)).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /reverse replacement/i })).not.toBeInTheDocument();
     });
 
     // Break caught: a posted replacement can be reversed without an explicit compensating reason and confirmation.

@@ -54,12 +54,22 @@ const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}
 const versionPattern = /^v1:[0-9a-f]{64}$/i;
 const previewTtlMs = 15 * 60 * 1000;
 
-export interface LoanReplacementPreview extends LoanReplacementProposal {
+export type LoanReplacementWarning =
+    | {
+        code: "OUTSTANDING_INTEREST_CORRECTED_TO_ZERO";
+        details: { amount: string; correctedAmount: "0.00"; collected: false; carriedForward: false };
+    }
+    | {
+        code: "OUTSTANDING_PENALTY_CORRECTED_TO_ZERO";
+        details: { amount: string; correctedAmount: "0.00"; treatedAsBorrowerPayment: false };
+    };
+
+export type LoanReplacementPreview = Omit<LoanReplacementProposal, "replacement" | "warnings"> & {
+    replacement: LoanReplacementProposal["replacement"] & { fundingSourceName: string };
+    warnings: LoanReplacementWarning[];
     publicId: string; previewHash: string; oldBalanceVersion: string; replacementDraftVersion: string; expiresAt: Date;
     auditPublicId: string; correlationId: string;
-    /** Presentation-only safe funding label; canonical proposal remains immutable. */
-    fundingSourceName: string | null;
-}
+};
 export interface LoanReplacementExecution {
     replacementPublicId: string; oldLoanPublicId: string; replacementLoanPublicId: string; status: "executed";
     auditPublicId: string; correlationId: string;
@@ -473,21 +483,29 @@ async function buildProposal(
     current: Awaited<ReturnType<typeof state>>,
     why: string,
     asOfDate: string,
-): Promise<LoanReplacementProposal> {
+): Promise<{ proposal: LoanReplacementProposal; fundingSourceName: string }> {
     const calculated = correction(oldLoan, current.oldSchedules, asOfDate);
     const generated = authoritativeReplacementSchedule(draft);
     const totalRepayment = generated.reduce(
         (total, item) => total.plus(item.scheduledTotal),
         new FinancialDecimal(0),
     );
-    const source = draft.bankLoanId
+    const drawdown = draft.bankLoanId
         ? await executor.query.bankLoans.findFirst({
             where: and(eq(bankLoans.tenantId, ctx.tenantId), eq(bankLoans.id, draft.bankLoanId)),
         })
+        : null;
+    const fundingProfile = drawdown
+        ? (drawdown.bankProfileId
+            ? await executor.query.bankProfiles.findFirst({
+                where: and(eq(bankProfiles.tenantId, ctx.tenantId), eq(bankProfiles.id, drawdown.bankProfileId)),
+            })
+            : null)
         : await executor.query.bankProfiles.findFirst({
             where: and(eq(bankProfiles.tenantId, ctx.tenantId), eq(bankProfiles.id, draft.fundingBankProfileId!)),
         });
-    if (!source || !draft.startDate || !draft.termMonths || generated.length === 0) {
+    const source = drawdown ?? fundingProfile;
+    if (!source || !fundingProfile || !draft.startDate || !draft.termMonths || generated.length === 0) {
         reviewRequired(
             "REPLACEMENT_TERMS_INVALID",
             "Replacement proposal cannot be represented from the validated terms",
@@ -507,7 +525,7 @@ async function buildProposal(
     if (calculated.penalty.gt(0)) {
         warnings.push(`Outstanding penalty of ${correctionValues.penalty} is corrected to zero and is not treated as borrower payment.`);
     }
-    return {
+    const proposal: LoanReplacementProposal = {
         schemaVersion: 1,
         asOfDate,
         reason: why,
@@ -549,6 +567,33 @@ async function buildProposal(
         },
         warnings,
     };
+    return { proposal, fundingSourceName: fundingProfile.name };
+}
+
+function presentReplacementWarnings(proposal: LoanReplacementProposal): LoanReplacementWarning[] {
+    const warnings: LoanReplacementWarning[] = [];
+    if (new FinancialDecimal(proposal.correction.interest).gt(0)) {
+        warnings.push({
+            code: "OUTSTANDING_INTEREST_CORRECTED_TO_ZERO",
+            details: {
+                amount: proposal.correction.interest,
+                correctedAmount: "0.00",
+                collected: false,
+                carriedForward: false,
+            },
+        });
+    }
+    if (new FinancialDecimal(proposal.correction.penalty).gt(0)) {
+        warnings.push({
+            code: "OUTSTANDING_PENALTY_CORRECTED_TO_ZERO",
+            details: {
+                amount: proposal.correction.penalty,
+                correctedAmount: "0.00",
+                treatedAsBorrowerPayment: false,
+            },
+        });
+    }
+    return warnings;
 }
 
 function storedProposal(record: Replacement): LoanReplacementProposal {
@@ -783,7 +828,7 @@ export async function previewLoanReplacement(ctx: CommandContext, input: { oldLo
     return db.transaction(async tx => {
         const [oldLoan, draft] = await Promise.all([loanFor(ctx, tx, oldLoanPublicId), loanFor(ctx, tx, replacementDraftPublicId)]);
         const current = await validate(ctx, tx, oldLoan, draft);
-        const proposal = await buildProposal(tx, ctx, oldLoan, draft, current, why, asOfDate);
+        const { proposal, fundingSourceName } = await buildProposal(tx, ctx, oldLoan, draft, current, why, asOfDate);
         const hash = previewHash(current, proposal);
         const row = await tx.insert(loanReplacements).values({
             tenantId: ctx.tenantId,
@@ -815,11 +860,10 @@ export async function previewLoanReplacement(ctx: CommandContext, input: { oldLo
                 previewHash: row.previewHash,
             },
         });
-        const fundingProfile = draft.bankLoanId
-            ? await tx.query.bankProfiles.findFirst({ where: and(eq(bankProfiles.tenantId, ctx.tenantId), eq(bankProfiles.id, draft.fundingBankProfileId!)) })
-            : null;
         return {
             ...proposal,
+            replacement: { ...proposal.replacement, fundingSourceName },
+            warnings: presentReplacementWarnings(proposal),
             publicId: row.publicId,
             previewHash: row.previewHash,
             oldBalanceVersion: row.oldBalanceVersion,
@@ -827,7 +871,6 @@ export async function previewLoanReplacement(ctx: CommandContext, input: { oldLo
             expiresAt: row.expiresAt,
             auditPublicId: audit.publicId,
             correlationId: ctx.correlationId,
-            fundingSourceName: fundingProfile?.providerName ?? fundingProfile?.name ?? (draft.bankLoanId ? null : (await tx.query.bankProfiles.findFirst({ where: and(eq(bankProfiles.tenantId, ctx.tenantId), eq(bankProfiles.id, draft.fundingBankProfileId!)) }))?.name ?? null),
         };
     });
 }
