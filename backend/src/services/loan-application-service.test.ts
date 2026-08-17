@@ -987,7 +987,7 @@ describe("loan application service", () => {
             tenantId: "tenant-a", name: "Concurrent Capacity Source", type: "bank",
         }).returning().then((rows) => rows[0]!);
         const drawdown = await db.insert(bankLoans).values({
-            tenantId: "tenant-a", bankProfileId: profile.id, amount: "100.00",
+            tenantId: "tenant-a", bankProfileId: profile.id, amount: "100.00", status: "active",
         }).returning().then((rows) => rows[0]!);
         const draftA = await createLoanDraft(context("tenant-a", actor.id, "concurrent-draft-a"), {
             borrowerPublicId: borrower.publicId, bankLoanPublicId: drawdown.publicId,
@@ -1324,7 +1324,7 @@ describe("loan application service", () => {
             tenantId: "tenant-a", name: "Overallocated REST Source", type: "bank",
         }).returning().then((rows) => rows[0]!);
         const drawdown = await db.insert(bankLoans).values({
-            tenantId: "tenant-a", bankProfileId: profile.id, amount: "100.00",
+            tenantId: "tenant-a", bankProfileId: profile.id, amount: "100.00", status: "active",
         }).returning().then((rows) => rows[0]!);
         await db.insert(loanFundingAllocations).values({
             tenantId: "tenant-a", bankProfileId: profile.id, bankLoanId: drawdown.id,
@@ -1338,6 +1338,7 @@ describe("loan application service", () => {
             headers: {
                 authorization: `Bearer ${await authToken(owner)}`,
                 "content-type": "application/json",
+                "idempotency-key": "funding-overallocated-rest",
             },
             body: JSON.stringify({
                 bankLoanPublicId: drawdown.publicId,
@@ -1371,13 +1372,14 @@ describe("loan application service", () => {
             tenantId: "tenant-a", name: "Funding", type: "bank",
         }).returning().then((rows) => rows[0]!);
         const [source, target] = await db.insert(bankLoans).values([
-            { tenantId: "tenant-a", bankProfileId: profile.id, amount: "2000.00" },
-            { tenantId: "tenant-a", bankProfileId: profile.id, amount: "2000.00" },
+            { tenantId: "tenant-a", bankProfileId: profile.id, amount: "2000.00", status: "active" },
+            { tenantId: "tenant-a", bankProfileId: profile.id, amount: "2000.00", status: "active" },
         ]).returning();
         const app = new Elysia().use(loansRoute);
         const headers = {
             authorization: `Bearer ${await authToken(owner)}`,
             "content-type": "application/json",
+            "idempotency-key": "funding-reallocation-rest",
         };
         const allocated = await jsonRequest(app, `/loans/${loan.publicId}/funding-allocations`, {
             method: "POST",

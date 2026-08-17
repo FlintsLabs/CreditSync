@@ -662,8 +662,26 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
         throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Loan activation requires a non-blank Idempotency-Key", 400);
     }
     const accessible = await accessibleLoan(ctx, publicId);
-    return db.transaction(async (tx) => {
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`loan-activation:${ctx.tenantId}:${idempotencyKey}`}, 0))`);
+    return db.transaction(async (tx) => activateLoanInTransaction(tx, ctx, accessible));
+}
+
+/**
+ * The transaction-aware activation primitive is intentionally the single owner
+ * of contract schedule generation and initial funding allocation.  Composite
+ * financial workflows must call it from their outer transaction rather than
+ * opening a second transaction around activation.
+ */
+export async function activateLoanInTransaction(
+    tx: any,
+    ctx: CommandContext,
+    accessible: LoanRow,
+    options: { replacementId?: number } = {},
+) {
+    const idempotencyKey = ctx.idempotencyKey?.trim();
+    if (!idempotencyKey) {
+        throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Loan activation requires a non-blank Idempotency-Key", 400);
+    }
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`loan-activation:${ctx.tenantId}:${idempotencyKey}`}, 0))`);
         const existingCommand = await tx.query.loans.findFirst({ where: and(
             eq(loans.tenantId, ctx.tenantId),
             eq(loans.activationIdempotencyKey, idempotencyKey),
@@ -706,9 +724,14 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
             }).from(loanFundingAllocations).where(and(
                 eq(loanFundingAllocations.bankLoanId, fundingSource.id),
                 eq(loanFundingAllocations.tenantId, ctx.tenantId),
-            )).then((rows) => new FinancialDecimal(rows[0]?.totalAllocated ?? "0"));
+            )).then((rows: Array<{ totalAllocated: string | null }>) => new FinancialDecimal(rows[0]?.totalAllocated ?? "0"));
             const sourceRemaining = new FinancialDecimal(fundingSource.amount).minus(sourceAllocation);
-            if (new FinancialDecimal(current.principalAmount).gt(sourceRemaining)) {
+            const existingLoanAllocation = await tx.select({ totalAllocated: sql<string>`coalesce(sum(${loanFundingAllocations.allocatedAmount}), 0)` })
+                .from(loanFundingAllocations).where(and(
+                    eq(loanFundingAllocations.loanId, current.id), eq(loanFundingAllocations.tenantId, ctx.tenantId),
+                )).then((rows: Array<{ totalAllocated: string | null }>) => new FinancialDecimal(rows[0]?.totalAllocated ?? "0"));
+            const requiredAllocation = FinancialDecimal.max(new FinancialDecimal(0), new FinancialDecimal(current.principalAmount).minus(existingLoanAllocation));
+            if (requiredAllocation.gt(sourceRemaining)) {
                 throw new DomainError("ALLOCATION_EXCEEDS_DRAWDOWN", "Allocation exceeds remaining drawdown balance", 400, {
                     sourceRemaining: serializeMoney(FinancialDecimal.max(new FinancialDecimal("0"), sourceRemaining)),
                 });
@@ -730,9 +753,14 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
             }).from(loanFundingAllocations).where(and(
                 eq(loanFundingAllocations.bankProfileId, ownCapitalProfile.id),
                 eq(loanFundingAllocations.tenantId, ctx.tenantId),
-            )).then((rows) => new FinancialDecimal(rows[0]?.totalAllocated ?? "0"));
+            )).then((rows: Array<{ totalAllocated: string | null }>) => new FinancialDecimal(rows[0]?.totalAllocated ?? "0"));
             const sourceRemaining = new FinancialDecimal(ownCapitalProfile.creditLimit ?? "0").minus(sourceAllocation);
-            if (new FinancialDecimal(current.principalAmount).gt(sourceRemaining)) {
+            const existingLoanAllocation = await tx.select({ totalAllocated: sql<string>`coalesce(sum(${loanFundingAllocations.allocatedAmount}), 0)` })
+                .from(loanFundingAllocations).where(and(
+                    eq(loanFundingAllocations.loanId, current.id), eq(loanFundingAllocations.tenantId, ctx.tenantId),
+                )).then((rows: Array<{ totalAllocated: string | null }>) => new FinancialDecimal(rows[0]?.totalAllocated ?? "0"));
+            const requiredAllocation = FinancialDecimal.max(new FinancialDecimal(0), new FinancialDecimal(current.principalAmount).minus(existingLoanAllocation));
+            if (requiredAllocation.gt(sourceRemaining)) {
                 throw new DomainError("ALLOCATION_EXCEEDS_CAPITAL", "Allocation exceeds remaining own-capital balance", 400, {
                     sourceRemaining: serializeMoney(FinancialDecimal.max(new FinancialDecimal("0"), sourceRemaining)),
                 });
@@ -825,7 +853,12 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
                 advanceInterestSnapshotCount = snapshots.length;
             }
         }
-        if (fundingSource || ownCapitalProfile) {
+        const existingFunding = (await tx.select({ total: sql<string>`coalesce(sum(${loanFundingAllocations.allocatedAmount}), 0)` })
+            .from(loanFundingAllocations).where(and(
+                eq(loanFundingAllocations.tenantId, ctx.tenantId),
+                eq(loanFundingAllocations.loanId, current.id),
+            )))[0]?.total ?? "0";
+        if ((fundingSource || ownCapitalProfile) && new FinancialDecimal(existingFunding).isZero()) {
             await tx.insert(loanFundingAllocations).values({
                 tenantId: ctx.tenantId,
                 bankProfileId: fundingSource?.bankProfileId ?? ownCapitalProfile!.id,
@@ -860,7 +893,7 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
             activationResult: after,
             updatedAt,
         }).where(and(eq(loans.id, current.id), eq(loans.tenantId, ctx.tenantId), eq(loans.status, "draft")))
-            .returning().then((rows) => rows[0]);
+            .returning().then((rows: LoanRow[]) => rows[0]);
         if (!row) throw new DomainError("LOAN_NOT_ACTIVATABLE", "Only draft loans can be activated", 409);
         await createAuditLog(tx, {
             ...auditContext(ctx), entityType: "loan", entityId: current.publicId,
@@ -873,8 +906,8 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
                 netBorrowerPayout,
                 advanceInterestSnapshotCount,
                 idempotencyKey,
+                replacementId: options.replacementId ?? null,
             },
         });
         return after;
-    });
 }

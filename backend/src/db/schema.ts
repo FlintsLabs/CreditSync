@@ -718,7 +718,6 @@ export const loanReplacementCorrections = pgTable("loan_replacement_corrections"
     reason: text("reason").notNull(),
     createdByUserId: integer("created_by_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
     uniqueIndex("loan_replacement_corrections_tenant_id_id_unique").on(table.tenantId, table.id),
     foreignKey({ name: "loan_replacement_corrections_tenant_replacement_fk", columns: [table.tenantId, table.replacementId], foreignColumns: [loanReplacements.tenantId, loanReplacements.id] }),
