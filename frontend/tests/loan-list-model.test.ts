@@ -1,7 +1,14 @@
 import { describe, expect, test } from "vitest";
-import { getBorrowerLabels, getVisibleBorrowerLabels, loanMatchesSearch } from "../src/pages/dashboard/loans/loan-list-model";
+import { getBorrowerLabels, getVisibleBorrowerLabels, isDoneLoanStatus, loanMatchesSearch } from "../src/pages/dashboard/loans/loan-list-model";
 
 describe("loan list label model", () => {
+    // Break caught: a replaced loan remains in Active or is accidentally treated as a paid contract.
+    test("classifies replaced loans as done without rendering the paid lifecycle", () => {
+        expect(isDoneLoanStatus("replaced")).toBe(true);
+        expect(isDoneLoanStatus("active")).toBe(false);
+        expect(isDoneLoanStatus("paid")).toBe(true);
+    });
+
     test("normalizes aliases before tags and deduplicates with Unicode-insensitive matching", () => {
         const loan = {
             id: "loan-123",

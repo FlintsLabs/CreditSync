@@ -25,6 +25,7 @@ import { FloatingInterestRateCard } from "./FloatingInterestRateCard";
 import { FloatingInterestSummary, type FloatingInterestPolicyView } from "./FloatingInterestSummary";
 import { IntermediatedDisbursementPanel } from "./IntermediatedDisbursementPanel";
 import { LoanRestructurePanel } from "./LoanRestructurePanel";
+import { LoanReplacementPanel } from "./LoanReplacementPanel";
 import { LoanOpeningBalances, type OpeningBalanceComponent, type RestructureLineage, type RestructureWaiver } from "./LoanOpeningBalances";
 import { LoanDetailTabs, type LoanDetailTab } from "./LoanDetailTabs";
 import { LoanInformationTab } from "./LoanInformationTab";
@@ -69,6 +70,11 @@ interface LoanDetailData {
         flatDailyRatePercent: string;
     } | null;
     restructureLineage?: RestructureLineage | null;
+    replacementLineage?: {
+        status: "executed" | "reversed";
+        replacedFromPublicId: string | null;
+        replacedToPublicId: string | null;
+    } | null;
     openingBalanceComponents?: OpeningBalanceComponent[];
     restructureWaivers?: RestructureWaiver[];
 }
@@ -207,6 +213,7 @@ export default function LoanDetail() {
     const [settlementReversalReason, setSettlementReversalReason] = useState("");
     const [settlementReversalConfirmed, setSettlementReversalConfirmed] = useState(false);
     const [postSettlementRefreshStatus, setPostSettlementRefreshStatus] = useState<"idle" | "refreshing" | "failed">("idle");
+    const [replacementRefreshToken, setReplacementRefreshToken] = useState(0);
     const disbursementsRef = useRef<LoanDisbursementsHandle>(null);
     const money = (value: string | null | undefined) => formatMoneyExact(value ?? "0.00", i18n.language);
     const isPositiveMoney = (value: string | null | undefined) => new Decimal(value ?? "0").isPositive();
@@ -255,7 +262,7 @@ export default function LoanDetail() {
         };
 
         run();
-    }, [id, isTenantAdmin, t]);
+    }, [id, isTenantAdmin, replacementRefreshToken, t]);
 
     const activateDraft = async () => {
         if (!loan || loan.status !== "draft" || activating) return;
@@ -697,6 +704,15 @@ export default function LoanDetail() {
                     </div>
 
                     <LoanOpeningBalances loanPublicId={loan.publicId} lineage={loan.restructureLineage} components={loan.openingBalanceComponents} waivers={loan.restructureWaivers} />
+                    {loan.replacementLineage && <Card>
+                        <CardHeader><CardTitle>{t("replacement.lineage.title")}</CardTitle></CardHeader>
+                        <CardContent><nav aria-label={t("replacement.lineage.title")} className="flex flex-wrap gap-3 text-sm">
+                            {loan.replacementLineage.replacedFromPublicId && <Link className="text-primary hover:underline" to={`/loans/${loan.replacementLineage.replacedFromPublicId}`}>{t("replacement.lineage.from")}</Link>}
+                            {loan.replacementLineage.replacedToPublicId && <Link className="text-primary hover:underline" to={`/loans/${loan.replacementLineage.replacedToPublicId}`}>{t("replacement.lineage.to")}</Link>}
+                            <span className="text-muted-foreground">{t(`replacement.lineage.${loan.replacementLineage.status}`)}</span>
+                        </nav></CardContent>
+                    </Card>}
+                    {loan.status === "active" && <LoanReplacementPanel oldLoanPublicId={loan.publicId} onInvalidated={() => setReplacementRefreshToken((value) => value + 1)} />}
                     <LoanRestructurePanel loan={loan} onExecuted={() => window.location.reload()} />
 
                     <LoanDisbursements ref={disbursementsRef} loanPublicId={loan.publicId ?? loan.id} onSummaryChange={setDisbursementSummary} />

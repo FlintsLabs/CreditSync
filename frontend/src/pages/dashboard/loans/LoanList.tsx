@@ -10,7 +10,7 @@ import { useTranslation } from "react-i18next";
 import { formatMoneyExact } from "../../../lib/workflow-model";
 import { LoanPaymentHealthBadge, type LoanPaymentHealth } from "./LoanPaymentHealthBadge";
 import { Badge } from "../../../components/ui/badge";
-import { getVisibleBorrowerLabels, loanMatchesSearch, type BorrowerLabelLoan } from "./loan-list-model";
+import { getVisibleBorrowerLabels, isDoneLoanStatus, loanMatchesSearch, type BorrowerLabelLoan } from "./loan-list-model";
 import { loanListHeaderActionsClassName, loanListHeaderClassName } from "./loan-list-layout";
 import { LoanCardFinancialSummary } from "./LoanCardFinancialSummary";
 
@@ -92,9 +92,15 @@ export default function LoanList() {
         };
     }, []);
 
+    useEffect(() => {
+        const invalidate = () => { void retryLoans(); };
+        window.addEventListener("creditsync:loans-invalidated", invalidate);
+        return () => window.removeEventListener("creditsync:loans-invalidated", invalidate);
+    }, [retryLoans]);
+
     const visibleLoans = useMemo(() => {
         const filtered = loans.filter((loan) => {
-            const isDone = loan.status === "paid" || loan.status === "closed";
+            const isDone = isDoneLoanStatus(loan.status);
             const matchesTab = loanTab === "all" || (loanTab === "done" ? isDone : !isDone);
             const matchesSearch = loanMatchesSearch(loan as BorrowerLabelLoan, search);
             const matchesStatus = statusFilter === "all" || loan.status === statusFilter;
@@ -163,7 +169,7 @@ export default function LoanList() {
                         <label className="text-sm font-medium">{t("common.status", "Status")}</label>
                         <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
                             <option value="all">{t("loans.filters.allStatuses", "All statuses")}</option>
-                            {(loanTab === "all" ? ["active", "draft", "paid", "closed", "defaulted", "pending", "problem"] : loanTab === "done" ? ["paid", "closed"] : ["active", "draft", "defaulted"]).map((status) => (
+                            {(loanTab === "all" ? ["active", "draft", "paid", "closed", "replaced", "defaulted", "pending", "problem"] : loanTab === "done" ? ["paid", "closed", "replaced"] : ["active", "draft", "defaulted"]).map((status) => (
                                 <option key={status} value={status}>{t(`loans.status.${status}`, status)}</option>
                             ))}
                         </select>

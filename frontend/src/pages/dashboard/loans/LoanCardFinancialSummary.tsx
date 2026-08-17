@@ -47,7 +47,7 @@ export function LoanCardFinancialSummary({
                 {" · "}
                 {t("loans.paidToDate")} {formatMoneyExact(paidToDate, i18n.language)}
             </p>
-            <p className={cn("text-xs font-semibold uppercase", status === "active" ? "text-green-600" : "text-gray-500")}>{status}</p>
+            <p className={cn("text-xs font-semibold uppercase", status === "active" ? "text-green-600" : "text-gray-500")}>{status === "replaced" ? t("loans.status.replaced") : status}</p>
         </div>
     );
 }

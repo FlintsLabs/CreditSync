@@ -577,6 +577,7 @@
             "draft": "Draft",
             "paid": "Paid",
             "closed": "Closed",
+            "replaced": "Closed — Replaced",
             "defaulted": "Defaulted"
         },
         "paymentHealth": {
@@ -606,6 +607,45 @@
             "largestGap": "Largest gap",
             "bestSpread": "Best realized spread",
             "worstSpread": "Worst realized spread"
+        }
+    },
+    "replacement": {
+        "title": "Replace loan",
+        "description": "Review the backend-owned replacement preview before making this irreversible lifecycle change.",
+        "draftLoan": "Replacement draft loan",
+        "reason": "Reason",
+        "preview": "Preview replacement",
+        "previewTitle": "Exact replacement preview",
+        "oldPrincipal": "Outstanding principal before replacement",
+        "correctedInterest": "Corrected interest",
+        "noCash": "Cash movement (none)",
+        "replacementPrincipal": "Replacement principal",
+        "installment": "Agreed installment",
+        "totalRepayment": "Total repayment",
+        "startDate": "Corrected start date",
+        "firstDueDate": "Corrected first due date",
+        "funding": "Funding",
+        "fundingKinds": { "drawdown": "Drawdown", "own_capital": "Own capital" },
+        "expires": "Preview expires {{value}}",
+        "confirmation": "I confirm this exact replacement preview",
+        "edit": "Edit replacement",
+        "execute": "Execute replacement",
+        "executed": "Replacement executed. Both loan records were refreshed.",
+        "reversalReason": "Reversal reason",
+        "reversalConfirmation": "I confirm this compensating replacement reversal",
+        "reverse": "Reverse replacement",
+        "reversed": "Replacement reversed with a compensating record.",
+        "lineage": {
+            "title": "Replacement lineage",
+            "from": "View source loan",
+            "to": "View replacement loan",
+            "executed": "Replacement active",
+            "reversed": "Replacement reversed"
+        },
+        "errors": {
+            "preview": "Unable to preview replacement.",
+            "execute": "Unable to execute replacement. No financial record was changed.",
+            "reverse": "Unable to reverse replacement. No compensating record was posted."
         }
     },
     "matching": {
