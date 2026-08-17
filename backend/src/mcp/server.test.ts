@@ -1306,6 +1306,48 @@ describe("CreditSync stateless MCP contract", () => {
         await client.close();
     });
 
+    test("accepts only closed public replacement lineage in borrower portfolios", async () => {
+        const lineage = {
+            replacementPublicId: SETTLEMENT_ID,
+            status: "reversed" as const,
+            replacedFromPublicId: null,
+            replacedToPublicId: DISBURSEMENT_ID,
+            inbound: null,
+            outbound: { replacementPublicId: SETTLEMENT_ID, loanPublicId: DISBURSEMENT_ID, status: "reversed" as const },
+        };
+        const portfolio = {
+            borrower: { publicId: BORROWER_ID, name: "Portfolio borrower" },
+            aliases: [],
+            loans: [{
+                publicId: BORROWER_ID,
+                principal: "36000.00",
+                interestRate: "0.00",
+                repaymentType: "daily",
+                status: "active",
+                replacementLineage: lineage,
+                startDate: "2026-08-17",
+            }],
+        };
+        const validBaseUrl = await startServer({ toolHandlers: { "borrower.portfolio": async () => portfolio } });
+        const valid = clientFor(validBaseUrl);
+        await valid.client.connect(valid.transport);
+        expect((await valid.client.callTool({ name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_ID } })).isError).not.toBe(true);
+        await valid.client.close();
+
+        const invalidBaseUrl = await startServer({ toolHandlers: {
+            "borrower.portfolio": async () => ({
+                ...portfolio,
+                loans: [{ ...portfolio.loans[0], replacementLineage: { ...lineage, replacementDbId: 42 } }],
+            }),
+        } });
+        const invalid = clientFor(invalidBaseUrl);
+        await invalid.client.connect(invalid.transport);
+        const result = await invalid.client.callTool({ name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_ID } });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({ error: { code: "INVALID_TOOL_OUTPUT" } });
+        await invalid.client.close();
+    });
+
     test("exposes a non-sensitive health response without MCP credentials", async () => {
         const baseUrl = await startServer({});
         const response = await fetch(`${baseUrl}/mcp/health`);

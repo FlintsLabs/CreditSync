@@ -107,6 +107,123 @@ function expectWriteAuditMetadata(data: Record<string, unknown>) {
 }
 
 describe("default MCP adapter integration", () => {
+    // Break caught: borrower.portfolio must carry the public-only replacement
+    // lineage emitted by the real portfolio projection, both before and after
+    // an executed/reversed replacement. A strict MCP output schema must never
+    // discard that state or leak internal database identifiers.
+    integrationTest("projects active/draft and executed/reversed replacement lineage through borrower.portfolio", async () => {
+        const fixture = await seedReplacementFixture({ tenantId: TENANT_ID });
+        await db.update(users).set({ email: ACTOR_EMAIL }).where(eq(users.id, fixture.actor.id));
+        const { client } = await startDefaultServer();
+
+        const before = resultData(await client.callTool({
+            name: "borrower.portfolio",
+            arguments: { borrowerPublicId: fixture.borrower.publicId },
+        })).data;
+        expect(before.borrower).toMatchObject({ publicId: fixture.borrower.publicId });
+        expect(before.loans).toEqual(expect.arrayContaining([
+            expect.objectContaining({ publicId: fixture.oldLoan.publicId, status: "active", replacementLineage: null }),
+            expect.objectContaining({ publicId: fixture.replacementDraft.publicId, status: "draft", replacementLineage: null }),
+        ]));
+
+        const preview = resultData(await client.callTool({
+            name: "loan.replacement.preview",
+            arguments: {
+                oldLoanPublicId: fixture.oldLoan.publicId,
+                replacementDraftPublicId: fixture.replacementDraft.publicId,
+                reason: "Correct contract start date while preserving the first due date",
+            },
+        })).data;
+        const executed = resultData(await client.callTool({
+            name: "loan.replacement.execute",
+            arguments: {
+                replacementPublicId: String(preview.publicId),
+                previewHash: String(preview.previewHash),
+                expectedOldBalanceVersion: String(preview.oldBalanceVersion),
+                expectedReplacementDraftVersion: String(preview.replacementDraftVersion),
+                confirmed: true,
+                reason: "Correct contract start date while preserving the first due date",
+                idempotencyKey: "mcp-portfolio-replacement-execute-1",
+            },
+        })).data;
+        const executedPortfolio = resultData(await client.callTool({
+            name: "borrower.portfolio",
+            arguments: { borrowerPublicId: fixture.borrower.publicId },
+        })).data;
+        expect(executedPortfolio.loans).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                publicId: fixture.oldLoan.publicId,
+                status: "replaced",
+                replacementLineage: {
+                    replacementPublicId: executed.replacementPublicId,
+                    status: "executed",
+                    replacedFromPublicId: null,
+                    replacedToPublicId: fixture.replacementDraft.publicId,
+                    inbound: null,
+                    outbound: {
+                        replacementPublicId: executed.replacementPublicId,
+                        loanPublicId: fixture.replacementDraft.publicId,
+                        status: "executed",
+                    },
+                },
+            }),
+            expect.objectContaining({
+                publicId: fixture.replacementDraft.publicId,
+                status: "active",
+                replacementLineage: {
+                    replacementPublicId: executed.replacementPublicId,
+                    status: "executed",
+                    replacedFromPublicId: fixture.oldLoan.publicId,
+                    replacedToPublicId: null,
+                    inbound: {
+                        replacementPublicId: executed.replacementPublicId,
+                        loanPublicId: fixture.oldLoan.publicId,
+                        status: "executed",
+                    },
+                    outbound: null,
+                },
+            }),
+        ]));
+
+        const reversed = resultData(await client.callTool({
+            name: "loan.replacement.reverse",
+            arguments: {
+                replacementPublicId: String(executed.replacementPublicId),
+                reason: "Undo the replacement after correcting the source terms",
+                idempotencyKey: "mcp-portfolio-replacement-reverse-1",
+            },
+        })).data;
+        const reversedPortfolio = resultData(await client.callTool({
+            name: "borrower.portfolio",
+            arguments: { borrowerPublicId: fixture.borrower.publicId },
+        })).data;
+        expect(reversedPortfolio.loans).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    publicId: fixture.oldLoan.publicId,
+                    status: "active",
+                    replacementLineage: expect.objectContaining({
+                        replacementPublicId: reversed.replacementPublicId,
+                        status: "reversed",
+                        replacedToPublicId: fixture.replacementDraft.publicId,
+                    }),
+                }),
+                expect.objectContaining({
+                    publicId: fixture.replacementDraft.publicId,
+                    status: "cancelled",
+                    replacementLineage: expect.objectContaining({
+                        replacementPublicId: reversed.replacementPublicId,
+                        status: "reversed",
+                        replacedFromPublicId: fixture.oldLoan.publicId,
+                    }),
+                }),
+            ]));
+
+        for (const portfolio of [before, executedPortfolio, reversedPortfolio]) {
+            expect(JSON.stringify(portfolio)).not.toMatch(/(?:"loanId"|"replacementId"|"ownerUserId"|"borrowerId")\s*:/u);
+        }
+        await client.close();
+    });
+
     // Break caught: the default MCP adapters bypass the replacement service or lose
     // exact preview versions, stable idempotency, and audit/correlation lineage.
     integrationTest("previews and executes a confirmed atomic loan replacement through direct service handlers", async () => {

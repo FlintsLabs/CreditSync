@@ -170,6 +170,53 @@ describe("CreditSync executable orchestration evals", () => {
         expect(result.calls.some((call) => call.name === "intermediary.disbursement.event.create")).toBe(false);
     });
 
+    test("loan replacement derives the active/draft IDs from inspected portfolio state and confirms after presenting the exact preview", async () => {
+        const result = await runEvalScenario("loan-replacement-execute");
+        expect(result).toMatchObject({ outcome: "completed" });
+        expect(result.calls.map((call) => call.name)).toEqual([
+            "borrower.search",
+            "borrower.portfolio",
+            "loan.replacement.preview",
+            "loan.replacement.execute",
+        ]);
+        expect(result.calls[2]?.arguments).toEqual({
+            oldLoanPublicId: "0198c481-3e2b-7000-8000-000000000031",
+            replacementDraftPublicId: "0198c481-3e2b-7000-8000-000000000034",
+            reason: "Correct contract start date while preserving the first due date",
+        });
+        expect(result.calls[3]?.arguments).toMatchObject({
+            replacementPublicId: "0198c481-3e2b-7000-8000-000000000035",
+            confirmed: true,
+        });
+        expect(result.events.map((event) => event.type === "tool" ? event.name : `${event.type}:${event.name}`)).toEqual([
+            "borrower.search",
+            "borrower.portfolio",
+            "loan.replacement.preview",
+            "presentation:loan-replacement-preview",
+            "confirmation:loan-replacement",
+            "loan.replacement.execute",
+        ]);
+        expect(result.events[4]).toEqual({ type: "confirmation", name: "loan-replacement", confirmed: true });
+    });
+
+    test("loan replacement fails closed for missing confirmation, stale state, downstream activity, status mutation, and portfolio ownership mismatch", async () => {
+        const expectedStops = {
+            "loan-replacement-missing-confirmation": "replacement-confirmation-required",
+            "loan-replacement-stale-preview": "fresh-replacement-confirmation-required",
+            "loan-replacement-downstream-activity": "replacement-downstream-activity",
+            "loan-replacement-direct-status-mutation": "replacement-direct-status-mutation-forbidden",
+            "loan-replacement-portfolio-scope-mismatch": "replacement-portfolio-scope-invalid",
+        } as const;
+        for (const [id, stopReason] of Object.entries(expectedStops)) {
+            const result = await runEvalScenario(id);
+            expect(result).toMatchObject({ outcome: "stopped", stopReason });
+            expect(result.calls.some((call) => call.name === "loan.replacement.execute"), id).toBe(id === "loan-replacement-stale-preview");
+        }
+        const scopeMismatch = await runEvalScenario("loan-replacement-portfolio-scope-mismatch");
+        expect(scopeMismatch.calls.map((call) => call.name)).toEqual(["borrower.search", "borrower.portfolio"]);
+        expect(scopeMismatch.calls.some((call) => call.name === "loan.replacement.preview")).toBe(false);
+    });
+
     test("floating interest execution requires the exact preview and explicit confirmation", async () => {
         const confirmed = await runEvalScenario("floating-rate-scheduled-change");
         expect(confirmed.calls.map((call) => call.name)).toEqual([

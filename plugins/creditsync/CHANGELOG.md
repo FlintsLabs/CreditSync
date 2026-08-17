@@ -11,6 +11,10 @@
 
 - Froze the additive 78-tool MCP contract and synchronized replacement financial rules and orchestration guidance.
 
+### Fixed
+
+- Added the closed public-only nullable `replacementLineage` field to `borrower.portfolio` loan items and made replacement evals derive active/draft IDs from inspected borrower-scoped portfolio state before previewing.
+
 ## 7.0.0 - 2026-08-14
 
 ### Added

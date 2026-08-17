@@ -322,15 +322,67 @@ function replacementPreviewResult() {
     };
 }
 
+function replacementPortfolio(options: {
+    borrowerPublicId?: string;
+    oldLoanStatus?: "active" | "replaced";
+    replacementDraftStatus?: "draft" | "active" | "cancelled";
+} = {}) {
+    return {
+        borrower: { publicId: options.borrowerPublicId ?? BORROWER_A, name: "Replacement Borrower" },
+        aliases: [],
+        loans: [
+            {
+                publicId: LOAN_A,
+                principal: "36000.00",
+                interestRate: "0.00",
+                repaymentType: "daily",
+                status: options.oldLoanStatus ?? "active",
+                replacementLineage: null,
+                startDate: "2026-07-12",
+            },
+            {
+                publicId: DRAFT,
+                principal: "36000.00",
+                interestRate: "0.00",
+                repaymentType: "daily",
+                status: options.replacementDraftStatus ?? "draft",
+                replacementLineage: null,
+                startDate: "2026-07-11",
+            },
+        ],
+    };
+}
+
+function inspectedReplacementCandidates(portfolio: Record<string, unknown>, borrowerPublicId: string) {
+    const borrower = portfolio.borrower as { publicId?: unknown } | undefined;
+    const loans = portfolio.loans;
+    // The portfolio itself is the authoritative borrower-owner scope. Never
+    // select a loan merely because it was returned by a search or a stale UI.
+    if (borrower?.publicId !== borrowerPublicId || !Array.isArray(loans)) return null;
+    const candidates = loans.filter((loan): loan is Record<string, unknown> =>
+        typeof loan === "object" && loan !== null && typeof (loan as { publicId?: unknown }).publicId === "string");
+    const oldLoan = candidates.find((loan) => loan.status === "active" && loan.replacementLineage === null);
+    const replacementDraft = candidates.find((loan) => loan.status === "draft" && loan.replacementLineage === null);
+    if (!oldLoan || !replacementDraft || oldLoan.publicId === replacementDraft.publicId) return null;
+    return {
+        oldLoanPublicId: oldLoan.publicId as string,
+        replacementDraftPublicId: replacementDraft.publicId as string,
+    };
+}
+
 async function replacementFlow(mcp: ScriptedMcp, confirmed = true) {
     const search = await mcp.call("borrower.search", { query: "Replacement Borrower" });
-    if (search.resolution !== "unique") return { outcome: "stopped", stopReason: "replacement-borrower-ambiguous" } as const;
-    await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A });
+    const borrowerPublicId = (search.candidates as Array<{ publicId?: unknown }> | undefined)?.[0]?.publicId;
+    if (search.resolution !== "unique" || typeof borrowerPublicId !== "string") {
+        return { outcome: "stopped", stopReason: "replacement-borrower-ambiguous" } as const;
+    }
+    const portfolio = await mcp.call("borrower.portfolio", { borrowerPublicId });
+    const candidates = inspectedReplacementCandidates(portfolio, borrowerPublicId);
+    if (!candidates) return { outcome: "stopped", stopReason: "replacement-portfolio-scope-invalid" } as const;
     let preview: Record<string, unknown>;
     try {
         preview = await mcp.call("loan.replacement.preview", {
-            oldLoanPublicId: LOAN_A,
-            replacementDraftPublicId: DRAFT,
+            ...candidates,
             reason: "Correct contract start date while preserving the first due date",
         });
     } catch (error) {
@@ -355,10 +407,11 @@ async function replacementFlow(mcp: ScriptedMcp, confirmed = true) {
         return { outcome: "completed" } as const;
     } catch (error) {
         if (!(error instanceof ScriptedMcpError) || !/STALE|EXPIRED/u.test(error.code)) throw error;
-        await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A });
+        const refreshedPortfolio = await mcp.call("borrower.portfolio", { borrowerPublicId });
+        const refreshedCandidates = inspectedReplacementCandidates(refreshedPortfolio, borrowerPublicId);
+        if (!refreshedCandidates) return { outcome: "stopped", stopReason: "replacement-portfolio-scope-invalid" } as const;
         const fresh = await mcp.call("loan.replacement.preview", {
-            oldLoanPublicId: LOAN_A,
-            replacementDraftPublicId: DRAFT,
+            ...refreshedCandidates,
             reason: "Correct contract start date while preserving the first due date",
         });
         mcp.presentLoanReplacement(fresh);
@@ -499,8 +552,8 @@ const RENEWAL_PORTFOLIO = {
     borrower: { publicId: BORROWER_A, name: "fixture" },
     aliases: [],
     loans: [
-        { publicId: LOAN_A, principal: "2500.00", interestRate: "14.00", repaymentType: "daily", status: "renewed", startDate: "2026-07-01" },
-        { publicId: LOAN_B, principal: "2500.00", interestRate: "14.00", repaymentType: "daily", status: "active", startDate: "2026-08-11" }
+        { publicId: LOAN_A, principal: "2500.00", interestRate: "14.00", repaymentType: "daily", status: "renewed", replacementLineage: null, startDate: "2026-07-01" },
+        { publicId: LOAN_B, principal: "2500.00", interestRate: "14.00", repaymentType: "daily", status: "active", replacementLineage: null, startDate: "2026-08-11" }
     ]
 };
 
@@ -792,6 +845,7 @@ function intermediatedIdentityScript(options: { ambiguous?: boolean; missingAssi
             interestRate: "0.00",
             repaymentType: "floating",
             status: "active",
+            replacementLineage: null,
             startDate: "2026-08-01"
         }]
 },
@@ -1291,7 +1345,7 @@ const SCENARIOS: Record<string, Scenario> = {
     "loan-replacement-execute": {
         script: [
             { name: "borrower.search", arguments: { query: "Replacement Borrower" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_A, name: "fixture" }] } },
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: BORROWER_A, name: "fixture" }, aliases: [], loans: [] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: replacementPortfolio() },
             { name: "loan.replacement.preview", arguments: { oldLoanPublicId: LOAN_A, replacementDraftPublicId: DRAFT, reason: "Correct contract start date while preserving the first due date" }, result: replacementPreviewResult() },
             { name: "loan.replacement.execute", arguments: { replacementPublicId: REPLACEMENT, previewHash: PREVIEW_HASH, expectedOldBalanceVersion: BALANCE_VERSION, expectedReplacementDraftVersion: BALANCE_VERSION, confirmed: true, reason: "Owner confirmed the exact fresh no-cash replacement proposal", idempotencyKey: "loan-replacement-execute-20260817-1" }, result: { replacementPublicId: REPLACEMENT, oldLoanPublicId: LOAN_A, replacementLoanPublicId: DRAFT, status: "executed", auditPublicId: REPLACEMENT_AUDIT, correlationId: REPLACEMENT_AUDIT } },
         ],
@@ -1300,7 +1354,7 @@ const SCENARIOS: Record<string, Scenario> = {
     "loan-replacement-missing-confirmation": {
         script: [
             { name: "borrower.search", arguments: { query: "Replacement Borrower" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_A, name: "fixture" }] } },
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: BORROWER_A, name: "fixture" }, aliases: [], loans: [] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: replacementPortfolio() },
             { name: "loan.replacement.preview", arguments: { oldLoanPublicId: LOAN_A, replacementDraftPublicId: DRAFT, reason: "Correct contract start date while preserving the first due date" }, result: replacementPreviewResult() },
         ],
         run: (mcp) => replacementFlow(mcp, false),
@@ -1308,10 +1362,10 @@ const SCENARIOS: Record<string, Scenario> = {
     "loan-replacement-stale-preview": {
         script: [
             { name: "borrower.search", arguments: { query: "Replacement Borrower" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_A, name: "fixture" }] } },
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: BORROWER_A, name: "fixture" }, aliases: [], loans: [] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: replacementPortfolio() },
             { name: "loan.replacement.preview", arguments: { oldLoanPublicId: LOAN_A, replacementDraftPublicId: DRAFT, reason: "Correct contract start date while preserving the first due date" }, result: replacementPreviewResult() },
             { name: "loan.replacement.execute", arguments: { replacementPublicId: REPLACEMENT, previewHash: PREVIEW_HASH, expectedOldBalanceVersion: BALANCE_VERSION, expectedReplacementDraftVersion: BALANCE_VERSION, confirmed: true, reason: "Owner confirmed the exact fresh no-cash replacement proposal", idempotencyKey: "loan-replacement-execute-20260817-1" }, error: { code: "REPLACEMENT_PREVIEW_STALE", message: "Replacement state changed", retryable: false, reviewRequired: true, details: {} } },
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: BORROWER_A, name: "fixture" }, aliases: [], loans: [] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: replacementPortfolio() },
             { name: "loan.replacement.preview", arguments: { oldLoanPublicId: LOAN_A, replacementDraftPublicId: DRAFT, reason: "Correct contract start date while preserving the first due date" }, result: replacementPreviewResult() },
         ],
         run: (mcp) => replacementFlow(mcp),
@@ -1319,7 +1373,7 @@ const SCENARIOS: Record<string, Scenario> = {
     "loan-replacement-downstream-activity": {
         script: [
             { name: "borrower.search", arguments: { query: "Replacement Borrower" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_A, name: "fixture" }] } },
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: BORROWER_A, name: "fixture" }, aliases: [], loans: [] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: replacementPortfolio() },
             { name: "loan.replacement.preview", arguments: { oldLoanPublicId: LOAN_A, replacementDraftPublicId: DRAFT, reason: "Correct contract start date while preserving the first due date" }, error: { code: "REPLACEMENT_DRAFT_DOWNSTREAM_ACTIVITY", message: "Replacement draft has downstream activity", retryable: false, reviewRequired: true, details: {} } },
         ],
         run: (mcp) => replacementFlow(mcp),
@@ -1327,13 +1381,25 @@ const SCENARIOS: Record<string, Scenario> = {
     "loan-replacement-direct-status-mutation": {
         script: [
             { name: "borrower.search", arguments: { query: "Replacement Borrower" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_A, name: "fixture" }] } },
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: BORROWER_A, name: "fixture" }, aliases: [], loans: [] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: replacementPortfolio() },
         ],
         run: async (mcp) => {
-            await mcp.call("borrower.search", { query: "Replacement Borrower" });
-            await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A });
+            const search = await mcp.call("borrower.search", { query: "Replacement Borrower" });
+            const borrowerPublicId = (search.candidates as Array<{ publicId?: unknown }> | undefined)?.[0]?.publicId;
+            if (typeof borrowerPublicId !== "string") return { outcome: "stopped", stopReason: "replacement-borrower-ambiguous" } as const;
+            const portfolio = await mcp.call("borrower.portfolio", { borrowerPublicId });
+            if (!inspectedReplacementCandidates(portfolio, borrowerPublicId)) {
+                return { outcome: "stopped", stopReason: "replacement-portfolio-scope-invalid" } as const;
+            }
             return { outcome: "stopped", stopReason: "replacement-direct-status-mutation-forbidden" } as const;
         },
+    },
+    "loan-replacement-portfolio-scope-mismatch": {
+        script: [
+            { name: "borrower.search", arguments: { query: "Replacement Borrower" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_A, name: "fixture" }] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: replacementPortfolio({ borrowerPublicId: BORROWER_B }) },
+        ],
+        run: (mcp) => replacementFlow(mcp),
     },
     "commission-no-agent-activation": {
         script: [{ name: "loan.commission-participant.list", arguments: { loanPublicId: LOAN_A }, result: { items: [] } }],
@@ -1492,7 +1558,7 @@ const SCENARIOS: Record<string, Scenario> = {
     },
     "floating-settlement-execute": {
         script: [
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active", principal: "0.00", interestRate: "0.00", startDate: "2026-08-15" }], borrower: { publicId: "0198c481-3e2b-7000-8000-000000000233", name: "fixture" }, aliases: [] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active", replacementLineage: null, principal: "0.00", interestRate: "0.00", startDate: "2026-08-15" }], borrower: { publicId: "0198c481-3e2b-7000-8000-000000000233", name: "fixture" }, aliases: [] } },
             { name: "loan.settlement.preview", arguments: { loanPublicId: LOAN_A, asOfDate: "2026-08-15" }, result: { publicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, status: "ready", outstandingPrincipal: "5000.00", dueInterest: "25.00", accruedNotDueInterest: "17.14", outstandingFees: "10.00", outstandingPenalties: "5.00", nonRefundableAdvanceInterest: "600.00", settlementTotal: "5057.14", expiresAt: SETTLEMENT_EXPIRES_AT, balanceVersion: SETTLEMENT_BALANCE_VERSION, id: "0198c481-3e2b-7000-8000-000000000234", loanPublicId: "0198c481-3e2b-7000-8000-000000000235", asOfDate: "2026-08-15", hashVersion: "v1", executedAt: "2026-08-15T06:30:00.000Z", createdAt: "2026-08-15T06:30:00.000Z", updatedAt: "2026-08-15T06:30:00.000Z" } },
             { name: "loan.settlement.execute", arguments: { settlementPublicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, confirmed: true, reason: "Borrower confirmed the exact displayed close-out", idempotencyKey: "floating-settlement-20260815-1" }, result: { publicId: SETTLEMENT, status: "executed", settlementTotal: "5057.14", id: "0198c481-3e2b-7000-8000-000000000236", loanPublicId: "0198c481-3e2b-7000-8000-000000000237", asOfDate: "2026-08-15", outstandingPrincipal: "0.00", dueInterest: "0.00", accruedNotDueInterest: "0.00", outstandingFees: "0.00", outstandingPenalties: "0.00", nonRefundableAdvanceInterest: "0.00", balanceVersion: "v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", previewHash: "v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", hashVersion: "v1", expiresAt: "2026-08-15T06:30:00.000Z", executedAt: "2026-08-15T06:30:00.000Z", createdAt: "2026-08-15T06:30:00.000Z", updatedAt: "2026-08-15T06:30:00.000Z", transaction: { id: "0198c481-3e2b-7000-8000-000000000238", publicId: "0198c481-3e2b-7000-8000-000000000239", amount: "0.00", principalComponent: "0.00", interestComponent: "0.00", feeComponent: "0.00", penaltyComponent: "0.00", type: "close_account", entryType: "repayment", transactionDate: "2026-08-15T06:30:00.000Z", postedAt: "2026-08-15T06:30:00.000Z" }, reason: "fixture", auditPublicId: "0198c481-3e2b-7000-8000-000000000240", correlationId: "0198c481-3e2b-7000-8000-000000000241" } },
         ],
@@ -1500,24 +1566,24 @@ const SCENARIOS: Record<string, Scenario> = {
     },
     "floating-settlement-missing-confirmation": {
         script: [
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active", principal: "0.00", interestRate: "0.00", startDate: "2026-08-15" }], borrower: { publicId: "0198c481-3e2b-7000-8000-000000000242", name: "fixture" }, aliases: [] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active", replacementLineage: null, principal: "0.00", interestRate: "0.00", startDate: "2026-08-15" }], borrower: { publicId: "0198c481-3e2b-7000-8000-000000000242", name: "fixture" }, aliases: [] } },
             { name: "loan.settlement.preview", arguments: { loanPublicId: LOAN_A, asOfDate: "2026-08-15" }, result: { publicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, status: "ready", outstandingPrincipal: "5000.00", dueInterest: "25.00", accruedNotDueInterest: "17.14", outstandingFees: "10.00", outstandingPenalties: "5.00", nonRefundableAdvanceInterest: "600.00", settlementTotal: "5057.14", expiresAt: SETTLEMENT_EXPIRES_AT, balanceVersion: SETTLEMENT_BALANCE_VERSION, id: "0198c481-3e2b-7000-8000-000000000243", loanPublicId: "0198c481-3e2b-7000-8000-000000000244", asOfDate: "2026-08-15", hashVersion: "v1", executedAt: "2026-08-15T06:30:00.000Z", createdAt: "2026-08-15T06:30:00.000Z", updatedAt: "2026-08-15T06:30:00.000Z" } },
         ],
         run: (mcp) => floatingSettlement(mcp),
     },
     "floating-settlement-stale-preview": {
         script: [
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active", principal: "0.00", interestRate: "0.00", startDate: "2026-08-15" }], borrower: { publicId: "0198c481-3e2b-7000-8000-000000000245", name: "fixture" }, aliases: [] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active", replacementLineage: null, principal: "0.00", interestRate: "0.00", startDate: "2026-08-15" }], borrower: { publicId: "0198c481-3e2b-7000-8000-000000000245", name: "fixture" }, aliases: [] } },
             { name: "loan.settlement.preview", arguments: { loanPublicId: LOAN_A, asOfDate: "2026-08-15" }, result: { publicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, status: "ready", outstandingPrincipal: "5000.00", dueInterest: "25.00", accruedNotDueInterest: "17.14", outstandingFees: "10.00", outstandingPenalties: "5.00", nonRefundableAdvanceInterest: "600.00", settlementTotal: "5057.14", expiresAt: SETTLEMENT_EXPIRES_AT, balanceVersion: SETTLEMENT_BALANCE_VERSION, id: "0198c481-3e2b-7000-8000-000000000246", loanPublicId: "0198c481-3e2b-7000-8000-000000000247", asOfDate: "2026-08-15", hashVersion: "v1", executedAt: "2026-08-15T06:30:00.000Z", createdAt: "2026-08-15T06:30:00.000Z", updatedAt: "2026-08-15T06:30:00.000Z" } },
             { name: "loan.settlement.execute", arguments: { settlementPublicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, confirmed: true, reason: "Borrower confirmed the exact displayed close-out", idempotencyKey: "floating-settlement-20260815-1" }, error: { code: "STALE_SETTLEMENT_PREVIEW", message: "Loan settlement preview is stale", retryable: false, reviewRequired: false, details: {} } },
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active", principal: "0.00", interestRate: "0.00", startDate: "2026-08-15" }], borrower: { publicId: "0198c481-3e2b-7000-8000-000000000248", name: "fixture" }, aliases: [] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active", replacementLineage: null, principal: "0.00", interestRate: "0.00", startDate: "2026-08-15" }], borrower: { publicId: "0198c481-3e2b-7000-8000-000000000248", name: "fixture" }, aliases: [] } },
             { name: "loan.settlement.preview", arguments: { loanPublicId: LOAN_A, asOfDate: "2026-08-15" }, result: { publicId: "0198c481-3e2b-7000-8000-000000000072", previewHash: `v1:${"e".repeat(64)}`, status: "ready", outstandingPrincipal: "4900.00", dueInterest: "25.00", accruedNotDueInterest: "17.14", outstandingFees: "10.00", outstandingPenalties: "5.00", nonRefundableAdvanceInterest: "600.00", settlementTotal: "4957.14", expiresAt: "2026-08-15T06:20:00.000Z", balanceVersion: `v1:${"f".repeat(64)}`, id: "0198c481-3e2b-7000-8000-000000000249", loanPublicId: "0198c481-3e2b-7000-8000-000000000250", asOfDate: "2026-08-15", hashVersion: "v1", executedAt: "2026-08-15T06:30:00.000Z", createdAt: "2026-08-15T06:30:00.000Z", updatedAt: "2026-08-15T06:30:00.000Z" } },
         ],
         run: (mcp) => floatingSettlement(mcp, { confirmed: true }),
     },
     "floating-settlement-non-refundable-refund": {
         script: [
-            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active", principal: "0.00", interestRate: "0.00", startDate: "2026-08-15" }], borrower: { publicId: "0198c481-3e2b-7000-8000-000000000251", name: "fixture" }, aliases: [] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, repaymentType: "floating", status: "active", replacementLineage: null, principal: "0.00", interestRate: "0.00", startDate: "2026-08-15" }], borrower: { publicId: "0198c481-3e2b-7000-8000-000000000251", name: "fixture" }, aliases: [] } },
             { name: "loan.settlement.preview", arguments: { loanPublicId: LOAN_A, asOfDate: "2026-08-15" }, result: { publicId: SETTLEMENT, previewHash: SETTLEMENT_PREVIEW_HASH, status: "ready", outstandingPrincipal: "5000.00", dueInterest: "25.00", accruedNotDueInterest: "17.14", outstandingFees: "10.00", outstandingPenalties: "5.00", nonRefundableAdvanceInterest: "600.00", settlementTotal: "5057.14", expiresAt: SETTLEMENT_EXPIRES_AT, balanceVersion: SETTLEMENT_BALANCE_VERSION, id: "0198c481-3e2b-7000-8000-000000000252", loanPublicId: "0198c481-3e2b-7000-8000-000000000253", asOfDate: "2026-08-15", hashVersion: "v1", executedAt: "2026-08-15T06:30:00.000Z", createdAt: "2026-08-15T06:30:00.000Z", updatedAt: "2026-08-15T06:30:00.000Z" } },
         ],
         run: (mcp) => floatingSettlement(mcp, { refundRequested: true }),
@@ -1624,7 +1690,7 @@ const SCENARIOS: Record<string, Scenario> = {
         run: (mcp) => paymentFlow(mcp, { evidence: true }),
     },
     "active-loan-edit": {
-        script: [{ name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, status: "active", principal: "0.00", interestRate: "0.00", repaymentType: "fixture", startDate: "2026-08-15" }], borrower: { publicId: "0198c481-3e2b-7000-8000-000000000298", name: "fixture" }, aliases: [] } }],
+        script: [{ name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { loans: [{ publicId: LOAN_A, status: "active", replacementLineage: null, principal: "0.00", interestRate: "0.00", repaymentType: "fixture", startDate: "2026-08-15" }], borrower: { publicId: "0198c481-3e2b-7000-8000-000000000298", name: "fixture" }, aliases: [] } }],
         run: async (mcp) => { await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A }); return { outcome: "stopped", stopReason: "immutable-active-terms" }; },
     },
     "disbursement-variance-without-confirmation": {

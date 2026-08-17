@@ -271,6 +271,19 @@ const borrowerOutput = z.object({
     createdAt: nullableIsoDateTime.optional(),
     updatedAt: nullableIsoDateTime.optional(),
 }).strict();
+const replacementLineageEventOutput = z.object({
+    replacementPublicId: uuid,
+    loanPublicId: uuid.nullable(),
+    status: z.enum(["executed", "reversed"]),
+}).strict();
+const replacementLineageOutput = z.object({
+    replacementPublicId: uuid,
+    status: z.enum(["executed", "reversed"]),
+    replacedFromPublicId: uuid.nullable(),
+    replacedToPublicId: uuid.nullable(),
+    inbound: replacementLineageEventOutput.nullable(),
+    outbound: replacementLineageEventOutput.nullable(),
+}).strict();
 const aliasOutput = z.object({
     ...publicEntity,
     alias: z.string(),
@@ -836,6 +849,7 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
             interestRate: money,
             repaymentType: z.string(),
             status: z.string().nullable(),
+            replacementLineage: replacementLineageOutput.nullable(),
             startDate: date.nullable(),
             createdAt: nullableIsoDateTime.optional(),
         }).strict()),
