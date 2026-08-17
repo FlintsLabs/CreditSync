@@ -375,6 +375,7 @@ async function validate(ctx: CommandContext, executor: Executor, oldLoan: Loan, 
     if (current.priorOld || current.priorDraft) reviewRequired("REPLACEMENT_ALREADY_EXECUTED", "A loan already has an executed replacement", [current.priorOld?.publicId ?? current.priorDraft!.publicId]);
     const draftDownstream = effectiveDownstream(current.draftDownstream);
     const draftBlockerIds = [...new Set([
+        ...current.draftSchedules.map((row) => row.publicId),
         ...draftDownstream.postedPaymentIds,
         ...draftDownstream.postedDisbursementIds,
         ...draftDownstream.dependentWorkflowIds,
@@ -984,7 +985,7 @@ export async function executeLoanReplacement(ctx: CommandContext, input: { repla
         await tx.execute(sql`SELECT id FROM loan_replacements WHERE tenant_id = ${ctx.tenantId} AND id = ${record.id} FOR UPDATE`);
         const keyOwner = await tx.query.loanReplacements.findFirst({ where: and(eq(loanReplacements.tenantId, ctx.tenantId), eq(loanReplacements.executeIdempotencyKey, key)) });
         if (keyOwner && keyOwner.id !== record.id) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was used for another replacement execution", 409);
-        if (record.status === "executed") {
+        if (record.status === "executed" || record.status === "reversed") {
             if (record.executeIdempotencyKey !== key || record.executeRequestHash !== requestHash) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was used with a different request", 409);
             const audit = await requireReplacementAudit(tx, ctx, record, "executed", why);
             const oldLoan = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, record.oldLoanId)) });

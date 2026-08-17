@@ -640,6 +640,43 @@ describe("loan replacement service database invariants", () => {
             confirmed: true,
         });
         expect(reversalReplay).toEqual(reversal);
+
+        const executionReplayAfterReversal = await executeLoanReplacement({
+            ...executionContext,
+            requestId: "retry-execution-after-reversal-request",
+            correlationId: "retry-execution-after-reversal-correlation",
+        }, executionInput);
+        expect(executionReplayAfterReversal).toEqual(execution);
+    });
+
+    // Break caught: an historical/malformed draft schedule survives validation and activation
+    // appends a second immutable installment set to the same replacement loan.
+    integrationTest("rejects a replacement draft that already has schedule rows", async () => {
+        const fixture = await seedReplacementFixture();
+        const existing = await db.insert(loanSchedules).values({
+            tenantId: fixture.tenantId,
+            loanId: fixture.replacementDraft.id,
+            installmentNo: 1,
+            dueDate: "2026-07-12",
+            scheduledPrincipal: "180.00",
+            scheduledInterest: "21.00",
+            scheduledFee: "0.00",
+            scheduledTotal: "201.00",
+            paidTotal: "0.00",
+            paidPenalty: "0.00",
+            remainingDue: "201.00",
+            status: "pending",
+        }).returning().then((rows) => rows[0]!);
+
+        await expect(fixture.preview()).rejects.toMatchObject({
+            code: "REPLACEMENT_DRAFT_DOWNSTREAM_ACTIVITY",
+            status: 409,
+            details: { blockerPublicIds: [existing.publicId] },
+        });
+        expect(await db.select().from(loanReplacements).where(eq(
+            loanReplacements.tenantId,
+            fixture.tenantId,
+        ))).toHaveLength(0);
     });
 
     // Break caught: execution replay ignores the aggregate's persisted audit FK and returns a

@@ -15,6 +15,7 @@
 - Added the approved design for an atomic, reversible scheduled-loan replacement workflow with a `replaced` terminal status, exact correction records, existing-draft activation, funding linkage, lineage, synchronized MCP/REST interfaces, and fail-closed downstream checks.
 
 ### Fixed
+- Preserved exact execution idempotency replay after a later safe reversal and rejected replacement drafts that already contain schedule rows before activation can append duplicate immutable installments.
 - Required explicit `confirmed: true` at every REST, MCP, and service boundary before compensating replacement reversal, and corrected MCP preview annotations to reflect its durable preview/audit writes.
 - Blocked commission participants, intermediary assignments, intermediary collections, and payment attributions from being appended to the cancelled replacement child after a safe reversal.
 - Kept historical schema and migration-lineage regressions forward-compatible with immutable correction rows and additive migrations after their originally pinned catalog tails.
