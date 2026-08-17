@@ -330,6 +330,9 @@ export async function reverseIntermediatedLoanPayout(
 
 export async function createDisbursementDraft(ctx: CommandContext, loanPublicId: string, input: CreateDisbursementDraftInput) {
     const loan = await accessibleLoan(ctx, loanPublicId);
+    if (["replaced", "cancelled", "canceled", "reversed", "settled", "closed", "paid"].includes(loan.status ?? "")) {
+        throw new DomainError("LOAN_DISBURSEMENT_LOCKED", "Disbursements cannot be created for a terminal loan", 409);
+    }
     const draft = validateDraft(input);
     const sourceProfile = await sourceProfileFor(ctx, input.sourceBankProfilePublicId);
     return db.transaction(async (tx) => {

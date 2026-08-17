@@ -3,12 +3,14 @@
 ## v0.3.17 - 2026-08-17
 
 ### Added
+- Added forward migration 0044 to harden the loan-replacement ledger with durable execution/reversal request hashes, actor/request/correlation/audit metadata, lifecycle checks, correction reversal provenance, and immutable database guards.
 - Added authoritative atomic scheduled-loan replacement preview, execution, and safe compensating reversal services with tenant-admin authorization, Decimal-safe correction entries, exact preview fingerprints, audit/correlation context, and fail-closed downstream/funding checks.
 - Added transaction-scoped loan activation so composite financial workflows reuse the authoritative schedule and funding calculation without opening a second transaction or duplicating a pre-funded allocation.
 - Added the TDD implementation plan for atomic scheduled-loan replacement, covering append-only corrections, existing-draft activation, `replaced` lineage, reversible execution, synchronized REST/MCP/plugin/frontend delivery, full verification, and controlled production execution.
 - Added the approved design for an atomic, reversible scheduled-loan replacement workflow with a `replaced` terminal status, exact correction records, existing-draft activation, funding linkage, lineage, synchronized MCP/REST interfaces, and fail-closed downstream checks.
 
 ### Fixed
+- Hardened loan replacement preview/execution/reversal with authoritative draft schedule calculation, own-capital source validation, source-mismatch checks, deterministic schedule/funding/payment/disbursement locks with post-lock reads, replay-hash conflicts, and terminal-loan write guards.
 - Aligned the append-only replacement-correction Drizzle schema with migration 0042 by removing an undeployed `updated_at` column that prevented correction inserts on a fresh database.
 - Added forward migration 0043 to repair the missing `loan_interest_rate_periods.status` column required by the current schema and floating-loan workflows.
 - Preserved the legacy `canceled` loan status used by renewal workflows alongside the replacement lifecycle statuses.

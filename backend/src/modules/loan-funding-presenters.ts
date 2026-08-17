@@ -17,7 +17,7 @@ export async function presentFundingAllocation(row: FundingAllocationRow) {
 }
 
 export function isMutableFundingLoan(status: string | null) {
-    return !["renewed", "canceled"].includes(status ?? "");
+    return !["renewed", "canceled", "cancelled", "replaced", "reversed", "settled", "closed", "paid"].includes(status ?? "");
 }
 
 export function signedMoney(value: Decimal.Value) { return serializeSignedMoney(value); }

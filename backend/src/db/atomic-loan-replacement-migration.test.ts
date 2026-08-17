@@ -35,6 +35,16 @@ describe("atomic loan replacement migration contract", () => {
     expect(migration).not.toContain("DROP TABLE");
   });
 
+  // Break caught: replacement execution/reversal idempotency and lifecycle evidence exist only in an in-memory snapshot, making retries and database immutability unverifiable.
+  test("adds a forward-only replacement lifecycle hardening migration", () => {
+    const migration = readFileSync(join(root, "0044_atomic_loan_replacement_hardening.sql"), "utf8");
+    expect(migration).toContain('ADD COLUMN IF NOT EXISTS "execute_request_hash"');
+    expect(migration).toContain('ADD COLUMN IF NOT EXISTS "reversal_request_hash"');
+    expect(migration).toContain('loan_replacements_lifecycle_check');
+    expect(migration).toContain('loan_replacements_immutable');
+    expect(migration).toContain('loan_replacement_corrections_immutable');
+  });
+
   integrationTest("fresh migrations expose the schema-defined rate-period status", async () => {
     const postgres = (await import("postgres")).default(process.env.TEST_DATABASE_URL!, { max: 1 });
     try {

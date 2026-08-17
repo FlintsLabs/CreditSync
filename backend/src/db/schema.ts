@@ -684,7 +684,18 @@ export const loanReplacements = pgTable("loan_replacements", {
     preExecutionSnapshot: jsonb("pre_execution_snapshot").$type<Record<string, unknown>>(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     executeIdempotencyKey: text("execute_idempotency_key"),
+    executeRequestHash: text("execute_request_hash"),
     reversalIdempotencyKey: text("reversal_idempotency_key"),
+    reversalRequestHash: text("reversal_request_hash"),
+    createdActorSource: text("created_actor_source").default("system").notNull(),
+    executeActorSource: text("execute_actor_source"),
+    reversalActorSource: text("reversal_actor_source"),
+    requestId: text("request_id"),
+    correlationId: text("correlation_id"),
+    executedAuditPublicId: uuid("executed_audit_public_id"),
+    reversedAuditPublicId: uuid("reversed_audit_public_id"),
+    executedAt: timestamp("executed_at", { withTimezone: true }),
+    reversedAt: timestamp("reversed_at", { withTimezone: true }),
     createdByUserId: integer("created_by_user_id"),
     executedByUserId: integer("executed_by_user_id"),
     reversedByUserId: integer("reversed_by_user_id"),
@@ -702,6 +713,8 @@ export const loanReplacements = pgTable("loan_replacements", {
     foreignKey({ name: "loan_replacements_tenant_executed_by_fk", columns: [table.tenantId, table.executedByUserId], foreignColumns: [users.tenantId, users.id] }),
     foreignKey({ name: "loan_replacements_tenant_reversed_by_fk", columns: [table.tenantId, table.reversedByUserId], foreignColumns: [users.tenantId, users.id] }),
     check("loan_replacements_status_check", sql`${table.status} IN ('preview', 'executed', 'reversed', 'expired')`),
+    check("loan_replacements_actor_source_check", sql`${table.createdActorSource} IN ('web', 'mcp', 'system') AND (${table.executeActorSource} IS NULL OR ${table.executeActorSource} IN ('web', 'mcp', 'system')) AND (${table.reversalActorSource} IS NULL OR ${table.reversalActorSource} IN ('web', 'mcp', 'system'))`),
+    check("loan_replacements_request_key_hash_check", sql`(${table.executeIdempotencyKey} IS NULL) = (${table.executeRequestHash} IS NULL) AND (${table.reversalIdempotencyKey} IS NULL) = (${table.reversalRequestHash} IS NULL)`),
 ]);
 
 export const loanReplacementCorrections = pgTable("loan_replacement_corrections", {
@@ -716,13 +729,16 @@ export const loanReplacementCorrections = pgTable("loan_replacement_corrections"
     fee: numeric("fee").default("0").notNull(),
     penalty: numeric("penalty").default("0").notNull(),
     reason: text("reason").notNull(),
+    reversedCorrectionId: integer("reversed_correction_id"),
     createdByUserId: integer("created_by_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
     uniqueIndex("loan_replacement_corrections_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("loan_replacement_corrections_tenant_reversed_unique").on(table.tenantId, table.reversedCorrectionId).where(sql`${table.reversedCorrectionId} IS NOT NULL`),
     foreignKey({ name: "loan_replacement_corrections_tenant_replacement_fk", columns: [table.tenantId, table.replacementId], foreignColumns: [loanReplacements.tenantId, loanReplacements.id] }),
     foreignKey({ name: "loan_replacement_corrections_tenant_loan_fk", columns: [table.tenantId, table.loanId], foreignColumns: [loans.tenantId, loans.id] }),
     foreignKey({ name: "loan_replacement_corrections_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+    foreignKey({ name: "loan_replacement_corrections_tenant_reversed_correction_fk", columns: [table.tenantId, table.reversedCorrectionId], foreignColumns: [table.tenantId, table.id] }),
 ]);
 
 export const loanDisbursementEvents = pgTable("loan_disbursement_events", {

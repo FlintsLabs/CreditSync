@@ -1532,6 +1532,7 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
         for (const allocation of allocations) {
             const loan = await tx.query.loans.findFirst({ where: and(eq(loans.id, allocation.loanId), eq(loans.tenantId, ctx.tenantId)) });
             if (!loan) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Payment target no longer exists", 409);
+            if (loan.status !== "active") throw new DomainError("STALE_PAYMENT_PROPOSAL", "Payment target is no longer an active loan", 409);
             if (!allocation.scheduleId && loan.repaymentType === "floating") {
                 await accrueFloatingInterestThrough(tx, loan, intake.receivedAt, ctx);
                 let obligations = await floatingPaymentObligations(tx, loan, intake.receivedAt, ctx);

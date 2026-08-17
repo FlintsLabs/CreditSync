@@ -2,12 +2,14 @@ import { createHash } from "node:crypto";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
-    auditLogs, bankLoans, loanDisbursementEvents, loanFundingAllocations, loanRenewals,
+    auditLogs, bankLoans, bankProfiles, loanDisbursementEvents, loanFundingAllocations, loanRenewals,
     loanReplacementCorrections, loanReplacements, loanRestructures, loanSchedules, loans, transactions, users,
 } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
 import { FinancialDecimal } from "../lib/financial-decimal";
+import { generateLoanSchedule } from "../lib/loan-schedule";
+import type { RepaymentType } from "../lib/calculator";
 import { serializeMoney } from "../lib/money";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
@@ -95,6 +97,7 @@ async function validate(ctx: CommandContext, executor: Executor, oldLoan: Loan, 
     if (oldLoan.status !== "active") reviewRequired("OLD_LOAN_NOT_REPLACEABLE", "Only an active loan can be replaced", [oldLoan.publicId]);
     if (draft.status !== "draft") reviewRequired("REPLACEMENT_DRAFT_NOT_AVAILABLE", "Replacement loan must still be a draft", [draft.publicId]);
     if (!["daily", "weekly", "monthly"].includes(oldLoan.repaymentType) || !["daily", "weekly", "monthly"].includes(draft.repaymentType)) reviewRequired("REPLACEMENT_TYPE_UNSUPPORTED", "Only scheduled loans can be replaced", [oldLoan.publicId, draft.publicId]);
+    authoritativeReplacementSchedule(draft);
     if (oldLoan.borrowerId !== draft.borrowerId || oldLoan.ownerUserId !== draft.ownerUserId) reviewRequired("REPLACEMENT_SCOPE_MISMATCH", "Replacement loans must have the same borrower and owner", [oldLoan.publicId, draft.publicId]);
     if (current.priorOld || current.priorDraft) reviewRequired("REPLACEMENT_ALREADY_EXECUTED", "A loan already has an executed replacement", [current.priorOld?.publicId ?? current.priorDraft!.publicId]);
     const postedPayments = activeRows(current.oldTransactions).filter(row => row.entryType === "repayment");
@@ -113,6 +116,17 @@ async function validate(ctx: CommandContext, executor: Executor, oldLoan: Loan, 
         const already = current.draftAllocations.reduce((total: any, row: any) => total.plus(row.allocatedAmount), new FinancialDecimal(0));
         const needed = FinancialDecimal.max(new FinancialDecimal(0), new FinancialDecimal(draft.principalAmount).minus(already));
         if (needed.gt(new FinancialDecimal(source.amount).minus(allocated))) reviewRequired("REPLACEMENT_FUNDING_INSUFFICIENT", "Replacement funding capacity is insufficient", [source.publicId]);
+        const wrong = current.draftAllocations.find((row: any) => row.bankLoanId !== source.id || row.bankProfileId !== source.bankProfileId);
+        if (wrong) reviewRequired("REPLACEMENT_FUNDING_MISMATCH", "Replacement allocation does not match its configured funding source", [wrong.publicId, source.publicId]);
+    } else if (draft.fundingBankProfileId) {
+        const source = await executor.query.bankProfiles.findFirst({ where: and(eq(bankProfiles.tenantId, ctx.tenantId), eq(bankProfiles.id, draft.fundingBankProfileId)) });
+        if (!source || source.status !== "active" || source.accountingMode !== "capital_pool") reviewRequired("REPLACEMENT_FUNDING_INVALID", "Replacement capital source is not active", [source?.publicId ?? draft.publicId]);
+        const allocated = await executor.select({ total: sql<string>`coalesce(sum(${loanFundingAllocations.allocatedAmount}), 0)` }).from(loanFundingAllocations).where(and(eq(loanFundingAllocations.tenantId, ctx.tenantId), eq(loanFundingAllocations.bankProfileId, source.id))).then((rows: any[]) => new FinancialDecimal(rows[0]?.total ?? "0"));
+        const already = current.draftAllocations.reduce((total: any, row: any) => total.plus(row.allocatedAmount), new FinancialDecimal(0));
+        const needed = FinancialDecimal.max(new FinancialDecimal(0), new FinancialDecimal(draft.principalAmount).minus(already));
+        if (needed.gt(new FinancialDecimal(source.creditLimit ?? "0").minus(allocated))) reviewRequired("REPLACEMENT_FUNDING_INSUFFICIENT", "Replacement capital capacity is insufficient", [source.publicId]);
+        const wrong = current.draftAllocations.find((row: any) => row.bankProfileId !== source.id || row.bankLoanId !== null);
+        if (wrong) reviewRequired("REPLACEMENT_FUNDING_MISMATCH", "Replacement allocation does not match its configured funding source", [wrong.publicId, source.publicId]);
     }
     return current;
 }
@@ -125,8 +139,7 @@ function previewHash(oldLoan: Loan, draft: Loan, current: Awaited<ReturnType<typ
 }
 async function presentPreview(executor: Executor, ctx: CommandContext, row: Replacement, oldLoan: Loan, draft: Loan, current: Awaited<ReturnType<typeof state>>, auditPublicId: string): Promise<LoanReplacementPreview> {
     const calculated = correction(oldLoan, current.oldSchedules);
-    const schedule = current.draftSchedules;
-    const generated = schedule.length ? schedule : [];
+    const generated = authoritativeReplacementSchedule(draft);
     const totalRepayment = generated.reduce((total: any, item: any) => total.plus(item.scheduledTotal), new FinancialDecimal(0));
     const source = draft.bankLoanId ? await executor.query.bankLoans.findFirst({ where: and(eq(bankLoans.tenantId, ctx.tenantId), eq(bankLoans.id, draft.bankLoanId)) }) : null;
     return { publicId: row.publicId, previewHash: row.previewHash, oldBalanceVersion: row.oldBalanceVersion, replacementDraftVersion: row.replacementDraftVersion, expiresAt: row.expiresAt, cash: { direction: "none", amount: "0.00" }, correction: { principal: serializeMoney(calculated.principal), interest: serializeMoney(calculated.interest), fee: serializeMoney(calculated.fee), penalty: serializeMoney(calculated.penalty) }, replacement: { loanPublicId: draft.publicId, startDate: draft.startDate, firstDueDate: generated[0]?.dueDate ?? nextDueDateFromTerms(draft), lastDueDate: generated.at(-1)?.dueDate ?? null, totalRepayment: serializeMoney(totalRepayment), fundingSourcePublicId: source?.publicId ?? null }, warnings: calculated.interest.gt(0) ? ["Calculated interest is corrected and is not collected or carried forward."] : [], auditPublicId, correlationId: ctx.correlationId };
@@ -136,6 +149,20 @@ function nextDueDateFromTerms(loan: Loan) {
     const date = new Date(`${loan.startDate}T00:00:00.000Z`);
     date.setUTCDate(date.getUTCDate() + (loan.repaymentType === "weekly" ? 7 : loan.repaymentType === "monthly" ? 30 : 1));
     return date.toISOString().slice(0, 10);
+}
+function authoritativeReplacementSchedule(loan: Loan) {
+    if (!loan.termMonths || !loan.startDate || !["daily", "weekly", "monthly"].includes(loan.repaymentType)) {
+        throw new DomainError("REPLACEMENT_TERMS_INVALID", "Replacement draft does not contain complete scheduled-loan terms", 409, { reviewRequired: true, blockerPublicIds: [loan.publicId] });
+    }
+    try {
+        return generateLoanSchedule({
+            principal: loan.principalAmount, interestRate: loan.interestRate, termMonths: loan.termMonths,
+            repaymentType: loan.repaymentType as RepaymentType, startDate: loan.startDate,
+            totalInstallments: loan.totalInstallments ?? undefined, installmentAmount: loan.installmentAmount ?? undefined,
+        });
+    } catch (error) {
+        throw new DomainError("REPLACEMENT_TERMS_INVALID", error instanceof Error ? error.message : "Replacement terms cannot be activated", 409, { reviewRequired: true, blockerPublicIds: [loan.publicId] });
+    }
 }
 
 export async function previewLoanReplacement(ctx: CommandContext, input: { oldLoanPublicId: string; replacementDraftPublicId: string; reason: string }): Promise<LoanReplacementPreview> {
@@ -147,7 +174,7 @@ export async function previewLoanReplacement(ctx: CommandContext, input: { oldLo
         const [oldLoan, draft] = await Promise.all([loanFor(ctx, tx, oldLoanPublicId), loanFor(ctx, tx, replacementDraftPublicId)]);
         const current = await validate(ctx, tx, oldLoan, draft);
         const hash = previewHash(oldLoan, draft, current, why);
-        const row = await tx.insert(loanReplacements).values({ tenantId: ctx.tenantId, oldLoanId: oldLoan.id, replacementLoanId: draft.id, status: "preview", reason: why, oldBalanceVersion: current.oldBalanceVersion, replacementDraftVersion: current.replacementDraftVersion, previewHash: hash, requestHash: sha({ oldLoanPublicId, replacementDraftPublicId, why }), expiresAt: new Date(Date.now() + previewTtlMs), createdByUserId: ctx.actorUserId }).returning().then((rows: Replacement[]) => rows[0]!);
+        const row = await tx.insert(loanReplacements).values({ tenantId: ctx.tenantId, oldLoanId: oldLoan.id, replacementLoanId: draft.id, status: "preview", reason: why, oldBalanceVersion: current.oldBalanceVersion, replacementDraftVersion: current.replacementDraftVersion, previewHash: hash, requestHash: sha({ oldLoanPublicId, replacementDraftPublicId, why }), expiresAt: new Date(Date.now() + previewTtlMs), createdByUserId: ctx.actorUserId, createdActorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId }).returning().then((rows: Replacement[]) => rows[0]!);
         const audit = await createAuditLog(tx, { ...auditContext(ctx), entityType: "loan_replacement", entityId: row.publicId, action: "previewed", payload: { oldLoanPublicId, replacementDraftPublicId, oldBalanceVersion: row.oldBalanceVersion, replacementDraftVersion: row.replacementDraftVersion, previewHash: row.previewHash, cash: { direction: "none", amount: "0.00" } } });
         return presentPreview(tx, ctx, row, oldLoan, draft, current, audit.publicId);
     });
@@ -159,7 +186,18 @@ async function replacementFor(ctx: CommandContext, executor: Executor, value: st
     if (!row) throw new DomainError("LOAN_REPLACEMENT_NOT_FOUND", "Loan replacement was not found", 404);
     return row as Replacement;
 }
+async function lockLoanReplacementGraph(tx: Executor, ctx: CommandContext, loanIds: number[]) {
+    const ids = [...new Set(loanIds)].sort((left, right) => left - right);
+    for (const loanId of ids) {
+        await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${loanId} FOR UPDATE`);
+        await tx.execute(sql`SELECT id FROM loan_schedules WHERE tenant_id = ${ctx.tenantId} AND loan_id = ${loanId} ORDER BY id FOR UPDATE`);
+        await tx.execute(sql`SELECT id FROM loan_funding_allocations WHERE tenant_id = ${ctx.tenantId} AND loan_id = ${loanId} ORDER BY id FOR UPDATE`);
+        await tx.execute(sql`SELECT id FROM transactions WHERE tenant_id = ${ctx.tenantId} AND loan_id = ${loanId} ORDER BY id FOR UPDATE`);
+        await tx.execute(sql`SELECT id FROM loan_disbursement_events WHERE tenant_id = ${ctx.tenantId} AND loan_id = ${loanId} ORDER BY id FOR UPDATE`);
+    }
+}
 function executionHash(input: { replacementPublicId: string; previewHash: string; expectedOldBalanceVersion: string; expectedReplacementDraftVersion: string; reason: string; confirmed: true }) { return sha(input); }
+function reversalHash(input: { replacementPublicId: string; reason: string }) { return sha({ contract: "atomic-loan-replacement-reversal", ...input }); }
 
 export async function executeLoanReplacement(ctx: CommandContext, input: { replacementPublicId: string; previewHash: string; expectedOldBalanceVersion: string; expectedReplacementDraftVersion: string; reason: string; confirmed: true }): Promise<LoanReplacementExecution> {
     await admin(ctx);
@@ -171,9 +209,10 @@ export async function executeLoanReplacement(ctx: CommandContext, input: { repla
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`loan-replacement:${ctx.tenantId}:${input.replacementPublicId}`}, 0))`);
         const record = await replacementFor(ctx, tx, input.replacementPublicId);
         await tx.execute(sql`SELECT id FROM loan_replacements WHERE tenant_id = ${ctx.tenantId} AND id = ${record.id} FOR UPDATE`);
+        const keyOwner = await tx.query.loanReplacements.findFirst({ where: and(eq(loanReplacements.tenantId, ctx.tenantId), eq(loanReplacements.executeIdempotencyKey, key)) });
+        if (keyOwner && keyOwner.id !== record.id) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was used for another replacement execution", 409);
         if (record.status === "executed") {
-            const stored = (record.preExecutionSnapshot as Record<string, unknown> | null)?.execution as Record<string, unknown> | undefined;
-            if (record.executeIdempotencyKey !== key || stored?.requestHash !== requestHash) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was used with a different request", 409);
+            if (record.executeIdempotencyKey !== key || record.executeRequestHash !== requestHash) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was used with a different request", 409);
             const audit = await tx.query.auditLogs.findFirst({ where: and(eq(auditLogs.tenantId, ctx.tenantId), eq(auditLogs.entityId, record.publicId), eq(auditLogs.action, "executed")) });
             const oldLoan = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, record.oldLoanId)) });
             const draft = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, record.replacementLoanId)) });
@@ -181,9 +220,10 @@ export async function executeLoanReplacement(ctx: CommandContext, input: { repla
         }
         if (record.status !== "preview" || record.expiresAt.getTime() <= Date.now()) reviewRequired("REPLACEMENT_PREVIEW_EXPIRED", "Replacement preview is expired or unavailable", [record.publicId]);
         if (record.previewHash !== input.previewHash || record.oldBalanceVersion !== input.expectedOldBalanceVersion || record.replacementDraftVersion !== input.expectedReplacementDraftVersion || record.reason !== why) reviewRequired("REPLACEMENT_PREVIEW_STALE", "Replacement preview does not match the confirmed request", [record.publicId]);
-        const [oldLoan, draft] = await Promise.all([loanFor(ctx, tx, (await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, record.oldLoanId)) }))!.publicId), loanFor(ctx, tx, (await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, record.replacementLoanId)) }))!.publicId)]);
-        for (const loanId of [oldLoan.id, draft.id].sort((a, b) => a - b)) await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${loanId} FOR UPDATE`);
+        let [oldLoan, draft] = await Promise.all([loanFor(ctx, tx, (await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, record.oldLoanId)) }))!.publicId), loanFor(ctx, tx, (await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, record.replacementLoanId)) }))!.publicId)]);
+        await lockLoanReplacementGraph(tx, ctx, [oldLoan.id, draft.id]);
         if (draft.bankLoanId) await tx.execute(sql`SELECT id FROM bank_loans WHERE tenant_id = ${ctx.tenantId} AND id = ${draft.bankLoanId} FOR UPDATE`);
+        [oldLoan, draft] = await Promise.all([loanFor(ctx, tx, oldLoan.publicId), loanFor(ctx, tx, draft.publicId)]);
         const current = await validate(ctx, tx, oldLoan, draft);
         if (current.oldBalanceVersion !== record.oldBalanceVersion || current.replacementDraftVersion !== record.replacementDraftVersion) reviewRequired("REPLACEMENT_PREVIEW_STALE", "Replacement balances or funding changed after preview", [oldLoan.publicId, draft.publicId]);
         const oldSnapshot = { loan: { status: oldLoan.status, outstandingPrincipal: oldLoan.outstandingPrincipal, outstandingInterest: oldLoan.outstandingInterest, outstandingFees: oldLoan.outstandingFees, nextDueDate: oldLoan.nextDueDate }, schedules: current.oldSchedules.map((row: any) => ({ id: row.id, status: row.status, remainingDue: row.remainingDue, paidTotal: row.paidTotal, paidPenalty: row.paidPenalty })) };
@@ -193,20 +233,24 @@ export async function executeLoanReplacement(ctx: CommandContext, input: { repla
         await tx.update(loanSchedules).set({ status: "cancelled", remainingDue: "0.00" }).where(and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.loanId, oldLoan.id)));
         await tx.update(loans).set({ status: "replaced", outstandingPrincipal: "0.00", outstandingInterest: "0.00", outstandingFees: "0.00", nextDueDate: null, updatedAt: new Date() }).where(and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, oldLoan.id), eq(loans.status, "active")));
         const audit = await createAuditLog(tx, { ...auditContext(ctx), entityType: "loan_replacement", entityId: record.publicId, action: "executed", payload: { before: { oldLoan: oldSnapshot, replacementDraftStatus: "draft" }, after: { oldLoan: { status: "replaced", outstandingPrincipal: "0.00", outstandingInterest: "0.00", outstandingFees: "0.00", nextDueDate: null }, replacementLoan: activated }, cash: { direction: "none", amount: "0.00" }, reason: why, requestHash, idempotencyKey: key } });
-        await tx.update(loanReplacements).set({ status: "executed", executeIdempotencyKey: key, executedByUserId: ctx.actorUserId, preExecutionSnapshot: { old: oldSnapshot, execution: { requestHash, auditPublicId: audit.publicId } }, updatedAt: new Date() }).where(and(eq(loanReplacements.tenantId, ctx.tenantId), eq(loanReplacements.id, record.id), eq(loanReplacements.status, "preview")));
+        await tx.update(loanReplacements).set({ status: "executed", executeIdempotencyKey: key, executeRequestHash: requestHash, executeActorSource: ctx.actorSource, executedAuditPublicId: audit.publicId, executedAt: new Date(), executedByUserId: ctx.actorUserId, preExecutionSnapshot: { old: oldSnapshot }, updatedAt: new Date() }).where(and(eq(loanReplacements.tenantId, ctx.tenantId), eq(loanReplacements.id, record.id), eq(loanReplacements.status, "preview")));
         return { replacementPublicId: record.publicId, oldLoanPublicId: oldLoan.publicId, replacementLoanPublicId: draft.publicId, status: "executed", auditPublicId: audit.publicId, correlationId: ctx.correlationId };
     });
 }
 
 export async function reverseLoanReplacement(ctx: CommandContext, input: { replacementPublicId: string; reason: string }): Promise<LoanReplacementReversal> {
-    await admin(ctx); const key = idempotencyKey(ctx); const why = reason(input.reason, "REPLACEMENT_REVERSAL_REASON_REQUIRED"); publicId(input.replacementPublicId, "replacementPublicId");
+    await admin(ctx); const key = idempotencyKey(ctx); const why = reason(input.reason, "REPLACEMENT_REVERSAL_REASON_REQUIRED"); publicId(input.replacementPublicId, "replacementPublicId"); const requestHash = reversalHash({ replacementPublicId: input.replacementPublicId, reason: why });
     return db.transaction(async tx => {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`loan-replacement:${ctx.tenantId}:${input.replacementPublicId}`}, 0))`);
         const record = await replacementFor(ctx, tx, input.replacementPublicId);
         await tx.execute(sql`SELECT id FROM loan_replacements WHERE tenant_id = ${ctx.tenantId} AND id = ${record.id} FOR UPDATE`);
-        const [oldLoan, draft] = await Promise.all([tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, record.oldLoanId)) }), tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, record.replacementLoanId)) })]);
+        const keyOwner = await tx.query.loanReplacements.findFirst({ where: and(eq(loanReplacements.tenantId, ctx.tenantId), eq(loanReplacements.reversalIdempotencyKey, key)) });
+        if (keyOwner && keyOwner.id !== record.id) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was used for another replacement reversal", 409);
+        let [oldLoan, draft] = await Promise.all([tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, record.oldLoanId)) }), tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, record.replacementLoanId)) })]);
+        await lockLoanReplacementGraph(tx, ctx, [record.oldLoanId, record.replacementLoanId]);
+        [oldLoan, draft] = await Promise.all([tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, record.oldLoanId)) }), tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, record.replacementLoanId)) })]);
         if (record.status === "reversed") {
-            if (record.reversalIdempotencyKey !== key) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was used with a different request", 409);
+            if (record.reversalIdempotencyKey !== key || record.reversalRequestHash !== requestHash) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was used with a different request", 409);
             const audit = await tx.query.auditLogs.findFirst({ where: and(eq(auditLogs.tenantId, ctx.tenantId), eq(auditLogs.entityId, record.publicId), eq(auditLogs.action, "reversed")) });
             return { replacementPublicId: record.publicId, oldLoanPublicId: oldLoan!.publicId, replacementLoanPublicId: draft!.publicId, status: "reversed", auditPublicId: audit?.publicId ?? "", correlationId: ctx.correlationId };
         }
@@ -222,7 +266,7 @@ export async function reverseLoanReplacement(ctx: CommandContext, input: { repla
         const snapshot = (record.preExecutionSnapshot as Record<string, any> | null)?.old;
         if (!snapshot) reviewRequired("REPLACEMENT_SNAPSHOT_MISSING", "Replacement snapshot is unavailable for safe reversal", [record.publicId]);
         const corrections = await tx.select().from(loanReplacementCorrections).where(and(eq(loanReplacementCorrections.tenantId, ctx.tenantId), eq(loanReplacementCorrections.replacementId, record.id), eq(loanReplacementCorrections.status, "posted")));
-        for (const item of corrections) await tx.insert(loanReplacementCorrections).values({ tenantId: ctx.tenantId, replacementId: record.id, loanId: oldLoan.id, status: "reversed", principal: signedMoney(new FinancialDecimal(item.principal).negated()), interest: signedMoney(new FinancialDecimal(item.interest).negated()), fee: signedMoney(new FinancialDecimal(item.fee).negated()), penalty: signedMoney(new FinancialDecimal(item.penalty).negated()), reason: why, createdByUserId: ctx.actorUserId });
+        for (const item of corrections) await tx.insert(loanReplacementCorrections).values({ tenantId: ctx.tenantId, replacementId: record.id, loanId: oldLoan.id, status: "reversed", principal: signedMoney(new FinancialDecimal(item.principal).negated()), interest: signedMoney(new FinancialDecimal(item.interest).negated()), fee: signedMoney(new FinancialDecimal(item.fee).negated()), penalty: signedMoney(new FinancialDecimal(item.penalty).negated()), reason: why, reversedCorrectionId: item.id, createdByUserId: ctx.actorUserId });
         const allocations = await tx.select().from(loanFundingAllocations).where(and(eq(loanFundingAllocations.tenantId, ctx.tenantId), eq(loanFundingAllocations.loanId, draft.id), eq(loanFundingAllocations.allocationType, "initial")));
         for (const allocation of allocations) await tx.insert(loanFundingAllocations).values({ tenantId: ctx.tenantId, bankProfileId: allocation.bankProfileId, bankLoanId: allocation.bankLoanId, loanId: draft.id, allocatedAmount: signedMoney(new FinancialDecimal(allocation.allocatedAmount).negated()), allocationDate: draft.startDate ?? new Date().toISOString().slice(0, 10), allocationType: "reallocation_out", allocationGroupId: crypto.randomUUID(), note: `Compensating replacement reversal ${record.publicId}`, createdByUserId: ctx.actorUserId, idempotencyKey: `replacement-reversal:${record.publicId}:${allocation.publicId}`, requestHash: sha({ replacementPublicId: record.publicId, allocationPublicId: allocation.publicId, why }) });
         await tx.update(loanSchedules).set({ status: "cancelled", remainingDue: "0.00" }).where(and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.loanId, draft.id)));
@@ -230,7 +274,7 @@ export async function reverseLoanReplacement(ctx: CommandContext, input: { repla
         await tx.update(loans).set({ status: snapshot.loan.status, outstandingPrincipal: snapshot.loan.outstandingPrincipal, outstandingInterest: snapshot.loan.outstandingInterest, outstandingFees: snapshot.loan.outstandingFees, nextDueDate: snapshot.loan.nextDueDate, updatedAt: new Date() }).where(and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, oldLoan.id)));
         for (const schedule of snapshot.schedules as Array<any>) await tx.update(loanSchedules).set({ status: schedule.status, remainingDue: schedule.remainingDue, paidTotal: schedule.paidTotal, paidPenalty: schedule.paidPenalty }).where(and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.id, schedule.id)));
         const audit = await createAuditLog(tx, { ...auditContext(ctx), entityType: "loan_replacement", entityId: record.publicId, action: "reversed", payload: { reason: why, before: { oldLoan: { status: "replaced" }, replacementLoan: { status: "active" } }, after: { oldLoan: snapshot.loan, replacementLoan: { status: "cancelled" } }, idempotencyKey: key } });
-        await tx.update(loanReplacements).set({ status: "reversed", reversalIdempotencyKey: key, reversedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(eq(loanReplacements.tenantId, ctx.tenantId), eq(loanReplacements.id, record.id), eq(loanReplacements.status, "executed")));
+        await tx.update(loanReplacements).set({ status: "reversed", reversalIdempotencyKey: key, reversalRequestHash: requestHash, reversalActorSource: ctx.actorSource, reversedAuditPublicId: audit.publicId, reversedAt: new Date(), reversedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(eq(loanReplacements.tenantId, ctx.tenantId), eq(loanReplacements.id, record.id), eq(loanReplacements.status, "executed")));
         return { replacementPublicId: record.publicId, oldLoanPublicId: oldLoan.publicId, replacementLoanPublicId: draft.publicId, status: "reversed", auditPublicId: audit.publicId, correlationId: ctx.correlationId };
     });
 }

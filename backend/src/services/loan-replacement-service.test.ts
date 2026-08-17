@@ -57,12 +57,24 @@ describe("loan replacement service", () => {
             reason: "Corrected start date", confirmed: true,
         });
         expect(executed).toMatchObject({ oldLoanPublicId: oldLoan.publicId, replacementLoanPublicId: replacement.publicId, status: "executed" });
+        expect(await executeLoanReplacement(context(tenantId, actor.id, "replacement-execute"), {
+            replacementPublicId: preview.publicId, previewHash: preview.previewHash,
+            expectedOldBalanceVersion: preview.oldBalanceVersion, expectedReplacementDraftVersion: preview.replacementDraftVersion,
+            reason: "Corrected start date", confirmed: true,
+        })).toMatchObject(executed);
+        await expect(executeLoanReplacement(context(tenantId, actor.id, "replacement-execute"), {
+            replacementPublicId: preview.publicId, previewHash: preview.previewHash,
+            expectedOldBalanceVersion: preview.oldBalanceVersion, expectedReplacementDraftVersion: preview.replacementDraftVersion,
+            reason: "Different correction", confirmed: true,
+        })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
         expect(await db.query.loans.findFirst({ where: eq(loans.id, oldLoan.id) })).toMatchObject({ status: "replaced", outstandingPrincipal: "0.00", outstandingInterest: "0.00", nextDueDate: null });
         expect(await db.select().from(loanReplacementCorrections).where(eq(loanReplacementCorrections.loanId, oldLoan.id))).toMatchObject([{ principal: "36000.00", interest: "4200.00", fee: "0.00", penalty: "0.00", status: "posted" }]);
         expect(await db.select().from(loanSchedules).where(and(eq(loanSchedules.loanId, oldLoan.id), eq(loanSchedules.status, "cancelled")))).toHaveLength(1);
 
         const reversed = await reverseLoanReplacement(context(tenantId, actor.id, "replacement-reverse"), { replacementPublicId: preview.publicId, reason: "Preview correction was not approved" });
         expect(reversed).toMatchObject({ replacementPublicId: preview.publicId, status: "reversed" });
+        expect(await reverseLoanReplacement(context(tenantId, actor.id, "replacement-reverse"), { replacementPublicId: preview.publicId, reason: "Preview correction was not approved" })).toMatchObject(reversed);
+        await expect(reverseLoanReplacement(context(tenantId, actor.id, "replacement-reverse"), { replacementPublicId: preview.publicId, reason: "Different reversal reason" })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
         expect(await db.query.loans.findFirst({ where: eq(loans.id, oldLoan.id) })).toMatchObject({ status: "active", outstandingPrincipal: "36000.00", outstandingInterest: "4200.00", nextDueDate: "2026-07-13" });
         expect(await db.select().from(loanReplacementCorrections).where(eq(loanReplacementCorrections.loanId, oldLoan.id))).toHaveLength(2);
     });
