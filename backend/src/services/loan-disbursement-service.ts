@@ -330,12 +330,14 @@ export async function reverseIntermediatedLoanPayout(
 
 export async function createDisbursementDraft(ctx: CommandContext, loanPublicId: string, input: CreateDisbursementDraftInput) {
     const loan = await accessibleLoan(ctx, loanPublicId);
-    if (["replaced", "cancelled", "canceled", "reversed", "settled", "closed", "paid"].includes(loan.status ?? "")) {
-        throw new DomainError("LOAN_DISBURSEMENT_LOCKED", "Disbursements cannot be created for a terminal loan", 409);
-    }
     const draft = validateDraft(input);
     const sourceProfile = await sourceProfileFor(ctx, input.sourceBankProfilePublicId);
     return db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${loan.id} FOR UPDATE`);
+        const lockedLoan = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, loan.id)) });
+        if (!lockedLoan || ["replaced", "cancelled", "canceled", "reversed", "settled", "closed", "paid"].includes(lockedLoan.status ?? "")) {
+            throw new DomainError("LOAN_DISBURSEMENT_LOCKED", "Disbursements cannot be created for a terminal loan", 409);
+        }
         const created = await tx.insert(loanDisbursementEvents).values({
             tenantId: ctx.tenantId, loanId: loan.id, ...draft, sourceBankProfileId: sourceProfile?.id ?? null,
             payeeHint: normalizedText(input.payeeHint), createdByUserId: ctx.actorUserId,
@@ -378,6 +380,10 @@ export async function updateDisbursementDraft(ctx: CommandContext, disbursementP
     const { event } = await accessibleEvent(ctx, disbursementPublicId);
     return db.transaction(async (tx) => {
         const current = await lockLoanAndEvent(tx, ctx, event.id);
+        const parent = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, current.loanId)) });
+        if (!parent || ["replaced", "cancelled", "canceled", "reversed", "settled", "closed", "paid"].includes(parent.status ?? "")) {
+            throw new DomainError("LOAN_DISBURSEMENT_LOCKED", "Disbursements cannot be posted for a terminal loan", 409);
+        }
         if (current.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Posted or reversed disbursements cannot be edited", 409);
         const merged: CreateDisbursementDraftInput = {
             grossAmount: input.grossAmount ?? serializeMoney(current.grossAmount), loanAttributedAmount: input.loanAttributedAmount ?? serializeMoney(current.loanAttributedAmount),

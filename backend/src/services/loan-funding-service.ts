@@ -43,7 +43,9 @@ async function resolve(tx: any, ctx: CommandContext, input: FundingAllocationInp
         if (drawdown) await tx.execute(sql`SELECT id FROM bank_loans WHERE tenant_id = ${ctx.tenantId} AND id = ${drawdown.id} FOR UPDATE`);
         if (profile) await tx.execute(sql`SELECT id FROM bank_profiles WHERE tenant_id = ${ctx.tenantId} AND id = ${profile.id} FOR UPDATE`);
     }
-    return { loan, profile, drawdown };
+    const lockedLoan = lock ? (await tx.select().from(loans).where(and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, loan.id))).limit(1))[0] : loan;
+    if (!lockedLoan || !isMutableFundingLoan(lockedLoan.status)) throw new DomainError("LOAN_FUNDING_LOCKED", "Funding cannot be changed after a loan is terminal", 409);
+    return { loan: lockedLoan, profile, drawdown };
 }
 async function capacities(tx: any, ctx: CommandContext, loan: any, drawdown: any) {
     const total = (await tx.select({ total: sql<string>`coalesce(sum(${loanFundingAllocations.allocatedAmount}),0)` }).from(loanFundingAllocations).where(and(eq(loanFundingAllocations.tenantId, ctx.tenantId), eq(loanFundingAllocations.loanId, loan.id))))[0]?.total ?? "0";

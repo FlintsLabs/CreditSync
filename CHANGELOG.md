@@ -10,6 +10,7 @@
 - Added the approved design for an atomic, reversible scheduled-loan replacement workflow with a `replaced` terminal status, exact correction records, existing-draft activation, funding linkage, lineage, synchronized MCP/REST interfaces, and fail-closed downstream checks.
 
 ### Fixed
+- Moved terminal-loan disbursement and funding checks behind transaction row locks so a concurrent replacement cannot race a new payout or allocation write.
 - Hardened loan replacement preview/execution/reversal with authoritative draft schedule calculation, own-capital source validation, source-mismatch checks, deterministic schedule/funding/payment/disbursement locks with post-lock reads, replay-hash conflicts, and terminal-loan write guards.
 - Aligned the append-only replacement-correction Drizzle schema with migration 0042 by removing an undeployed `updated_at` column that prevented correction inserts on a fresh database.
 - Added forward migration 0043 to repair the missing `loan_interest_rate_periods.status` column required by the current schema and floating-loan workflows.
