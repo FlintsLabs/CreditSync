@@ -6,6 +6,10 @@
 - Added the TDD implementation plan for atomic scheduled-loan replacement, covering append-only corrections, existing-draft activation, `replaced` lineage, reversible execution, synchronized REST/MCP/plugin/frontend delivery, full verification, and controlled production execution.
 - Added the approved design for an atomic, reversible scheduled-loan replacement workflow with a `replaced` terminal status, exact correction records, existing-draft activation, funding linkage, lineage, synchronized MCP/REST interfaces, and fail-closed downstream checks.
 
+### Fixed
+- Added forward migration 0043 to repair the missing `loan_interest_rate_periods.status` column required by the current schema and floating-loan workflows.
+- Preserved the legacy `canceled` loan status used by renewal workflows alongside the replacement lifecycle statuses.
+
 ## v0.3.16 - 2026-08-16
 
 ### Added

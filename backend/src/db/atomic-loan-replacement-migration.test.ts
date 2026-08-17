@@ -15,7 +15,7 @@ describe("atomic loan replacement migration contract", () => {
     expect(sql).toContain("'replaced'");
     expect(sql).toContain("loan_replacements_tenant_old_loan_fk");
     expect(sql).toContain("loan_replacements_tenant_replacement_loan_fk");
-    expect(sql).toContain("'draft', 'active', 'paid', 'defaulted', 'closed', 'renewed', 'restructured', 'cancelled', 'settled', 'reversed', 'replaced'");
+    expect(sql).toContain("'draft', 'active', 'paid', 'defaulted', 'closed', 'renewed', 'restructured', 'cancelled', 'canceled', 'settled', 'reversed', 'replaced'");
     expect(sql.indexOf('CREATE UNIQUE INDEX "loan_replacements_tenant_id_id_unique"'))
       .toBeLessThan(sql.indexOf('CREATE TABLE "loan_replacement_corrections"'));
   });
@@ -29,13 +29,27 @@ describe("atomic loan replacement migration contract", () => {
     );
   });
 
+  test("contains the forward repair for the rate-period status column", () => {
+    const migration = readFileSync(join(root, "0043_loan_interest_rate_period_status.sql"), "utf8");
+    expect(migration).toContain('ADD COLUMN IF NOT EXISTS "status" text DEFAULT \'posted\' NOT NULL');
+    expect(migration).not.toContain("DROP TABLE");
+  });
+
+  integrationTest("fresh migrations expose the schema-defined rate-period status", async () => {
+    const postgres = (await import("postgres")).default(process.env.TEST_DATABASE_URL!, { max: 1 });
+    try {
+      const rows = await postgres.unsafe("SELECT column_default, is_nullable FROM information_schema.columns WHERE table_name = 'loan_interest_rate_periods' AND column_name = 'status'") as unknown as Array<{ column_default: string; is_nullable: string }>;
+      expect(rows).toEqual([{ column_default: "'posted'::text", is_nullable: "NO" }]);
+    } finally { await postgres.end(); }
+  });
+
   integrationTest("accepts every loan status used by the application on a fresh database", async () => {
     const postgres = (await import("postgres")).default(process.env.TEST_DATABASE_URL!, { max: 1 });
     try {
       const tenant = `replacement-status-${Date.now()}`;
       const [{ id: userId }] = await postgres<{ id: number }[]>`INSERT INTO users (tenant_id, email, name) VALUES (${tenant}, ${`${tenant}@example.test`}, 'Status Test') RETURNING id`;
       const [{ id: borrowerId }] = await postgres<{ id: number }[]>`INSERT INTO borrowers (tenant_id, owner_user_id, name) VALUES (${tenant}, ${userId}, 'Status Borrower') RETURNING id`;
-      const statuses = ["draft", "active", "paid", "defaulted", "closed", "renewed", "restructured", "cancelled", "settled", "reversed", "replaced"];
+      const statuses = ["draft", "active", "paid", "defaulted", "closed", "renewed", "restructured", "cancelled", "canceled", "settled", "reversed", "replaced"];
       for (const status of statuses) {
         await postgres`INSERT INTO loans (tenant_id, owner_user_id, borrower_id, principal_amount, interest_rate, repayment_type, term_months, status) VALUES (${tenant}, ${userId}, ${borrowerId}, '100.00', '0.00', 'daily', 1, ${status})`;
       }
