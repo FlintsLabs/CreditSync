@@ -5,6 +5,7 @@ import { loanDisbursementRoutes } from "./loan-disbursement-routes";
 import { loanFundingRoutes } from "./loan-funding-routes";
 import { loanInterestRateRoutes } from "./loan-interest-rate-routes";
 import { loanPaymentHistoryRoutes } from "./loan-payment-history-routes";
+import { loanReplacementRoutes } from "./loan-replacements";
 import { loanRestructureRoutes } from "./loan-restructures";
 import { loanWaiverRoutes } from "./loan-waivers";
 
@@ -26,5 +27,6 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
     .use(loanFundingRoutes)
     .use(loanInterestRateRoutes)
     .use(loanPaymentHistoryRoutes)
+    .use(loanReplacementRoutes)
     .use(loanRestructureRoutes)
     .use(loanWaiverRoutes);

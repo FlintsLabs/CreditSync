@@ -11,7 +11,7 @@ import { computeOverdueSnapshot } from "../lib/overdue";
 import { serializeMoney } from "../lib/money";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
 import { findAccessibleBorrowerByPublicId, findAccessibleLoanByPublicId } from "../lib/public-id";
-import { activateLoan, createLoanDraft, getLoanApplication, presentLoan, previewLoan, updateLoanDraft } from "../services/loan-application-service";
+import { activateLoan, createLoanDraft, getLoanApplication, getLoanReplacementLineages, presentLoan, previewLoan, updateLoanDraft } from "../services/loan-application-service";
 import { bangkokBusinessDate, getLoanListLegacyPaymentHealth, getLoanPaymentHealth } from "../services/loan-payment-health-service";
 import { getLoanReceiptSummaries } from "../services/loan-receipt-summary-service";
 import { floatingInterestBalances } from "../services/floating-interest-service";
@@ -194,14 +194,17 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                     aliasesByBorrower.set(aliasRow.borrowerId, [...(aliasesByBorrower.get(aliasRow.borrowerId) ?? []), aliasRow.alias]);
                 }
 
-                const receiptSummaries = await getLoanReceiptSummaries(
-                    db,
-                    user.tenantId,
-                    rows.map(({ loan }) => loan.id),
-                );
-                const currentAgentRows = rows.length === 0
-                    ? []
-                    : await buildCurrentLoanAgentRowsQuery(user.tenantId, rows.map(({ loan }) => loan.id));
+                const [receiptSummaries, replacementLineages, currentAgentRows] = await Promise.all([
+                    getLoanReceiptSummaries(
+                        db,
+                        user.tenantId,
+                        rows.map(({ loan }) => loan.id),
+                    ),
+                    getLoanReplacementLineages(user.tenantId, rows.map(({ loan }) => loan)),
+                    rows.length === 0
+                        ? Promise.resolve([])
+                        : buildCurrentLoanAgentRowsQuery(user.tenantId, rows.map(({ loan }) => loan.id)),
+                ]);
                 const currentAgentsByLoan = new Map<number, { name: string; aliases: string[] }[]>();
                 for (const agentRow of currentAgentRows) {
                     currentAgentsByLoan.set(agentRow.loanId, [
@@ -224,6 +227,7 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                         borrowerName,
                         borrowerAliases: borrowerId == null ? [] : aliasesByBorrower.get(borrowerId) ?? [],
                         borrowerTags: borrowerTags ?? [],
+                        replacementLineage: replacementLineages.get(loan.id) ?? null,
                         principal: serializeMoney(loan.principalAmount),
                         outstandingPrincipal: serializeMoney(loan.outstandingPrincipal ?? "0"),
                         interestReceived: receipts.interestReceived,

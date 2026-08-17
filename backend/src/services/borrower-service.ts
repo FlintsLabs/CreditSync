@@ -7,6 +7,7 @@ import { invalidateTenantCache } from "../lib/cache";
 import { serializeMoney } from "../lib/money";
 import { DomainError } from "./domain-error";
 import type { CommandContext } from "./command-context";
+import { getLoanReplacementLineages } from "./loan-application-service";
 
 export function normalizeBorrowerText(value: string): string {
     return value
@@ -277,6 +278,7 @@ export async function getBorrowerPortfolio(ctx: CommandContext, borrowerPublicId
         )),
         db.select().from(loans).where(and(...loanConditions)),
     ]);
+    const replacementLineages = await getLoanReplacementLineages(ctx.tenantId, borrowerLoans);
     return {
         borrower: presentBorrower(borrower),
         aliases: aliases.map(presentAlias),
@@ -287,6 +289,7 @@ export async function getBorrowerPortfolio(ctx: CommandContext, borrowerPublicId
             interestRate: serializeMoney(loan.interestRate),
             repaymentType: loan.repaymentType,
             status: loan.status,
+            replacementLineage: replacementLineages.get(loan.id) ?? null,
             startDate: loan.startDate,
             createdAt: loan.createdAt,
         })),

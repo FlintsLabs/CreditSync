@@ -22,6 +22,9 @@ export async function getDashboardBorrowerHealth(
     input: { context: CommandContext; asOf: Date },
 ): Promise<DashboardBorrowerHealthRow[]> {
     const tenantId = input.context.tenantId;
+    // The borrower-health queue is an active-collection projection. `replaced`
+    // remains a terminal historical status (not `paid`) and must never surface
+    // as an amount due while its replacement is the active contract.
     const [tenantLoans, tenantBorrowers] = await Promise.all([
         executor.select().from(loans).where(and(eq(loans.tenantId, tenantId), eq(loans.status, "active"))),
         executor.select().from(borrowers).where(eq(borrowers.tenantId, tenantId)),

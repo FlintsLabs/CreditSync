@@ -1,6 +1,6 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { db, type DbTransaction } from "../db";
-import { bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanOpeningBalanceComponents, loanRestructures, loanRestructureWaivers, loanSchedules, loans, users } from "../db/schema";
+import { bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanOpeningBalanceComponents, loanReplacements, loanRestructures, loanRestructureWaivers, loanSchedules, loans, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
 import {
@@ -34,6 +34,73 @@ import { normalizeDailyLoanEntry, type DailyLoanEntryInput, type NormalizedDaily
 import type { SinglePaymentTerms } from "../lib/single-payment";
 
 type LoanRow = typeof loans.$inferSelect;
+
+export interface LoanReplacementLineage {
+    replacementPublicId: string;
+    status: "executed" | "reversed";
+    replacedFromPublicId: string | null;
+    replacedToPublicId: string | null;
+    inbound: { replacementPublicId: string; loanPublicId: string | null; status: "executed" | "reversed" } | null;
+    outbound: { replacementPublicId: string; loanPublicId: string | null; status: "executed" | "reversed" } | null;
+}
+
+/**
+ * Builds public-only replacement lineage for projections. A reversed aggregate
+ * remains history; a replacement never reclassifies a loan as paid.
+ */
+export async function getLoanReplacementLineages(
+    tenantId: string,
+    loanRows: ReadonlyArray<Pick<LoanRow, "id">>,
+): Promise<Map<number, LoanReplacementLineage | null>> {
+    const requestedIds = [...new Set(loanRows.map((loan) => loan.id))];
+    const result = new Map<number, LoanReplacementLineage | null>(requestedIds.map((id) => [id, null]));
+    if (requestedIds.length === 0) return result;
+
+    const replacements = await db.select().from(loanReplacements).where(and(
+        eq(loanReplacements.tenantId, tenantId),
+        inArray(loanReplacements.status, ["executed", "reversed"]),
+        or(
+            inArray(loanReplacements.oldLoanId, requestedIds),
+            inArray(loanReplacements.replacementLoanId, requestedIds),
+        ),
+    )).orderBy(desc(loanReplacements.createdAt));
+    if (replacements.length === 0) return result;
+
+    const publicIds = new Map((await db.select({ id: loans.id, publicId: loans.publicId }).from(loans).where(and(
+        eq(loans.tenantId, tenantId),
+        inArray(loans.id, [...new Set(replacements.flatMap((replacement) => [replacement.oldLoanId, replacement.replacementLoanId]))]),
+    ))).map((loan) => [loan.id, loan.publicId]));
+    const inbound = new Map<number, typeof replacements[number]>();
+    const outbound = new Map<number, typeof replacements[number]>();
+    for (const replacement of replacements) {
+        if (!inbound.has(replacement.replacementLoanId)) inbound.set(replacement.replacementLoanId, replacement);
+        if (!outbound.has(replacement.oldLoanId)) outbound.set(replacement.oldLoanId, replacement);
+    }
+    for (const loanId of requestedIds) {
+        const inboundReplacement = inbound.get(loanId);
+        const outboundReplacement = outbound.get(loanId);
+        if (!inboundReplacement && !outboundReplacement) continue;
+        const primary = outboundReplacement ?? inboundReplacement!;
+        const status = primary.status as "executed" | "reversed";
+        result.set(loanId, {
+            replacementPublicId: primary.publicId,
+            status,
+            replacedFromPublicId: inboundReplacement ? publicIds.get(inboundReplacement.oldLoanId) ?? null : null,
+            replacedToPublicId: outboundReplacement ? publicIds.get(outboundReplacement.replacementLoanId) ?? null : null,
+            inbound: inboundReplacement ? {
+                replacementPublicId: inboundReplacement.publicId,
+                loanPublicId: publicIds.get(inboundReplacement.oldLoanId) ?? null,
+                status: inboundReplacement.status as "executed" | "reversed",
+            } : null,
+            outbound: outboundReplacement ? {
+                replacementPublicId: outboundReplacement.publicId,
+                loanPublicId: publicIds.get(outboundReplacement.replacementLoanId) ?? null,
+                status: outboundReplacement.status as "executed" | "reversed",
+            } : null,
+        });
+    }
+    return result;
+}
 
 type DailyLoanEntryMetadata = Pick<NormalizedDailyLoanEntry, "durationUnit" | "durationValue" | "entryMode" | "dailyPayment" | "interestInput" | "flatDailyRatePercent">;
 
@@ -435,11 +502,13 @@ export function previewLoan(input: PublicLoanCalculationParams) {
 export async function getLoanApplication(ctx: CommandContext, publicId: string) {
     const loan = await accessibleLoan(ctx, publicId);
     const base = await presentLoan(loan);
-    const [inbound, outbound] = await Promise.all([
+    const [inbound, outbound, replacementLineages] = await Promise.all([
         db.query.loanRestructures.findFirst({ where: and(eq(loanRestructures.tenantId, ctx.tenantId), inArray(loanRestructures.status, ["executed", "reversed"]), eq(loanRestructures.newLoanId, loan.id)), orderBy: [desc(loanRestructures.createdAt)] }),
         db.query.loanRestructures.findFirst({ where: and(eq(loanRestructures.tenantId, ctx.tenantId), inArray(loanRestructures.status, ["executed", "reversed"]), eq(loanRestructures.oldLoanId, loan.id)), orderBy: [desc(loanRestructures.createdAt)] }),
+        getLoanReplacementLineages(ctx.tenantId, [loan]),
     ]);
-    if (!inbound && !outbound) return { ...base, restructureLineage: null, openingBalanceComponents: [], restructureWaivers: [] };
+    const replacementLineage = replacementLineages.get(loan.id) ?? null;
+    if (!inbound && !outbound) return { ...base, replacementLineage, restructureLineage: null, openingBalanceComponents: [], restructureWaivers: [] };
     const [inboundOldLoan, outboundNewLoan, opening, waivers] = await Promise.all([
         inbound ? db.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, inbound.oldLoanId)) }) : null,
         outbound?.newLoanId ? db.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, outbound.newLoanId)) }) : null,
@@ -452,6 +521,7 @@ export async function getLoanApplication(ctx: CommandContext, publicId: string) 
     const primary = outbound ?? inbound!;
     return {
         ...base,
+        replacementLineage,
         restructureLineage: {
             restructurePublicId: primary.publicId,
             status: primary.status,

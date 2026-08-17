@@ -1,6 +1,7 @@
 import { t } from "elysia";
 
 const preserveUnknown = { additionalProperties: true } as const;
+const closed = { additionalProperties: t.Never() } as const;
 
 export const publicMoney = t.String({ pattern: "^(0|[1-9]\\d*)\\.\\d{2}$", maxLength: 32 });
 export const repaymentType = t.Union([
@@ -80,3 +81,24 @@ export const loanDraftBody = t.Composite([
 ], preserveUnknown);
 
 export const loanDraftUpdateBody = t.Partial(loanDraftBody);
+
+// Replacement commands intentionally use public UUIDs and exact string money
+// values only. Financial validation (including confirmation and idempotency)
+// remains authoritative in the command service.
+export const loanReplacementPreviewBody = t.Object({
+    oldLoanPublicId: t.String(),
+    replacementDraftPublicId: t.String(),
+    reason: t.String(),
+}, closed);
+
+export const loanReplacementExecuteBody = t.Object({
+    confirmed: t.Boolean(),
+    previewHash: t.String(),
+    expectedOldBalanceVersion: t.String(),
+    expectedReplacementDraftVersion: t.String(),
+    reason: t.String(),
+}, closed);
+
+export const loanReplacementReverseBody = t.Object({
+    reason: t.String(),
+}, closed);
