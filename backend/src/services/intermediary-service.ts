@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { db } from "../db";
+import { db, type DbExecutor } from "../db";
 import { auditLogs, borrowers, files, intermediaries, intermediaryCollections, intermediaryRemittanceAllocations, intermediaryRemittanceEvidence, intermediaryRemittanceEvidenceIntents, intermediaryRemittanceProposals, intermediaryRemittances, intermediatedDisbursementGroups, intermediatedTransferEvents, loans, paymentIntakes, transactions, users } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import { canAccessTenantWideData } from "../lib/access";
@@ -88,7 +88,7 @@ export async function listIntermediaries(ctx: CommandContext, status: "active" |
 }
 
 export async function intermediaryHeldBalanceProjection(
-    executor: any,
+    executor: DbExecutor,
     tenantId: string,
     intermediaryId: number,
 ) {
@@ -219,6 +219,22 @@ export async function createIntermediaryCollection(ctx: CommandContext, input: C
         } else if (!new Decimal(linkedIntake.amount).eq(amount)) throw new DomainError("INVALID_LINKED_PAYMENT", "Linked ready payment amount must exactly match the collection", 409);
     }
     return db.transaction(async (tx) => {
+        await tx.execute(sql`
+            SELECT id FROM loans
+            WHERE tenant_id = ${ctx.tenantId} AND id = ${loan.id}
+            FOR UPDATE
+        `);
+        const lockedLoan = await tx.query.loans.findFirst({ where: and(
+            eq(loans.tenantId, ctx.tenantId),
+            eq(loans.id, loan.id),
+        ) });
+        if (!lockedLoan || lockedLoan.status === "replaced" || lockedLoan.borrowerId !== borrower.id) {
+            throw new DomainError(
+                "LOAN_COLLECTION_LOCKED",
+                "Collections cannot be created for a replaced loan",
+                409,
+            );
+        }
         const row = await tx.insert(intermediaryCollections).values({ tenantId: ctx.tenantId, ownerUserId: ctx.actorUserId, intermediaryId: intermediary.id, borrowerId: borrower.id, loanId: loan.id, amount: serializeMoney(amount), borrowerPaidAt, status: "pending_remittance", idempotencyKey, bankReference: input.bankReference?.trim() || null, bankReferenceHash: referenceHash(input.bankReference), note: input.note?.trim() || null, postedPaymentIntakeId: linkedIntake?.id ?? null, paymentIntakePreexisting: linkedIntake?.status === "posted", createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((rows) => rows[0]!);
         const after = presentCollection(row);
         await createAuditLog(tx, { ...auditContext(ctx), entityType: "intermediary_collection", entityId: row.publicId, action: "created", payload: { before: null, after } });
@@ -349,7 +365,7 @@ export async function finalizeIntermediaryRemittanceEvidence(ctx: CommandContext
     });
 }
 
-async function remittanceSelection(executor: any, tenantId: string, remittanceId: number) {
+async function remittanceSelection(executor: DbExecutor, tenantId: string, remittanceId: number) {
     const allocations = await executor.select().from(intermediaryRemittanceAllocations).where(and(eq(intermediaryRemittanceAllocations.tenantId, tenantId), eq(intermediaryRemittanceAllocations.remittanceId, remittanceId), sql`${intermediaryRemittanceAllocations.releasedAt} IS NULL`)).orderBy(intermediaryRemittanceAllocations.allocationOrder);
     const collections = allocations.length ? await executor.select().from(intermediaryCollections).where(and(eq(intermediaryCollections.tenantId, tenantId), inArray(intermediaryCollections.id, allocations.map((row: typeof intermediaryRemittanceAllocations.$inferSelect) => row.collectionId)))) : [];
     return { allocations, collections, selected: collections.reduce((sum: Decimal, row: typeof intermediaryCollections.$inferSelect) => sum.plus(row.amount), new Decimal(0)) };

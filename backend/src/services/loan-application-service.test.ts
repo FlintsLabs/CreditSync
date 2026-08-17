@@ -16,6 +16,7 @@ import {
 } from "./loan-application-service";
 import { accrueFloatingInterestThrough, correctFloatingInterestAccruals } from "./floating-interest-service";
 import { getLoanPaymentHealth } from "./loan-payment-health-service";
+import { seedReplacementFixture } from "./loan-replacement-test-fixture";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
@@ -733,6 +734,137 @@ describe("loan application service", () => {
         expect(await db.select().from(transactions).where(eq(transactions.loanId, stored!.id))).toEqual(before.transactions);
     });
 
+    // Break caught: the legacy close endpoint overwrites the immutable lineage marker on an
+    // already replaced loan, leaving an executed replacement whose old loan is no longer replaced.
+    integrationTest("rejects legacy close after a loan has been replaced", async () => {
+        const fixture = await seedReplacementFixture({ tenantId: "tenant-a" });
+        const preview = await fixture.preview();
+        await fixture.execute(preview, "legacy-close-lineage-execution");
+        const app = new Elysia().use(loansRoute);
+        const headers = {
+            authorization: `Bearer ${await authToken(fixture.actor)}`,
+            "content-type": "application/json",
+        };
+
+        const close = await jsonRequest(app, `/loans/${fixture.oldLoan.publicId}/close`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ note: "Must not erase replacement lineage" }),
+        });
+
+        expect(close.response.status, close.text).toBe(409);
+        expect(close.body).toEqual({
+            code: "LOAN_REPLACED",
+            error: "Replaced loans cannot be closed directly",
+        });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, fixture.oldLoan.id) }))
+            .toMatchObject({ status: "replaced" });
+    });
+
+    // Break caught: close reads `active` without a row lock, replacement commits `replaced`, and
+    // the queued unconditional close update then commits `closed` over the replacement marker.
+    integrationTest("serializes legacy close behind replacement execution", async () => {
+        const fixture = await seedReplacementFixture({ tenantId: "tenant-a" });
+        const preview = await fixture.preview();
+        const app = new Elysia().use(loansRoute);
+        const headers = {
+            authorization: `Bearer ${await authToken(fixture.actor)}`,
+            "content-type": "application/json",
+        };
+
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        let markLocked!: () => void;
+        const locked = new Promise<void>((resolve) => { markLocked = resolve; });
+        const blocker = db.transaction(async (tx) => {
+            await tx.execute(sql`SELECT id FROM loans WHERE id = ${fixture.oldLoan.id} FOR UPDATE`);
+            markLocked();
+            await held;
+        });
+        await locked;
+
+        const executionPromise = fixture.execute(preview, "legacy-close-race-execution");
+        await Bun.sleep(20);
+        const closePromise = jsonRequest(app, `/loans/${fixture.oldLoan.publicId}/close`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ note: "Concurrent legacy close" }),
+        });
+        await Bun.sleep(20);
+        release();
+        await blocker;
+
+        const [execution, close] = await Promise.all([executionPromise, closePromise]);
+        expect(execution).toMatchObject({ status: "executed" });
+        expect(close.response.status, close.text).toBe(409);
+        expect(close.body).toMatchObject({ code: "LOAN_REPLACED" });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, fixture.oldLoan.id) }))
+            .toMatchObject({ status: "replaced" });
+    });
+
+    // Break caught: closing the active replacement child mutates its lifecycle, but reversal
+    // still cancels that child and restores the old loan as though no downstream transition occurred.
+    integrationTest("blocks replacement reversal after the replacement child is closed", async () => {
+        const fixture = await seedReplacementFixture({ tenantId: "tenant-a" });
+        const preview = await fixture.preview();
+        await fixture.execute(preview, "replacement-child-close-execution");
+        const app = new Elysia().use(loansRoute);
+        const headers = {
+            authorization: `Bearer ${await authToken(fixture.actor)}`,
+            "content-type": "application/json",
+        };
+
+        const close = await jsonRequest(app, `/loans/${fixture.replacementDraft.publicId}/close`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ note: "Downstream terminal transition" }),
+        });
+        expect(close.response.status, close.text).toBe(200);
+        expect(close.body).toMatchObject({ status: "closed" });
+
+        await expect(fixture.reverse(preview.publicId, "replacement-child-close-reversal"))
+            .rejects.toMatchObject({
+                code: "REPLACEMENT_REVERSAL_LIFECYCLE_CHANGED",
+                status: 409,
+                details: {
+                    reviewRequired: true,
+                    blockerPublicIds: [fixture.replacementDraft.publicId],
+                },
+            });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, fixture.oldLoan.id) }))
+            .toMatchObject({ status: "replaced" });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, fixture.replacementDraft.id) }))
+            .toMatchObject({ status: "closed" });
+    });
+
+    // Break caught: after a safe reversal marks the replacement child `cancelled`, legacy close
+    // overwrites that required cancellation marker with `closed`.
+    integrationTest("rejects legacy close for a cancelled replacement child", async () => {
+        const fixture = await seedReplacementFixture({ tenantId: "tenant-a" });
+        const preview = await fixture.preview();
+        await fixture.execute(preview, "cancelled-child-close-execution");
+        await fixture.reverse(preview.publicId, "cancelled-child-close-reversal");
+        const app = new Elysia().use(loansRoute);
+        const headers = {
+            authorization: `Bearer ${await authToken(fixture.actor)}`,
+            "content-type": "application/json",
+        };
+
+        const close = await jsonRequest(app, `/loans/${fixture.replacementDraft.publicId}/close`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ note: "Must preserve cancellation lineage" }),
+        });
+
+        expect(close.response.status, close.text).toBe(409);
+        expect(close.body).toEqual({
+            code: "LOAN_NOT_CLOSEABLE",
+            error: "Cancelled or reversed loans cannot be closed",
+        });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, fixture.replacementDraft.id) }))
+            .toMatchObject({ status: "cancelled" });
+    });
+
     // Break caught: a first-day paid accrual cannot prove which effective-dated rate produced it.
     integrationTest("links a weekly deducted first-period accrual to the initial rate period", async () => {
         const actor = await seedUser("tenant-a", "floating-first-day@example.test", "collector");
@@ -883,6 +1015,48 @@ describe("loan application service", () => {
             eq(auditLogs.entityId, draft.publicId),
             eq(auditLogs.action, "activated"),
         ))).toHaveLength(1);
+    });
+
+    // Break caught: the replacement-only funding-gap behavior leaks through the shared
+    // activation primitive and silently changes standalone activation allocation history.
+    integrationTest("preserves an existing partial allocation during standalone activation", async () => {
+        const actor = await seedUser("tenant-a", "partial-standalone@example.test", "owner");
+        const ctx = context("tenant-a", actor.id, "partial-standalone-activation");
+        const borrower = await createBorrower(ctx, { name: "Partial Standalone Borrower" });
+        const profile = await db.insert(bankProfiles).values({
+            tenantId: "tenant-a",
+            name: "Partial Standalone Funding",
+            type: "bank",
+        }).returning().then((rows) => rows[0]!);
+        const drawdown = await db.insert(bankLoans).values({
+            tenantId: "tenant-a",
+            bankProfileId: profile.id,
+            amount: "10000.00",
+        }).returning().then((rows) => rows[0]!);
+        const draft = await createLoanDraft(ctx, {
+            borrowerPublicId: borrower.publicId,
+            bankLoanPublicId: drawdown.publicId,
+            ...terms,
+        });
+        const stored = await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) });
+        await db.insert(loanFundingAllocations).values({
+            tenantId: "tenant-a",
+            bankProfileId: profile.id,
+            bankLoanId: drawdown.id,
+            loanId: stored!.id,
+            allocatedAmount: "200.00",
+            allocationDate: "2026-08-10",
+            allocationType: "initial",
+            createdByUserId: actor.id,
+        });
+
+        await activateLoan(ctx, draft.publicId);
+
+        const allocations = await db.select().from(loanFundingAllocations).where(eq(
+            loanFundingAllocations.loanId,
+            stored!.id,
+        ));
+        expect(allocations.map((row) => row.allocatedAmount)).toEqual(["200.00"]);
     });
 
     // Break caught: a capital-pool profile is accepted as a draft source but is not

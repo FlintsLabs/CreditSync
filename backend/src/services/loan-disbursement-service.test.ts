@@ -31,13 +31,17 @@ function context(user: { id: number; tenantId: string }, idempotencyKey: string 
     return { tenantId: user.tenantId, actorUserId: user.id, actorSource: "web", requestId: `req-${crypto.randomUUID()}`, correlationId: `corr-${crypto.randomUUID()}`, idempotencyKey };
 }
 
-async function loanFor(user: { id: number; tenantId: string }, principal = "5000.00") {
+async function loanFor(
+    user: { id: number; tenantId: string },
+    principal = "5000.00",
+    status: "active" | "draft" = "active",
+) {
     const borrower = await db.insert(borrowers).values({ tenantId: user.tenantId, ownerUserId: user.id, name: "Disbursement borrower" })
         .returning().then((rows) => rows[0]!);
     return db.insert(loans).values({
         tenantId: user.tenantId, ownerUserId: user.id, borrowerId: borrower.id, principalAmount: principal,
         interestRate: "0.00", repaymentType: "monthly", outstandingPrincipal: principal,
-        outstandingInterest: "0.00", outstandingFees: "0.00", status: "active",
+        outstandingInterest: "0.00", outstandingFees: "0.00", status,
     }).returning().then((rows) => rows[0]!);
 }
 
@@ -95,6 +99,26 @@ integrationTest("posts an editable draft once and locks it afterward", async () 
     expect(posted).toMatchObject({ publicId: draft.publicId, status: "posted" });
     await expect(updateDisbursementDraft(context(owner), posted.publicId, { note: "x" })).rejects.toMatchObject({ code: "DISBURSEMENT_LOCKED", status: 409 });
     expect(await db.select().from(auditLogs).where(and(eq(auditLogs.entityId, draft.publicId), eq(auditLogs.action, "posted")))).toHaveLength(1);
+});
+
+// Break caught: an actual payout can be posted against an application draft before its
+// financial terms are activated and locked.
+integrationTest("rejects posting a disbursement until the parent loan is active", async () => {
+    const owner = await actor();
+    const loan = await loanFor(owner, "5000.00", "draft");
+    const draft = await createDisbursementDraft(context(owner), loan.publicId, {
+        grossAmount: "5000.00",
+        loanAttributedAmount: "5000.00",
+        channel: "cash",
+        disbursedAt: "2026-08-10T10:00:00.000Z",
+    });
+
+    await expect(postDisbursement(context(owner, "post-before-activation"), draft.publicId))
+        .rejects.toMatchObject({ code: "LOAN_DISBURSEMENT_LOCKED", status: 409 });
+    expect(await db.query.loanDisbursementEvents.findFirst({ where: eq(
+        loanDisbursementEvents.publicId,
+        draft.publicId,
+    ) })).toMatchObject({ status: "draft", postedAt: null, postIdempotencyKey: null });
 });
 
 // Break caught: a compensating reversal can be edited or deleted directly, silently restoring the original payout.

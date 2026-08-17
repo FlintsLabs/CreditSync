@@ -127,6 +127,20 @@ function assertClosedLoanTerms(body: Record<string, unknown>, draft: boolean) {
 }
 
 function requireLegacyCloseEligible(loan: typeof loans.$inferSelect) {
+    if (loan.status === "replaced") {
+        throw new DomainError(
+            "LOAN_REPLACED",
+            "Replaced loans cannot be closed directly",
+            409,
+        );
+    }
+    if (["cancelled", "canceled", "reversed"].includes(loan.status ?? "")) {
+        throw new DomainError(
+            "LOAN_NOT_CLOSEABLE",
+            "Cancelled or reversed loans cannot be closed",
+            409,
+        );
+    }
     if (loan.repaymentType === "floating") {
         throw new DomainError(
             "FLOATING_SETTLEMENT_REQUIRED",
@@ -438,16 +452,26 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
         if (!user) return loanUnauthorized(set);
         try {
             return await db.transaction(async (tx) => {
-                const resolved = await findAccessibleLoanByPublicId(user, params.id);
-                const loan = resolved ? await tx.query.loans.findFirst({
-                    where: and(eq(loans.id, resolved.id), ...loanAccessFilters(user)),
-                }) : null;
+                // Legacy close is still a terminal writer. Lock and read the public target in
+                // this transaction so replacement execution cannot commit `replaced` between
+                // eligibility validation and the close update.
+                const loan = (await tx.select().from(loans).where(and(
+                    eq(loans.publicId, params.id),
+                    ...loanAccessFilters(user),
+                )).for("update").limit(1))[0] ?? null;
                 if (!loan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
                 requireLegacyCloseEligible(loan);
                 if (loan.status === "closed") throw new DomainError("LOAN_ALREADY_CLOSED", "Loan is already closed", 409);
                 const before = await getLoanApplication(loanCommandContext(user, request), loan.publicId);
                 const updated = await tx.update(loans).set({ status: "closed", updatedAt: new Date() })
-                    .where(eq(loans.id, loan.id)).returning().then((rows) => rows[0]!);
+                    .where(and(
+                        eq(loans.tenantId, user.tenantId),
+                        eq(loans.id, loan.id),
+                        sql`${loans.status} IS NOT DISTINCT FROM ${loan.status}`,
+                    )).returning().then((rows) => rows[0]);
+                if (!updated) {
+                    throw new DomainError("LOAN_STATE_CHANGED", "Loan state changed before close", 409);
+                }
                 const after = await presentLoan(updated);
                 await createAuditLog(tx, {
                     tenantId: user.tenantId,

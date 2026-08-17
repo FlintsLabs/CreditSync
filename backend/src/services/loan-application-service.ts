@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { db } from "../db";
+import { db, type DbTransaction } from "../db";
 import { bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanOpeningBalanceComponents, loanRestructures, loanRestructureWaivers, loanSchedules, loans, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
@@ -672,10 +672,10 @@ export async function activateLoan(ctx: CommandContext, publicId: string) {
  * opening a second transaction around activation.
  */
 export async function activateLoanInTransaction(
-    tx: any,
+    tx: DbTransaction,
     ctx: CommandContext,
     accessible: LoanRow,
-    options: { replacementId?: number } = {},
+    options: { replacementPublicId?: string; topUpPartialFunding?: boolean } = {},
 ) {
     const idempotencyKey = ctx.idempotencyKey?.trim();
     if (!idempotencyKey) {
@@ -858,13 +858,22 @@ export async function activateLoanInTransaction(
                 eq(loanFundingAllocations.tenantId, ctx.tenantId),
                 eq(loanFundingAllocations.loanId, current.id),
             )))[0]?.total ?? "0";
-        if ((fundingSource || ownCapitalProfile) && new FinancialDecimal(existingFunding).isZero()) {
+        const existingFundingAmount = new FinancialDecimal(existingFunding);
+        const allocationAmount = existingFundingAmount.isZero()
+            ? new FinancialDecimal(current.principalAmount)
+            : options.topUpPartialFunding
+                ? FinancialDecimal.max(
+                    new FinancialDecimal(0),
+                    new FinancialDecimal(current.principalAmount).minus(existingFundingAmount),
+                )
+                : new FinancialDecimal(0);
+        if ((fundingSource || ownCapitalProfile) && allocationAmount.gt(0)) {
             await tx.insert(loanFundingAllocations).values({
                 tenantId: ctx.tenantId,
                 bankProfileId: fundingSource?.bankProfileId ?? ownCapitalProfile!.id,
                 bankLoanId: fundingSource?.id ?? null,
                 loanId: current.id,
-                allocatedAmount: serializeMoney(current.principalAmount),
+                allocatedAmount: serializeMoney(allocationAmount),
                 allocationDate: current.startDate ?? new Date().toISOString().slice(0, 10),
                 allocationType: "initial",
                 note: "Created when loan draft was activated",
@@ -906,7 +915,7 @@ export async function activateLoanInTransaction(
                 netBorrowerPayout,
                 advanceInterestSnapshotCount,
                 idempotencyKey,
-                replacementId: options.replacementId ?? null,
+                replacementPublicId: options.replacementPublicId ?? null,
             },
         });
         return after;

@@ -3,6 +3,7 @@
 ## v0.3.17 - 2026-08-17
 
 ### Added
+- Added forward migration 0045 for canonical Bangkok-dated loan-replacement proposals, fail-closed legacy backfill, strict database proposal validation, and tenant-scoped execution/reversal audit references.
 - Added forward migration 0044 to harden the loan-replacement ledger with durable execution/reversal request hashes, actor/request/correlation/audit metadata, lifecycle checks, correction reversal provenance, and immutable database guards.
 - Added authoritative atomic scheduled-loan replacement preview, execution, and safe compensating reversal services with tenant-admin authorization, Decimal-safe correction entries, exact preview fingerprints, audit/correlation context, and fail-closed downstream/funding checks.
 - Added transaction-scoped loan activation so composite financial workflows reuse the authoritative schedule and funding calculation without opening a second transaction or duplicating a pre-funded allocation.
@@ -10,6 +11,7 @@
 - Added the approved design for an atomic, reversible scheduled-loan replacement workflow with a `replaced` terminal status, exact correction records, existing-draft activation, funding linkage, lineage, synchronized MCP/REST interfaces, and fail-closed downstream checks.
 
 ### Fixed
+- Completed atomic replacement hardening with persisted replay correlations, public-only audits, parent-writer serialization (including legacy close), chained-lineage reversal protection, post-lock preview freshness checks, replacement-draft downstream fingerprints, compensation-aware payment-attribution guards, active-only payout posting, standalone activation isolation, and fail-closed funding/disbursement reversal dependencies.
 - Moved terminal-loan disbursement and funding checks behind transaction row locks so a concurrent replacement cannot race a new payout or allocation write.
 - Hardened loan replacement preview/execution/reversal with authoritative draft schedule calculation, own-capital source validation, source-mismatch checks, deterministic schedule/funding/payment/disbursement locks with post-lock reads, replay-hash conflicts, and terminal-loan write guards.
 - Aligned the append-only replacement-correction Drizzle schema with migration 0042 by removing an undeployed `updated_at` column that prevented correction inserts on a fresh database.

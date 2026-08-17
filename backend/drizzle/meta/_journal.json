@@ -316,6 +316,13 @@
       "when": 1786970400000,
       "tag": "0044_atomic_loan_replacement_hardening",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1786974000000,
+      "tag": "0045_atomic_loan_replacement_proposal",
+      "breakpoints": true
     }
   ]
 }

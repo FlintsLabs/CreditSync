@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
 import { and, desc, eq, gt, sql } from "drizzle-orm";
-import { db } from "../db";
+import { db, type DbExecutor } from "../db";
 import { loanOpeningBalanceComponents, loanRestructures, loanRestructureWaivers, loanWaiverPreviews, loans, transactions, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
@@ -9,7 +9,7 @@ import { parseMoney, serializeMoney } from "../lib/money";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 
-type Executor = any;
+type Executor = DbExecutor;
 type WaiverRow = typeof loanRestructureWaivers.$inferSelect;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const previewTtlMs = () => Math.max(60, Number(process.env.WAIVER_PREVIEW_TTL_SECONDS ?? 900)) * 1000;
@@ -118,6 +118,13 @@ export async function executeLoanWaiver(ctx: CommandContext, previewPublicId: st
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id=${ctx.tenantId} AND id=${preview.loanId} FOR UPDATE`);
         const lockedLoan = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, preview.loanId)) });
         if (!lockedLoan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+        if (lockedLoan.status === "replaced") {
+            throw new DomainError(
+                "LOAN_WAIVER_LOCKED",
+                "Waivers cannot be executed for a replaced loan",
+                409,
+            );
+        }
         await accessibleReplacement(ctx, lockedLoan.publicId, tx);
         const component = componentKind(preview.componentKind, true);
         const state = await componentState(tx, ctx, preview.loanId, preview.restructureId, component);

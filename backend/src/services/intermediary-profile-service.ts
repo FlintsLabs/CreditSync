@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
-import { db } from "../db";
+import { db, type DbExecutor } from "../db";
 import {
     auditLogs,
     borrowers,
@@ -126,7 +126,7 @@ function presentAssignment(row: Assignment, related: {
     };
 }
 
-async function actorFor(ctx: CommandContext, executor: any = db): Promise<Actor | null> {
+async function actorFor(ctx: CommandContext, executor: DbExecutor = db): Promise<Actor | null> {
     if (ctx.actorUserId === null) return null;
     const actor = await executor.query.users.findFirst({
         where: and(eq(users.id, ctx.actorUserId), eq(users.tenantId, ctx.tenantId)),
@@ -139,7 +139,7 @@ function ownerAccessible(actor: Actor | null, ownerUserId: number | null) {
     return actor === null || canAccessTenantWideData({ role: actor.role ?? "viewer" }) || actor.id === ownerUserId;
 }
 
-async function intermediaryFor(ctx: CommandContext, publicId: string, actor: Actor | null, executor: any = db): Promise<Intermediary> {
+async function intermediaryFor(ctx: CommandContext, publicId: string, actor: Actor | null, executor: DbExecutor = db): Promise<Intermediary> {
     const row = await executor.query.intermediaries.findFirst({
         where: and(eq(intermediaries.tenantId, ctx.tenantId), eq(intermediaries.publicId, publicId)),
     });
@@ -149,7 +149,7 @@ async function intermediaryFor(ctx: CommandContext, publicId: string, actor: Act
     return row;
 }
 
-async function loanFor(ctx: CommandContext, publicId: string, actor: Actor | null, executor: any = db) {
+async function loanFor(ctx: CommandContext, publicId: string, actor: Actor | null, executor: DbExecutor = db) {
     const row = await executor.query.loans.findFirst({
         where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.publicId, publicId)),
     });
@@ -159,7 +159,7 @@ async function loanFor(ctx: CommandContext, publicId: string, actor: Actor | nul
     return row;
 }
 
-async function lockCommand(executor: any, scope: string, ctx: CommandContext, key: string) {
+async function lockCommand(executor: DbExecutor, scope: string, ctx: CommandContext, key: string) {
     await executor.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${ctx.tenantId}:${scope}:${key}`}, 0))`);
 }
 
@@ -205,7 +205,7 @@ function priorAssignmentResult(entry: typeof auditLogs.$inferSelect): ReturnType
     return value as ReturnType<typeof presentAssignment>;
 }
 
-async function priorCommandAudit(executor: any, ctx: CommandContext, entityType: string, action: string, key: string) {
+async function priorCommandAudit(executor: DbExecutor, ctx: CommandContext, entityType: string, action: string, key: string) {
     return executor.select().from(auditLogs).where(and(
         eq(auditLogs.tenantId, ctx.tenantId),
         eq(auditLogs.entityType, entityType),
@@ -434,10 +434,21 @@ export async function assignIntermediaryToLoan(ctx: CommandContext, loanPublicId
                 };
             }
 
-            const [loan, intermediary] = await Promise.all([
-                loanFor(ctx, loanPublicId, actor, tx),
-                intermediaryFor(ctx, input.intermediaryPublicId, actor, tx),
-            ]);
+            const loanBeforeLock = await loanFor(ctx, loanPublicId, actor, tx);
+            await tx.execute(sql`
+                SELECT id FROM loans
+                WHERE tenant_id = ${ctx.tenantId} AND id = ${loanBeforeLock.id}
+                FOR UPDATE
+            `);
+            const loan = await loanFor(ctx, loanPublicId, actor, tx);
+            if (loan.status === "replaced") {
+                throw new DomainError(
+                    "LOAN_INTERMEDIARY_ASSIGNMENT_LOCKED",
+                    "Intermediaries cannot be assigned to a replaced loan",
+                    409,
+                );
+            }
+            const intermediary = await intermediaryFor(ctx, input.intermediaryPublicId, actor, tx);
             if (intermediary.status !== "active") {
                 throw new DomainError("INTERMEDIARY_INACTIVE", "Inactive intermediaries cannot be assigned to loans", 409);
             }

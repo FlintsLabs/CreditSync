@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type Decimal from "decimal.js";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { db } from "../db";
+import { db, type DbExecutor } from "../db";
 import { auditLogs, intermediaries, loanCommissionParticipants, loans, transactions, users } from "../db/schema";
 import { FinancialDecimal } from "../lib/financial-decimal";
 import { signedPublicMoneyPattern } from "../lib/financial-decimal";
@@ -81,7 +81,7 @@ function fingerprint(value: unknown) {
     return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
-async function actorFor(ctx: CommandContext, executor: any = db): Promise<Actor | null> {
+async function actorFor(ctx: CommandContext, executor: DbExecutor = db): Promise<Actor | null> {
     if (ctx.actorUserId === null) return null;
     const actor = await executor.query.users.findFirst({ where: and(eq(users.tenantId, ctx.tenantId), eq(users.id, ctx.actorUserId)) });
     if (!actor) throw new DomainError("ACTOR_NOT_FOUND", "Actor is not available in this tenant", 403);
@@ -92,19 +92,19 @@ function accessible(actor: Actor | null, ownerUserId: number | null) {
     return canAccessOwnedRecord(actor, ownerUserId);
 }
 
-async function loanFor(ctx: CommandContext, publicId: string, actor: Actor | null, executor: any = db) {
+async function loanFor(ctx: CommandContext, publicId: string, actor: Actor | null, executor: DbExecutor = db) {
     const row = await executor.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.publicId, publicId)) });
     if (!row || !accessible(actor, row.ownerUserId)) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
     return row;
 }
 
-async function intermediaryFor(ctx: CommandContext, publicId: string, actor: Actor | null, executor: any = db) {
+async function intermediaryFor(ctx: CommandContext, publicId: string, actor: Actor | null, executor: DbExecutor = db) {
     const row = await executor.query.intermediaries.findFirst({ where: and(eq(intermediaries.tenantId, ctx.tenantId), eq(intermediaries.publicId, publicId)) });
     if (!row || !accessible(actor, row.ownerUserId)) throw new DomainError("INTERMEDIARY_NOT_FOUND", "Intermediary not found", 404);
     return row;
 }
 
-async function participantRelations(executor: any, ctx: CommandContext, row: Participant) {
+async function participantRelations(executor: DbExecutor, ctx: CommandContext, row: Participant) {
     const [loan, intermediary, previous] = await Promise.all([
         executor.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, row.loanId)) }),
         executor.query.intermediaries.findFirst({ where: and(eq(intermediaries.tenantId, ctx.tenantId), eq(intermediaries.id, row.intermediaryId)) }),
@@ -113,7 +113,7 @@ async function participantRelations(executor: any, ctx: CommandContext, row: Par
     return { loan, intermediary, previous };
 }
 
-async function present(executor: any, ctx: CommandContext, row: Participant) {
+async function present(executor: DbExecutor, ctx: CommandContext, row: Participant) {
     const related = await participantRelations(executor, ctx, row);
     if (!related.loan || !related.intermediary) throw new DomainError("COMMISSION_PARTICIPANT_NOT_FOUND", "Commission participant not found", 404);
     return {
@@ -135,13 +135,13 @@ async function present(executor: any, ctx: CommandContext, row: Participant) {
     };
 }
 
-async function authorizeParticipant(executor: any, ctx: CommandContext, actor: Actor | null, row: Participant) {
+async function authorizeParticipant(executor: DbExecutor, ctx: CommandContext, actor: Actor | null, row: Participant) {
     const related = await participantRelations(executor, ctx, row);
     if (!related.loan || !accessible(actor, related.loan.ownerUserId)) throw new DomainError("COMMISSION_PARTICIPANT_NOT_FOUND", "Commission participant not found", 404);
     if (!related.intermediary || !accessible(actor, related.intermediary.ownerUserId)) throw new DomainError("COMMISSION_PARTICIPANT_NOT_FOUND", "Commission participant not found", 404);
 }
 
-async function replay(executor: any, ctx: CommandContext, actor: Actor | null, key: string, expectedFingerprint: string) {
+async function replay(executor: DbExecutor, ctx: CommandContext, actor: Actor | null, key: string, expectedFingerprint: string) {
     const row = await executor.query.loanCommissionParticipants.findFirst({ where: and(eq(loanCommissionParticipants.tenantId, ctx.tenantId), eq(loanCommissionParticipants.idempotencyKey, key)) });
     if (!row) return null;
     await authorizeParticipant(executor, ctx, actor, row);
@@ -151,7 +151,7 @@ async function replay(executor: any, ctx: CommandContext, actor: Actor | null, k
     return present(executor, ctx, row);
 }
 
-async function insertVersion(executor: any, ctx: CommandContext, input: {
+async function insertVersion(executor: DbExecutor, ctx: CommandContext, input: {
     publicId: string; loanId: number; intermediaryId: number; previousParticipantId: number | null; commissionRate: string; role: string; note: string | null;
     effectiveFrom: Date; effectiveTo: Date | null; status: "active" | "ended"; idempotencyKey: string; requestFingerprint: string; action: string;
 }) {
@@ -169,15 +169,26 @@ async function insertVersion(executor: any, ctx: CommandContext, input: {
     }).returning().then((rows: Participant[]) => rows[0]!);
 }
 
-async function headRows(executor: any, tenantId: string, loanId: number) {
+async function headRows(executor: DbExecutor, tenantId: string, loanId: number) {
     return executor.select().from(loanCommissionParticipants).where(and(
         eq(loanCommissionParticipants.tenantId, tenantId), eq(loanCommissionParticipants.loanId, loanId),
         sql`NOT EXISTS (SELECT 1 FROM loan_commission_participants successor WHERE successor.tenant_id = ${tenantId} AND successor.previous_participant_id = ${loanCommissionParticipants.id})`,
     )).orderBy(loanCommissionParticipants.id) as Promise<Participant[]>;
 }
 
-async function assertRateCapacity(executor: any, ctx: CommandContext, loanId: number, newRate: Decimal, effectiveFrom: Date, excludedHeadId?: number) {
+async function assertRateCapacity(executor: DbExecutor, ctx: CommandContext, loanId: number, newRate: Decimal, effectiveFrom: Date, excludedHeadId?: number) {
     await executor.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${loanId} FOR UPDATE`);
+    const lockedLoan = await executor.query.loans.findFirst({ where: and(
+        eq(loans.tenantId, ctx.tenantId),
+        eq(loans.id, loanId),
+    ) });
+    if (!lockedLoan || lockedLoan.status === "replaced") {
+        throw new DomainError(
+            "LOAN_COMMISSION_LOCKED",
+            "Commission participation cannot be changed for a replaced loan",
+            409,
+        );
+    }
     const heads = await headRows(executor, ctx.tenantId, loanId);
     const total = heads.filter((row) => row.id !== excludedHeadId && (row.status === "active" || (row.effectiveTo !== null && row.effectiveTo > effectiveFrom)))
         .reduce((sum, row) => sum.plus(row.commissionRate), new FinancialDecimal("0")).plus(newRate);
@@ -204,7 +215,7 @@ export async function addLoanCommissionParticipant(ctx: CommandContext, input: A
     });
 }
 
-async function currentParticipant(ctx: CommandContext, publicId: string, actor: Actor | null, executor: any) {
+async function currentParticipant(ctx: CommandContext, publicId: string, actor: Actor | null, executor: DbExecutor) {
     const row = await executor.query.loanCommissionParticipants.findFirst({ where: and(eq(loanCommissionParticipants.tenantId, ctx.tenantId), eq(loanCommissionParticipants.publicId, publicId)) });
     if (!row) throw new DomainError("COMMISSION_PARTICIPANT_NOT_FOUND", "Commission participant not found", 404);
     await authorizeParticipant(executor, ctx, actor, row);

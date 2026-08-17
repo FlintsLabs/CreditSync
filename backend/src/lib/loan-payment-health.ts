@@ -63,6 +63,27 @@ function scheduledPenalty(input: LoanPaymentHealthInput, remainingDue: Decimal, 
     return FinancialDecimal.max(accrued.toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP).minus(paidPenalty), 0);
 }
 
+export function computeScheduledOutstandingPenalty(
+    input: Pick<
+        LoanPaymentHealthInput,
+        "businessDate" | "gracePeriodDays" | "lateFeeMode" | "lateFeeAmount" | "schedules"
+    >,
+): string {
+    const gracePeriodDays = Math.max(0, input.gracePeriodDays ?? 0);
+    const total = input.schedules.reduce((sum, schedule) => {
+        const remainingDue = FinancialDecimal.max(new FinancialDecimal(schedule.remainingDue), 0);
+        if (remainingDue.isZero() || schedule.dueDate > input.businessDate) return sum;
+        const overdueDays = Math.max(0, calendarDays(schedule.dueDate, input.businessDate) - gracePeriodDays);
+        return sum.plus(scheduledPenalty(
+            { ...input, lifecycleStatus: "active", repaymentType: "scheduled", accruals: [] },
+            remainingDue,
+            overdueDays,
+            new FinancialDecimal(schedule.paidPenalty),
+        ));
+    }, zero());
+    return money(total);
+}
+
 export function computeLoanPaymentHealth(input: LoanPaymentHealthInput): LoanPaymentHealth {
     let dueNow = zero();
     let overdue = zero();

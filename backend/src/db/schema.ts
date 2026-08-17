@@ -16,6 +16,7 @@ import {
     uniqueIndex,
     uuid,
 } from "drizzle-orm/pg-core";
+import type { PersistedLoanReplacementProposal } from "../lib/loan-replacement-proposal";
 
 // Enums
 export const roleEnum = pgEnum("role", ["owner", "manager", "collector", "viewer"]);
@@ -681,6 +682,8 @@ export const loanReplacements = pgTable("loan_replacements", {
     replacementDraftVersion: text("replacement_draft_version").notNull(),
     previewHash: text("preview_hash").notNull(),
     requestHash: text("request_hash").notNull(),
+    previewAsOfDate: date("preview_as_of_date").notNull(),
+    previewSnapshot: jsonb("preview_snapshot").$type<PersistedLoanReplacementProposal>().notNull(),
     preExecutionSnapshot: jsonb("pre_execution_snapshot").$type<Record<string, unknown>>(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     executeIdempotencyKey: text("execute_idempotency_key"),
@@ -712,9 +715,87 @@ export const loanReplacements = pgTable("loan_replacements", {
     foreignKey({ name: "loan_replacements_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
     foreignKey({ name: "loan_replacements_tenant_executed_by_fk", columns: [table.tenantId, table.executedByUserId], foreignColumns: [users.tenantId, users.id] }),
     foreignKey({ name: "loan_replacements_tenant_reversed_by_fk", columns: [table.tenantId, table.reversedByUserId], foreignColumns: [users.tenantId, users.id] }),
+    foreignKey({ name: "loan_replacements_tenant_executed_audit_fk", columns: [table.tenantId, table.executedAuditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
+    foreignKey({ name: "loan_replacements_tenant_reversed_audit_fk", columns: [table.tenantId, table.reversedAuditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
     check("loan_replacements_status_check", sql`${table.status} IN ('preview', 'executed', 'reversed', 'expired')`),
     check("loan_replacements_actor_source_check", sql`${table.createdActorSource} IN ('web', 'mcp', 'system') AND (${table.executeActorSource} IS NULL OR ${table.executeActorSource} IN ('web', 'mcp', 'system')) AND (${table.reversalActorSource} IS NULL OR ${table.reversalActorSource} IN ('web', 'mcp', 'system'))`),
     check("loan_replacements_request_key_hash_check", sql`(${table.executeIdempotencyKey} IS NULL) = (${table.executeRequestHash} IS NULL) AND (${table.reversalIdempotencyKey} IS NULL) = (${table.reversalRequestHash} IS NULL)`),
+    check("loan_replacements_preview_snapshot_check", sql`
+        (
+            jsonb_typeof(${table.previewSnapshot}) = 'object' AND
+            jsonb_typeof(${table.previewSnapshot} -> 'asOfDate') = 'string' AND
+            ${table.previewSnapshot} ->> 'asOfDate' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND
+            ${table.previewSnapshot} ->> 'asOfDate' = ${table.previewAsOfDate}::text AND
+            jsonb_typeof(${table.previewSnapshot} -> 'reason') = 'string' AND
+            ${table.previewSnapshot} ->> 'reason' = ${table.reason} AND
+            (
+                (
+                    jsonb_typeof(${table.previewSnapshot} -> 'schemaVersion') = 'number' AND
+                    ${table.previewSnapshot} ->> 'schemaVersion' = '1' AND
+                    jsonb_typeof(${table.previewSnapshot} -> 'oldLoan') = 'object' AND
+                    ${table.previewSnapshot} -> 'oldLoan' ->> 'loanPublicId' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' AND
+                    ${table.previewSnapshot} -> 'oldLoan' ->> 'statusBefore' = 'active' AND
+                    ${table.previewSnapshot} -> 'oldLoan' ->> 'statusAfter' = 'replaced' AND
+                    ${table.previewSnapshot} -> 'oldLoan' ->> 'principal' ~ '^(0|[1-9][0-9]*)[.][0-9]{2}$' AND
+                    jsonb_typeof(${table.previewSnapshot} -> 'oldLoan' -> 'collectibleBefore') = 'object' AND
+                    ${table.previewSnapshot} -> 'oldLoan' -> 'collectibleBefore' ->> 'principal' ~ '^(0|[1-9][0-9]*)[.][0-9]{2}$' AND
+                    ${table.previewSnapshot} -> 'oldLoan' -> 'collectibleBefore' ->> 'interest' ~ '^(0|[1-9][0-9]*)[.][0-9]{2}$' AND
+                    ${table.previewSnapshot} -> 'oldLoan' -> 'collectibleBefore' ->> 'fee' ~ '^(0|[1-9][0-9]*)[.][0-9]{2}$' AND
+                    ${table.previewSnapshot} -> 'oldLoan' -> 'collectibleBefore' ->> 'penalty' ~ '^(0|[1-9][0-9]*)[.][0-9]{2}$' AND
+                    (${table.previewSnapshot} -> 'oldLoan' -> 'collectibleBefore') ? 'nextDueDate' AND
+                    (
+                        jsonb_typeof(${table.previewSnapshot} -> 'oldLoan' -> 'collectibleBefore' -> 'nextDueDate') = 'null' OR
+                        (
+                            jsonb_typeof(${table.previewSnapshot} -> 'oldLoan' -> 'collectibleBefore' -> 'nextDueDate') = 'string' AND
+                            ${table.previewSnapshot} -> 'oldLoan' -> 'collectibleBefore' ->> 'nextDueDate' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                        )
+                    ) AND
+                    jsonb_typeof(${table.previewSnapshot} -> 'oldLoan' -> 'collectibleAfter') = 'object' AND
+                    ${table.previewSnapshot} -> 'oldLoan' -> 'collectibleAfter' ->> 'principal' = '0.00' AND
+                    ${table.previewSnapshot} -> 'oldLoan' -> 'collectibleAfter' ->> 'interest' = '0.00' AND
+                    ${table.previewSnapshot} -> 'oldLoan' -> 'collectibleAfter' ->> 'fee' = '0.00' AND
+                    ${table.previewSnapshot} -> 'oldLoan' -> 'collectibleAfter' ->> 'penalty' = '0.00' AND
+                    jsonb_typeof(${table.previewSnapshot} -> 'oldLoan' -> 'collectibleAfter' -> 'nextDueDate') = 'null' AND
+                    jsonb_typeof(${table.previewSnapshot} -> 'cash') = 'object' AND
+                    ${table.previewSnapshot} -> 'cash' ->> 'direction' = 'none' AND
+                    ${table.previewSnapshot} -> 'cash' ->> 'amount' = '0.00' AND
+                    jsonb_typeof(${table.previewSnapshot} -> 'correction') = 'object' AND
+                    ${table.previewSnapshot} -> 'correction' ->> 'principal' ~ '^(0|[1-9][0-9]*)[.][0-9]{2}$' AND
+                    ${table.previewSnapshot} -> 'correction' ->> 'interest' ~ '^(0|[1-9][0-9]*)[.][0-9]{2}$' AND
+                    ${table.previewSnapshot} -> 'correction' ->> 'fee' ~ '^(0|[1-9][0-9]*)[.][0-9]{2}$' AND
+                    ${table.previewSnapshot} -> 'correction' ->> 'penalty' ~ '^(0|[1-9][0-9]*)[.][0-9]{2}$' AND
+                    jsonb_typeof(${table.previewSnapshot} -> 'replacement') = 'object' AND
+                    ${table.previewSnapshot} -> 'replacement' ->> 'loanPublicId' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' AND
+                    ${table.previewSnapshot} -> 'replacement' ->> 'statusBefore' = 'draft' AND
+                    ${table.previewSnapshot} -> 'replacement' ->> 'statusAfter' = 'active' AND
+                    ${table.previewSnapshot} -> 'replacement' ->> 'principal' ~ '^(0|[1-9][0-9]*)[.][0-9]{2}$' AND
+                    ${table.previewSnapshot} -> 'replacement' ->> 'interestRate' ~ '^(0|[1-9][0-9]*)[.][0-9]{2}$' AND
+                    ${table.previewSnapshot} -> 'replacement' ->> 'repaymentType' IN ('daily', 'weekly', 'monthly') AND
+                    jsonb_typeof(${table.previewSnapshot} -> 'replacement' -> 'termMonths') = 'number' AND
+                    ${table.previewSnapshot} -> 'replacement' ->> 'termMonths' ~ '^[1-9][0-9]*$' AND
+                    jsonb_typeof(${table.previewSnapshot} -> 'replacement' -> 'totalInstallments') = 'number' AND
+                    ${table.previewSnapshot} -> 'replacement' ->> 'totalInstallments' ~ '^[1-9][0-9]*$' AND
+                    ${table.previewSnapshot} -> 'replacement' ->> 'installmentAmount' ~ '^(0|[1-9][0-9]*)[.][0-9]{2}$' AND
+                    ${table.previewSnapshot} -> 'replacement' ->> 'startDate' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND
+                    ${table.previewSnapshot} -> 'replacement' ->> 'firstDueDate' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND
+                    ${table.previewSnapshot} -> 'replacement' ->> 'lastDueDate' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND
+                    ${table.previewSnapshot} -> 'replacement' ->> 'totalRepayment' ~ '^(0|[1-9][0-9]*)[.][0-9]{2}$' AND
+                    ${table.previewSnapshot} -> 'replacement' ->> 'fundingSourceKind' IN ('drawdown', 'own_capital') AND
+                    ${table.previewSnapshot} -> 'replacement' ->> 'fundingSourcePublicId' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' AND
+                    jsonb_typeof(${table.previewSnapshot} -> 'warnings') = 'array' AND
+                    NOT jsonb_path_exists(${table.previewSnapshot}, '$.warnings[*] ? (@.type() != "string")')
+                )
+                OR
+                (
+                    ${table.status} IN ('expired', 'executed', 'reversed') AND
+                    jsonb_typeof(${table.previewSnapshot} -> 'schemaVersion') = 'number' AND
+                    ${table.previewSnapshot} ->> 'schemaVersion' = '0' AND
+                    ${table.previewSnapshot} -> 'legacy' = 'true'::jsonb AND
+                    ${table.previewSnapshot} -> 'proposalUnavailable' = 'true'::jsonb
+                )
+            )
+        ) IS TRUE
+    `),
 ]);
 
 export const loanReplacementCorrections = pgTable("loan_replacement_corrections", {

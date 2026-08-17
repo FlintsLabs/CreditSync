@@ -4,21 +4,33 @@ import { db } from "../db";
 import { auditLogs, borrowers, intermediaries, loans, paymentIntakes, paymentIntermediaryAttributions, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import { createPaymentAttribution, listPaymentAttributions, reversePaymentAttribution } from "./payment-attribution-service";
+import { reversePayment } from "./payment-service";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
 
 async function resetTables() {
-    await db.execute(sql`TRUNCATE TABLE audit_logs, payment_intermediary_attributions, loan_commission_participants, transactions, intermediaries, loans, borrowers, users RESTART IDENTITY CASCADE`);
+    await db.execute(sql`TRUNCATE TABLE audit_logs, payment_intermediary_attributions, loan_commission_participants, transactions, payment_intakes, intermediaries, loans, borrowers, users RESTART IDENTITY CASCADE`);
 }
 async function seed(tenantId: string) {
     const actor = await db.insert(users).values({ tenantId, email: `${tenantId}@attribution.test`, role: "owner" }).returning().then((r) => r[0]!);
     const borrower = await db.insert(borrowers).values({ tenantId, ownerUserId: actor.id, name: tenantId }).returning().then((r) => r[0]!);
-    const loan = await db.insert(loans).values({ tenantId, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "100.00", interestRate: "0.00", repaymentType: "floating" }).returning().then((r) => r[0]!);
-    const payment = await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan.id, amount: "100.00", principalComponent: "80.00", interestComponent: "20.00", type: "repayment", entryType: "repayment", idempotencyKey: `${tenantId}-payment`, postedAt: new Date("2026-08-16T00:00:00.000Z") }).returning().then((r) => r[0]!);
+    const loan = await db.insert(loans).values({ tenantId, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "100.00", interestRate: "0.00", repaymentType: "monthly" }).returning().then((r) => r[0]!);
+    const intake = await db.insert(paymentIntakes).values({
+        tenantId,
+        ownerUserId: actor.id,
+        status: "posted",
+        amount: "100.00",
+        originLoanId: loan.id,
+        receivedAt: new Date("2026-08-16T00:00:00.000Z"),
+        postedAt: new Date("2026-08-16T00:00:01.000Z"),
+        createdByUserId: actor.id,
+        postedByUserId: actor.id,
+    }).returning().then((r) => r[0]!);
+    const payment = await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan.id, paymentIntakeId: intake.id, amount: "100.00", principalComponent: "80.00", interestComponent: "20.00", type: "repayment", entryType: "repayment", idempotencyKey: `${tenantId}-payment`, postedAt: new Date("2026-08-16T00:00:00.000Z") }).returning().then((r) => r[0]!);
     const a = await db.insert(intermediaries).values({ tenantId, ownerUserId: actor.id, name: `${tenantId} A`, normalizedName: `${tenantId}-a`, createdByUserId: actor.id, updatedByUserId: actor.id }).returning().then((r) => r[0]!);
     const b = await db.insert(intermediaries).values({ tenantId, ownerUserId: actor.id, name: `${tenantId} B`, normalizedName: `${tenantId}-b`, createdByUserId: actor.id, updatedByUserId: actor.id }).returning().then((r) => r[0]!);
-    return { actor, loan, payment, a, b };
+    return { actor, loan, intake, payment, a, b };
 }
 const ctx = (actor: typeof users.$inferSelect, key?: string): CommandContext => ({ tenantId: actor.tenantId, actorUserId: actor.id, actorSource: "web", requestId: `req-${key ?? "read"}`, correlationId: `corr-${key ?? "read"}`, idempotencyKey: key });
 
@@ -54,6 +66,99 @@ describe("payment intermediary attribution ledger", () => {
         await expect(db.delete(paymentIntermediaryAttributions).where(eq(paymentIntermediaryAttributions.publicId, original.publicId)).execute()).rejects.toMatchObject({ cause: { code: "P0001", message: expect.stringMatching(/append-only/) } });
     });
 
+    // Break caught: reversing the parent payment first hides it from the canonical attribution
+    // relation lookup and strands a positive attribution with no supported compensation path.
+    integrationTest("requires active attributions to be compensated before reversing their payment", async () => {
+        const seeded = await seed("attribution-before-payment-reversal");
+        const original = await createPaymentAttribution(ctx(seeded.actor, "create-before-payment-reversal"), {
+            paymentPublicId: seeded.payment.publicId,
+            sourceKind: "intermediary",
+            intermediaryPublicId: seeded.a.publicId,
+            amount: "40.00",
+        });
+
+        await expect(reversePayment(
+            ctx(seeded.actor, "blocked-parent-payment-reversal"),
+            seeded.intake.publicId,
+            { reason: "Bank correction" },
+        )).rejects.toMatchObject({
+            code: "PAYMENT_ATTRIBUTION_REVERSAL_REQUIRED",
+            status: 409,
+            details: { blockerPublicIds: [original.publicId] },
+        });
+        expect(await db.query.paymentIntakes.findFirst({ where: eq(
+            paymentIntakes.id,
+            seeded.intake.id,
+        ) })).toMatchObject({ status: "posted" });
+
+        await reversePaymentAttribution(ctx(seeded.actor, "compensate-before-payment-reversal"), {
+            attributionPublicId: original.publicId,
+            reason: "Payment must be reversed",
+        });
+        await expect(reversePayment(
+            ctx(seeded.actor, "allowed-parent-payment-reversal"),
+            seeded.intake.publicId,
+            { reason: "Bank correction" },
+        )).resolves.toMatchObject({ status: "reversed" });
+        expect((await listPaymentAttributions(ctx(seeded.actor), seeded.payment.publicId)).map((row) => row.amount))
+            .toEqual(["40.00", "-40.00"]);
+    });
+
+    // Break caught: the reversal guard inspects only payment_id and misses an attribution whose
+    // separately linked transaction belongs to the intake being reversed.
+    integrationTest("protects a linked attributed transaction until its attribution is compensated", async () => {
+        const seeded = await seed("linked-attribution-before-payment-reversal");
+        const linkedIntake = await db.insert(paymentIntakes).values({
+            tenantId: seeded.actor.tenantId,
+            ownerUserId: seeded.actor.id,
+            status: "posted",
+            amount: "10.00",
+            originLoanId: seeded.loan.id,
+            receivedAt: new Date("2026-08-16T01:00:00.000Z"),
+            postedAt: new Date("2026-08-16T01:00:01.000Z"),
+            createdByUserId: seeded.actor.id,
+            postedByUserId: seeded.actor.id,
+        }).returning().then((rows) => rows[0]!);
+        const linkedTransaction = await db.insert(transactions).values({
+            tenantId: seeded.actor.tenantId,
+            ownerUserId: seeded.actor.id,
+            loanId: seeded.loan.id,
+            paymentIntakeId: linkedIntake.id,
+            amount: "10.00",
+            principalComponent: "10.00",
+            type: "repayment",
+            entryType: "repayment",
+            idempotencyKey: "linked-attribution-payment-reversal-target",
+            postedAt: new Date("2026-08-16T01:00:00.000Z"),
+        }).returning().then((rows) => rows[0]!);
+        const original = await createPaymentAttribution(ctx(seeded.actor, "create-linked-before-payment-reversal"), {
+            paymentPublicId: seeded.payment.publicId,
+            transactionPublicId: linkedTransaction.publicId,
+            sourceKind: "direct",
+            amount: "10.00",
+        });
+
+        await expect(reversePayment(
+            ctx(seeded.actor, "blocked-linked-payment-reversal"),
+            linkedIntake.publicId,
+            { reason: "Bank correction" },
+        )).rejects.toMatchObject({
+            code: "PAYMENT_ATTRIBUTION_REVERSAL_REQUIRED",
+            status: 409,
+            details: { blockerPublicIds: [original.publicId] },
+        });
+
+        await reversePaymentAttribution(ctx(seeded.actor, "compensate-linked-before-payment-reversal"), {
+            attributionPublicId: original.publicId,
+            reason: "Linked payment must be reversed",
+        });
+        await expect(reversePayment(
+            ctx(seeded.actor, "allowed-linked-payment-reversal"),
+            linkedIntake.publicId,
+            { reason: "Bank correction" },
+        )).resolves.toMatchObject({ status: "reversed" });
+    });
+
     integrationTest("authorizes replay before returning it and presents the persisted linked transaction", async () => {
         const seeded = await seed("attribution-replay");
         const peer = await db.insert(users).values({ tenantId: seeded.actor.tenantId, email: "peer@attribution.test", role: "collector" }).returning().then((rows) => rows[0]!);
@@ -83,6 +188,76 @@ describe("payment intermediary attribution ledger", () => {
             await expect(createPaymentAttribution(ctx(seeded.actor, key), { paymentPublicId, sourceKind: "direct", amount: "1.00" })).rejects.toMatchObject({ code: "PAYMENT_NOT_FOUND", status: 404 });
             await expect(createPaymentAttribution(ctx(seeded.actor, `linked-${key}`), { paymentPublicId: seeded.payment.publicId, transactionPublicId: paymentPublicId, sourceKind: "direct", amount: "1.00" })).rejects.toMatchObject({ code: "PAYMENT_NOT_FOUND", status: 404 });
         }
+
+        await db.insert(transactions).values({
+            tenantId: seeded.actor.tenantId,
+            ownerUserId: seeded.actor.id,
+            loanId: seeded.loan.id,
+            amount: "-100.00",
+            principalComponent: "-80.00",
+            interestComponent: "-20.00",
+            type: "reversal",
+            entryType: "reversal",
+            reversedTransactionId: seeded.payment.id,
+            idempotencyKey: "compensated-attribution-target",
+            postedAt: new Date("2026-08-16T00:00:01.000Z"),
+        });
+        await expect(createPaymentAttribution(ctx(seeded.actor, "compensated-original"), {
+            paymentPublicId: seeded.payment.publicId,
+            sourceKind: "direct",
+            amount: "1.00",
+        })).rejects.toMatchObject({ code: "PAYMENT_NOT_FOUND", status: 404 });
+    });
+
+    // Break caught: attribution locks only the payment row and can append after replacement has
+    // committed the parent loan's terminal lineage marker.
+    integrationTest("rejects attribution after the parent loan is replaced", async () => {
+        const seeded = await seed("attribution-replaced-parent");
+        await db.update(loans).set({ status: "replaced" }).where(eq(loans.id, seeded.loan.id));
+
+        await expect(createPaymentAttribution(ctx(seeded.actor, "replaced-parent"), {
+            paymentPublicId: seeded.payment.publicId,
+            sourceKind: "direct",
+            amount: "1.00",
+        })).rejects.toMatchObject({
+            code: "PAYMENT_PARENT_TERMINAL",
+            status: 409,
+            details: { blockerPublicIds: [seeded.loan.publicId] },
+        });
+        expect(await db.select().from(paymentIntermediaryAttributions)).toHaveLength(0);
+    });
+
+    // Break caught: attribution validates `active` before a lock wait, then appends after a
+    // concurrent writer commits `replaced` on the parent.
+    integrationTest("serializes attribution behind a concurrent parent replacement", async () => {
+        const seeded = await seed("attribution-parent-race");
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        let markLocked!: () => void;
+        const locked = new Promise<void>((resolve) => { markLocked = resolve; });
+        const replacementWriter = db.transaction(async (tx) => {
+            await tx.execute(sql`SELECT id FROM loans WHERE id = ${seeded.loan.id} FOR UPDATE`);
+            markLocked();
+            await held;
+            await tx.update(loans).set({ status: "replaced" }).where(eq(loans.id, seeded.loan.id));
+        });
+        await locked;
+
+        const attribution = createPaymentAttribution(ctx(seeded.actor, "parent-race"), {
+            paymentPublicId: seeded.payment.publicId,
+            sourceKind: "direct",
+            amount: "1.00",
+        });
+        await Bun.sleep(20);
+        release();
+        await replacementWriter;
+
+        await expect(attribution).rejects.toMatchObject({
+            code: "PAYMENT_PARENT_TERMINAL",
+            status: 409,
+            details: { blockerPublicIds: [seeded.loan.publicId] },
+        });
+        expect(await db.select().from(paymentIntermediaryAttributions)).toHaveLength(0);
     });
 
     integrationTest("hides and refuses to reverse attributions with a related row outside owner scope", async () => {

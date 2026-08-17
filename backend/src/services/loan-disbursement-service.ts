@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { db } from "../db";
+import { db, type DbExecutor } from "../db";
 import { auditLogs, bankProfiles, files, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loanRestructures, loans, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import { parseMoney, serializeMoney } from "../lib/money";
@@ -9,7 +9,7 @@ import { BUCKET_NAME, createSignedPutUrl, headStoredObject, toStorageReference, 
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 
-type Executor = any;
+type Executor = DbExecutor;
 type EventRow = typeof loanDisbursementEvents.$inferSelect;
 
 export interface DisbursementEvidenceStorageGateway {
@@ -440,6 +440,17 @@ export async function postDisbursement(ctx: CommandContext, disbursementPublicId
             throw new DomainError("DISBURSEMENT_ALREADY_POSTED", "Disbursement was already posted with another idempotency key", 409);
         }
         if (current.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Reversed disbursements cannot be posted", 409);
+        const parent = await tx.query.loans.findFirst({ where: and(
+            eq(loans.tenantId, ctx.tenantId),
+            eq(loans.id, current.loanId),
+        ) });
+        if (!parent || parent.status !== "active") {
+            throw new DomainError(
+                "LOAN_DISBURSEMENT_LOCKED",
+                "Disbursements can be posted only for an active loan",
+                409,
+            );
+        }
         const attached = await tx.select().from(loanDisbursementEvidence).where(and(
             eq(loanDisbursementEvidence.tenantId, ctx.tenantId), eq(loanDisbursementEvidence.loanDisbursementEventId, current.id),
         ));

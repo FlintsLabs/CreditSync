@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
-import { and, count, desc, eq, gt, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, gte, inArray, lt, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
     borrowerAliases,
@@ -18,6 +18,7 @@ import {
     loans,
     paymentEvidence,
     paymentIntakes,
+    paymentIntermediaryAttributions,
     paymentMatchAllocations,
     paymentMatchProposals,
     transactions,
@@ -1750,6 +1751,34 @@ export async function reversePayment(ctx: CommandContext, intakePublicId: string
         const loanIds: number[] = [...new Set<number>(originals.map((item: typeof transactions.$inferSelect) => item.loanId))].sort((a, b) => a - b);
         const scheduleIds: number[] = [...new Set<number>(originals.map((item: typeof transactions.$inferSelect) => item.scheduleId).filter((id: number | null): id is number => id !== null))].sort((a, b) => a - b);
         if (loanIds.length) await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(loanIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
+        const originalIds: number[] = originals.map((item: typeof transactions.$inferSelect) => item.id);
+        originalIds.sort((a, b) => a - b);
+        if (originalIds.length) {
+            // Attribution creation locks parent loan -> canonical transaction. Reusing that
+            // order closes both payment_id and linked transaction_id races with reversal.
+            await tx.execute(sql`SELECT id FROM transactions WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(originalIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
+            const attributionRows = await tx.select().from(paymentIntermediaryAttributions).where(and(
+                eq(paymentIntermediaryAttributions.tenantId, ctx.tenantId),
+                or(
+                    inArray(paymentIntermediaryAttributions.paymentId, originalIds),
+                    inArray(paymentIntermediaryAttributions.transactionId, originalIds),
+                ),
+            )).orderBy(paymentIntermediaryAttributions.id);
+            const compensatedIds = new Set(attributionRows
+                .filter((row: typeof paymentIntermediaryAttributions.$inferSelect) => row.reversedAttributionId !== null)
+                .map((row: typeof paymentIntermediaryAttributions.$inferSelect) => row.reversedAttributionId));
+            const activeAttributionPublicIds = attributionRows
+                .filter((row: typeof paymentIntermediaryAttributions.$inferSelect) => new FinancialDecimal(row.attributedAmount).gt(0) && !compensatedIds.has(row.id))
+                .map((row: typeof paymentIntermediaryAttributions.$inferSelect) => row.publicId);
+            if (activeAttributionPublicIds.length) {
+                throw new DomainError(
+                    "PAYMENT_ATTRIBUTION_REVERSAL_REQUIRED",
+                    "Reverse active payment attributions before reversing their payment",
+                    409,
+                    { blockerPublicIds: activeAttributionPublicIds },
+                );
+            }
+        }
         if (scheduleIds.length) await tx.execute(sql`SELECT id FROM loan_schedules WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(scheduleIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
         const reversals: Array<typeof transactions.$inferSelect> = [];
         for (const original of originals) {

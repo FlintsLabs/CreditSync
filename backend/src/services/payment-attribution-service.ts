@@ -2,11 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import type Decimal from "decimal.js";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { auditLogs, intermediaries, paymentIntermediaryAttributions, transactions, users } from "../db/schema";
+import { auditLogs, intermediaries, loans, paymentIntermediaryAttributions, transactions, users } from "../db/schema";
 import { FinancialDecimal, signedPublicMoneyPattern, unsignedPublicMoneyPattern } from "../lib/financial-decimal";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
-import { authorizedPostedPayment, canAccessOwnedRecord } from "./posted-payment-access";
+import { authorizedCanonicalPostedPayment, authorizedPostedPayment, canAccessOwnedRecord } from "./posted-payment-access";
 
 type Attribution = typeof paymentIntermediaryAttributions.$inferSelect;
 type Actor = typeof users.$inferSelect;
@@ -63,8 +63,8 @@ async function intermediaryFor(ctx: CommandContext, publicId: string, actor: Act
 
 async function attributionRelations(executor: any, ctx: CommandContext, actor: Actor | null, row: Attribution) {
     const [payment, linkedTransaction, intermediary, reversed] = await Promise.all([
-        authorizedPostedPayment(executor, ctx, actor, { id: row.paymentId }, "PAYMENT_ATTRIBUTION_NOT_FOUND"),
-        row.transactionId ? authorizedPostedPayment(executor, ctx, actor, { id: row.transactionId }, "PAYMENT_ATTRIBUTION_NOT_FOUND") : null,
+        authorizedCanonicalPostedPayment(executor, ctx, actor, { id: row.paymentId }, "PAYMENT_ATTRIBUTION_NOT_FOUND"),
+        row.transactionId ? authorizedCanonicalPostedPayment(executor, ctx, actor, { id: row.transactionId }, "PAYMENT_ATTRIBUTION_NOT_FOUND") : null,
         row.intermediaryId ? executor.query.intermediaries.findFirst({ where: and(eq(intermediaries.tenantId, ctx.tenantId), eq(intermediaries.id, row.intermediaryId)) }) : null,
         row.reversedAttributionId ? executor.query.paymentIntermediaryAttributions.findFirst({ where: and(eq(paymentIntermediaryAttributions.tenantId, ctx.tenantId), eq(paymentIntermediaryAttributions.id, row.reversedAttributionId)) }) : null,
     ]);
@@ -111,8 +111,27 @@ export async function createPaymentAttribution(ctx: CommandContext, input: Creat
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${ctx.tenantId}:payment-attribution:${key}`}, 0))`);
         const existing = await replay(tx, ctx, actor, key, requestFingerprint);
         if (existing) return existing;
+        const candidatePayment = await paymentFor(ctx, input.paymentPublicId, actor, tx);
+        await tx.execute(sql`SELECT id FROM loans
+            WHERE tenant_id = ${ctx.tenantId} AND id = ${candidatePayment.loanId}
+            FOR UPDATE`);
+        const parent = await tx.query.loans.findFirst({ where: and(
+            eq(loans.tenantId, ctx.tenantId),
+            eq(loans.id, candidatePayment.loanId),
+        ) });
+        if (!parent) throw new DomainError("PAYMENT_NOT_FOUND", "Payment not found", 404);
+        if (parent.status === "replaced") {
+            throw new DomainError(
+                "PAYMENT_PARENT_TERMINAL",
+                "Payment attribution cannot be created for a replaced loan",
+                409,
+                { blockerPublicIds: [parent.publicId] },
+            );
+        }
+        // The parent lock serializes replacement and payment reversal writers. Re-read the
+        // canonical payment after locking its row so a compensated original cannot be attributed.
+        await tx.execute(sql`SELECT id FROM transactions WHERE tenant_id = ${ctx.tenantId} AND id = ${candidatePayment.id} FOR UPDATE`);
         const payment = await paymentFor(ctx, input.paymentPublicId, actor, tx);
-        await tx.execute(sql`SELECT id FROM transactions WHERE tenant_id = ${ctx.tenantId} AND id = ${payment.id} FOR UPDATE`);
         const intermediary = input.intermediaryPublicId ? await intermediaryFor(ctx, input.intermediaryPublicId, actor, tx) : null;
         const linkedTransaction = input.transactionPublicId ? await paymentFor(ctx, input.transactionPublicId, actor, tx) : payment;
         if (linkedTransaction.loanId !== payment.loanId) throw new DomainError("ATTRIBUTION_TRANSACTION_MISMATCH", "Referenced transaction must belong to the same loan", 409);
@@ -128,7 +147,7 @@ export async function createPaymentAttribution(ctx: CommandContext, input: Creat
 
 export async function listPaymentAttributions(ctx: CommandContext, paymentPublicId: string) {
     const actor = await actorFor(ctx);
-    const payment = await paymentFor(ctx, paymentPublicId, actor);
+    const payment = await authorizedCanonicalPostedPayment(db, ctx, actor, { publicId: paymentPublicId });
     const rows = await db.select().from(paymentIntermediaryAttributions).where(and(eq(paymentIntermediaryAttributions.tenantId, ctx.tenantId), eq(paymentIntermediaryAttributions.paymentId, payment.id))).orderBy(paymentIntermediaryAttributions.id);
     const visible = await Promise.all(rows.map(async (row) => {
         try { return await present(db, ctx, actor, row); }

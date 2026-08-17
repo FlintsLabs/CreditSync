@@ -1,6 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
-import { db } from "../db";
+import { db, type DbExecutor, type DbTransaction } from "../db";
 import { auditLogs, bankLoans, bankProfiles, loanFundingAllocations, loans, users } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import { canAccessTenantWideData, loanAccessFilters } from "../lib/access";
@@ -24,12 +24,12 @@ export type FundingAllocationResult = Awaited<ReturnType<typeof presentFundingAl
 function fingerprint(input: unknown) { return createHash("sha256").update(JSON.stringify(input)).digest("hex"); }
 function amount(value: string) { if (!/^\d+\.\d{2}$/.test(value)) throw new DomainError("INVALID_MONEY", "allocatedAmount must be a positive decimal with exactly two decimals", 400); try { const d = new FinancialDecimal(value); if (!d.isFinite() || d.lte(0)) throw new Error(); return d.toFixed(2); } catch { throw new DomainError("INVALID_MONEY", "allocatedAmount must be a positive decimal with exactly two decimals", 400); } }
 function requireKey(ctx: CommandContext) { const key = ctx.idempotencyKey?.trim(); if (!key) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required", 400); return key; }
-async function authorize(ctx: CommandContext, executor: any = db) {
+async function authorize(ctx: CommandContext, executor: DbExecutor = db) {
     if (ctx.actorUserId === null) throw new DomainError("TENANT_ADMIN_REQUIRED", "A tenant owner or manager is required", 403);
     const actor = (await executor.select().from(users).where(and(eq(users.id, ctx.actorUserId), eq(users.tenantId, ctx.tenantId))).limit(1))[0];
     if (!actor || !canAccessTenantWideData({ role: actor.role ?? "viewer" })) throw new DomainError("TENANT_ADMIN_REQUIRED", "A tenant owner or manager is required", 403);
 }
-async function resolve(tx: any, ctx: CommandContext, input: FundingAllocationInput, lock = true) {
+async function resolve(tx: DbTransaction, ctx: CommandContext, input: FundingAllocationInput, lock = true) {
     const loan = (await tx.select().from(loans).where(and(eq(loans.tenantId, ctx.tenantId), eq(loans.publicId, input.loanPublicId))).limit(1))[0];
     if (!loan) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
     if (!isMutableFundingLoan(loan.status)) throw new DomainError("LOAN_FUNDING_LOCKED", "Funding cannot be changed after a loan is renewed or canceled", 409);
@@ -47,7 +47,12 @@ async function resolve(tx: any, ctx: CommandContext, input: FundingAllocationInp
     if (!lockedLoan || !isMutableFundingLoan(lockedLoan.status)) throw new DomainError("LOAN_FUNDING_LOCKED", "Funding cannot be changed after a loan is terminal", 409);
     return { loan: lockedLoan, profile, drawdown };
 }
-async function capacities(tx: any, ctx: CommandContext, loan: any, drawdown: any) {
+async function capacities(
+    tx: DbTransaction,
+    ctx: CommandContext,
+    loan: typeof loans.$inferSelect,
+    drawdown: typeof bankLoans.$inferSelect | undefined,
+) {
     const total = (await tx.select({ total: sql<string>`coalesce(sum(${loanFundingAllocations.allocatedAmount}),0)` }).from(loanFundingAllocations).where(and(eq(loanFundingAllocations.tenantId, ctx.tenantId), eq(loanFundingAllocations.loanId, loan.id))))[0]?.total ?? "0";
     const loanRemaining = FinancialDecimal.max(new FinancialDecimal(0), new FinancialDecimal(loan.principalAmount).minus(total));
     let sourceRemaining: InstanceType<typeof FinancialDecimal> | null = null;
@@ -55,8 +60,45 @@ async function capacities(tx: any, ctx: CommandContext, loan: any, drawdown: any
     return { total: new FinancialDecimal(total), loanRemaining, sourceRemaining };
 }
 export async function previewFundingAllocation(ctx: CommandContext, input: FundingAllocationInput): Promise<FundingAllocationPreview> {
-    await authorize(ctx); const requested = amount(input.allocatedAmount);
-    return db.transaction(async tx => { const r = await resolve(tx, ctx, input, false); const c = await capacities(tx, ctx, r.loan, r.drawdown); const sourceProfilePublicId = r.profile?.publicId ?? (r.drawdown ? (await tx.select().from(bankProfiles).where(and(eq(bankProfiles.tenantId, ctx.tenantId), eq(bankProfiles.id, r.drawdown.bankProfileId))).limit(1))[0]?.publicId ?? null : null); const next = c.total.plus(requested); return { source: { bankProfilePublicId: sourceProfilePublicId, bankLoanPublicId: r.drawdown?.publicId ?? null, remainingCapacity: serializeMoney(c.sourceRemaining ?? new FinancialDecimal("999999999999999999999999999999.99")) }, target: { loanPublicId: r.loan.publicId, principalAmount: serializeMoney(r.loan.principalAmount), remainingUnfundedPrincipal: serializeMoney(c.loanRemaining) }, requestedAmount: requested, resultingFunding: { netAllocatedPrincipal: serializeMoney(next), remainingGap: serializeMoney(FinancialDecimal.max(new FinancialDecimal(0), new FinancialDecimal(r.loan.principalAmount).minus(next))), state: next.isZero() ? "unfunded" : next.gte(r.loan.principalAmount) ? "fully_funded" : "partially_funded" }, warnings: [] }; });
+    await authorize(ctx);
+    const requested = amount(input.allocatedAmount);
+    return db.transaction(async (tx) => {
+        const resolved = await resolve(tx, ctx, input, false);
+        const capacity = await capacities(tx, ctx, resolved.loan, resolved.drawdown);
+        const drawdownProfile = resolved.drawdown?.bankProfileId
+            ? (await tx.select().from(bankProfiles).where(and(
+                eq(bankProfiles.tenantId, ctx.tenantId),
+                eq(bankProfiles.id, resolved.drawdown.bankProfileId),
+            )).limit(1))[0]
+            : undefined;
+        const sourceProfilePublicId = resolved.profile?.publicId ?? drawdownProfile?.publicId ?? null;
+        const next = capacity.total.plus(requested);
+        return {
+            source: {
+                bankProfilePublicId: sourceProfilePublicId,
+                bankLoanPublicId: resolved.drawdown?.publicId ?? null,
+                remainingCapacity: serializeMoney(capacity.sourceRemaining
+                    ?? new FinancialDecimal("999999999999999999999999999999.99")),
+            },
+            target: {
+                loanPublicId: resolved.loan.publicId,
+                principalAmount: serializeMoney(resolved.loan.principalAmount),
+                remainingUnfundedPrincipal: serializeMoney(capacity.loanRemaining),
+            },
+            requestedAmount: requested,
+            resultingFunding: {
+                netAllocatedPrincipal: serializeMoney(next),
+                remainingGap: serializeMoney(FinancialDecimal.max(
+                    new FinancialDecimal(0),
+                    new FinancialDecimal(resolved.loan.principalAmount).minus(next),
+                )),
+                state: next.isZero()
+                    ? "unfunded"
+                    : next.gte(resolved.loan.principalAmount) ? "fully_funded" : "partially_funded",
+            },
+            warnings: [],
+        };
+    });
 }
 export async function createFundingAllocation(ctx: CommandContext, input: FundingAllocationInput): Promise<FundingAllocationResult> {
     const key = requireKey(ctx); const normalized = { ...input, allocatedAmount: amount(input.allocatedAmount) }; await authorize(ctx); const hash = fingerprint(normalized);
