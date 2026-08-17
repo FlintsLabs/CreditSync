@@ -42,8 +42,8 @@ describe("loan replacement REST lifecycle", () => {
         ]));
     });
 
-    // Break caught: a route boundary permits unexpected fields or bypasses the
-    // service's owner/manager authorization before creating a financial preview.
+    // Break caught: framework validation exposes its unstable `found` payload
+    // instead of the public loan-domain error envelope for closed schemas.
     integrationTest("uses closed schemas and tenant-admin authorization for previews", async () => {
         const fixture = await seedReplacementFixture();
         const app = new Elysia().use(loansRoute);
@@ -59,11 +59,38 @@ describe("loan replacement REST lifecycle", () => {
         const managerToken = await tokenFor(fixture.actor);
         const unknown = await call(app, "/loans/replacements/preview", managerToken, { method: "POST", body: JSON.stringify({ ...body, accidentalAmount: "1.00" }) });
         expect(unknown.response.status).toBe(422);
+        expect(unknown.body).toEqual({ error: "Request body contains invalid or unknown fields", code: "VALIDATION_ERROR" });
+        expect(unknown.body).not.toHaveProperty("found");
 
         const collector = await db.insert(users).values({ tenantId: fixture.tenantId, email: `${crypto.randomUUID()}@example.test`, role: "collector" }).returning().then((rows) => rows[0]!);
         const forbidden = await call(app, "/loans/replacements/preview", await tokenFor(collector), { method: "POST", body: JSON.stringify(body) });
         expect(forbidden.response.status).toBe(403);
         expect(forbidden.body).toMatchObject({ code: "TENANT_ADMIN_REQUIRED" });
+    });
+
+    // Break caught: tenant ownership is accidentally rejected, or a known
+    // public loan UUID discloses its existence across tenant boundaries.
+    integrationTest("allows an owner and hides foreign tenant loan public IDs", async () => {
+        const fixture = await seedReplacementFixture();
+        const app = new Elysia().use(loansRoute);
+        const body = {
+            oldLoanPublicId: fixture.oldLoan.publicId,
+            replacementDraftPublicId: fixture.replacementDraft.publicId,
+            reason: "Owner-approved correction",
+        };
+        const owner = await db.insert(users).values({ tenantId: fixture.tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+        const ownerPreview = await call(app, "/loans/replacements/preview", await tokenFor(owner), { method: "POST", body: JSON.stringify(body) });
+        expect(ownerPreview.response.status, ownerPreview.text).toBe(200);
+        expect(ownerPreview.body).toEqual(expect.objectContaining({
+            publicId: expect.any(String), auditPublicId: expect.any(String), correlationId: expect.any(String),
+            oldLoan: expect.objectContaining({ loanPublicId: fixture.oldLoan.publicId }),
+            replacement: expect.objectContaining({ loanPublicId: fixture.replacementDraft.publicId }),
+        }));
+
+        const outsider = await db.insert(users).values({ tenantId: `tenant-outsider-${crypto.randomUUID()}`, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+        const hidden = await call(app, "/loans/replacements/preview", await tokenFor(outsider), { method: "POST", body: JSON.stringify(body) });
+        expect(hidden.response.status).toBe(404);
+        expect(hidden.body).toEqual({ error: "Loan not found", code: "LOAN_NOT_FOUND" });
     });
 
     // Break caught: REST execution loses the exact public fingerprint/audit
@@ -87,15 +114,45 @@ describe("loan replacement REST lifecycle", () => {
         const previewHash = preview.body.previewHash as string;
         const oldBalanceVersion = preview.body.oldBalanceVersion as string;
         const replacementDraftVersion = preview.body.replacementDraftVersion as string;
-        expect(preview.body).toMatchObject({
-            publicId: expect.any(String),
-            previewHash: previewHash,
+        expect(structuredClone(preview.body)).toEqual({
+            schemaVersion: 1,
+            asOfDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+            reason: "Corrected contract start date",
+            oldLoan: {
+                loanPublicId: fixture.oldLoan.publicId,
+                statusBefore: "active",
+                statusAfter: "replaced",
+                principal: "36000.00",
+                collectibleBefore: { principal: "36000.00", interest: "4200.00", fee: "0.00", penalty: "0.00", nextDueDate: "2026-07-13" },
+                collectibleAfter: { principal: "0.00", interest: "0.00", fee: "0.00", penalty: "0.00", nextDueDate: null },
+            },
+            cash: { direction: "none", amount: "0.00" },
+            correction: { principal: "36000.00", interest: "4200.00", fee: "0.00", penalty: "0.00" },
+            replacement: {
+                loanPublicId: fixture.replacementDraft.publicId,
+                statusBefore: "draft",
+                statusAfter: "active",
+                principal: "36000.00",
+                interestRate: "0.00",
+                repaymentType: "daily",
+                termMonths: 7,
+                totalInstallments: 200,
+                installmentAmount: "300.00",
+                startDate: "2026-07-11",
+                firstDueDate: "2026-07-12",
+                lastDueDate: "2027-01-27",
+                totalRepayment: "60000.00",
+                fundingSourceKind: "drawdown",
+                fundingSourcePublicId: fixture.source.drawdown!.publicId,
+            },
+            warnings: ["Outstanding calculated interest of 4200.00 is corrected to zero and is neither collected nor carried forward."],
+            publicId: previewPublicId,
+            previewHash,
             oldBalanceVersion,
             replacementDraftVersion,
-            auditPublicId: expect.any(String), correlationId: "corr-replacement-preview",
-            oldLoan: { loanPublicId: fixture.oldLoan.publicId, principal: "36000.00", statusAfter: "replaced" },
-            replacement: { loanPublicId: fixture.replacementDraft.publicId, principal: "36000.00", statusAfter: "active" },
-            correction: { principal: "36000.00", interest: "4200.00", fee: "0.00", penalty: "0.00" },
+            expiresAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+            auditPublicId: expect.any(String),
+            correlationId: "corr-replacement-preview",
         });
         expect(preview.body).not.toHaveProperty("oldLoanId");
         expect(preview.body).not.toHaveProperty("replacementLoanId");

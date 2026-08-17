@@ -12,6 +12,7 @@
 - Added the approved design for an atomic, reversible scheduled-loan replacement workflow with a `replaced` terminal status, exact correction records, existing-draft activation, funding linkage, lineage, synchronized MCP/REST interfaces, and fail-closed downstream checks.
 
 ### Fixed
+- Normalized closed-schema loan replacement REST validation failures to the stable public DomainError envelope and added exact preview, owner, and cross-tenant access regressions.
 - Made replacement reversal audits capture canonical proposal/reason/request hashes, exact public loan and schedule before/after state, funding provenance, and public correction/allocation compensation IDs; idempotent execution and reversal replays now validate the aggregate's exact persisted audit reference and fail closed on missing or mismatched evidence, while the Drizzle schema preserves migration 0044's terminal audit-evidence constraint.
 - Completed atomic replacement hardening with persisted replay correlations, public-only audits, parent-writer serialization (including legacy close), chained-lineage reversal protection, post-lock preview freshness checks, replacement-draft downstream fingerprints, compensation-aware payment-attribution guards, active-only payout posting, standalone activation isolation, and fail-closed funding/disbursement reversal dependencies.
 - Moved terminal-loan disbursement and funding checks behind transaction row locks so a concurrent replacement cannot race a new payout or allocation write.

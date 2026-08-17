@@ -16,6 +16,10 @@ import {
 
 const strict = { additionalProperties: false } as const;
 
+function validationFailure(set: { status?: number | string }) {
+    return loanDomainFailure(new DomainError("VALIDATION_ERROR", "Request body contains invalid or unknown fields", 422), set);
+}
+
 function assertKnownKeys(value: Record<string, unknown>, allowed: readonly string[]) {
     const unexpectedFields = Object.keys(value).filter((key) => !allowed.includes(key));
     if (unexpectedFields.length) {
@@ -28,6 +32,7 @@ function assertKnownKeys(value: Record<string, unknown>, allowed: readonly strin
 /** Authenticated public lifecycle boundary for atomic loan replacements. */
 export const loanReplacementRoutes = new Elysia({ normalize: false })
     .use(authPlugin)
+    .onError(({ code, set }) => code === "VALIDATION" ? validationFailure(set) : undefined)
     .post("/replacements/preview", async ({ body, user, request, set }) => {
         if (!user) return loanUnauthorized(set);
         try {
