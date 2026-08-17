@@ -1,10 +1,10 @@
-# CreditSync Plugin 7.0.0
+# CreditSync Plugin 7.1.0
 
 This private Codex plugin orchestrates the CreditSync MCP app for borrower and intermediary identity, payments, intermediary remittances and multi-leg disbursements, generalized floating-interest origination and settlement, effective-dated rate changes, direct loan disbursements, renewals, and append-only reversal.
 
 ## Package contract
 
-- Plugin version: `7.0.0`
+- Plugin version: `7.1.0`
 - MCP schema version: `1.0`
 - 11 orchestration skills: `creditsync`, `manage-borrowers`, `reconcile-payments`, `reconcile-intermediary-remittances`, `manage-loans`, `manage-floating-interest-rates`, `settle-floating-loans`, `manage-disbursements`, `manage-intermediated-disbursements`, `renew-daily-loan`, `restructure-loan`
 - App manifest: `.app.json`
@@ -13,6 +13,8 @@ This private Codex plugin orchestrates the CreditSync MCP app for borrower and i
 The package does not contain an MCP URL, bearer token, `.mcp.json`, OAuth configuration, hooks, plugin UI, or funding mutation capability. It references a private registered app so credentials remain in Codex/server secret storage.
 
 For settlement/restructure, resolve and inspect the borrower, call `loan.restructure.preview`, display every gross/waived/external-credit/net component plus replacement terms and cash, and execute only the exact hash/balance version after confirmation. Additional principal is not a posted payout; any returned disbursement draft follows the separate disbursement lifecycle. Later interest/fee/penalty waivers use their own preview/confirmation flow and reason. Principal cannot be waived.
+
+For an atomic scheduled-loan replacement, resolve and inspect the borrower, then call `loan.replacement.preview` for the active old-loan UUID and an existing funded replacement-draft UUID. Display its exact no-cash movement, correction components, old/replacement lineage, funding, dates, expiry, hash, and both versions. Only an explicit human confirmation permits `loan.replacement.execute` with literal confirmation, the exact returned values, a reason, and a stable idempotency key. Never activate the draft or mutate statuses directly. Stale state or downstream activity stops the workflow; reversal is compensating-only and blocked by downstream activity.
 
 For an actual loan disbursement, first inspect `loan.disbursement.list` and present its approved principal, net disbursed amount, and signed variance. The safe lifecycle is `loan.disbursement.draft` → optional `loan.disbursement.evidence.prepare` → unchanged-byte PUT with returned headers → `loan.disbursement.evidence.finalize` → explicit human confirmation → `loan.disbursement.post` → re-list/select the exact posted event before reversal. A prepare result with `status: ready` is already finalized and must not be PUT/finalized again; missing/expired upload data, checksum conflict, or finalize mismatch stops without posting. Keep the returned stable idempotency key for a retry of that same post only. A variance is a warning that must be shown, never conversation arithmetic or permission to alter the loan schedule. Disbursement posting records an append-only ledger event; it never mutates the approved schedule. Reversal requires a specific non-blank human reason and a different stable idempotency key, and creates a compensating ledger event rather than deleting history. Draft input deliberately rejects `evidenceFilePublicIds`; only finalized evidence can be linked to a draft.
 
@@ -71,7 +73,7 @@ Publishing to Git does not hot-reload an installed copy. Start a new Codex task 
 - Intermediated disbursement follows exact identity and active-assignment checks → group and transfer events → per-event evidence → group inspection → zero-variance preview → explicit confirmation → idempotent post. Reversal first re-lists and inspects the exact posted group, then requires a separate reason and confirmation.
 - Reversals require a reason and create compensating history rather than deletion. Renewal reversal uses same-task execute IDs plus the borrower ID retained before execution; `renewal.reverse`, not the limited portfolio view, performs the authoritative atomic downstream-activity check and may return only the backend message plus aggregate `downstreamEntryCount`.
 
-See `references/` for matching, accounting invariants, error recovery, and the frozen full 64-tool metadata snapshot. The snapshot is generated through an authenticated local MCP SDK Client `tools/list` call. `evals/evals.json` and `evals/harness.ts` execute exact ordered/repeated tool calls, supported arguments, injected workflow states, external upload effects, and forbidden-write boundaries while remaining honest that no live private app was used.
+See `references/` for matching, accounting invariants, error recovery, and the frozen full 78-tool metadata snapshot. The snapshot is generated through an authenticated local MCP SDK Client `tools/list` call. `evals/evals.json` and `evals/harness.ts` execute exact ordered/repeated tool calls, supported arguments, injected workflow states, external upload effects, and forbidden-write boundaries while remaining honest that no live private app was used.
 
 Deployment, credential rotation, MinIO evidence, and recovery procedures are maintained in the root repository documentation:
 

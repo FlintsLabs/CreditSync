@@ -14,6 +14,8 @@ const LOAN_A = "0198c481-3e2b-7000-8000-000000000031";
 const LOAN_B = "0198c481-3e2b-7000-8000-000000000032";
 const LOAN_C = "0198c481-3e2b-7000-8000-000000000033";
 const DRAFT = "0198c481-3e2b-7000-8000-000000000034";
+const REPLACEMENT = "0198c481-3e2b-7000-8000-000000000035";
+const REPLACEMENT_AUDIT = "0198c481-3e2b-7000-8000-000000000037";
 const DISBURSEMENT = "0198c481-3e2b-7000-8000-000000000051";
 const DISBURSEMENT_EVIDENCE = "0198c481-3e2b-7000-8000-000000000052";
 const RENEWAL = "0198c481-3e2b-7000-8000-000000000041";
@@ -111,7 +113,8 @@ export type HarnessEvent =
     | { type: "tool"; name: McpToolName }
     | { type: "presentation"; name: "floating-settlement-preview"; data: Record<string, unknown> }
     | { type: "presentation"; name: "intermediated-disbursement-preview"; data: Record<string, unknown> }
-    | { type: "confirmation"; name: "floating-settlement" | "intermediated-disbursement"; confirmed: boolean };
+    | { type: "presentation"; name: "loan-replacement-preview"; data: Record<string, unknown> }
+    | { type: "confirmation"; name: "floating-settlement" | "intermediated-disbursement" | "loan-replacement"; confirmed: boolean };
 
 export type SameTaskRenewalExecutionContext = {
     provenance: "same_task_renewal_execute_result";
@@ -201,6 +204,14 @@ class ScriptedMcp {
         this.events.push({ type: "presentation", name: "intermediated-disbursement-preview", data });
     }
 
+    presentLoanReplacement(data: Record<string, unknown>) {
+        this.events.push({ type: "presentation", name: "loan-replacement-preview", data });
+    }
+
+    recordLoanReplacementConfirmation(confirmed: boolean) {
+        this.events.push({ type: "confirmation", name: "loan-replacement", confirmed });
+    }
+
     recordIntermediatedDisbursementConfirmation(confirmed: boolean) {
         this.events.push({ type: "confirmation", name: "intermediated-disbursement", confirmed });
     }
@@ -278,6 +289,81 @@ async function restructureFlow(mcp: ScriptedMcp, confirmed = true) {
     } catch (error) {
         if (error instanceof ScriptedMcpError && /STALE|EXPIRED/u.test(error.code)) return { outcome: "stopped", stopReason: "stale-restructure-preview" } as const;
         throw error;
+    }
+}
+
+function replacementPreviewResult() {
+    return {
+        publicId: REPLACEMENT,
+        previewHash: PREVIEW_HASH,
+        oldBalanceVersion: BALANCE_VERSION,
+        replacementDraftVersion: BALANCE_VERSION,
+        expiresAt: "2026-08-17T06:30:00.000Z",
+        auditPublicId: REPLACEMENT_AUDIT,
+        correlationId: REPLACEMENT_AUDIT,
+        schemaVersion: 1,
+        asOfDate: "2026-08-17",
+        reason: "Correct contract start date while preserving the first due date",
+        oldLoan: {
+            loanPublicId: LOAN_A, statusBefore: "active", statusAfter: "replaced", principal: "36000.00",
+            collectibleBefore: { principal: "36000.00", interest: "4200.00", fee: "0.00", penalty: "0.00", nextDueDate: "2026-07-13" },
+            collectibleAfter: { principal: "0.00", interest: "0.00", fee: "0.00", penalty: "0.00", nextDueDate: null },
+        },
+        cash: { direction: "none", amount: "0.00" },
+        correction: { principal: "36000.00", interest: "4200.00", fee: "0.00", penalty: "0.00" },
+        replacement: {
+            loanPublicId: DRAFT, statusBefore: "draft", statusAfter: "active", principal: "36000.00",
+            interestRate: "0.00", repaymentType: "daily", termMonths: 7, totalInstallments: 200,
+            installmentAmount: "300.00", startDate: "2026-07-11", firstDueDate: "2026-07-12",
+            lastDueDate: "2027-01-27", totalRepayment: "60000.00", fundingSourceKind: "drawdown",
+            fundingSourcePublicId: "0198c481-3e2b-7000-8000-000000000036",
+        },
+        warnings: [],
+    };
+}
+
+async function replacementFlow(mcp: ScriptedMcp, confirmed = true) {
+    const search = await mcp.call("borrower.search", { query: "Replacement Borrower" });
+    if (search.resolution !== "unique") return { outcome: "stopped", stopReason: "replacement-borrower-ambiguous" } as const;
+    await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A });
+    let preview: Record<string, unknown>;
+    try {
+        preview = await mcp.call("loan.replacement.preview", {
+            oldLoanPublicId: LOAN_A,
+            replacementDraftPublicId: DRAFT,
+            reason: "Correct contract start date while preserving the first due date",
+        });
+    } catch (error) {
+        if (error instanceof ScriptedMcpError && /DOWNSTREAM|DRAFT/u.test(error.code)) {
+            return { outcome: "stopped", stopReason: "replacement-downstream-activity" } as const;
+        }
+        throw error;
+    }
+    mcp.presentLoanReplacement(preview);
+    mcp.recordLoanReplacementConfirmation(confirmed);
+    if (!confirmed) return { outcome: "stopped", stopReason: "replacement-confirmation-required" } as const;
+    try {
+        await mcp.call("loan.replacement.execute", {
+            replacementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            expectedOldBalanceVersion: preview.oldBalanceVersion,
+            expectedReplacementDraftVersion: preview.replacementDraftVersion,
+            confirmed: true,
+            reason: "Owner confirmed the exact fresh no-cash replacement proposal",
+            idempotencyKey: "loan-replacement-execute-20260817-1",
+        });
+        return { outcome: "completed" } as const;
+    } catch (error) {
+        if (!(error instanceof ScriptedMcpError) || !/STALE|EXPIRED/u.test(error.code)) throw error;
+        await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A });
+        const fresh = await mcp.call("loan.replacement.preview", {
+            oldLoanPublicId: LOAN_A,
+            replacementDraftPublicId: DRAFT,
+            reason: "Correct contract start date while preserving the first due date",
+        });
+        mcp.presentLoanReplacement(fresh);
+        mcp.recordLoanReplacementConfirmation(false);
+        return { outcome: "stopped", stopReason: "fresh-replacement-confirmation-required" } as const;
     }
 }
 
@@ -1202,6 +1288,53 @@ type Scenario = {
 };
 
 const SCENARIOS: Record<string, Scenario> = {
+    "loan-replacement-execute": {
+        script: [
+            { name: "borrower.search", arguments: { query: "Replacement Borrower" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_A, name: "fixture" }] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: BORROWER_A, name: "fixture" }, aliases: [], loans: [] } },
+            { name: "loan.replacement.preview", arguments: { oldLoanPublicId: LOAN_A, replacementDraftPublicId: DRAFT, reason: "Correct contract start date while preserving the first due date" }, result: replacementPreviewResult() },
+            { name: "loan.replacement.execute", arguments: { replacementPublicId: REPLACEMENT, previewHash: PREVIEW_HASH, expectedOldBalanceVersion: BALANCE_VERSION, expectedReplacementDraftVersion: BALANCE_VERSION, confirmed: true, reason: "Owner confirmed the exact fresh no-cash replacement proposal", idempotencyKey: "loan-replacement-execute-20260817-1" }, result: { replacementPublicId: REPLACEMENT, oldLoanPublicId: LOAN_A, replacementLoanPublicId: DRAFT, status: "executed", auditPublicId: REPLACEMENT_AUDIT, correlationId: REPLACEMENT_AUDIT } },
+        ],
+        run: (mcp) => replacementFlow(mcp),
+    },
+    "loan-replacement-missing-confirmation": {
+        script: [
+            { name: "borrower.search", arguments: { query: "Replacement Borrower" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_A, name: "fixture" }] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: BORROWER_A, name: "fixture" }, aliases: [], loans: [] } },
+            { name: "loan.replacement.preview", arguments: { oldLoanPublicId: LOAN_A, replacementDraftPublicId: DRAFT, reason: "Correct contract start date while preserving the first due date" }, result: replacementPreviewResult() },
+        ],
+        run: (mcp) => replacementFlow(mcp, false),
+    },
+    "loan-replacement-stale-preview": {
+        script: [
+            { name: "borrower.search", arguments: { query: "Replacement Borrower" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_A, name: "fixture" }] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: BORROWER_A, name: "fixture" }, aliases: [], loans: [] } },
+            { name: "loan.replacement.preview", arguments: { oldLoanPublicId: LOAN_A, replacementDraftPublicId: DRAFT, reason: "Correct contract start date while preserving the first due date" }, result: replacementPreviewResult() },
+            { name: "loan.replacement.execute", arguments: { replacementPublicId: REPLACEMENT, previewHash: PREVIEW_HASH, expectedOldBalanceVersion: BALANCE_VERSION, expectedReplacementDraftVersion: BALANCE_VERSION, confirmed: true, reason: "Owner confirmed the exact fresh no-cash replacement proposal", idempotencyKey: "loan-replacement-execute-20260817-1" }, error: { code: "REPLACEMENT_PREVIEW_STALE", message: "Replacement state changed", retryable: false, reviewRequired: true, details: {} } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: BORROWER_A, name: "fixture" }, aliases: [], loans: [] } },
+            { name: "loan.replacement.preview", arguments: { oldLoanPublicId: LOAN_A, replacementDraftPublicId: DRAFT, reason: "Correct contract start date while preserving the first due date" }, result: replacementPreviewResult() },
+        ],
+        run: (mcp) => replacementFlow(mcp),
+    },
+    "loan-replacement-downstream-activity": {
+        script: [
+            { name: "borrower.search", arguments: { query: "Replacement Borrower" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_A, name: "fixture" }] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: BORROWER_A, name: "fixture" }, aliases: [], loans: [] } },
+            { name: "loan.replacement.preview", arguments: { oldLoanPublicId: LOAN_A, replacementDraftPublicId: DRAFT, reason: "Correct contract start date while preserving the first due date" }, error: { code: "REPLACEMENT_DRAFT_DOWNSTREAM_ACTIVITY", message: "Replacement draft has downstream activity", retryable: false, reviewRequired: true, details: {} } },
+        ],
+        run: (mcp) => replacementFlow(mcp),
+    },
+    "loan-replacement-direct-status-mutation": {
+        script: [
+            { name: "borrower.search", arguments: { query: "Replacement Borrower" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_A, name: "fixture" }] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: BORROWER_A, name: "fixture" }, aliases: [], loans: [] } },
+        ],
+        run: async (mcp) => {
+            await mcp.call("borrower.search", { query: "Replacement Borrower" });
+            await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A });
+            return { outcome: "stopped", stopReason: "replacement-direct-status-mutation-forbidden" } as const;
+        },
+    },
     "commission-no-agent-activation": {
         script: [{ name: "loan.commission-participant.list", arguments: { loanPublicId: LOAN_A }, result: { items: [] } }],
         run: async (mcp) => { await mcp.call("loan.commission-participant.list", { loanPublicId: LOAN_A }); return { outcome: "completed" } as const; },

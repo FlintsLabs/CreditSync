@@ -1,5 +1,16 @@
 # CreditSync Plugin Changelog
 
+## 7.1.0 - 2026-08-17
+
+### Added
+
+- Added the closed `loan.replacement.preview`, explicitly confirmed/idempotent `loan.replacement.execute`, and compensating `loan.replacement.reverse` tools with public-only lineage, audit, and correlation fields.
+- Added executable inspect-preview-confirm-execute and stop-boundary evals for missing confirmation, stale previews, downstream activity, and forbidden direct status mutation.
+
+### Changed
+
+- Froze the additive 78-tool MCP contract and synchronized replacement financial rules and orchestration guidance.
+
 ## 7.0.0 - 2026-08-14
 
 ### Added

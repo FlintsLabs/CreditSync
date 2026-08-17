@@ -34,6 +34,14 @@ This example is a contract fixture, not permission to derive a live renewal from
 - Renewal reversal is blocked while the replacement loan has active downstream transactions, adjustments, or funding changes.
 - MCP may list funding sources but never create or mutate them.
 
+## Atomic scheduled-loan replacement
+
+- Replacement is a backend-owned `preview → explicit human confirmation → execute` workflow between one active scheduled loan and one existing funded draft for the same borrower and owner. Use only public UUIDs.
+- `loan.replacement.preview` returns the exact correction, zero/no cash movement, old and replacement lifecycle effects, funding public ID, schedule dates, expiry, preview hash, and both current versions. Display every returned value; never recreate the accounting calculation or use a preview to mutate status.
+- `loan.replacement.execute` requires literal `confirmed: true`, the exact fresh replacement public ID/hash/both versions, a non-blank reason, and a stable idempotency key. A stale/expired/mismatched preview, funding mismatch, or any downstream activity stops the workflow and requires re-inspection plus fresh confirmation.
+- Execution is the only way to atomically append correction history, activate the existing draft, cancel remaining old schedules, and mark the old loan `replaced`. Never call ordinary activation, create another loan, or directly edit status/schedules/balances to simulate it.
+- `loan.replacement.reverse` requires a separate explicit confirmation, non-blank reason, and new stable idempotency key. It creates compensating records only when the authoritative downstream check is clear; posted payments, actual payouts, or dependent workflows block reversal.
+
 ## Loan disbursements
 
 - A loan disbursement is an actual, append-only ledger event. It does not create, recalculate, or mutate the approved loan schedule.

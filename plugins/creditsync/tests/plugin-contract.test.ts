@@ -18,7 +18,7 @@ async function json(path: string) {
     return JSON.parse(await readFile(resolve(pluginRoot, path), "utf8")) as Record<string, unknown>;
 }
 
-describe("CreditSync plugin 7.0.0 contract", () => {
+describe("CreditSync plugin 7.1.0 contract", () => {
     test("exposes the documented local validation command", async () => {
         const packageManifest = await json("package.json");
         expect(packageManifest.private).toBe(true);
@@ -28,7 +28,7 @@ describe("CreditSync plugin 7.0.0 contract", () => {
     test("manifest exposes only the private app and orchestration skills", async () => {
         const manifest = await json(".codex-plugin/plugin.json");
         expect(manifest.name).toBe("creditsync");
-        expect(manifest.version).toBe("7.0.0");
+        expect(manifest.version).toBe("7.1.0");
         expect(manifest.skills).toBe("./skills/");
         expect(manifest.apps).toBe("./.app.json");
         expect(manifest).not.toHaveProperty("mcpServers");
@@ -123,9 +123,9 @@ describe("CreditSync plugin 7.0.0 contract", () => {
     test("frozen full MCP metadata matches an actual MCP tools/list response", async () => {
         const contract = await json("references/mcp-tool-contract.json") as unknown as FrozenMcpContract;
         expect(contract.schemaVersion).toBe("1.0");
-        expect(contract.compatibility).toBe("Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 7.0.0; breaking changes require plugin 8.0.0.");
+        expect(contract.compatibility).toBe("Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 7.1.0; breaking changes require plugin 8.0.0.");
         expect(contract.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
-        expect(contract.tools).toHaveLength(75);
+        expect(contract.tools).toHaveLength(78);
         expect(contract.tools.every((tool) => tool.inputSchema && tool.outputSchema && tool.annotations)).toBe(true);
         const advertised = await captureAdvertisedMcpContract();
         expect(canonicalContractJson(contract)).toBe(canonicalContractJson(advertised));
@@ -193,6 +193,7 @@ describe("CreditSync plugin 7.0.0 contract", () => {
             "payment-split-borrowers-intermediary",
             "payment-partial",
             "loan-draft-activation",
+            "loan-replacement-execute",
             "floating-rate-scheduled-change",
             "floating-rate-missing-confirmation",
             "floating-settlement-execute",
@@ -247,9 +248,13 @@ describe("CreditSync plugin 7.0.0 contract", () => {
             "restructure-unexpected-additional-cash",
             "waiver-missing-reason",
             "restructure-unsafe-reversal",
+            "loan-replacement-missing-confirmation",
+            "loan-replacement-stale-preview",
+            "loan-replacement-downstream-activity",
+            "loan-replacement-direct-status-mutation",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
-        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(29);
-        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(45);
+        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(30);
+        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(49);
     });
 
     test("floating settlement skill preserves exact composition and all execution stop gates", async () => {

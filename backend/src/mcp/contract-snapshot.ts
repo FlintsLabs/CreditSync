@@ -81,7 +81,7 @@ export async function captureAdvertisedMcpContract(): Promise<FrozenMcpContract>
         return {
             schemaVersion: "1.0",
             sourceOfTruth: "Local MCP SDK Client tools/list response from backend/src/mcp/server.ts",
-            compatibility: "Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 7.0.0; breaking changes require plugin 8.0.0.",
+            compatibility: "Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 7.1.0; breaking changes require plugin 8.0.0.",
             tools: response.tools.map((tool) => ({
                 name: tool.name,
                 ...(tool.title ? { title: tool.title } : {}),

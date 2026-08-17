@@ -813,6 +813,8 @@ describe("CreditSync stateless MCP contract", () => {
             "loan.interest-rate.execute",
             "loan.settlement.execute",
             "loan.settlement.reverse",
+            "loan.replacement.execute",
+            "loan.replacement.reverse",
             "loan.disbursement.update",
             "loan.disbursement.post",
             "loan.disbursement.reverse",
@@ -894,6 +896,66 @@ describe("CreditSync stateless MCP contract", () => {
         });
         expect(unknown.isError).toBe(true);
         expect(unknown.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: "text" })]));
+        await client.close();
+    });
+
+    // Break caught: replacement lifecycle calls are either missing from the public MCP
+    // catalog or can bypass the exact preview/confirmation/idempotency contract.
+    test("advertises closed atomic loan replacement lifecycle contracts", async () => {
+        const baseUrl = await startServer({});
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const tools = new Map((await client.listTools()).tools.map((tool) => [tool.name, tool]));
+
+        expect(tools.get("loan.replacement.preview")?.annotations).toMatchObject({
+            readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+        });
+        for (const name of ["loan.replacement.execute", "loan.replacement.reverse"]) {
+            expect(tools.get(name)?.annotations).toMatchObject({
+                readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false,
+            });
+        }
+
+        const preview = tools.get("loan.replacement.preview")?.inputSchema as { required?: string[]; additionalProperties?: boolean } | undefined;
+        expect(preview).toMatchObject({ additionalProperties: false });
+        expect(preview?.required?.sort()).toEqual(["oldLoanPublicId", "reason", "replacementDraftPublicId"]);
+
+        const execute = tools.get("loan.replacement.execute")?.inputSchema as {
+            required?: string[]; additionalProperties?: boolean; properties?: { confirmed?: { const?: unknown } };
+        } | undefined;
+        expect(execute).toMatchObject({ additionalProperties: false });
+        expect(execute?.required?.sort()).toEqual([
+            "confirmed", "expectedOldBalanceVersion", "expectedReplacementDraftVersion", "idempotencyKey",
+            "previewHash", "reason", "replacementPublicId",
+        ]);
+        expect(execute?.properties?.confirmed?.const).toBe(true);
+
+        const reverse = tools.get("loan.replacement.reverse")?.inputSchema as { required?: string[]; additionalProperties?: boolean } | undefined;
+        expect(reverse).toMatchObject({ additionalProperties: false });
+        expect(reverse?.required?.sort()).toEqual(["idempotencyKey", "reason", "replacementPublicId"]);
+
+        const unconfirmed = await client.callTool({
+            name: "loan.replacement.execute",
+            arguments: {
+                replacementPublicId: BORROWER_ID,
+                previewHash: PREVIEW_HASH,
+                expectedOldBalanceVersion: BALANCE_VERSION,
+                expectedReplacementDraftVersion: BALANCE_VERSION,
+                confirmed: false,
+                reason: "Owner reviewed exact replacement proposal",
+                idempotencyKey: "replacement-execute-missing-confirmation",
+            },
+        });
+        expect(unconfirmed.isError).toBe(true);
+        const missingReason = await client.callTool({
+            name: "loan.replacement.reverse",
+            arguments: {
+                replacementPublicId: BORROWER_ID,
+                reason: "   ",
+                idempotencyKey: "replacement-reverse-missing-reason",
+            },
+        });
+        expect(missingReason.isError).toBe(true);
         await client.close();
     });
 

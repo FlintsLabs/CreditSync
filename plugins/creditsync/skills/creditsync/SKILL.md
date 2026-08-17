@@ -13,7 +13,7 @@ Use CreditSync as an orchestration surface over its private MCP app. The backend
 
 1. Confirm that the CreditSync app exposes the required named tools before promising an action. If a tool is unavailable or authorization fails, stop and report the missing connection or permission.
 2. Inspect before every write. Search and retrieve the current borrower, intake, loan, proposal, or renewal by public UUID; never invent IDs or select a tenant/actor.
-3. Use `payment.preview`, `loan.preview`, `loan.interest-rate.preview`, `loan.settlement.preview`, `renewal.preview`, `loan.disbursement.list`, or `intermediary.disbursement.preview` for accounting outcomes. Never replace backend results with agent arithmetic.
+3. Use `payment.preview`, `loan.preview`, `loan.interest-rate.preview`, `loan.settlement.preview`, `loan.replacement.preview`, `renewal.preview`, `loan.disbursement.list`, or `intermediary.disbursement.preview` for accounting outcomes. Never replace backend results with agent arithmetic.
 4. Present exact money strings, targets, warnings, expiry, cash direction, and proposal/preview identity before a financial write.
 5. Re-read or re-preview after state changes. After a disbursement draft update, re-list it and obtain fresh confirmation because any earlier confirmation is invalid. Post only the latest inspected backend result.
 6. For a supplied payment-slip image, require verified evidence to be `ready` before `payment.preview` or `payment.post`; if no image is supplied, data-only payment capture may skip evidence.
@@ -42,6 +42,7 @@ Every activation, post, write reversal, and renewal uses explicit public IDs. Su
 - Borrower identity, aliases, create/update: use `manage-borrowers`.
 - Intake, optional evidence, matching, posting, or payment reversal: use `reconcile-payments`.
 - Loan preview, draft, and activation: use `manage-loans`.
+- Atomic scheduled-loan replacement into an existing funded draft: use `manage-loans`.
 - Floating-loan interest timeline inspection and scheduled changes: use `manage-floating-interest-rates`.
 - Floating-loan exact close-out preview and execution: use `settle-floating-loans`.
 - Actual loan disbursement draft creation/editing, optional payout evidence, variance review, posting, or reversal: use `manage-disbursements`.
@@ -58,4 +59,5 @@ Use the plugin references for the frozen tool contract, matching policy, financi
 - Posting a payment after a supplied image was not uploaded/finalized: stop when evidence is missing, unavailable, duplicate, mismatched, or not ready. Data-only requests without a supplied image remain valid.
 - Creating a borrower to escape an ambiguous nickname: resolve candidates first.
 - Editing posted transactions or active terms: use a supported reversal, renewal, or new draft flow.
+- Directly changing a loan to `replaced` or a draft to `active`: stop; only `loan.replacement.execute` may make the coordinated append-only replacement transition after a fresh explicit confirmation.
 - Logging or echoing raw QR payloads, evidence contents, bearer tokens, or sensitive identity fields.

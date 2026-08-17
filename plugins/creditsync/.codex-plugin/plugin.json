@@ -1,7 +1,7 @@
 {
   "name": "creditsync",
-  "version": "7.0.0",
-  "description": "Private CreditSync borrower, payment, intermediary-remittance and disbursement, floating-interest settlement, renewal, and reversal workflows for Codex.",
+  "version": "7.1.0",
+  "description": "Private CreditSync borrower, payment, loan replacement, intermediary-remittance and disbursement, floating-interest settlement, renewal, and reversal workflows for Codex.",
   "author": {
     "name": "CreditSync"
   },
@@ -32,6 +32,7 @@
       "Review the CreditSync payment inbox.",
       "Find a borrower and show outstanding loans.",
       "Preview a daily-loan renewal.",
+      "Preview an atomic scheduled-loan replacement.",
       "Preview a single-payment loan settlement and replacement contract.",
       "Record a loan disbursement with evidence.",
       "Record an assigned intermediary three-leg disbursement with evidence.",

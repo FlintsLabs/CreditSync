@@ -25,6 +25,7 @@ import type { EvidenceStorageGateway } from "../services/payment-service";
 import type { DisbursementEvidenceStorageGateway } from "../services/loan-disbursement-service";
 import type { IntermediaryRemittanceEvidenceGateway } from "../services/intermediary-service";
 import type { TransferEvidenceStorageGateway } from "../services/transfer-evidence-service";
+import { seedReplacementFixture } from "../services/loan-replacement-test-fixture";
 import { createDefaultMcpHttpPlugin } from "./default";
 import { MCP_TOOL_NAMES, type McpToolName } from "./server";
 
@@ -106,6 +107,64 @@ function expectWriteAuditMetadata(data: Record<string, unknown>) {
 }
 
 describe("default MCP adapter integration", () => {
+    // Break caught: the default MCP adapters bypass the replacement service or lose
+    // exact preview versions, stable idempotency, and audit/correlation lineage.
+    integrationTest("previews and executes a confirmed atomic loan replacement through direct service handlers", async () => {
+        const fixture = await seedReplacementFixture({ tenantId: TENANT_ID });
+        await db.update(users).set({ email: ACTOR_EMAIL }).where(eq(users.id, fixture.actor.id));
+        const { client } = await startDefaultServer();
+
+        const preview = resultData(await client.callTool({
+            name: "loan.replacement.preview",
+            arguments: {
+                oldLoanPublicId: fixture.oldLoan.publicId,
+                replacementDraftPublicId: fixture.replacementDraft.publicId,
+                reason: "Correct contract start date while preserving the first due date",
+            },
+        })).data;
+        expect(preview).toMatchObject({
+            schemaVersion: 1,
+            cash: { direction: "none", amount: "0.00" },
+            correction: { principal: "36000.00", interest: "4200.00", fee: "0.00", penalty: "0.00" },
+            oldLoan: { loanPublicId: fixture.oldLoan.publicId, statusAfter: "replaced" },
+            replacement: {
+                loanPublicId: fixture.replacementDraft.publicId,
+                statusAfter: "active",
+                firstDueDate: "2026-07-12",
+            },
+            auditPublicId: expect.stringMatching(UUID_PATTERN),
+            correlationId: expect.stringMatching(UUID_PATTERN),
+        });
+        expect(preview).not.toHaveProperty("id");
+
+        const executeArgs = {
+            replacementPublicId: String(preview.publicId),
+            previewHash: String(preview.previewHash),
+            expectedOldBalanceVersion: String(preview.oldBalanceVersion),
+            expectedReplacementDraftVersion: String(preview.replacementDraftVersion),
+            confirmed: true,
+            reason: "Correct contract start date while preserving the first due date",
+            idempotencyKey: "mcp-replacement-execute-1",
+        };
+        const executed = resultData(await client.callTool({ name: "loan.replacement.execute", arguments: executeArgs }));
+        const replayed = resultData(await client.callTool({ name: "loan.replacement.execute", arguments: executeArgs }));
+        expect(executed.data).toEqual(replayed.data);
+        expect(executed).toMatchObject({
+            data: {
+                replacementPublicId: preview.publicId,
+                oldLoanPublicId: fixture.oldLoan.publicId,
+                replacementLoanPublicId: fixture.replacementDraft.publicId,
+                status: "executed",
+                auditPublicId: expect.stringMatching(UUID_PATTERN),
+                correlationId: expect.stringMatching(UUID_PATTERN),
+            },
+            auditPublicIds: [expect.stringMatching(UUID_PATTERN)],
+            correlationId: expect.stringMatching(UUID_PATTERN),
+        });
+
+        await client.close();
+    });
+
     // Break caught: the real MCP adapter cannot complete the inspect-first borrower/intermediary
     // assignment -> exact group/events -> three finalized slips -> zero-variance preview ->
     // explicitly confirmed atomic post workflow through direct application-service calls.
@@ -1267,6 +1326,27 @@ describe("default MCP adapter integration", () => {
             idempotencyKey: "mcp-waiver-reverse",
         });
         await call("funding-source.list", { status: "active" });
+
+        const replacementFixture = await seedReplacementFixture({ tenantId: TENANT_ID });
+        const replacementPreview = (await call("loan.replacement.preview", {
+            oldLoanPublicId: replacementFixture.oldLoan.publicId,
+            replacementDraftPublicId: replacementFixture.replacementDraft.publicId,
+            reason: "MCP all-tools atomic replacement",
+        })).data;
+        const replacementExecution = (await call("loan.replacement.execute", {
+            replacementPublicId: String(replacementPreview.publicId),
+            previewHash: String(replacementPreview.previewHash),
+            expectedOldBalanceVersion: String(replacementPreview.oldBalanceVersion),
+            expectedReplacementDraftVersion: String(replacementPreview.replacementDraftVersion),
+            confirmed: true,
+            reason: "MCP all-tools atomic replacement",
+            idempotencyKey: "mcp-all-tools-replacement-execute",
+        })).data;
+        await call("loan.replacement.reverse", {
+            replacementPublicId: String(replacementExecution.replacementPublicId),
+            reason: "MCP all-tools atomic replacement reversal",
+            idempotencyKey: "mcp-all-tools-replacement-reverse",
+        });
 
         expect([...new Set(called)].sort()).toEqual([...MCP_TOOL_NAMES].sort());
         expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length);

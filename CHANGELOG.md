@@ -3,6 +3,7 @@
 ## v0.3.17 - 2026-08-17
 
 ### Added
+- Added frozen 78-tool MCP/plugin support for atomic scheduled-loan replacement preview, explicitly confirmed idempotent execution, and safe compensating reversal with public-only lineage, exact decimal proposal outputs, audit/correlation propagation, and executable stop-boundary evals.
 - Added authenticated, tenant-scoped loan replacement preview, execute, and reversal REST commands with closed public schemas, idempotency/correlation/audit responses, and replacement lineage across loan, list, and borrower-history projections.
 - Added forward migration 0045 for canonical Bangkok-dated loan-replacement proposals, fail-closed legacy backfill, strict database proposal validation, and tenant-scoped execution/reversal audit references.
 - Added forward migration 0044 to harden the loan-replacement ledger with durable execution/reversal request hashes, actor/request/correlation/audit metadata, lifecycle checks, correction reversal provenance, and immutable database guards.

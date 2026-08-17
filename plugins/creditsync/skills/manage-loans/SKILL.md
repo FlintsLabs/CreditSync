@@ -21,6 +21,17 @@ Loan creation is `preview → draft → activate`. Terms become immutable after 
 
 If requested terms change at any point, start again at `loan.preview`; do not activate a draft based on a different preview.
 
+## Atomic scheduled-loan replacement
+
+Use this only to replace an accessible active scheduled loan with an already-created, funded replacement draft for the same borrower and owner. It is not an edit, a direct status change, or a shortcut around activation.
+
+1. Resolve the borrower with `borrower.search` and inspect `borrower.portfolio`. Retain only public UUIDs.
+2. Call `loan.replacement.preview` with the active old-loan UUID, existing replacement-draft UUID, and a specific reason. Show the returned replacement public ID, preview hash, both versions, expiry, exact old before/after collectible balances, correction components, `cash.direction`/`cash.amount`, replacement funding public ID, dates, schedule totals, and warnings. Never calculate or alter those values.
+3. Stop for any stale/expired preview, warning requiring review, borrower/owner/funding mismatch, or downstream activity. Re-inspect and request a fresh preview; previous approval never carries forward.
+4. Obtain explicit human confirmation of that exact fresh preview. Then call `loan.replacement.execute` with literal `confirmed: true`, exactly the returned public ID/hash/versions, a non-blank reason, and a stable idempotency key. Reuse the key only for an identical retry.
+5. Report only public lineage IDs plus the returned audit and correlation IDs. Do not expose internal IDs. The backend atomically activates the draft, appends corrections, cancels old schedule obligations, and marks the old loan `replaced`; do not call `loan.activate`, create another draft, or mutate either status directly.
+6. Reversal is exceptional: inspect the exact executed result, obtain a separate non-blank reason and explicit confirmation, then call `loan.replacement.reverse` with a new stable idempotency key. Stop if the backend reports any replacement-loan downstream activity; reversal is compensating and never deletes history.
+
 ## Commission participants
 
 Before activation or any participant change, call `loan.commission-participant.list`. Having no commission participant is valid; never invent one. For an approved agreement, `loan.commission-participant.add`, `loan.commission-participant.update`, and `loan.commission-participant.end` are effective-dated append-only writes. Show the exact intermediary, rate, role, effective boundary, and reason where applicable, then require explicit confirmation and a stable idempotency key for the actual write. Reuse a key only for an identical retry, and never rewrite historical participant versions or auto-apply a new agreement to old payments.
@@ -47,6 +58,7 @@ Payment source attribution is independent from the participant agreement. Inspec
 | Change participant | list → approval → `loan.commission-participant.add` / `loan.commission-participant.update` / `loan.commission-participant.end` | Confirmed, idempotent, effective-dated append |
 | Preview reversal commission | `loan.commission.reverse` with posted reversal payment UUIDs | Read-only; no audit IDs |
 | Edit active terms | inspect and refuse direct edit | Use supported new/correcting flow |
+| Replace active scheduled contract | search → portfolio → `loan.replacement.preview` → exact confirmation → `loan.replacement.execute` | Existing funded draft only; no direct status mutation |
 
 ## Common mistakes
 
@@ -55,5 +67,6 @@ Payment source attribution is independent from the participant agreement. Inspec
 - Quietly creating a second loan while calling it an edit.
 - Passing an internal numeric ID or unverified funding source.
 - Omitting the activation idempotency key or translating a weekly policy into a daily rate.
+- Treating a replacement preview as approval, reusing stale confirmation, or activating the draft directly.
 
 Follow the root `creditsync` skill for inspect-before-write, stale-state handling, and authorization.
