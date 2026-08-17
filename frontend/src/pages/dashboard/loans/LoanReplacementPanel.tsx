@@ -138,7 +138,7 @@ export function LoanReplacementPanel({ oldLoanPublicId, lineage }: { oldLoanPubl
         setBusy(true); setError(null);
         try {
             reverseKey.current ??= crypto.randomUUID();
-            const response = await api.post(`/loans/replacements/${current.replacementPublicId}/reverse`, { reason: reverseReason.trim() }, { headers: { "Idempotency-Key": reverseKey.current } });
+            const response = await api.post(`/loans/replacements/${current.replacementPublicId}/reverse`, { confirmed: true, reason: reverseReason.trim() }, { headers: { "Idempotency-Key": reverseKey.current } });
             const next = response.data as ReplacementResult;
             setResult(next); invalidateLoanQueries([next.oldLoanPublicId, next.replacementLoanPublicId]);
         } catch (caught) {

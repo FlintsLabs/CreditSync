@@ -161,6 +161,6 @@ describe("LoanReplacementPanel", () => {
         await user.type(screen.getByLabelText(/reversal reason/i), "Undo duplicate replacement");
         await user.click(screen.getByLabelText(/confirm this compensating replacement reversal/i));
         await user.click(reverse);
-        await waitFor(() => expect(api.post).toHaveBeenLastCalledWith(`/loans/replacements/${REPLACEMENT_ID}/reverse`, { reason: "Undo duplicate replacement" }, expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) })));
+        await waitFor(() => expect(api.post).toHaveBeenLastCalledWith(`/loans/replacements/${REPLACEMENT_ID}/reverse`, { confirmed: true, reason: "Undo duplicate replacement" }, expect.objectContaining({ headers: expect.objectContaining({ "Idempotency-Key": expect.any(String) }) })));
     });
 });

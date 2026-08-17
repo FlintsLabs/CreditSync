@@ -92,15 +92,15 @@ describe("floating weekly and intermediary integration migration lineage", () =>
     test("keeps immutable main 0027 through 0035 followed by one monotonic 0036–0038 tail", async () => {
         // Break caught: a deployed main migration is replaced/reordered, or Drizzle skips 0036 because its timestamp predates 0035.
         const entries = (await journal()).entries;
-        expect(entries.slice(27).map((entry) => entry.tag)).toEqual([
+        expect(entries.slice(27, 39).map((entry) => entry.tag)).toEqual([
             ...authoritativeMainTail,
             integrationTag,
             borrowerUploadIntentMigrationTag,
             productionLoanSchemaReconciliationMigrationTag,
         ]);
-        expect(entries.slice(27).map((entry) => entry.idx)).toEqual([27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38]);
-        const integrationEntry = entries.at(-1)!;
-        expect(integrationEntry.when).toBeGreaterThan(entries.at(-2)!.when);
+        expect(entries.slice(27, 39).map((entry) => entry.idx)).toEqual([27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38]);
+        const integrationIndex = entries.findIndex((entry) => entry.tag === integrationTag);
+        expect(entries[integrationIndex]!.when).toBeGreaterThan(entries[integrationIndex - 1]!.when);
         expect(entries.filter((entry) => entry.tag === integrationTag)).toHaveLength(1);
         expect(entries.filter((entry) => entry.tag === borrowerUploadIntentMigrationTag)).toHaveLength(1);
         expect(entries.filter((entry) => entry.tag === productionLoanSchemaReconciliationMigrationTag)).toHaveLength(1);

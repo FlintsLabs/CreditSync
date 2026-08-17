@@ -261,6 +261,7 @@ export function createDefaultMcpToolHandlers(
     }),
     "loan.replacement.reverse": (ctx, input) => reverseLoanReplacement(ctx, {
         replacementPublicId: asString(input, "replacementPublicId"),
+        confirmed: input.confirmed as true,
         reason: asString(input, "reason"),
     }),
     "loan.disbursement.list": (ctx, input) => listLoanDisbursements(ctx, asString(input, "loanPublicId")),

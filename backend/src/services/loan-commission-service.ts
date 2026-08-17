@@ -182,10 +182,10 @@ async function assertRateCapacity(executor: DbExecutor, ctx: CommandContext, loa
         eq(loans.tenantId, ctx.tenantId),
         eq(loans.id, loanId),
     ) });
-    if (!lockedLoan || lockedLoan.status === "replaced") {
+    if (!lockedLoan || lockedLoan.status === "replaced" || lockedLoan.status === "cancelled") {
         throw new DomainError(
             "LOAN_COMMISSION_LOCKED",
-            "Commission participation cannot be changed for a replaced loan",
+            "Commission participation cannot be changed for a terminal loan",
             409,
         );
     }

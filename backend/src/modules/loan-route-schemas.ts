@@ -100,5 +100,6 @@ export const loanReplacementExecuteBody = t.Object({
 }, closed);
 
 export const loanReplacementReverseBody = t.Object({
+    confirmed: t.Literal(true),
     reason: t.String(),
 }, closed);

@@ -120,7 +120,7 @@ export async function createPaymentAttribution(ctx: CommandContext, input: Creat
             eq(loans.id, candidatePayment.loanId),
         ) });
         if (!parent) throw new DomainError("PAYMENT_NOT_FOUND", "Payment not found", 404);
-        if (parent.status === "replaced") {
+        if (parent.status === "replaced" || parent.status === "cancelled") {
             throw new DomainError(
                 "PAYMENT_PARENT_TERMINAL",
                 "Payment attribution cannot be created for a replaced loan",

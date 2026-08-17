@@ -15,6 +15,10 @@
 - Added the approved design for an atomic, reversible scheduled-loan replacement workflow with a `replaced` terminal status, exact correction records, existing-draft activation, funding linkage, lineage, synchronized MCP/REST interfaces, and fail-closed downstream checks.
 
 ### Fixed
+- Required explicit `confirmed: true` at every REST, MCP, and service boundary before compensating replacement reversal, and corrected MCP preview annotations to reflect its durable preview/audit writes.
+- Blocked commission participants, intermediary assignments, intermediary collections, and payment attributions from being appended to the cancelled replacement child after a safe reversal.
+- Kept historical schema and migration-lineage regressions forward-compatible with immutable correction rows and additive migrations after their originally pinned catalog tails.
+- Made the legacy-close versus replacement concurrency regression accept either row-lock winner while proving the losing command fails closed and cannot overwrite the committed terminal state.
 - Aligned scheduled-loan replacement presentation across REST, MCP, plugin, and Web by nesting the canonical bank-profile name in the replacement contract, preserving structured correction-warning semantics, honoring nested review-required blockers, formatting Bangkok dates/expiry with Gregorian dates, durably invalidating the list plus both loan-detail queries after execute/reverse, and allowing a fresh preview after reversed lineage reloads.
 - Fixed the frozen MCP `borrower.portfolio` loan schema to expose strict public-only nullable replacement lineage, with real database coverage for active/draft, executed, and reversed replacement history plus fail-closed orchestration scope checks.
 - Normalized closed-schema loan replacement REST validation failures to the stable public DomainError envelope and added exact preview, owner, and cross-tenant access regressions.

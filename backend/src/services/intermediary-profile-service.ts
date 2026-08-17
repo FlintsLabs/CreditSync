@@ -441,10 +441,10 @@ export async function assignIntermediaryToLoan(ctx: CommandContext, loanPublicId
                 FOR UPDATE
             `);
             const loan = await loanFor(ctx, loanPublicId, actor, tx);
-            if (loan.status === "replaced") {
+            if (loan.status === "replaced" || loan.status === "cancelled") {
                 throw new DomainError(
                     "LOAN_INTERMEDIARY_ASSIGNMENT_LOCKED",
-                    "Intermediaries cannot be assigned to a replaced loan",
+                    "Intermediaries cannot be assigned to a terminal loan",
                     409,
                 );
             }

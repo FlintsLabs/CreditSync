@@ -908,7 +908,7 @@ describe("CreditSync stateless MCP contract", () => {
         const tools = new Map((await client.listTools()).tools.map((tool) => [tool.name, tool]));
 
         expect(tools.get("loan.replacement.preview")?.annotations).toMatchObject({
-            readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false,
+            readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false,
         });
         for (const name of ["loan.replacement.execute", "loan.replacement.reverse"]) {
             expect(tools.get(name)?.annotations).toMatchObject({
@@ -930,9 +930,12 @@ describe("CreditSync stateless MCP contract", () => {
         ]);
         expect(execute?.properties?.confirmed?.const).toBe(true);
 
-        const reverse = tools.get("loan.replacement.reverse")?.inputSchema as { required?: string[]; additionalProperties?: boolean } | undefined;
+        const reverse = tools.get("loan.replacement.reverse")?.inputSchema as {
+            required?: string[]; additionalProperties?: boolean; properties?: { confirmed?: { const?: unknown } };
+        } | undefined;
         expect(reverse).toMatchObject({ additionalProperties: false });
-        expect(reverse?.required?.sort()).toEqual(["idempotencyKey", "reason", "replacementPublicId"]);
+        expect(reverse?.required?.sort()).toEqual(["confirmed", "idempotencyKey", "reason", "replacementPublicId"]);
+        expect(reverse?.properties?.confirmed?.const).toBe(true);
 
         const unconfirmed = await client.callTool({
             name: "loan.replacement.execute",
@@ -956,6 +959,16 @@ describe("CreditSync stateless MCP contract", () => {
             },
         });
         expect(missingReason.isError).toBe(true);
+        const unconfirmedReverse = await client.callTool({
+            name: "loan.replacement.reverse",
+            arguments: {
+                replacementPublicId: BORROWER_ID,
+                confirmed: false,
+                reason: "Owner has not confirmed this reversal",
+                idempotencyKey: "replacement-reverse-unconfirmed",
+            },
+        });
+        expect(unconfirmedReverse.isError).toBe(true);
         await client.close();
     });
 

@@ -1072,8 +1072,10 @@ export async function executeLoanReplacement(ctx: CommandContext, input: { repla
     });
 }
 
-export async function reverseLoanReplacement(ctx: CommandContext, input: { replacementPublicId: string; reason: string }): Promise<LoanReplacementReversal> {
-    await admin(ctx); const key = idempotencyKey(ctx); const why = reason(input.reason, "REPLACEMENT_REVERSAL_REASON_REQUIRED"); publicId(input.replacementPublicId, "replacementPublicId"); const requestHash = reversalHash({ replacementPublicId: input.replacementPublicId, reason: why });
+export async function reverseLoanReplacement(ctx: CommandContext, input: { replacementPublicId: string; reason: string; confirmed: true }): Promise<LoanReplacementReversal> {
+    await admin(ctx);
+    if (!input.confirmed) throw new DomainError("REPLACEMENT_REVERSAL_CONFIRMATION_REQUIRED", "Explicit replacement reversal confirmation is required", 400);
+    const key = idempotencyKey(ctx); const why = reason(input.reason, "REPLACEMENT_REVERSAL_REASON_REQUIRED"); publicId(input.replacementPublicId, "replacementPublicId"); const requestHash = reversalHash({ replacementPublicId: input.replacementPublicId, reason: why });
     return db.transaction(async tx => {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`loan-replacement:${ctx.tenantId}:reverse-key:${key}`}, 0))`);
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`loan-replacement:${ctx.tenantId}:${input.replacementPublicId}`}, 0))`);

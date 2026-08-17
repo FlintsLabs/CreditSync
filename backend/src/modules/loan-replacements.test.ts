@@ -236,10 +236,17 @@ describe("loan replacement REST lifecycle", () => {
         const health = await getDashboardBorrowerHealth(db, { context: fixture.context("replacement-health"), asOf: new Date() });
         expect(health.map((row) => row.loanPublicId)).toEqual([fixture.replacementDraft.publicId]);
 
+        const unconfirmedReverse = await call(app, `/loans/replacements/${previewPublicId}/reverse`, token, {
+            method: "POST",
+            headers: { "idempotency-key": "replacement-reverse-unconfirmed" },
+            body: JSON.stringify({ confirmed: false, reason: "The prior agreement remains authoritative" }),
+        });
+        expect(unconfirmedReverse.response.status).toBe(422);
+
         const reverse = await call(app, `/loans/replacements/${previewPublicId}/reverse`, token, {
             method: "POST",
             headers: { "idempotency-key": "replacement-reverse", "x-correlation-id": "corr-replacement-reverse" },
-            body: JSON.stringify({ reason: "The prior agreement remains authoritative" }),
+            body: JSON.stringify({ confirmed: true, reason: "The prior agreement remains authoritative" }),
         });
         expect(reverse.response.status, reverse.text).toBe(200);
         expect(reverse.body).toEqual({

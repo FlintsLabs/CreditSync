@@ -1167,6 +1167,7 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
     }).strict(),
     "loan.replacement.reverse": z.object({
         replacementPublicId: uuid,
+        confirmed: z.literal(true),
         reason: shortText,
         idempotencyKey: z.string().trim().min(1).max(200),
     }).strict(),
@@ -1430,7 +1431,6 @@ const readOnlyTools = new Set<McpToolName>([
     "intake.get",
     "intake.list",
     "loan.preview",
-    "loan.replacement.preview",
     "loan.interest-rate.list",
     "loan.disbursement.list",
     "loan.commission-participant.list",

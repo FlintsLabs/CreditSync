@@ -259,7 +259,7 @@ export async function seedReplacementFixture(
         ),
         reverse: (replacementPublicId, key = "replacement-reverse", why = "Reverse replacement") => reverseLoanReplacement(
             context(key),
-            { replacementPublicId, reason: why },
+            { replacementPublicId, reason: why, confirmed: true },
         ),
         counts: async () => {
             const [replacementRows, oldSchedules, replacementSchedules, oldAllocations, replacementAllocations, corrections, executionAudits, reversalAudits, payments, disbursements] = await Promise.all([

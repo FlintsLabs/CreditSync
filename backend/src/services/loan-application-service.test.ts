@@ -3,7 +3,7 @@ import Decimal from "decimal.js";
 import { and, eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { auditLogs, bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanSchedules, loans, transactions, users } from "../db/schema";
+import { auditLogs, bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanReplacements, loanSchedules, loans, transactions, users } from "../db/schema";
 import { loansRoute } from "../modules/loans";
 import type { CommandContext } from "./command-context";
 import { createBorrower } from "./borrower-service";
@@ -763,7 +763,7 @@ describe("loan application service", () => {
 
     // Break caught: close reads `active` without a row lock, replacement commits `replaced`, and
     // the queued unconditional close update then commits `closed` over the replacement marker.
-    integrationTest("serializes legacy close behind replacement execution", async () => {
+    integrationTest("serializes concurrent legacy close and replacement without overwriting terminal state", async () => {
         const fixture = await seedReplacementFixture({ tenantId: "tenant-a" });
         const preview = await fixture.preview();
         const app = new Elysia().use(loansRoute);
@@ -794,12 +794,31 @@ describe("loan application service", () => {
         release();
         await blocker;
 
-        const [execution, close] = await Promise.all([executionPromise, closePromise]);
-        expect(execution).toMatchObject({ status: "executed" });
-        expect(close.response.status, close.text).toBe(409);
-        expect(close.body).toMatchObject({ code: "LOAN_REPLACED" });
-        expect(await db.query.loans.findFirst({ where: eq(loans.id, fixture.oldLoan.id) }))
-            .toMatchObject({ status: "replaced" });
+        const [execution, close] = await Promise.allSettled([executionPromise, closePromise]);
+        const storedLoan = await db.query.loans.findFirst({ where: eq(loans.id, fixture.oldLoan.id) });
+        const storedReplacement = await db.query.loanReplacements.findFirst({
+            where: eq(loanReplacements.publicId, preview.publicId),
+        });
+
+        if (execution.status === "fulfilled") {
+            expect(execution.value).toMatchObject({ status: "executed" });
+            expect(close.status).toBe("fulfilled");
+            if (close.status === "fulfilled") {
+                expect(close.value.response.status, close.value.text).toBe(409);
+                expect(close.value.body).toMatchObject({ code: "LOAN_REPLACED" });
+            }
+            expect(storedLoan).toMatchObject({ status: "replaced" });
+            expect(storedReplacement).toMatchObject({ status: "executed" });
+        } else {
+            expect(execution.reason).toMatchObject({ code: "OLD_LOAN_NOT_REPLACEABLE", status: 409 });
+            expect(close.status).toBe("fulfilled");
+            if (close.status === "fulfilled") {
+                expect(close.value.response.status, close.value.text).toBe(200);
+                expect(close.value.body).toMatchObject({ status: "closed" });
+            }
+            expect(storedLoan).toMatchObject({ status: "closed" });
+            expect(storedReplacement).toMatchObject({ status: "preview" });
+        }
     });
 
     // Break caught: closing the active replacement child mutates its lifecycle, but reversal

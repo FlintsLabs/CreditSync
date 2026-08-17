@@ -228,10 +228,10 @@ export async function createIntermediaryCollection(ctx: CommandContext, input: C
             eq(loans.tenantId, ctx.tenantId),
             eq(loans.id, loan.id),
         ) });
-        if (!lockedLoan || lockedLoan.status === "replaced" || lockedLoan.borrowerId !== borrower.id) {
+        if (!lockedLoan || lockedLoan.status === "replaced" || lockedLoan.status === "cancelled" || lockedLoan.borrowerId !== borrower.id) {
             throw new DomainError(
                 "LOAN_COLLECTION_LOCKED",
-                "Collections cannot be created for a replaced loan",
+                "Collections cannot be created for a terminal loan",
                 409,
             );
         }

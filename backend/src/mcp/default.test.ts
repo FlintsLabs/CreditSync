@@ -189,6 +189,7 @@ describe("default MCP adapter integration", () => {
             name: "loan.replacement.reverse",
             arguments: {
                 replacementPublicId: String(executed.replacementPublicId),
+                confirmed: true,
                 reason: "Undo the replacement after correcting the source terms",
                 idempotencyKey: "mcp-portfolio-replacement-reverse-1",
             },
@@ -1474,6 +1475,7 @@ describe("default MCP adapter integration", () => {
         })).data;
         await call("loan.replacement.reverse", {
             replacementPublicId: String(replacementExecution.replacementPublicId),
+            confirmed: true,
             reason: "MCP all-tools atomic replacement reversal",
             idempotencyKey: "mcp-all-tools-replacement-reverse",
         });

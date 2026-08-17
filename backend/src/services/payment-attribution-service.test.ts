@@ -227,6 +227,24 @@ describe("payment intermediary attribution ledger", () => {
         expect(await db.select().from(paymentIntermediaryAttributions)).toHaveLength(0);
     });
 
+    // Break caught: a reversed replacement child is terminal as `cancelled`, and must not accept
+    // a late attribution merely because the guard only recognized the `replaced` terminal state.
+    integrationTest("rejects attribution after the parent loan is cancelled", async () => {
+        const seeded = await seed("attribution-cancelled-parent");
+        await db.update(loans).set({ status: "cancelled" }).where(eq(loans.id, seeded.loan.id));
+
+        await expect(createPaymentAttribution(ctx(seeded.actor, "cancelled-parent"), {
+            paymentPublicId: seeded.payment.publicId,
+            sourceKind: "direct",
+            amount: "1.00",
+        })).rejects.toMatchObject({
+            code: "PAYMENT_PARENT_TERMINAL",
+            status: 409,
+            details: { blockerPublicIds: [seeded.loan.publicId] },
+        });
+        expect(await db.select().from(paymentIntermediaryAttributions)).toHaveLength(0);
+    });
+
     // Break caught: attribution validates `active` before a lock wait, then appends after a
     // concurrent writer commits `replaced` on the parent.
     integrationTest("serializes attribution behind a concurrent parent replacement", async () => {

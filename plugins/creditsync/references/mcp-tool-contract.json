@@ -8237,9 +8237,9 @@
     {
       "annotations": {
         "destructiveHint": false,
-        "idempotentHint": true,
+        "idempotentHint": false,
         "openWorldHint": false,
-        "readOnlyHint": true,
+        "readOnlyHint": false,
         "title": "Loan Replacement Preview"
       },
       "description": "Preview an atomic scheduled-loan replacement from an active loan into an existing funded draft.",
@@ -8856,6 +8856,10 @@
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false,
         "properties": {
+          "confirmed": {
+            "const": true,
+            "type": "boolean"
+          },
           "idempotencyKey": {
             "maxLength": 200,
             "minLength": 1,
@@ -8874,6 +8878,7 @@
         },
         "required": [
           "replacementPublicId",
+          "confirmed",
           "reason",
           "idempotencyKey"
         ],

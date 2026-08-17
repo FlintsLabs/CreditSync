@@ -637,6 +637,7 @@ describe("loan replacement service database invariants", () => {
         }, {
             replacementPublicId: execution.replacementPublicId,
             reason: reversalReason,
+            confirmed: true,
         });
         expect(reversalReplay).toEqual(reversal);
     });
@@ -1378,6 +1379,46 @@ describe("loan replacement service database invariants", () => {
             loanCommissionParticipants.loanId,
             fixture.oldLoan.id,
         ))).toHaveLength(0);
+    });
+
+    // Break caught: reversal marks the replacement child cancelled, but downstream writers that
+    // only recognize `replaced` can append new financial/workflow records after that terminal state.
+    integrationTest("rejects downstream writers for the cancelled replacement loan after reversal", async () => {
+        const fixture = await seedReplacementFixture();
+        const intermediary = await seedIntermediary(fixture);
+        const preview = await fixture.preview();
+        const executed = await fixture.execute(preview);
+        await fixture.reverse(executed.replacementPublicId);
+
+        await expect(createIntermediaryCollection(
+            fixture.context("collection-after-reversal"),
+            {
+                intermediaryPublicId: intermediary.publicId,
+                borrowerPublicId: fixture.borrower.publicId,
+                loanPublicId: fixture.replacementDraft.publicId,
+                amount: "1.00",
+                borrowerPaidAt: "2026-08-17T00:00:00.000Z",
+            },
+        )).rejects.toMatchObject({ code: "LOAN_COLLECTION_LOCKED", status: 409 });
+        await expect(assignIntermediaryToLoan(
+            fixture.context("assignment-after-reversal"),
+            fixture.replacementDraft.publicId,
+            {
+                intermediaryPublicId: intermediary.publicId,
+                role: "collection",
+                effectiveFrom: "2026-08-17T00:00:00.000Z",
+            },
+        )).rejects.toMatchObject({ code: "LOAN_INTERMEDIARY_ASSIGNMENT_LOCKED", status: 409 });
+        await expect(addLoanCommissionParticipant(
+            fixture.context("commission-after-reversal"),
+            {
+                loanPublicId: fixture.replacementDraft.publicId,
+                intermediaryPublicId: intermediary.publicId,
+                commissionRate: "1.00",
+                role: "collector",
+                effectiveFrom: "2026-08-17T00:00:00.000Z",
+            },
+        )).rejects.toMatchObject({ code: "LOAN_COMMISSION_LOCKED", status: 409 });
     });
 
     for (const blocker of downstreamBlockers) {

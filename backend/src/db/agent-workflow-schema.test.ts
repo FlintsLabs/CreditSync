@@ -52,7 +52,11 @@ describe("agent workflow Drizzle schema", () => {
             expect(columns).toContain("tenant_id");
             expect(columns).toContain("public_id");
             expect(columns).toContain("created_at");
-            expect(columns).toContain("updated_at");
+            if (exportName === "loanReplacementCorrections") {
+                expect(columns).not.toContain("updated_at");
+            } else {
+                expect(columns).toContain("updated_at");
+            }
             expect(columns).toContain("status");
             expect(
                 columns.some((column) => column.endsWith("_by_user_id")),

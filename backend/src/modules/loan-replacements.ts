@@ -63,10 +63,11 @@ export const loanReplacementRoutes = new Elysia({ normalize: false })
     .post("/replacements/:publicId/reverse", async ({ params, body, user, request, set }) => {
         if (!user) return loanUnauthorized(set);
         try {
-            assertKnownKeys(body as Record<string, unknown>, ["reason"]);
+            assertKnownKeys(body as Record<string, unknown>, ["confirmed", "reason"]);
             const result = await reverseLoanReplacement(loanCommandContext(user, request), {
                 replacementPublicId: params.publicId,
                 ...body,
+                confirmed: body.confirmed as true,
             });
             await invalidateTenantCache(user.tenantId);
             return result;
