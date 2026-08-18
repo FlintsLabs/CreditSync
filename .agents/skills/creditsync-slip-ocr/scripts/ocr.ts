@@ -47,14 +47,14 @@ async function ocr(path: string): Promise<string> {
 const result: Record<string, string> = { full: await ocr(image) };
 for (const [name, l, t, w, h] of CROPS) {
     const out = join(cache, `${name}.jpg`);
+    // Clamp to image bounds — LINE album exports vary in aspect ratio.
+    const left = Math.min(Math.round(l * meta.width!), meta.width! - 1);
+    const top = Math.min(Math.round(t * meta.height!), meta.height! - 1);
+    const width = Math.min(Math.round(w * meta.width!), meta.width! - left);
+    const height = Math.min(Math.round(h * meta.height!), meta.height! - top);
     await sharp(image)
-        .extract({
-            left: Math.round(l * meta.width!),
-            top: Math.round(t * meta.height!),
-            width: Math.round(w * meta.width!),
-            height: Math.round(h * meta.height!),
-        })
-        .resize({ width: Math.round(w * meta.width! * 4), kernel: "lanczos3" })
+        .extract({ left, top, width, height })
+        .resize({ width: width * 4, kernel: "lanczos3" })
         .sharpen()
         .greyscale()
         .normalize()

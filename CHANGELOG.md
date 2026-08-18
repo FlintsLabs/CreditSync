@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.23 - 2026-08-18
+
+### Added
+- Added the Thai Tesseract training asset and OCR crop-bound clamping for variable-aspect-ratio payment-slip images.
+- Added the tracked TTB So fast funding-source follow-up item to `TODO.md`.
+
+### Changed
+- Refined Thai reversal and compensating-entry terminology across payment, renewal, disbursement, settlement, and audit labels.
+
 ## v0.3.22 - 2026-08-18
 
 ### Added
