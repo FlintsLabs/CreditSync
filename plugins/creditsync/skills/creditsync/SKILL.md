@@ -43,6 +43,7 @@ Every activation, post, write reversal, and renewal uses explicit public IDs. Su
 - Intake, optional evidence, matching, posting, or payment reversal: use `reconcile-payments`.
 - Inspect payments for a specific contract: call `loan.payment-history.list` with the exact loan public UUID; treat its returned intake/allocation/components as authoritative and read-only.
 - Correct an existing scheduled contract's first repayment date: inspect with `loan.contract.get`, then use `loan.payment-start-date.update` with a reason and idempotency key. The command preserves posted payments and changes only unpaid schedule dates.
+- Remove an abandoned unactivated draft: inspect the exact loan first, then use `loan.draft.delete` with explicit confirmation, reason, and idempotency key. Never use it for active or posted contracts.
 - Inspect complete contract terms and installments: call `loan.contract.get` with the exact loan public UUID; show backend-returned policies, rates, installment amounts, and schedule rows without recalculating them.
 - When creating a scheduled loan, keep `startDate` (contract/disbursement date) separate from `paymentStartDate` (first due date); let the backend generate subsequent due dates from the selected repayment cycle.
 - Loan preview, draft, and activation: use `manage-loans`.

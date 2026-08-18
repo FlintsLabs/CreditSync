@@ -17,6 +17,7 @@ import { listFundingSources } from "../services/funding-source-service";
 import {
     activateLoan,
     createLoanDraft,
+    deleteLoanDraft,
     getLoanContract,
     previewLoan,
     updateLoanPaymentStartDate,
@@ -221,6 +222,7 @@ export function createDefaultMcpToolHandlers(
         }
     },
     "loan.draft": (ctx, input) => createLoanDraft(ctx, input as unknown as LoanDraftInput),
+    "loan.draft.delete": (ctx, input) => deleteLoanDraft(ctx, asString(input, "loanPublicId"), { reason: asString(input, "reason") }),
     "loan.activate": (ctx, input) => activateLoan(ctx, asString(input, "loanPublicId")),
     "loan.payment-start-date.update": (ctx, input) => updateLoanPaymentStartDate(ctx, asString(input, "loanPublicId"), {
         paymentStartDate: asString(input, "paymentStartDate"),

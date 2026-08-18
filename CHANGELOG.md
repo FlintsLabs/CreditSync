@@ -5,6 +5,12 @@
 ### Added
 - Added Dashboard analytics for today's actual-versus-expected collection rate, 30-day cash and interest trends, monthly interest performance, deployed principal, and outstanding principal.
 
+## v0.3.24 - 2026-08-18
+
+### Added
+- Added audited, idempotent deletion for unactivated draft loan contracts through REST and MCP, with dependency checks that protect schedules and financial records.
+- Added synchronized frozen 82-tool MCP/plugin metadata and draft-deletion operating guidance.
+
 ## v0.3.23 - 2026-08-18
 
 ### Added

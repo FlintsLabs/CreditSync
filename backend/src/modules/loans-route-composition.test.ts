@@ -76,6 +76,7 @@ describe("loans route composition", () => {
             "POST /loans/waivers/:id/reverse",
             "PUT /loans/:id",
             "PUT /loans/:id/disbursements/:disbursementId",
+            "DELETE /loans/:id",
         ].sort());
     });
 

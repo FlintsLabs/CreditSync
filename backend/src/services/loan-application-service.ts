@@ -573,6 +573,74 @@ export interface UpdateLoanPaymentStartDateInput {
     reason: string;
 }
 
+export interface DeleteLoanDraftInput {
+    reason: string;
+}
+
+/** Permanently removes an unactivated draft after retaining an audit event. */
+export async function deleteLoanDraft(ctx: CommandContext, publicId: string, input: DeleteLoanDraftInput) {
+    const idempotencyKey = ctx.idempotencyKey?.trim();
+    if (!idempotencyKey) {
+        throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Draft deletion requires a non-blank Idempotency-Key", 400);
+    }
+    const prior = await db.select({ publicId: auditLogs.publicId }).from(auditLogs).where(and(
+        eq(auditLogs.tenantId, ctx.tenantId),
+        eq(auditLogs.entityType, "loan"),
+        eq(auditLogs.entityId, publicId),
+        eq(auditLogs.action, "draft_deleted"),
+        sql`${auditLogs.payload}->>'idempotencyKey' = ${idempotencyKey}`,
+    )).orderBy(desc(auditLogs.createdAt)).limit(1);
+    if (prior[0]) {
+        return { loanPublicId: publicId, status: "deleted" as const, auditPublicId: prior[0].publicId, correlationId: ctx.correlationId };
+    }
+    const accessible = await accessibleLoan(ctx, publicId);
+    if (accessible.status !== "draft") {
+        throw new DomainError("LOAN_DRAFT_DELETE_FORBIDDEN", "Only draft loan contracts can be deleted", 409);
+    }
+
+    return db.transaction(async (tx) => {
+        const current = await tx.query.loans.findFirst({ where: and(
+            eq(loans.id, accessible.id),
+            eq(loans.tenantId, ctx.tenantId),
+        ) });
+        if (!current) {
+            const replay = await tx.select({ publicId: auditLogs.publicId }).from(auditLogs).where(and(
+                eq(auditLogs.tenantId, ctx.tenantId),
+                eq(auditLogs.entityType, "loan"),
+                eq(auditLogs.entityId, publicId),
+                eq(auditLogs.action, "draft_deleted"),
+                sql`${auditLogs.payload}->>'idempotencyKey' = ${idempotencyKey}`,
+            )).limit(1);
+            if (replay[0]) return { loanPublicId: publicId, status: "deleted" as const, auditPublicId: replay[0].publicId, correlationId: ctx.correlationId };
+            throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+        }
+        if (current.status !== "draft") {
+            throw new DomainError("LOAN_DRAFT_DELETE_FORBIDDEN", "Only draft loan contracts can be deleted", 409);
+        }
+        const schedules = await tx.select({ id: loanSchedules.id }).from(loanSchedules).where(and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.loanId, current.id)));
+        if (schedules.length > 0) {
+            throw new DomainError("LOAN_DRAFT_HAS_DEPENDENCIES", "Draft has repayment schedule rows and cannot be deleted", 409);
+        }
+        await tx.delete(loanInterestRatePeriods).where(and(
+            eq(loanInterestRatePeriods.tenantId, ctx.tenantId),
+            eq(loanInterestRatePeriods.loanId, current.id),
+        ));
+        const audit = await createAuditLog(tx, {
+            ...auditContext(ctx),
+            entityType: "loan",
+            entityId: current.publicId,
+            action: "draft_deleted",
+            payload: { before: await presentLoan(current), reason: input.reason, idempotencyKey },
+        });
+        try {
+            await tx.delete(loans).where(and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, current.id)));
+        } catch {
+            throw new DomainError("LOAN_DRAFT_HAS_DEPENDENCIES", "Draft has financial or workflow records and cannot be deleted", 409);
+        }
+        return { loanPublicId: publicId, status: "deleted" as const, auditPublicId: audit.publicId, correlationId: ctx.correlationId };
+    });
+}
+
 /**
  * Amend the first repayment date without deleting a contract or rewriting
  * posted payment history. Paid schedule rows remain immutable; only unpaid
