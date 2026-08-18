@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.27 - 2026-08-18
+
+### Changed
+- Redesigned the Loan List contract cards to prioritize collection-critical overdue status, exact arrears, grouped contract terms, consistent localized dates/currency, and actionable unassigned-agent state.
+
 ## v0.3.26 - 2026-08-18
 
 ### Added

@@ -188,88 +188,143 @@ export default function LoanList() {
             </Card>
 
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {visibleLoans.map((loan) => (
-                    <Link key={loan.id} to={`/loans/${loan.publicId ?? loan.id}`} className="block">
-                    <Card className="hover:shadow-md transition-shadow flex flex-col h-full">
-                        <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
-                            <div className="space-y-1">
-                                <CardTitle className="text-sm font-medium">{loan.borrowerName}</CardTitle>
-                                {(() => {
-                                    const labelState = getVisibleBorrowerLabels(loan);
-                                    if (labelState.visible.length === 0) return null;
-                                    return (
-                                        <div className="flex flex-wrap gap-1">
-                                            {labelState.visible.map((label) => (
-                                                <Badge key={label} variant="outline" className="h-5 text-xs">
-                                                    {label}
-                                                </Badge>
-                                            ))}
-                                            {labelState.overflow > 0 ? (
-                                                <span
-                                                    aria-label={t("loans.borrowerLabels.more", { count: labelState.overflow })}
-                                                    className="inline-flex items-center rounded-full border border-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
-                                                >
-                                                    +{labelState.overflow}
-                                                </span>
-                                            ) : null}
+                {visibleLoans.map((loan) => {
+                    const labelState = getVisibleBorrowerLabels(loan);
+                    const agentName = loan.currentAgent?.name ?? loan.currentAgentName;
+                    const isUnassigned = !agentName;
+                    const formattedStartDate = loan.startDate
+                        ? new Intl.DateTimeFormat(i18n.language, {
+                              day: "numeric",
+                              month: "short",
+                              year: "numeric",
+                              timeZone: "Asia/Bangkok",
+                          }).format(new Date(`${loan.startDate}T00:00:00+07:00`))
+                        : t("loans.notSet", "Not set");
+                    const formattedCreatedAt = new Intl.DateTimeFormat(i18n.language, {
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        hour12: false,
+                        timeZone: "Asia/Bangkok",
+                    }).format(new Date(loan.createdAt));
+
+                    return (
+                        <Link key={loan.id} to={`/loans/${loan.publicId ?? loan.id}`} className="block group">
+                            <Card className="hover:shadow-md transition-all flex flex-col h-full border-border/80 hover:border-primary/30">
+                                <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
+                                    <div className="space-y-1 min-w-0 flex-1 pr-2">
+                                        <CardTitle className="text-base font-semibold leading-tight tracking-tight text-foreground truncate group-hover:text-primary transition-colors">
+                                            {loan.borrowerName}
+                                        </CardTitle>
+                                        {labelState.visible.length > 0 && (
+                                            <div className="flex flex-wrap gap-1 pt-0.5">
+                                                {labelState.visible.map((label) => (
+                                                    <Badge key={label} variant="outline" className="h-5 px-1.5 text-[11px] font-normal text-muted-foreground">
+                                                        {label}
+                                                    </Badge>
+                                                ))}
+                                                {labelState.overflow > 0 && (
+                                                    <span
+                                                        aria-label={t("loans.borrowerLabels.more", { count: labelState.overflow })}
+                                                        className="inline-flex items-center rounded-full border border-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
+                                                    >
+                                                        +{labelState.overflow}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                            <Button variant="ghost" className="h-8 w-8 p-0 shrink-0 text-muted-foreground hover:text-foreground" onClick={(event) => event.preventDefault()}>
+                                                <span className="sr-only">{t("common.openMenu", "Open menu")}</span>
+                                                <MoreHorizontal className="h-4 w-4" />
+                                            </Button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent align="end">
+                                            <DropdownMenuItem onClick={(event) => {
+                                                event.preventDefault();
+                                                setClosingLoanId(loan.id);
+                                            }}>
+                                                <DollarSign className="mr-2 h-4 w-4" />
+                                                <span>{t("loans.calculateClosingBalance", "Calculate Closing Balance")}</span>
+                                            </DropdownMenuItem>
+                                        </DropdownMenuContent>
+                                    </DropdownMenu>
+                                </CardHeader>
+                                <CardContent className="flex-grow flex flex-col justify-between pt-0 gap-3">
+                                    <div className="space-y-3">
+                                        {/* Collection-critical problem / health indicator */}
+                                        <LoanPaymentHealthBadge
+                                            health={loan.paymentHealth ?? currentPaymentHealth}
+                                            repaymentType={loan.repaymentType}
+                                        />
+
+                                        {/* Principal & balance summary */}
+                                        <LoanCardFinancialSummary
+                                            status={loan.status}
+                                            outstandingPrincipal={loan.outstandingPrincipal}
+                                            originalPrincipal={loan.principal}
+                                            interestReceived={loan.interestReceived}
+                                            paidToDate={loan.paidToDate}
+                                        />
+
+                                        {/* Contract details 2-column grid */}
+                                        <div className="rounded-lg border bg-muted/20 p-2.5 grid grid-cols-2 gap-2 text-xs">
+                                            <div>
+                                                <div className="text-muted-foreground text-[11px] font-medium">{t("loans.repaymentType", "Repayment type")}</div>
+                                                <div className="font-semibold text-foreground truncate">{t(`loanWizard.repaymentOptions.${loan.repaymentType}`)}</div>
+                                            </div>
+                                            <div>
+                                                <div className="text-muted-foreground text-[11px] font-medium">{t("loans.installment", "Installment")}</div>
+                                                <div className="font-semibold text-foreground tabular-nums truncate">
+                                                    {loan.repaymentType === "floating"
+                                                        ? t("loans.noSchedule", "No fixed schedule")
+                                                        : formatMoneyExact(loan.installmentAmount ?? "0.00", i18n.language)}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div className="text-muted-foreground text-[11px] font-medium">{t("loans.installmentsCountLabel", "Count")}</div>
+                                                <div className="font-medium text-foreground">
+                                                    {loan.repaymentType === "floating"
+                                                        ? <span className="text-muted-foreground">{t("loans.noFixedSchedule", "Floating repayment has no fixed schedule")}</span>
+                                                        : t("loans.installmentsCount", { count: loan.totalInstallments ?? 0 })}
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <div className="text-muted-foreground text-[11px] font-medium">{t("loans.startDate", "Start date")}</div>
+                                                <div className="font-medium text-foreground">{formattedStartDate}</div>
+                                            </div>
                                         </div>
-                                    );
-                                })()}
-                                <div className="text-xs text-muted-foreground">{t("loans.loanLabel", { defaultValue: "Loan #{{id}}", id: loan.id })}</div>
-                            </div>
-                           <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" className="h-8 w-8 p-0" onClick={(event) => event.preventDefault()}>
-                                        <span className="sr-only">{t("common.openMenu", "Open menu")}</span>
-                                        <MoreHorizontal className="h-4 w-4" />
-                                    </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                    <DropdownMenuItem onClick={(event) => {
-                                        event.preventDefault();
-                                        setClosingLoanId(loan.id);
-                                    }}>
-                                        <DollarSign className="mr-2 h-4 w-4" />
-                                        <span>{t("loans.calculateClosingBalance", "Calculate Closing Balance")}</span>
-                                    </DropdownMenuItem>
-                                </DropdownMenuContent>
-                            </DropdownMenu>
-                        </CardHeader>
-                        <CardContent className="flex-grow flex flex-col justify-between">
-                            <div className="space-y-3">
-                                <LoanCardFinancialSummary
-                                    status={loan.status}
-                                    outstandingPrincipal={loan.outstandingPrincipal}
-                                    originalPrincipal={loan.principal}
-                                    interestReceived={loan.interestReceived}
-                                    paidToDate={loan.paidToDate}
-                                />
 
-                                <LoanPaymentHealthBadge
-                                    health={loan.paymentHealth ?? currentPaymentHealth}
-                                    repaymentType={loan.repaymentType}
-                                />
+                                        {/* Agent / Collector Assignment */}
+                                        <div className="flex items-center justify-between rounded-md border border-dashed px-2.5 py-1.5 text-xs">
+                                            <div className="flex items-center gap-1.5 min-w-0">
+                                                <span className="text-muted-foreground font-medium shrink-0">{t("loans.agent.label", "Agent")}:</span>
+                                                <span className={`truncate font-medium ${isUnassigned ? "text-amber-700 dark:text-amber-300" : "text-foreground"}`}>
+                                                    {agentName ?? t("loans.agent.unassigned", "Unassigned")}
+                                                </span>
+                                            </div>
+                                            {isUnassigned && (
+                                                <span className="shrink-0 text-[11px] font-semibold text-primary">
+                                                    {t("loans.agent.assignAction", "Assign")} &rarr;
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
 
-                                <Badge variant="outline" className="w-fit max-w-full gap-1 text-xs">
-                                    <span className="text-muted-foreground">{t("loans.agent.label", "Agent")}</span>
-                                    <span className="truncate">{loan.currentAgent?.name ?? loan.currentAgentName ?? t("loans.agent.unassigned", "Unassigned")}</span>
-                                </Badge>
-
-                                <div className="space-y-2 text-xs">
-                                    <div><div className="text-muted-foreground">{t("loans.repaymentType", "Repayment type")}</div><div className="font-medium">{t(`loanWizard.repaymentOptions.${loan.repaymentType}`)}</div></div>
-                                    {loan.repaymentType === "floating" ? <div className="text-muted-foreground">{t("loans.noFixedSchedule", "Floating repayment has no fixed schedule")}</div> : <div className="font-medium">{t("loans.installmentSummary", { amount: formatMoneyExact(loan.installmentAmount ?? "0.00", i18n.language), count: loan.totalInstallments ?? 0 })}</div>}
-                                    <div><div className="text-muted-foreground">{t("loans.startDate", "Start date")}</div><div className="font-medium">{loan.startDate ? new Intl.DateTimeFormat(i18n.language, { timeZone: "Asia/Bangkok" }).format(new Date(`${loan.startDate}T00:00:00+07:00`)) : t("loans.notSet", "Not set")}</div></div>
-                                </div>
-                            </div>
-
-                            <div className="flex items-center text-sm text-muted-foreground mt-4">
-                                <Calendar className="mr-2 h-4 w-4 flex-shrink-0" />
-                                <span>{t("loans.createdAt", "Created at")}: {new Intl.DateTimeFormat(i18n.language, { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Bangkok" }).format(new Date(loan.createdAt))}</span>
-                            </div>
-                        </CardContent>
-                    </Card>
-                    </Link>
-                ))}
+                                    {/* Footer metadata: Created at */}
+                                    <div className="flex items-center text-[11px] text-muted-foreground pt-2 border-t border-border/40">
+                                        <Calendar className="mr-1.5 h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+                                        <span>{t("loans.createdAt", "Created at")}: {formattedCreatedAt}</span>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        </Link>
+                    );
+                })}
             </div>
 
             {isLoading && (

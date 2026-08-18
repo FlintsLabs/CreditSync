@@ -10,7 +10,6 @@ export interface LoanPaymentHealth {
     overdueItemCount: number;
     maxOverdueDays: number;
 }
-
 interface Props {
     health: LoanPaymentHealth;
     repaymentType: string;
@@ -25,12 +24,18 @@ export function LoanPaymentHealthBadge({ health, repaymentType }: Props) {
             ? "loans.paymentHealth.overdueDays"
             : "loans.paymentHealth.overdueInstallments";
         return (
-            <div className="space-y-1" role="status" aria-label={t("loans.paymentHealth.overdueAria")}>
-                <Badge variant="destructive" className="gap-1">
-                    <AlertTriangle aria-hidden="true" className="h-3.5 w-3.5" />
-                    {t(countKey, { count: health.overdueItemCount })}
-                </Badge>
-                <p className="text-xs font-medium text-destructive">
+            <div
+                className="space-y-1.5 rounded-lg border border-destructive/20 bg-destructive/10 p-2.5 dark:bg-destructive/15 dark:border-destructive/30"
+                role="status"
+                aria-label={t("loans.paymentHealth.overdueAria")}
+            >
+                <div className="flex items-center gap-2">
+                    <Badge variant="destructive" className="gap-1 shadow-none">
+                        <AlertTriangle aria-hidden="true" className="h-3.5 w-3.5" />
+                        <span>{t(countKey, { count: health.overdueItemCount })}</span>
+                    </Badge>
+                </div>
+                <p className="text-xs font-semibold text-destructive tabular-nums">
                     {t("loans.paymentHealth.overdueSummary", {
                         amount: formatMoneyExact(health.overdueAmount, i18n.language),
                         days: health.maxOverdueDays,
