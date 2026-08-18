@@ -1149,6 +1149,15 @@
             "activating": "Activating...",
             "error": "Failed to activate the loan. The draft was not changed."
         },
+        "deleteDraft": {
+            "action": "Delete draft",
+            "title": "Delete this loan draft?",
+            "warning": "This permanently removes the unactivated draft. Posted financial records are not affected.",
+            "reason": "Reason",
+            "confirm": "Delete draft",
+            "deleting": "Deleting...",
+            "error": "Unable to delete the loan draft. It may have financial records or schedule dependencies."
+        },
         "dailyTerms": {
             "title": "Daily repayment terms", "duration": "Duration", "agreedInstallment": "Agreed instalment", "installments": "Total instalments", "totalInterest": "Total interest", "dailyInterest": "Daily interest", "flatRate": "Flat daily rate",
             "notice": "The agreed instalment is fixed. A smaller payment leaves the scheduled remainder due; early settlement requires its own preview.",

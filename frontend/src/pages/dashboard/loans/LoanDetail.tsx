@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, CalendarDays, CheckCircle, Copy, User2 } from "lucide-react";
+import { ArrowLeft, CalendarDays, CheckCircle, Copy, Trash2, User2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import Decimal from "decimal.js";
 import { api } from "../../../lib/api";
@@ -200,6 +200,9 @@ export default function LoanDetail() {
     const [disbursementSummary, setDisbursementSummary] = useState<DisbursementSummaryInput | null>(null);
     const [activationOpen, setActivationOpen] = useState(false);
     const [activating, setActivating] = useState(false);
+    const [deleteDraftOpen, setDeleteDraftOpen] = useState(false);
+    const [deleteDraftReason, setDeleteDraftReason] = useState("");
+    const [deletingDraft, setDeletingDraft] = useState(false);
     const activationIntentRef = useRef<{ loanPublicId: string; key: string } | null>(null);
     const settlementIntentRef = useRef<{ fingerprint: string; key: string } | null>(null);
     const settlementReversalIntentRef = useRef<{ fingerprint: string; key: string } | null>(null);
@@ -284,6 +287,23 @@ export default function LoanDetail() {
             setErrorMessage(t("loanDetail.activation.error"));
         } finally {
             setActivating(false);
+        }
+    };
+
+    const deleteDraft = async () => {
+        if (!loan || loan.status !== "draft" || deletingDraft || !deleteDraftReason.trim()) return;
+        try {
+            setDeletingDraft(true);
+            await api.delete(`/loans/${loan.publicId}`, {
+                data: { reason: deleteDraftReason.trim() },
+                headers: { "Idempotency-Key": `web:loan-draft-delete:${loan.publicId}:${crypto.randomUUID()}` },
+            });
+            navigate("/loans");
+        } catch (error) {
+            console.error("Failed to delete loan draft", error);
+            setErrorMessage(t("loanDetail.deleteDraft.error"));
+        } finally {
+            setDeletingDraft(false);
         }
     };
 
@@ -419,12 +439,37 @@ export default function LoanDetail() {
                     {!loading && loan?.publicId && <div className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground"><span className="shrink-0">{t("loanDetail.loanId", "ID")}:</span><code className="truncate font-mono">{loan.publicId}</code><button type="button" className="shrink-0 rounded p-1 hover:bg-muted" aria-label={t("loanDetail.copyLoanId", "Copy loan ID")} title={t("loanDetail.copyLoanId", "Copy loan ID")} onClick={() => { void navigator.clipboard.writeText(loan.publicId); setCopiedLoanId(true); window.setTimeout(() => setCopiedLoanId(false), 2000); }}><Copy className="h-3.5 w-3.5" /></button>{copiedLoanId && <span className="shrink-0 text-emerald-600">{t("loanDetail.copied", "Copied")}</span>}</div>}
                 </div>
                 {!loading && loan?.status === "draft" && (
-                    <Button className="w-full shrink-0 sm:w-auto" onClick={() => setActivationOpen(true)}>
-                        <CheckCircle className="mr-2 h-4 w-4" />
-                        {t("loanDetail.activation.action")}
-                    </Button>
+                    <div className="flex w-full shrink-0 flex-wrap justify-end gap-2 sm:w-auto">
+                        <Button variant="destructive" onClick={() => setDeleteDraftOpen(true)}>
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            {t("loanDetail.deleteDraft.action")}
+                        </Button>
+                        <Button onClick={() => setActivationOpen(true)}>
+                            <CheckCircle className="mr-2 h-4 w-4" />
+                            {t("loanDetail.activation.action")}
+                        </Button>
+                    </div>
                 )}
             </div>
+
+            <Dialog open={deleteDraftOpen} onOpenChange={(open) => !deletingDraft && setDeleteDraftOpen(open)}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>{t("loanDetail.deleteDraft.title")}</DialogTitle>
+                        <DialogDescription>{t("loanDetail.deleteDraft.warning")}</DialogDescription>
+                    </DialogHeader>
+                    <label className="grid gap-1 text-sm" htmlFor="delete-draft-reason">
+                        {t("loanDetail.deleteDraft.reason")}
+                        <Input id="delete-draft-reason" value={deleteDraftReason} onChange={(event) => setDeleteDraftReason(event.target.value)} autoFocus />
+                    </label>
+                    <DialogFooter>
+                        <Button variant="outline" disabled={deletingDraft} onClick={() => setDeleteDraftOpen(false)}>{t("common.cancel")}</Button>
+                        <Button variant="destructive" disabled={deletingDraft || !deleteDraftReason.trim()} onClick={() => void deleteDraft()}>
+                            {deletingDraft ? t("loanDetail.deleteDraft.deleting") : t("loanDetail.deleteDraft.confirm")}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             <Dialog open={activationOpen} onOpenChange={(open) => !activating && setActivationOpen(open)}>
                 <DialogContent>

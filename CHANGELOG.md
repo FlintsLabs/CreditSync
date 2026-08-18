@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.26 - 2026-08-18
+
+### Added
+- Added a localized Loan Detail action and confirmation dialog for deleting abandoned draft loan contracts with a required reason.
+
 ## v0.3.25 - 2026-08-18
 
 ### Added
