@@ -417,7 +417,6 @@ export default function LoanDetail() {
                 <div className="min-w-0 flex-1">
                     <h2 className="text-2xl font-bold tracking-tight">{loading ? t("common.loading", "Loading...") : t("loanDetail.title", "Loan agreement")}</h2>
                     {!loading && loan?.publicId && <div className="mt-1 flex min-w-0 items-center gap-1 text-xs text-muted-foreground"><span className="shrink-0">{t("loanDetail.loanId", "ID")}:</span><code className="truncate font-mono">{loan.publicId}</code><button type="button" className="shrink-0 rounded p-1 hover:bg-muted" aria-label={t("loanDetail.copyLoanId", "Copy loan ID")} title={t("loanDetail.copyLoanId", "Copy loan ID")} onClick={() => { void navigator.clipboard.writeText(loan.publicId); setCopiedLoanId(true); window.setTimeout(() => setCopiedLoanId(false), 2000); }}><Copy className="h-3.5 w-3.5" /></button>{copiedLoanId && <span className="shrink-0 text-emerald-600">{t("loanDetail.copied", "Copied")}</span>}</div>}
-                    <p className="text-muted-foreground">{t("loanDetail.description", "Profitability, funding composition, and installment status in one view.")}</p>
                 </div>
                 {!loading && loan?.status === "draft" && (
                     <Button className="w-full shrink-0 sm:w-auto" onClick={() => setActivationOpen(true)}>

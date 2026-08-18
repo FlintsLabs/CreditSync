@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.20 - 2026-08-18
+
+### Changed
+- Removed the redundant Loan Detail subtitle and restored red destructive styling for overdue repayment statuses while retaining the warning icon.
+
 ## v0.3.19 - 2026-08-18
 
 ### Added

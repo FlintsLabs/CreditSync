@@ -12,17 +12,18 @@ interface ScheduleRow { id: string; publicId: string; installmentNo: number; due
 
 function ScheduleStatus({ status, label }: { status: string; label: string }) {
     const isPaid = status === "paid";
+    const isOverdue = status === "overdue";
     const isDue = ["pending", "partial", "overdue", "due", "scheduled"].includes(status);
     const Icon = isPaid ? Check : isDue ? AlertTriangle : null;
     const className = isPaid
         ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300"
-        : isDue
+        : isDue && !isOverdue
             ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300"
             : undefined;
 
     return <Badge
-        data-testid={isPaid ? "schedule-status-paid" : isDue ? "schedule-status-due" : undefined}
-        variant="outline"
+        data-testid={isPaid ? "schedule-status-paid" : isOverdue ? "schedule-status-overdue" : isDue ? "schedule-status-due" : undefined}
+        variant={isOverdue ? "destructive" : "outline"}
         className={className}
     >
         {Icon && <Icon

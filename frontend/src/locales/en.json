@@ -1259,7 +1259,6 @@
         "loanId": "ID",
         "copyLoanId": "Copy loan ID",
         "copied": "Copied",
-        "description": "Profitability, funding composition, and installment status in one view.",
         "missing": "This loan does not exist anymore.",
         "unknownBorrower": "Unknown borrower",
         "openBorrowerProfile": "Open borrower profile",

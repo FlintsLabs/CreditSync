@@ -94,6 +94,7 @@ describe("Loan detail repayment schedule table", () => {
         expect(within(table).getByTestId("schedule-status-icon-paid")).toBeInTheDocument();
         expect(within(table).getAllByTestId("schedule-status-due")[0]).toHaveClass("text-amber-700");
         expect(within(table).getAllByTestId("schedule-status-icon-due")[0]).toBeInTheDocument();
+        expect(within(table).getByTestId("schedule-status-overdue")).toHaveClass("bg-destructive");
         expect(within(table).getByText("งวด #9")).toBeInTheDocument();
         expect(within(table).queryByText("งวด #11")).not.toBeInTheDocument();
 
