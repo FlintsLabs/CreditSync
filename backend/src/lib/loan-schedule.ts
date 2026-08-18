@@ -8,6 +8,7 @@ interface GenerateLoanScheduleInput {
     termMonths: number;
     repaymentType: RepaymentType;
     startDate?: string;
+    paymentStartDate?: string;
     totalInstallments?: number;
     installmentAmount?: Decimal.Value;
     singlePayment?: SinglePaymentTerms;
@@ -31,6 +32,7 @@ export function generateLoanSchedule(input: GenerateLoanScheduleInput): Generate
         termMonths: input.termMonths,
         repaymentType: input.repaymentType,
         startDate,
+        paymentStartDate: input.paymentStartDate ? new Date(input.paymentStartDate) : undefined,
         totalInstallments: input.totalInstallments,
         installmentAmount: input.installmentAmount,
         singlePayment: input.singlePayment,

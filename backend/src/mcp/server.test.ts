@@ -810,6 +810,7 @@ describe("CreditSync stateless MCP contract", () => {
             "payment.post",
             "payment.reverse",
             "loan.activate",
+            "loan.payment-start-date.update",
             "loan.interest-rate.execute",
             "loan.settlement.execute",
             "loan.settlement.reverse",
@@ -856,6 +857,91 @@ describe("CreditSync stateless MCP contract", () => {
         });
         expect(observedContext?.requestId).toMatch(/^[0-9a-f-]{36}$/);
         expect(observedContext?.correlationId).toMatch(/^[0-9a-f-]{36}$/);
+
+        await client.close();
+    });
+
+    test("lists and serves read-only loan payment history", async () => {
+        const loanPublicId = "0198c481-3e2b-7000-8000-000000000007";
+        const baseUrl = await startServer({
+            toolHandlers: {
+                ["loan.payment-history.list" as (typeof MCP_TOOL_NAMES)[number]]: async (_ctx: CommandContext, input: Record<string, unknown>) => ({
+                    loanPublicId: String(input.loanPublicId),
+                    items: [],
+                }),
+            },
+        });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+
+        const listed = await client.listTools();
+        const tool = listed.tools.find((item) => item.name === "loan.payment-history.list");
+        expect(tool?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+        expect((tool?.inputSchema as { additionalProperties?: boolean }).additionalProperties).toBe(false);
+
+        const result = await client.callTool({
+            name: "loan.payment-history.list",
+            arguments: { loanPublicId },
+        });
+        expect(result.isError).not.toBe(true);
+        expect(result.structuredContent).toMatchObject({
+            schemaVersion: "1.0",
+            data: { loanPublicId, items: [] },
+        });
+
+        await client.close();
+    });
+
+    test("lists complete contract terms and repayment schedule read-only", async () => {
+        const loanPublicId = "0198c481-3e2b-7000-8000-000000000008";
+        const baseUrl = await startServer({
+            toolHandlers: {
+                ["loan.contract.get" as (typeof MCP_TOOL_NAMES)[number]]: async (_ctx: CommandContext, input: Record<string, unknown>) => ({
+                    id: String(input.loanPublicId),
+                    publicId: String(input.loanPublicId),
+                    borrowerPublicId: BORROWER_ID,
+                    bankLoanPublicId: null,
+                    bankProfilePublicId: null,
+                    principal: "1000.00",
+                    principalAmount: "1000.00",
+                    interestRate: "0.00",
+                    repaymentType: "daily",
+                    termMonths: null,
+                    installmentAmount: "100.00",
+                    totalInstallments: 10,
+                    startDate: "2026-08-01",
+                    nextDueDate: "2026-08-02",
+                    outstandingPrincipal: "1000.00",
+                    outstandingInterest: "0.00",
+                    outstandingFees: "0.00",
+                    status: "active",
+                    dailyEntry: { durationUnit: "days", durationValue: 10, entryMode: "daily_payment", dailyPayment: "100.00", interestInput: null, flatDailyRatePercent: "0.0000" },
+                    dailyLoanCalculation: { totalInstallments: 10, installmentAmount: "100.00", totalRepayment: "1000.00", totalInterest: "0.00", dailyInterest: "0.00", flatDailyRatePercent: "0.0000", flatMonthlyRatePercent: "0.0000", flatAnnualRatePercent: "0.0000" },
+                    floatingInterestPolicy: null,
+                    floatingDailyInterest: null,
+                    floatingPayoutSummary: null,
+                    singlePayment: null,
+                    schedule: [{ publicId: "0198c481-3e2b-7000-8000-000000000009", installmentNo: 1, dueDate: "2026-08-02", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", paidTotal: "0.00", paidPenalty: "0.00", overdueDays: 0, remainingDue: "100.00", status: "pending" }],
+                }),
+            },
+        });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+
+        const listed = await client.listTools();
+        const tool = listed.tools.find((item) => item.name === "loan.contract.get");
+        expect(tool?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+
+        const result = await client.callTool({ name: "loan.contract.get", arguments: { loanPublicId } });
+        expect(result.isError).not.toBe(true);
+        expect(result.structuredContent).toMatchObject({
+            schemaVersion: "1.0",
+            data: {
+                publicId: loanPublicId,
+                dailyEntry: { entryMode: "daily_payment", dailyPayment: "100.00" },
+                schedule: [{ installmentNo: 1, scheduledTotal: "100.00", remainingDue: "100.00" }],
+            },
+        });
 
         await client.close();
     });

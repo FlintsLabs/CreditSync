@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { db, type DbTransaction } from "../db";
-import { bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanOpeningBalanceComponents, loanReplacements, loanRestructures, loanRestructureWaivers, loanSchedules, loans, users } from "../db/schema";
+import { auditLogs, bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanOpeningBalanceComponents, loanReplacements, loanRestructures, loanRestructureWaivers, loanSchedules, loans, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
 import {
@@ -379,6 +379,7 @@ export async function presentLoan(row: LoanRow) {
         totalInstallments: row.totalInstallments,
         startDate: row.startDate,
         nextDueDate: row.nextDueDate,
+        paymentStartDate: row.paymentStartDate,
         outstandingPrincipal: serializeMoney(row.outstandingPrincipal ?? "0"),
         outstandingInterest: serializeMoney(row.outstandingInterest ?? "0"),
         outstandingFees: serializeMoney(row.outstandingFees ?? "0"),
@@ -535,6 +536,143 @@ export async function getLoanApplication(ctx: CommandContext, publicId: string) 
     };
 }
 
+export async function getLoanContract(ctx: CommandContext, publicId: string) {
+    const loan = await accessibleLoan(ctx, publicId);
+    const [application, scheduleRows] = await Promise.all([
+        getLoanApplication(ctx, publicId),
+        db.select().from(loanSchedules).where(and(
+            eq(loanSchedules.tenantId, ctx.tenantId),
+            eq(loanSchedules.loanId, loan.id),
+        )).orderBy(loanSchedules.installmentNo),
+    ]);
+    const { replacementLineage: _replacementLineage, restructureLineage: _restructureLineage, openingBalanceComponents: _openingBalanceComponents, restructureWaivers: _restructureWaivers, ...contract } = application;
+    return {
+        ...contract,
+        schedule: scheduleRows.map((row) => ({
+            id: row.publicId,
+            publicId: row.publicId,
+            installmentNo: row.installmentNo,
+            dueDate: row.dueDate,
+            scheduledPrincipal: serializeMoney(row.scheduledPrincipal),
+            scheduledInterest: serializeMoney(row.scheduledInterest),
+            scheduledFee: serializeMoney(row.scheduledFee),
+            scheduledTotal: serializeMoney(row.scheduledTotal),
+            paidTotal: serializeMoney(row.paidTotal),
+            paidPenalty: serializeMoney(row.paidPenalty),
+            overdueDays: row.overdueDays,
+            remainingDue: serializeMoney(row.remainingDue),
+            status: row.status,
+            createdAt: row.createdAt,
+            updatedAt: row.updatedAt,
+        })),
+    };
+}
+
+export interface UpdateLoanPaymentStartDateInput {
+    paymentStartDate: string;
+    reason: string;
+}
+
+/**
+ * Amend the first repayment date without deleting a contract or rewriting
+ * posted payment history. Paid schedule rows remain immutable; only unpaid
+ * rows receive the new due dates derived from the requested start date.
+ */
+export async function updateLoanPaymentStartDate(
+    ctx: CommandContext,
+    publicId: string,
+    input: UpdateLoanPaymentStartDateInput,
+) {
+    const accessible = await accessibleLoan(ctx, publicId);
+    if (!['daily', 'weekly', 'monthly'].includes(accessible.repaymentType)) {
+        throw new DomainError("INVALID_LOAN_TERMS", "Payment start date can only be changed for scheduled loans", 400);
+    }
+    if (!ctx.idempotencyKey?.trim()) {
+        throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Payment start date changes require a non-blank Idempotency-Key", 400);
+    }
+
+    const normalized = normalizePublicLoanTerms({
+        principal: serializeMoney(accessible.principalAmount),
+        interestRate: serializeMoney(accessible.interestRate),
+        termMonths: accessible.termMonths ?? 1,
+        repaymentType: accessible.repaymentType as RepaymentType,
+        startDate: accessible.startDate ?? input.paymentStartDate,
+        paymentStartDate: input.paymentStartDate,
+        totalInstallments: accessible.totalInstallments ?? undefined,
+        installmentAmount: accessible.installmentAmount === null ? undefined : serializeMoney(accessible.installmentAmount),
+    });
+    const generated = generateLoanSchedule({
+        principal: normalized.principal,
+        interestRate: normalized.interestRate,
+        termMonths: normalized.termMonths,
+        repaymentType: normalized.repaymentType,
+        startDate: normalized.startDate,
+        paymentStartDate: normalized.paymentStartDate,
+        totalInstallments: normalized.totalInstallments,
+        installmentAmount: normalized.installmentAmount,
+    });
+
+    return db.transaction(async (tx) => {
+        const current = await tx.query.loans.findFirst({
+            where: and(eq(loans.id, accessible.id), eq(loans.tenantId, ctx.tenantId)),
+        });
+        if (!current) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+        const repeated = await tx.select({ publicId: auditLogs.publicId }).from(auditLogs).where(and(
+            eq(auditLogs.tenantId, ctx.tenantId),
+            eq(auditLogs.entityType, "loan"),
+            eq(auditLogs.entityId, current.publicId),
+            eq(auditLogs.action, "payment_start_date_changed"),
+            sql`${auditLogs.payload}->>'idempotencyKey' = ${ctx.idempotencyKey!.trim()}`,
+        )).orderBy(desc(auditLogs.createdAt)).limit(1);
+        if (repeated[0]) {
+            return { ...await presentLoan(current), auditPublicId: repeated[0].publicId, correlationId: ctx.correlationId };
+        }
+        const existingSchedule = await tx.select().from(loanSchedules).where(and(
+            eq(loanSchedules.tenantId, ctx.tenantId),
+            eq(loanSchedules.loanId, current.id),
+        )).orderBy(loanSchedules.installmentNo);
+        const paidRows = existingSchedule.filter((row) => new FinancialDecimal(row.paidTotal).greaterThan(0));
+        const lastPaid = paidRows.at(-1);
+        const firstUnpaid = existingSchedule.find((row) => new FinancialDecimal(row.paidTotal).equals(0));
+        if (lastPaid && firstUnpaid) {
+            const generatedFirstUnpaid = generated.find((row) => row.installmentNo === firstUnpaid.installmentNo);
+            if (generatedFirstUnpaid && generatedFirstUnpaid.dueDate <= lastPaid.dueDate) {
+                throw new DomainError("SCHEDULE_CHANGE_CONFLICT", "New payment start date must keep unpaid installments after the last paid installment", 409);
+            }
+        }
+        const changedSchedule: Array<{ installmentNo: number; before: string; after: string }> = [];
+        for (const row of existingSchedule) {
+            if (new FinancialDecimal(row.paidTotal).greaterThan(0)) continue;
+            const replacement = generated.find((candidate) => candidate.installmentNo === row.installmentNo);
+            if (!replacement || replacement.dueDate === row.dueDate) continue;
+            await tx.update(loanSchedules).set({ dueDate: replacement.dueDate, updatedAt: new Date() }).where(and(
+                eq(loanSchedules.tenantId, ctx.tenantId),
+                eq(loanSchedules.id, row.id),
+            ));
+            changedSchedule.push({ installmentNo: row.installmentNo, before: row.dueDate, after: replacement.dueDate });
+        }
+        const updated = await tx.update(loans).set({ paymentStartDate: normalized.paymentStartDate, updatedAt: new Date() }).where(and(
+            eq(loans.tenantId, ctx.tenantId),
+            eq(loans.id, current.id),
+        )).returning().then((rows) => rows[0]);
+        if (!updated) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+        const audit = await createAuditLog(tx, {
+            ...auditContext(ctx),
+            entityType: "loan",
+            entityId: updated.publicId,
+            action: "payment_start_date_changed",
+            payload: {
+                before: { paymentStartDate: current.paymentStartDate },
+                after: { paymentStartDate: updated.paymentStartDate },
+                changedSchedule,
+                reason: input.reason,
+                idempotencyKey: ctx.idempotencyKey!.trim(),
+            },
+        });
+        return { ...await presentLoan(updated), auditPublicId: audit.publicId, correlationId: ctx.correlationId };
+    });
+}
+
 export async function createLoanDraft(ctx: CommandContext, input: LoanDraftInput) {
     if (input.bankLoanPublicId && input.bankProfilePublicId) {
         throw new DomainError("FUNDING_SOURCE_CONFLICT", "Choose either a drawdown or an own-capital profile", 400);
@@ -577,6 +715,7 @@ export async function createLoanDraft(ctx: CommandContext, input: LoanDraftInput
             totalInstallments: terms.totalInstallments ?? null,
             installmentAmount: terms.installmentAmount ?? null,
             startDate: input.startDate,
+            paymentStartDate: input.paymentStartDate ?? null,
             outstandingPrincipal: "0.00",
             outstandingInterest: "0.00",
             outstandingFees: "0.00",
@@ -653,6 +792,7 @@ export async function updateLoanDraft(ctx: CommandContext, publicId: string, inp
             ? repaymentTypeChanged || existing.installmentAmount === null ? undefined : serializeMoney(existing.installmentAmount)
             : input.installmentAmount,
         startDate: input.startDate ?? existing.startDate ?? new Date().toISOString().slice(0, 10),
+        paymentStartDate: input.paymentStartDate ?? (repaymentTypeChanged ? undefined : existing.paymentStartDate ?? undefined),
         dailyEntry: input.dailyEntry ?? (repaymentTypeChanged ? undefined : existingDailyEntry(existing)),
         floatingInterestPolicy: repaymentType === "floating"
             ? input.floatingInterestPolicy ?? (!suppliedFloatingPolicy && !repaymentTypeChanged ? existingFloatingInterestPolicy ?? undefined : undefined)
@@ -692,6 +832,9 @@ export async function updateLoanDraft(ctx: CommandContext, publicId: string, inp
             dailyFlatRatePercent: dailyEntry?.flatDailyRatePercent ?? null,
             ...singlePaymentColumns(merged.singlePayment),
             startDate: input.startDate ?? existing.startDate,
+            paymentStartDate: merged.repaymentType === "daily" || merged.repaymentType === "weekly" || merged.repaymentType === "monthly"
+                ? input.paymentStartDate ?? existing.paymentStartDate
+                : null,
             updatedAt: new Date(),
         }).where(and(
             eq(loans.id, existing.id),
@@ -845,6 +988,7 @@ export async function activateLoanInTransaction(
                 termMonths: current.termMonths!,
                 repaymentType: current.repaymentType as RepaymentType,
                 startDate: current.startDate ?? undefined,
+                paymentStartDate: current.paymentStartDate ?? undefined,
                 totalInstallments: current.totalInstallments ?? undefined,
                 installmentAmount: current.installmentAmount ?? undefined,
                 singlePayment: singlePaymentFor(current) ?? undefined,

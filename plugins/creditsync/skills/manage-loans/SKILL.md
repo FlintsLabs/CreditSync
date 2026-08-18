@@ -11,8 +11,10 @@ Loan creation is `preview → draft → activate`. Terms become immutable after 
 
 ## Create and activate
 
-1. Resolve the borrower with `borrower.search` and inspect `borrower.portfolio`. Stop for ambiguous identity.
-2. Collect exact requested terms: principal, interest rate, term, repayment type, start date, and any required installment count/amount. Keep public money as two-decimal strings. For floating loans, collect `floatingInterestPolicy`: day/week unit, literal period length `1`, percent/per-thousand rate, zero/one advance period, and literal `non_refundable` refund policy. Do not use the removed daily-only policy shape.
+1. Resolve the borrower with `borrower.search` and inspect `borrower.portfolio`. Stop for ambiguous identity. For the selected contract's exact terms, daily/weekly/monthly schedule, floating-interest policy, or single-payment conditions, call `loan.contract.get` before explaining the agreement.
+2. Collect exact requested terms: principal, interest rate, term, repayment type, contract `startDate`, optional scheduled `paymentStartDate`, and any required installment count/amount. `paymentStartDate` is the first due date for daily/weekly/monthly schedules and is independent from the contract start date. Keep public money as two-decimal strings. For floating loans, collect `floatingInterestPolicy`: day/week unit, literal period length `1`, percent/per-thousand rate, zero/one advance period, and literal `non_refundable` refund policy. Do not use the removed daily-only policy shape.
+
+If the contract already exists and the first repayment date needs correction, inspect it with `loan.contract.get`, then call `loan.payment-start-date.update` with the exact loan UUID, new date, reason, and idempotency key. This preserves posted payment history and amends only unpaid schedule dates; stop for a schedule conflict and request an operator decision.
 3. Call `loan.preview`; present the exact terms plus schedule totals, count, dates, and first/final installment returned by CreditSync. Do not independently recompute or smooth the final installment.
 4. Ask the operator to approve those terms and schedule summary.
 5. Call `loan.draft` with the same terms and borrower public UUID. A funding source is optional and must use a public UUID returned by `funding-source.list`; never create or modify funding through MCP.

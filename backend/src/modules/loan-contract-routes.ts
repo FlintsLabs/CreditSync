@@ -12,7 +12,7 @@ import { FinancialDecimal } from "../lib/financial-decimal";
 import { serializeMoney } from "../lib/money";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
 import { findAccessibleBorrowerByPublicId, findAccessibleLoanByPublicId } from "../lib/public-id";
-import { activateLoan, createLoanDraft, getLoanApplication, getLoanReplacementLineages, presentLoan, previewLoan, updateLoanDraft } from "../services/loan-application-service";
+import { activateLoan, createLoanDraft, getLoanApplication, getLoanReplacementLineages, presentLoan, previewLoan, updateLoanDraft, updateLoanPaymentStartDate } from "../services/loan-application-service";
 import { bangkokBusinessDate, getLoanListLegacyPaymentHealth, getLoanPaymentHealth } from "../services/loan-payment-health-service";
 import { getLoanReceiptSummaries } from "../services/loan-receipt-summary-service";
 import { floatingInterestBalances } from "../services/floating-interest-service";
@@ -121,7 +121,7 @@ function assertKnownKeys(value: Record<string, unknown>, allowedKeys: readonly s
 
 function assertClosedLoanTerms(body: Record<string, unknown>, draft: boolean) {
     assertKnownKeys(body, [
-        "principal", "interestRate", "termMonths", "repaymentType", "startDate",
+        "principal", "interestRate", "termMonths", "repaymentType", "startDate", "paymentStartDate",
         "totalInstallments", "installmentAmount", "floatingInterestPolicy", "floatingDailyInterest",
         "dailyEntry", "singlePayment",
         ...(draft ? ["borrowerPublicId", "bankLoanPublicId", "bankProfilePublicId"] : []),
@@ -589,6 +589,16 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
             return loanDomainFailure(error, set);
         }
     }, { params: t.Object({ id: t.String() }), body: loanDraftUpdateBody })
+    .post("/:id/payment-start-date", async ({ params, body, user, request, set }) => {
+        if (!user) return loanUnauthorized(set);
+        try {
+            const updated = await updateLoanPaymentStartDate(loanCommandContext(user, request), params.id, body);
+            await invalidateTenantCache(user.tenantId);
+            return updated;
+        } catch (error) {
+            return loanDomainFailure(error, set);
+        }
+    }, { params: t.Object({ id: t.String() }), body: t.Object({ paymentStartDate: t.String(), reason: t.String() }) })
     .post("/:id/activate", async ({ params, user, request, set }) => {
         if (!user) return loanUnauthorized(set);
         try {

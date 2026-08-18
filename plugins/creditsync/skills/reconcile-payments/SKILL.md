@@ -37,6 +37,10 @@ If no image is supplied, data-only capture is valid and skips all evidence calls
 
 One transfer may allocate across many loans and borrowers. Never force an allocation to make totals fit; let the backend validate the sum and outstanding obligations.
 
+## Inspect one loan's payment history
+
+After resolving the exact loan public UUID through `borrower.portfolio`, call `loan.payment-history.list` to retrieve the payment intakes associated with that contract. Present the returned intake status, received amount/date, latest allocation, and posted principal/interest/fee/penalty components exactly as returned; this tool is read-only and does not recalculate or mutate financial records.
+
 ## Attribute payment sources and commission
 
 After posting, call `payment.intermediary-attribution.list` for the exact payment before any source-attribution write and inspect current effective agents with `loan.commission-participant.list` when an intermediary is proposed. Present the operator with explicit choices: leave the amount unattributed, create a `direct` entry without an intermediary UUID, or create one or more `intermediary` entries for a confirmed multi-agent split. Do not infer attribution from payer hints, participant history, or fuzzy identity, and do not silently fill any remainder.

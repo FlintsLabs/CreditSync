@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.22 - 2026-08-18
+
+### Added
+- Added read-only MCP inspection for complete loan contracts, repayment schedules, and payment history.
+- Added independent `paymentStartDate` support for scheduled loans and an audited, idempotent workflow to amend unpaid repayment dates without deleting contracts or posted payments.
+- Added migration 0046 for the loan payment start date and synchronized the frozen 81-tool CreditSync plugin contract.
+
 ## v0.3.21 - 2026-08-18
 
 ### Added

@@ -39,6 +39,21 @@ describe("Loan Calculator", () => {
         expect(schedule[359].amount).toBe("65.47");
     });
 
+    it("should start scheduled repayments on the explicit payment start date", () => {
+        const schedule = calculateLoanSchedule({
+            principal: 1000,
+            interestRate: 0,
+            termMonths: 1,
+            repaymentType: "daily",
+            startDate: new Date("2024-01-01"),
+            paymentStartDate: new Date("2024-01-05"),
+            totalInstallments: 2,
+            installmentAmount: 500,
+        });
+
+        expect(schedule.map((row) => row.dueDate)).toEqual(["2024-01-05", "2024-01-06"]);
+    });
+
     it("should calculate pro-rated closing amount", () => {
         const principal = 20000;
         const rate = 18; // 18% per year

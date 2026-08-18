@@ -63,6 +63,7 @@ export const loanTermsBody = t.Object({
     termMonths: t.Number(),
     repaymentType,
     startDate: t.String(),
+    paymentStartDate: t.Optional(t.String()),
     totalInstallments: t.Optional(t.Number()),
     installmentAmount: t.Optional(publicMoney),
     floatingInterestPolicy: t.Optional(floatingInterestPolicy),

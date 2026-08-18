@@ -223,6 +223,7 @@ export const loans = pgTable("loans", {
     lateFeeMode: text("late_fee_mode").default("none"),
     lateFeeAmount: numeric("late_fee_amount").default("0"),
     startDate: date("start_date").defaultNow(),
+    paymentStartDate: date("payment_start_date"),
     nextDueDate: date("next_due_date"),
     outstandingPrincipal: numeric("outstanding_principal").default("0"),
     outstandingInterest: numeric("outstanding_interest").default("0"),

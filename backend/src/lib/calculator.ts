@@ -20,6 +20,7 @@ export interface LoanCalculationParams {
     termMonths: number;
     repaymentType: RepaymentType;
     startDate: Date;
+    paymentStartDate?: Date;
     totalInstallments?: number;
     installmentAmount?: Decimal.Value;
     singlePayment?: SinglePaymentTerms;
@@ -40,6 +41,7 @@ export interface PublicLoanCalculationParams {
     termMonths: number;
     repaymentType: RepaymentType;
     startDate: string;
+    paymentStartDate?: string;
     totalInstallments?: number;
     installmentAmount?: string;
     dailyEntry?: DailyLoanEntryInput;
@@ -78,6 +80,7 @@ export interface PublicLoanTerms {
     totalInstallments?: number;
     installmentAmount?: string;
     startDate?: string;
+    paymentStartDate?: string;
     singlePayment?: SinglePaymentTermsInput;
 }
 
@@ -91,6 +94,15 @@ export function normalizePublicLoanTerms(input: PublicLoanTerms): NormalizedPubl
     }
     if (!(["single_payment", "daily", "weekly", "monthly", "floating"] as const).includes(input.repaymentType)) {
         throw new Error("Repayment type is not supported");
+    }
+    if (input.paymentStartDate !== undefined) {
+        if (!(input.repaymentType === "daily" || input.repaymentType === "weekly" || input.repaymentType === "monthly")) {
+            throw new Error("Payment start date requires a scheduled repayment type");
+        }
+        if (input.startDate === undefined) throw new Error("Payment start date requires a contract start date");
+        const startDate = normalizeBangkokBusinessDate(input.startDate);
+        const paymentStartDate = normalizeBangkokBusinessDate(input.paymentStartDate);
+        if (paymentStartDate < startDate) throw new Error("Payment start date cannot be before contract start date");
     }
     if (input.repaymentType === "single_payment"
         && (input.totalInstallments !== undefined || input.installmentAmount !== undefined)) {
@@ -204,7 +216,12 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
     let allocatedPrincipal = new FinancialDecimal("0");
     let allocatedInterest = new FinancialDecimal("0");
     let remainingPrincipal = principalMoney;
-    let currentDate = dayjs(startDate);
+    let currentDate = dayjs(params.paymentStartDate ?? startDate);
+    if (params.paymentStartDate) {
+        if (repaymentType === "daily") currentDate = currentDate.subtract(1, "day");
+        if (repaymentType === "weekly") currentDate = currentDate.subtract(1, "week");
+        if (repaymentType === "monthly") currentDate = currentDate.subtract(1, "month");
+    }
 
     for (let i = 1; i <= installments; i++) {
         const isFinalInstallment = i === installments;
@@ -240,6 +257,7 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
 
 export function calculatePublicLoanSchedule(params: PublicLoanCalculationParams): PublicInstallmentSchedule[] {
     const startDate = normalizeBangkokBusinessDate(params.startDate);
+    const paymentStartDate = params.paymentStartDate === undefined ? undefined : normalizeBangkokBusinessDate(params.paymentStartDate);
     const dailyEntry = params.dailyEntry === undefined ? null : (() => {
         if (params.repaymentType !== "daily") throw new Error("Daily entry requires daily repayment");
         return normalizeDailyLoanEntry({ principal: params.principal, ...params.dailyEntry });
@@ -260,6 +278,7 @@ export function calculatePublicLoanSchedule(params: PublicLoanCalculationParams)
         // arithmetic independent of the host process timezone by representing that
         // date at UTC midnight; calculateLoanSchedule only reads/adds calendar units.
         startDate: new Date(`${startDate}T00:00:00Z`),
+        ...(paymentStartDate === undefined ? {} : { paymentStartDate: new Date(`${paymentStartDate}T00:00:00Z`) }),
         totalInstallments: terms.totalInstallments,
         installmentAmount: terms.installmentAmount === undefined ? undefined : parseMoney(terms.installmentAmount),
         singlePayment: terms.singlePayment,

@@ -17,7 +17,9 @@ import { listFundingSources } from "../services/funding-source-service";
 import {
     activateLoan,
     createLoanDraft,
+    getLoanContract,
     previewLoan,
+    updateLoanPaymentStartDate,
     type LoanDraftInput,
 } from "../services/loan-application-service";
 import {
@@ -55,6 +57,7 @@ import {
     createPaymentIntake,
     finalizePaymentEvidence,
     getPaymentIntake,
+    listLoanPaymentIntakes,
     listPaymentIntakes,
     postPayment,
     preparePaymentEvidence,
@@ -219,6 +222,10 @@ export function createDefaultMcpToolHandlers(
     },
     "loan.draft": (ctx, input) => createLoanDraft(ctx, input as unknown as LoanDraftInput),
     "loan.activate": (ctx, input) => activateLoan(ctx, asString(input, "loanPublicId")),
+    "loan.payment-start-date.update": (ctx, input) => updateLoanPaymentStartDate(ctx, asString(input, "loanPublicId"), {
+        paymentStartDate: asString(input, "paymentStartDate"),
+        reason: asString(input, "reason"),
+    }),
     "loan.interest-rate.list": (ctx, input) => listLoanInterestRates(ctx, asString(input, "loanPublicId")),
     "loan.interest-rate.preview": (ctx, input) => previewLoanInterestRateChange(ctx, asString(input, "loanPublicId"), {
         effectiveDate: asString(input, "effectiveDate"),
@@ -265,6 +272,8 @@ export function createDefaultMcpToolHandlers(
         reason: asString(input, "reason"),
     }),
     "loan.disbursement.list": (ctx, input) => listLoanDisbursements(ctx, asString(input, "loanPublicId")),
+    "loan.contract.get": (ctx, input) => getLoanContract(ctx, asString(input, "loanPublicId")),
+    "loan.payment-history.list": (ctx, input) => listLoanPaymentIntakes(ctx, asString(input, "loanPublicId")),
     "loan.disbursement.draft": (ctx, input) => {
         const { loanPublicId, ...draft } = input;
         rejectDisbursementDraftEvidenceIds(draft);
@@ -428,6 +437,7 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "payment.post": { entityType: "payment_intake", action: "posted" },
     "payment.reverse": { entityType: "payment_intake", action: "reversed" },
     "loan.activate": { entityType: "loan", action: "activated" },
+    "loan.payment-start-date.update": { entityType: "loan", action: "payment_start_date_changed" },
     "loan.interest-rate.execute": { entityType: "loan_interest_rate_timeline", action: "interest_rate_timeline_changed" },
     "loan.settlement.execute": { entityType: "loan_settlement", action: "executed" },
     "loan.settlement.reverse": { entityType: "loan_settlement", action: "reversed" },

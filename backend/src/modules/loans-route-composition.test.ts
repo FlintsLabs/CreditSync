@@ -47,6 +47,7 @@ describe("loans route composition", () => {
             "PATCH /loans/:id/commission-participants/:participantId",
             "POST /loans/",
             "POST /loans/:id/activate",
+            "POST /loans/:id/payment-start-date",
             "POST /loans/:id/close",
             "POST /loans/:id/commission-participants",
             "POST /loans/:id/commission-participants/:participantId/end",
