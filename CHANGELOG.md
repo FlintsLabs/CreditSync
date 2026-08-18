@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.19 - 2026-08-18
+
+### Added
+- Added localized No. columns, total-record counts, configurable page sizes, and status icons for Loan Detail repayment and payment-history tables.
+
+### Changed
+- Updated repayment status badges so paid installments use a green check state and due-related installments use a yellow warning state.
+
 ## v0.3.18 - 2026-08-18
 
 ### Added

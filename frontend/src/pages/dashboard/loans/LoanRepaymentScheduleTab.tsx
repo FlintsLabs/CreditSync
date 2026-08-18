@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { AlertTriangle, Check, Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../../lib/api";
 import { formatMoneyExact } from "../../../lib/workflow-model";
@@ -9,6 +9,30 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { LoanTablePagination, type LoanTablePageSize } from "./LoanTablePagination";
 
 interface ScheduleRow { id: string; publicId: string; installmentNo: number; dueDate: string; remainingDue: string; commissionAmount?: string; status: string }
+
+function ScheduleStatus({ status, label }: { status: string; label: string }) {
+    const isPaid = status === "paid";
+    const isDue = ["pending", "partial", "overdue", "due", "scheduled"].includes(status);
+    const Icon = isPaid ? Check : isDue ? AlertTriangle : null;
+    const className = isPaid
+        ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300"
+        : isDue
+            ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300"
+            : undefined;
+
+    return <Badge
+        data-testid={isPaid ? "schedule-status-paid" : isDue ? "schedule-status-due" : undefined}
+        variant="outline"
+        className={className}
+    >
+        {Icon && <Icon
+            data-testid={isPaid ? "schedule-status-icon-paid" : "schedule-status-icon-due"}
+            className="mr-1 h-3.5 w-3.5"
+            aria-hidden="true"
+        />}
+        {label}
+    </Badge>;
+}
 
 export function LoanRepaymentScheduleTab({ loanPublicId }: { loanPublicId: string }) {
     const { t, i18n } = useTranslation();
@@ -40,7 +64,7 @@ export function LoanRepaymentScheduleTab({ loanPublicId }: { loanPublicId: strin
             : rows.length === 0 ? <div className="rounded border border-dashed p-5 text-sm text-muted-foreground">{t("loanDetail.noRepaymentSchedule", "No repayment schedule available for this loan.")}</div>
             : <div className="space-y-4">
                 <div className="rounded border bg-muted/20 p-4"><div className="text-sm text-muted-foreground">{t("loanDetail.scheduleTab.totalCommission", "Commission generated from collected interest")}</div><div className="text-xl font-semibold tabular-nums">{formatMoneyExact(totalCommission, i18n.language)}</div></div>
-                <div className="overflow-x-auto"><Table className="min-w-[42rem]"><TableHeader><TableRow><TableHead>{t("loanDetail.scheduleColumns.installment")}</TableHead><TableHead>{t("loanDetail.scheduleColumns.dueDate")}</TableHead><TableHead className="text-right">{t("loanDetail.scheduleColumns.remainingDue")}</TableHead><TableHead className="text-right">{t("loanDetail.scheduleColumns.commission")}</TableHead><TableHead className="text-right">{t("loanDetail.scheduleColumns.status")}</TableHead></TableRow></TableHeader><TableBody>{rows.slice((page - 1) * (pageSize === "all" ? rows.length : pageSize), pageSize === "all" ? rows.length : page * pageSize).map((row) => <TableRow key={row.publicId ?? row.id}><TableCell className="font-medium">{t("loanDetail.installmentLabel", { defaultValue: "Installment #{{id}}", id: row.installmentNo })}</TableCell><TableCell>{row.dueDate}</TableCell><TableCell className="text-right tabular-nums">{formatMoneyExact(row.remainingDue, i18n.language)}</TableCell><TableCell className="text-right tabular-nums">{formatMoneyExact(row.commissionAmount ?? "0.00", i18n.language)}</TableCell><TableCell className="text-right"><Badge variant={row.status === "overdue" ? "destructive" : row.status === "paid" ? "secondary" : "outline"}>{t(`loans.paymentHealth.scheduleStatus.${row.status}`, { defaultValue: row.status })}</Badge></TableCell></TableRow>)}</TableBody></Table></div>
+                <div className="overflow-x-auto"><Table className="min-w-[42rem]"><TableHeader><TableRow><TableHead>{t("loanDetail.table.no", "No.")}</TableHead><TableHead>{t("loanDetail.scheduleColumns.installment")}</TableHead><TableHead>{t("loanDetail.scheduleColumns.dueDate")}</TableHead><TableHead className="text-right">{t("loanDetail.scheduleColumns.remainingDue")}</TableHead><TableHead className="text-right">{t("loanDetail.scheduleColumns.commission")}</TableHead><TableHead className="text-right">{t("loanDetail.scheduleColumns.status")}</TableHead></TableRow></TableHeader><TableBody>{rows.slice((page - 1) * (pageSize === "all" ? rows.length : pageSize), pageSize === "all" ? rows.length : page * pageSize).map((row, index) => <TableRow key={row.publicId ?? row.id}><TableCell data-testid={`schedule-row-number-${(page - 1) * (pageSize === "all" ? rows.length : pageSize) + index + 1}`}>{(page - 1) * (pageSize === "all" ? rows.length : pageSize) + index + 1}</TableCell><TableCell className="font-medium">{t("loanDetail.installmentLabel", { defaultValue: "Installment #{{id}}", id: row.installmentNo })}</TableCell><TableCell>{row.dueDate}</TableCell><TableCell className="text-right tabular-nums">{formatMoneyExact(row.remainingDue, i18n.language)}</TableCell><TableCell className="text-right tabular-nums">{formatMoneyExact(row.commissionAmount ?? "0.00", i18n.language)}</TableCell><TableCell className="text-right"><ScheduleStatus status={row.status} label={t(`loans.paymentHealth.scheduleStatus.${row.status}`, { defaultValue: row.status })} /></TableCell></TableRow>)}</TableBody></Table></div>
                 <LoanTablePagination controlId="loan-schedule-page-size" page={page} pageSize={pageSize} totalItems={rows.length} onPageChange={setPage} onPageSizeChange={(nextPageSize) => { setPageSize(nextPageSize); setPage(1); }} />
             </div>}
     </CardContent></Card>;

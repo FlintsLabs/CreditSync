@@ -76,22 +76,30 @@ describe("Loan detail repayment schedule table", () => {
 
         const table = within(section as HTMLElement).getByRole("table");
         expect(within(table).getByRole("columnheader", { name: "งวด" })).toBeInTheDocument();
+        expect(within(table).getByRole("columnheader", { name: "ลำดับ" })).toBeInTheDocument();
         expect(within(table).getByRole("columnheader", { name: "วันครบกำหนด" })).toBeInTheDocument();
         expect(within(table).getByRole("columnheader", { name: "ยอดคงค้าง" })).toBeInTheDocument();
         expect(within(table).getByRole("columnheader", { name: "สถานะ" })).toBeInTheDocument();
         expect(within(table).queryByRole("columnheader", { name: "ค่าคอมมิชชันที่เกิดขึ้น" })).not.toBeInTheDocument();
         expect(within(section as HTMLElement).getByText("ค่าคอมมิชชันจากดอกเบี้ยที่เก็บได้")).toBeInTheDocument();
+        expect(within(section as HTMLElement).getByText("รวม: 25 รายการ")).toBeInTheDocument();
         expect(within(table).getAllByRole("row")).toHaveLength(11);
+        expect(within(table).getByTestId("schedule-row-number-1")).toHaveTextContent("1");
         expect(within(table).getByText("งวด #1")).toBeInTheDocument();
         expect(within(table).getByText("2026-07-01")).toBeInTheDocument();
         expect(within(table).getAllByText("฿200.00").length).toBeGreaterThan(0);
         expect(within(table).getByText("ค้างชำระ")).toBeInTheDocument();
         expect(within(table).getByText("ชำระแล้ว")).toBeInTheDocument();
+        expect(within(table).getByTestId("schedule-status-paid")).toHaveClass("text-emerald-700");
+        expect(within(table).getByTestId("schedule-status-icon-paid")).toBeInTheDocument();
+        expect(within(table).getAllByTestId("schedule-status-due")[0]).toHaveClass("text-amber-700");
+        expect(within(table).getAllByTestId("schedule-status-icon-due")[0]).toBeInTheDocument();
         expect(within(table).getByText("งวด #9")).toBeInTheDocument();
         expect(within(table).queryByText("งวด #11")).not.toBeInTheDocument();
 
         await userEvent.click(within(section as HTMLElement).getByRole("button", { name: "ถัดไป" }));
         expect(within(table).getByText("งวด #11")).toBeInTheDocument();
+        expect(within(table).getByTestId("schedule-row-number-11")).toHaveTextContent("11");
         expect(within(table).getAllByRole("row")).toHaveLength(11);
 
         await userEvent.selectOptions(within(section as HTMLElement).getByLabelText("รายการต่อหน้า"), "all");

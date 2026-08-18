@@ -20,6 +20,7 @@ export function LoanTablePagination({ controlId, page, pageSize, totalItems, onP
     const totalPages = pageSize === "all" ? 1 : Math.max(1, Math.ceil(totalItems / pageSize));
 
     return <nav aria-label={t("loanDetail.pagination.label", "Table pagination")} className="flex flex-wrap items-center justify-between gap-3 pt-2">
+        <span className="text-sm text-muted-foreground">{t("loanDetail.pagination.total", { count: totalItems })}</span>
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <label htmlFor={controlId}>{t("loanDetail.pagination.pageSize", "Rows per page")}</label>
             <select id={controlId} className="h-9 rounded-md border bg-background px-2" value={pageSize} onChange={(event) => onPageSizeChange(event.target.value === "all" ? "all" : Number(event.target.value) as LoanTablePageSize)}>

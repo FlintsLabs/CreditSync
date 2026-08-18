@@ -67,11 +67,15 @@ describe("LoanPaymentHistoryTab", () => {
         render(<LoanPaymentHistoryTab loanPublicId="loan-1" />);
 
         const table = await screen.findByRole("table");
+        expect(within(table).getByRole("columnheader", { name: "No." })).toBeInTheDocument();
+        expect(screen.getByText("Total: 25 records")).toBeInTheDocument();
         expect(within(table).getByTestId("payment-payment-1")).toBeInTheDocument();
+        expect(within(table).getByTestId("payment-row-number-1")).toHaveTextContent("1");
         expect(within(table).getByTestId("payment-payment-10")).toBeInTheDocument();
         expect(within(table).queryByTestId("payment-payment-11")).not.toBeInTheDocument();
         await userEvent.click(screen.getByRole("button", { name: "Next" }));
         expect(within(table).getByTestId("payment-payment-11")).toBeInTheDocument();
+        expect(within(table).getByTestId("payment-row-number-11")).toHaveTextContent("11");
         await userEvent.selectOptions(screen.getByLabelText("Rows per page"), "all");
         expect(within(table).getByTestId("payment-payment-25")).toBeInTheDocument();
     });
