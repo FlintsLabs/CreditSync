@@ -40,6 +40,7 @@ describe("loans route composition", () => {
             "GET /loans/:id/profitability",
             "GET /loans/:id/restructures",
             "GET /loans/:id/schedule",
+            "GET /loans/:id/schedule-summary",
             "GET /loans/:id/waivers",
             "GET /loans/restructures/:restructureId",
             "GET /loans/waivers/:id",

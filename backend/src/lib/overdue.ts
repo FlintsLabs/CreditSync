@@ -1,11 +1,17 @@
-function startOfDay(value: Date | string) {
-    const date = typeof value === "string" ? new Date(value) : new Date(value);
-    date.setHours(0, 0, 0, 0);
-    return date;
+function businessDate(value: Date | string) {
+    const date = typeof value === "string" ? new Date(value) : value;
+    const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Bangkok",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).formatToParts(date);
+    const read = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value;
+    return `${read("year")}-${read("month")}-${read("day")}`;
 }
 
 function daysBetween(from: Date, to: Date) {
-    const diff = startOfDay(to).getTime() - startOfDay(from).getTime();
+    const diff = Date.parse(`${businessDate(to)}T00:00:00Z`) - Date.parse(`${businessDate(from)}T00:00:00Z`);
     return Math.max(0, Math.floor(diff / 86400000));
 }
 
@@ -23,8 +29,10 @@ export interface OverdueComputationInput {
 }
 
 export function computeOverdueSnapshot(input: OverdueComputationInput) {
-    const asOf = input.asOf ? startOfDay(input.asOf) : startOfDay(new Date());
-    const dueDate = startOfDay(input.dueDate);
+    const asOf = input.asOf ? new Date(input.asOf) : new Date();
+    const dueDate = new Date(`${input.dueDate}T00:00:00Z`);
+    const asOfBusinessDate = businessDate(asOf);
+    const dueBusinessDate = businessDate(input.dueDate);
     const remainingDue = Number(input.remainingDue ?? 0);
     const paidPenalty = Number(input.paidPenalty ?? 0);
     const gracePeriodDays = Number(input.gracePeriodDays ?? 0);
@@ -50,6 +58,8 @@ export function computeOverdueSnapshot(input: OverdueComputationInput) {
         ? "paid"
         : overdueDays > 0
             ? "overdue"
+            : asOfBusinessDate >= dueBusinessDate
+                ? "due"
             : input.baseStatus === "partial"
                 ? "partial"
                 : "pending";

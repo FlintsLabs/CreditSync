@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.21 - 2026-08-18
+
+### Added
+- Added backend-calculated repayment schedule summaries for paid, overdue, due-today, and pending installment counts with the exact due-today amount.
+- Added a distinct `ถึงกำหนดชำระ` / `Due` status for unpaid installments on their Bangkok business due date.
+
 ## v0.3.20 - 2026-08-18
 
 ### Changed

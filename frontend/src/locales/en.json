@@ -591,6 +591,7 @@
             "scheduleStatus": {
                 "pending": "Pending",
                 "partial": "Partially paid",
+                "due": "Due",
                 "overdue": "Overdue",
                 "paid": "Paid"
             }
@@ -1105,7 +1106,7 @@
             "title": "Payment History", "description": "Posted payments, explicit source attribution, and authoritative commission.", "empty": "No posted payments.", "totalCommission": "Total commission", "date": "Posted date", "amountLabel": "Amount", "interest": "Interest", "commission": "Commission", "attribution": "Attribution", "unattributed": "Unattributed", "direct": "Direct payment", "agent": "Agent", "edit": "Attribute", "editorTitle": "Attribute payment", "source": "Source", "confirmation": "I confirm this payment source attribution",
             "errors": { "load": "Unable to load payment history.", "confirm": "Confirm the attribution before saving.", "amount": "Enter a positive amount with exactly two decimals.", "agent": "Choose an agent.", "save": "Unable to save payment attribution." }
         },
-        "scheduleTab": { "totalCommission": "Commission generated from collected interest", "errors": { "load": "Unable to load repayment schedule." } },
+        "scheduleTab": { "totalCommission": "Commission generated from collected interest", "summary": { "paid": "Paid", "paidCount": "{{paid}} / {{total}} installments", "overdue": "Overdue", "overdueCount": "{{count}} installments", "dueToday": "Due today", "dueTodayCount": "{{count}} installments · {{amount}}", "pending": "Pending", "pendingCount": "{{count}} installments", "today": "Today {{date}}" }, "errors": { "load": "Unable to load repayment schedule." } },
         "table": { "no": "No." },
         "pagination": { "label": "Table pagination", "page": "Page {{page}} of {{totalPages}}", "pageSize": "Rows per page", "all": "All", "total": "Total: {{count}} records", "previous": "Previous", "next": "Next" },
         "restructureBalances": {

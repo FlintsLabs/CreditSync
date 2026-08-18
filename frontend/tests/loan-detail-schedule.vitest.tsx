@@ -48,6 +48,7 @@ function renderLoanDetail() {
         if (url === `/loans/${LOAN_ID}`) return { data: loan };
         if (url === `/borrowers/${BORROWER_ID}`) return { data: { id: BORROWER_ID, publicId: BORROWER_ID, name: "พี่ฟ้า" } };
         if (url.endsWith("/schedule")) return { data: schedule };
+        if (url.endsWith("/schedule-summary")) return { data: { businessDate: "2026-08-18", totalInstallments: 25, paidInstallments: 1, overdueInstallments: 10, dueTodayInstallments: 1, dueTodayAmount: "200.00", pendingInstallments: 13 } };
         if (url.endsWith("/funding-allocations")) return { data: [] };
         if (url.endsWith("/allocation-state")) return { data: { principalAmount: "4000.00", netAllocatedPrincipal: "0.00", remainingGap: "4000.00", overfundedAmount: "0.00", state: "unfunded" } };
         throw new Error(`Unexpected GET ${url}`);
@@ -83,6 +84,11 @@ describe("Loan detail repayment schedule table", () => {
         expect(within(table).queryByRole("columnheader", { name: "ค่าคอมมิชชันที่เกิดขึ้น" })).not.toBeInTheDocument();
         expect(within(section as HTMLElement).getByText("ค่าคอมมิชชันจากดอกเบี้ยที่เก็บได้")).toBeInTheDocument();
         expect(within(section as HTMLElement).getByText("รวม: 25 รายการ")).toBeInTheDocument();
+        expect(within(section as HTMLElement).getByTestId("schedule-summary")).toHaveTextContent("ชำระแล้ว");
+        expect(within(section as HTMLElement).getByTestId("schedule-summary")).toHaveTextContent("1 / 25 งวด");
+        expect(within(section as HTMLElement).getByTestId("schedule-summary")).toHaveTextContent("ค้างชำระ");
+        expect(within(section as HTMLElement).getByTestId("schedule-summary")).toHaveTextContent("ถึงกำหนดวันนี้");
+        expect(within(section as HTMLElement).getByTestId("schedule-summary")).toHaveTextContent("รอชำระ");
         expect(within(table).getAllByRole("row")).toHaveLength(11);
         expect(within(table).getByTestId("schedule-row-number-1")).toHaveTextContent("1");
         expect(within(table).getByText("งวด #1")).toBeInTheDocument();

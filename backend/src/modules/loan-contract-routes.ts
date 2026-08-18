@@ -8,6 +8,7 @@ import { calculateLoanClosingSummary } from "../lib/calculator";
 import { createAuditLog } from "../lib/audit-log";
 import { getAccessScopeCacheKey, loanAccessFilters } from "../lib/access";
 import { computeOverdueSnapshot } from "../lib/overdue";
+import { FinancialDecimal } from "../lib/financial-decimal";
 import { serializeMoney } from "../lib/money";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
 import { findAccessibleBorrowerByPublicId, findAccessibleLoanByPublicId } from "../lib/public-id";
@@ -50,6 +51,39 @@ export const loanListLoanProjection = {
 };
 
 const bangkokCurrentInstant = sql`((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Bangkok') AT TIME ZONE 'Asia/Bangkok')`;
+
+export function summarizeLoanSchedule(loan: typeof loans.$inferSelect, scheduleRows: Array<typeof loanSchedules.$inferSelect>) {
+    const today = bangkokBusinessDate(new Date());
+    const summary = {
+        businessDate: today,
+        totalInstallments: scheduleRows.length,
+        paidInstallments: 0,
+        overdueInstallments: 0,
+        dueTodayInstallments: 0,
+        pendingInstallments: 0,
+        dueTodayAmount: new FinancialDecimal("0.00"),
+    };
+
+    for (const row of scheduleRows) {
+        const overdue = computeOverdueSnapshot({
+            dueDate: row.dueDate,
+            remainingDue: row.remainingDue,
+            paidPenalty: row.paidPenalty,
+            gracePeriodDays: loan.gracePeriodDays,
+            lateFeeMode: loan.lateFeeMode,
+            lateFeeAmount: loan.lateFeeAmount,
+            baseStatus: row.status,
+        });
+        if (overdue.effectiveStatus === "paid") summary.paidInstallments += 1;
+        else if (overdue.effectiveStatus === "overdue") summary.overdueInstallments += 1;
+        else if (row.dueDate === today) {
+            summary.dueTodayInstallments += 1;
+            summary.dueTodayAmount = summary.dueTodayAmount.plus(overdue.totalDueNow.toFixed(2));
+        } else if (overdue.effectiveStatus === "pending" || overdue.effectiveStatus === "partial") summary.pendingInstallments += 1;
+    }
+
+    return { ...summary, dueTodayAmount: summary.dueTodayAmount.toFixed(2) };
+}
 
 export function buildCurrentLoanAgentRowsQuery(tenantId: string, loanIds: number[]) {
     return db.select({
@@ -362,6 +396,26 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
         } catch (error) {
             return loanDomainFailure(error, set);
         }
+    }, { params: t.Object({ id: t.String() }) })
+    .get("/:id/schedule-summary", async ({ params, user, set }) => {
+        if (!user) return loanUnauthorized(set);
+        const loan = await findAccessibleLoanByPublicId(user, params.id);
+        if (!loan) return loanDomainFailure(new DomainError("LOAN_NOT_FOUND", "Loan not found", 404), set);
+
+        const scopeKey = getAccessScopeCacheKey(user);
+        return withTenantCache({
+            tenantId: user.tenantId,
+            namespace: "loans",
+            key: `schedule-summary:${loan.id}:${scopeKey}`,
+            ttlSeconds: 20,
+            loader: async () => {
+                const scheduleRows = await db.select().from(loanSchedules).where(and(
+                    eq(loanSchedules.loanId, loan.id),
+                    eq(loanSchedules.tenantId, user.tenantId),
+                ));
+                return summarizeLoanSchedule(loan, scheduleRows);
+            },
+        });
     }, { params: t.Object({ id: t.String() }) })
     .get("/:id/schedule", async ({ params, user, request, set }) => {
         if (!user) return loanUnauthorized(set);
