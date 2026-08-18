@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { BorrowerQueueMeta } from "../src/pages/dashboard/Dashboard";
-import { buildBorrowerRepaymentHref, buildDashboardPriorities, compareMoney, type BorrowerDueItem, type DashboardInputs } from "../src/pages/dashboard/dashboard-model";
+import { buildBorrowerRepaymentHref, buildDashboardPriorities, compareMoney, getCollectionRatePercent, type BorrowerDueItem, type DashboardInputs } from "../src/pages/dashboard/dashboard-model";
 import i18n from "../src/lib/i18n";
 
 const input: DashboardInputs = {
@@ -26,6 +26,12 @@ const input: DashboardInputs = {
 };
 
 describe("dashboard command center model", () => {
+    it("calculates collection rate from exact decimal money strings", () => {
+        expect(getCollectionRatePercent("36.00", "40.00")).toBe("90.00");
+        expect(getCollectionRatePercent("9007199254740993.01", "9007199254740993.01")).toBe("100.00");
+        expect(getCollectionRatePercent("0.00", "0.00")).toBe("0.00");
+    });
+
     it("orders only actionable priorities by operational severity", () => {
         expect(buildDashboardPriorities(input).map((item) => [item.key, item.count, item.href])).toEqual([
             ["overdueBorrowers", 3, "/transactions/new"],

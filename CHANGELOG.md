@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.25 - 2026-08-18
+
+### Added
+- Added Dashboard analytics for today's actual-versus-expected collection rate, 30-day cash and interest trends, monthly interest performance, deployed principal, and outstanding principal.
+
 ## v0.3.23 - 2026-08-18
 
 ### Added

@@ -1,5 +1,6 @@
 import { Elysia } from "elysia";
 import { and, eq } from "drizzle-orm";
+import Decimal from "decimal.js";
 import { db } from "../db";
 import { bankLoanRepayments, bankLoanSchedules, bankLoans, bankTransactions, borrowers, botUploads, loanFundingAllocations, loanSchedules, loans, reconciliationEntries, transactions } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
@@ -360,5 +361,88 @@ export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
             key: "profitability-summary",
             ttlSeconds: 30,
             loader: async () => serializeDashboardProfitability(await getTenantProfitabilitySummary(user.tenantId)),
+        });
+    })
+    .get("/analytics", async ({ user, set }) => {
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
+        }
+
+        return await withTenantCache({
+            tenantId: user.tenantId,
+            namespace: "dashboard",
+            key: "analytics",
+            ttlSeconds: 30,
+            loader: async () => {
+                const today = todayString();
+                const start = new Date(`${today}T00:00:00.000Z`);
+                start.setUTCDate(start.getUTCDate() - 29);
+                const startDate = start.toISOString().slice(0, 10);
+                const [schedules, repayments, allLoans, allocations] = await Promise.all([
+                    db.select({ dueDate: loanSchedules.dueDate, scheduledTotal: loanSchedules.scheduledTotal, scheduledInterest: loanSchedules.scheduledInterest })
+                        .from(loanSchedules)
+                        .where(eq(loanSchedules.tenantId, user.tenantId)),
+                    db.select({ transactionDate: transactions.transactionDate, postedAt: transactions.postedAt, amount: transactions.amount, interestComponent: transactions.interestComponent })
+                        .from(transactions)
+                        .where(eq(transactions.tenantId, user.tenantId)),
+                    db.select({ status: loans.status, outstandingPrincipal: loans.outstandingPrincipal })
+                        .from(loans)
+                        .where(eq(loans.tenantId, user.tenantId)),
+                    db.select({ allocatedAmount: loanFundingAllocations.allocatedAmount })
+                        .from(loanFundingAllocations)
+                        .where(eq(loanFundingAllocations.tenantId, user.tenantId)),
+                ]);
+
+                const zero = () => new Decimal(0);
+                const add = (left: string | null | undefined, right: string | null | undefined) => new Decimal(left ?? 0).plus(right ?? 0).toFixed(2);
+                const daily = new Map<string, { expected: string; actual: string; interest: string }>();
+                const monthly = new Map<string, { expectedInterest: string; actualInterest: string }>();
+                const ensureDaily = (date: string) => {
+                    const current = daily.get(date) ?? { expected: "0.00", actual: "0.00", interest: "0.00" };
+                    daily.set(date, current);
+                    return current;
+                };
+                const ensureMonthly = (month: string) => {
+                    const current = monthly.get(month) ?? { expectedInterest: "0.00", actualInterest: "0.00" };
+                    monthly.set(month, current);
+                    return current;
+                };
+
+                for (const row of schedules) {
+                    if (row.dueDate < startDate || row.dueDate > today) continue;
+                    const item = ensureDaily(row.dueDate);
+                    item.expected = add(item.expected, row.scheduledTotal);
+                    const month = row.dueDate.slice(0, 7);
+                    const monthlyItem = ensureMonthly(month);
+                    monthlyItem.expectedInterest = add(monthlyItem.expectedInterest, row.scheduledInterest);
+                }
+                for (const row of repayments) {
+                    const date = (row.transactionDate ?? row.postedAt).toISOString().slice(0, 10);
+                    if (date < startDate || date > today) continue;
+                    const item = ensureDaily(date);
+                    item.actual = add(item.actual, row.amount);
+                    item.interest = add(item.interest, row.interestComponent);
+                    const monthlyItem = ensureMonthly(date.slice(0, 7));
+                    monthlyItem.actualInterest = add(monthlyItem.actualInterest, row.interestComponent);
+                }
+                const dailySeries = Array.from({ length: 30 }, (_, index) => {
+                    const date = new Date(start);
+                    date.setUTCDate(date.getUTCDate() + index);
+                    const key = date.toISOString().slice(0, 10);
+                    return { date: key, ...(daily.get(key) ?? { expected: "0.00", actual: "0.00", interest: "0.00" }) };
+                });
+                const deployedPrincipal = allocations.reduce((sum, row) => sum.plus(row.allocatedAmount), zero()).toFixed(2);
+                const outstandingPrincipal = allLoans.filter((loan) => loan.status === "active").reduce((sum, loan) => sum.plus(loan.outstandingPrincipal ?? 0), zero()).toFixed(2);
+                const todayItem = daily.get(today) ?? { expected: "0.00", actual: "0.00", interest: "0.00" };
+
+                return {
+                    collectionRate: { expected: todayItem.expected, actual: todayItem.actual },
+                    daily: dailySeries,
+                    monthly: Array.from(monthly.entries()).sort(([left], [right]) => left.localeCompare(right)).map(([month, values]) => ({ month, ...values })),
+                    deployedPrincipal,
+                    outstandingPrincipal,
+                };
+            },
         });
     });

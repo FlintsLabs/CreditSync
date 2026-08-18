@@ -103,3 +103,20 @@ export function compareMoney(left: string, right: string) {
     const difference = moneyCents(left) - moneyCents(right);
     return difference === 0n ? 0 : difference > 0n ? 1 : -1;
 }
+
+export function getCollectionRatePercent(collected: string, expected: string) {
+    const expectedCents = moneyCents(expected);
+    if (expectedCents <= 0n) return "0.00";
+    const scaledPercent = (moneyCents(collected) * 10000n * 2n + expectedCents) / (expectedCents * 2n);
+    const whole = scaledPercent / 100n;
+    const fraction = (scaledPercent % 100n).toString().padStart(2, "0");
+    return `${whole}.${fraction}`;
+}
+
+export interface DashboardAnalytics {
+    collectionRate: { expected: string; actual: string };
+    daily: Array<{ date: string; expected: string; actual: string; interest: string }>;
+    monthly: Array<{ month: string; expectedInterest: string; actualInterest: string }>;
+    deployedPrincipal: string;
+    outstandingPrincipal: string;
+}

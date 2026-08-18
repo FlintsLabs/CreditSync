@@ -18,6 +18,18 @@ import {
   Sparkles,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import Decimal from "decimal.js";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { api } from "../../lib/api";
 import { formatMoneyExact } from "../../lib/workflow-model";
 import { getStoredUser, isTenantAdminUser } from "../../lib/session";
@@ -32,10 +44,12 @@ import {
 import {
     buildDashboardPriorities,
     buildBorrowerRepaymentHref,
-  compareMoney,
+    compareMoney,
+    getCollectionRatePercent,
   type BorrowerDueItem,
   type DashboardPriority,
-  type DashboardSummary,
+    type DashboardSummary,
+    type DashboardAnalytics,
   type FundDueItem,
   type FundingAlerts,
   type ProfitabilitySummary,
@@ -257,7 +271,7 @@ export default function Dashboard() {
       borrowerPaymentsMissingSlip: 0,
     },
   );
-  const profitability = useDashboardResource<ProfitabilitySummary>(
+    const profitability = useDashboardResource<ProfitabilitySummary>(
     "/dashboard/profitability-summary",
     {
       borrowerRevenueCollected: "0.00",
@@ -270,6 +284,13 @@ export default function Dashboard() {
       carryForwardAvailable: "0.00",
     },
   );
+  const analytics = useDashboardResource<DashboardAnalytics>("/dashboard/analytics", {
+    collectionRate: { expected: "0.00", actual: "0.00" },
+    daily: [],
+    monthly: [],
+    deployedPrincipal: "0.00",
+    outstandingPrincipal: "0.00",
+  });
 
   useEffect(() => {
     if (!isTenantAdmin) navigate("/loans", { replace: true });
@@ -393,6 +414,8 @@ export default function Dashboard() {
           )}
         </div>
       </section>
+
+      <DashboardAnalyticsSection analytics={analytics} />
 
       <div className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(0,0.88fr)_minmax(0,1.4fr)]">
         <Card className="h-fit border-primary/20">
@@ -620,6 +643,53 @@ export default function Dashboard() {
       </section>
     </main>
   );
+}
+
+function DashboardAnalyticsSection({
+  analytics,
+}: {
+  analytics: ReturnType<typeof useDashboardResource<DashboardAnalytics>>;
+}) {
+  const { t, i18n } = useTranslation();
+  const rate = getCollectionRatePercent(
+    analytics.data?.collectionRate.actual ?? "0.00",
+    analytics.data?.collectionRate.expected ?? "0.00",
+  );
+  const rateNumber = Number(rate);
+  const rateTone = rateNumber >= 95 ? "text-emerald-600" : rateNumber >= 80 ? "text-amber-600" : "text-destructive";
+  const formatAxisDate = (value: string) => new Intl.DateTimeFormat(i18n.language, { day: "numeric", month: "short" }).format(new Date(`${value}T00:00:00`));
+  const formatMonth = (value: string) => new Intl.DateTimeFormat(i18n.language, { month: "short", year: "numeric" }).format(new Date(`${value}-01T00:00:00`));
+  const formatTooltip = (value: unknown) => formatMoneyExact(String(value ?? "0.00"), i18n.language);
+
+  return (
+    <section aria-labelledby="analytics-heading" className="space-y-4">
+      <div>
+        <h2 id="analytics-heading" className="text-lg font-semibold">{t("dashboardPage.sections.analytics")}</h2>
+        <p className="text-sm text-muted-foreground">{t("dashboardPage.sections.analyticsDescription")}</p>
+      </div>
+      {analytics.error ? <SectionError retry={analytics.retry} /> : analytics.loading ? (
+        <div className="grid gap-4 lg:grid-cols-3"><Skeleton className="h-56" /><Skeleton className="h-56" /><Skeleton className="h-56" /></div>
+      ) : (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm">{t("dashboardPage.analytics.collectionRate")}</CardTitle></CardHeader><CardContent><div className={`text-3xl font-bold tabular-nums ${rateTone}`}>{rate}%</div><p className="mt-1 text-xs text-muted-foreground">{t("dashboardPage.analytics.actualVsExpected", { actual: formatTooltip(analytics.data?.collectionRate.actual), expected: formatTooltip(analytics.data?.collectionRate.expected) })}</p></CardContent></Card>
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm">{t("dashboardPage.analytics.interestCollected")}</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold tabular-nums">{formatTooltip(analytics.data?.daily.reduce((sum, item) => addMoneyStrings(sum, item.interest), "0.00"))}</div><p className="mt-1 text-xs text-muted-foreground">{t("dashboardPage.analytics.last30Days")}</p></CardContent></Card>
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm">{t("dashboardPage.analytics.deployedPrincipal")}</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold tabular-nums">{formatTooltip(analytics.data?.deployedPrincipal)}</div><p className="mt-1 text-xs text-muted-foreground">{t("dashboardPage.analytics.totalAllocated")}</p></CardContent></Card>
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm">{t("dashboardPage.analytics.outstandingPrincipal")}</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold tabular-nums">{formatTooltip(analytics.data?.outstandingPrincipal)}</div><p className="mt-1 text-xs text-muted-foreground">{t("dashboardPage.analytics.activeLoans")}</p></CardContent></Card>
+          </div>
+          <div className="grid min-w-0 gap-4 xl:grid-cols-2">
+            <Card><CardHeader><CardTitle>{t("dashboardPage.analytics.cashCollection30Days")}</CardTitle><p className="text-sm text-muted-foreground">{t("dashboardPage.analytics.cashCollectionDescription")}</p></CardHeader><CardContent><div className="h-64 w-full"><ResponsiveContainer width="100%" height="100%"><LineChart data={analytics.data?.daily}><CartesianGrid strokeDasharray="3 3" className="stroke-border" /><XAxis dataKey="date" tickFormatter={formatAxisDate} minTickGap={24} /><YAxis tickFormatter={(value) => formatTooltip(value)} width={80} /><Tooltip labelFormatter={(value) => formatAxisDate(String(value))} formatter={(value, name) => [formatTooltip(value), name === "actual" ? t("dashboardPage.analytics.actual") : t("dashboardPage.analytics.expected")]} /><Line type="monotone" dataKey="expected" stroke="#f59e0b" strokeWidth={2} dot={false} /><Line type="monotone" dataKey="actual" stroke="#10b981" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div></CardContent></Card>
+            <Card><CardHeader><CardTitle>{t("dashboardPage.analytics.interestByDay")}</CardTitle><p className="text-sm text-muted-foreground">{t("dashboardPage.analytics.interestByDayDescription")}</p></CardHeader><CardContent><div className="h-64 w-full"><ResponsiveContainer width="100%" height="100%"><LineChart data={analytics.data?.daily}><CartesianGrid strokeDasharray="3 3" className="stroke-border" /><XAxis dataKey="date" tickFormatter={formatAxisDate} minTickGap={24} /><YAxis tickFormatter={(value) => formatTooltip(value)} width={80} /><Tooltip labelFormatter={(value) => formatAxisDate(String(value))} formatter={(value) => [formatTooltip(value), t("dashboardPage.analytics.interest")]} /><Line type="monotone" dataKey="interest" stroke="#8b5cf6" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div></CardContent></Card>
+            <Card className="xl:col-span-2"><CardHeader><CardTitle>{t("dashboardPage.analytics.interestByMonth")}</CardTitle><p className="text-sm text-muted-foreground">{t("dashboardPage.analytics.interestByMonthDescription")}</p></CardHeader><CardContent><div className="h-64 w-full"><ResponsiveContainer width="100%" height="100%"><BarChart data={analytics.data?.monthly}><CartesianGrid strokeDasharray="3 3" className="stroke-border" /><XAxis dataKey="month" tickFormatter={formatMonth} /><YAxis tickFormatter={(value) => formatTooltip(value)} width={80} /><Tooltip labelFormatter={(value) => formatMonth(String(value))} formatter={(value, name) => [formatTooltip(value), name === "actualInterest" ? t("dashboardPage.analytics.actualInterest") : t("dashboardPage.analytics.expectedInterest")]} /><Bar dataKey="expectedInterest" fill="#f59e0b" radius={[4, 4, 0, 0]} /><Bar dataKey="actualInterest" fill="#8b5cf6" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></div></CardContent></Card>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function addMoneyStrings(left: string, right: string) {
+  return new Decimal(left).plus(right).toFixed(2);
 }
 
 function DetailCards({

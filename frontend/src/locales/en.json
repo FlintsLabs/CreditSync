@@ -767,7 +767,30 @@
             "unallocatedDrawdowns": "Unallocated Drawdowns",
             "reconciliationStatus": "Reconciliation Status",
             "borrowerDueQueue": "Borrower Due Queue",
-            "fundDueQueue": "Fund Due Queue"
+            "fundDueQueue": "Fund Due Queue",
+            "analytics": "Collection & portfolio overview",
+            "analyticsDescription": "Track expected cash, actual collections, interest, and deployed principal"
+        },
+        "analytics": {
+            "collectionRate": "Today's collection rate",
+            "actualVsExpected": "Collected {{actual}} of {{expected}} expected",
+            "interestCollected": "Interest collected",
+            "last30Days": "Total for the last 30 days",
+            "deployedPrincipal": "Total deployed principal",
+            "totalAllocated": "Allocated across all loan agreements",
+            "outstandingPrincipal": "Outstanding principal",
+            "activeLoans": "Active loan agreements only",
+            "cashCollection30Days": "Actual collections vs expected",
+            "cashCollectionDescription": "Last 30 days",
+            "interestByDay": "Interest collected by day",
+            "interestByDayDescription": "Last 30 days",
+            "interestByMonth": "Interest accumulated by month",
+            "interestByMonthDescription": "Expected interest compared with actual collections",
+            "actual": "Actual",
+            "expected": "Expected",
+            "interest": "Interest",
+            "actualInterest": "Actual collected",
+            "expectedInterest": "Expected"
         },
         "empty": {
             "noPriorities": "Everything urgent is clear. No action is needed right now.",

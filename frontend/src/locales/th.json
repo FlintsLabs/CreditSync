@@ -767,7 +767,30 @@
             "unallocatedDrawdowns": "รายการเบิกใช้ที่ยังไม่จัดสรร",
             "reconciliationStatus": "สถานะกระทบยอด",
             "borrowerDueQueue": "คิวรับชำระลูกหนี้",
-            "fundDueQueue": "คิวจ่ายคืนแหล่งเงิน"
+            "fundDueQueue": "คิวจ่ายคืนแหล่งเงิน",
+            "analytics": "ภาพรวมผลการเก็บเงิน",
+            "analyticsDescription": "ดูยอดที่ควรรับ ยอดรับจริง ดอกเบี้ย และวงเงินที่ปล่อยไป"
+        },
+        "analytics": {
+            "collectionRate": "อัตราการรับชำระวันนี้",
+            "actualVsExpected": "รับจริง {{actual}} จากที่ควรรับ {{expected}}",
+            "interestCollected": "ดอกเบี้ยที่เก็บได้",
+            "last30Days": "รวมย้อนหลัง 30 วัน",
+            "deployedPrincipal": "วงเงินที่ปล่อยสะสม",
+            "totalAllocated": "ยอดจัดสรรให้สัญญาทั้งหมด",
+            "outstandingPrincipal": "เงินต้นคงค้าง",
+            "activeLoans": "เฉพาะสัญญาที่กำลังดำเนินการ",
+            "cashCollection30Days": "ยอดรับจริงเทียบยอดควรรับ",
+            "cashCollectionDescription": "ย้อนหลัง 30 วัน",
+            "interestByDay": "ดอกเบี้ยที่เก็บได้รายวัน",
+            "interestByDayDescription": "ย้อนหลัง 30 วัน",
+            "interestByMonth": "ดอกเบี้ยสะสมรายเดือน",
+            "interestByMonthDescription": "เปรียบเทียบดอกเบี้ยที่ควรได้กับที่เก็บได้จริง",
+            "actual": "รับจริง",
+            "expected": "ควรรับ",
+            "interest": "ดอกเบี้ย",
+            "actualInterest": "เก็บได้จริง",
+            "expectedInterest": "ควรได้"
         },
         "empty": {
             "noPriorities": "งานเร่งด่วนเรียบร้อยแล้ว ขณะนี้ยังไม่มีรายการที่ต้องดำเนินการ",
