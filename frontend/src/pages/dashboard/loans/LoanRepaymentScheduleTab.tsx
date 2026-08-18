@@ -6,6 +6,7 @@ import { formatMoneyExact } from "../../../lib/workflow-model";
 import { Badge } from "../../../components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/Card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../../components/ui/table";
+import { LoanTablePagination, type LoanTablePageSize } from "./LoanTablePagination";
 
 interface ScheduleRow { id: string; publicId: string; installmentNo: number; dueDate: string; remainingDue: string; commissionAmount?: string; status: string }
 
@@ -15,6 +16,8 @@ export function LoanRepaymentScheduleTab({ loanPublicId }: { loanPublicId: strin
     const [totalCommission, setTotalCommission] = useState("0.00");
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState<LoanTablePageSize>(10);
 
     useEffect(() => {
         let active = true;
@@ -22,6 +25,7 @@ export function LoanRepaymentScheduleTab({ loanPublicId }: { loanPublicId: strin
             .then(([scheduleResponse, loanResponse]) => {
                 if (!active) return;
                 setRows(scheduleResponse.data ?? []);
+                setPage(1);
                 setTotalCommission(loanResponse.data?.commissionSummary?.totalCommission ?? "0.00");
                 setError("");
             })
@@ -36,7 +40,8 @@ export function LoanRepaymentScheduleTab({ loanPublicId }: { loanPublicId: strin
             : rows.length === 0 ? <div className="rounded border border-dashed p-5 text-sm text-muted-foreground">{t("loanDetail.noRepaymentSchedule", "No repayment schedule available for this loan.")}</div>
             : <div className="space-y-4">
                 <div className="rounded border bg-muted/20 p-4"><div className="text-sm text-muted-foreground">{t("loanDetail.scheduleTab.totalCommission", "Commission generated from collected interest")}</div><div className="text-xl font-semibold tabular-nums">{formatMoneyExact(totalCommission, i18n.language)}</div></div>
-                <div className="overflow-x-auto"><Table className="min-w-[42rem]"><TableHeader><TableRow><TableHead>{t("loanDetail.scheduleColumns.installment")}</TableHead><TableHead>{t("loanDetail.scheduleColumns.dueDate")}</TableHead><TableHead className="text-right">{t("loanDetail.scheduleColumns.remainingDue")}</TableHead><TableHead className="text-right">{t("loanDetail.scheduleColumns.commission")}</TableHead><TableHead className="text-right">{t("loanDetail.scheduleColumns.status")}</TableHead></TableRow></TableHeader><TableBody>{rows.slice(0, 8).map((row) => <TableRow key={row.publicId ?? row.id}><TableCell className="font-medium">{t("loanDetail.installmentLabel", { defaultValue: "Installment #{{id}}", id: row.installmentNo })}</TableCell><TableCell>{row.dueDate}</TableCell><TableCell className="text-right tabular-nums">{formatMoneyExact(row.remainingDue, i18n.language)}</TableCell><TableCell className="text-right tabular-nums">{formatMoneyExact(row.commissionAmount ?? "0.00", i18n.language)}</TableCell><TableCell className="text-right"><Badge variant={row.status === "overdue" ? "destructive" : row.status === "paid" ? "secondary" : "outline"}>{t(`loans.paymentHealth.scheduleStatus.${row.status}`, { defaultValue: row.status })}</Badge></TableCell></TableRow>)}</TableBody></Table></div>
+                <div className="overflow-x-auto"><Table className="min-w-[42rem]"><TableHeader><TableRow><TableHead>{t("loanDetail.scheduleColumns.installment")}</TableHead><TableHead>{t("loanDetail.scheduleColumns.dueDate")}</TableHead><TableHead className="text-right">{t("loanDetail.scheduleColumns.remainingDue")}</TableHead><TableHead className="text-right">{t("loanDetail.scheduleColumns.commission")}</TableHead><TableHead className="text-right">{t("loanDetail.scheduleColumns.status")}</TableHead></TableRow></TableHeader><TableBody>{rows.slice((page - 1) * (pageSize === "all" ? rows.length : pageSize), pageSize === "all" ? rows.length : page * pageSize).map((row) => <TableRow key={row.publicId ?? row.id}><TableCell className="font-medium">{t("loanDetail.installmentLabel", { defaultValue: "Installment #{{id}}", id: row.installmentNo })}</TableCell><TableCell>{row.dueDate}</TableCell><TableCell className="text-right tabular-nums">{formatMoneyExact(row.remainingDue, i18n.language)}</TableCell><TableCell className="text-right tabular-nums">{formatMoneyExact(row.commissionAmount ?? "0.00", i18n.language)}</TableCell><TableCell className="text-right"><Badge variant={row.status === "overdue" ? "destructive" : row.status === "paid" ? "secondary" : "outline"}>{t(`loans.paymentHealth.scheduleStatus.${row.status}`, { defaultValue: row.status })}</Badge></TableCell></TableRow>)}</TableBody></Table></div>
+                <LoanTablePagination controlId="loan-schedule-page-size" page={page} pageSize={pageSize} totalItems={rows.length} onPageChange={setPage} onPageSizeChange={(nextPageSize) => { setPageSize(nextPageSize); setPage(1); }} />
             </div>}
     </CardContent></Card>;
 }

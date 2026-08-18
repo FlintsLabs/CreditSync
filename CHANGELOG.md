@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.18 - 2026-08-18
+
+### Added
+- Added localized page-size controls to Loan Detail repayment and payment-history tables with 10, 20, 50, 100, and All options.
+
 ## v0.3.17 - 2026-08-17
 
 ### Added

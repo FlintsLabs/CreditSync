@@ -1106,6 +1106,7 @@
             "errors": { "load": "Unable to load payment history.", "confirm": "Confirm the attribution before saving.", "amount": "Enter a positive amount with exactly two decimals.", "agent": "Choose an agent.", "save": "Unable to save payment attribution." }
         },
         "scheduleTab": { "totalCommission": "Commission generated from collected interest", "errors": { "load": "Unable to load repayment schedule." } },
+        "pagination": { "label": "Table pagination", "page": "Page {{page}} of {{totalPages}}", "pageSize": "Rows per page", "all": "All", "previous": "Previous", "next": "Next" },
         "restructureBalances": {
             "title": "Restructure opening balances", "lineage": "Restructure lineage", "from": "Restructured from", "to": "Restructured to", "waivers": "Recorded waivers", "payoutStatus": "Payout status", "payoutSeparate": "Tracked separately in the disbursement ledger", "noRelatedPayout": "No related payout record yet", "payoutLoading": "Loading related payout…", "payoutError": "Unable to load the related payout ledger", "reversedHistory": "Reversed opening-balance history",
             "kinds": { "carried_principal": "Carried principal", "additional_principal": "Additional principal", "carried_interest": "Carried interest", "carried_fee": "Carried fee", "carried_penalty": "Carried penalty", "new_contract_interest": "New contract interest" },

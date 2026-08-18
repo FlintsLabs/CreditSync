@@ -15,7 +15,7 @@ vi.mock("../src/pages/dashboard/loans/LoanRestructurePanel", () => ({ LoanRestru
 
 const LOAN_ID = "019ff023-fd64-7d41-9aae-723d2a458a8a";
 const BORROWER_ID = "019fea17-6068-7ccb-b267-9f39880bb762";
-const schedule = Array.from({ length: 9 }, (_, index) => ({
+const schedule = Array.from({ length: 25 }, (_, index) => ({
     id: `schedule-${index + 1}`,
     publicId: `schedule-public-${index + 1}`,
     installmentNo: index + 1,
@@ -67,7 +67,7 @@ describe("Loan detail repayment schedule table", () => {
         await appI18n.changeLanguage("th");
     });
 
-    it("renders a localized compact semantic table with the first eight rows", async () => {
+    it("paginates the full schedule so rows after the first page remain accessible", async () => {
         renderLoanDetail();
         await userEvent.click(await screen.findByRole("tab", { name: "ตารางผ่อน" }));
 
@@ -81,12 +81,21 @@ describe("Loan detail repayment schedule table", () => {
         expect(within(table).getByRole("columnheader", { name: "สถานะ" })).toBeInTheDocument();
         expect(within(table).queryByRole("columnheader", { name: "ค่าคอมมิชชันที่เกิดขึ้น" })).not.toBeInTheDocument();
         expect(within(section as HTMLElement).getByText("ค่าคอมมิชชันจากดอกเบี้ยที่เก็บได้")).toBeInTheDocument();
-        expect(within(table).getAllByRole("row")).toHaveLength(9);
+        expect(within(table).getAllByRole("row")).toHaveLength(11);
         expect(within(table).getByText("งวด #1")).toBeInTheDocument();
         expect(within(table).getByText("2026-07-01")).toBeInTheDocument();
         expect(within(table).getAllByText("฿200.00").length).toBeGreaterThan(0);
         expect(within(table).getByText("ค้างชำระ")).toBeInTheDocument();
         expect(within(table).getByText("ชำระแล้ว")).toBeInTheDocument();
-        expect(within(table).queryByText("งวด #9")).not.toBeInTheDocument();
+        expect(within(table).getByText("งวด #9")).toBeInTheDocument();
+        expect(within(table).queryByText("งวด #11")).not.toBeInTheDocument();
+
+        await userEvent.click(within(section as HTMLElement).getByRole("button", { name: "ถัดไป" }));
+        expect(within(table).getByText("งวด #11")).toBeInTheDocument();
+        expect(within(table).getAllByRole("row")).toHaveLength(11);
+
+        await userEvent.selectOptions(within(section as HTMLElement).getByLabelText("รายการต่อหน้า"), "all");
+        expect(within(table).getByText("งวด #25")).toBeInTheDocument();
+        expect(within(table).getAllByRole("row")).toHaveLength(26);
     });
 });

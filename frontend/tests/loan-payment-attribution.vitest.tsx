@@ -52,6 +52,30 @@ describe("LoanPaymentHistoryTab", () => {
         expect(within(screen.getByTestId("payment-none")).getByText("ยังไม่ระบุแหล่งที่มา")).toBeInTheDocument();
     });
 
+    it("paginates posted payments so rows after the first page remain accessible", async () => {
+        const payments = Array.from({ length: 25 }, (_, index) => ({
+            publicId: `payment-${index + 1}`, loanPublicId: "loan-1", amount: "100.00", interestComponent: "20.00",
+            date: "2026-08-16T00:00:00.000Z", type: "repayment",
+        }));
+        vi.mocked(api.get).mockImplementation(async (url) => {
+            if (url === "/transactions") return { data: payments };
+            if (url === "/intermediaries?status=all") return { data: [] };
+            if (url.startsWith("/payments/") && url.endsWith("/intermediary-attributions")) return { data: [] };
+            if (url.startsWith("/loans/loan-1/commissions?")) return { data: { totalCommission: "0.00", participants: [] } };
+            throw new Error(`Unexpected GET ${url}`);
+        });
+        render(<LoanPaymentHistoryTab loanPublicId="loan-1" />);
+
+        const table = await screen.findByRole("table");
+        expect(within(table).getByTestId("payment-payment-1")).toBeInTheDocument();
+        expect(within(table).getByTestId("payment-payment-10")).toBeInTheDocument();
+        expect(within(table).queryByTestId("payment-payment-11")).not.toBeInTheDocument();
+        await userEvent.click(screen.getByRole("button", { name: "Next" }));
+        expect(within(table).getByTestId("payment-payment-11")).toBeInTheDocument();
+        await userEvent.selectOptions(screen.getByLabelText("Rows per page"), "all");
+        expect(within(table).getByTestId("payment-payment-25")).toBeInTheDocument();
+    });
+
     it("reuses an attribution idempotency key for unchanged retries and replaces it after a payload change", async () => {
         vi.mocked(api.get).mockImplementation(async (url) => {
             if (url === "/transactions") return { data: [{ publicId: "payment-a", loanPublicId: "loan-1", amount: "100.00", interestComponent: "20.00", date: "2026-08-16T00:00:00.000Z", type: "repayment" }] };
