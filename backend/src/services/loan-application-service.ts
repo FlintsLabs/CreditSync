@@ -56,14 +56,40 @@ export async function getLoanReplacementLineages(
     const result = new Map<number, LoanReplacementLineage | null>(requestedIds.map((id) => [id, null]));
     if (requestedIds.length === 0) return result;
 
-    const replacements = await db.select().from(loanReplacements).where(and(
-        eq(loanReplacements.tenantId, tenantId),
-        inArray(loanReplacements.status, ["executed", "reversed"]),
-        or(
-            inArray(loanReplacements.oldLoanId, requestedIds),
-            inArray(loanReplacements.replacementLoanId, requestedIds),
-        ),
-    )).orderBy(desc(loanReplacements.createdAt));
+    const [legacyReplacements, restructures] = await Promise.all([
+        db.select().from(loanReplacements).where(and(
+            eq(loanReplacements.tenantId, tenantId),
+            inArray(loanReplacements.status, ["executed", "reversed"]),
+            or(
+                inArray(loanReplacements.oldLoanId, requestedIds),
+                inArray(loanReplacements.replacementLoanId, requestedIds),
+            ),
+        )),
+        db.select().from(loanRestructures).where(and(
+            eq(loanRestructures.tenantId, tenantId),
+            inArray(loanRestructures.status, ["executed", "reversed"]),
+            or(
+                inArray(loanRestructures.oldLoanId, requestedIds),
+                inArray(loanRestructures.newLoanId, requestedIds),
+            ),
+        )),
+    ]);
+    const replacements = [
+        ...legacyReplacements.map((replacement) => ({
+            publicId: replacement.publicId,
+            status: replacement.status,
+            oldLoanId: replacement.oldLoanId,
+            replacementLoanId: replacement.replacementLoanId,
+            createdAt: replacement.createdAt,
+        })),
+        ...restructures.filter((restructure) => restructure.newLoanId !== null).map((restructure) => ({
+            publicId: restructure.publicId,
+            status: restructure.status,
+            oldLoanId: restructure.oldLoanId,
+            replacementLoanId: restructure.newLoanId!,
+            createdAt: restructure.createdAt,
+        })),
+    ].sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
     if (replacements.length === 0) return result;
 
     const publicIds = new Map((await db.select({ id: loans.id, publicId: loans.publicId }).from(loans).where(and(

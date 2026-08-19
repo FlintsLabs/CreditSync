@@ -40,7 +40,7 @@ export function LoanCardFinancialSummary({
             <div className="flex items-center justify-between gap-2">
                 <span className="text-xs text-muted-foreground font-medium">{t("loans.outstandingPrincipal", "Outstanding Principal")}</span>
                 <p className={cn("text-xs font-semibold uppercase tracking-wider", status === "active" ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground")}>
-                    {status === "replaced" ? t("loans.status.replaced") : status}
+                    {status === "replaced" ? t("loans.status.replaced") : status === "restructured" ? t("loans.status.restructured") : status}
                 </p>
             </div>
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">

@@ -593,6 +593,7 @@
             "paid": "Paid",
             "closed": "Closed",
             "replaced": "Closed — Replaced",
+            "restructured": "Historical — Restructured",
             "defaulted": "Defaulted"
         },
         "paymentHealth": {

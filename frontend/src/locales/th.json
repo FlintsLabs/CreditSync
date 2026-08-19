@@ -593,6 +593,7 @@
             "paid": "ชำระครบ",
             "closed": "ปิดสัญญาแล้ว",
             "replaced": "ปิดแล้ว — ถูกแทนที่",
+            "restructured": "ประวัติ — ปรับโครงสร้างแล้ว",
             "defaulted": "ผิดนัด"
         },
         "paymentHealth": {

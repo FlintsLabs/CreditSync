@@ -9,9 +9,9 @@ export interface BorrowerLabelLoan {
     currentAgentAliases?: (string | null)[] | null;
 }
 
-/** Replaced is terminal lifecycle state; it is intentionally distinct from paid. */
+/** Replaced/restructured are terminal lifecycle states; they remain visible as history, not active collection targets. */
 export function isDoneLoanStatus(status: string): boolean {
-    return status === "paid" || status === "closed" || status === "replaced";
+    return status === "paid" || status === "closed" || status === "replaced" || status === "restructured";
 }
 
 function normalizeLabel(value: string) {

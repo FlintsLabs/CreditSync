@@ -9,6 +9,9 @@
 - Updated floating payment allocation to apply carried penalty, fee, and interest before current floating obligations, and synchronized restructure guidance with the MCP contract.
 - Floating restructure top-ups now deduct advance interest only from the additional principal and start the increased daily collection on the following day.
 
+### Fixed
+- Fixed restructured loans appearing in the active collection list; they now remain visible under loan history with their replacement lineage while the replacement loan remains the collection target.
+
 ## v0.3.30 - 2026-08-19
 
 ### Changed
