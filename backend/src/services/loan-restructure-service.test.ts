@@ -109,11 +109,10 @@ describe("loan restructure service", () => {
         expect(preview.replacementPrincipal).toBe("5000.00");
         expect(preview.cash).toEqual({ direction: "payout", amount: "985.00" });
         expect(preview.replacementTerms.repaymentType).toBe("floating");
-        expect(preview.replacementTerms.floatingInterestPolicy).toMatchObject({
-            periodUnit: "day",
-            periodLength: 1,
-            rateMode: "per_thousand",
+        expect(preview.replacementTerms.floatingDailyInterest).toMatchObject({
+            mode: "per_thousand",
             rate: "15.0000",
+            firstDayTreatment: "start_next_day",
         });
         expect(preview.balance.grossPrincipal).toBe("4000.00");
         expect(preview.previewHash).toMatch(/^v1:[0-9a-f]{64}$/);

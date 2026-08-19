@@ -406,13 +406,14 @@ async function computePreview(executor: Executor, ctx: CommandContext, loan: Loa
 }
 
 function presentPreview(row: Restructure, loan: Loan, computed: Awaited<ReturnType<typeof computePreview>>) {
+    const { floatingInterestPolicy: _internalFloatingPolicy, ...publicReplacementTerms } = computed.replacement.terms;
     return {
         publicId: row.publicId, oldLoanPublicId: loan.publicId, status: row.status,
         settlementDate: row.settlementDate, oldBalanceVersion: row.oldBalanceVersion, previewHash: row.previewHash, expiresAt: row.expiresAt,
         balance: computed.calculated,
         replacementPrincipal: serializeMoney(new FinancialDecimal(row.netPrincipal).plus(row.additionalPrincipal)),
         externalCreditAllocation: { penalty: serializeMoney(row.externalCreditPenalty), fee: serializeMoney(row.externalCreditFees), interest: serializeMoney(row.externalCreditInterest), principal: serializeMoney(row.externalCreditPrincipal), unallocated: "0.00" },
-        replacementTerms: computed.replacement.terms,
+        replacementTerms: publicReplacementTerms,
         schedule: computed.replacement.schedule, cash: { direction: row.cashDirection, amount: serializeMoney(row.cashAmount) },
         reason: row.reason,
     };
