@@ -406,7 +406,10 @@ async function computePreview(executor: Executor, ctx: CommandContext, loan: Loa
 }
 
 function presentPreview(row: Restructure, loan: Loan, computed: Awaited<ReturnType<typeof computePreview>>) {
-    const { floatingInterestPolicy: _internalFloatingPolicy, ...publicReplacementTerms } = computed.replacement.terms;
+    const { floatingInterestPolicy: _internalFloatingPolicy, floatingDailyInterest, ...termsWithoutFloatingInternals } = computed.replacement.terms;
+    const publicReplacementTerms = floatingDailyInterest
+        ? { ...termsWithoutFloatingInternals, floatingDailyInterest: { mode: floatingDailyInterest.mode, rate: floatingDailyInterest.rate, firstDayTreatment: floatingDailyInterest.firstDayTreatment } }
+        : termsWithoutFloatingInternals;
     const { dueInterest: _dueInterest, accruedNotDueInterest: _accruedNotDueInterest, nonRefundableAdvanceInterest: _nonRefundableAdvanceInterest, ...publicBalance } = computed.calculated;
     return {
         publicId: row.publicId, oldLoanPublicId: loan.publicId, status: row.status,
