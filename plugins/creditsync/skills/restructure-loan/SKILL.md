@@ -1,9 +1,11 @@
 ---
 name: restructure-loan
-description: Use when settling a CreditSync single-payment loan into a replacement contract, waiving eligible balances, adding principal, or reversing those audited actions.
+description: Use when settling a CreditSync single-payment or floating loan into a replacement contract, waiving eligible balances, adding principal, or reversing those audited actions.
 ---
 
 # Restructure a CreditSync Loan
+
+This workflow supports active single-payment and floating loans. For a floating-to-floating restructure, the preview snapshots projected interest and penalty through the settlement date, carries eligible unpaid components into the replacement loan, and may return a separate additional-principal disbursement draft.
 
 ## Required sequence
 

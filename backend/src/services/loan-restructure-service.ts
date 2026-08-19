@@ -1,16 +1,16 @@
 import { createHash } from "node:crypto";
 import type Decimal from "decimal.js";
-import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
-    auditLogs, borrowers, loanDisbursementEvents, loanInterestAccruals, loanInterestRatePeriods,
+    auditLogs, borrowers, floatingPenaltyLedgerEntries, loanDisbursementEvents, loanInterestAccruals, loanInterestRatePeriods,
     loanOpeningBalanceComponents, loanRenewals, loanRestructures, loanRestructureWaivers, loanSchedules, loans,
     paymentIntakes, transactions, users,
 } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
-import { normalizePublicLoanTerms, type PublicLoanCalculationParams, type RepaymentType } from "../lib/calculator";
-import { normalizeDailyLoanEntry } from "../lib/daily-loan-entry";
+import { normalizePublicLoanTerms, type NormalizedPublicLoanTerms, type PublicLoanCalculationParams, type RepaymentType } from "../lib/calculator";
+import { normalizeDailyLoanEntry, type NormalizedDailyLoanEntry } from "../lib/daily-loan-entry";
 import { normalizeFloatingDailyInterest, type FloatingDailyInterest } from "../lib/floating-daily-interest";
 import { normalizeFloatingInterestPolicy, type FloatingInterestPolicy } from "../lib/floating-interest-policy";
 import { FinancialDecimal } from "../lib/financial-decimal";
@@ -20,6 +20,7 @@ import { calculateSinglePaymentSettlement, type SinglePaymentExposure, type Sing
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import { createDisbursementDraftInTransaction } from "./loan-disbursement-service";
+import { settlementSnapshot } from "./loan-settlement-service";
 import { postExternalSettlementCreditInTransaction, reversePayment } from "./payment-service";
 
 type Executor = any;
@@ -150,6 +151,74 @@ async function snapshot(executor: Executor, ctx: CommandContext, loan: Loan, set
     return { outstandingPrincipal, outstandingFees, exposures, version: versionHash(versionPayload), versionPayload };
 }
 
+async function floatingSnapshot(executor: Executor, ctx: CommandContext, loan: Loan, settlementDate: string) {
+    const [allTransactions, allDisbursements, accrualRows, ratePeriods, penaltyLedgerRows] = await Promise.all([
+        executor.select().from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.loanId, loan.id))).orderBy(transactions.transactionDate, transactions.id),
+        executor.select().from(loanDisbursementEvents).where(and(eq(loanDisbursementEvents.tenantId, ctx.tenantId), eq(loanDisbursementEvents.loanId, loan.id))).orderBy(loanDisbursementEvents.disbursedAt, loanDisbursementEvents.id),
+        executor.select().from(loanInterestAccruals).where(and(eq(loanInterestAccruals.tenantId, ctx.tenantId), eq(loanInterestAccruals.loanId, loan.id), sql`${loanInterestAccruals.status} <> 'reversed'`)).orderBy(asc(loanInterestAccruals.accrualDate), asc(loanInterestAccruals.id)),
+        executor.select().from(loanInterestRatePeriods).where(and(eq(loanInterestRatePeriods.tenantId, ctx.tenantId), eq(loanInterestRatePeriods.loanId, loan.id))).orderBy(asc(loanInterestRatePeriods.effectiveDate), asc(loanInterestRatePeriods.id)),
+        executor.select().from(floatingPenaltyLedgerEntries).where(and(eq(floatingPenaltyLedgerEntries.tenantId, ctx.tenantId), eq(floatingPenaltyLedgerEntries.loanId, loan.id))).orderBy(asc(floatingPenaltyLedgerEntries.penaltyDate), asc(floatingPenaltyLedgerEntries.id)),
+    ]);
+    const allActiveTransactions = activeTransactionRows(allTransactions);
+    const allActiveDisbursements = activeDisbursementRows(allDisbursements);
+    const laterTransaction = allActiveTransactions.find(row => bangkokDate(row.transactionDate ?? row.postedAt) > settlementDate);
+    const laterDisbursement = allActiveDisbursements.find(row => bangkokDate(row.disbursedAt ?? row.postedAt ?? row.createdAt!) > settlementDate);
+    if (laterTransaction || laterDisbursement) {
+        throw new DomainError("RESTRUCTURE_SETTLEMENT_PRECEDES_ACTIVE_ACTIVITY", "Settlement date cannot precede active posted loan activity", 409, { settlementDate, laterActivityType: laterTransaction ? "transaction" : "disbursement" });
+    }
+    if (loan.interestPeriodAnchorDate && settlementDate < loan.interestPeriodAnchorDate) {
+        throw new DomainError("INVALID_SETTLEMENT_DATE", "Settlement date cannot precede the floating interest anchor", 400);
+    }
+    const snap = await settlementSnapshot(executor, ctx, loan, settlementDate, false);
+    const grossInterest = snap.dueInterest.plus(snap.accruedNotDueInterest);
+    const versionPayload = {
+        loanPublicId: loan.publicId,
+        settlementDate,
+        loan: [
+            loan.status, loan.outstandingPrincipal, loan.outstandingInterest, loan.outstandingFees,
+            loan.nextDueDate, loan.updatedAt?.toISOString(), loan.dailyInterestMode, loan.dailyInterestRate,
+            loan.firstDayTreatment, loan.floatingAccrualCycle, loan.interestPeriodUnit, loan.interestPeriodLength,
+            loan.advanceInterestPeriods, loan.advanceInterestRefundPolicy, loan.interestPeriodAnchorDate,
+            loan.lateFeeMode, loan.lateFeeAmount, loan.gracePeriodDays,
+        ],
+        transactions: allTransactions.map((row: typeof transactions.$inferSelect) => [
+            row.publicId, row.entryType, row.reversedTransactionId, row.principalComponent,
+            row.interestComponent, row.feeComponent, row.penaltyComponent, row.transactionDate?.toISOString(),
+        ]),
+        disbursements: allDisbursements.map((row: typeof loanDisbursementEvents.$inferSelect) => [
+            row.publicId, row.status, row.reversedEventId, row.loanAttributedAmount,
+            row.disbursedAt?.toISOString(), row.postedAt?.toISOString(),
+        ]),
+        accruals: accrualRows.map((row: typeof loanInterestAccruals.$inferSelect) => [
+            row.publicId, row.accrualDate, row.interestAmount, row.paidAmount, row.status, row.reversedAccrualId,
+        ]),
+        ratePeriods: ratePeriods.map((row: typeof loanInterestRatePeriods.$inferSelect) => [
+            row.id, row.effectiveDate, row.rateType, row.rate, row.periodUnit, row.periodLength,
+        ]),
+        penaltyLedger: penaltyLedgerRows.map((row: typeof floatingPenaltyLedgerEntries.$inferSelect) => [
+            row.id, row.penaltyDate, row.amount, row.entryType, row.adjustsEntryId,
+        ]),
+        settlementBalanceVersion: snap.balanceVersion,
+    };
+    return {
+        outstandingPrincipal: snap.outstandingPrincipal,
+        outstandingFees: snap.outstandingFees,
+        dueInterest: snap.dueInterest,
+        accruedNotDueInterest: snap.accruedNotDueInterest,
+        grossInterest,
+        grossPenalty: snap.outstandingPenalties,
+        nonRefundableAdvanceInterest: snap.nonRefundableAdvanceInterest,
+        version: versionHash(versionPayload),
+        versionPayload,
+    };
+}
+
+export interface NormalizedReplacementTerms extends NormalizedPublicLoanTerms {
+    floatingInterestPolicy?: FloatingInterestPolicy;
+    floatingDailyInterest?: FloatingDailyInterest;
+    dailyEntry?: NormalizedDailyLoanEntry;
+}
+
 function normalizeReplacement(input: ReplacementLoanTerms, replacementPrincipal: Decimal) {
     let terms;
     try { terms = normalizePublicLoanTerms({ ...input, principal: serializeMoney(replacementPrincipal) }); }
@@ -196,7 +265,18 @@ function normalizeReplacement(input: ReplacementLoanTerms, replacementPrincipal:
         totalInstallments: terms.totalInstallments, installmentAmount: terms.installmentAmount,
         singlePayment: terms.singlePayment,
     });
-    return { terms, dailyEntry, floating, floatingPolicy, schedule };
+    return {
+        terms: {
+            ...terms,
+            ...(floatingPolicy ? { floatingInterestPolicy: floatingPolicy } : {}),
+            ...(floating ? { floatingDailyInterest: floating } : {}),
+            ...(dailyEntry ? { dailyEntry } : {}),
+        } as NormalizedReplacementTerms,
+        dailyEntry,
+        floating,
+        floatingPolicy,
+        schedule,
+    };
 }
 
 function waiver(input: PreviewLoanRestructureInput, component: "interest" | "fees" | "penalty", gross: Decimal) {
@@ -221,7 +301,9 @@ function allocateExternalCredit(amount: Decimal, balances: { penalty: Decimal; f
 }
 async function computePreview(executor: Executor, ctx: CommandContext, loan: Loan, input: PreviewLoanRestructureInput) {
     const settlementDate = businessDate(input.settlementDate, "settlementDate");
-    if (loan.repaymentType !== "single_payment" || loan.status !== "active") throw new DomainError("LOAN_NOT_RESTRUCTURABLE", "Only active single-payment loans can use this settlement workflow", 409);
+    if ((loan.repaymentType !== "single_payment" && loan.repaymentType !== "floating") || loan.status !== "active") {
+        throw new DomainError("LOAN_NOT_RESTRUCTURABLE", "Only active single-payment or floating loans can use this restructure workflow", 409);
+    }
     const reason = requiredText(input.reason, "RESTRUCTURE_REASON_REQUIRED", "A restructure reason is required");
     const additionalPrincipal = money(input.additionalPrincipal, "additionalPrincipal");
     const creditAmount = money(input.externalSettlementCredit?.amount, "externalSettlementCredit.amount");
@@ -229,21 +311,72 @@ async function computePreview(executor: Executor, ctx: CommandContext, loan: Loa
         requiredText(input.externalSettlementCredit?.payer, "EXTERNAL_CREDIT_PAYER_REQUIRED", "External settlement credit payer is required");
         requiredText(input.externalSettlementCredit?.source, "EXTERNAL_CREDIT_SOURCE_REQUIRED", "External settlement credit source is required");
     }
-    const current = await snapshot(executor, ctx, loan, settlementDate);
-    const terms = singlePaymentTerms(loan);
-    const gross = calculateSinglePaymentSettlement({ settlementDate, terms, exposures: current.exposures, waivers: { interest: "0.00", fees: "0.00", penalties: "0.00" }, outstandingPrincipal: serializeMoney(current.outstandingPrincipal), outstandingFees: serializeMoney(current.outstandingFees), externalSettlementCredits: "0.00" });
-    const waivedInterest = waiver(input, "interest", new FinancialDecimal(gross.grossInterest));
-    const waivedFees = waiver(input, "fees", new FinancialDecimal(gross.grossFees));
-    const waivedPenalty = waiver(input, "penalty", new FinancialDecimal(gross.grossPenalty));
-    const calculated = calculateSinglePaymentSettlement({ settlementDate, terms, exposures: current.exposures, waivers: { interest: serializeMoney(waivedInterest), fees: serializeMoney(waivedFees), penalties: serializeMoney(waivedPenalty) }, outstandingPrincipal: serializeMoney(current.outstandingPrincipal), outstandingFees: serializeMoney(current.outstandingFees), externalSettlementCredits: serializeMoney(creditAmount) });
-    const creditAllocation = allocateExternalCredit(creditAmount, { penalty: new FinancialDecimal(calculated.netPenalty), fee: new FinancialDecimal(calculated.netFees), interest: new FinancialDecimal(calculated.netInterest), principal: current.outstandingPrincipal });
-    if (creditAllocation.unallocated.gt(0)) {
-        throw new DomainError("EXTERNAL_CREDIT_EXCEEDS_SETTLEMENT", "External settlement credit cannot exceed the net eligible settlement", 400);
+
+    let current: Awaited<ReturnType<typeof snapshot>> | Awaited<ReturnType<typeof floatingSnapshot>>;
+    let calculated: any;
+    let waivedInterest: Decimal;
+    let waivedFees: Decimal;
+    let waivedPenalty: Decimal;
+    let creditAllocation: ReturnType<typeof allocateExternalCredit>;
+    let netPrincipal: Decimal;
+    let netInterest: Decimal;
+    let netFees: Decimal;
+    let netPenalty: Decimal;
+
+    if (loan.repaymentType === "single_payment") {
+        const spCurrent = await snapshot(executor, ctx, loan, settlementDate);
+        current = spCurrent;
+        const terms = singlePaymentTerms(loan);
+        const gross = calculateSinglePaymentSettlement({ settlementDate, terms, exposures: spCurrent.exposures, waivers: { interest: "0.00", fees: "0.00", penalties: "0.00" }, outstandingPrincipal: serializeMoney(spCurrent.outstandingPrincipal), outstandingFees: serializeMoney(spCurrent.outstandingFees), externalSettlementCredits: "0.00" });
+        waivedInterest = waiver(input, "interest", new FinancialDecimal(gross.grossInterest));
+        waivedFees = waiver(input, "fees", new FinancialDecimal(gross.grossFees));
+        waivedPenalty = waiver(input, "penalty", new FinancialDecimal(gross.grossPenalty));
+        calculated = calculateSinglePaymentSettlement({ settlementDate, terms, exposures: spCurrent.exposures, waivers: { interest: serializeMoney(waivedInterest), fees: serializeMoney(waivedFees), penalties: serializeMoney(waivedPenalty) }, outstandingPrincipal: serializeMoney(spCurrent.outstandingPrincipal), outstandingFees: serializeMoney(spCurrent.outstandingFees), externalSettlementCredits: serializeMoney(creditAmount) });
+        creditAllocation = allocateExternalCredit(creditAmount, { penalty: new FinancialDecimal(calculated.netPenalty), fee: new FinancialDecimal(calculated.netFees), interest: new FinancialDecimal(calculated.netInterest), principal: spCurrent.outstandingPrincipal });
+        if (creditAllocation.unallocated.gt(0)) {
+            throw new DomainError("EXTERNAL_CREDIT_EXCEEDS_SETTLEMENT", "External settlement credit cannot exceed the net eligible settlement", 400);
+        }
+        netPrincipal = spCurrent.outstandingPrincipal.minus(creditAllocation.principal);
+        netInterest = new FinancialDecimal(calculated.netInterest).minus(creditAllocation.interest);
+        netFees = new FinancialDecimal(calculated.netFees).minus(creditAllocation.fee);
+        netPenalty = new FinancialDecimal(calculated.netPenalty).minus(creditAllocation.penalty);
+    } else {
+        const flCurrent = await floatingSnapshot(executor, ctx, loan, settlementDate);
+        current = flCurrent;
+        waivedInterest = waiver(input, "interest", flCurrent.grossInterest);
+        waivedFees = waiver(input, "fees", flCurrent.outstandingFees);
+        waivedPenalty = waiver(input, "penalty", flCurrent.grossPenalty);
+        const calculatedNetInterest = flCurrent.grossInterest.minus(waivedInterest);
+        const calculatedNetFees = flCurrent.outstandingFees.minus(waivedFees);
+        const calculatedNetPenalty = flCurrent.grossPenalty.minus(waivedPenalty);
+        creditAllocation = allocateExternalCredit(creditAmount, { penalty: calculatedNetPenalty, fee: calculatedNetFees, interest: calculatedNetInterest, principal: flCurrent.outstandingPrincipal });
+        if (creditAllocation.unallocated.gt(0)) {
+            throw new DomainError("EXTERNAL_CREDIT_EXCEEDS_SETTLEMENT", "External settlement credit cannot exceed the net eligible settlement", 400);
+        }
+        netPrincipal = flCurrent.outstandingPrincipal.minus(creditAllocation.principal);
+        netInterest = calculatedNetInterest.minus(creditAllocation.interest);
+        netFees = calculatedNetFees.minus(creditAllocation.fee);
+        netPenalty = calculatedNetPenalty.minus(creditAllocation.penalty);
+        calculated = {
+            grossPrincipal: serializeMoney(flCurrent.outstandingPrincipal),
+            grossInterest: serializeMoney(flCurrent.grossInterest),
+            grossFees: serializeMoney(flCurrent.outstandingFees),
+            grossPenalty: serializeMoney(flCurrent.grossPenalty),
+            grossSettlement: serializeMoney(flCurrent.outstandingPrincipal.plus(flCurrent.grossInterest).plus(flCurrent.outstandingFees).plus(flCurrent.grossPenalty)),
+            waivedInterest: serializeMoney(waivedInterest),
+            waivedFees: serializeMoney(waivedFees),
+            waivedPenalty: serializeMoney(waivedPenalty),
+            netInterest: serializeMoney(calculatedNetInterest),
+            netFees: serializeMoney(calculatedNetFees),
+            netPenalty: serializeMoney(calculatedNetPenalty),
+            externalSettlementCredits: serializeMoney(creditAmount),
+            netSettlement: serializeMoney(netPrincipal.plus(netInterest).plus(netFees).plus(netPenalty)),
+            dueInterest: serializeMoney(flCurrent.dueInterest),
+            accruedNotDueInterest: serializeMoney(flCurrent.accruedNotDueInterest),
+            nonRefundableAdvanceInterest: serializeMoney(flCurrent.nonRefundableAdvanceInterest),
+        };
     }
-    const netPrincipal = current.outstandingPrincipal.minus(creditAllocation.principal);
-    const netInterest = new FinancialDecimal(calculated.netInterest).minus(creditAllocation.interest);
-    const netFees = new FinancialDecimal(calculated.netFees).minus(creditAllocation.fee);
-    const netPenalty = new FinancialDecimal(calculated.netPenalty).minus(creditAllocation.penalty);
+
     const replacementPrincipal = netPrincipal.plus(additionalPrincipal);
     if (replacementPrincipal.lte(0)) throw new DomainError("INVALID_REPLACEMENT_PRINCIPAL", "Replacement principal must be greater than zero", 400);
     const replacement = normalizeReplacement(input.replacementTerms, replacementPrincipal);

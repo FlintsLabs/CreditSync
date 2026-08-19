@@ -4,7 +4,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
     auditLogs, bankProfiles, borrowers, fundLedgerEntries, loanDisbursementEvents, loanFundingAllocations, loanOpeningBalanceComponents,
-    loanInterestRatePeriods, loanRenewals, loanRestructures, loanSchedules, loans, paymentIntakes, paymentMatchAllocations, paymentMatchProposals, transactions, users,
+    loanInterestAccruals, loanInterestRatePeriods, loanRenewals, loanRestructures, loanSchedules, loans, paymentIntakes, paymentMatchAllocations, paymentMatchProposals, transactions, users,
 } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import { executeLoanRestructure, previewLoanRestructure, reverseLoanRestructure } from "./loan-restructure-service";
@@ -39,6 +39,42 @@ async function seed() {
     return { tenantId, actor, borrower, loan, ctx };
 }
 
+async function seedFloating(options?: {
+    principal?: string;
+    rate?: string;
+    startDate?: string;
+}) {
+    const tenantId = `tenant-${crypto.randomUUID()}`;
+    const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then(r => r[0]!);
+    const borrower = await db.insert(borrowers).values({ tenantId, ownerUserId: actor.id, name: "Floating Restructure Borrower" }).returning().then(r => r[0]!);
+    const principal = options?.principal ?? "4000.00";
+    const rate = options?.rate ?? "15.0000";
+    const startDate = options?.startDate ?? "2026-08-15";
+    const loan = await db.insert(loans).values({
+        tenantId, ownerUserId: actor.id, borrowerId: borrower.id,
+        principalAmount: principal, interestRate: "0.00", repaymentType: "floating",
+        startDate,
+        dailyInterestMode: "per_thousand", dailyInterestRate: rate,
+        firstDayTreatment: "start_next_day", floatingAccrualCycle: "daily",
+        interestStartDate: startDate, interestPeriodUnit: "day", interestPeriodLength: 1,
+        advanceInterestPeriods: 0, advanceInterestRefundPolicy: "non_refundable",
+        interestPeriodAnchorDate: startDate,
+        outstandingPrincipal: principal, outstandingInterest: "0.00", outstandingFees: "0.00",
+        status: "active",
+    }).returning().then(r => r[0]!);
+    await db.insert(loanInterestRatePeriods).values({
+        tenantId, loanId: loan.id, effectiveDate: startDate,
+        rateType: "per_thousand", rate, periodUnit: "day", periodLength: 1,
+        createdByUserId: actor.id,
+    });
+    await db.insert(loanDisbursementEvents).values({
+        tenantId, loanId: loan.id, grossAmount: principal, loanAttributedAmount: principal, channel: "bank_transfer",
+        status: "posted", disbursedAt: new Date(`${startDate}T03:00:00Z`), postedAt: new Date(`${startDate}T03:01:00Z`), postIdempotencyKey: crypto.randomUUID(), createdByUserId: actor.id,
+    });
+    const ctx = (key?: string): CommandContext => ({ tenantId, actorUserId: actor.id, actorSource: "web", requestId: "req-floating-restructure", correlationId: "corr-floating-restructure", idempotencyKey: key });
+    return { tenantId, actor, borrower, loan, ctx };
+}
+
 const replacementTerms = {
     repaymentType: "single_payment" as const, startDate: "2026-08-15", termMonths: 1, interestRate: "4.00",
     singlePayment: { dueDate: "2026-09-15", fixedAgreedInterest: "240.00", interestPolicy: "fixed_only" as const, latePenalty: { mode: "none" as const } },
@@ -46,6 +82,45 @@ const replacementTerms = {
 
 describe("loan restructure service", () => {
     if (process.env.TEST_DATABASE_URL) beforeEach(reset);
+
+    integrationTest("previews an active floating loan restructure with additional principal and floating replacement terms", async () => {
+        const { loan, ctx } = await seedFloating();
+        const beforeAccruals = await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id));
+        const floatingReplacementTerms = {
+            repaymentType: "floating" as const,
+            startDate: "2026-08-15",
+            termMonths: 1,
+            interestRate: "0.00",
+            floatingInterestPolicy: {
+                periodUnit: "day" as const,
+                periodLength: 1 as const,
+                rateMode: "per_thousand" as const,
+                rate: "15.0000",
+                advanceInterestPeriods: 0 as const,
+                advanceInterestRefundPolicy: "non_refundable" as const,
+            },
+        };
+        const preview = await previewLoanRestructure(ctx(), loan.publicId, {
+            settlementDate: "2026-08-15",
+            replacementTerms: floatingReplacementTerms,
+            additionalPrincipal: "1000.00",
+            reason: "restructure floating loan with additional cash",
+        });
+        expect(preview.replacementPrincipal).toBe("5000.00");
+        expect(preview.cash).toEqual({ direction: "payout", amount: "1000.00" });
+        expect(preview.replacementTerms.repaymentType).toBe("floating");
+        expect(preview.replacementTerms.floatingInterestPolicy).toMatchObject({
+            periodUnit: "day",
+            periodLength: 1,
+            rateMode: "per_thousand",
+            rate: "15.0000",
+        });
+        expect(preview.balance.grossPrincipal).toBe("4000.00");
+        expect(preview.previewHash).toMatch(/^v1:[0-9a-f]{64}$/);
+        expect(preview.oldBalanceVersion).toMatch(/^v1:[0-9a-f]{64}$/);
+        const afterAccruals = await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id));
+        expect(afterAccruals).toEqual(beforeAccruals);
+    });
 
     integrationTest("previews authoritative exposure, greater-of interest, concurrent penalty, waivers and additional cash", async () => {
         const { loan, ctx } = await seed();
@@ -68,6 +143,184 @@ describe("loan restructure service", () => {
         expect(preview.oldBalanceVersion).toMatch(/^v1:[0-9a-f]{64}$/);
         expect(preview.expiresAt).toBeInstanceOf(Date);
         expect(await db.select().from(loans).where(eq(loans.clonedFromLoanId, loan.id))).toHaveLength(0);
+    });
+
+    integrationTest("executes a floating-to-floating restructure atomically with opening components, rate period, and additional-principal draft", async () => {
+        const { loan, ctx } = await seedFloating();
+        const floatingReplacementTerms = {
+            repaymentType: "floating" as const,
+            startDate: "2026-08-15",
+            termMonths: 1,
+            interestRate: "0.00",
+            floatingInterestPolicy: {
+                periodUnit: "day" as const,
+                periodLength: 1 as const,
+                rateMode: "per_thousand" as const,
+                rate: "15.0000",
+                advanceInterestPeriods: 0 as const,
+                advanceInterestRefundPolicy: "non_refundable" as const,
+            },
+        };
+        const preview = await previewLoanRestructure(ctx(), loan.publicId, {
+            settlementDate: "2026-08-15",
+            replacementTerms: floatingReplacementTerms,
+            additionalPrincipal: "1000.00",
+            reason: "floating to floating restructure",
+        });
+        const executed = await executeLoanRestructure(ctx("execute-floating-to-floating"), preview.publicId, {
+            confirmed: true,
+            previewHash: preview.previewHash,
+            expectedBalanceVersion: preview.oldBalanceVersion,
+            reason: "floating restructure approved",
+        });
+        expect(executed.oldLoanPublicId).toBe(loan.publicId);
+        expect(executed.newLoanPublicId).toBeDefined();
+        expect(executed.disbursementDraftPublicId).toBeDefined();
+
+        const oldLoanRow = await db.query.loans.findFirst({ where: eq(loans.id, loan.id) });
+        expect(oldLoanRow?.status).toBe("restructured");
+
+        const replacement = await db.query.loans.findFirst({ where: eq(loans.publicId, executed.newLoanPublicId!) });
+        expect(replacement).toMatchObject({
+            status: "active",
+            repaymentType: "floating",
+            principalAmount: "5000.00",
+            outstandingPrincipal: "5000.00",
+            dailyInterestMode: "per_thousand",
+            dailyInterestRate: "15.0000",
+            firstDayTreatment: "start_next_day",
+            floatingAccrualCycle: "daily",
+            interestStartDate: "2026-08-15",
+            interestPeriodUnit: "day",
+            interestPeriodLength: 1,
+        });
+
+        const ratePeriods = await db.select().from(loanInterestRatePeriods).where(eq(loanInterestRatePeriods.loanId, replacement!.id));
+        expect(ratePeriods).toHaveLength(1);
+        expect(ratePeriods[0]).toMatchObject({
+            effectiveDate: "2026-08-15",
+            rateType: "per_thousand",
+            rate: "15.0000",
+            periodUnit: "day",
+            periodLength: 1,
+        });
+
+        const openingComponents = await db.select().from(loanOpeningBalanceComponents).where(eq(loanOpeningBalanceComponents.loanId, replacement!.id));
+        expect(openingComponents.map(c => [c.componentKind, c.amount])).toEqual(expect.arrayContaining([
+            ["carried_principal", "4000.00"],
+            ["additional_principal", "1000.00"],
+        ]));
+
+        const drafts = await db.select().from(loanDisbursementEvents).where(eq(loanDisbursementEvents.loanId, replacement!.id));
+        expect(drafts).toHaveLength(1);
+        expect(drafts[0]).toMatchObject({
+            status: "draft",
+            grossAmount: "1000.00",
+            loanAttributedAmount: "1000.00",
+        });
+
+        // Reversal succeeds when pristine
+        const reversed = await reverseLoanRestructure(ctx("reverse-pristine-floating"), preview.publicId, { reason: "undo floating restructure" });
+        expect(reversed.status).toBe("reversed");
+        const restoredOldLoan = await db.query.loans.findFirst({ where: eq(loans.id, loan.id) });
+        expect(restoredOldLoan?.status).toBe("active");
+        const cancelledReplacement = await db.query.loans.findFirst({ where: eq(loans.id, replacement!.id) });
+        expect(cancelledReplacement?.status).toBe("cancelled");
+    });
+
+    integrationTest("detects stale preview when floating balance or rate period changes intervene", async () => {
+        const { loan, ctx } = await seedFloating();
+        const floatingReplacementTerms = {
+            repaymentType: "floating" as const,
+            startDate: "2026-08-15",
+            termMonths: 1,
+            interestRate: "0.00",
+            floatingInterestPolicy: {
+                periodUnit: "day" as const,
+                periodLength: 1 as const,
+                rateMode: "per_thousand" as const,
+                rate: "15.0000",
+                advanceInterestPeriods: 0 as const,
+                advanceInterestRefundPolicy: "non_refundable" as const,
+            },
+        };
+        const preview = await previewLoanRestructure(ctx(), loan.publicId, {
+            settlementDate: "2026-08-15",
+            replacementTerms: floatingReplacementTerms,
+            additionalPrincipal: "0.00",
+            reason: "floating stale test",
+        });
+
+        // Mutate floating rate period
+        await db.update(loanInterestRatePeriods).set({ expiryDate: "2026-08-19" }).where(and(eq(loanInterestRatePeriods.tenantId, ctx().tenantId), eq(loanInterestRatePeriods.loanId, loan.id)));
+        await db.insert(loanInterestRatePeriods).values({
+            tenantId: ctx().tenantId,
+            loanId: loan.id,
+            effectiveDate: "2026-08-20",
+            rateType: "per_thousand",
+            rate: "20.0000",
+            periodUnit: "day",
+            periodLength: 1,
+            createdByUserId: ctx().actorUserId,
+        });
+
+        await expect(executeLoanRestructure(ctx("execute-stale-rate"), preview.publicId, {
+            confirmed: true,
+            previewHash: preview.previewHash,
+            expectedBalanceVersion: preview.oldBalanceVersion,
+            reason: "should fail stale",
+        })).rejects.toMatchObject({ code: "STALE_RESTRUCTURE_PREVIEW" });
+    });
+
+    integrationTest("blocks floating restructure reversal when replacement loan has rate changes or payments", async () => {
+        const { loan, ctx } = await seedFloating();
+        const floatingReplacementTerms = {
+            repaymentType: "floating" as const,
+            startDate: "2026-08-15",
+            termMonths: 1,
+            interestRate: "0.00",
+            floatingInterestPolicy: {
+                periodUnit: "day" as const,
+                periodLength: 1 as const,
+                rateMode: "per_thousand" as const,
+                rate: "15.0000",
+                advanceInterestPeriods: 0 as const,
+                advanceInterestRefundPolicy: "non_refundable" as const,
+            },
+        };
+        const preview = await previewLoanRestructure(ctx(), loan.publicId, {
+            settlementDate: "2026-08-15",
+            replacementTerms: floatingReplacementTerms,
+            additionalPrincipal: "0.00",
+            reason: "floating blocker test",
+        });
+        const executed = await executeLoanRestructure(ctx("execute-blocker-floating"), preview.publicId, {
+            confirmed: true,
+            previewHash: preview.previewHash,
+            expectedBalanceVersion: preview.oldBalanceVersion,
+            reason: "execute for reversal block test",
+        });
+        const replacement = await db.query.loans.findFirst({ where: eq(loans.publicId, executed.newLoanPublicId!) });
+
+        // Add a second rate period on replacement loan
+        await db.update(loanInterestRatePeriods).set({ expiryDate: "2026-08-19" }).where(and(eq(loanInterestRatePeriods.tenantId, ctx().tenantId), eq(loanInterestRatePeriods.loanId, replacement!.id)));
+        await db.insert(loanInterestRatePeriods).values({
+            tenantId: ctx().tenantId,
+            loanId: replacement!.id,
+            effectiveDate: "2026-08-20",
+            rateType: "per_thousand",
+            rate: "18.0000",
+            periodUnit: "day",
+            periodLength: 1,
+            createdByUserId: ctx().actorUserId,
+        });
+
+        await expect(reverseLoanRestructure(ctx("reverse-blocked-rate"), preview.publicId, {
+            reason: "try undo with rate change",
+        })).rejects.toMatchObject({
+            code: "RESTRUCTURE_REVERSAL_BLOCKED",
+            details: { blockers: { rateChanges: 1 } },
+        });
     });
 
     integrationTest("executes atomically, replays same key, persists opening components, and creates only an additional-principal draft", async () => {

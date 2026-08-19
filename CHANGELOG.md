@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.31 - 2026-08-19
+
+### Added
+- Added preview/execute/reverse support for floating-to-floating loan restructures, including projected settlement balances, carried opening components, replacement rate periods, and separate additional-principal disbursement drafts.
+
+### Changed
+- Updated floating payment allocation to apply carried penalty, fee, and interest before current floating obligations, and synchronized restructure guidance with the MCP contract.
+
 ## v0.3.30 - 2026-08-19
 
 ### Changed

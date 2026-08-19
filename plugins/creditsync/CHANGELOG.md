@@ -10,6 +10,7 @@
 ### Changed
 
 - Froze the additive 78-tool MCP contract and synchronized replacement financial rules and orchestration guidance.
+- Synchronized the restructure tool description and guidance for active single-payment and floating-to-floating loan workflows.
 
 ### Fixed
 

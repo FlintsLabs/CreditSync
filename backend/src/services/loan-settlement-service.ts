@@ -48,7 +48,7 @@ const previewHashPattern = /^v1:[0-9a-f]{64}$/i;
 const hashVersion = "v1";
 const previewTtlMilliseconds = 15 * 60 * 1000;
 
-interface SettlementSnapshot {
+export interface SettlementSnapshot {
     outstandingPrincipal: Decimal;
     dueInterest: Decimal;
     accruedNotDueInterest: Decimal;
@@ -162,14 +162,15 @@ function signedMoney(value: Decimal.Value) {
     return new FinancialDecimal(value).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP).toFixed(2);
 }
 
-async function settlementSnapshot(
+export async function settlementSnapshot(
     tx: Executor,
     ctx: CommandContext,
     loan: LoanRow,
     asOfDate: string,
+    materialize = true,
 ): Promise<SettlementSnapshot> {
     const through = parseAsOfDate(asOfDate);
-    await accrueFloatingInterestThrough(tx, loan, through, ctx);
+    if (materialize) await accrueFloatingInterestThrough(tx, loan, through, ctx);
     const [accrualRows, transactionRows, disbursementRows] = await Promise.all([
         tx.select().from(loanInterestAccruals).where(and(
             eq(loanInterestAccruals.tenantId, ctx.tenantId),
@@ -185,9 +186,11 @@ async function settlementSnapshot(
             eq(loanDisbursements.loanId, loan.id),
         )).orderBy(asc(loanDisbursements.id)),
     ]);
+    const obligations = await floatingPaymentObligations(tx, loan, parseAsOfDate(asOfDate), ctx);
+    const interestRows = materialize ? accrualRows : obligations.rows;
     let dueInterest = new FinancialDecimal(0);
     let accruedNotDueInterest = new FinancialDecimal(0);
-    for (const row of accrualRows) {
+    for (const row of interestRows) {
         if (row.accrualDate > asOfDate) continue;
         const unpaid = FinancialDecimal.max(0, new FinancialDecimal(row.interestAmount).minus(row.paidAmount));
         if (unpaid.isZero()) continue;
@@ -196,7 +199,6 @@ async function settlementSnapshot(
     }
     const outstandingPrincipal = money(loan.outstandingPrincipal ?? loan.principalAmount);
     const outstandingFees = money(loan.outstandingFees ?? "0.00");
-    const obligations = await floatingPaymentObligations(tx, loan, parseAsOfDate(asOfDate), ctx);
     const outstandingPenalties = money(obligations.duePenalty);
     const nonRefundableAdvanceInterest = disbursementRows.reduce(
         (sum: Decimal, row: typeof loanDisbursements.$inferSelect) => sum.plus(row.firstDayInterestDeducted),

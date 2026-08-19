@@ -1695,7 +1695,7 @@ const toolDescriptions: Record<McpToolName, string> = {
     "renewal.preview": "Preview a daily-loan renewal from current balances.",
     "renewal.execute": "Execute a confirmed renewal idempotently.",
     "renewal.reverse": "Reverse an executed renewal with compensating records.",
-    "loan.restructure.preview": "Preview an exact single-payment settlement and replacement contract from current balances.",
+    "loan.restructure.preview": "Preview an exact single-payment or floating-loan settlement and replacement contract from current balances.",
     "loan.restructure.execute": "Execute an explicitly confirmed restructure preview idempotently.",
     "loan.restructure.reverse": "Reverse an executed restructure when the authoritative downstream checks allow it.",
     "loan.waiver.preview": "Preview an interest, fee, or penalty waiver against the current replacement-loan balance.",
