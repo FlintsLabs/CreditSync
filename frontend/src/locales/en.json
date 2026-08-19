@@ -543,6 +543,7 @@
         "agent": {
             "label": "Agent",
             "unassigned": "Unassigned",
+            "unassignedSubtext": "Assign an agent to manage this borrower",
             "assignAction": "Assign"
         },
         "borrowerLabels": {
@@ -597,6 +598,10 @@
             "overdueDays_other": "Overdue {{count}} days",
             "overdueSummary": "{{amount}} · up to {{days}} days overdue",
             "maxOverdueDays": "up to {{days}} days overdue",
+            "maxOverdueDaysLabel": "Max overdue days",
+            "totalOverdue": "Total overdue balance",
+            "daysCount_one": "{{count}} day",
+            "daysCount_other": "{{count}} days",
             "dueNow": "Due now {{amount}}",
             "dueNowLabel": "Due now",
             "overdueAria": "This loan has an overdue balance",

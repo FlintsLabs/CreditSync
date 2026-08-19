@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.29 - 2026-08-19
+
+### Changed
+- Polished Loan List contract cards with responsive composition, stronger overdue/action hierarchy, lighter balance treatment, grouped icon metadata, and clearer agent assignment states.
+
 ## v0.3.28 - 2026-08-19
 
 ### Fixed

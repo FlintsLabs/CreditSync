@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "../../../components/ui/Button";
 import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/Card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../../components/ui/dropdown-menu";
-import { Plus, FileText, Calendar, MoreHorizontal, DollarSign, ArrowRightLeft, AlertCircle } from "lucide-react";
+import { Plus, FileText, Calendar, CalendarDays, MoreHorizontal, DollarSign, ArrowRightLeft, AlertCircle, User, UserCheck, ChevronRight, RotateCw, Wallet, Clock, Receipt } from "lucide-react";
 import { Link } from "react-router-dom";
 import { LoanClosingModal } from "./LoanClosingModal";
 import { useTranslation } from "react-i18next";
@@ -212,29 +212,34 @@ export default function LoanList() {
 
                     return (
                         <Link key={loan.id} to={`/loans/${loan.publicId ?? loan.id}`} className="block group">
-                            <Card className="hover:shadow-md transition-all flex flex-col h-full border-border/80 hover:border-primary/30">
-                                <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
-                                    <div className="space-y-1 min-w-0 flex-1 pr-2">
-                                        <CardTitle className="text-base font-semibold leading-tight tracking-tight text-foreground truncate group-hover:text-primary transition-colors">
-                                            {loan.borrowerName}
-                                        </CardTitle>
-                                        {labelState.visible.length > 0 && (
-                                            <div className="flex flex-wrap gap-1 pt-0.5">
-                                                {labelState.visible.map((label) => (
-                                                    <Badge key={label} variant="outline" className="h-5 px-1.5 text-[11px] font-normal text-muted-foreground">
-                                                        {label}
-                                                    </Badge>
-                                                ))}
-                                                {labelState.overflow > 0 && (
-                                                    <span
-                                                        aria-label={t("loans.borrowerLabels.more", { count: labelState.overflow })}
-                                                        className="inline-flex items-center rounded-full border border-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
-                                                    >
-                                                        +{labelState.overflow}
-                                                    </span>
-                                                )}
-                                            </div>
-                                        )}
+                            <Card className="hover:shadow-md transition-all flex flex-col h-full border-border/80 hover:border-primary/30 rounded-2xl">
+                                <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3 gap-2">
+                                    <div className="flex items-start gap-3 min-w-0 flex-1 pr-1">
+                                        <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+                                            <User className="h-5 w-5" />
+                                        </div>
+                                        <div className="space-y-1 min-w-0 flex-1">
+                                            <CardTitle className="text-base font-bold leading-tight tracking-tight text-foreground truncate group-hover:text-primary transition-colors">
+                                                {loan.borrowerName}
+                                            </CardTitle>
+                                            {labelState.visible.length > 0 && (
+                                                <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                                                    {labelState.visible.map((label) => (
+                                                        <Badge key={label} variant="outline" className="h-5 px-2 text-[11px] font-normal text-muted-foreground rounded-full bg-muted/30">
+                                                            {label}
+                                                        </Badge>
+                                                    ))}
+                                                    {labelState.overflow > 0 && (
+                                                        <span
+                                                            aria-label={t("loans.borrowerLabels.more", { count: labelState.overflow })}
+                                                            className="inline-flex items-center rounded-full border border-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground"
+                                                        >
+                                                            +{labelState.overflow}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                     <DropdownMenu>
                                         <DropdownMenuTrigger asChild>
@@ -271,54 +276,111 @@ export default function LoanList() {
                                             paidToDate={loan.paidToDate}
                                         />
 
-                                        {/* Contract details 2-column grid */}
-                                        <div className="rounded-lg border bg-muted/20 p-2.5 grid grid-cols-2 gap-2 text-xs">
-                                            <div>
-                                                <div className="text-muted-foreground text-[11px] font-medium">{t("loans.repaymentType", "Repayment type")}</div>
-                                                <div className="font-semibold text-foreground truncate">{t(`loanWizard.repaymentOptions.${loan.repaymentType}`)}</div>
-                                            </div>
-                                            <div>
-                                                <div className="text-muted-foreground text-[11px] font-medium">{t("loans.installment", "Installment")}</div>
-                                                <div className="font-semibold text-foreground tabular-nums truncate">
-                                                    {loan.repaymentType === "floating"
-                                                        ? t("loans.noSchedule", "No fixed schedule")
-                                                        : formatMoneyExact(loan.installmentAmount ?? "0.00", i18n.language)}
+                                        {/* Contract details 2-column grid with circular icon badges */}
+                                        <div className="rounded-xl border border-border/50 bg-muted/15 p-2.5 sm:p-3 grid grid-cols-2 gap-2.5 text-xs">
+                                            <div className="flex items-start gap-2 min-w-0">
+                                                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5">
+                                                    <RotateCw className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                                                </div>
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="text-muted-foreground text-[11px] font-medium">{t("loans.repaymentType", "Repayment type")}</div>
+                                                    <div className="font-semibold text-foreground truncate">{t(`loanWizard.repaymentOptions.${loan.repaymentType}`)}</div>
                                                 </div>
                                             </div>
-                                            <div>
-                                                <div className="text-muted-foreground text-[11px] font-medium">{t("loans.installmentsCountLabel", "Count")}</div>
-                                                <div className="font-medium text-foreground">
-                                                    {loan.repaymentType === "floating"
-                                                        ? <span className="text-muted-foreground">{t("loans.noFixedSchedule", "Floating repayment has no fixed schedule")}</span>
-                                                        : t("loans.installmentsCount", { count: loan.totalInstallments ?? 0 })}
+                                            <div className="flex items-start gap-2 min-w-0">
+                                                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5">
+                                                    <Wallet className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                                                </div>
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="text-muted-foreground text-[11px] font-medium">{t("loans.installment", "Installment")}</div>
+                                                    <div className="font-semibold text-foreground tabular-nums truncate">
+                                                        {loan.repaymentType === "floating"
+                                                            ? t("loans.noSchedule", "No fixed schedule")
+                                                            : formatMoneyExact(loan.installmentAmount ?? "0.00", i18n.language)}
+                                                    </div>
                                                 </div>
                                             </div>
-                                            <div>
-                                                <div className="text-muted-foreground text-[11px] font-medium">{t("loans.startDate", "Start date")}</div>
-                                                <div className="font-medium text-foreground">{formattedStartDate}</div>
+                                            <div className="flex items-start gap-2 min-w-0">
+                                                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5">
+                                                    <CalendarDays className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                                                </div>
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="text-muted-foreground text-[11px] font-medium">{t("loans.installmentsCountLabel", "Count")}</div>
+                                                    <div className="font-medium text-foreground truncate">
+                                                        {loan.repaymentType === "floating"
+                                                            ? <span className="text-muted-foreground">{t("loans.noFixedSchedule", "Floating repayment has no fixed schedule")}</span>
+                                                            : t("loans.installmentsCount", { count: loan.totalInstallments ?? 0 })}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-start gap-2 min-w-0">
+                                                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0 mt-0.5">
+                                                    <Calendar className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                                                </div>
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="text-muted-foreground text-[11px] font-medium">{t("loans.startDate", "Start date")}</div>
+                                                    <div className="font-medium text-foreground truncate">{formattedStartDate}</div>
+                                                </div>
                                             </div>
                                         </div>
 
                                         {/* Agent / Collector Assignment */}
-                                        <div className="flex items-center justify-between rounded-md border border-dashed px-2.5 py-1.5 text-xs">
-                                            <div className="flex items-center gap-1.5 min-w-0">
-                                                <span className="text-muted-foreground font-medium shrink-0">{t("loans.agent.label", "Agent")}:</span>
-                                                <span className={`truncate font-medium ${isUnassigned ? "text-amber-700 dark:text-amber-300" : "text-foreground"}`}>
-                                                    {agentName ?? t("loans.agent.unassigned", "Unassigned")}
+                                        {isUnassigned ? (
+                                            <div className="flex items-center justify-between rounded-xl border border-rose-200/80 bg-rose-50/40 p-2.5 sm:p-3 text-xs gap-2 dark:border-rose-900/40 dark:bg-rose-950/20">
+                                                <div className="flex items-center gap-2.5 min-w-0">
+                                                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-rose-100 text-rose-600 flex items-center justify-center shrink-0 dark:bg-rose-950/60 dark:text-rose-400">
+                                                        <User className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <div className="font-semibold text-rose-700 dark:text-rose-400 truncate">
+                                                            {t("loans.agent.unassigned", "Unassigned")}
+                                                        </div>
+                                                        <div className="text-[11px] text-muted-foreground truncate">
+                                                            {t("loans.agent.unassignedSubtext", "Assign an agent to manage this borrower")}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <span className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-background px-2.5 py-1 text-xs font-semibold text-rose-700 shadow-xs hover:bg-rose-50 transition-colors shrink-0 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300 dark:hover:bg-rose-900/30">
+                                                    {t("loans.agent.assignAction", "Assign")}
+                                                    <ChevronRight className="h-3.5 w-3.5" />
                                                 </span>
                                             </div>
-                                            {isUnassigned && (
-                                                <span className="shrink-0 text-[11px] font-semibold text-primary">
-                                                    {t("loans.agent.assignAction", "Assign")} &rarr;
-                                                </span>
-                                            )}
-                                        </div>
+                                        ) : (
+                                            <div className="flex items-center justify-between rounded-xl border border-border/60 bg-muted/20 p-2.5 sm:p-3 text-xs gap-2">
+                                                <div className="flex items-center gap-2.5 min-w-0">
+                                                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                                                        <UserCheck className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <div className="text-[11px] text-muted-foreground font-medium">{t("loans.agent.label", "Agent")}</div>
+                                                        <div className="font-semibold text-foreground truncate">{agentName}</div>
+                                                    </div>
+                                                </div>
+                                                {(loan.currentAgent?.aliases ?? loan.currentAgentAliases ?? []).length > 0 && (
+                                                    <div className="flex gap-1 shrink-0">
+                                                        {(loan.currentAgent?.aliases ?? loan.currentAgentAliases ?? [])
+                                                            .filter(Boolean)
+                                                            .map((alias) => (
+                                                                <Badge key={alias} variant="secondary" className="text-[10px] px-1.5 py-0 h-4 font-normal">
+                                                                    {alias}
+                                                                </Badge>
+                                                            ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
 
-                                    {/* Footer metadata: Created at */}
-                                    <div className="flex items-center text-[11px] text-muted-foreground pt-2 border-t border-border/40">
-                                        <Calendar className="mr-1.5 h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
-                                        <span>{t("loans.createdAt", "Created at")}: {formattedCreatedAt}</span>
+                                    {/* Footer metadata: Created at and Loan ID */}
+                                    <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-2.5 border-t border-border/40">
+                                        <div className="flex items-center gap-1.5 truncate">
+                                            <Clock className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+                                            <span>{t("loans.createdAt", "Created at")}: {formattedCreatedAt}</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5 shrink-0 pl-2">
+                                            <Receipt className="h-3.5 w-3.5 text-muted-foreground/70" />
+                                            <span>{t("loans.loanLabel", { id: loan.publicId ?? loan.id })}</span>
+                                        </div>
                                     </div>
                                 </CardContent>
                             </Card>

@@ -541,15 +541,16 @@
         "create": "สร้างสัญญา",
         "search": "ชื่อ ชื่อเล่น แท็ก หรือเลขสัญญา",
         "agent": {
-            "label": "เอเจนต์",
-            "unassigned": "ยังไม่มอบหมาย",
+            "label": "ผู้รับผิดชอบ",
+            "unassigned": "ยังไม่มีผู้รับผิดชอบ",
+            "unassignedSubtext": "มอบหมายเจ้าหน้าที่เพื่อดูแลลูกค้า",
             "assignAction": "มอบหมาย"
         },
         "borrowerLabels": {
             "more_one": "ป้ายกำกับลูกหนี้เพิ่มเติม {{count}} รายการ",
             "more_other": "ป้ายกำกับลูกหนี้เพิ่มเติม {{count}} รายการ"
         },
-        "loanLabel": "สัญญา #{{id}}",
+        "loanLabel": "รหัสสัญญา #{{id}}",
         "originalPrincipal": "เงินต้นตั้งต้น",
         "outstandingPrincipal": "ยอดเงินต้นคงเหลือ",
         "interestReceived": "ดอกเบี้ยรับแล้ว",
@@ -597,6 +598,10 @@
             "overdueDays_other": "ค้างชำระ {{count}} วัน",
             "overdueSummary": "{{amount}} · ค้างสูงสุด {{days}} วัน",
             "maxOverdueDays": "ค้างสูงสุด {{days}} วัน",
+            "maxOverdueDaysLabel": "ค้างชำระสูงสุด",
+            "totalOverdue": "ยอดค้างชำระรวม",
+            "daysCount_one": "{{count}} วัน",
+            "daysCount_other": "{{count}} วัน",
             "dueNow": "ถึงกำหนดชำระ {{amount}}",
             "dueNowLabel": "ถึงกำหนดชำระ",
             "overdueAria": "สัญญานี้มียอดค้างชำระ",
