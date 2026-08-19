@@ -13,6 +13,7 @@ import {
     type BorrowerUpdateInput,
 } from "../services/borrower-service";
 import { DomainError } from "../services/domain-error";
+import type { CommandContext } from "../services/command-context";
 import { listFundingSources } from "../services/funding-source-service";
 import {
     activateLoan,
@@ -156,6 +157,15 @@ function paymentReversalReason(input: ToolInput) {
         : "MCP 1.0 compatibility reversal";
 }
 
+export function paymentPostCommandContext(ctx: CommandContext, input: ToolInput): CommandContext {
+    const paymentIntakePublicId = asString(input, "paymentIntakePublicId");
+    const proposalPublicId = asString(input, "proposalPublicId");
+    return {
+        ...ctx,
+        idempotencyKey: ctx.idempotencyKey ?? `mcp:payment-post:${paymentIntakePublicId}:${proposalPublicId}`,
+    };
+}
+
 export function createDefaultMcpToolHandlers(
     dependencies: DefaultMcpDependencies = {},
 ): Record<McpToolName, McpToolHandler> {
@@ -207,7 +217,7 @@ export function createDefaultMcpToolHandlers(
         { allocations: input.allocations as ExplicitPaymentAllocation[] | undefined },
     ),
     "payment.post": (ctx, input) => postPayment(
-        ctx,
+        paymentPostCommandContext(ctx, input),
         asString(input, "paymentIntakePublicId"),
         { proposalPublicId: asString(input, "proposalPublicId") },
     ),

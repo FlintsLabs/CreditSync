@@ -10,6 +10,7 @@ import { parseMoney, serializeMoney } from "../lib/money";
 import { loansRoute } from "../modules/loans";
 import { normalizeMoney as normalizeFrontendMoney } from "../../../frontend/src/lib/workflow-api";
 import { createMcpHttpPlugin, MCP_TOOL_NAMES, type CreateMcpHttpPluginInput, type McpToolHandler } from "./server";
+import { paymentPostCommandContext } from "./default";
 import type { McpRuntimeConfig } from "./security";
 
 const TOKEN = "contract-secret";
@@ -1360,6 +1361,23 @@ describe("CreditSync stateless MCP contract", () => {
         expect(JSON.stringify(logs)).not.toContain("paymentIntakePublicId");
 
         await client.close();
+    });
+
+    test("derives a stable idempotency key for MCP payment posting", () => {
+        const ctx: CommandContext = {
+            tenantId: "tenant-fixed",
+            actorUserId: 7,
+            actorSource: "mcp",
+            requestId: "request-1",
+            correlationId: "correlation-1",
+        };
+        const input = { paymentIntakePublicId: INTAKE_ID, proposalPublicId: BORROWER_ID };
+
+        const first = paymentPostCommandContext(ctx, input);
+        const second = paymentPostCommandContext(ctx, input);
+
+        expect(first.idempotencyKey).toBe(`mcp:payment-post:${INTAKE_ID}:${BORROWER_ID}`);
+        expect(second.idempotencyKey).toBe(first.idempotencyKey);
     });
 
     test("does not report a financial write as successful when its public audit record is unavailable", async () => {

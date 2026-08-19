@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.28 - 2026-08-19
+
+### Fixed
+- Fixed MCP floating-payment posting by deriving and forwarding a stable idempotency key into payment commands, with regression coverage for retry stability.
+
 ## v0.3.27 - 2026-08-18
 
 ### Changed
