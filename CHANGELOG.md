@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.30 - 2026-08-19
+
+### Changed
+- Grouped Loan List cards by canonical borrower while preserving the existing card layout, filters, sorting, navigation, and localized count labels.
+
 ## v0.3.29 - 2026-08-19
 
 ### Changed

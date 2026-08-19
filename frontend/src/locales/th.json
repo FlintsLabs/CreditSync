@@ -550,6 +550,10 @@
             "more_one": "ป้ายกำกับลูกหนี้เพิ่มเติม {{count}} รายการ",
             "more_other": "ป้ายกำกับลูกหนี้เพิ่มเติม {{count}} รายการ"
         },
+        "borrowerGroup": {
+            "loanCount_one": "{{count}} สัญญา",
+            "loanCount_other": "{{count}} สัญญา"
+        },
         "loanLabel": "รหัสสัญญา #{{id}}",
         "originalPrincipal": "เงินต้นตั้งต้น",
         "outstandingPrincipal": "ยอดเงินต้นคงเหลือ",

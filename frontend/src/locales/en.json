@@ -550,6 +550,10 @@
             "more_one": "1 more borrower label",
             "more_other": "{{count}} more borrower labels"
         },
+        "borrowerGroup": {
+            "loanCount_one": "{{count}} loan",
+            "loanCount_other": "{{count}} loans"
+        },
         "loanLabel": "Loan #{{id}}",
         "originalPrincipal": "Original principal",
         "outstandingPrincipal": "Outstanding Principal",

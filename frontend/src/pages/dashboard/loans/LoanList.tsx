@@ -25,6 +25,7 @@ const currentPaymentHealth: LoanPaymentHealth = {
 interface LoanRow {
     id: string;
     publicId: string;
+    borrowerPublicId?: string | null;
     borrowerName: string;
     borrowerAliases?: string[] | null;
     borrowerTags?: string[] | null;
@@ -104,6 +105,21 @@ export default function LoanList() {
             return 0;
         });
     }, [fundingFilter, loanTab, loans, search, sortBy, statusFilter]);
+
+    const groupedVisibleLoans = useMemo(() => {
+        const groups = new Map<string, { borrowerName: string; loans: LoanRow[] }>();
+        for (const loan of visibleLoans) {
+            // Missing identifiers stay isolated so different borrowers are never merged by name.
+            const groupKey = loan.borrowerPublicId ?? `loan:${loan.id}`;
+            const group = groups.get(groupKey);
+            if (group) {
+                group.loans.push(loan);
+            } else {
+                groups.set(groupKey, { borrowerName: loan.borrowerName, loans: [loan] });
+            }
+        }
+        return [...groups.values()];
+    }, [visibleLoans]);
 
     return (
         <div className="space-y-6">
@@ -187,8 +203,25 @@ export default function LoanList() {
                 </CardContent>
             </Card>
 
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {visibleLoans.map((loan) => {
+            <div className="space-y-8">
+                {groupedVisibleLoans.map((group, groupIndex) => (
+                    <section
+                        key={group.loans[0]?.borrowerPublicId ?? `group-${groupIndex}`}
+                        aria-labelledby={group.loans.length > 1 ? `borrower-group-${groupIndex}` : undefined}
+                        className="space-y-3"
+                    >
+                        {group.loans.length > 1 && (
+                            <div className="flex items-baseline gap-2 border-b border-border/60 pb-2">
+                                <h3 id={`borrower-group-${groupIndex}`} className="text-lg font-semibold tracking-tight text-foreground">
+                                    {group.borrowerName}
+                                </h3>
+                                <span className="text-sm text-muted-foreground">
+                                    {t("loans.borrowerGroup.loanCount", { count: group.loans.length })}
+                                </span>
+                            </div>
+                        )}
+                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                            {group.loans.map((loan) => {
                     const labelState = getVisibleBorrowerLabels(loan);
                     const agentName = loan.currentAgent?.name ?? loan.currentAgentName;
                     const isUnassigned = !agentName;
@@ -386,7 +419,10 @@ export default function LoanList() {
                             </Card>
                         </Link>
                     );
-                })}
+                            })}
+                        </div>
+                    </section>
+                ))}
             </div>
 
             {isLoading && (
