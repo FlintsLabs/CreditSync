@@ -410,7 +410,10 @@ function presentPreview(row: Restructure, loan: Loan, computed: Awaited<ReturnTy
     const publicReplacementTerms = floatingDailyInterest
         ? { ...termsWithoutFloatingInternals, floatingDailyInterest: { mode: floatingDailyInterest.mode, rate: floatingDailyInterest.rate, firstDayTreatment: floatingDailyInterest.firstDayTreatment } }
         : termsWithoutFloatingInternals;
-    const { dueInterest: _dueInterest, accruedNotDueInterest: _accruedNotDueInterest, nonRefundableAdvanceInterest: _nonRefundableAdvanceInterest, ...publicBalance } = computed.calculated;
+    const { dueInterest: _dueInterest, accruedNotDueInterest: _accruedNotDueInterest, nonRefundableAdvanceInterest: _nonRefundableAdvanceInterest, ...balanceWithoutInternalFields } = computed.calculated;
+    const publicBalance = loan.repaymentType === "floating"
+        ? { fixedInterestCandidate: "0.00", retroactiveInterestCandidate: "0.00", selectedInterest: "0.00", selectedInterestBranch: "fixed", interestDifference: "0.00", exposureTrace: [], lateDays: 0, ...balanceWithoutInternalFields }
+        : balanceWithoutInternalFields;
     return {
         publicId: row.publicId, oldLoanPublicId: loan.publicId, status: row.status,
         settlementDate: row.settlementDate, oldBalanceVersion: row.oldBalanceVersion, previewHash: row.previewHash, expiresAt: row.expiresAt,
