@@ -246,7 +246,8 @@ function normalizeReplacement(input: ReplacementLoanTerms, replacementPrincipal:
                 advanceInterestPeriods: legacy.firstDayTreatment === "deduct" ? 1 : 0,
                 advanceInterestRefundPolicy: "non_refundable",
             }) : null;
-            if (generalized && legacyAsGeneralized && JSON.stringify(generalized) !== JSON.stringify(legacyAsGeneralized)) {
+            const splitAdditionalAdvance = generalized?.advanceInterestPeriods === 1 && legacy?.firstDayTreatment === "start_next_day";
+            if (generalized && legacyAsGeneralized && JSON.stringify(generalized) !== JSON.stringify(legacyAsGeneralized) && !splitAdditionalAdvance) {
                 throw new Error("Floating replacement interest policy inputs conflict");
             }
             floatingPolicy = generalized ?? legacyAsGeneralized!;
@@ -290,8 +291,7 @@ function splitAdditionalAdvanceInterest(sourceLoan: Loan, replacement: ReturnTyp
 function applyAdditionalAdvancePolicy(replacement: ReturnType<typeof normalizeReplacement>, additionalAdvanceInterest: Decimal) {
     if (additionalAdvanceInterest.lte(0) || !replacement.floating || !replacement.floatingPolicy) return replacement;
     const floating = { ...replacement.floating, firstDayTreatment: "start_next_day" as const };
-    const { floatingDailyInterest: _legacyFloatingInterest, ...termsWithoutLegacyFloatingInterest } = replacement.terms;
-    return { ...replacement, floating, terms: { ...termsWithoutLegacyFloatingInterest, floatingInterestPolicy: replacement.floatingPolicy } };
+    return { ...replacement, floating, terms: { ...replacement.terms, floatingInterestPolicy: replacement.floatingPolicy, floatingDailyInterest: floating } };
 }
 
 function waiver(input: PreviewLoanRestructureInput, component: "interest" | "fees" | "penalty", gross: Decimal) {
