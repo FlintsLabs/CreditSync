@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.33 - 2026-08-20
+
+### Added
+- Added the approved design and implementation plan for auditable MCP payment reconciliation.
+
 ## v0.3.32 - 2026-08-20
 
 ### Fixed
