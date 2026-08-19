@@ -7,6 +7,7 @@
 
 ### Changed
 - Updated floating payment allocation to apply carried penalty, fee, and interest before current floating obligations, and synchronized restructure guidance with the MCP contract.
+- Floating restructure top-ups now deduct advance interest only from the additional principal and start the increased daily collection on the following day.
 
 ## v0.3.30 - 2026-08-19
 

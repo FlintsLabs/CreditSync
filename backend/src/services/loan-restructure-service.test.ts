@@ -96,7 +96,7 @@ describe("loan restructure service", () => {
                 periodLength: 1 as const,
                 rateMode: "per_thousand" as const,
                 rate: "15.0000",
-                advanceInterestPeriods: 0 as const,
+                advanceInterestPeriods: 1 as const,
                 advanceInterestRefundPolicy: "non_refundable" as const,
             },
         };
@@ -107,7 +107,7 @@ describe("loan restructure service", () => {
             reason: "restructure floating loan with additional cash",
         });
         expect(preview.replacementPrincipal).toBe("5000.00");
-        expect(preview.cash).toEqual({ direction: "payout", amount: "1000.00" });
+        expect(preview.cash).toEqual({ direction: "payout", amount: "985.00" });
         expect(preview.replacementTerms.repaymentType).toBe("floating");
         expect(preview.replacementTerms.floatingInterestPolicy).toMatchObject({
             periodUnit: "day",
@@ -157,7 +157,7 @@ describe("loan restructure service", () => {
                 periodLength: 1 as const,
                 rateMode: "per_thousand" as const,
                 rate: "15.0000",
-                advanceInterestPeriods: 0 as const,
+                advanceInterestPeriods: 1 as const,
                 advanceInterestRefundPolicy: "non_refundable" as const,
             },
         };
@@ -215,7 +215,7 @@ describe("loan restructure service", () => {
         expect(drafts).toHaveLength(1);
         expect(drafts[0]).toMatchObject({
             status: "draft",
-            grossAmount: "1000.00",
+            grossAmount: "985.00",
             loanAttributedAmount: "1000.00",
         });
 

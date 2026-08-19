@@ -279,6 +279,21 @@ function normalizeReplacement(input: ReplacementLoanTerms, replacementPrincipal:
     };
 }
 
+function splitAdditionalAdvanceInterest(sourceLoan: Loan, replacement: ReturnType<typeof normalizeReplacement>, additionalPrincipal: Decimal) {
+    if (sourceLoan.repaymentType !== "floating" || !replacement.floating || !replacement.floatingPolicy || replacement.floatingPolicy.advanceInterestPeriods !== 1 || additionalPrincipal.lte(0)) return new FinancialDecimal(0);
+    const rate = new FinancialDecimal(replacement.floating.rate);
+    return replacement.floating.mode === "percent"
+        ? additionalPrincipal.times(rate).div(100).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP)
+        : additionalPrincipal.times(rate).div(1000).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
+}
+
+function applyAdditionalAdvancePolicy(replacement: ReturnType<typeof normalizeReplacement>, additionalAdvanceInterest: Decimal) {
+    if (additionalAdvanceInterest.lte(0) || !replacement.floating || !replacement.floatingPolicy) return replacement;
+    const floating = { ...replacement.floating, firstDayTreatment: "start_next_day" as const };
+    const { floatingDailyInterest: _legacyFloatingInterest, ...termsWithoutLegacyFloatingInterest } = replacement.terms;
+    return { ...replacement, floating, terms: { ...termsWithoutLegacyFloatingInterest, floatingInterestPolicy: replacement.floatingPolicy } };
+}
+
 function waiver(input: PreviewLoanRestructureInput, component: "interest" | "fees" | "penalty", gross: Decimal) {
     const item = input.waivers?.[component];
     const amount = money(item?.amount, `waivers.${component}.amount`);
@@ -379,13 +394,15 @@ async function computePreview(executor: Executor, ctx: CommandContext, loan: Loa
 
     const replacementPrincipal = netPrincipal.plus(additionalPrincipal);
     if (replacementPrincipal.lte(0)) throw new DomainError("INVALID_REPLACEMENT_PRINCIPAL", "Replacement principal must be greater than zero", 400);
-    const replacement = normalizeReplacement(input.replacementTerms, replacementPrincipal);
+    const normalizedReplacement = normalizeReplacement(input.replacementTerms, replacementPrincipal);
+    const additionalAdvanceInterest = splitAdditionalAdvanceInterest(loan, normalizedReplacement, additionalPrincipal);
+    const replacement = applyAdditionalAdvancePolicy(normalizedReplacement, additionalAdvanceInterest);
     if (replacement.terms.startDate !== settlementDate) throw new DomainError("REPLACEMENT_START_DATE_MISMATCH", "Replacement loan startDate must equal settlementDate", 400, { settlementDate, replacementStartDate: replacement.terms.startDate });
-    const cash = additionalPrincipal.gt(0) ? { direction: "payout" as const, amount: serializeMoney(additionalPrincipal) } : { direction: "none" as const, amount: "0.00" };
+    const cash = additionalPrincipal.gt(0) ? { direction: "payout" as const, amount: serializeMoney(additionalPrincipal.minus(additionalAdvanceInterest)) } : { direction: "none" as const, amount: "0.00" };
     const request = { ...input, reason, additionalPrincipal: serializeMoney(additionalPrincipal), currentVersion: current.version, replacementTerms: replacement.terms };
     const requestHash = sha(request);
     const previewHash = versionHash({ requestHash, currentVersion: current.version, calculated, replacementPrincipal: serializeMoney(replacementPrincipal), schedule: replacement.schedule });
-    return { current, calculated, waivedInterest, waivedFees, waivedPenalty, creditAmount, creditAllocation, netPrincipal, netInterest, netFees, netPenalty, additionalPrincipal, replacementPrincipal, replacement, cash, reason, request, requestHash, previewHash };
+    return { current, calculated, waivedInterest, waivedFees, waivedPenalty, creditAmount, creditAllocation, netPrincipal, netInterest, netFees, netPenalty, additionalPrincipal, additionalAdvanceInterest, replacementPrincipal, replacement, cash, reason, request, requestHash, previewHash };
 }
 
 function presentPreview(row: Restructure, loan: Loan, computed: Awaited<ReturnType<typeof computePreview>>) {
@@ -575,7 +592,12 @@ export async function executeLoanRestructure(ctx: CommandContext, restructurePub
             });
         }
         let draft = null;
-        if (computed.additionalPrincipal.gt(0)) draft = await createDisbursementDraftInTransaction(tx, ctx, newLoan, { grossAmount: serializeMoney(computed.additionalPrincipal), loanAttributedAmount: serializeMoney(computed.additionalPrincipal), channel: "adjustment", note: "Additional principal payout pending", payeeHint: null, disbursedAt: now.toISOString() }, row.id);
+        if (computed.additionalPrincipal.gt(0)) {
+            const note = computed.additionalAdvanceInterest.gt(0)
+                ? `Additional principal payout pending; ${serializeMoney(computed.additionalAdvanceInterest)} advance interest deducted from the additional principal`
+                : "Additional principal payout pending";
+            draft = await createDisbursementDraftInTransaction(tx, ctx, newLoan, { grossAmount: serializeMoney(computed.cash.amount), loanAttributedAmount: serializeMoney(computed.additionalPrincipal), channel: "adjustment", note, payeeHint: null, disbursedAt: now.toISOString() }, row.id);
+        }
         await tx.update(loans).set({ status: "restructured", updatedAt: now }).where(and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, oldLoan.id), eq(loans.status, "active")));
         return { value: await presentExecution(tx, executed, oldLoan) };
     });
