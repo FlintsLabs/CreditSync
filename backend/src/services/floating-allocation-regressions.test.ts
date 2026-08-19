@@ -462,6 +462,18 @@ describe("weekly floating allocation, penalty, reversal, and projection invarian
             .orderBy(floatingPenaltyLedgerEntries.id)).toEqual(before);
     });
 
+    integrationTest("allows backdated reconciliation after later floating payment is reversed", async () => {
+        setSystemTime(new Date("2026-08-20T12:00:00+07:00"));
+        const seeded = await seedWeeklyLoan();
+        const later = await postFloatingPayment(seeded, "600.00", "2026-08-20T05:00:00.000Z");
+        await reversePayment(context(seeded.actor, "reverse-later-payment"), later.intake.publicId, {
+            reason: "Reconcile a missing earlier payment",
+        });
+
+        await expect(postFloatingPayment(seeded, "600.00", "2026-08-18T05:00:00.000Z"))
+            .resolves.toBeDefined();
+    });
+
     // Break caught: a compensation can reduce the assessed ledger below the
     // penalty already paid, silently dropping the customer's excess credit.
     integrationTest("rejects backdated compensation below already-paid penalty", async () => {

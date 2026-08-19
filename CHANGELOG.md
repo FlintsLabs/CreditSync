@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.32 - 2026-08-20
+
+### Fixed
+- Fixed backdated floating-payment reconciliation after a later payment was reversed by ignoring compensated payment allocations while preserving immutable reversal history.
+
 ## v0.3.31 - 2026-08-19
 
 ### Added
