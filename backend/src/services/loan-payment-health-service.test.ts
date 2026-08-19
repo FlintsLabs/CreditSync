@@ -409,4 +409,31 @@ describe("loan payment-health service", () => {
         });
         expect(body[0]).not.toHaveProperty("loanId");
     });
+
+    integrationTest("projects configured floating due amounts on the Loan List without writing accruals", async () => {
+        setSystemTime(new Date("2026-08-11T12:00:00+07:00"));
+        const { actor, borrower } = await seedActorAndBorrower("tenant-floating-list");
+        const loan = await db.insert(loans).values({
+            tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id,
+            principalAmount: "1000.00", interestRate: "0.00", repaymentType: "floating",
+            dailyInterestMode: "per_thousand", dailyInterestRate: "15.0000", firstDayTreatment: "start_next_day",
+            interestStartDate: "2026-08-10", floatingAccrualCycle: "daily", interestPeriodAnchorDate: "2026-08-10",
+            interestPeriodUnit: "day", interestPeriodLength: 1, advanceInterestPeriods: 0,
+            advanceInterestRefundPolicy: "non_refundable", outstandingPrincipal: "1000.00", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanInterestRatePeriods).values({
+            tenantId: actor.tenantId, loanId: loan.id, effectiveDate: "2026-08-10", rateType: "per_thousand",
+            rate: "15.0000", periodUnit: "day", periodLength: 1, createdByUserId: actor.id,
+        });
+
+        const response = await new Elysia().use(loansRoute).handle(new Request("http://localhost/loans", {
+            headers: { authorization: `Bearer ${await authToken(actor)}` },
+        }));
+        const body = await response.json() as Array<{ publicId: string; paymentHealth: unknown }>;
+        expect(response.status).toBe(200);
+        expect(body.find((row) => row.publicId === loan.publicId)?.paymentHealth).toMatchObject({
+            status: "due_today", dueTodayAmount: "15.00", overdueAmount: "0.00",
+        });
+        expect(await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id))).toHaveLength(0);
+    });
 });

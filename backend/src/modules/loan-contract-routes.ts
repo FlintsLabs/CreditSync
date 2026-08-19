@@ -278,7 +278,9 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                             aliases: [...new Set(currentAgents.flatMap((agent) => agent.aliases))],
                         },
                         paymentHealth: loan.repaymentType === "floating"
-                            ? await getLoanListLegacyPaymentHealth(db, loan as typeof loans.$inferSelect, { asOf })
+                            ? (loan.firstDayTreatment && loan.interestStartDate && loan.dailyInterestMode && loan.dailyInterestRate
+                                ? await getLoanPaymentHealth(db, loan as typeof loans.$inferSelect, { asOf, context: ctx })
+                                : await getLoanListLegacyPaymentHealth(db, loan as typeof loans.$inferSelect, { asOf }))
                             : await getLoanPaymentHealth(db, loan as typeof loans.$inferSelect, { asOf, context: ctx }),
                     };
                 }));

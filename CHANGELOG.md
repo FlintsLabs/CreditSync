@@ -11,6 +11,7 @@
 
 ### Fixed
 - Fixed restructured loans appearing in the active collection list; they now remain visible under loan history with their replacement lineage while the replacement loan remains the collection target.
+- Fixed the Loan List payment-health projection for configured floating loans so due-today and overdue daily interest appears without requiring a posted payment or mutating accrual history.
 
 ## v0.3.30 - 2026-08-19
 
