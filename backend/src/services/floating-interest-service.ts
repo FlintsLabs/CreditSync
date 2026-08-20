@@ -1268,7 +1268,7 @@ export async function correctFloatingInterestAccruals(ctx: CommandContext, loanP
             eq(floatingPenaltyLedgerEntries.loanId, loan.id),
             inArray(floatingPenaltyLedgerEntries.dueDate, [...correctedDueDates]),
         ));
-        if (dependentPenaltyHistory.some((entry) => entry.entryType !== "legacy_cutover" && correctedDueDates.has(entry.dueDate))) {
+        if (dependentPenaltyHistory.some((entry) => !["legacy_cutover", "legacy_snapshot"].includes(entry.entryType) && correctedDueDates.has(entry.dueDate))) {
             throw new DomainError(
                 "ACCRUAL_CORRECTION_HAS_PENALTY_HISTORY",
                 "Accruals with immutable penalty history require a compensating financial workflow",
