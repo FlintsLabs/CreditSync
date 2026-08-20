@@ -26,7 +26,7 @@ import type { DisbursementEvidenceStorageGateway } from "../services/loan-disbur
 import type { IntermediaryRemittanceEvidenceGateway } from "../services/intermediary-service";
 import type { TransferEvidenceStorageGateway } from "../services/transfer-evidence-service";
 import { seedReplacementFixture } from "../services/loan-replacement-test-fixture";
-import { createDefaultMcpHttpPlugin } from "./default";
+import { createDefaultMcpHttpPlugin, paymentReverseCommandContext } from "./default";
 import { MCP_TOOL_NAMES, type McpToolName } from "./server";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
@@ -107,6 +107,19 @@ function expectWriteAuditMetadata(data: Record<string, unknown>) {
 }
 
 describe("default MCP adapter integration", () => {
+    test("derives a stable idempotency key for payment reversals when callers omit one", () => {
+        const context = paymentReverseCommandContext({
+            tenantId: TENANT_ID,
+            actorUserId: 1,
+            requestId: "request-1",
+            actorSource: "mcp",
+            correlationId: "correlation-1",
+        }, {
+            paymentIntakePublicId: "01a020da-0767-74c0-b31a-29787378c937",
+        });
+
+        expect(context.idempotencyKey).toBe("mcp:payment-reverse:01a020da-0767-74c0-b31a-29787378c937");
+    });
     // Break caught: borrower.portfolio must carry the public-only replacement
     // lineage emitted by the real portfolio projection, both before and after
     // an executed/reversed replacement. A strict MCP output schema must never

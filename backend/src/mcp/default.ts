@@ -166,6 +166,14 @@ export function paymentPostCommandContext(ctx: CommandContext, input: ToolInput)
     };
 }
 
+export function paymentReverseCommandContext(ctx: CommandContext, input: ToolInput): CommandContext {
+    const paymentIntakePublicId = asString(input, "paymentIntakePublicId");
+    return {
+        ...ctx,
+        idempotencyKey: ctx.idempotencyKey ?? `mcp:payment-reverse:${paymentIntakePublicId}`,
+    };
+}
+
 export function createDefaultMcpToolHandlers(
     dependencies: DefaultMcpDependencies = {},
 ): Record<McpToolName, McpToolHandler> {
@@ -221,7 +229,7 @@ export function createDefaultMcpToolHandlers(
         asString(input, "paymentIntakePublicId"),
         { proposalPublicId: asString(input, "proposalPublicId") },
     ),
-    "payment.reverse": (ctx, input) => reversePayment(ctx, asString(input, "paymentIntakePublicId"), {
+    "payment.reverse": (ctx, input) => reversePayment(paymentReverseCommandContext(ctx, input), asString(input, "paymentIntakePublicId"), {
         reason: paymentReversalReason(input),
     }),
     "loan.preview": async (_ctx, input) => {

@@ -4,6 +4,7 @@
 
 ### Fixed
 - Fixed MCP loan payment-history inspection to return its documented `{ loanPublicId, items }` response and added real-adapter regression coverage.
+- Fixed MCP payment reversals for floating-loan penalty reconciliation by supplying the stable internal command idempotency key required by the ledger.
 
 ## v0.3.35 - 2026-08-21
 
