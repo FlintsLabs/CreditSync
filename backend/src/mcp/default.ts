@@ -285,7 +285,13 @@ export function createDefaultMcpToolHandlers(
     }),
     "loan.disbursement.list": (ctx, input) => listLoanDisbursements(ctx, asString(input, "loanPublicId")),
     "loan.contract.get": (ctx, input) => getLoanContract(ctx, asString(input, "loanPublicId")),
-    "loan.payment-history.list": (ctx, input) => listLoanPaymentIntakes(ctx, asString(input, "loanPublicId")),
+    "loan.payment-history.list": async (ctx, input) => {
+        const loanPublicId = asString(input, "loanPublicId");
+        return {
+            loanPublicId,
+            items: await listLoanPaymentIntakes(ctx, loanPublicId),
+        };
+    },
     "loan.disbursement.draft": (ctx, input) => {
         const { loanPublicId, ...draft } = input;
         rejectDisbursementDraftEvidenceIds(draft);

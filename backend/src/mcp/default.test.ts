@@ -1245,6 +1245,11 @@ describe("default MCP adapter integration", () => {
             proposalPublicId: proposal.publicId,
         })).data;
         const paymentPublicId = String((postedPayment.transactions as Array<{ publicId: string }>)[0]!.publicId);
+        const paymentHistory = (await call("loan.payment-history.list", { loanPublicId })).data;
+        expect(paymentHistory).toMatchObject({
+            loanPublicId,
+            items: [expect.objectContaining({ publicId: intakePublicId, status: "posted" })],
+        });
         const reversedPayment = (await call("payment.reverse", {
             paymentIntakePublicId: intakePublicId,
             reason: "Correct duplicate transfer",

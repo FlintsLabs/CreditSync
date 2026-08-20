@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.36 - 2026-08-21
+
+### Fixed
+- Fixed MCP loan payment-history inspection to return its documented `{ loanPublicId, items }` response and added real-adapter regression coverage.
+
 ## v0.3.35 - 2026-08-21
 
 ### Changed
