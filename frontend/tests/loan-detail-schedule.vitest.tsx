@@ -43,9 +43,9 @@ const loan = {
     status: "active",
 };
 
-function renderLoanDetail() {
+function renderLoanDetail(loanData = loan) {
     vi.mocked(api.get).mockImplementation(async (url) => {
-        if (url === `/loans/${LOAN_ID}`) return { data: loan };
+        if (url === `/loans/${LOAN_ID}`) return { data: loanData };
         if (url === `/borrowers/${BORROWER_ID}`) return { data: { id: BORROWER_ID, publicId: BORROWER_ID, name: "พี่ฟ้า" } };
         if (url.endsWith("/schedule")) return { data: schedule };
         if (url.endsWith("/schedule-summary")) return { data: { businessDate: "2026-08-18", totalInstallments: 25, paidInstallments: 1, overdueInstallments: 10, dueTodayInstallments: 1, dueTodayAmount: "200.00", pendingInstallments: 13 } };
@@ -112,5 +112,30 @@ describe("Loan detail repayment schedule table", () => {
         await userEvent.selectOptions(within(section as HTMLElement).getByLabelText("รายการต่อหน้า"), "all");
         expect(within(table).getByText("งวด #25")).toBeInTheDocument();
         expect(within(table).getAllByRole("row")).toHaveLength(26);
+    });
+
+    it("shows a distinct icon for each daily repayment term", async () => {
+        renderLoanDetail({
+            ...loan,
+            repaymentType: "daily",
+            dailyLoanCalculation: {
+                durationValue: 15,
+                durationUnit: "days",
+                installmentAmount: "200.00",
+                totalInstallments: 15,
+                totalInterest: "0.00",
+                dailyInterest: "0.00",
+                flatDailyRatePercent: "0.0000",
+            },
+        });
+
+        const section = (await screen.findByRole("heading", { name: "เงื่อนไขการผ่อนรายวัน" })).closest("div.rounded-lg");
+        expect(section).not.toBeNull();
+        expect(section?.querySelector("svg.lucide-calendar-days")).toBeInTheDocument();
+        expect(section?.querySelector("svg.lucide-wallet")).toBeInTheDocument();
+        expect(section?.querySelector("svg.lucide-list-ordered")).toBeInTheDocument();
+        expect(section?.querySelector("svg.lucide-coins")).toBeInTheDocument();
+        expect(section?.querySelector("svg.lucide-circle-dollar-sign")).toBeInTheDocument();
+        expect(section?.querySelector("svg.lucide-percent")).toBeInTheDocument();
     });
 });

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, CalendarDays, CheckCircle, Copy, Trash2, User2 } from "lucide-react";
+import { ArrowLeft, CalendarDays, CheckCircle, CircleDollarSign, Coins, Copy, ListOrdered, Percent, Trash2, User2, Wallet } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import Decimal from "decimal.js";
 import { api } from "../../../lib/api";
@@ -605,12 +605,12 @@ export default function LoanDetail() {
                         <Card>
                             <CardHeader><CardTitle>{t("loanDetail.dailyTerms.title", "Daily repayment terms")}</CardTitle></CardHeader>
                             <CardContent className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-6">
-                                <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.duration", "Duration")}</div><div className="font-medium">{loan.dailyLoanCalculation.durationValue} {t(`loanDetail.dailyTerms.units.${loan.dailyLoanCalculation.durationUnit}`, loan.dailyLoanCalculation.durationUnit)}</div></div>
-                                <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.agreedInstallment", "Agreed instalment")}</div><div className="font-medium">{money(loan.dailyLoanCalculation.installmentAmount)}</div></div>
-                                <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.installments", "Total instalments")}</div><div className="font-medium">{loan.dailyLoanCalculation.totalInstallments}</div></div>
-                                <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.totalInterest", "Total interest")}</div><div className="font-medium">{money(loan.dailyLoanCalculation.totalInterest)}</div></div>
-                                <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.dailyInterest", "Daily interest")}</div><div className="font-medium">{money(loan.dailyLoanCalculation.dailyInterest)}</div></div>
-                                <div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.flatRate", "Flat daily rate")}</div><div className="font-medium">{loan.dailyLoanCalculation.flatDailyRatePercent}%</div></div>
+                                <div className="flex items-start gap-2"><CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.duration", "Duration")}</div><div className="font-medium">{loan.dailyLoanCalculation.durationValue} {t(`loanDetail.dailyTerms.units.${loan.dailyLoanCalculation.durationUnit}`, loan.dailyLoanCalculation.durationUnit)}</div></div></div>
+                                <div className="flex items-start gap-2"><Wallet className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.agreedInstallment", "Agreed instalment")}</div><div className="font-medium">{money(loan.dailyLoanCalculation.installmentAmount)}</div></div></div>
+                                <div className="flex items-start gap-2"><ListOrdered className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.installments", "Total instalments")}</div><div className="font-medium">{loan.dailyLoanCalculation.totalInstallments}</div></div></div>
+                                <div className="flex items-start gap-2"><Coins className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.totalInterest", "Total interest")}</div><div className="font-medium">{money(loan.dailyLoanCalculation.totalInterest)}</div></div></div>
+                                <div className="flex items-start gap-2"><CircleDollarSign className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.dailyInterest", "Daily interest")}</div><div className="font-medium">{money(loan.dailyLoanCalculation.dailyInterest)}</div></div></div>
+                                <div className="flex items-start gap-2"><Percent className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><div><div className="text-muted-foreground">{t("loanDetail.dailyTerms.flatRate", "Flat daily rate")}</div><div className="font-medium">{loan.dailyLoanCalculation.flatDailyRatePercent}%</div></div></div>
                             </CardContent>
                             <CardContent className="pt-0 text-xs text-muted-foreground">{t("loanDetail.dailyTerms.notice", "The agreed instalment is fixed. A smaller payment leaves the scheduled remainder due; early settlement requires its own preview.")}</CardContent>
                         </Card>

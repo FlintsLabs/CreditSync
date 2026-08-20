@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.35 - 2026-08-21
+
+### Changed
+- Added contextual icons to each daily repayment term on Loan Detail for faster visual scanning.
+
 ## v0.3.34 - 2026-08-21
 
 ### Changed
