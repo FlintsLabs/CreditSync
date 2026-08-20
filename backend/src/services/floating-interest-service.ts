@@ -1235,11 +1235,17 @@ export async function correctFloatingInterestAccruals(ctx: CommandContext, loanP
         if (oldRows.length !== uniqueDates.length) throw new DomainError("ACCRUAL_CORRECTION_TARGET_MISMATCH", "Every correction date must identify one active accrual", 409);
         const allocatedTargets = oldRows.length ? await tx.select({
             interestAccrualId: floatingTransactionAllocations.interestAccrualId,
-        }).from(floatingTransactionAllocations).where(and(
+        }).from(floatingTransactionAllocations)
+            .innerJoin(transactions, eq(transactions.id, floatingTransactionAllocations.transactionId))
+            .where(and(
             eq(floatingTransactionAllocations.tenantId, ctx.tenantId),
             eq(floatingTransactionAllocations.loanId, loan.id),
             eq(floatingTransactionAllocations.component, "interest"),
             inArray(floatingTransactionAllocations.interestAccrualId, oldRows.map((row) => row.id)),
+            eq(transactions.entryType, "repayment"),
+            sql`NOT EXISTS (SELECT 1 FROM transactions reversal
+                WHERE reversal.tenant_id = ${ctx.tenantId}
+                  AND reversal.reversed_transaction_id = ${transactions.id})`,
         )) : [];
         if (allocatedTargets.length) {
             throw new DomainError(
