@@ -80,7 +80,11 @@ function principalAtStartOfDate(
     rows: Array<typeof transactions.$inferSelect>,
     accrualDate: string,
 ) {
+    const reversedTransactionIds = new Set(rows
+        .map((row) => row.reversedTransactionId)
+        .filter((id): id is number => id !== null));
     const principalAppliedBefore = rows
+        .filter((row) => row.entryType !== "reversal" && !reversedTransactionIds.has(row.id))
         .filter((row) => row.postedAt && row.transactionDate && bangkokDate(row.transactionDate) < accrualDate)
         .reduce((sum, row) => sum.plus(row.principalComponent), new FinancialDecimal(0));
     return FinancialDecimal.max(0, new FinancialDecimal(loan.principalAmount).minus(principalAppliedBefore)).toFixed(2);

@@ -7,6 +7,7 @@
 - Fixed MCP payment reversals for floating-loan penalty reconciliation by supplying the stable internal command idempotency key required by the ledger.
 - Fixed floating accrual correction to ignore interest allocations whose repayments have already been reversed, preserving immutable reversal history while allowing audited reprojection.
 - Allowed floating accrual correction to retain zero-value legacy penalty snapshots, which do not represent mutable penalty assessments.
+- Fixed floating principal snapshots to exclude repayments that already have compensating reversals.
 
 ## v0.3.35 - 2026-08-21
 
