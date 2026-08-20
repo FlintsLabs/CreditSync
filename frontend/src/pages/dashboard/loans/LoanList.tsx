@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "../../../components/ui/Button";
 import { Card, CardHeader, CardTitle, CardContent } from "../../../components/ui/Card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../../components/ui/dropdown-menu";
-import { Plus, FileText, Calendar, CalendarDays, MoreHorizontal, DollarSign, ArrowRightLeft, AlertCircle, User, UserCheck, ChevronRight, RotateCw, Wallet, Clock, Receipt } from "lucide-react";
+import { Plus, FileText, Calendar, CalendarDays, MoreHorizontal, DollarSign, ArrowRightLeft, AlertCircle, User, UserCheck, ChevronRight, RotateCw, Wallet, Clock, Receipt, Copy, Check } from "lucide-react";
 import { Link } from "react-router-dom";
 import { LoanClosingModal } from "./LoanClosingModal";
 import { useTranslation } from "react-i18next";
@@ -58,6 +58,7 @@ export default function LoanList() {
     const [statusFilter, setStatusFilter] = useState("all");
     const [fundingFilter, setFundingFilter] = useState("all");
     const [sortBy, setSortBy] = useState("newest");
+    const [copiedLoanId, setCopiedLoanId] = useState<string | null>(null);
     const loanListRevision = useLoanQueryRevision(loanListQueryKey);
 
     const retryLoans = useCallback(async () => {
@@ -242,6 +243,10 @@ export default function LoanList() {
                         hour12: false,
                         timeZone: "Asia/Bangkok",
                     }).format(new Date(loan.createdAt));
+                    const loanPublicId = loan.publicId ?? loan.id;
+                    const shortenedLoanId = loanPublicId.length > 12
+                        ? `${loanPublicId.slice(0, 8)}…${loanPublicId.slice(-3)}`
+                        : loanPublicId;
 
                     return (
                         <Link key={loan.id} to={`/loans/${loan.publicId ?? loan.id}`} className="block group">
@@ -410,9 +415,26 @@ export default function LoanList() {
                                             <Clock className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
                                             <span>{t("loans.createdAt", "Created at")}: {formattedCreatedAt}</span>
                                         </div>
-                                        <div className="flex items-center gap-1.5 shrink-0 pl-2">
+                                        <div className="flex items-center gap-1.5 shrink-0 pl-2 min-w-0">
                                             <Receipt className="h-3.5 w-3.5 text-muted-foreground/70" />
-                                            <span>{t("loans.loanLabel", { id: loan.publicId ?? loan.id })}</span>
+                                            <span title={loanPublicId} className="truncate">{t("loans.loanLabel", { id: shortenedLoanId })}</span>
+                                            <button
+                                                type="button"
+                                                className="shrink-0 rounded p-1 hover:bg-muted"
+                                                aria-label={t("loans.copyLoanId", "Copy loan ID")}
+                                                title={t("loans.copyLoanId", "Copy loan ID")}
+                                                onClick={(event) => {
+                                                    event.preventDefault();
+                                                    event.stopPropagation();
+                                                    void navigator.clipboard.writeText(loanPublicId).then(() => {
+                                                        setCopiedLoanId(loanPublicId);
+                                                        window.setTimeout(() => setCopiedLoanId(null), 2000);
+                                                    });
+                                                }}
+                                            >
+                                                {copiedLoanId === loanPublicId ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                                            </button>
+                                            {copiedLoanId === loanPublicId && <span className="sr-only">{t("loans.copied", "Copied")}</span>}
                                         </div>
                                     </div>
                                 </CardContent>

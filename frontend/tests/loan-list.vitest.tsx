@@ -14,6 +14,39 @@ describe("LoanList", () => {
         await i18n.changeLanguage("en");
     });
 
+    test("shows a shortened contract ID and copies the full ID", async () => {
+        const publicId = "01a01aee-9191-7dc5-962e-eac5ddeb0e60";
+        vi.mocked(api.get).mockResolvedValue({ data: [{
+            id: publicId,
+            publicId,
+            borrowerName: "Copy Contract",
+            principal: "1000.00",
+            outstandingPrincipal: "1000.00",
+            interestReceived: "0.00",
+            paidToDate: "0.00",
+            status: "active",
+            repaymentType: "daily",
+            installmentAmount: "100.00",
+            totalInstallments: 10,
+            startDate: "2026-08-01",
+            createdAt: "2026-08-10T07:30:00.000Z",
+            paymentHealth: { status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00", overdueItemCount: 0, maxOverdueDays: 0 },
+        }] });
+        const writeText = vi.fn().mockResolvedValue(undefined);
+        Object.assign(navigator, { clipboard: { writeText } });
+
+        render(<MemoryRouter><LoanList /></MemoryRouter>);
+
+        const card = (await screen.findByText("Copy Contract")).closest("a")!;
+        expect(within(card).getByText("Loan #01a01aee…e60")).toBeInTheDocument();
+        expect(within(card).queryByText(publicId)).not.toBeInTheDocument();
+
+        await userEvent.click(within(card).getByRole("button", { name: "Copy loan ID" }));
+
+        expect(writeText).toHaveBeenCalledWith(publicId);
+        expect(within(card).getByText("Copied")).toBeInTheDocument();
+    });
+
     test("shows agreed repayment details and clear dates without funding metric requests", async () => {
         vi.mocked(api.get).mockResolvedValue({ data: [
             { id: "daily", publicId: "daily", borrowerName: "Daily", principal: "5000.00", outstandingPrincipal: "3750.00", interestReceived: "0.00", paidToDate: "0.00", status: "active", repaymentType: "daily", installmentAmount: "250.00", totalInstallments: 12, startDate: "2026-08-01", createdAt: "2026-08-10T07:30:00.000Z", paymentHealth: { status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00", overdueItemCount: 0, maxOverdueDays: 0 } },

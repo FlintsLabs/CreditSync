@@ -88,6 +88,7 @@ Account identity and tenant role are read-only values supplied by the authorized
 - search loan lists by borrower name, loan ID, aliases, and tags, including hidden overflow labels
 - show the current loan agent (or localized unassigned state) on Loan List cards and include confirmed agent aliases in search
 - scan exact Loan List financial summaries: non-paid cards keep outstanding and original principal together with backend-owned interest-received and paid-to-date totals, while paid cards show a checked completion state with original principal and interest received
+- show compact contract IDs on Loan List cards with a copy action that copies the full public ID
 - preview installment breakdown
 - calculate floating closing obligations from current outstanding principal, unpaid due and accruing interest, outstanding fees, and applicable penalties while reporting payment history separately
 - record actual borrower cash, bank-transfer, or adjustment disbursements independently of approved loan terms

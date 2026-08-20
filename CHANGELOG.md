@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.34 - 2026-08-21
+
+### Changed
+- Updated Loan List contract cards to show shortened contract IDs with a copy action for the full ID.
+
 ## v0.3.33 - 2026-08-20
 
 ### Added
