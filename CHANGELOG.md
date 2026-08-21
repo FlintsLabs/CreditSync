@@ -10,6 +10,9 @@
 - Added closed MCP schemas and synchronized the private CreditSync plugin contract and payment-reconciliation skill for preview hash, balance-version, expiry, confirmation, and reason safety boundaries.
 - Added authoritative affected-loan state hashing after deterministic locks, active-source compensation guards, floating accrual provenance, and database immutability triggers for executed reconciliation records.
 
+### Fixed
+- Fixed the bank-drawdown migration integration test hanging while a rejected Postgres.js query was owned by Bun's promise matcher, preserving the database rejection assertion and bounding connection shutdown.
+
 ## v0.3.36 - 2026-08-21
 
 ### Fixed

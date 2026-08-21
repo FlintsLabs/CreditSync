@@ -27,6 +27,14 @@ integrationTest("executes the hardening migration idempotently and exposes its s
         expect(columns.map((row) => row.column_name).sort()).toEqual(['activation_idempotency_key','activation_request_hash','activation_result','correlation_id','idempotency_key','request_id']);
         const indexes = await postgres<{ indexname: string }[]>`SELECT indexname FROM pg_indexes WHERE tablename = 'bank_loans' AND indexname IN ('bank_loans_tenant_idempotency_unique','bank_loans_tenant_activation_idempotency_unique')`;
         expect(indexes.map((row) => row.indexname).sort()).toEqual(['bank_loans_tenant_activation_idempotency_unique','bank_loans_tenant_idempotency_unique']);
-        await expect(postgres.unsafe(`INSERT INTO bank_loans (tenant_id, amount, status, idempotency_key) VALUES ('migration-test', 1, 'invalid', 'migration-test')`)).rejects.toBeDefined();
-    } finally { await postgres.end(); }
+        let rejectedInvalidStatus = false;
+        try {
+            await postgres.unsafe(`INSERT INTO bank_loans (tenant_id, amount, status, idempotency_key) VALUES ('migration-test', 1, 'invalid', 'migration-test')`);
+        } catch {
+            rejectedInvalidStatus = true;
+        }
+        expect(rejectedInvalidStatus).toBe(true);
+    } finally {
+        await postgres.end({ timeout: 1 });
+    }
 });
