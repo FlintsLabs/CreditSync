@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui
 import { Input } from "../../../components/ui/Input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../../../components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../../components/ui/table";
+import { repaymentLineageTarget } from "./loan-repayment-history-model";
 
 interface PostedComponents {
     principal: string;
@@ -28,6 +29,8 @@ interface PaymentIntakeHistoryItem {
     bankReference: string | null;
     latestAllocation: { amount: string; proposalPublicId: string | null } | null;
     postedComponents: PostedComponents | null;
+    repostOfIntakePublicId?: string | null;
+    repostedByIntakePublicId?: string | null;
 }
 
 interface LoanRepaymentHistoryProps {
@@ -142,8 +145,8 @@ export function LoanRepaymentHistory({ loanPublicId, borrowerName, borrowerPubli
         timeStyle: "short",
     }).format(new Date(value));
 
-    const Status = ({ status }: { status: string }) => (
-        <Badge variant={statusVariant(status)}>{t(`loanDetail.repaymentHistory.status.${status}`, { defaultValue: status })}</Badge>
+    const Status = ({ item }: { item: PaymentIntakeHistoryItem }) => (
+        <div className="flex flex-col items-start gap-1"><Badge variant={statusVariant(item.status)}>{item.repostOfIntakePublicId ? t("loanDetail.repaymentHistory.repostedAfterReversal") : t(`loanDetail.repaymentHistory.status.${item.status}`, { defaultValue: item.status })}</Badge>{item.repostedByIntakePublicId && <span className="text-xs text-muted-foreground">{t("loanDetail.repaymentHistory.repostedBy")}</span>}</div>
     );
 
     return (
@@ -179,8 +182,9 @@ export function LoanRepaymentHistory({ loanPublicId, borrowerName, borrowerPubli
                                             <TableCell className="whitespace-nowrap text-right font-medium tabular-nums">{formatMoneyExact(item.amount, i18n.language)}</TableCell>
                                             <TableCell className="max-w-56 truncate" title={item.bankReference ?? undefined}>{item.bankReference ?? "—"}</TableCell>
                                             <TableCell><Allocation item={item} t={t} i18n={i18n} /></TableCell>
-                                            <TableCell className="whitespace-nowrap"><Status status={item.status} /></TableCell>
+                                            <TableCell className="whitespace-nowrap"><Status item={item} /></TableCell>
                                             <TableCell className="text-right">
+                                                {repaymentLineageTarget(item) && <Button className="mr-2" variant="ghost" size="sm" onClick={() => openIntake(repaymentLineageTarget(item)!.publicId)}>{t(repaymentLineageTarget(item)!.labelKey)}</Button>}
                                                 <Button variant="outline" size="sm" onClick={() => openIntake(item.publicId)}>
                                                     {t("loanDetail.repaymentHistory.continue")}
                                                 </Button>

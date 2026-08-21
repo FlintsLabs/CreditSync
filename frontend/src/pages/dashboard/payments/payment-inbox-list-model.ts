@@ -4,6 +4,8 @@ export interface PaymentIntakeSummary {
     amount: string;
     receivedAt: string;
     payerName?: string | null;
+    repostOfIntakePublicId?: string | null;
+    repostedByIntakePublicId?: string | null;
 }
 
 export interface PaymentIntakePage {

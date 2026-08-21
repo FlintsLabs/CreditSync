@@ -5,6 +5,7 @@
 ### Added
 - Added tenant-safe lineage, fail-closed preview eligibility, and atomic idempotent execution for reposting a fully compensated, finalized-evidence-backed reversed payment into one append-only posted child while retaining the reversed source and its evidence unchanged.
 - Exposed repost source/child UUID lineage across payment intake reads and loan payment history, and synchronized the closed MCP contract and CreditSync plugin 7.3.0 guidance.
+- Added localized source/child repost badges and navigation in Payment Inbox and loan repayment history without duplicating evidence or recalculating allocations in the browser.
 - Added audited, idempotent `payment.reconcile.preview` and `payment.reconcile.execute` MCP workflow for reviewed historical `needs_review` intakes, restricted to interest-only allocation with append-only provenance and no principal reduction.
 - Added closed MCP schemas and synchronized the private CreditSync plugin contract and payment-reconciliation skill for preview hash, balance-version, expiry, confirmation, and reason safety boundaries.
 - Added authoritative affected-loan state hashing after deterministic locks, active-source compensation guards, floating accrual provenance, and database immutability triggers for executed reconciliation records.

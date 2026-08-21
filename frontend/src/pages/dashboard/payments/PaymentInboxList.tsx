@@ -117,7 +117,10 @@ export function PaymentInboxList({
                             <span className="block truncate font-medium">{item.payerName || t("payments.unknownPayer")}</span>
                             <span className="block text-sm text-muted-foreground sm:mt-0.5">{formatDateTime(item.receivedAt)}</span>
                         </span>
-                        <Badge data-status-tone={statusTone.name} className={`w-fit ${statusTone.className}`} variant="outline">{t(`payments.status.${item.status}`)}</Badge>
+                        <span className="flex flex-wrap gap-1">
+                            <Badge data-status-tone={statusTone.name} className={`w-fit ${statusTone.className}`} variant="outline">{t(`payments.status.${item.status}`)}</Badge>
+                            {item.repostOfIntakePublicId && <Badge variant="outline">{t("payments.lineage.repostedAfterReversal")}</Badge>}
+                        </span>
                         <span className="font-medium tabular-nums sm:min-w-24 sm:text-right">{formatMoney(item.amount)}</span>
                     </button>
                 </li>;
