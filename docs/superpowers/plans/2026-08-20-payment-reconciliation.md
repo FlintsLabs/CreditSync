@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add an explicit, auditable MCP workflow that corrects posted payment allocations, including historical floating payments before exact-ledger cutover.
+**Goal:** Add an explicit, auditable MCP workflow that posts a reviewed historical `needs_review` intake as interest-only, including floating payments before exact-ledger cutover, without reducing principal.
 
 **Architecture:** Add reconciliation orchestration beside the existing payment service. Preview computes and persists an immutable correction proposal; execute locks all affected records and appends compensating reversal and corrected allocation records in one transaction. MCP exposes only the preview and confirmed execute operations, with closed schemas and idempotent command context.
 
@@ -26,10 +26,10 @@
 - Create: `backend/src/services/payment-reconciliation-service.ts`
 - Test: `backend/src/services/payment-reconciliation-service.test.ts`
 
-- [ ] Write failing tests for exact component deltas, source linkage, cutover-date correction, amount conservation, and negative-balance rejection.
+- [ ] Write failing tests for exact component deltas, source linkage, cutover-date correction, amount conservation, negative-balance rejection, and posting a `needs_review` intake as interest-only without changing principal.
 - [ ] Run the focused disposable PostgreSQL test and confirm the new tests fail for the missing service/schema.
 - [ ] Add append-only reconciliation proposal/group and entry tables following existing tenant/public-id/audit/idempotency constraints. Store source payment, preview hash, expected state version, status, reason, and correction entries.
-- [ ] Implement `previewPaymentReconciliation(ctx, input)` and `executePaymentReconciliation(ctx, previewPublicId, input)` with deterministic lock order and decimal-only arithmetic.
+- [ ] Implement `previewPaymentReconciliation(ctx, input)` and `executePaymentReconciliation(ctx, previewPublicId, input)` with deterministic lock order and decimal-only arithmetic. For an unposted `needs_review` intake, append only the explicit allocations and no synthetic reversal.
 - [ ] Ensure reversal entries point to source allocation/transaction IDs and historical entries carry an explicit cutover/manual-reconciliation reason.
 - [ ] Re-run focused tests and confirm they pass.
 - [ ] Commit as `feat: add auditable payment reconciliation kernel`.
@@ -57,7 +57,7 @@
 - Test: `backend/src/mcp/security.test.ts`
 - Test: `backend/src/mcp/server.test.ts`
 
-- [ ] Add failing contract tests for `payment_reconcile_preview` and `payment_reconcile_execute` schemas, confirmation, reason, idempotency, and audit output.
+- [ ] Add failing contract tests for `payment_reconcile_preview` and `payment_reconcile_execute` schemas, explicit component selection, confirmation, reason, idempotency, and audit output.
 - [ ] Register closed input/output schemas with read/write/destructive annotations consistent with existing payment tools.
 - [ ] Route preview and execute directly to the reconciliation service; MCP must not call the REST API internally.
 - [ ] Return structured data plus a readable summary, without raw identity-card values, signed URLs, or evidence contents.

@@ -31,6 +31,26 @@ import type { CommandContext } from "./command-context";
 
 type Executor = any;
 
+/** Returns only payment allocations that have not been compensated by a reversal. */
+export async function findActiveFloatingTransactionAllocation(
+    executor: Executor,
+    tenantId: string,
+    loanId: number,
+    effectiveDate: string,
+) {
+    return executor.query.floatingTransactionAllocations.findFirst({ where: and(
+        eq(floatingTransactionAllocations.tenantId, tenantId),
+        eq(floatingTransactionAllocations.loanId, loanId),
+        eq(floatingTransactionAllocations.entryType, "payment"),
+        sql`NOT EXISTS (
+            SELECT 1 FROM floating_transaction_allocations AS reversal_allocation
+            WHERE reversal_allocation.tenant_id = ${tenantId}
+              AND reversal_allocation.reversed_allocation_id = "floatingTransactionAllocations"."id"
+        )`,
+        sql`${floatingTransactionAllocations.effectiveDate} > ${effectiveDate}`,
+    ) });
+}
+
 function floatingCommandContext(loan: typeof loans.$inferSelect, value: CommandContext | number | null): CommandContext {
     if (typeof value === "object" && value !== null) return value;
     return {

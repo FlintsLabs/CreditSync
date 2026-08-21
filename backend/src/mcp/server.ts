@@ -20,6 +20,8 @@ export const MCP_TOOL_NAMES = [
     "payment.preview",
     "payment.post",
     "payment.reverse",
+    "payment.reconcile.preview",
+    "payment.reconcile.execute",
     "loan.preview",
     "loan.draft",
     "loan.draft.delete",
@@ -256,6 +258,14 @@ const explicitAllocation = z.object({
     schedulePublicId: uuid.optional(),
     amount: money,
 }).strict();
+const reconciliationAllocation = z.object({
+    borrowerPublicId: uuid,
+    loanPublicId: uuid,
+    schedulePublicId: uuid.optional(),
+    amount: money,
+    component: z.literal("interest"),
+}).strict();
+const reconciliationAllocationOutput = reconciliationAllocation.extend({ schedulePublicId: uuid.nullable().optional() }).strict();
 
 const isoDateTime = z.iso.datetime({ offset: true });
 const nullableIsoDateTime = isoDateTime.nullable();
@@ -339,6 +349,28 @@ const transactionOutput = z.object({
     penaltyComponent: signedMoney,
     entryType: z.string(),
     postedAt: nullableIsoDateTime.optional(),
+}).strict();
+const reconciliationPreviewOutput = z.object({
+    ...publicEntity,
+    status: z.enum(["ready", "executed", "expired"]),
+    sourcePayment: z.record(z.string(), z.unknown()),
+    currentAllocationSnapshot: z.array(z.record(z.string(), z.unknown())),
+    proposedAllocation: z.array(reconciliationAllocationOutput),
+    correction: z.object({ principal: signedMoney, interest: signedMoney, fee: signedMoney, penalty: signedMoney }).strict(),
+    warnings: z.array(warningSchema),
+    previewHash: z.string().regex(/^v1:[0-9a-f]{64}$/i),
+    expectedBalanceVersion: z.string().regex(/^v1:[0-9a-f]{64}$/i),
+    expiresAt: isoDateTime,
+    historicalReconciliationGroupPublicIds: z.array(uuid),
+    reason: z.string(),
+}).strict();
+const reconciliationExecuteOutput = z.object({
+    reconciliationPublicId: uuid,
+    sourcePaymentPublicId: uuid,
+    compensatingTransactionPublicIds: z.array(uuid),
+    correctedTransactionPublicIds: z.array(uuid).optional(),
+    auditPublicIds: z.array(uuid),
+    correlationId: uuid,
 }).strict();
 const loanPaymentHistoryItemOutput = intakeOutput.extend({
     originLoanPublicId: uuid.nullable(),
@@ -941,6 +973,8 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "payment.preview": proposalOutput,
     "payment.post": intakeOutput.extend({ transactions: z.array(transactionOutput) }),
     "payment.reverse": intakeOutput.extend({ transactions: z.array(transactionOutput) }),
+    "payment.reconcile.preview": reconciliationPreviewOutput,
+    "payment.reconcile.execute": reconciliationExecuteOutput,
     "loan.preview": z.union([
         z.object({
             terms: z.object({ ...loanTerms }).strict(),
@@ -1157,6 +1191,19 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
     "payment.reverse": z.object({
         paymentIntakePublicId: uuid,
         reason: shortText.optional(),
+    }).strict(),
+    "payment.reconcile.preview": z.object({
+        paymentIntakePublicId: uuid,
+        allocations: z.array(reconciliationAllocation).min(1).max(1_000),
+        reason: shortText,
+    }).strict(),
+    "payment.reconcile.execute": z.object({
+        reconciliationPreviewPublicId: uuid,
+        previewHash: z.string().regex(/^v1:[0-9a-f]{64}$/i),
+        expectedBalanceVersion: z.string().regex(/^v1:[0-9a-f]{64}$/i),
+        confirmed: z.literal(true),
+        reason: shortText,
+        idempotencyKey: z.string().trim().min(1).max(200),
     }).strict(),
     "loan.preview": z.object(loanTerms).strict(),
     "loan.draft": z.object({
@@ -1523,6 +1570,8 @@ const destructiveTools = new Set<McpToolName>([
     "payment.preview",
     "payment.post",
     "payment.reverse",
+    "payment.reconcile.preview",
+    "payment.reconcile.execute",
     "loan.draft.delete",
     "loan.activate",
     "loan.payment-start-date.update",
@@ -1557,6 +1606,7 @@ const destructiveTools = new Set<McpToolName>([
 const financialTools = new Set<McpToolName>([
     "payment.post",
     "payment.reverse",
+    "payment.reconcile.execute",
     "loan.activate",
     "loan.payment-start-date.update",
     "loan.interest-rate.execute",
@@ -1586,6 +1636,7 @@ const idempotentTools = new Set<McpToolName>([
     "intake.create",
     "payment.post",
     "payment.reverse",
+    "payment.reconcile.execute",
     "loan.draft.delete",
     "loan.activate",
     "loan.payment-start-date.update",
@@ -1633,6 +1684,8 @@ const toolDescriptions: Record<McpToolName, string> = {
     "payment.preview": "Preview and persist a versioned payment match proposal.",
     "payment.post": "Post a ready payment proposal atomically.",
     "payment.reverse": "Reverse a posted payment with compensating entries.",
+    "payment.reconcile.preview": "Preview an interest-only posting for a reviewed historical needs_review payment intake without reducing principal.",
+    "payment.reconcile.execute": "Execute a confirmed, idempotent payment reconciliation with append-only provenance.",
     "loan.preview": "Preview an exact loan schedule without persistence.",
     "loan.draft": "Create an editable loan draft.",
     "loan.draft.delete": "Permanently delete an unactivated draft loan after dependency checks and audit logging.",

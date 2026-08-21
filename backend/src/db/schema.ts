@@ -1460,6 +1460,91 @@ export const paymentMatchAllocations = pgTable("payment_match_allocations", {
     }),
 ]);
 
+// Immutable two-phase proposals and append-only provenance for payment corrections.
+export const paymentReconciliationProposals = pgTable("payment_reconciliation_proposals", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    paymentIntakeId: integer("payment_intake_id").notNull(),
+    status: text("status").default("ready").notNull(), // ready, executed, expired
+    previewHash: text("preview_hash").notNull(),
+    expectedBalanceVersion: text("expected_balance_version").notNull(),
+    sourceSnapshot: jsonb("source_snapshot").notNull(),
+    proposedAllocations: jsonb("proposed_allocations").notNull(),
+    warnings: jsonb("warnings").$type<Array<Record<string, unknown>>>().notNull().default([]),
+    reason: text("reason").notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+    createdByUserId: integer("created_by_user_id"),
+    executedByUserId: integer("executed_by_user_id"),
+    executedAt: timestamp("executed_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_reconciliation_proposals_tenant_id_id_unique").on(table.tenantId, table.id),
+    index("payment_reconciliation_proposals_tenant_intake_idx").on(table.tenantId, table.paymentIntakeId, table.createdAt),
+    check("payment_reconciliation_proposals_status_check", sql`${table.status} IN ('ready', 'executed', 'expired')`),
+    foreignKey({ name: "payment_reconciliation_proposals_tenant_intake_fk", columns: [table.tenantId, table.paymentIntakeId], foreignColumns: [paymentIntakes.tenantId, paymentIntakes.id] }),
+    foreignKey({ name: "payment_reconciliation_proposals_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+    foreignKey({ name: "payment_reconciliation_proposals_tenant_executed_by_fk", columns: [table.tenantId, table.executedByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
+
+export const paymentReconciliationGroups = pgTable("payment_reconciliation_groups", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    proposalId: integer("proposal_id").notNull(),
+    paymentIntakeId: integer("payment_intake_id").notNull(),
+    status: text("status").default("executed").notNull(),
+    reason: text("reason").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    auditPublicId: uuid("audit_public_id").notNull(),
+    createdByUserId: integer("created_by_user_id"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_reconciliation_groups_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("payment_reconciliation_groups_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
+    check("payment_reconciliation_groups_status_check", sql`${table.status} = 'executed'`),
+    foreignKey({ name: "payment_reconciliation_groups_tenant_proposal_fk", columns: [table.tenantId, table.proposalId], foreignColumns: [paymentReconciliationProposals.tenantId, paymentReconciliationProposals.id] }),
+    foreignKey({ name: "payment_reconciliation_groups_tenant_intake_fk", columns: [table.tenantId, table.paymentIntakeId], foreignColumns: [paymentIntakes.tenantId, paymentIntakes.id] }),
+    foreignKey({ name: "payment_reconciliation_groups_tenant_audit_fk", columns: [table.tenantId, table.auditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
+    foreignKey({ name: "payment_reconciliation_groups_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
+
+export const paymentReconciliationEntries = pgTable("payment_reconciliation_entries", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    groupId: integer("group_id").notNull(),
+    entryType: text("entry_type").notNull(), // reversal, replacement
+    component: text("component").notNull(),
+    amount: numeric("amount").notNull(),
+    principalComponent: numeric("principal_component").notNull().default("0"),
+    interestComponent: numeric("interest_component").notNull().default("0"),
+    feeComponent: numeric("fee_component").notNull().default("0"),
+    penaltyComponent: numeric("penalty_component").notNull().default("0"),
+    sourceTransactionId: integer("source_transaction_id"),
+    sourceAllocationId: integer("source_allocation_id"),
+    transactionId: integer("transaction_id"),
+    loanId: integer("loan_id").notNull(),
+    scheduleId: integer("schedule_id"),
+    reason: text("reason").notNull(),
+    auditPublicId: uuid("audit_public_id").notNull(),
+    createdByUserId: integer("created_by_user_id"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_reconciliation_entries_tenant_id_id_unique").on(table.tenantId, table.id),
+    index("payment_reconciliation_entries_tenant_group_idx").on(table.tenantId, table.groupId, table.id),
+    check("payment_reconciliation_entries_type_check", sql`${table.entryType} IN ('reversal', 'replacement')`),
+    check("payment_reconciliation_entries_component_check", sql`${table.component} IN ('interest', 'principal', 'fee', 'penalty', 'mixed')`),
+    foreignKey({ name: "payment_reconciliation_entries_tenant_group_fk", columns: [table.tenantId, table.groupId], foreignColumns: [paymentReconciliationGroups.tenantId, paymentReconciliationGroups.id] }),
+    foreignKey({ name: "payment_reconciliation_entries_tenant_source_tx_fk", columns: [table.tenantId, table.sourceTransactionId], foreignColumns: [transactions.tenantId, transactions.id] }),
+    foreignKey({ name: "payment_reconciliation_entries_tenant_tx_fk", columns: [table.tenantId, table.transactionId], foreignColumns: [transactions.tenantId, transactions.id] }),
+    foreignKey({ name: "payment_reconciliation_entries_tenant_loan_fk", columns: [table.tenantId, table.loanId], foreignColumns: [loans.tenantId, loans.id] }),
+    foreignKey({ name: "payment_reconciliation_entries_tenant_schedule_fk", columns: [table.tenantId, table.scheduleId], foreignColumns: [loanSchedules.tenantId, loanSchedules.id] }),
+    foreignKey({ name: "payment_reconciliation_entries_tenant_audit_fk", columns: [table.tenantId, table.auditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
+    foreignKey({ name: "payment_reconciliation_entries_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
+
 export const loanRenewals = pgTable("loan_renewals", {
     id: serial("id").primaryKey(),
     publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),

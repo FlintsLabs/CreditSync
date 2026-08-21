@@ -137,6 +137,7 @@ import {
     reversePaymentAttribution,
     type CreatePaymentAttributionInput,
 } from "../services/payment-attribution-service";
+import { executePaymentReconciliation, previewPaymentReconciliation, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
 
 type ToolInput = Record<string, unknown>;
 
@@ -231,6 +232,20 @@ export function createDefaultMcpToolHandlers(
     ),
     "payment.reverse": (ctx, input) => reversePayment(paymentReverseCommandContext(ctx, input), asString(input, "paymentIntakePublicId"), {
         reason: paymentReversalReason(input),
+    }),
+    "payment.reconcile.preview": (ctx, input) => previewPaymentReconciliation(ctx, {
+        paymentIntakePublicId: asString(input, "paymentIntakePublicId"),
+        allocations: input.allocations as ReconciliationAllocation[],
+        reason: asString(input, "reason"),
+    }),
+    "payment.reconcile.execute": (ctx, input) => executePaymentReconciliation({
+        ...ctx, idempotencyKey: asString(input, "idempotencyKey"),
+    }, asString(input, "reconciliationPreviewPublicId"), {
+        previewHash: asString(input, "previewHash"),
+        expectedBalanceVersion: asString(input, "expectedBalanceVersion"),
+        confirmed: true,
+        reason: asString(input, "reason"),
+        idempotencyKey: asString(input, "idempotencyKey"),
     }),
     "loan.preview": async (_ctx, input) => {
         try {
@@ -462,6 +477,7 @@ export function createDefaultMcpToolHandlers(
 const auditTarget: Partial<Record<McpToolName, { entityType: string; action: string }>> = {
     "payment.post": { entityType: "payment_intake", action: "posted" },
     "payment.reverse": { entityType: "payment_intake", action: "reversed" },
+    "payment.reconcile.execute": { entityType: "payment_reconciliation", action: "executed" },
     "loan.activate": { entityType: "loan", action: "activated" },
     "loan.payment-start-date.update": { entityType: "loan", action: "payment_start_date_changed" },
     "loan.interest-rate.execute": { entityType: "loan_interest_rate_timeline", action: "interest_rate_timeline_changed" },

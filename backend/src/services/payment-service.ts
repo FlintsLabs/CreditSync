@@ -47,6 +47,7 @@ import {
     floatingInterestDue,
     floatingPaymentObligations,
     materializeFloatingPenaltyAssessments,
+    findActiveFloatingTransactionAllocation,
     reconcileFloatingPenaltyLedgerAfterInterestAllocation,
     reprojectFloatingInterestAfterTransaction,
 } from "./floating-interest-service";
@@ -1581,18 +1582,7 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
 
                 const effectiveDate = paymentBusinessDate(intake.receivedAt);
                 const laterExactAllocation = paidFloatingPenalty.gt(0) || paidFloatingInterest.gt(0)
-                    ? await tx.query.floatingTransactionAllocations.findFirst({ where: and(
-                        eq(floatingTransactionAllocations.tenantId, ctx.tenantId),
-                        eq(floatingTransactionAllocations.loanId, loan.id),
-                        eq(floatingTransactionAllocations.entryType, "payment"),
-                        sql`NOT EXISTS (
-                            SELECT 1
-                            FROM floating_transaction_allocations AS reversal_allocation
-                            WHERE reversal_allocation.tenant_id = ${ctx.tenantId}
-                              AND reversal_allocation.reversed_allocation_id = "floatingTransactionAllocations"."id"
-                        )`,
-                        sql`${floatingTransactionAllocations.effectiveDate} > ${effectiveDate}`,
-                    ) })
+                    ? await findActiveFloatingTransactionAllocation(tx, ctx.tenantId, loan.id, effectiveDate)
                     : undefined;
                 const rejectLaterExactAllocation = () => {
                     throw new DomainError(
