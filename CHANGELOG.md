@@ -766,6 +766,7 @@
 
 ### Fixed
 
+- Isolated reconciliation regression fixtures with distinct command idempotency keys so posted-intake rejection coverage cannot replay and mutate the historical source intake.
 - Hardened funding allocation idempotency, exact money validation, source resolution, locking, and read ordering.
 # Changelog
 

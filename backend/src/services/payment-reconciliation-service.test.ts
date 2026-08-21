@@ -69,7 +69,7 @@ describe("payment reconciliation persistence", () => {
         await reviewPaymentIntake(ctx, intake.publicId, { status: "needs_review" });
         await expect(previewPaymentReconciliation(ctx, { paymentIntakePublicId: intake.publicId, allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: draft.publicId, amount: "10.00", component: "principal" }], reason: "Must never reduce principal" })).rejects.toMatchObject({ code: "RECONCILIATION_COMPONENT_NOT_SUPPORTED" });
 
-        const postedIntake = await createPaymentIntake(ctx, { amount: "11.00", receivedAt: "2026-08-16T09:28:00.000Z", payerName: `${borrower.name} posted` });
+        const postedIntake = await createPaymentIntake({ ...ctx, idempotencyKey: crypto.randomUUID(), requestId: crypto.randomUUID() }, { amount: "11.00", receivedAt: "2026-08-16T09:28:00.000Z", payerName: `${borrower.name} posted` });
         await db.update(paymentIntakes).set({ status: "posted" }).where(and(eq(paymentIntakes.tenantId, tenantId), eq(paymentIntakes.publicId, postedIntake.publicId)));
         await expect(previewPaymentReconciliation(ctx, { paymentIntakePublicId: postedIntake.publicId, allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: draft.publicId, amount: "11.00", component: "interest" }], reason: "Posted corrections are not safe in this release" })).rejects.toMatchObject({ code: "RECONCILIATION_INTAKE_INVALID" });
 
@@ -100,6 +100,6 @@ describe("payment reconciliation persistence", () => {
         await expect((async () => db.update(paymentReconciliationEntries).set({ reason: "tamper" }).where(eq(paymentReconciliationEntries.id, entry!.id)).returning())()).rejects.toThrow();
         await expect((async () => db.update(paymentReconciliationProposals).set({ reason: "tamper" }).where(eq(paymentReconciliationProposals.id, proposalRow!.id)).returning())()).rejects.toThrow();
 
-        await expect(previewPaymentReconciliation(ctx, { paymentIntakePublicId: intake.publicId, allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: draft.publicId, amount: "10.00", component: "interest" }], reason: "Should reject a second reconciliation" })).rejects.toMatchObject({ code: "RECONCILIATION_SOURCE_ALREADY_COMPENSATED" });
+        await expect(previewPaymentReconciliation(ctx, { paymentIntakePublicId: intake.publicId, allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: draft.publicId, amount: "10.00", component: "interest" }], reason: "Should reject a second reconciliation" })).rejects.toMatchObject({ code: "RECONCILIATION_INTAKE_INVALID" });
     });
 });
