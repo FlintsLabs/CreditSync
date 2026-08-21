@@ -76,8 +76,19 @@ describe("payment reconciliation persistence", () => {
         const preview = await previewPaymentReconciliation(ctx, request);
         expect(preview.sourcePayment).toMatchObject({ mode: "reversed_repost", status: "reversed", hasReadyEvidence: true });
         expect(preview.correction).toEqual({ principal: "0.00", interest: "45.00", fee: "0.00", penalty: "0.00" });
-
-        await db.insert(paymentIntakes).values({ tenantId, status: "posted", amount: "45.00", repostOfIntakeId: source.id, createdByUserId: actor.id, postedByUserId: actor.id });
+        const command = { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true as const, reason: preview.reason, idempotencyKey: crypto.randomUUID() };
+        const executed = await executePaymentReconciliation(ctx, preview.publicId, command);
+        const replay = await executePaymentReconciliation(ctx, preview.publicId, command);
+        expect(replay).toMatchObject({ reconciliationPublicId: executed.reconciliationPublicId, sourcePaymentPublicId: source.publicId, postedPaymentPublicId: executed.postedPaymentPublicId, correctedTransactionPublicIds: executed.correctedTransactionPublicIds });
+        const child = await db.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, tenantId), eq(paymentIntakes.repostOfIntakeId, source.id)) });
+        expect(child).toMatchObject({ status: "posted", amount: "45.00", bankReference: null, bankReferenceHash: null, qrPayloadHash: null });
+        expect(executed).toMatchObject({ sourcePaymentPublicId: source.publicId, postedPaymentPublicId: child!.publicId });
+        expect(await db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, tenantId), eq(paymentEvidence.paymentIntakeId, source.id)))).toHaveLength(1);
+        expect(await db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, tenantId), eq(paymentEvidence.paymentIntakeId, child!.id)))).toHaveLength(0);
+        const replacementRows = await db.select().from(transactions).where(and(eq(transactions.tenantId, tenantId), eq(transactions.paymentIntakeId, child!.id), eq(transactions.entryType, "repayment")));
+        expect(replacementRows).toHaveLength(1);
+        expect(replacementRows[0]).toMatchObject({ principalComponent: "0.00", interestComponent: "45.00" });
+        expect((await db.query.loans.findFirst({ where: eq(loans.id, loan!.id) }))?.outstandingPrincipal).toBe("1000.00");
         await expect(previewPaymentReconciliation(ctx, request)).rejects.toMatchObject({ code: "RECONCILIATION_SOURCE_ALREADY_REPOSTED" });
 
         const activeSource = await db.insert(paymentIntakes).values({ tenantId, status: "reversed", amount: "45.00", receivedAt: source.receivedAt, createdByUserId: actor.id }).returning().then((rows) => rows[0]!);

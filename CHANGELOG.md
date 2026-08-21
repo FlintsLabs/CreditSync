@@ -3,7 +3,7 @@
 ## v0.3.37 - 2026-08-21
 
 ### Added
-- Added tenant-safe lineage and fail-closed preview eligibility for reposting a fully compensated, finalized-evidence-backed reversed payment into one append-only replacement intake while retaining the original evidence and reconciliation source.
+- Added tenant-safe lineage, fail-closed preview eligibility, and atomic idempotent execution for reposting a fully compensated, finalized-evidence-backed reversed payment into one append-only posted child while retaining the reversed source and its evidence unchanged.
 - Added audited, idempotent `payment.reconcile.preview` and `payment.reconcile.execute` MCP workflow for reviewed historical `needs_review` intakes, restricted to interest-only allocation with append-only provenance and no principal reduction.
 - Added closed MCP schemas and synchronized the private CreditSync plugin contract and payment-reconciliation skill for preview hash, balance-version, expiry, confirmation, and reason safety boundaries.
 - Added authoritative affected-loan state hashing after deterministic locks, active-source compensation guards, floating accrual provenance, and database immutability triggers for executed reconciliation records.

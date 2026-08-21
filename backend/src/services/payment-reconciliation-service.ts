@@ -217,7 +217,16 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
         if (prior) {
             const proposal = await tx.query.paymentReconciliationProposals.findFirst({ where: and(eq(paymentReconciliationProposals.tenantId, ctx.tenantId), eq(paymentReconciliationProposals.id, prior.proposalId)) });
             if (proposal?.publicId !== previewPublicId || proposal.previewHash !== input.previewHash || prior.reason !== input.reason.trim()) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was used for a different reconciliation", 409);
-            return { reconciliationPublicId: prior.publicId, sourcePaymentPublicId: (await tx.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.id, prior.paymentIntakeId) }))?.publicId, compensatingTransactionPublicIds: [], auditPublicIds: [prior.auditPublicId], correlationId: prior.correlationId };
+            const [sourcePayment, postedPayment] = await Promise.all([
+                tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, prior.paymentIntakeId)) }),
+                tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, prior.postedIntakeId ?? prior.paymentIntakeId)) }),
+            ]);
+            const entries = await tx.select().from(paymentReconciliationEntries).where(and(eq(paymentReconciliationEntries.tenantId, ctx.tenantId), eq(paymentReconciliationEntries.groupId, prior.id))).orderBy(paymentReconciliationEntries.id);
+            const transactionIds = entries.map((entry) => entry.transactionId).filter((id): id is number => id !== null);
+            const transactionRows = transactionIds.length ? await tx.select({ id: transactions.id, publicId: transactions.publicId }).from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), inArray(transactions.id, transactionIds))) : [];
+            const publicIdById = new Map(transactionRows.map((row) => [row.id, row.publicId]));
+            const idsFor = (entryType: "reversal" | "replacement") => entries.filter((entry) => entry.entryType === entryType).map((entry) => entry.transactionId === null ? undefined : publicIdById.get(entry.transactionId)).filter((id): id is string => Boolean(id));
+            return { reconciliationPublicId: prior.publicId, sourcePaymentPublicId: sourcePayment?.publicId, postedPaymentPublicId: postedPayment?.publicId, compensatingTransactionPublicIds: idsFor("reversal"), correctedTransactionPublicIds: idsFor("replacement"), auditPublicIds: [prior.auditPublicId], correlationId: prior.correlationId };
         }
         await tx.execute(sql`SELECT id FROM payment_reconciliation_proposals WHERE tenant_id = ${ctx.tenantId} AND public_id = ${previewPublicId} FOR UPDATE`);
         const proposal = await tx.query.paymentReconciliationProposals.findFirst({ where: and(eq(paymentReconciliationProposals.tenantId, ctx.tenantId), eq(paymentReconciliationProposals.publicId, previewPublicId)) });
@@ -226,34 +235,40 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
         if (proposal.previewHash !== input.previewHash || proposal.expectedBalanceVersion !== input.expectedBalanceVersion) throw new DomainError("STALE_RECONCILIATION_PREVIEW", "Reconciliation preview no longer matches current state", 409);
         if (proposal.reason !== input.reason.trim()) throw new DomainError("RECONCILIATION_REASON_MISMATCH", "Execution reason must match the preview reason", 409);
         const intake = await accessibleIntake(ctx, (await tx.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.id, proposal.paymentIntakeId) }))!.publicId, tx);
-        if (intake.status !== "needs_review") throw new DomainError("RECONCILIATION_INTAKE_INVALID", "Only reviewed historical needs_review intakes are supported", 409);
+        const inspectedBeforeLocks = await inspectReconciliationSource(tx, ctx, intake);
         const priorForIntake = await tx.query.paymentReconciliationGroups.findFirst({ where: and(eq(paymentReconciliationGroups.tenantId, ctx.tenantId), eq(paymentReconciliationGroups.paymentIntakeId, intake.id)) });
         if (priorForIntake) throw new DomainError("RECONCILIATION_SOURCE_ALREADY_COMPENSATED", "The payment intake has already been reconciled", 409);
         const allocations = await resolveAllocations(ctx, proposal.proposedAllocations as ReconciliationAllocation[], tx);
         if (allocations.some((item) => item.component !== "interest")) throw new DomainError("RECONCILIATION_COMPONENT_NOT_SUPPORTED", "Historical reconciliation supports interest-only allocations", 409);
-        const sourceRowsForLock: Array<{ loanId: number }> = intake.status === "posted"
-            ? await tx.select({ loanId: transactions.loanId }).from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.paymentIntakeId, intake.id), eq(transactions.entryType, "repayment"))).orderBy(transactions.loanId)
-            : [];
+        const sourceRowsForLock: Array<{ loanId: number }> = inspectedBeforeLocks.originals;
         const lockLoanIds = [...new Set([...allocations.map((item) => item.loanId), ...sourceRowsForLock.map((item) => item.loanId)])].sort((left, right) => left - right);
         if (lockLoanIds.length) await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(lockLoanIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
         if (lockLoanIds.length) await tx.execute(sql`SELECT id FROM loan_interest_accruals WHERE tenant_id = ${ctx.tenantId} AND loan_id IN (${sql.join(lockLoanIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY loan_id, id FOR UPDATE`);
         if (lockLoanIds.length) await tx.execute(sql`SELECT id FROM transactions WHERE tenant_id = ${ctx.tenantId} AND loan_id IN (${sql.join(lockLoanIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY loan_id, id FOR UPDATE`);
-        const allCurrentOriginals: Array<typeof transactions.$inferSelect> = intake.status === "posted" ? await tx.select().from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.paymentIntakeId, intake.id), eq(transactions.entryType, "repayment"))).orderBy(transactions.id) : [];
-        const currentOriginals: Array<typeof transactions.$inferSelect> = intake.status === "posted" ? await activeSourceRepayments(tx, ctx, intake.id) : [];
-        if (intake.status === "posted" && (allCurrentOriginals.length === 0 || currentOriginals.length !== allCurrentOriginals.length)) throw new DomainError("RECONCILIATION_SOURCE_ALREADY_COMPENSATED", "The posted payment is already compensated or reconciled", 409);
+        const inspected = await inspectReconciliationSource(tx, ctx, intake);
+        const currentOriginals = inspected.originals;
         const currentSource = {
-            mode: "historical_needs_review" as const, paymentIntakePublicId: intake.publicId, status: intake.status, amount: serializeMoney(intake.amount), receivedAt: intake.receivedAt,
-            hasReadyEvidence: false,
-            currentAllocationSnapshot: currentOriginals.map((row) => ({ transactionPublicId: row.publicId, loanId: row.loanId, scheduleId: row.scheduleId, amount: serializeMoney(row.amount), principal: serializeMoney(row.principalComponent), interest: serializeMoney(row.interestComponent), fee: serializeMoney(row.feeComponent), penalty: serializeMoney(row.penaltyComponent) })),
-            reversalSnapshot: [],
+            mode: inspected.mode, paymentIntakePublicId: intake.publicId, status: intake.status, amount: serializeMoney(intake.amount), receivedAt: intake.receivedAt,
+            hasReadyEvidence: inspected.hasReadyEvidence,
+            currentAllocationSnapshot: currentOriginals.map(sourceTransactionSnapshot),
+            reversalSnapshot: inspected.reversals.map(sourceTransactionSnapshot),
         };
-        const currentBalanceVersion = await authoritativeBalanceVersion(tx, ctx, [...allocations.map((item) => item.loanId), ...currentOriginals.map((item) => item.loanId)]);
+        const financialBalanceVersion = await authoritativeBalanceVersion(tx, ctx, [...allocations.map((item) => item.loanId), ...currentOriginals.map((item) => item.loanId)]);
+        const currentBalanceVersion = inspected.mode === "reversed_repost" ? hash({ financialBalanceVersion, source: currentSource }) : financialBalanceVersion;
         if (currentBalanceVersion !== proposal.expectedBalanceVersion) throw new DomainError("STALE_RECONCILIATION_PREVIEW", "Affected financial state differs from preview", 409);
         if (hash({ source: currentSource, allocations: allocations.map(presentAllocation), expectedBalanceVersion: proposal.expectedBalanceVersion, reason: proposal.reason }) !== proposal.previewHash) throw new DomainError("STALE_RECONCILIATION_PREVIEW", "Current payment state differs from preview", 409);
         const audit = await createAuditLog(tx, { ...contextPayload(ctx), entityType: "payment_reconciliation", entityId: proposal.publicId, action: "executed", payload: { paymentIntakePublicId: intake.publicId, reason: input.reason.trim(), idempotencyKey: input.idempotencyKey, before: proposal.sourceSnapshot, after: proposal.proposedAllocations } });
-        const group = await tx.insert(paymentReconciliationGroups).values({ tenantId: ctx.tenantId, proposalId: proposal.id, paymentIntakeId: intake.id, reason: input.reason.trim(), idempotencyKey: input.idempotencyKey, correlationId: ctx.correlationId, auditPublicId: audit.publicId, createdByUserId: ctx.actorUserId }).returning().then((rows) => rows[0]!);
+        const postedIntake = inspected.mode === "reversed_repost"
+            ? await tx.insert(paymentIntakes).values({
+                tenantId: ctx.tenantId, ownerUserId: intake.ownerUserId, source: intake.source, status: "posted", amount: serializeMoney(intake.amount), receivedAt: intake.receivedAt,
+                payerName: intake.payerName, originLoanId: intake.originLoanId, repostOfIntakeId: intake.id,
+                notes: `Reposted after reversal from ${intake.publicId}: ${input.reason.trim()}`,
+                postedAt: new Date(), createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId, postedByUserId: ctx.actorUserId,
+            }).returning().then((rows) => rows[0]!)
+            : intake;
+        const group = await tx.insert(paymentReconciliationGroups).values({ tenantId: ctx.tenantId, proposalId: proposal.id, paymentIntakeId: intake.id, postedIntakeId: postedIntake.id, reason: input.reason.trim(), idempotencyKey: input.idempotencyKey, correlationId: ctx.correlationId, auditPublicId: audit.publicId, createdByUserId: ctx.actorUserId }).returning().then((rows) => rows[0]!);
         const entryRows: Array<typeof paymentReconciliationEntries.$inferSelect> = [];
-        for (const original of currentOriginals) {
+        for (const original of inspected.mode === "historical_needs_review" ? currentOriginals : []) {
             const reversal = await tx.insert(transactions).values({ tenantId: ctx.tenantId, ownerUserId: original.ownerUserId, loanId: original.loanId, scheduleId: original.scheduleId, amount: `-${serializeMoney(original.amount)}`, principalComponent: `-${serializeMoney(original.principalComponent)}`, interestComponent: `-${serializeMoney(original.interestComponent)}`, feeComponent: `-${serializeMoney(original.feeComponent)}`, penaltyComponent: `-${serializeMoney(original.penaltyComponent)}`, type: "reversal", transactionDate: new Date(), recordedByUserId: ctx.actorUserId, paymentIntakeId: intake.id, entryType: "reversal", reversedTransactionId: original.id, idempotencyKey: `reconciliation-reversal:${group.publicId}:${original.id}`, postedAt: new Date() }).returning().then((rows) => rows[0]!);
             const entry = await tx.insert(paymentReconciliationEntries).values({ tenantId: ctx.tenantId, groupId: group.id, entryType: "reversal", component: "mixed", amount: `-${serializeMoney(original.amount)}`, principalComponent: `-${serializeMoney(original.principalComponent)}`, interestComponent: `-${serializeMoney(original.interestComponent)}`, feeComponent: `-${serializeMoney(original.feeComponent)}`, penaltyComponent: `-${serializeMoney(original.penaltyComponent)}`, sourceTransactionId: original.id, transactionId: reversal.id, loanId: original.loanId, scheduleId: original.scheduleId, reason: input.reason.trim(), auditPublicId: audit.publicId, createdByUserId: ctx.actorUserId }).returning().then((rows) => rows[0]!);
             entryRows.push(entry);
@@ -271,7 +286,7 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
             amounts[allocation.component] = serializeMoney(allocation.amount);
             const schedule = allocation.schedulePublicId ? await tx.query.loanSchedules.findFirst({ where: and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.publicId, allocation.schedulePublicId), eq(loanSchedules.loanId, target.id)) }) : null;
             if (allocation.schedulePublicId && !schedule) throw new DomainError("INVALID_RECONCILIATION_TARGET", "Schedule no longer belongs to the allocation loan", 409);
-            const replacement = await tx.insert(transactions).values({ tenantId: ctx.tenantId, ownerUserId: target.ownerUserId ?? ctx.actorUserId, loanId: target.id, scheduleId: schedule?.id ?? null, amount: serializeMoney(allocation.amount), principalComponent: amounts.principal, interestComponent: amounts.interest, feeComponent: amounts.fee, penaltyComponent: amounts.penalty, type: "repayment", transactionDate: intake.receivedAt, recordedByUserId: ctx.actorUserId, paymentIntakeId: intake.id, entryType: "repayment", idempotencyKey: `reconciliation-replacement:${group.publicId}:${replacementPublicIds.length}`, postedAt: new Date() }).returning().then((rows) => rows[0]!);
+            const replacement = await tx.insert(transactions).values({ tenantId: ctx.tenantId, ownerUserId: target.ownerUserId ?? ctx.actorUserId, loanId: target.id, scheduleId: schedule?.id ?? null, amount: serializeMoney(allocation.amount), principalComponent: amounts.principal, interestComponent: amounts.interest, feeComponent: amounts.fee, penaltyComponent: amounts.penalty, type: "repayment", transactionDate: intake.receivedAt, recordedByUserId: ctx.actorUserId, paymentIntakeId: postedIntake.id, entryType: "repayment", idempotencyKey: `reconciliation-replacement:${group.publicId}:${replacementPublicIds.length}`, postedAt: new Date() }).returning().then((rows) => rows[0]!);
             replacementPublicIds.push(replacement.publicId);
             await tx.insert(paymentReconciliationEntries).values({ tenantId: ctx.tenantId, groupId: group.id, entryType: "replacement", component: allocation.component, amount: serializeMoney(allocation.amount), principalComponent: amounts.principal, interestComponent: amounts.interest, feeComponent: amounts.fee, penaltyComponent: amounts.penalty, transactionId: replacement.id, loanId: target.id, reason: input.reason.trim(), auditPublicId: audit.publicId, createdByUserId: ctx.actorUserId });
             const updatedPrincipal = Decimal.max(0, new Decimal(target.outstandingPrincipal ?? target.principalAmount).minus(amounts.principal));
@@ -298,6 +313,6 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
         }
         await tx.update(paymentReconciliationProposals).set({ status: "executed", executedByUserId: ctx.actorUserId, executedAt: new Date() }).where(eq(paymentReconciliationProposals.id, proposal.id));
         if (intake.status === "needs_review") await tx.update(paymentIntakes).set({ status: "posted", postedAt: new Date(), postedByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(eq(paymentIntakes.id, intake.id));
-        return { reconciliationPublicId: group.publicId, sourcePaymentPublicId: intake.publicId, compensatingTransactionPublicIds: [...entryRows.map((entry) => entry.transactionId).filter((id): id is number => id !== null)], correctedTransactionPublicIds: replacementPublicIds, auditPublicIds: [audit.publicId], correlationId: ctx.correlationId };
+        return { reconciliationPublicId: group.publicId, sourcePaymentPublicId: intake.publicId, postedPaymentPublicId: postedIntake.publicId, compensatingTransactionPublicIds: [...entryRows.map((entry) => entry.transactionId).filter((id): id is number => id !== null)], correctedTransactionPublicIds: replacementPublicIds, auditPublicIds: [audit.publicId], correlationId: ctx.correlationId };
     });
 }
