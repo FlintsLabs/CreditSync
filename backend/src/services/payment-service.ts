@@ -56,6 +56,7 @@ type Executor = any;
 type IntakeRow = typeof paymentIntakes.$inferSelect;
 type ProposalRow = typeof paymentMatchProposals.$inferSelect;
 type AllocationRow = typeof paymentMatchAllocations.$inferSelect;
+type IntakeLineage = { repostOfIntakePublicId: string | null; repostedByIntakePublicId: string | null };
 
 export interface EvidenceStorageGateway {
     preparePut(request: SignedPutRequest): Promise<{ uploadUrl: string; expiresAt: Date; requiredHeaders?: Record<string, string> }>;
@@ -146,7 +147,7 @@ async function accessibleIntake(ctx: CommandContext, publicId: string, executor:
     return row;
 }
 
-function presentIntake(row: IntakeRow) {
+function presentIntake(row: IntakeRow, lineage: IntakeLineage = { repostOfIntakePublicId: null, repostedByIntakePublicId: null }) {
     return {
         id: row.publicId,
         publicId: row.publicId,
@@ -161,7 +162,33 @@ function presentIntake(row: IntakeRow) {
         postedAt: row.postedAt,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
+        ...lineage,
     };
+}
+
+async function loadIntakeLineage(ctx: CommandContext, rows: IntakeRow[], executor: Executor = db) {
+    const result = new Map<number, IntakeLineage>();
+    if (!rows.length) return result;
+    const rowIds = rows.map((row) => row.id);
+    const parentIds = rows.map((row) => row.repostOfIntakeId).filter((id): id is number => id !== null);
+    const related: IntakeRow[] = await executor.select().from(paymentIntakes).where(and(
+        eq(paymentIntakes.tenantId, ctx.tenantId),
+        or(
+            parentIds.length ? inArray(paymentIntakes.id, parentIds) : sql`false`,
+            inArray(paymentIntakes.repostOfIntakeId, rowIds),
+        ),
+    ));
+    const parentById = new Map(related.map((row: IntakeRow) => [row.id, row]));
+    const childByParentId = new Map(related.filter((row: IntakeRow) => row.repostOfIntakeId !== null).map((row: IntakeRow) => [row.repostOfIntakeId!, row]));
+    for (const row of rows) {
+        const parent = row.repostOfIntakeId === null ? undefined : parentById.get(row.repostOfIntakeId);
+        const child = childByParentId.get(row.id);
+        result.set(row.id, {
+            repostOfIntakePublicId: parent?.ownerUserId === row.ownerUserId ? parent.publicId : null,
+            repostedByIntakePublicId: child?.ownerUserId === row.ownerUserId ? child.publicId : null,
+        });
+    }
+    return result;
 }
 
 function duplicateResult(row: IntakeRow, reason: string) {
@@ -290,7 +317,8 @@ export async function listPaymentIntakes(ctx: CommandContext, input: { status?: 
     if (input.status) conditions.push(eq(paymentIntakes.status, input.status));
     if (actor && !canAccessTenantWideData({ role: actor.role ?? "viewer" })) conditions.push(eq(paymentIntakes.ownerUserId, actor.id));
     const rows = await db.select().from(paymentIntakes).where(and(...conditions)).orderBy(desc(paymentIntakes.receivedAt));
-    return rows.map(presentIntake);
+    const lineage = await loadIntakeLineage(ctx, rows);
+    return rows.map((row) => presentIntake(row, lineage.get(row.id)));
 }
 
 const paymentIntakeStatuses = new Set(["draft", "needs_review", "ready", "posted", "reversed", "duplicate"]);
@@ -357,8 +385,9 @@ export async function listPaymentIntakePage(ctx: CommandContext, input: PaymentI
             .limit(pageSize).offset((page - 1) * pageSize),
     ]);
     const total = totalRow.value;
+    const lineage = await loadIntakeLineage(ctx, rows);
     return {
-        items: rows.map(presentIntake),
+        items: rows.map((row) => presentIntake(row, lineage.get(row.id))),
         page,
         pageSize,
         total,
@@ -412,6 +441,7 @@ export async function listLoanPaymentIntakes(ctx: CommandContext, loanPublicId: 
         transactionsByIntake.set(transaction.paymentIntakeId, [...(transactionsByIntake.get(transaction.paymentIntakeId) ?? []), transaction]);
     }
 
+    const lineage = await loadIntakeLineage(ctx, intakeRows);
     return intakeRows
         .filter((intake) => intake.originLoanId === loan.id
             || transactionsByIntake.has(intake.id)
@@ -423,7 +453,7 @@ export async function listLoanPaymentIntakes(ctx: CommandContext, loanPublicId: 
             const sumComponent = (field: "principalComponent" | "interestComponent" | "feeComponent" | "penaltyComponent") =>
                 postedTransactions.reduce((total, transaction) => total.plus(transaction[field] ?? "0"), new Decimal(0));
             return {
-                ...presentIntake(intake),
+                ...presentIntake(intake, lineage.get(intake.id)),
                 originLoanPublicId: intake.originLoanId === loan.id ? loan.publicId : null,
                 latestAllocation: allocation.length ? {
                     amount: allocation.reduce((total, row) => total.plus(row.amount), new Decimal(0)).toFixed(2),
@@ -445,9 +475,10 @@ export async function listPaymentReviewQueue(ctx: CommandContext) {
 
 export async function getPaymentIntake(ctx: CommandContext, publicId: string) {
     const row = await accessibleIntake(ctx, publicId);
-    const [evidenceRows, proposals] = await Promise.all([
+    const [evidenceRows, proposals, lineage] = await Promise.all([
         db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.paymentIntakeId, row.id))),
         db.select().from(paymentMatchProposals).where(and(eq(paymentMatchProposals.tenantId, ctx.tenantId), eq(paymentMatchProposals.paymentIntakeId, row.id))).orderBy(desc(paymentMatchProposals.version)),
+        loadIntakeLineage(ctx, [row]),
     ]);
     const evidenceFileIds = evidenceRows.flatMap((item) => item.fileId ? [item.fileId] : []);
     const evidenceFiles = evidenceFileIds.length ? await db.select().from(files).where(and(
@@ -476,7 +507,7 @@ export async function getPaymentIntake(ctx: CommandContext, publicId: string) {
         }));
     }
     return {
-        ...presentIntake(row),
+        ...presentIntake(row, lineage.get(row.id)),
         evidence: evidenceRows.map((item) => ({
             id: item.publicId,
             publicId: item.publicId,

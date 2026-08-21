@@ -1,10 +1,10 @@
-# CreditSync Plugin 7.2.0
+# CreditSync Plugin 7.3.0
 
 This private Codex plugin orchestrates the CreditSync MCP app for borrower and intermediary identity, payments, intermediary remittances and multi-leg disbursements, generalized floating-interest origination and settlement, effective-dated rate changes, direct loan disbursements, renewals, and append-only reversal.
 
 ## Package contract
 
-- Plugin version: `7.2.0`
+- Plugin version: `7.3.0`
 - MCP schema version: `1.0`
 - 11 orchestration skills: `creditsync`, `manage-borrowers`, `reconcile-payments`, `reconcile-intermediary-remittances`, `manage-loans`, `manage-floating-interest-rates`, `settle-floating-loans`, `manage-disbursements`, `manage-intermediated-disbursements`, `renew-daily-loan`, `restructure-loan`
 - App manifest: `.app.json`
@@ -65,6 +65,7 @@ Publishing to Git does not hot-reload an installed copy. Start a new Codex task 
 - A latest `ready` payment may be posted by the agent after its exact allocations are shown.
 - `needs_review`, fuzzy identity, allocation mismatch, stale preview, and unresolved renewal charges stop for human input.
 - Hard duplicates return the original intake and never create a second payment.
+- A fully reversed payment may be reposted only through `payment.reconcile.preview` and explicit confirmed execute when every original repayment has an exact compensating reversal and the source retains finalized ready evidence. The result identifies both the immutable reversed source and its new interest-only posted child; principal is never reduced and evidence is never copied.
 - Loan activation sends a stable idempotency key, and activation and every renewal show the backend result before explicit confirmation.
 - Floating origination preserves the backend's explicit day-or-week policy, including rate mode, rate, advance periods, and non-refundable treatment.
 - Floating-interest changes follow list → preview → exact confirmation → idempotent execute; accrued dates and stale previews always stop the workflow.

@@ -248,6 +248,7 @@ const intakeArgs = {
     bankReference: "BBL-680294",
     idempotencyKey: "capture-680294",
 };
+const noRepostLineage = { repostOfIntakePublicId: null, repostedByIntakePublicId: null };
 
 const allocations = [
     { borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, amount: "200.00" },
@@ -1465,38 +1466,38 @@ const SCENARIOS: Record<string, Scenario> = {
     },
     "payment-data-only": {
         script: [
-            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null } },
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null, ...noRepostLineage } },
             { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: PROPOSAL, status: "ready", version: -9007199254740991, warnings: [], totalAllocated: "0.00", allocations: [] } },
-            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, result: { publicId: "0198c481-3e2b-7000-8000-000000000202", status: "fixture", transactions: [] } },
+            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, result: { publicId: "0198c481-3e2b-7000-8000-000000000202", status: "fixture", ...noRepostLineage, transactions: [] } },
         ],
         run: (mcp) => paymentFlow(mcp, {}),
     },
     "payment-slip": {
         script: [
-            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null } },
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null, ...noRepostLineage } },
             { name: "evidence.prepare", arguments: { paymentIntakePublicId: INTAKE, mimeType: "image/jpeg", size: PAYMENT_EVIDENCE_BYTES.byteLength, sha256: FILE_HASH, evidenceType: "slip" }, result: { publicId: EVIDENCE, filePublicId: EVIDENCE_FILE, duplicate: false, uploadUrl: "https://storage.example/payment-upload", requiredHeaders: {} } },
             { name: "evidence.finalize", arguments: { paymentIntakePublicId: INTAKE, evidencePublicId: EVIDENCE }, result: { publicId: EVIDENCE, status: "ready", sha256: FILE_HASH, filePublicId: EVIDENCE_FILE } },
             { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: PROPOSAL, status: "ready", version: -9007199254740991, warnings: [], totalAllocated: "0.00", allocations: [] } },
-            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, result: { publicId: "0198c481-3e2b-7000-8000-000000000205", status: "fixture", transactions: [] } },
+            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, result: { publicId: "0198c481-3e2b-7000-8000-000000000205", status: "fixture", ...noRepostLineage, transactions: [] } },
         ],
         run: (mcp) => paymentFlow(mcp, { evidence: true }),
     },
     "payment-stale-repreview": {
         script: [
-            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null } },
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null, ...noRepostLineage } },
             { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE }, result: { status: "stale", publicId: "0198c481-3e2b-7000-8000-000000000206", version: -9007199254740991, warnings: [], totalAllocated: "0.00", allocations: [] } },
-            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: "0198c481-3e2b-7000-8000-000000000207", status: "fixture", evidence: [], latestProposal: { publicId: "0198c481-3e2b-7000-8000-000000000208", version: -9007199254740991, status: "fixture", warnings: [], totalAllocated: "0.00", allocations: [] } } },
+            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: "0198c481-3e2b-7000-8000-000000000207", status: "fixture", ...noRepostLineage, evidence: [], latestProposal: { publicId: "0198c481-3e2b-7000-8000-000000000208", version: -9007199254740991, status: "fixture", warnings: [], totalAllocated: "0.00", allocations: [] } } },
             { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: PROPOSAL, status: "ready", version: -9007199254740991, warnings: [], totalAllocated: "0.00", allocations: [] } },
-            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, result: { publicId: "0198c481-3e2b-7000-8000-000000000209", status: "fixture", transactions: [] } },
+            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, result: { publicId: "0198c481-3e2b-7000-8000-000000000209", status: "fixture", ...noRepostLineage, transactions: [] } },
         ],
         run: (mcp) => paymentFlow(mcp, {}),
     },
     "payment-split-loans": {
         script: [
             { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000210", name: "fixture" }, aliases: [], loans: [] } },
-            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null } },
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null, ...noRepostLineage } },
             { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE, allocations }, result: { publicId: PROPOSAL, status: "ready", version: -9007199254740991, warnings: [], totalAllocated: "0.00", allocations: [] } },
-            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, result: { publicId: "0198c481-3e2b-7000-8000-000000000211", status: "fixture", transactions: [] } },
+            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, result: { publicId: "0198c481-3e2b-7000-8000-000000000211", status: "fixture", ...noRepostLineage, transactions: [] } },
         ],
         run: async (mcp) => { await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A }); return paymentFlow(mcp, { explicitAllocations: allocations }); },
     },
@@ -1506,7 +1507,7 @@ const SCENARIOS: Record<string, Scenario> = {
             { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000212", name: "fixture" }, aliases: [], loans: [] } },
             { name: "borrower.search", arguments: { query: "ลอย" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_B, name: "fixture" }] } },
             { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_B }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000213", name: "fixture" }, aliases: [], loans: [] } },
-            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null } },
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null, ...noRepostLineage } },
             { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE, allocations: [allocations[0], { borrowerPublicId: BORROWER_B, loanPublicId: LOAN_B, amount: "300.00" }] }, result: { publicId: PROPOSAL, status: "needs_review", version: -9007199254740991, warnings: [], totalAllocated: "0.00", allocations: [] } },
         ],
         run: async (mcp) => {
@@ -1520,9 +1521,9 @@ const SCENARIOS: Record<string, Scenario> = {
     "payment-partial": {
         script: [
             { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000214", name: "fixture" }, aliases: [], loans: [] } },
-            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null } },
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null, ...noRepostLineage } },
             { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE, allocations: partialAllocation }, result: { publicId: PROPOSAL, status: "ready", version: -9007199254740991, warnings: [], totalAllocated: "0.00", allocations: [] } },
-            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, result: { publicId: "0198c481-3e2b-7000-8000-000000000215", status: "fixture", transactions: [] } },
+            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, result: { publicId: "0198c481-3e2b-7000-8000-000000000215", status: "fixture", ...noRepostLineage, transactions: [] } },
         ],
         run: async (mcp) => { await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A }); return paymentFlow(mcp, { explicitAllocations: partialAllocation }); },
     },
@@ -1639,8 +1640,8 @@ const SCENARIOS: Record<string, Scenario> = {
     },
     "payment-reversal": {
         script: [
-            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { status: "posted", publicId: "0198c481-3e2b-7000-8000-000000000286", evidence: [], latestProposal: { publicId: "0198c481-3e2b-7000-8000-000000000287", version: -9007199254740991, status: "fixture", warnings: [], totalAllocated: "0.00", allocations: [] } } },
-            { name: "payment.reverse", arguments: { paymentIntakePublicId: INTAKE, reason: "Owner confirmed duplicate bank posting" }, result: { publicId: "0198c481-3e2b-7000-8000-000000000288", status: "fixture", transactions: [] } },
+            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { status: "posted", publicId: "0198c481-3e2b-7000-8000-000000000286", ...noRepostLineage, evidence: [], latestProposal: { publicId: "0198c481-3e2b-7000-8000-000000000287", version: -9007199254740991, status: "fixture", warnings: [], totalAllocated: "0.00", allocations: [] } } },
+            { name: "payment.reverse", arguments: { paymentIntakePublicId: INTAKE, reason: "Owner confirmed duplicate bank posting" }, result: { publicId: "0198c481-3e2b-7000-8000-000000000288", status: "fixture", ...noRepostLineage, transactions: [] } },
         ],
         run: async (mcp) => { await mcp.call("intake.get", { paymentIntakePublicId: INTAKE }); await mcp.call("payment.reverse", { paymentIntakePublicId: INTAKE, reason: "Owner confirmed duplicate bank posting" }); return { outcome: "completed" }; },
     },
@@ -1666,28 +1667,28 @@ const SCENARIOS: Record<string, Scenario> = {
     "duplicate-reference": {
         script: [
             { name: "intake.create", arguments: intakeArgs, result: { publicId: ORIGINAL_INTAKE, duplicate: true, status: "fixture", duplicateReason: "fixture", warnings: [] } },
-            { name: "intake.get", arguments: { paymentIntakePublicId: ORIGINAL_INTAKE }, result: { publicId: "0198c481-3e2b-7000-8000-000000000294", status: "fixture", evidence: [], latestProposal: { publicId: "0198c481-3e2b-7000-8000-000000000295", version: -9007199254740991, status: "fixture", warnings: [], totalAllocated: "0.00", allocations: [] } } },
+            { name: "intake.get", arguments: { paymentIntakePublicId: ORIGINAL_INTAKE }, result: { publicId: "0198c481-3e2b-7000-8000-000000000294", status: "fixture", ...noRepostLineage, evidence: [], latestProposal: { publicId: "0198c481-3e2b-7000-8000-000000000295", version: -9007199254740991, status: "fixture", warnings: [], totalAllocated: "0.00", allocations: [] } } },
         ],
         run: (mcp) => paymentFlow(mcp, {}),
     },
     "duplicate-evidence-hash": {
         script: [
-            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null } },
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null, ...noRepostLineage } },
             { name: "evidence.prepare", arguments: { paymentIntakePublicId: INTAKE, mimeType: "image/jpeg", size: PAYMENT_EVIDENCE_BYTES.byteLength, sha256: FILE_HASH, evidenceType: "slip" }, result: { publicId: EVIDENCE, duplicate: true, intakePublicId: ORIGINAL_INTAKE } },
-            { name: "intake.get", arguments: { paymentIntakePublicId: ORIGINAL_INTAKE }, result: { publicId: "0198c481-3e2b-7000-8000-000000000296", status: "fixture", evidence: [], latestProposal: { publicId: "0198c481-3e2b-7000-8000-000000000297", version: -9007199254740991, status: "fixture", warnings: [], totalAllocated: "0.00", allocations: [] } } },
+            { name: "intake.get", arguments: { paymentIntakePublicId: ORIGINAL_INTAKE }, result: { publicId: "0198c481-3e2b-7000-8000-000000000296", status: "fixture", ...noRepostLineage, evidence: [], latestProposal: { publicId: "0198c481-3e2b-7000-8000-000000000297", version: -9007199254740991, status: "fixture", warnings: [], totalAllocated: "0.00", allocations: [] } } },
         ],
         run: (mcp) => paymentFlow(mcp, { evidence: true }),
     },
     "payment-evidence-upload-unavailable": {
         script: [
-            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null } },
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null, ...noRepostLineage } },
             { name: "evidence.prepare", arguments: { paymentIntakePublicId: INTAKE, mimeType: "image/jpeg", size: PAYMENT_EVIDENCE_BYTES.byteLength, sha256: FILE_HASH, evidenceType: "slip" }, result: { publicId: EVIDENCE, filePublicId: EVIDENCE_FILE, duplicate: false } },
         ],
         run: (mcp) => paymentFlow(mcp, { evidence: true }),
     },
     "payment-evidence-finalize-mismatch": {
         script: [
-            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null } },
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null, ...noRepostLineage } },
             { name: "evidence.prepare", arguments: { paymentIntakePublicId: INTAKE, mimeType: "image/jpeg", size: PAYMENT_EVIDENCE_BYTES.byteLength, sha256: FILE_HASH, evidenceType: "slip" }, result: { publicId: EVIDENCE, filePublicId: EVIDENCE_FILE, duplicate: false, uploadUrl: "https://storage.example/payment-upload", requiredHeaders: {} } },
             { name: "evidence.finalize", arguments: { paymentIntakePublicId: INTAKE, evidencePublicId: EVIDENCE }, result: { publicId: EVIDENCE, status: "ready", sha256: FILE_HASH, filePublicId: ORIGINAL_INTAKE } },
         ],

@@ -322,6 +322,8 @@ const intakeOutput = z.object({
     postedAt: nullableIsoDateTime.optional(),
     createdAt: nullableIsoDateTime.optional(),
     updatedAt: nullableIsoDateTime.optional(),
+    repostOfIntakePublicId: uuid.nullable(),
+    repostedByIntakePublicId: uuid.nullable(),
 }).strict();
 const proposalAllocationOutput = z.object({
     ...publicEntity,
@@ -367,6 +369,7 @@ const reconciliationPreviewOutput = z.object({
 const reconciliationExecuteOutput = z.object({
     reconciliationPublicId: uuid,
     sourcePaymentPublicId: uuid,
+    postedPaymentPublicId: uuid,
     compensatingTransactionPublicIds: z.array(uuid),
     correctedTransactionPublicIds: z.array(uuid).optional(),
     auditPublicIds: z.array(uuid),

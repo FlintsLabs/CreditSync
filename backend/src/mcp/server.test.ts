@@ -59,6 +59,8 @@ function intakeFixture(status: "draft" | "posted" = "draft") {
         postedAt: status === "posted" ? "2026-08-10T00:01:00.000Z" : null,
         createdAt: "2026-08-10T00:00:00.000Z",
         updatedAt: "2026-08-10T00:00:00.000Z",
+        repostOfIntakePublicId: null,
+        repostedByIntakePublicId: null,
     };
 }
 

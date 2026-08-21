@@ -37,13 +37,15 @@ describe("loan payment history REST adapter", () => {
             { tenantId: actor.tenantId, ownerUserId: actor.id, originLoanId: loan!.id, status: "reversed", amount: "20.00", receivedAt: new Date("2026-08-11T10:00:00.000Z") },
             { tenantId: actor.tenantId, ownerUserId: actor.id, originLoanId: otherLoan!.id, status: "posted", amount: "30.00", receivedAt: new Date("2026-08-11T11:00:00.000Z") },
         ]).returning();
+        const reposted = await db.insert(paymentIntakes).values({ tenantId: actor.tenantId, ownerUserId: actor.id, originLoanId: loan!.id, status: "posted", amount: "20.00", receivedAt: new Date("2026-08-11T10:00:00.000Z"), repostOfIntakeId: reversed!.id, postedAt: new Date(), postedByUserId: actor.id }).returning().then((rows) => rows[0]!);
         const token = await authToken(actor);
         const app = new Elysia().use(loansRoute);
         const response = await app.handle(new Request(`http://localhost/loans/${loan!.publicId}/payment-intakes`, { headers: { authorization: `Bearer ${token}` } }));
 
         expect(response.status).toBe(200);
         expect(await response.json()).toEqual([
-            expect.objectContaining({ publicId: reversed!.publicId, status: "reversed", amount: "20.00", originLoanPublicId: loan!.publicId }),
+            expect.objectContaining({ publicId: reversed!.publicId, status: "reversed", amount: "20.00", originLoanPublicId: loan!.publicId, repostedByIntakePublicId: reposted.publicId }),
+            expect.objectContaining({ publicId: reposted.publicId, status: "posted", repostOfIntakePublicId: reversed!.publicId }),
             expect.objectContaining({ publicId: draft!.publicId, status: "draft", amount: "10.00", originLoanPublicId: loan!.publicId }),
         ]);
     });

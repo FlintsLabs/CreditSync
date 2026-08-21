@@ -119,10 +119,10 @@ async function inspectReconciliationSource(executor: any, ctx: CommandContext, i
 }> {
     if (intake.status === "needs_review") return { mode: "historical_needs_review", originals: [], reversals: [], hasReadyEvidence: false };
     if (intake.status !== "reversed") throw new DomainError("RECONCILIATION_INTAKE_INVALID", "Only needs_review or fully reversed intakes can be reconciled", 409);
-    const originals = await executor.select().from(transactions).where(and(
+    const originals: Array<typeof transactions.$inferSelect> = await executor.select().from(transactions).where(and(
         eq(transactions.tenantId, ctx.tenantId), eq(transactions.paymentIntakeId, intake.id), eq(transactions.entryType, "repayment"),
     )).orderBy(transactions.id);
-    const reversals = originals.length
+    const reversals: Array<typeof transactions.$inferSelect> = originals.length
         ? await executor.select().from(transactions).where(and(
             eq(transactions.tenantId, ctx.tenantId), eq(transactions.entryType, "reversal"), inArray(transactions.reversedTransactionId, originals.map((row) => row.id)),
         )).orderBy(transactions.id)

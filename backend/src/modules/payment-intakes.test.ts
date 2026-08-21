@@ -107,6 +107,19 @@ describe("payment intake REST adapter", () => {
         });
         expect(reversed.body.status).toBe("reversed");
         expect(reversed.body.transactions).toHaveLength(2);
+        const sourceRow = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, created.body.publicId) });
+        const child = await db.insert(paymentIntakes).values({ tenantId: actor.tenantId, ownerUserId: actor.id, status: "posted", amount: "100.00", receivedAt: sourceRow!.receivedAt, repostOfIntakeId: sourceRow!.id, postedAt: new Date(), createdByUserId: actor.id, postedByUserId: actor.id }).returning().then((rows) => rows[0]!);
+        const [sourceDetail, childDetail, lineageList] = await Promise.all([
+            jsonRequest(app, `/payment-intakes/${sourceRow!.publicId}`, token),
+            jsonRequest(app, `/payment-intakes/${child.publicId}`, token),
+            jsonRequest(app, "/payment-intakes", token),
+        ]);
+        expect(sourceDetail.body).toMatchObject({ repostOfIntakePublicId: null, repostedByIntakePublicId: child.publicId });
+        expect(childDetail.body).toMatchObject({ repostOfIntakePublicId: sourceRow!.publicId, repostedByIntakePublicId: null });
+        expect(lineageList.body.items).toEqual(expect.arrayContaining([
+            expect.objectContaining({ publicId: sourceRow!.publicId, repostedByIntakePublicId: child.publicId }),
+            expect.objectContaining({ publicId: child.publicId, repostOfIntakePublicId: sourceRow!.publicId }),
+        ]));
         const reversalAudit = await db.select().from(auditLogs).where(eq(auditLogs.action, "reversed"));
         expect(reversalAudit.at(-1)?.payload).toMatchObject({ reason: "Bank correction confirmed" });
     });
