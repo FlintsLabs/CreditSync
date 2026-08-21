@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import Decimal from "decimal.js";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db";
-import { floatingTransactionAllocations, loanInterestAccruals, loans, paymentIntakes, paymentReconciliationEntries, paymentReconciliationGroups, paymentReconciliationProposals, transactions, users } from "../db/schema";
+import { floatingTransactionAllocations, loanInterestAccruals, loans, paymentEvidence, paymentIntakes, paymentReconciliationEntries, paymentReconciliationGroups, paymentReconciliationProposals, transactions, users } from "../db/schema";
 import { createBorrower } from "./borrower-service";
 import { createLoanDraft, activateLoan } from "./loan-application-service";
 import { createPaymentIntake, reviewPaymentIntake } from "./payment-service";
@@ -58,6 +58,34 @@ describe("payment reconciliation allocation kernel", () => {
 });
 
 describe("payment reconciliation persistence", () => {
+    integrationTest("previews only fully reversed evidence-backed sources without a repost child", async () => {
+        const tenantId = `repost-preview-${crypto.randomUUID()}`;
+        const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+        const ctx: CommandContext = { tenantId, actorUserId: actor.id, actorSource: "mcp", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() };
+        const borrower = await createBorrower(ctx, { name: "Reversed Repost Borrower" });
+        const draft = await createLoanDraft(ctx, { borrowerPublicId: borrower.publicId, principal: "1000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1, startDate: "2026-08-06", floatingDailyInterest: { mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day" } });
+        await activateLoan(ctx, draft.publicId);
+        const loan = await db.query.loans.findFirst({ where: and(eq(loans.tenantId, tenantId), eq(loans.publicId, draft.publicId)) });
+        const source = await db.insert(paymentIntakes).values({ tenantId, status: "reversed", amount: "45.00", receivedAt: new Date("2026-08-15T09:28:00.000Z"), payerName: borrower.name, createdByUserId: actor.id, postedByUserId: actor.id, postedAt: new Date() }).returning().then((rows) => rows[0]!);
+        const original = await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan!.id, amount: "45.00", interestComponent: "45.00", paymentIntakeId: source.id, entryType: "repayment", transactionDate: source.receivedAt, recordedByUserId: actor.id }).returning().then((rows) => rows[0]!);
+        await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan!.id, amount: "-45.00", interestComponent: "-45.00", paymentIntakeId: source.id, entryType: "reversal", reversedTransactionId: original.id, transactionDate: new Date(), recordedByUserId: actor.id });
+        const request = { paymentIntakePublicId: source.publicId, allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: draft.publicId, amount: "45.00", component: "interest" as const }], reason: "Repost confirmed historical interest after full reversal" };
+
+        await expect(previewPaymentReconciliation(ctx, request)).rejects.toMatchObject({ code: "RECONCILIATION_SOURCE_EVIDENCE_REQUIRED" });
+        await db.insert(paymentEvidence).values({ tenantId, paymentIntakeId: source.id, status: "ready", evidenceType: "legacy_slip", legacyReference: "fixture", finalizedAt: new Date(), createdByUserId: actor.id });
+        const preview = await previewPaymentReconciliation(ctx, request);
+        expect(preview.sourcePayment).toMatchObject({ mode: "reversed_repost", status: "reversed", hasReadyEvidence: true });
+        expect(preview.correction).toEqual({ principal: "0.00", interest: "45.00", fee: "0.00", penalty: "0.00" });
+
+        await db.insert(paymentIntakes).values({ tenantId, status: "posted", amount: "45.00", repostOfIntakeId: source.id, createdByUserId: actor.id, postedByUserId: actor.id });
+        await expect(previewPaymentReconciliation(ctx, request)).rejects.toMatchObject({ code: "RECONCILIATION_SOURCE_ALREADY_REPOSTED" });
+
+        const activeSource = await db.insert(paymentIntakes).values({ tenantId, status: "reversed", amount: "45.00", receivedAt: source.receivedAt, createdByUserId: actor.id }).returning().then((rows) => rows[0]!);
+        await db.insert(paymentEvidence).values({ tenantId, paymentIntakeId: activeSource.id, status: "ready", evidenceType: "legacy_slip", legacyReference: "active-fixture", finalizedAt: new Date(), createdByUserId: actor.id });
+        await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan!.id, amount: "45.00", interestComponent: "45.00", paymentIntakeId: activeSource.id, entryType: "repayment", recordedByUserId: actor.id });
+        await expect(previewPaymentReconciliation(ctx, { ...request, paymentIntakePublicId: activeSource.publicId })).rejects.toMatchObject({ code: "RECONCILIATION_SOURCE_NOT_FULLY_REVERSED" });
+    });
+
     integrationTest("enforces one repost child per reversed source", async () => {
         const tenantId = `repost-lineage-${crypto.randomUUID()}`;
         const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);

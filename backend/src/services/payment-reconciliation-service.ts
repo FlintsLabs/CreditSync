@@ -3,7 +3,7 @@ import Decimal from "decimal.js";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
-    borrowers, loans, loanSchedules, paymentIntakes, paymentReconciliationEntries,
+    borrowers, loans, loanSchedules, paymentEvidence, paymentIntakes, paymentReconciliationEntries,
     paymentReconciliationGroups, paymentReconciliationProposals, transactions,
     floatingTransactionAllocations, loanInterestAccruals,
 } from "../db/schema";
@@ -99,6 +99,55 @@ async function activeSourceRepayments(executor: any, ctx: CommandContext, intake
     )).orderBy(transactions.id);
 }
 
+type ReconciliationMode = "historical_needs_review" | "reversed_repost";
+
+function isExactCompensation(original: typeof transactions.$inferSelect, reversal: typeof transactions.$inferSelect) {
+    return reversal.loanId === original.loanId
+        && reversal.scheduleId === original.scheduleId
+        && new Decimal(reversal.amount).plus(original.amount).isZero()
+        && new Decimal(reversal.principalComponent).plus(original.principalComponent).isZero()
+        && new Decimal(reversal.interestComponent).plus(original.interestComponent).isZero()
+        && new Decimal(reversal.feeComponent).plus(original.feeComponent).isZero()
+        && new Decimal(reversal.penaltyComponent).plus(original.penaltyComponent).isZero();
+}
+
+async function inspectReconciliationSource(executor: any, ctx: CommandContext, intake: typeof paymentIntakes.$inferSelect): Promise<{
+    mode: ReconciliationMode;
+    originals: Array<typeof transactions.$inferSelect>;
+    reversals: Array<typeof transactions.$inferSelect>;
+    hasReadyEvidence: boolean;
+}> {
+    if (intake.status === "needs_review") return { mode: "historical_needs_review", originals: [], reversals: [], hasReadyEvidence: false };
+    if (intake.status !== "reversed") throw new DomainError("RECONCILIATION_INTAKE_INVALID", "Only needs_review or fully reversed intakes can be reconciled", 409);
+    const originals = await executor.select().from(transactions).where(and(
+        eq(transactions.tenantId, ctx.tenantId), eq(transactions.paymentIntakeId, intake.id), eq(transactions.entryType, "repayment"),
+    )).orderBy(transactions.id);
+    const reversals = originals.length
+        ? await executor.select().from(transactions).where(and(
+            eq(transactions.tenantId, ctx.tenantId), eq(transactions.entryType, "reversal"), inArray(transactions.reversedTransactionId, originals.map((row) => row.id)),
+        )).orderBy(transactions.id)
+        : [];
+    const hasReadyEvidence = Boolean(await executor.query.paymentEvidence.findFirst({ where: and(
+        eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.paymentIntakeId, intake.id), eq(paymentEvidence.status, "ready"), sql`${paymentEvidence.finalizedAt} IS NOT NULL`,
+    ) }));
+    const child = await executor.query.paymentIntakes.findFirst({ where: and(
+        eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.repostOfIntakeId, intake.id),
+    ) });
+    const reversalByOriginal = new Map(reversals.map((row) => [row.reversedTransactionId, row]));
+    if (!originals.length || reversals.length !== originals.length || originals.some((row) => {
+        const reversal = reversalByOriginal.get(row.id);
+        return !reversal || !isExactCompensation(row, reversal);
+    })) throw new DomainError("RECONCILIATION_SOURCE_NOT_FULLY_REVERSED", "Every source repayment must have one exact compensating reversal", 409);
+    if (!hasReadyEvidence) throw new DomainError("RECONCILIATION_SOURCE_EVIDENCE_REQUIRED", "A finalized ready source evidence record is required", 409);
+    if (child) throw new DomainError("RECONCILIATION_SOURCE_ALREADY_REPOSTED", "The reversed source already has a repost child", 409);
+    return { mode: "reversed_repost", originals, reversals, hasReadyEvidence: true };
+}
+
+function sourceTransactionSnapshot(row: typeof transactions.$inferSelect) {
+    const signedMoney = (value: string) => new Decimal(value).toDecimalPlaces(2).toFixed(2);
+    return { transactionPublicId: row.publicId, reversedTransactionId: row.reversedTransactionId, loanId: row.loanId, scheduleId: row.scheduleId, amount: signedMoney(row.amount), principal: signedMoney(row.principalComponent), interest: signedMoney(row.interestComponent), fee: signedMoney(row.feeComponent), penalty: signedMoney(row.penaltyComponent) };
+}
+
 async function authoritativeBalanceVersion(executor: any, ctx: CommandContext, loanIds: number[]) {
     const ids = [...new Set(loanIds)].sort((left, right) => left - right);
     if (!ids.length) return hash({ loans: [], transactions: [], accruals: [], allocations: [] });
@@ -133,23 +182,22 @@ export async function previewPaymentReconciliation(ctx: CommandContext, input: {
     if (!Array.isArray(input.allocations) || input.allocations.length === 0) throw new DomainError("RECONCILIATION_ALLOCATIONS_REQUIRED", "At least one explicit allocation is required", 400);
     return db.transaction(async (tx) => {
         const intake = await accessibleIntake(ctx, input.paymentIntakePublicId, tx);
-        if (intake.status !== "needs_review") throw new DomainError("RECONCILIATION_INTAKE_INVALID", "Only reviewed historical needs_review intakes are supported", 409);
         if (input.allocations.some((item) => item.component !== "interest")) throw new DomainError("RECONCILIATION_COMPONENT_NOT_SUPPORTED", "Historical reconciliation supports interest-only allocations", 409);
         await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id = ${intake.id} FOR UPDATE`);
+        const inspected = await inspectReconciliationSource(tx, ctx, intake);
         const priorReconciliation = await tx.query.paymentReconciliationGroups.findFirst({ where: and(eq(paymentReconciliationGroups.tenantId, ctx.tenantId), eq(paymentReconciliationGroups.paymentIntakeId, intake.id)) });
         if (priorReconciliation) throw new DomainError("RECONCILIATION_SOURCE_ALREADY_COMPENSATED", "The payment intake has already been reconciled", 409);
-        const allOriginals: Array<typeof transactions.$inferSelect> = intake.status === "posted"
-            ? await tx.select().from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.paymentIntakeId, intake.id), eq(transactions.entryType, "repayment"))).orderBy(transactions.id)
-            : [];
-        const originals: Array<typeof transactions.$inferSelect> = intake.status === "posted" ? await activeSourceRepayments(tx, ctx, intake.id) : [];
-        if (intake.status === "posted" && (allOriginals.length === 0 || originals.length !== allOriginals.length)) throw new DomainError("RECONCILIATION_SOURCE_ALREADY_COMPENSATED", "The posted payment is already compensated or reconciled", 409);
+        const originals = inspected.originals;
         const allocations = await resolveAllocations(ctx, input.allocations, tx);
         const calculated = calculateReconciliationComponents(input.allocations, intake.amount);
         const source = {
-            paymentIntakePublicId: intake.publicId, status: intake.status, amount: serializeMoney(intake.amount), receivedAt: intake.receivedAt,
-            currentAllocationSnapshot: originals.map((row) => ({ transactionPublicId: row.publicId, loanId: row.loanId, scheduleId: row.scheduleId, amount: serializeMoney(row.amount), principal: serializeMoney(row.principalComponent), interest: serializeMoney(row.interestComponent), fee: serializeMoney(row.feeComponent), penalty: serializeMoney(row.penaltyComponent) })),
+            mode: inspected.mode, paymentIntakePublicId: intake.publicId, status: intake.status, amount: serializeMoney(intake.amount), receivedAt: intake.receivedAt,
+            hasReadyEvidence: inspected.hasReadyEvidence,
+            currentAllocationSnapshot: originals.map(sourceTransactionSnapshot),
+            reversalSnapshot: inspected.reversals.map(sourceTransactionSnapshot),
         };
-        const expectedBalanceVersion = await authoritativeBalanceVersion(tx, ctx, [...allocations.map((item) => item.loanId), ...originals.map((item) => item.loanId)]);
+        const financialBalanceVersion = await authoritativeBalanceVersion(tx, ctx, [...allocations.map((item) => item.loanId), ...originals.map((item) => item.loanId)]);
+        const expectedBalanceVersion = inspected.mode === "reversed_repost" ? hash({ financialBalanceVersion, source }) : financialBalanceVersion;
         const previewHash = hash({ source, allocations: allocations.map(presentAllocation), expectedBalanceVersion, reason: input.reason.trim() });
         const expiresAt = new Date(Date.now() + Math.max(60, Number(process.env.PAYMENT_PREVIEW_TTL_SECONDS ?? 900)) * 1000);
         const row = await tx.insert(paymentReconciliationProposals).values({
@@ -194,8 +242,10 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
         const currentOriginals: Array<typeof transactions.$inferSelect> = intake.status === "posted" ? await activeSourceRepayments(tx, ctx, intake.id) : [];
         if (intake.status === "posted" && (allCurrentOriginals.length === 0 || currentOriginals.length !== allCurrentOriginals.length)) throw new DomainError("RECONCILIATION_SOURCE_ALREADY_COMPENSATED", "The posted payment is already compensated or reconciled", 409);
         const currentSource = {
-            paymentIntakePublicId: intake.publicId, status: intake.status, amount: serializeMoney(intake.amount), receivedAt: intake.receivedAt,
+            mode: "historical_needs_review" as const, paymentIntakePublicId: intake.publicId, status: intake.status, amount: serializeMoney(intake.amount), receivedAt: intake.receivedAt,
+            hasReadyEvidence: false,
             currentAllocationSnapshot: currentOriginals.map((row) => ({ transactionPublicId: row.publicId, loanId: row.loanId, scheduleId: row.scheduleId, amount: serializeMoney(row.amount), principal: serializeMoney(row.principalComponent), interest: serializeMoney(row.interestComponent), fee: serializeMoney(row.feeComponent), penalty: serializeMoney(row.penaltyComponent) })),
+            reversalSnapshot: [],
         };
         const currentBalanceVersion = await authoritativeBalanceVersion(tx, ctx, [...allocations.map((item) => item.loanId), ...currentOriginals.map((item) => item.loanId)]);
         if (currentBalanceVersion !== proposal.expectedBalanceVersion) throw new DomainError("STALE_RECONCILIATION_PREVIEW", "Affected financial state differs from preview", 409);
