@@ -58,6 +58,14 @@ describe("payment reconciliation allocation kernel", () => {
 });
 
 describe("payment reconciliation persistence", () => {
+    integrationTest("enforces one repost child per reversed source", async () => {
+        const tenantId = `repost-lineage-${crypto.randomUUID()}`;
+        const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+        const source = await db.insert(paymentIntakes).values({ tenantId, status: "reversed", amount: "75.00", createdByUserId: actor.id }).returning().then((rows) => rows[0]!);
+        await db.insert(paymentIntakes).values({ tenantId, status: "posted", amount: "75.00", repostOfIntakeId: source.id, createdByUserId: actor.id, postedByUserId: actor.id });
+        await expect(Promise.resolve(db.insert(paymentIntakes).values({ tenantId, status: "posted", amount: "75.00", repostOfIntakeId: source.id, createdByUserId: actor.id, postedByUserId: actor.id }))).rejects.toThrow();
+    });
+
     integrationTest("uses unique floating allocation idempotency keys when one intake is split across loans", async () => {
         const tenantId = `reconcile-split-${crypto.randomUUID()}`;
         const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);

@@ -1267,6 +1267,7 @@ export const paymentIntakes = pgTable("payment_intakes", {
     idempotencyKey: text("idempotency_key"),
     originLoanId: integer("origin_loan_id"),
     duplicateOfIntakeId: integer("duplicate_of_intake_id"),
+    repostOfIntakeId: integer("repost_of_intake_id"),
     warnings: jsonb("warnings").$type<Array<Record<string, unknown>>>(),
     notes: text("notes"),
     postedAt: timestamp("posted_at"),
@@ -1286,6 +1287,9 @@ export const paymentIntakes = pgTable("payment_intakes", {
     uniqueIndex("payment_intakes_tenant_qr_payload_hash_unique")
         .on(table.tenantId, table.qrPayloadHash)
         .where(sql`${table.qrPayloadHash} IS NOT NULL`),
+    uniqueIndex("payment_intakes_tenant_repost_of_unique")
+        .on(table.tenantId, table.repostOfIntakeId)
+        .where(sql`${table.repostOfIntakeId} IS NOT NULL`),
     index("payment_intakes_tenant_origin_loan_received_at_idx")
         .on(table.tenantId, table.originLoanId, table.receivedAt),
     check(
@@ -1305,6 +1309,11 @@ export const paymentIntakes = pgTable("payment_intakes", {
     foreignKey({
         name: "payment_intakes_tenant_duplicate_fk",
         columns: [table.tenantId, table.duplicateOfIntakeId],
+        foreignColumns: [table.tenantId, table.id],
+    }),
+    foreignKey({
+        name: "payment_intakes_tenant_repost_of_fk",
+        columns: [table.tenantId, table.repostOfIntakeId],
         foreignColumns: [table.tenantId, table.id],
     }),
     foreignKey({
@@ -1493,6 +1502,7 @@ export const paymentReconciliationGroups = pgTable("payment_reconciliation_group
     tenantId: tenantId,
     proposalId: integer("proposal_id").notNull(),
     paymentIntakeId: integer("payment_intake_id").notNull(),
+    postedIntakeId: integer("posted_intake_id"),
     status: text("status").default("executed").notNull(),
     reason: text("reason").notNull(),
     idempotencyKey: text("idempotency_key").notNull(),
@@ -1506,6 +1516,7 @@ export const paymentReconciliationGroups = pgTable("payment_reconciliation_group
     check("payment_reconciliation_groups_status_check", sql`${table.status} = 'executed'`),
     foreignKey({ name: "payment_reconciliation_groups_tenant_proposal_fk", columns: [table.tenantId, table.proposalId], foreignColumns: [paymentReconciliationProposals.tenantId, paymentReconciliationProposals.id] }),
     foreignKey({ name: "payment_reconciliation_groups_tenant_intake_fk", columns: [table.tenantId, table.paymentIntakeId], foreignColumns: [paymentIntakes.tenantId, paymentIntakes.id] }),
+    foreignKey({ name: "payment_reconciliation_groups_tenant_posted_intake_fk", columns: [table.tenantId, table.postedIntakeId], foreignColumns: [paymentIntakes.tenantId, paymentIntakes.id] }),
     foreignKey({ name: "payment_reconciliation_groups_tenant_audit_fk", columns: [table.tenantId, table.auditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
     foreignKey({ name: "payment_reconciliation_groups_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
 ]);
