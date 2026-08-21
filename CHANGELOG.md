@@ -18,6 +18,7 @@
 - Extended the real-adapter MCP regression to execute the previously uncovered contract, draft deletion, payment-start amendment, and interest-only reconciliation tools through valid lifecycles.
 - Fixed MCP reconciliation execution to consume the idempotency key from command context after the protocol boundary strips command metadata from handler input.
 - Included reconciliation public IDs in MCP audit lookup so successful executions can return their required verified audit metadata.
+- Kept historical production-schema, mixed-lineage reconciliation, and settlement verification compatible with the exact current commission, replacement, payment-start, reconciliation/repost journal tail and settled payment-health projections.
 
 ## v0.3.36 - 2026-08-21
 

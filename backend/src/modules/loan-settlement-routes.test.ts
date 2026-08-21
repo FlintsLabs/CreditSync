@@ -254,7 +254,6 @@ describe("loan settlement REST adapter", () => {
                     status: "settled",
                     dueTodayAmount: "0.00",
                     overdueAmount: "0.00",
-                    accruingInterestAmount: "171.43",
                     overdueItemCount: 0,
                     maxOverdueDays: 0,
                 },

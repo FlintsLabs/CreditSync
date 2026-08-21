@@ -15,6 +15,11 @@ const backendRoot = `${import.meta.dir}/../../`;
 const migrationJournalPath = `${backendRoot}drizzle/meta/_journal.json`;
 const migration0038 = `${backendRoot}drizzle/0038_production_loan_schema_reconciliation.sql`;
 const migration0032 = `${backendRoot}drizzle/0032_restructure_external_credit_allocation.sql`;
+const migration0039 = `${backendRoot}drizzle/0039_loan_agents_commission_attribution.sql`;
+const migration0042 = `${backendRoot}drizzle/0042_atomic_loan_replacement.sql`;
+const migration0044 = `${backendRoot}drizzle/0044_atomic_loan_replacement_hardening.sql`;
+const migration0045 = `${backendRoot}drizzle/0045_atomic_loan_replacement_proposal.sql`;
+const migration0046 = `${backendRoot}drizzle/0046_payment_start_date.sql`;
 const tenantId = "tenant-task-3-regression";
 const productionLoanColumns = [
     "interest_period_unit", "interest_period_length", "advance_interest_periods", "advance_interest_refund_policy",
@@ -184,10 +189,16 @@ integrationTest("repairs the actual authenticated loan detail read on the same h
     // Start from the authoritative 0030 base. Apart from the explicit 0032
     // compatibility statements below, restructure tables are already in that
     // base. The captured drift is constructed explicitly, not by replaying
-    // later migrations and deleting their objects.
+    // every later migration and deleting their objects.
     const client = await resetAndApplyMigrations(30);
     try {
         await applySqlFile(client, migration0032);
+        // Current authenticated detail also inspects commission participants,
+        // replacement lineage, and payment_start_date; these objects are
+        // independent from the 0038 drift.
+        for (const compatibilityMigration of [migration0039, migration0042, migration0044, migration0045, migration0046]) {
+            await applySqlFile(client, compatibilityMigration);
+        }
         await createCapturedProductionDrift(client);
         await assertCapturedProductionDrift(client);
         const seeded = await seedOwnerAndBorrower(client, "task-3-detail@example.test");

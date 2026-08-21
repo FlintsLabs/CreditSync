@@ -7,8 +7,10 @@ const newTables = ["loan_restructures", "loan_opening_balance_components", "loan
 const postEmptyTables = newTables.filter((table) => table !== "floating_penalty_ledger_entries" && table !== "floating_transaction_allocations");
 const catalogTables40 = [...newTables, "loans", "loan_interest_accruals", "loan_interest_rate_periods", "loan_disbursement_events", "loan_schedules", "transactions", "audit_logs"] as const;
 const catalogTables42 = [...catalogTables40, "borrower_id_card_upload_intents"] as const;
+const catalogTables53 = [...catalogTables42, "loan_replacements", "loan_replacement_corrections", "payment_intakes", "payment_reconciliation_proposals", "payment_reconciliation_groups", "payment_reconciliation_entries", "floating_penalty_ledger_entries", "floating_transaction_allocations"] as const;
 const authoritativeCatalogSha25640 = "c08f69e551d54c803064261ad6b253899ce26979a0266b688565631f54ddc3d7";
 const authoritativeCatalogSha25642 = "0fb05cff74c00051375725b39612f0b100ee87cf891c9e30c1ca24104f017f1a";
+const authoritativeCatalogSha25653 = "8e89adf49b98ceab0e1da40f05c979cf7a88fd1f8b158d5eaf2bdc1e4d87194c";
 const legacyCatalogSha256Public = "b6e6ea2666b1e3ea92726b22131db420e74221947a43f493aaaa68fdd2f6dacb";
 const legacyCatalogSha256Quarantine = "2fb8cfa9272876a6668d6dd6cdaa97d8e54332df2f82ae1f502227ee5d3399f9";
 const inboundFk = "intermediary_compensation_settlements_tenant_destination_fk";
@@ -64,6 +66,11 @@ async function expectedPending() {
   return [...base, ...pendingTail];
 }
 
+async function expectedForwardTail() {
+  const journal = await Bun.file(`${root}drizzle/meta/_journal.json`).json() as { entries: Array<{ idx: number; tag: string; when: number }> };
+  return Promise.all(journal.entries.filter((entry) => entry.idx >= 39).map(async (entry) => [sha256(await readFile(`${root}drizzle/${entry.tag}.sql`, "utf8")), entry.when] as const));
+}
+
 async function verifyLegacyCatalog(tx: postgres.TransactionSql, relation: string) {
   const schema = relation.split(".")[0]!;
   const fingerprint = await catalogFingerprint(tx, ["intermediary_bank_accounts"], schema);
@@ -109,12 +116,12 @@ async function verify0030Completed(tx: postgres.TransactionSql) {
   if (Number(row.cutovers)!==5 || Number(row.snapshots)!==43 || Number(row.audits)!==5 || Number(row.distinct_dates)!==1 || Number(row.mismatch)!==0 || Number(row.invalid_audits)!==0) throw new Error(`0030 completed ledger/audit content is not exact: ${JSON.stringify(row)}`);
 }
 
-async function verifyCatalogAndData(tx: postgres.TransactionSql, journalCount: 40 | 42, compareCaptured = false) {
+async function verifyCatalogAndData(tx: postgres.TransactionSql, journalCount: 40 | 42 | 53, compareCaptured = false) {
   await verifyLegacyCatalog(tx, "creditsync_quarantine.intermediary_bank_accounts");
   await verifyQuarantineSchema(tx);
   await verify0030Completed(tx);
-  const catalog = await catalogFingerprint(tx, journalCount === 40 ? catalogTables40 : catalogTables42);
-  const expectedCatalog = journalCount === 40 ? authoritativeCatalogSha25640 : authoritativeCatalogSha25642;
+  const catalog = await catalogFingerprint(tx, journalCount === 40 ? catalogTables40 : journalCount === 42 ? catalogTables42 : catalogTables53);
+  const expectedCatalog = journalCount === 40 ? authoritativeCatalogSha25640 : journalCount === 42 ? authoritativeCatalogSha25642 : authoritativeCatalogSha25653;
   if (catalog !== expectedCatalog) throw new Error(`authoritative catalog fingerprint mismatch: ${catalog}`);
   for (const table of postEmptyTables) {
     const rows = await tx.unsafe<{ n: string }[]>(`SELECT count(*) AS n FROM public."${table}"`);
@@ -181,13 +188,14 @@ async function run() {
       await tx.unsafe(`LOCK TABLE audit_logs, bank_profiles, borrowers, drizzle.__drizzle_migrations, files, intermediaries, intermediary_compensation_settlements, public.intermediary_bank_accounts, loan_disbursement_events, loan_funding_allocations, loan_funding_previews, loan_interest_accruals, loan_interest_rate_periods, loan_schedules, loans, transactions, users IN ACCESS EXCLUSIVE MODE`);
       const journal = await tx<{ hash: string; created_at: string }[]>`SELECT hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id`;
       const count = journal.length;
-      if (![30, 40, 42].includes(count)) throw new Error(`mixed-lineage state is not exact: ${count} journal rows`);
+      if (![30, 40, 42, 53].includes(count)) throw new Error(`mixed-lineage state is not exact: ${count} journal rows`);
       const pending = await expectedPending();
       const authoritativeRows = authoritative.map((entry) => [entry.hash, entry.when] as const);
-      const expected = count === 30 ? pending : count === 40 ? [...pending, ...authoritativeRows] : [...pending, ...authoritativeRows, ...stock];
+      const forwardTail = count === 53 ? await expectedForwardTail() : [];
+      const expected = count === 30 ? pending : count === 40 ? [...pending, ...authoritativeRows] : [...pending, ...authoritativeRows, ...stock, ...forwardTail];
       if (expected.length !== count) throw new Error("internal journal manifest length mismatch");
       if (journal.some((row, i) => row.hash !== expected[i]![0] || Number(row.created_at) !== expected[i]![1])) throw new Error("mixed-lineage journal tuple array is not exact");
-      if (count === 42 || count === 40) { await verifyCatalogAndData(tx, count); return "already-complete"; }
+      if (count === 53 || count === 42 || count === 40) { await verifyCatalogAndData(tx, count); return "already-complete"; }
       await tx.unsafe(preflightDo);
       await verifyLegacyCatalog(tx, "public.intermediary_bank_accounts");
       const quarantine = await tx<{ relation: string | null }[]>`SELECT to_regclass('creditsync_quarantine.intermediary_bank_accounts')::text AS relation`;
