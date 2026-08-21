@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.37 - 2026-08-21
+
+### Added
+- Added audited, idempotent `payment.reconcile.preview` and `payment.reconcile.execute` MCP workflow for reviewed historical `needs_review` intakes, restricted to interest-only allocation with append-only provenance and no principal reduction.
+- Added closed MCP schemas and synchronized the private CreditSync plugin contract and payment-reconciliation skill for preview hash, balance-version, expiry, confirmation, and reason safety boundaries.
+- Added authoritative affected-loan state hashing after deterministic locks, active-source compensation guards, floating accrual provenance, and database immutability triggers for executed reconciliation records.
+
 ## v0.3.36 - 2026-08-21
 
 ### Fixed

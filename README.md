@@ -32,6 +32,7 @@ The repo already contains a working MVP foundation:
 - OCR endpoint for uploaded ID-card-like images
 - Loan calculation plus draft-review-activation flow
 - Payment intake, evidence, review, grouped allocation, posting, and compensating reversal workflow
+- Interest-only historical payment reconciliation preview/execute workflow for reviewed `needs_review` intakes, with append-only provenance, idempotency, and a hard guarantee that principal is not reduced
 - Daily-loan renewal preview, confirmed execution, and compensating reversal workflow
 - Single-payment settlement/restructure preview, explicit confirmation, component waivers, replacement contracts, and compensating reversal workflow
 - Owner/manager scheduled-loan replacement preview, confirmed execution, public lineage, and compensating reversal workflow
@@ -124,6 +125,7 @@ Renewal previews derive principal from posted, non-reversed transaction componen
 - detect tenant-scoped operation, bank-reference, QR-payload, and evidence-hash duplicates without treating semantic similarity as a duplicate
 - preview deterministic matches, review ambiguous matches, and split one intake across borrowers, loans, and schedules
 - post schedule, loan, and fund effects atomically, then correct posted payments with append-only compensating reversals
+- reconcile approved historical `needs_review` interest-only allocations through `payment.reconcile.preview` → explicit confirmation → `payment.reconcile.execute`; posted-payment corrections remain outside this initial safety boundary
 - stop floating-payment allocation when legacy daily-interest rows have an invalid zero-principal basis, and repair those rows through an idempotent append-only correction with adjustment and audit history
 
 The authenticated payment API is rooted at `/payment-intakes`. It exposes create/list/get and review-queue operations, `/:id/evidence/upload-intents`, `/:id/evidence/:evidenceId/finalize`, `/:id/match-preview`, `/:id/post`, `/:id/review`, and `/:id/reverse`. REST reversal requires a non-blank operator `reason`, which is preserved in the audit event. To preserve the frozen MCP schema-version 1.0 contract, `payment.reverse` continues to accept the legacy `{ paymentIntakePublicId }` input and uses a stable compatibility audit reason when the optional `reason` is absent; new MCP callers should provide it. All command IDs are UUIDs and all public money values are two-decimal strings. `GET /transactions` remains available for legacy repayment history, but `POST /transactions` returns `405 LEGACY_REPAYMENT_WRITE_DISABLED`; all repayment writes must use `/payment-intakes` so one Decimal allocator and one PostgreSQL lock order govern balances.

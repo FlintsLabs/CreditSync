@@ -53,6 +53,12 @@ To correct attribution, re-list, select the exact existing entry, obtain a non-b
 
 Inspect the posted intake and show the entries that will be compensated. Obtain a non-blank reason, then call `payment.reverse` with both `{ paymentIntakePublicId, reason }`. The frozen 1.0 tool has no client idempotency-key field; the backend makes repeat reversal of that intake idempotent. Report the resulting audit/correlation identifiers. A reversal does not delete the original transaction.
 
+## Reconcile a historical interest-only intake
+
+Use reconciliation only for an operator-reviewed historical intake that remains `needs_review` and must be posted as interest without reducing principal. First inspect the exact intake and affected loans, then call `payment.reconcile.preview` with every explicit allocation using component `interest` plus a non-blank reason. The backend returns the source snapshot, signed component correction, exact amount conservation, preview hash, balance version, expiry, and any historical group IDs. The preview must show `principal: "0.00"`.
+
+Execution appends only the explicit interest allocations and does not synthesize a reversal. Posted intakes and principal, fee, or penalty components are rejected in this release. Call `payment.reconcile.execute` only after displaying the exact preview and obtaining explicit human confirmation, passing the unchanged preview hash/version, reason, and a new stable idempotency key. Stale, expired, mismatched, ambiguous, or conflicting retries stop for review. Same-key identical retries return the original reconciliation result.
+
 ## Quick reference
 
 | State | Continue? |
