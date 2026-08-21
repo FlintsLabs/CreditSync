@@ -58,6 +58,28 @@ describe("payment reconciliation allocation kernel", () => {
 });
 
 describe("payment reconciliation persistence", () => {
+    integrationTest("uses unique floating allocation idempotency keys when one intake is split across loans", async () => {
+        const tenantId = `reconcile-split-${crypto.randomUUID()}`;
+        const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+        const ctx: CommandContext = { tenantId, actorUserId: actor.id, actorSource: "mcp", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() };
+        const borrower = await createBorrower(ctx, { name: "Split Reconciliation Borrower" });
+        const first = await createLoanDraft(ctx, { borrowerPublicId: borrower.publicId, principal: "1000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1, startDate: "2026-08-06", floatingDailyInterest: { mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day" } });
+        const second = await createLoanDraft({ ...ctx, idempotencyKey: crypto.randomUUID() }, { borrowerPublicId: borrower.publicId, principal: "1000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1, startDate: "2026-08-06", floatingDailyInterest: { mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day" } });
+        await activateLoan(ctx, first.publicId);
+        await activateLoan({ ...ctx, idempotencyKey: crypto.randomUUID() }, second.publicId);
+        const intake = await createPaymentIntake({ ...ctx, idempotencyKey: crypto.randomUUID() }, { amount: "20.00", receivedAt: "2026-08-15T09:28:00.000Z", payerName: borrower.name });
+        await reviewPaymentIntake(ctx, intake.publicId, { status: "needs_review" });
+        const preview = await previewPaymentReconciliation(ctx, { paymentIntakePublicId: intake.publicId, allocations: [
+            { borrowerPublicId: borrower.publicId, loanPublicId: first.publicId, amount: "10.00", component: "interest" },
+            { borrowerPublicId: borrower.publicId, loanPublicId: second.publicId, amount: "10.00", component: "interest" },
+        ], reason: "Split historical interest across two loans" });
+        const result = await executePaymentReconciliation(ctx, preview.publicId, { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: crypto.randomUUID() });
+        expect(result.correctedTransactionPublicIds).toHaveLength(2);
+        const allocationRows = await db.select().from(floatingTransactionAllocations).where(eq(floatingTransactionAllocations.tenantId, tenantId));
+        expect(allocationRows).toHaveLength(2);
+        expect(new Set(allocationRows.map((row) => row.idempotencyKey)).size).toBe(2);
+    });
+
     integrationTest("posts a needs_review interest-only intake without changing principal", async () => {
         const tenantId = `reconcile-${crypto.randomUUID()}`;
         const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
