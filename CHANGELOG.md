@@ -12,6 +12,12 @@
 
 ### Fixed
 - Fixed the bank-drawdown migration integration test hanging while a rejected Postgres.js query was owned by Bun's promise matcher, preserving the database rejection assertion and bounding connection shutdown.
+- Aligned weekly floating-interest correction regression coverage with append-only compensating reversal semantics so fully compensated repayments no longer reduce any corrected principal snapshot.
+- Fixed commission-participant MCP writes and lists to project service-only intermediary display fields out of the strict frozen public contract.
+- Kept the real-adapter MCP all-tools scenario within posted-payment attribution boundaries by reversing its attribution before reversing the source payment.
+- Extended the real-adapter MCP regression to execute the previously uncovered contract, draft deletion, payment-start amendment, and interest-only reconciliation tools through valid lifecycles.
+- Fixed MCP reconciliation execution to consume the idempotency key from command context after the protocol boundary strips command metadata from handler input.
+- Included reconciliation public IDs in MCP audit lookup so successful executions can return their required verified audit metadata.
 
 ## v0.3.36 - 2026-08-21
 

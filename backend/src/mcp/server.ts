@@ -1836,6 +1836,31 @@ function dataRecord(value: unknown): Record<string, unknown> {
 
 function frozenToolData(toolName: McpToolName, value: unknown): Record<string, unknown> {
     const data = dataRecord(value);
+    if ([
+        "loan.commission-participant.add",
+        "loan.commission-participant.update",
+        "loan.commission-participant.end",
+    ].includes(toolName)) {
+        const {
+            intermediaryName: _intermediaryName,
+            intermediaryAliases: _intermediaryAliases,
+            ...contractParticipant
+        } = data;
+        return contractParticipant;
+    }
+    if (toolName === "loan.commission-participant.list" && Array.isArray(data.items)) {
+        return {
+            items: data.items.map((item) => {
+                if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+                const {
+                    intermediaryName: _intermediaryName,
+                    intermediaryAliases: _intermediaryAliases,
+                    ...contractParticipant
+                } = item as Record<string, unknown>;
+                return contractParticipant;
+            }),
+        };
+    }
     if (toolName === "loan.disbursement.list") {
         const summary = data.summary;
         if (summary && typeof summary === "object" && !Array.isArray(summary)) {

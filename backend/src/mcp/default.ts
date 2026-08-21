@@ -238,15 +238,19 @@ export function createDefaultMcpToolHandlers(
         allocations: input.allocations as ReconciliationAllocation[],
         reason: asString(input, "reason"),
     }),
-    "payment.reconcile.execute": (ctx, input) => executePaymentReconciliation({
-        ...ctx, idempotencyKey: asString(input, "idempotencyKey"),
-    }, asString(input, "reconciliationPreviewPublicId"), {
-        previewHash: asString(input, "previewHash"),
-        expectedBalanceVersion: asString(input, "expectedBalanceVersion"),
-        confirmed: true,
-        reason: asString(input, "reason"),
-        idempotencyKey: asString(input, "idempotencyKey"),
-    }),
+    "payment.reconcile.execute": (ctx, input) => {
+        const idempotencyKey = ctx.idempotencyKey;
+        if (!idempotencyKey) {
+            throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Payment reconciliation requires an idempotency key", 400);
+        }
+        return executePaymentReconciliation(ctx, asString(input, "reconciliationPreviewPublicId"), {
+            previewHash: asString(input, "previewHash"),
+            expectedBalanceVersion: asString(input, "expectedBalanceVersion"),
+            confirmed: true,
+            reason: asString(input, "reason"),
+            idempotencyKey,
+        });
+    },
     "loan.preview": async (_ctx, input) => {
         try {
             return previewLoan(input as unknown as Parameters<typeof previewLoan>[0]);
@@ -506,7 +510,12 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
 function resultPublicId(result: unknown) {
     if (!result || typeof result !== "object") return null;
     const record = result as Record<string, unknown>;
-    const value = record.publicId ?? record.id ?? record.loanPublicId ?? record.settlementPublicId ?? record.replacementPublicId;
+    const value = record.publicId
+        ?? record.id
+        ?? record.loanPublicId
+        ?? record.settlementPublicId
+        ?? record.replacementPublicId
+        ?? record.reconciliationPublicId;
     return typeof value === "string" ? value : null;
 }
 

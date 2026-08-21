@@ -1138,6 +1138,32 @@ describe("default MCP adapter integration", () => {
             reason: "MCP all-tools settlement reversal",
             idempotencyKey: "mcp-all-tools-settlement-reverse",
         });
+        const reconciliationIntake = await db.insert(paymentIntakes).values({
+            tenantId: TENANT_ID,
+            status: "needs_review",
+            amount: "10.00",
+            receivedAt: new Date("2026-08-15T09:28:00.000Z"),
+            payerName: "MCP reconciliation payer",
+            createdByUserId: actor.id,
+        }).returning().then((rows) => rows[0]!);
+        const reconciliationPreview = (await call("payment.reconcile.preview", {
+            paymentIntakePublicId: reconciliationIntake.publicId,
+            allocations: [{
+                borrowerPublicId,
+                loanPublicId: floatingLoan.publicId,
+                amount: "10.00",
+                component: "interest",
+            }],
+            reason: "MCP all-tools historical interest reconciliation",
+        })).data;
+        await call("payment.reconcile.execute", {
+            reconciliationPreviewPublicId: reconciliationPreview.publicId,
+            previewHash: reconciliationPreview.previewHash,
+            expectedBalanceVersion: reconciliationPreview.expectedBalanceVersion,
+            confirmed: true,
+            reason: "MCP all-tools historical interest reconciliation",
+            idempotencyKey: "mcp-all-tools-reconciliation-execute",
+        });
 
         const loanTerms = {
             principal: "100.00",
@@ -1155,7 +1181,34 @@ describe("default MCP adapter integration", () => {
             ...loanTerms,
         })).data;
         const loanPublicId = String(drafted.publicId);
+        const removableDraft = await db.insert(loans).values({
+            tenantId: TENANT_ID,
+            ownerUserId: actor.id,
+            borrowerId: borrower!.id,
+            principalAmount: "50.00",
+            outstandingPrincipal: "50.00",
+            interestRate: "0.00",
+            repaymentType: "daily",
+            startDate: "2026-08-09",
+            termMonths: 1,
+            totalInstallments: 1,
+            installmentAmount: "50.00",
+            status: "draft",
+        }).returning().then((rows) => rows[0]!);
+        await call("loan.draft.delete", {
+            loanPublicId: removableDraft.publicId,
+            confirmed: true,
+            reason: "MCP all-tools removable draft",
+            idempotencyKey: "mcp-all-tools-draft-delete",
+        });
         await call("loan.activate", { loanPublicId, idempotencyKey: "mcp-all-tools-loan-activate" });
+        await call("loan.contract.get", { loanPublicId });
+        await call("loan.payment-start-date.update", {
+            loanPublicId,
+            paymentStartDate: "2026-08-10",
+            reason: "MCP all-tools payment start correction",
+            idempotencyKey: "mcp-all-tools-payment-start-date",
+        });
         const activatedLoan = (await db.query.loans.findFirst({ where: eq(loans.publicId, loanPublicId) }))!;
         await db.insert(loanDisbursements).values({
             tenantId: TENANT_ID,
@@ -1263,14 +1316,23 @@ describe("default MCP adapter integration", () => {
             loanPublicId,
             items: [expect.objectContaining({ publicId: intakePublicId, status: "posted" })],
         });
+        await call("intermediary.search", { query: "MCP all-tools collector" });
+        const intermediary = (await call("intermediary.create", { name: "MCP all-tools collector" })).data;
+        const attribution = (await call("payment.intermediary-attribution.create", {
+            paymentPublicId, sourceKind: "direct", amount: "20.00", confirmed: true,
+            idempotencyKey: "mcp-all-tools-attribution-create",
+        })).data;
+        await call("payment.intermediary-attribution.list", { paymentPublicId });
+        await call("payment.intermediary-attribution.reverse", {
+            attributionPublicId: attribution.publicId, reason: "MCP all-tools attribution reversal",
+            confirmed: true, idempotencyKey: "mcp-all-tools-attribution-reverse",
+        });
         const reversedPayment = (await call("payment.reverse", {
             paymentIntakePublicId: intakePublicId,
             reason: "Correct duplicate transfer",
         })).data;
         const reversalPaymentPublicId = String((reversedPayment.transactions as Array<{ publicId: string }>).at(-1)!.publicId);
 
-        await call("intermediary.search", { query: "MCP all-tools collector" });
-        const intermediary = (await call("intermediary.create", { name: "MCP all-tools collector" })).data;
         await call("loan.commission-participant.list", { loanPublicId });
         const participant = (await call("loan.commission-participant.add", {
             loanPublicId, intermediaryPublicId: intermediary.publicId, commissionRate: "30.00", role: "collector",
@@ -1290,15 +1352,6 @@ describe("default MCP adapter integration", () => {
         await call("loan.commission.calculate", commissionArgs);
         await call("loan.commission.reverse", {
             loanPublicId, paymentPublicIds: [reversalPaymentPublicId],
-        });
-        const attribution = (await call("payment.intermediary-attribution.create", {
-            paymentPublicId, sourceKind: "direct", amount: "20.00", confirmed: true,
-            idempotencyKey: "mcp-all-tools-attribution-create",
-        })).data;
-        await call("payment.intermediary-attribution.list", { paymentPublicId });
-        await call("payment.intermediary-attribution.reverse", {
-            attributionPublicId: attribution.publicId, reason: "MCP all-tools attribution reversal",
-            confirmed: true, idempotencyKey: "mcp-all-tools-attribution-reverse",
         });
         const bankAccount = (await call("intermediary.bank-account.save", {
             intermediaryPublicId: intermediary.publicId,

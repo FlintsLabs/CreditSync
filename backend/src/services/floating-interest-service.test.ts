@@ -311,7 +311,7 @@ describe("floating interest accrual service", () => {
         ]);
     });
 
-    // Break caught: weekly correction applies the weekly quote as a daily rate, removes snapshot metadata, or erases an original payment before its later reversal date.
+    // Break caught: weekly correction applies the weekly quote as a daily rate, removes snapshot metadata, or retains a fully compensated payment in principal history.
     integrationTest("corrects weekly snapshots with signed transaction history effective on each Bangkok date", async () => {
         const { actor, loan } = await seedWeeklyLoan("tenant-weekly-correction");
         const ratePeriod = await db.insert(loanInterestRatePeriods).values({
@@ -383,13 +383,13 @@ describe("floating interest accrual service", () => {
             sql`${loanInterestAccruals.status} <> 'reversed'`,
         )).orderBy(loanInterestAccruals.accrualDate);
         expect(active.slice(3, 7)).toEqual([
-            { accrualDate: "2026-08-16", openingPrincipal: "4000.00", interestRatePeriodId: ratePeriod.id, periodStartDate: "2026-08-13", periodEndDate: "2026-08-20", periodDayIndex: 4, interestAmount: "68.57", cumulativeInterestAmount: "325.71", status: "due", reversedAccrualId: expect.any(Number) },
-            { accrualDate: "2026-08-17", openingPrincipal: "4000.00", interestRatePeriodId: ratePeriod.id, periodStartDate: "2026-08-13", periodEndDate: "2026-08-20", periodDayIndex: 5, interestAmount: "68.57", cumulativeInterestAmount: "394.28", status: "due", reversedAccrualId: expect.any(Number) },
-            { accrualDate: "2026-08-18", openingPrincipal: "4000.00", interestRatePeriodId: ratePeriod.id, periodStartDate: "2026-08-13", periodEndDate: "2026-08-20", periodDayIndex: 6, interestAmount: "68.57", cumulativeInterestAmount: "462.85", status: "due", reversedAccrualId: expect.any(Number) },
-            { accrualDate: "2026-08-19", openingPrincipal: "5000.00", interestRatePeriodId: ratePeriod.id, periodStartDate: "2026-08-13", periodEndDate: "2026-08-20", periodDayIndex: 7, interestAmount: "85.71", cumulativeInterestAmount: "548.56", status: "due", reversedAccrualId: expect.any(Number) },
+            { accrualDate: "2026-08-16", openingPrincipal: "5000.00", interestRatePeriodId: ratePeriod.id, periodStartDate: "2026-08-13", periodEndDate: "2026-08-20", periodDayIndex: 4, interestAmount: "85.72", cumulativeInterestAmount: "342.86", status: "due", reversedAccrualId: expect.any(Number) },
+            { accrualDate: "2026-08-17", openingPrincipal: "5000.00", interestRatePeriodId: ratePeriod.id, periodStartDate: "2026-08-13", periodEndDate: "2026-08-20", periodDayIndex: 5, interestAmount: "85.71", cumulativeInterestAmount: "428.57", status: "due", reversedAccrualId: expect.any(Number) },
+            { accrualDate: "2026-08-18", openingPrincipal: "5000.00", interestRatePeriodId: ratePeriod.id, periodStartDate: "2026-08-13", periodEndDate: "2026-08-20", periodDayIndex: 6, interestAmount: "85.72", cumulativeInterestAmount: "514.29", status: "due", reversedAccrualId: expect.any(Number) },
+            { accrualDate: "2026-08-19", openingPrincipal: "5000.00", interestRatePeriodId: ratePeriod.id, periodStartDate: "2026-08-13", periodEndDate: "2026-08-20", periodDayIndex: 7, interestAmount: "85.71", cumulativeInterestAmount: "600.00", status: "due", reversedAccrualId: expect.any(Number) },
         ]);
-        expect((await floatingInterestDue(db, loan, bangkokNoon("2026-08-20"), context(actor))).toFixed(2)).toBe("548.56");
-        expect(await db.query.loans.findFirst({ where: eq(loans.id, loan.id) })).toMatchObject({ outstandingInterest: "548.56" });
+        expect((await floatingInterestDue(db, loan, bangkokNoon("2026-08-20"), context(actor))).toFixed(2)).toBe("600.00");
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, loan.id) })).toMatchObject({ outstandingInterest: "600.00" });
     });
 
     // Break caught: sparse correction targets let an untouched row overwrite the running weekly cumulative delta and leave the later suffix on stale principal.
