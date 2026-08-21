@@ -72,8 +72,26 @@ async function resetMixedLineage() {
   await sql`INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES (${alternateFunding[0]}, ${alternateFunding[1]})`;
 }
 
+async function restoreCurrentSchema() {
+  await sql.unsafe("DROP SCHEMA public CASCADE; DROP SCHEMA IF EXISTS drizzle CASCADE; DROP SCHEMA IF EXISTS creditsync_quarantine CASCADE; CREATE SCHEMA public");
+  const journal = await Bun.file(`${root}drizzle/meta/_journal.json`).json() as { entries: Array<{ tag: string; when: number }> };
+  for (const entry of journal.entries) await applyFile(`${root}drizzle/${entry.tag}.sql`);
+  await sql.unsafe("CREATE SCHEMA drizzle; CREATE TABLE drizzle.__drizzle_migrations (id serial PRIMARY KEY, hash text NOT NULL, created_at bigint NOT NULL)");
+  for (const entry of journal.entries) {
+    const content = await Bun.file(`${root}drizzle/${entry.tag}.sql`).text();
+    await sql`INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES (${hash(content)}, ${entry.when})`;
+  }
+}
+
 beforeAll(async () => { if (databaseUrl) { sql = postgres(databaseUrl, { max: 1 }); await resetMixedLineage(); } });
-afterAll(async () => { if (sql) await sql.end(); });
+afterAll(async () => {
+  if (!sql) return;
+  try {
+    await restoreCurrentSchema();
+  } finally {
+    await sql.end();
+  }
+});
 
 integration("applies the exact mixed lineage, preserves legacy rows/FK, and reruns as a verified no-op", async () => {
   const before = await sql`SELECT oid, relfilenode FROM pg_class WHERE oid='public.intermediary_bank_accounts'::regclass`;
