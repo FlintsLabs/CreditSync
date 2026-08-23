@@ -64,7 +64,7 @@ describe("LoanList", () => {
                 totalInstallments: 10,
                 startDate: "2026-08-01",
                 createdAt: "2026-08-10T07:30:00.000Z",
-                paymentHealth: { status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00", overdueItemCount: 0, maxOverdueDays: 0 },
+                paymentHealth: { status: "overdue", dueTodayAmount: "0.00", overdueAmount: "100.00", overdueItemCount: 1, maxOverdueDays: 2 },
             },
             {
                 id: "beta-loan",
@@ -98,6 +98,7 @@ describe("LoanList", () => {
         expect(within(navigation).getAllByText("VIP")).toHaveLength(2);
         expect(within(navigation).getByText("Market stall")).toBeInTheDocument();
         expect(within(navigation).queryByText("Alpha nickname")).not.toBeInTheDocument();
+        expect(within(navigation).getByRole("img", { name: "Has overdue payments" })).toBeInTheDocument();
         const cardGrids = screen.getAllByTestId("loan-card-grid");
         expect(cardGrids[0]).toHaveClass("lg:grid-cols-3");
         expect(cardGrids[0]).not.toHaveClass("xl:grid-cols-4");

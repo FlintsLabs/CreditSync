@@ -563,7 +563,8 @@
         "borrowerNavigation": {
             "title": "รายชื่อลูกหนี้",
             "ariaLabel": "เมนูนำทางรายชื่อลูกหนี้",
-            "noTags": "ไม่มีแท็ก"
+            "noTags": "ไม่มีแท็ก",
+            "overdue": "มีรายการค้างชำระ"
         },
         "loanLabel": "รหัสสัญญา #{{id}}",
         "originalPrincipal": "เงินต้นตั้งต้น",
@@ -942,7 +943,7 @@
         "errors": { "load": "ไม่สามารถโหลดกล่องรับชำระได้", "loadDetail": "ไม่สามารถโหลดรายละเอียดการชำระได้", "action": "ดำเนินการกับรายการชำระไม่สำเร็จ" }
     },
     "renewal": {
-        "title": "ต่อสัญญารายวัน", "description": "พรีวิวยอดปิด กระแสเงินสด และตารางใหม่ก่อนยืนยันอย่างชัดเจน",
+        "title": "ต่อสัญญารายวัน", "description": "พรีวิวยอดปิด กระแสเงินสด และตารางใหม่ก่อนยืนยันอย่างชัดเจน", "renewalDate": "วันที่เริ่มสัญญาใหม่", "paymentStartDate": "วันที่เริ่มชำระงวดแรก", "nextDayDefault": "วันถัดไป (ค่าเดิม)",
         "requestedPrincipal": "เงินต้นสัญญาใหม่", "settlementPolicy": { "label": "นโยบายดอกเบี้ยสัญญาเดิม", "full_contract_interest": "คิดดอกเต็มสัญญา (ค่าเริ่มต้น)", "accrued_to_date": "คิดดอกถึงวันต่อสัญญา" }, "adjustments": { "title": "รายการปรับเพิ่มเติม", "add": "เพิ่มรายการ", "empty": "ไม่มีรายการปรับเพิ่มเติม", "kind": "ประเภทรายการ", "amount": "จำนวนเงิน", "reason": "เหตุผล (จำเป็น)", "remove": "ลบรายการ", "kinds": { "fee": "ค่าธรรมเนียม", "penalty": "ค่าปรับ", "other_charge": "ค่าใช้จ่ายอื่น", "waiver": "ยกเว้นยอด" } }, "waivedCharges": "ยอดค่าใช้จ่ายที่ยกเว้น", "waiverReason": "เหตุผลการยกเว้น", "preview": "พรีวิวการต่อสัญญา", "previewTitle": "พรีวิวการต่อสัญญา", "edit": "แก้ไขและพรีวิวใหม่",
         "recoveredPrincipal": "เงินต้นที่รับคืนแล้ว", "oldOutstanding": "เงินต้นสัญญาเดิมคงค้าง", "contractualInterest": "ดอกเบี้ยเต็มสัญญาเดิม", "receivedInterest": "ดอกเบี้ยที่รับแล้ว", "remainingContractInterest": "ดอกสัญญาเดิมที่เหลือ", "accruedDueInterest": "ดอกถึงวันต่อสัญญา", "totalPaid": "รับชำระรวม", "recoveredBeforeAdjustments": "เงินคืนก่อนรายการปรับ", "manualCharges": "ค่าใช้จ่ายเพิ่มเติม", "manualWaivers": "ยอดยกเว้นเพิ่มเติม", "payments": "ประวัติรับชำระ", "dueCharges": "ค่าใช้จ่ายถึงกำหนด", "dueInterest": "ดอกเบี้ยถึงกำหนด", "dueFees": "ค่าธรรมเนียมถึงกำหนด", "duePenalties": "ค่าปรับถึงกำหนด", "waiver": "ยอดยกเว้น", "settlement": "ยอดหักชำระสัญญาเดิม", "cashPayout": "เงินสดสุทธิ",
         "renewalId": "รหัสการต่อสัญญา", "expires": "พรีวิวหมดอายุ", "newSchedule": "ตารางชำระใหม่", "dueDate": "วันครบกำหนด", "principal": "เงินต้น", "interest": "ดอกเบี้ย", "total": "รวม",
@@ -963,7 +964,7 @@
         "STALE_PAYMENT_PROPOSAL": "พรีวิวนี้เก่าแล้ว โปรดพรีวิวการจัดสรรอีกครั้ง", "PAYMENT_NOT_READY": "แก้ไขคำเตือนการตรวจสอบก่อนลงบัญชี",
         "REVERSAL_REASON_REQUIRED": "กรอกเหตุผลรายการกลับบัญชี", "REVERSAL_NOT_LATEST": "โปรดทำรายการกลับบัญชีชำระล่าสุดก่อน",
         "INVALID_ALIAS": "กรอกชื่อเรียกอื่นที่ถูกต้อง", "ALIAS_ALREADY_EXISTS": "ชื่อเรียกอื่นนี้มีอยู่แล้ว",
-        "STALE_RENEWAL_PREVIEW": "พรีวิวการต่อสัญญานี้เก่าแล้ว โปรดสร้างพรีวิวใหม่", "WAIVER_REASON_REQUIRED": "กรอกเหตุผลการยกเว้น",
+        "STALE_RENEWAL_PREVIEW": "พรีวิวการต่อสัญญานี้เก่าแล้ว โปรดสร้างพรีวิวใหม่", "INVALID_RENEWAL_DATE": "กรุณาระบุวันที่ต่อสัญญาให้ถูกต้อง", "RENEWAL_DATE_BEFORE_LOAN_START": "วันที่ต่อสัญญาต้องไม่ก่อนวันที่เริ่มสัญญาเดิม", "RENEWAL_DATE_IN_FUTURE": "วันที่ต่อสัญญาต้องไม่เป็นวันในอนาคต", "PAYMENT_START_DATE_BEFORE_RENEWAL": "วันเริ่มชำระต้องไม่ก่อนวันที่ต่อสัญญา", "RENEWAL_DATE_AFTER_POSTED_ACTIVITY": "วันที่ต่อสัญญาต้องไม่ก่อนรายการที่บันทึกแล้ว", "WAIVER_REASON_REQUIRED": "กรอกเหตุผลการยกเว้น",
         "WAIVER_EXCEEDS_DUE_CHARGES": "ยอดยกเว้นต้องไม่เกินค่าใช้จ่ายถึงกำหนด",
         "OLD_LOAN_NOT_REPLACEABLE": "แทนที่ได้เฉพาะสัญญาที่ใช้งานอยู่ โปรดตรวจสอบสัญญาต้นทางแล้วพรีวิวใหม่",
         "REPLACEMENT_DRAFT_NOT_AVAILABLE": "สัญญาที่ใช้แทนไม่ใช่ฉบับร่างที่พร้อมใช้งานแล้ว",

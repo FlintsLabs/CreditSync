@@ -524,6 +524,7 @@ export default function LoanList() {
                                 <nav aria-label={t("loans.borrowerNavigation.ariaLabel", "Borrower navigation")} className="max-h-[min(70vh,44rem)] space-y-1 overflow-y-auto pr-1">
                                     {groupedVisibleLoans.map((group, groupIndex) => {
                                         const tags = getUniqueBorrowerTags(group.loans);
+                                        const hasOverdueLoan = group.loans.some((loan) => loan.paymentHealth?.status === "overdue" || (loan.paymentHealth?.overdueItemCount ?? 0) > 0);
                                         const isActive = activeBorrowerGroup === groupIndex || (activeBorrowerGroup === null && groupIndex === 0);
                                         return (
                                             <button
@@ -536,7 +537,14 @@ export default function LoanList() {
                                                     document.getElementById(`borrower-group-${groupIndex}`)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
                                                 }}
                                             >
-                                                <span className="block truncate text-sm font-semibold text-foreground">{group.borrowerName}</span>
+                                                <span className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-foreground">
+                                                    <span className="truncate">{group.borrowerName}</span>
+                                                    {hasOverdueLoan && (
+                                                        <span role="img" aria-label={t("loans.borrowerNavigation.overdue", "Has overdue payments")} className="shrink-0 text-destructive">
+                                                            <AlertCircle className="h-4 w-4" />
+                                                        </span>
+                                                    )}
+                                                </span>
                                                 <span className="mt-0.5 block text-xs text-muted-foreground">{t("loans.borrowerGroup.loanCount", { count: group.loans.length })}</span>
                                                 {tags.length > 0 ? (
                                                     <span className="mt-1.5 flex flex-wrap gap-1">

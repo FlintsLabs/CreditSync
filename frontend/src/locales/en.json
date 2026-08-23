@@ -563,7 +563,8 @@
         "borrowerNavigation": {
             "title": "Borrowers",
             "ariaLabel": "Borrower navigation",
-            "noTags": "No tags"
+            "noTags": "No tags",
+            "overdue": "Has overdue payments"
         },
         "loanLabel": "Loan #{{id}}",
         "originalPrincipal": "Original principal",
@@ -989,7 +990,7 @@
     "renewal": {
         "title": "Daily Loan Renewal",
         "description": "Preview settlement, cash movement, and the replacement schedule before explicit confirmation.",
-        "requestedPrincipal": "New requested principal",
+        "requestedPrincipal": "New requested principal", "renewalDate": "Renewal effective date", "paymentStartDate": "First payment date", "nextDayDefault": "Next day (legacy default)",
         "settlementPolicy": { "label": "Old-contract interest policy", "full_contract_interest": "Full contract interest (default)", "accrued_to_date": "Accrued interest through renewal date" },
         "adjustments": { "title": "Manual adjustments", "add": "Add adjustment", "empty": "No manual adjustments.", "kind": "Adjustment type", "amount": "Amount", "reason": "Required reason", "remove": "Remove adjustment", "kinds": { "fee": "Fee", "penalty": "Penalty", "other_charge": "Other charge", "waiver": "Waiver" } },
         "waivedCharges": "Charges to waive",
@@ -1037,7 +1038,7 @@
         "STALE_PAYMENT_PROPOSAL": "This preview is stale. Preview the allocation again.", "PAYMENT_NOT_READY": "Resolve the review warnings before posting.",
         "REVERSAL_REASON_REQUIRED": "Enter a reason for the reversal.", "REVERSAL_NOT_LATEST": "Reverse later payments first.",
         "INVALID_ALIAS": "Enter a valid alias.", "ALIAS_ALREADY_EXISTS": "That alias already exists.",
-        "STALE_RENEWAL_PREVIEW": "This renewal preview is stale. Create a new preview.", "WAIVER_REASON_REQUIRED": "Enter a reason for the waiver.",
+        "STALE_RENEWAL_PREVIEW": "This renewal preview is stale. Create a new preview.", "INVALID_RENEWAL_DATE": "Enter a valid renewal date.", "RENEWAL_DATE_BEFORE_LOAN_START": "The renewal date cannot be before the loan start date.", "RENEWAL_DATE_IN_FUTURE": "The renewal date cannot be in the future.", "PAYMENT_START_DATE_BEFORE_RENEWAL": "The first payment date cannot be before the renewal date.", "RENEWAL_DATE_AFTER_POSTED_ACTIVITY": "The renewal date cannot be before posted loan activity.", "WAIVER_REASON_REQUIRED": "Enter a reason for the waiver.",
         "WAIVER_EXCEEDS_DUE_CHARGES": "The waiver cannot exceed the charges due.",
         "OLD_LOAN_NOT_REPLACEABLE": "Only an active loan can be replaced. Preview again after reviewing the source loan.",
         "REPLACEMENT_DRAFT_NOT_AVAILABLE": "The replacement loan is no longer an available draft.",
