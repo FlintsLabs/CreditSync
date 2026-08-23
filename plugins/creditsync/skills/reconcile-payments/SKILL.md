@@ -59,6 +59,10 @@ Use reconciliation only for an operator-reviewed historical intake that remains 
 
 Execution appends only the explicit interest allocations and does not synthesize a reversal. For `reversed_repost`, it preserves the source and evidence unchanged, creates one linked posted child, and returns both `sourcePaymentPublicId` and `postedPaymentPublicId`; evidence is not copied. Other posted intakes and principal, fee, or penalty components are rejected. Call `payment.reconcile.execute` only after displaying the exact preview and obtaining explicit human confirmation, passing the unchanged preview hash/version, reason, and a new stable idempotency key. Stale, expired, mismatched, ambiguous, missing-evidence, partially reversed, already-reposted, or conflicting retries stop for review. Same-key identical retries return the original reconciliation result.
 
+## Atomic scheduled-loan batches
+
+For several payment slips that must post as one financial decision, use the closed `payment.batch.*` tools. Inspect every intake, borrower, loan, and schedule before writing. Create one batch, add every intake, and prepare/finalize each evidence item when evidence is supplied. Preview the complete batch after all inputs are ready; stop every item if any identity, amount, duplicate, or allocation is ambiguous. Apply human-explicit allocations in one new preview revision, display the complete semantic summary and variance, obtain one explicit confirmation, then execute once with a stable idempotency key. Verify every posted intake and every affected loan balance after execution. A stale or changed-semantic response sets `repreviewRequired`; duplicate, mismatch, or ambiguous results set `humanReviewRequired` and must stop without partial posting.
+
 ## Quick reference
 
 | State | Continue? |

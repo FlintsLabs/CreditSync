@@ -1296,4 +1296,5 @@
             "load": "ไม่สามารถโหลดรายละเอียดสัญญาได้ในขณะนี้"
         }
     }
+    ,"paymentBatch": { "title": "ชุดการรับชำระเงินแบบอะตอมิก", "borrower": "UUID ลูกหนี้", "borrowerPlaceholder": "UUID ลูกหนี้ที่ยืนยันแล้ว", "intake": "รายการรับชำระที่ {{index}}", "intakePlaceholder": "UUID รายการรับชำระ", "amount": "จำนวนเงิน", "dueDate": "วันที่ครบกำหนดเป้าหมาย", "loan": "UUID สัญญาเงินกู้", "loanPlaceholder": "UUID สัญญารายวัน/ตามกำหนดที่ใช้งานอยู่", "schedule": "UUID ตารางชำระ", "schedulePlaceholder": "UUID ตารางเป้าหมาย", "intent": "เจตนาการจัดสรร", "onTime": "ตรงกำหนด", "advance": "ชำระล่วงหน้า", "backdated": "ย้อนหลัง", "addItem": "เพิ่มรายการรับชำระ", "total": "ยอดรวมชุด: {{amount}}", "previewStatus": "พรีวิว {{status}} (รุ่น {{version}})", "allocationCount": "การจัดสรรในพรีวิวทั้งหมด {{count}} รายการ", "warning": "คำเตือน: {{code}}", "posted": "ลงบัญชีชุดรับชำระแล้ว", "confirm": "ฉันตรวจสอบตัวอย่างผลลัพธ์ทั้งหมดและยืนยันการดำเนินการนี้", "preview": "ดูตัวอย่างทั้งชุด", "execute": "ดำเนินการทั้งชุด" }
 }

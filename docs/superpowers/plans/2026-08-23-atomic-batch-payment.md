@@ -622,7 +622,7 @@ Run: `cd frontend && bun run build`
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit the Web UI**
+- [x] **Step 8: Commit the Web UI**
 
 ```bash
 git add CHANGELOG.md frontend/src/pages/dashboard/payments frontend/src/locales/en.json frontend/src/locales/th.json
@@ -641,7 +641,7 @@ git commit -m "feat: add payment batch preview editor"
 - Consumes: all prior task deliverables.
 - Produces: operator documentation and final verified release candidate without deployment.
 
-- [ ] **Step 1: Update operator documentation**
+- [x] **Step 1: Update operator documentation**
 
 Document when the agent chooses batch flow, how one slip can split across loans, why ambiguity stops the whole batch, how whole-batch prompt edits work, one-confirmation semantics, and how retries avoid duplicate posting. Do not include real borrower data, references, signed URLs, or evidence.
 
@@ -661,7 +661,7 @@ Run: `cd plugins/creditsync && bun test && bun run validate`
 
 Expected: PASS and committed contract equals advertised contract.
 
-- [ ] **Step 4: Run complete frontend gates**
+- [x] **Step 4: Run complete frontend gates**
 
 Run: `cd frontend && bun test && bun run lint && bun run build`
 

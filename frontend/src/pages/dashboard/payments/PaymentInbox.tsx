@@ -9,6 +9,7 @@ import { Input } from "../../../components/ui/Input";
 import { Badge } from "../../../components/ui/badge";
 import { EvidencePreviewButton } from "../../../components/evidence/EvidencePreviewButton";
 import { PaymentInboxList } from "./PaymentInboxList";
+import { PaymentBatchEditor } from "./PaymentBatchEditor";
 import {
     initialPaymentInboxQuery,
     toPaymentInboxParams,
@@ -224,6 +225,7 @@ export default function PaymentInbox() {
         await api.post(`/payment-intakes/${detail!.publicId}/evidence/${intent.publicId}/finalize`);
     });
 
+    if (searchParams.get("batch") === "1") return <div className="space-y-6"><PaymentBatchEditor onPreview={() => undefined} onExecute={() => undefined} /></div>;
     return <div className="space-y-6" aria-busy={listLoading || detailLoading || busy}>
         <div className="flex flex-wrap items-center justify-between gap-3">
             <div><h1 className="text-3xl font-bold">{t("payments.title")}</h1><p className="text-muted-foreground">{t("payments.description")}</p></div>

@@ -28,7 +28,7 @@ describe("CreditSync plugin 7.3.0 contract", () => {
     test("manifest exposes only the private app and orchestration skills", async () => {
         const manifest = await json(".codex-plugin/plugin.json");
         expect(manifest.name).toBe("creditsync");
-        expect(manifest.version).toBe("7.3.0");
+        expect(manifest.version).toBe("7.4.0");
         expect(manifest.skills).toBe("./skills/");
         expect(manifest.apps).toBe("./.app.json");
         expect(manifest).not.toHaveProperty("mcpServers");
@@ -123,9 +123,9 @@ describe("CreditSync plugin 7.3.0 contract", () => {
     test("frozen full MCP metadata matches an actual MCP tools/list response", async () => {
         const contract = await json("references/mcp-tool-contract.json") as unknown as FrozenMcpContract;
         expect(contract.schemaVersion).toBe("1.0");
-        expect(contract.compatibility).toBe("Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 7.3.0; breaking changes require plugin 8.0.0.");
+        expect(contract.compatibility).toBe("Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 7.4.0; breaking changes require plugin 8.0.0.");
         expect(contract.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
-        expect(contract.tools).toHaveLength(84);
+        expect(contract.tools).toHaveLength(91);
         expect(contract.tools.every((tool) => tool.inputSchema && tool.outputSchema && tool.annotations)).toBe(true);
         const advertised = await captureAdvertisedMcpContract();
         expect(canonicalContractJson(contract)).toBe(canonicalContractJson(advertised));
@@ -265,8 +265,8 @@ describe("CreditSync plugin 7.3.0 contract", () => {
             "loan-replacement-direct-status-mutation",
             "loan-replacement-portfolio-scope-mismatch",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
-        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(30);
-        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(50);
+        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(32);
+        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(54);
     });
 
     test("floating settlement skill preserves exact composition and all execution stop gates", async () => {
