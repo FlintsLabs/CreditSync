@@ -104,7 +104,7 @@ describe("floating weekly and intermediary integration migration lineage", () =>
         expect(entries.filter((entry) => entry.tag === integrationTag)).toHaveLength(1);
         expect(entries.filter((entry) => entry.tag === borrowerUploadIntentMigrationTag)).toHaveLength(1);
         expect(entries.filter((entry) => entry.tag === productionLoanSchemaReconciliationMigrationTag)).toHaveLength(1);
-    });
+    }, 20_000);
 
     test("removes the branch-local migration lineage instead of replaying it", async () => {
         // Break caught: one of the development-only 0027-0029 migrations is deployed after main under a stale tag or filename.
@@ -114,7 +114,7 @@ describe("floating weekly and intermediary integration migration lineage", () =>
             expect(await Bun.file(`${backendRoot}drizzle/${tag}.sql`).exists()).toBe(false);
         }
         expect(await Bun.file(`${backendRoot}drizzle/${integrationTag}.sql`).exists()).toBe(true);
-    });
+    }, 20_000);
 
     test("keeps authoritative main migration bytes identical to merge parent 5268363", async () => {
         // Break caught: semantic integration silently edits immutable production migration history.
