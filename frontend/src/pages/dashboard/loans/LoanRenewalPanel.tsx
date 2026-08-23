@@ -17,6 +17,8 @@ import {
     type RenewalComposition,
     type RenewalSettlementPolicy,
 } from "./loan-renewal-model";
+import { RenewalSummaryCard } from "./RenewalSummaryCard";
+import type { LoanRenewalSummary } from "./renewal-summary-image";
 
 interface RenewableLoan {
     publicId: string;
@@ -72,6 +74,7 @@ export function LoanRenewalPanel({ loan }: { loan: RenewableLoan }) {
     const [preview, setPreview] = useState<RenewalPreview | null>(null);
     const [execution, setExecution] = useState<RenewalExecution | null>(null);
     const [schedule, setSchedule] = useState<ScheduleRow[]>([]);
+    const [summary, setSummary] = useState<LoanRenewalSummary | null>(null);
     const [audit, setAudit] = useState<AuditState>({ status: "idle" });
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
@@ -88,7 +91,7 @@ export function LoanRenewalPanel({ loan }: { loan: RenewableLoan }) {
     }, [t]);
 
     const discardApproval = () => {
-        setPreview(null); setExecution(null); setSchedule([]); setConfirmed(false); setCollectionConfirmed(false);
+        setPreview(null); setExecution(null); setSchedule([]); setSummary(null); setConfirmed(false); setCollectionConfirmed(false);
         executionKey.current = null; reversalKey.current = null;
     };
 
@@ -132,6 +135,8 @@ export function LoanRenewalPanel({ loan }: { loan: RenewableLoan }) {
             ]);
             setPreview(renewal.data);
             setSchedule(nextSchedule.data?.schedule ?? []);
+            const summaryResponse = await api.get(`/loan-renewals/${renewal.data.publicId}/summary`);
+            setSummary(summaryResponse.data);
             await loadAudit(renewal.data.publicId);
         } catch (caught) {
             setError(localizedError(caught, "renewal.errors.preview"));
@@ -154,6 +159,7 @@ export function LoanRenewalPanel({ loan }: { loan: RenewableLoan }) {
             ) as RenewalExecution;
             setExecution(result);
             reversalKey.current = null;
+            setSummary((await api.get(`/loan-renewals/${preview.publicId}/summary`)).data);
             await loadAudit(preview.publicId);
         } catch (caught) {
             setError(localizedError(caught, "renewal.errors.execute"));
@@ -170,6 +176,7 @@ export function LoanRenewalPanel({ loan }: { loan: RenewableLoan }) {
                 headers: { "Idempotency-Key": stableIntentKey(reversalKey, fingerprint) },
             });
             setExecution(result.data);
+            setSummary((await api.get(`/loan-renewals/${preview.publicId}/summary`)).data);
             await loadAudit(preview.publicId);
         } catch (caught) {
             setError(localizedError(caught, "renewal.errors.reverse"));
@@ -199,6 +206,7 @@ export function LoanRenewalPanel({ loan }: { loan: RenewableLoan }) {
                     <div><span className="text-muted-foreground">{t("renewal.cashPayout")}</span><div className="font-medium">{t(`renewal.cashDirection.${preview.cashDirection}`)} · {money(preview.cashAmount)}</div></div><div className="sm:col-span-2"><span className="text-muted-foreground">{t("renewal.renewalId")}</span><div className="break-all font-mono text-xs">{preview.publicId}</div><div className="text-xs text-muted-foreground">{t("renewal.expires")}: {dateTime(preview.expiresAt)}</div></div>
                 </div>{preview.composition.payments.length > 0 && <div className="mt-4"><strong>{t("renewal.payments")}</strong>{preview.composition.payments.map((payment) => <div className="mt-2 grid gap-1 rounded bg-muted/30 p-2 text-xs sm:grid-cols-3" key={payment.transactionPublicId}><span>{dateTime(payment.paidAt)}</span><span>{money(payment.amount)}</span><span className="break-all font-mono">{payment.transactionPublicId}</span></div>)}</div>}{preview.composition.adjustments.length > 0 && <div className="mt-4"><strong>{t("renewal.adjustments.title")}</strong>{preview.composition.adjustments.map((line) => <div className="mt-2 flex justify-between gap-3 rounded bg-muted/30 p-2 text-xs" key={line.lineNo}><span>{t(`renewal.adjustments.kinds.${line.kind}`)} · {line.reason}</span><span>{money(line.amount)}</span></div>)}</div>}</div>
                 <div className="rounded border p-4"><strong>{t("renewal.newSchedule")}</strong><div className="mt-3 max-h-64 overflow-auto"><table className="w-full text-sm"><thead><tr className="border-b text-left"><th className="p-2">#</th><th className="p-2">{t("renewal.dueDate")}</th><th className="p-2">{t("renewal.principal")}</th><th className="p-2">{t("renewal.interest")}</th><th className="p-2">{t("renewal.total")}</th></tr></thead><tbody>{schedule.map((row) => <tr key={row.installmentNo} className="border-b"><td className="p-2">{row.installmentNo}</td><td className="p-2">{new Intl.DateTimeFormat(i18n.language).format(new Date(`${row.dueDate}T00:00:00`))}</td><td className="p-2">{money(row.principalComponent)}</td><td className="p-2">{money(row.interestComponent)}</td><td className="p-2 font-medium">{money(row.amount)}</td></tr>)}</tbody></table></div></div>
+                {summary && <RenewalSummaryCard summary={summary} />}
                 {!execution && <div className="rounded border p-4"><div className="mb-3 rounded bg-muted/30 p-3 text-sm">{t("renewal.approvalSummary", { policy: t(`renewal.settlementPolicy.${preview.composition.settlementPolicy}`), oldInterest: money(preview.composition.settlementAmount), newInterest: money(preview.composition.contractualInterest), cash: money(preview.cashAmount), direction: t(`renewal.cashDirection.${preview.cashDirection}`) })}</div><label className="grid gap-1 text-sm">{t("renewal.executionReason")}<Input value={executionReason} onChange={(event) => setExecutionReason(event.target.value)} /></label><label className="mt-3 flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} className="mt-1" /><span>{t("renewal.confirmation")}</span></label>{preview.cashDirection === "collection" && <label className="mt-3 flex items-start gap-2 rounded border border-amber-300 bg-amber-50 p-3 text-sm"><input type="checkbox" checked={collectionConfirmed} onChange={(event) => setCollectionConfirmed(event.target.checked)} className="mt-1" /><span>{t("renewal.collectionConfirmation", { amount: money(preview.cashAmount) })}</span></label>}<Button className="mt-3 bg-emerald-600 hover:bg-emerald-700" disabled={busy || !canExecuteRenewal(preview.cashDirection, confirmed, collectionConfirmed) || !executionReason.trim()} onClick={() => void execute()}><CheckCircle2 className="mr-2 h-4 w-4" />{busy ? t("common.loading") : t("renewal.confirm")}</Button></div>}
                 {execution?.status === "executed" && <div className="rounded border p-4"><div className="font-medium text-emerald-700">{t("renewal.executed", { id: execution.newLoanPublicId })}</div><label className="mt-3 grid gap-1 text-sm">{t("renewal.reverseReason")}<Input value={reverseReason} onChange={(event) => setReverseReason(event.target.value)} /></label><Button className="mt-3" variant="destructive" disabled={busy || !reverseReason.trim()} onClick={() => void reverse()}><RotateCcw className="mr-2 h-4 w-4" />{busy ? t("common.loading") : t("renewal.reverse")}</Button></div>}
                 <div className="rounded border p-4" aria-live="polite"><strong>{t("renewal.audit")}</strong>{audit.status === "loading" && <div role="status">{t("renewal.auditLoading")}</div>}{audit.status === "empty" && <div>{t("renewal.auditEmpty")}</div>}{audit.status === "forbidden" && <div>{t("renewal.auditForbidden")}</div>}{audit.status === "error" && <div role="alert">{t("renewal.auditFailed")}</div>}{audit.status === "ready" && audit.entries.map((entry) => <div key={entry.id} className="mt-2 rounded bg-muted/30 p-2 text-xs"><div>{t(`auditActions.${entry.action}`, { defaultValue: t("auditActions.unknown") })} · {dateTime(entry.createdAt)}</div><div className="break-all font-mono text-muted-foreground">{t("renewal.auditId")}: {entry.id} · {t("renewal.correlationId")}: {entry.correlationId || "—"} · {t("renewal.requestId")}: {entry.requestId || "—"}</div></div>)}</div>

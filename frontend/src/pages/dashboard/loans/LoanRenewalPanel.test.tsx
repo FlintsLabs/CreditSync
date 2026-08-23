@@ -17,7 +17,7 @@ const composition = {
 } as const;
 
 describe("LoanRenewalPanel manual renewal", () => {
-    beforeEach(async () => { vi.clearAllMocks(); await appI18n.changeLanguage("en"); (api.get as ReturnType<typeof vi.fn>).mockResolvedValue({ data: [] }); });
+    beforeEach(async () => { vi.clearAllMocks(); await appI18n.changeLanguage("en"); (api.get as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => ({ data: url.endsWith("/summary") ? { status: "preview", watermark: "preview_not_executed", renewalPublicId: "01a01eaf-fdec-79a1-9e0c-fa66a5efa4cc", borrower: { displayName: "Customer" }, oldContract: { publicId: "019ff2b2-15e2-7df7-a594-eb836ff388f0", startDate: "2026-08-01", dueDate: "2026-08-24" }, replacement: { publicId: null, principal: "2000.00", installmentAmount: "100.00", totalInstallments: 24 }, composition, generatedAt: "2026-08-10T10:00:00.000Z" } : [] })); });
 
     test("sends explicit policy and manual lines, renders backend values, and edit discards approval", async () => {
         (api.post as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => url === "/loan-renewals/preview"
