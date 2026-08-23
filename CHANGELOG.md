@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.46 - 2026-08-24
+
+### Added
+- Added the approved design for anchored floating advance-interest collection, distinguishing prepaid period coverage from arrears interest, explicit zero-default penalties, settlement treatment, and append-only payment correction.
+
 ## v0.3.45 - 2026-08-24
 
 ### Added
