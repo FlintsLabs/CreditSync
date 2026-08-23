@@ -41,9 +41,10 @@ export function batchTotal(items: BatchItemDraft[]): string {
 }
 
 export function isBatchReady(items: BatchItemDraft[], borrowerPublicId: string, confirmed: boolean, preview: BatchPreview | null): boolean {
-    if (!preview) return false;
-    return confirmed && Boolean(borrowerPublicId.trim()) && items.length > 0 && preview.status === "ready" && preview.evidenceReady
-        && preview.warnings.length === 0 && preview.allocations.length > 0
+    const readyPreview = preview;
+    if (!readyPreview) return false;
+    return confirmed && Boolean(borrowerPublicId.trim()) && items.length > 0 && readyPreview.status === "ready" && readyPreview.evidenceReady
+        && readyPreview.warnings.length === 0 && readyPreview.allocations.length > 0
         && items.every((item) => item.paymentIntakePublicId.trim() && item.targetDueDate && item.loanPublicId && item.schedulePublicId && new Decimal(normalizeMoney(item.amount)).gt(0));
 }
 
