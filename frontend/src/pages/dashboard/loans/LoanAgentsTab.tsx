@@ -46,7 +46,7 @@ function domainMessage(error: unknown, fallback: string) {
     return data?.message ?? data?.error ?? fallback;
 }
 
-export function LoanAgentsTab({ loanPublicId }: { loanPublicId: string }) {
+export function LoanAgentsTab({ loanPublicId, loanStartDate }: { loanPublicId: string; loanStartDate?: string | null }) {
     const { t, i18n } = useTranslation();
     const [participants, setParticipants] = useState<Participant[]>([]);
     const [intermediaries, setIntermediaries] = useState<Intermediary[]>([]);
@@ -87,6 +87,7 @@ export function LoanAgentsTab({ loanPublicId }: { loanPublicId: string }) {
     const totalRate = participants.filter((item) => item.status === "active").reduce((sum, item) => sum.plus(item.commissionRate), new Decimal(0)).toFixed(4);
     const formatDate = (value: string | null) => value ? new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeZone: "Asia/Bangkok" }).format(new Date(value)) : "—";
     const isDirectCollection = form.role === "direct_collection";
+    const minimumEffectiveAt = loanStartDate ? `${loanStartDate.slice(0, 10)}T00:00` : undefined;
 
     const open = (nextMode: Mode, participant?: Participant) => {
         setMode(nextMode);
@@ -99,7 +100,7 @@ export function LoanAgentsTab({ loanPublicId }: { loanPublicId: string }) {
             effectiveAt: "",
             note: "",
             confirmed: false,
-        } : initialForm);
+        } : { ...initialForm, effectiveAt: nextMode === "add" ? minimumEffectiveAt ?? "" : "" });
     };
 
     const submit = async () => {
@@ -175,7 +176,7 @@ export function LoanAgentsTab({ loanPublicId }: { loanPublicId: string }) {
                 <div className="space-y-4">
                     {mode === "add" && <div className="grid gap-2"><label htmlFor="agent-intermediary">{t("loanDetail.agents.agent", "Agent")}</label><select id="agent-intermediary" className="h-10 rounded-md border bg-background px-3" value={form.intermediaryPublicId} onChange={(event) => setForm({ ...form, intermediaryPublicId: event.target.value, confirmed: false })}><option value="">{t("loanDetail.agents.choose", "Choose an agent")}</option>{intermediaries.map((item) => <option key={item.publicId} value={item.publicId}>{item.name}</option>)}</select></div>}
                     {mode !== "end" && <><div className="grid gap-2"><span id="agent-role-label" className="font-medium">{t("loanDetail.agents.careType", "Contract care type")}</span><p className="text-sm text-muted-foreground">{t("loanDetail.agents.careTypeHint", "Choose one type.")}</p><div role="radiogroup" aria-labelledby="agent-role-label" className="grid gap-2">{commissionRoles.map(({ value, icon: Icon }) => <button key={value} type="button" role="radio" aria-checked={form.role === value} className={`flex items-start gap-3 rounded-lg border p-3 text-left transition-colors ${form.role === value ? "border-primary bg-primary/5 ring-1 ring-primary" : "hover:bg-muted/50"}`} onClick={() => setForm({ ...form, role: value, commissionRate: value === "direct_collection" ? "0.00" : form.commissionRate, confirmed: false })}><span className={`rounded-md p-2 ${form.role === value ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}><Icon className="h-4 w-4" /></span><span className="min-w-0 flex-1"><span className="block font-medium">{t(`loanDetail.agents.roles.${value}`, value)}</span><span className="mt-0.5 block text-sm text-muted-foreground">{t(`loanDetail.agents.roleDescriptions.${value}`, value)}</span></span>{form.role === value && <CheckCircle2 className="mt-1 h-5 w-5 shrink-0 text-primary" aria-hidden="true" />}</button>)}</div></div><div className="grid gap-2"><label htmlFor="agent-rate">{t("loanDetail.agents.rateInput", "Commission rate (%)")}</label><Input id="agent-rate" inputMode="decimal" disabled={isDirectCollection} value={form.commissionRate} onChange={(event) => setForm({ ...form, commissionRate: sanitizeCommissionRate(event.target.value), confirmed: false })} />{isDirectCollection && <p className="text-sm text-muted-foreground">{t("loanDetail.agents.directCollectionRateHint", "Set to 0% for direct collection.")}</p>}</div></>}
-                    <div className="grid gap-2"><label htmlFor="agent-effective">{t(mode === "end" ? "loanDetail.agents.effectiveTo" : "loanDetail.agents.effectiveFrom", mode === "end" ? "Effective to" : "Effective from")}</label><div className="relative"><Input ref={effectiveAtRef} id="agent-effective" className="pr-10 [&::-webkit-calendar-picker-indicator]:opacity-0" type="datetime-local" value={form.effectiveAt} onChange={(event) => setForm({ ...form, effectiveAt: event.target.value, confirmed: false })} /><button type="button" aria-label={t("loanDetail.agents.openDatePicker", "Open date picker")} className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-muted-foreground" onClick={() => effectiveAtRef.current?.showPicker?.()}><Calendar className="h-4 w-4" aria-hidden="true" /></button></div></div>
+                    <div className="grid gap-2"><label htmlFor="agent-effective">{t(mode === "end" ? "loanDetail.agents.effectiveTo" : "loanDetail.agents.effectiveFrom", mode === "end" ? "Effective to" : "Effective from")}</label><div className="relative"><Input ref={effectiveAtRef} id="agent-effective" className="pr-10 [&::-webkit-calendar-picker-indicator]:opacity-0" type="datetime-local" min={minimumEffectiveAt} value={form.effectiveAt} onChange={(event) => setForm({ ...form, effectiveAt: event.target.value, confirmed: false })} /><button type="button" aria-label={t("loanDetail.agents.openDatePicker", "Open date picker")} className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-muted-foreground" onClick={() => effectiveAtRef.current?.showPicker?.()}><Calendar className="h-4 w-4" aria-hidden="true" /></button></div></div>
                     <div className="grid gap-2"><label htmlFor="agent-note">{t(mode === "end" ? "loanDetail.agents.reason" : "loanDetail.agents.note", mode === "end" ? "Reason" : "Note")}</label><Input id="agent-note" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value, confirmed: false })} /></div>
                     <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={form.confirmed} onChange={(event) => setForm({ ...form, confirmed: event.target.checked })} /><span>{t("loanDetail.agents.confirmation", "I confirm this commission agreement")}</span></label>
                     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}

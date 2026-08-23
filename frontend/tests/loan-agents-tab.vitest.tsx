@@ -65,6 +65,18 @@ describe("LoanAgentsTab", () => {
         expect(screen.getByLabelText("Effective from")).toHaveClass("pr-10");
     });
 
+    it("defaults agent effectiveness to the loan start and prevents dates before it", async () => {
+        vi.mocked(api.get).mockImplementation(async (url) => url === "/intermediaries?status=active"
+            ? { data: [{ publicId: "agent-a", name: "Agent A", aliases: [] }] }
+            : { data: [] });
+        render(<LoanAgentsTab loanPublicId="loan-1" loanStartDate="2026-08-14" />);
+        await screen.findByText("No agents assigned");
+        await userEvent.click(screen.getByRole("button", { name: "Add agent" }));
+
+        expect(screen.getByLabelText("Effective from")).toHaveValue("2026-08-14T00:00");
+        expect(screen.getByLabelText("Effective from")).toHaveAttribute("min", "2026-08-14T00:00");
+    });
+
     it("localizes the no-agent state in Thai", async () => {
         await i18n.changeLanguage("th");
         vi.mocked(api.get).mockResolvedValue({ data: [] });

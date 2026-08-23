@@ -5,6 +5,9 @@
 ### Added
 - Added an authenticated application footer with a Changelog link and visible CreditSync, MCP schema, and Plugin release versions.
 
+### Fixed
+- Defaulted loan-agent effective dates to the loan start and prevented selecting an earlier date in the agreement dialog.
+
 ## v0.3.39 - 2026-08-23
 
 ### Added

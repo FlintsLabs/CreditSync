@@ -594,7 +594,7 @@ export default function LoanDetail() {
                 </Card>
             ) : (
                 <LoanDetailTabs value={activeTab} onChange={setActiveTab} renderPanel={(tab) => tab === "agents"
-                    ? <LoanAgentsTab loanPublicId={loan.publicId} />
+                    ? <LoanAgentsTab loanPublicId={loan.publicId} loanStartDate={loan.startDate} />
                     : tab === "payments"
                         ? <LoanPaymentHistoryTab loanPublicId={loan.publicId} />
                         : tab === "schedule"
