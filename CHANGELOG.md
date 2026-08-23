@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.41 - 2026-08-24
+
+### Added
+- Added a localized intermediary-profile name editor with audited backend update integration and regression coverage.
+
 ## v0.3.40 - 2026-08-23
 
 ### Added

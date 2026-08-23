@@ -8,7 +8,7 @@ import { refreshForScope } from "../src/pages/dashboard/intermediaries/intermedi
 import { api } from "../src/lib/api";
 import appI18n from "../src/lib/i18n";
 
-vi.mock("../src/lib/api", () => ({ api: { get: vi.fn(), post: vi.fn() } }));
+vi.mock("../src/lib/api", () => ({ api: { get: vi.fn(), post: vi.fn(), patch: vi.fn() } }));
 
 const INTERMEDIARY_ID = "11111111-1111-4111-8111-111111111111";
 const LOAN_ID = "22222222-2222-4222-8222-222222222222";
@@ -251,6 +251,24 @@ describe("intermediary profile workspace", () => {
         expect(screen.getByText(/1 disbursement group needs review/i)).toBeInTheDocument();
         expect(screen.getByText(/Krungthai.*•••• 2233/)).toBeInTheDocument();
         expect(screen.queryByText(/1111222233/)).not.toBeInTheDocument();
+    });
+
+    it("allows the intermediary name to be edited from the profile header", async () => {
+        const user = userEvent.setup();
+        const renamedProfile = { ...profile, name: "Mae Mali Updated" };
+        vi.mocked(api.patch).mockResolvedValue({ data: renamedProfile });
+        renderDetail();
+
+        expect(await screen.findByRole("heading", { name: "Mae Mali" })).toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: /edit name/i }));
+        const nameInput = screen.getByRole("textbox", { name: /name/i });
+        await user.clear(nameInput);
+        await user.type(nameInput, "Mae Mali Updated");
+        await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+        await waitFor(() => expect(api.patch).toHaveBeenCalledWith(`/intermediaries/${INTERMEDIARY_ID}`, { name: "Mae Mali Updated" }));
+        expect(await screen.findByRole("heading", { name: "Mae Mali Updated" })).toBeInTheDocument();
+        expect(screen.queryByRole("textbox", { name: /name/i })).not.toBeInTheDocument();
     });
 
     // Break caught: default decimal.js precision rounds a valid 29-digit maximum, or summing multiple loans loses cents.

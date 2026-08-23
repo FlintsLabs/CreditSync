@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { AlertTriangle, ArrowLeft, Landmark } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Landmark, Pencil } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../../lib/api";
 import { formatMoneyExact, sumMoney } from "../../../lib/workflow-model";
@@ -39,6 +39,10 @@ export default function IntermediaryDetail() {
     const [loading, setLoading] = useState(true);
     const [loadError, setLoadError] = useState<"notFound" | "failed" | null>(null);
     const [reload, setReload] = useState(0);
+    const [editingName, setEditingName] = useState(false);
+    const [nameDraft, setNameDraft] = useState("");
+    const [savingName, setSavingName] = useState(false);
+    const [nameError, setNameError] = useState(false);
     const activeProfileId = useActiveScope(id);
 
     useEffect(() => {
@@ -72,6 +76,26 @@ export default function IntermediaryDetail() {
     const reviewGroups = groups.filter((group) => ["draft", "needs_review"].includes(group.status));
     const money = (value: string) => formatMoneyExact(value, i18n.language);
     const date = (value: string) => new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeZone: "Asia/Bangkok" }).format(new Date(value));
+    const saveName = async (event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        if (!profile) return;
+        const name = nameDraft.trim();
+        if (!name) {
+            setNameError(true);
+            return;
+        }
+        setSavingName(true);
+        setNameError(false);
+        try {
+            const response = await api.patch<Profile>(`/intermediaries/${profile.publicId}`, { name });
+            setProfile(response.data);
+            setEditingName(false);
+        } catch {
+            setNameError(true);
+        } finally {
+            setSavingName(false);
+        }
+    };
 
     if (loading) return <p>{t("common.loading")}</p>;
     if (loadError === "notFound") return <p>{t("intermediary.profile.notFound")}</p>;
@@ -81,7 +105,16 @@ export default function IntermediaryDetail() {
     return <div className="space-y-6">
         <Link className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground" to="/intermediaries"><ArrowLeft className="mr-2 h-4 w-4" />{t("intermediary.profile.back")}</Link>
         <div className="flex flex-wrap items-start justify-between gap-3">
-            <div><h1 className="text-2xl font-bold">{profile.name}</h1><p className="text-sm text-muted-foreground">{profile.aliases.join(" · ") || profile.notes}</p></div>
+            <div>
+                {editingName ? <form className="flex flex-wrap items-center gap-2" onSubmit={(event) => void saveName(event)}>
+                    <label className="sr-only" htmlFor="intermediary-name">{t("intermediary.profile.nameLabel")}</label>
+                    <input id="intermediary-name" className="h-10 rounded-md border bg-background px-3 text-2xl font-bold" value={nameDraft} onChange={(event) => { setNameDraft(event.target.value); setNameError(false); }} autoFocus required />
+                    <button className="rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted" type="submit" disabled={savingName}>{savingName ? t("common.saving") : t("common.save")}</button>
+                    <button className="rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted" type="button" onClick={() => { setEditingName(false); setNameError(false); }} disabled={savingName}>{t("common.cancel")}</button>
+                </form> : <div className="flex items-center gap-2"><h1 className="text-2xl font-bold">{profile.name}</h1><button className="rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground" type="button" aria-label={t("intermediary.profile.editName")} onClick={() => { setNameDraft(profile.name); setNameError(false); setEditingName(true); }}><Pencil className="h-4 w-4" /></button></div>}
+                <p className="text-sm text-muted-foreground">{profile.aliases.join(" · ") || profile.notes}</p>
+                {nameError && <p className="text-sm text-destructive" role="alert">{t("intermediary.profile.nameError")}</p>}
+            </div>
             <Link className="rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted" to={`/intermediaries/remittances?intermediaryPublicId=${profile.publicId}`}>{t("intermediary.profile.remittances")}</Link>
         </div>
 

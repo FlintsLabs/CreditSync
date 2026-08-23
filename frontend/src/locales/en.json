@@ -1099,6 +1099,9 @@
         },
         "profile": {
             "back": "Back to intermediaries",
+            "editName": "Edit name",
+            "nameLabel": "Intermediary name",
+            "nameError": "Enter a name or try saving again.",
             "notFound": "Intermediary profile not found.",
             "loadError": "Could not load intermediary profile.",
             "remittances": "Collections and remittances",
