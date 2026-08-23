@@ -524,7 +524,8 @@ function resultPublicId(result: unknown) {
         ?? record.loanPublicId
         ?? record.settlementPublicId
         ?? record.replacementPublicId
-        ?? record.reconciliationPublicId;
+        ?? record.reconciliationPublicId
+        ?? record.batchPublicId;
     return typeof value === "string" ? value : null;
 }
 

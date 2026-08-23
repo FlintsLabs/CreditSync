@@ -189,9 +189,9 @@ export async function executePaymentBatch(ctx: CommandContext, batchPublicId: st
         await tx.update(paymentBatchAllocations).set({ status: "posted" }).where(and(eq(paymentBatchAllocations.tenantId, ctx.tenantId), eq(paymentBatchAllocations.previewId, preview.id)));
         await tx.update(paymentBatchPreviews).set({ status: "posted" }).where(and(eq(paymentBatchPreviews.tenantId, ctx.tenantId), eq(paymentBatchPreviews.id, preview.id)));
         const updated = await tx.update(paymentBatches).set({ status: "posted", executeIdempotencyKey: input.idempotencyKey, executeRequestHash: digest(input), postedAt: new Date(), updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(eq(paymentBatches.tenantId, ctx.tenantId), eq(paymentBatches.id, locked.id))).returning().then((rows) => rows[0]!);
-        await createAuditLog(tx, { tenantId: ctx.tenantId, actorUserId: ctx.actorUserId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, entityType: "payment_batch", entityId: updated.publicId, action: "posted", payload: { batchPublicId: updated.publicId, intakePublicIds: posted.map((item) => item.intakePublicId), transactionPublicIds: posted.flatMap((item) => item.transactionPublicIds) } });
+        const audit = await createAuditLog(tx, { tenantId: ctx.tenantId, actorUserId: ctx.actorUserId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, entityType: "payment_batch", entityId: updated.publicId, action: "posted", payload: { batchPublicId: updated.publicId, intakePublicIds: posted.map((item) => item.intakePublicId), transactionPublicIds: posted.flatMap((item) => item.transactionPublicIds) } });
         await options.afterStage?.("all");
-        return { batchPublicId: updated.publicId, status: "posted", posted, auditPublicIds: [], correlationId: ctx.correlationId };
+        return { batchPublicId: updated.publicId, status: "posted", posted, auditPublicIds: [audit.publicId], correlationId: ctx.correlationId };
     };
     return db.transaction(run);
 }

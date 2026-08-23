@@ -1293,6 +1293,53 @@ describe("default MCP adapter integration", () => {
             paymentIntakePublicId: intakePublicId,
             evidencePublicId: evidence.publicId,
         })).data;
+
+        const batchIntake = (await call("intake.create", {
+            amount: "1.00",
+            receivedAt: "2026-08-10T00:00:00.000Z",
+            payerName: "MCP batch payer",
+            idempotencyKey: "mcp-all-tools-batch-intake",
+        })).data;
+        const batchIntakePublicId = String(batchIntake.publicId);
+        const batch = (await call("payment.batch.create", {
+            borrowerPublicId,
+            idempotencyKey: "mcp-all-tools-batch-create",
+        })).data;
+        const batchPublicId = String(batch.publicId);
+        const batchItem = (await call("payment.batch.item.add", {
+            batchPublicId,
+            paymentIntakePublicId: batchIntakePublicId,
+            itemOrder: 1,
+        })).data;
+        const batchItemPublicId = String((batchItem.items as Array<{ publicId: string }>)[0]!.publicId);
+        const batchEvidence = (await call("payment.batch.evidence.prepare", {
+            batchItemPublicId,
+            paymentIntakePublicId: batchIntakePublicId,
+            mimeType: "image/png",
+            size: 4,
+            sha256: "c".repeat(64),
+            evidenceType: "slip",
+        })).data;
+        await call("payment.batch.evidence.finalize", {
+            batchItemPublicId,
+            paymentIntakePublicId: batchIntakePublicId,
+            evidencePublicId: batchEvidence.publicId,
+        });
+        await call("payment.batch.get", { batchPublicId });
+        const batchSchedule = (await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.loanId, activatedLoan.id) }))!;
+        const batchPreview = (await call("payment.batch.preview", {
+            batchPublicId,
+            borrowerPublicId,
+            allocations: [{ itemPublicId: batchItemPublicId, loanPublicId, schedulePublicId: batchSchedule.publicId, amount: "1.00", targetDueDate: batchSchedule.dueDate, intent: "on_time" }],
+        })).data;
+        await call("payment.batch.execute", {
+            batchPublicId,
+            previewPublicId: batchPreview.publicId,
+            previewHash: batchPreview.previewHash,
+            confirmationHash: batchPreview.confirmationHash,
+            confirmed: true,
+            idempotencyKey: "mcp-all-tools-batch-execute",
+        });
         const inspected = (await call("intake.get", { paymentIntakePublicId: intakePublicId })).data;
         expect(inspected.evidence).toEqual([
             expect.objectContaining({
@@ -1314,7 +1361,7 @@ describe("default MCP adapter integration", () => {
         const paymentHistory = (await call("loan.payment-history.list", { loanPublicId })).data;
         expect(paymentHistory).toMatchObject({
             loanPublicId,
-            items: [expect.objectContaining({ publicId: intakePublicId, status: "posted" })],
+            items: expect.arrayContaining([expect.objectContaining({ publicId: intakePublicId, status: "posted" })]),
         });
         await call("intermediary.search", { query: "MCP all-tools collector" });
         const intermediary = (await call("intermediary.create", { name: "MCP all-tools collector" })).data;
@@ -1555,7 +1602,7 @@ describe("default MCP adapter integration", () => {
         expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length);
         expect(called.filter((name) => name === "intermediary.disbursement.event.create")).toHaveLength(2);
         expect(called.filter((name) => name === "loan.restructure.execute")).toHaveLength(2);
-        expect(called).toHaveLength(MCP_TOOL_NAMES.length + 3);
+        expect(called).toHaveLength(MCP_TOOL_NAMES.length + 4);
 
         await client.close();
     }, 10_000);

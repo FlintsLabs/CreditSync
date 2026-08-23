@@ -32,6 +32,7 @@
 ### Fixed
 - Corrected the forward atomic-batch immutability trigger migration so posted allocation updates inspect their preview relationship instead of a nonexistent batch column.
 - Corrected the shared trigger implementation to resolve row-specific OLD fields safely across batch, item, preview, and allocation tables.
+- Returned batch-post audit metadata through MCP and kept the all-tools adapter and migration reconciliation tests aligned with the added batch migrations.
 - Allowed audited commission-participant agreements at 0% through the service and PostgreSQL constraint, with migration and regression coverage.
 
 ## v0.3.37 - 2026-08-21
