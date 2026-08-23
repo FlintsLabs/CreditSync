@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.44 - 2026-08-24
+
+### Added
+- Added localized editing for intermediary aliases while preserving the rest of the loaded profile after a partial update response.
+
 ## v0.3.43 - 2026-08-24
 
 ### Changed

@@ -255,7 +255,7 @@ describe("intermediary profile workspace", () => {
 
     it("allows the intermediary name to be edited from the profile header", async () => {
         const user = userEvent.setup();
-        const renamedProfile = { ...profile, name: "Mae Mali Updated" };
+        const renamedProfile = { publicId: INTERMEDIARY_ID, name: "Mae Mali Updated", aliases: profile.aliases, notes: profile.notes, status: profile.status };
         vi.mocked(api.patch).mockResolvedValue({ data: renamedProfile });
         renderDetail();
 
@@ -269,6 +269,23 @@ describe("intermediary profile workspace", () => {
         await waitFor(() => expect(api.patch).toHaveBeenCalledWith(`/intermediaries/${INTERMEDIARY_ID}`, { name: "Mae Mali Updated" }));
         expect(await screen.findByRole("heading", { name: "Mae Mali Updated" })).toBeInTheDocument();
         expect(screen.queryByRole("textbox", { name: /name/i })).not.toBeInTheDocument();
+    });
+
+    it("allows confirmed intermediary aliases to be edited without losing profile details", async () => {
+        const user = userEvent.setup();
+        vi.mocked(api.patch).mockResolvedValue({ data: { publicId: INTERMEDIARY_ID, name: profile.name, aliases: ["Updated Alias", "Second Alias"], notes: profile.notes, status: profile.status } });
+        renderDetail();
+
+        expect(await screen.findByText("Mali Agent")).toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: /edit aliases/i }));
+        const aliasesInput = screen.getByRole("textbox", { name: /aliases/i });
+        await user.clear(aliasesInput);
+        await user.type(aliasesInput, "Updated Alias, Second Alias");
+        await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+        await waitFor(() => expect(api.patch).toHaveBeenCalledWith(`/intermediaries/${INTERMEDIARY_ID}`, { aliases: ["Updated Alias", "Second Alias"] }));
+        expect(await screen.findByText("Updated Alias · Second Alias")).toBeInTheDocument();
+        expect(screen.getByText(/Krungthai.*•••• 2233/)).toBeInTheDocument();
     });
 
     // Break caught: default decimal.js precision rounds a valid 29-digit maximum, or summing multiple loans loses cents.

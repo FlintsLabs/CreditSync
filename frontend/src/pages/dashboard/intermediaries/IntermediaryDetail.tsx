@@ -43,6 +43,10 @@ export default function IntermediaryDetail() {
     const [nameDraft, setNameDraft] = useState("");
     const [savingName, setSavingName] = useState(false);
     const [nameError, setNameError] = useState(false);
+    const [editingAliases, setEditingAliases] = useState(false);
+    const [aliasesDraft, setAliasesDraft] = useState("");
+    const [savingAliases, setSavingAliases] = useState(false);
+    const [aliasesError, setAliasesError] = useState(false);
     const activeProfileId = useActiveScope(id);
 
     useEffect(() => {
@@ -88,12 +92,28 @@ export default function IntermediaryDetail() {
         setNameError(false);
         try {
             const response = await api.patch<Profile>(`/intermediaries/${profile.publicId}`, { name });
-            setProfile(response.data);
+            setProfile((current) => current ? { ...current, ...response.data } : response.data);
             setEditingName(false);
         } catch {
             setNameError(true);
         } finally {
             setSavingName(false);
+        }
+    };
+    const saveAliases = async (event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        if (!profile) return;
+        const aliases = aliasesDraft.split(",").map((alias) => alias.trim()).filter(Boolean);
+        setSavingAliases(true);
+        setAliasesError(false);
+        try {
+            const response = await api.patch<Profile>(`/intermediaries/${profile.publicId}`, { aliases });
+            setProfile((current) => current ? { ...current, ...response.data } : response.data);
+            setEditingAliases(false);
+        } catch {
+            setAliasesError(true);
+        } finally {
+            setSavingAliases(false);
         }
     };
 
@@ -112,7 +132,13 @@ export default function IntermediaryDetail() {
                     <button className="rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted" type="submit" disabled={savingName}>{savingName ? t("common.saving") : t("common.save")}</button>
                     <button className="rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted" type="button" onClick={() => { setEditingName(false); setNameError(false); }} disabled={savingName}>{t("common.cancel")}</button>
                 </form> : <div className="flex items-center gap-2"><h1 className="text-2xl font-bold">{profile.name}</h1><button className="rounded-md p-2 text-muted-foreground hover:bg-muted hover:text-foreground" type="button" aria-label={t("intermediary.profile.editName")} onClick={() => { setNameDraft(profile.name); setNameError(false); setEditingName(true); }}><Pencil className="h-4 w-4" /></button></div>}
-                <p className="text-sm text-muted-foreground">{profile.aliases.join(" · ") || profile.notes}</p>
+                {editingAliases ? <form className="mt-2 flex flex-wrap items-center gap-2" onSubmit={(event) => void saveAliases(event)}>
+                    <label className="sr-only" htmlFor="intermediary-aliases">{t("intermediary.profile.aliasesLabel")}</label>
+                    <input id="intermediary-aliases" className="h-9 min-w-64 rounded-md border bg-background px-3 text-sm" value={aliasesDraft} onChange={(event) => { setAliasesDraft(event.target.value); setAliasesError(false); }} autoFocus />
+                    <button className="rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted" type="submit" disabled={savingAliases}>{savingAliases ? t("common.saving") : t("common.save")}</button>
+                    <button className="rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted" type="button" onClick={() => { setEditingAliases(false); setAliasesError(false); }} disabled={savingAliases}>{t("common.cancel")}</button>
+                </form> : <div className="flex items-center gap-1"><p className="text-sm text-muted-foreground">{profile.aliases.join(" · ") || profile.notes}</p><button className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground" type="button" aria-label={t("intermediary.profile.editAliases")} onClick={() => { setAliasesDraft(profile.aliases.join(", ")); setAliasesError(false); setEditingAliases(true); }}><Pencil className="h-3.5 w-3.5" /></button></div>}
+                {aliasesError && <p className="text-sm text-destructive" role="alert">{t("intermediary.profile.aliasesError")}</p>}
                 {nameError && <p className="text-sm text-destructive" role="alert">{t("intermediary.profile.nameError")}</p>}
             </div>
             <Link className="rounded-md border px-3 py-2 text-sm font-medium hover:bg-muted" to={`/intermediaries/remittances?intermediaryPublicId=${profile.publicId}`}>{t("intermediary.profile.remittances")}</Link>
