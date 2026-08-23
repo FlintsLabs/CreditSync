@@ -302,6 +302,7 @@ export async function previewLoanRenewal(
             tenantId: ctx.tenantId,
             oldLoanId: loan.id,
             status: "preview",
+            settlementPolicy: "full_contract_interest",
             previewHash: hash,
             requestedPrincipal: serializeMoney(requestedPrincipal),
             outstandingPrincipal: serializeMoney(snapshot.outstandingPrincipal),

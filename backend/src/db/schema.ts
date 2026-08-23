@@ -18,6 +18,8 @@ import {
 } from "drizzle-orm/pg-core";
 import type { PersistedLoanReplacementProposal } from "../lib/loan-replacement-proposal";
 
+export type RenewalSettlementPolicy = "full_contract_interest" | "accrued_to_date";
+
 // Enums
 export const roleEnum = pgEnum("role", ["owner", "manager", "collector", "viewer"]);
 
@@ -1563,6 +1565,8 @@ export const loanRenewals = pgTable("loan_renewals", {
     oldLoanId: integer("old_loan_id").notNull(),
     newLoanId: integer("new_loan_id"),
     status: text("status").default("preview").notNull(), // preview, executed, reversed, expired
+    settlementPolicy: text("settlement_policy").$type<RenewalSettlementPolicy>().notNull(),
+    composition: jsonb("composition").$type<Record<string, unknown>>(),
     previewHash: text("preview_hash").notNull(),
     requestedPrincipal: numeric("requested_principal").notNull(),
     outstandingPrincipal: numeric("outstanding_principal").notNull(),
@@ -1599,6 +1603,7 @@ export const loanRenewals = pgTable("loan_renewals", {
         .on(table.tenantId, table.reversalIdempotencyKey)
         .where(sql`${table.reversalIdempotencyKey} IS NOT NULL`),
     check("loan_renewals_status_check", sql`${table.status} IN ('preview', 'executed', 'reversed', 'expired')`),
+    check("loan_renewals_settlement_policy_check", sql`${table.settlementPolicy} IN ('full_contract_interest', 'accrued_to_date')`),
     check("loan_renewals_cash_direction_check", sql`${table.cashDirection} IS NULL OR ${table.cashDirection} IN ('payout', 'collection', 'none')`),
     foreignKey({
         name: "loan_renewals_tenant_old_loan_fk",
@@ -1630,6 +1635,38 @@ export const loanRenewals = pgTable("loan_renewals", {
         columns: [table.tenantId, table.reversedByUserId],
         foreignColumns: [users.tenantId, users.id],
     }),
+]);
+
+export const loanRenewalAdjustmentLines = pgTable("loan_renewal_adjustment_lines", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId,
+    renewalId: integer("renewal_id").notNull(),
+    lineNo: integer("line_no").notNull(),
+    kind: text("kind").$type<"fee" | "penalty" | "other_charge" | "waiver">().notNull(),
+    amount: numeric("amount", { precision: 30, scale: 2 }).notNull(),
+    reason: text("reason").notNull(),
+    status: text("status").$type<"posted" | "reversed">().default("posted").notNull(),
+    reversesLineId: integer("reverses_line_id"),
+    actorSource: text("actor_source").notNull(),
+    requestId: text("request_id").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    auditPublicId: uuid("audit_public_id").notNull(),
+    createdByUserId: integer("created_by_user_id"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("loan_renewal_adjustment_lines_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("loan_renewal_adjustment_lines_tenant_renewal_line_unique").on(table.tenantId, table.renewalId, table.lineNo),
+    uniqueIndex("loan_renewal_adjustment_lines_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
+    check("loan_renewal_adjustment_lines_amount_check", sql`${table.amount} > 0`),
+    check("loan_renewal_adjustment_lines_reason_check", sql`length(btrim(${table.reason})) > 0`),
+    check("loan_renewal_adjustment_lines_kind_check", sql`${table.kind} IN ('fee', 'penalty', 'other_charge', 'waiver')`),
+    check("loan_renewal_adjustment_lines_status_check", sql`${table.status} IN ('posted', 'reversed')`),
+    foreignKey({ name: "loan_renewal_adjustment_lines_tenant_renewal_fk", columns: [table.tenantId, table.renewalId], foreignColumns: [loanRenewals.tenantId, loanRenewals.id] }),
+    foreignKey({ name: "loan_renewal_adjustment_lines_tenant_reverses_fk", columns: [table.tenantId, table.reversesLineId], foreignColumns: [table.tenantId, table.id] }),
+    foreignKey({ name: "loan_renewal_adjustment_lines_tenant_audit_fk", columns: [table.tenantId, table.auditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
+    foreignKey({ name: "loan_renewal_adjustment_lines_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
 ]);
 
 export const loanRestructures = pgTable("loan_restructures", {

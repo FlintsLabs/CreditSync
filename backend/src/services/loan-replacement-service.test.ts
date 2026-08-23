@@ -320,6 +320,7 @@ const seedExecutedRenewal: DownstreamSeeder = async (fixture, targetLoan) => {
         oldLoanId: targetLoan.id,
         newLoanId: otherLoan(fixture, targetLoan).id,
         status: "executed",
+        settlementPolicy: "full_contract_interest",
         previewHash: `v1:${"e".repeat(64)}`,
         requestedPrincipal: "1.00",
         outstandingPrincipal: "1.00",

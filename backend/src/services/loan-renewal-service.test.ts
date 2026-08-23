@@ -9,6 +9,7 @@ import {
     borrowers,
     loanAdjustments,
     loanFundingAllocations,
+    loanRenewalAdjustmentLines,
     loanRenewals,
     loanSchedules,
     loans,
@@ -29,7 +30,7 @@ const integrationTest = integrationEnabled ? test : test.skip;
 
 async function resetRenewalTables() {
     await db.execute(sql`TRUNCATE TABLE
-        audit_logs, loan_adjustments, loan_renewals, fund_ledger_entries,
+        audit_logs, loan_adjustments, loan_renewal_adjustment_lines, loan_renewals, fund_ledger_entries,
         transactions, payment_match_allocations, payment_match_proposals,
         payment_evidence, payment_intakes, loan_funding_allocations,
         loan_schedules, loans, borrowers, users, bank_loans, bank_profiles
@@ -180,6 +181,63 @@ describe("daily-loan renewal service", () => {
         expect(allocation.map((row) => row.carryAmount.toFixed(2))).toEqual(["0.01", "0.01", "0.01", "0.00", "0.00"]);
         expect(allocation.every((row) => row.carryAmount.gte(0))).toBe(true);
         expect(allocation.reduce((sum, row) => sum.plus(row.carryAmount), new Decimal(0)).toFixed(2)).toBe("0.03");
+    });
+
+    integrationTest("persists exact renewal composition and enforces immutable tenant-safe adjustment lines", async () => {
+        const seeded = await seedDailyLoan({ paidInstallments: 0 });
+        const audit = await db.insert(auditLogs).values({
+            tenantId: seeded.tenantId,
+            entityType: "loan_renewal",
+            entityId: seeded.oldLoan.publicId,
+            action: "previewed",
+            actorUserId: seeded.actor.id,
+            actorSource: "web",
+            requestId: "renewal-adjustment-schema",
+            correlationId: "renewal-adjustment-schema",
+        }).returning().then((rows) => rows[0]!);
+        const renewal = await db.insert(loanRenewals).values({
+            tenantId: seeded.tenantId,
+            oldLoanId: seeded.oldLoan.id,
+            status: "preview",
+            previewHash: `v1:${"1".repeat(64)}`,
+            settlementPolicy: "full_contract_interest",
+            composition: { contractualInterest: "350.00", cashAmount: "125.00" },
+            requestedPrincipal: "2500.00",
+            outstandingPrincipal: "2375.00",
+            dueCharges: "0.00",
+            waivedCharges: "0.00",
+            cashDirection: "payout",
+            cashAmount: "125.00",
+            expiresAt: new Date(Date.now() + 60_000),
+            createdByUserId: seeded.actor.id,
+        }).returning().then((rows) => rows[0]!);
+        const line = {
+            tenantId: seeded.tenantId,
+            renewalId: renewal.id,
+            lineNo: 1,
+            kind: "other_charge" as const,
+            amount: "25.00",
+            reason: "Documented collection expense",
+            status: "posted" as const,
+            actorSource: "web",
+            requestId: "renewal-adjustment-schema",
+            correlationId: "renewal-adjustment-schema",
+            idempotencyKey: "renewal-adjustment-schema:1",
+            auditPublicId: audit.publicId,
+            createdByUserId: seeded.actor.id,
+        };
+        const inserted = await db.insert(loanRenewalAdjustmentLines).values(line).returning().then((rows) => rows[0]!);
+        const expectRejected = (operation: PromiseLike<unknown>) => expect(Promise.resolve(operation)).rejects.toBeDefined();
+
+        expect(inserted).toMatchObject({ lineNo: 1, kind: "other_charge", amount: "25.00", status: "posted" });
+        await expectRejected(db.insert(loanRenewalAdjustmentLines).values({ ...line, idempotencyKey: "renewal-adjustment-schema:duplicate" }));
+        await expectRejected(db.insert(loanRenewalAdjustmentLines).values({ ...line, lineNo: 2, amount: "0.00", idempotencyKey: "renewal-adjustment-schema:zero" }));
+        await expectRejected(db.insert(loanRenewalAdjustmentLines).values({ ...line, lineNo: 3, amount: "-1.00", idempotencyKey: "renewal-adjustment-schema:negative" }));
+        await expectRejected(db.insert(loanRenewalAdjustmentLines).values({ ...line, lineNo: 4, kind: "invalid" as "fee", idempotencyKey: "renewal-adjustment-schema:kind" }));
+        await expectRejected(db.insert(loanRenewalAdjustmentLines).values({ ...line, lineNo: 5, status: "invalid" as "posted", idempotencyKey: "renewal-adjustment-schema:status" }));
+        await expectRejected(db.insert(loanRenewalAdjustmentLines).values({ ...line, tenantId: "tenant-other", lineNo: 6, idempotencyKey: "renewal-adjustment-schema:tenant" }));
+        await expectRejected(db.update(loanRenewalAdjustmentLines).set({ reason: "mutated" }).where(eq(loanRenewalAdjustmentLines.id, inserted.id)));
+        await expectRejected(db.delete(loanRenewalAdjustmentLines).where(eq(loanRenewalAdjustmentLines.id, inserted.id)));
     });
 
     // Break caught: renewal uses cached/scheduled balances instead of actual posted, non-reversed principal.
