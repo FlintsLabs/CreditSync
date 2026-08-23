@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.47 - 2026-08-24
+
+### Added
+- Added a test-first implementation plan for anchored floating advance-interest collection, including exact period provenance, separate zero-default penalties, settlement behavior, MCP/plugin synchronization, and correction of the reversed THB 600 receipt.
+
 ## v0.3.46 - 2026-08-24
 
 ### Added
