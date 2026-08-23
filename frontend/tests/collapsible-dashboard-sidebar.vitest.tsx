@@ -132,6 +132,27 @@ describe("compact dashboard sidebar", () => {
         expect(within(mobileHeader).queryByRole("button", { name: "Open account menu for Mali" })).not.toBeInTheDocument();
     });
 
+    it("shows release metadata and a changelog link below authenticated content", () => {
+        render(
+            <MemoryRouter initialEntries={["/loans"]}>
+                <Routes>
+                    <Route path="/" element={<DashboardLayout />}>
+                        <Route path="loans" element={<h1>loans</h1>} />
+                    </Route>
+                </Routes>
+            </MemoryRouter>,
+        );
+
+        const footer = screen.getByTestId("application-footer");
+        expect(within(footer).getByText("CreditSync v0.3.40")).toBeInTheDocument();
+        expect(within(footer).getByText("MCP v1.0")).toBeInTheDocument();
+        expect(within(footer).getByText("Plugin v7.4.0")).toBeInTheDocument();
+        expect(within(footer).getByRole("link", { name: "Changelog" })).toHaveAttribute(
+            "href",
+            "https://github.com/FlintsLabs/CreditSync/blob/main/CHANGELOG.md",
+        );
+    });
+
     it("places the account menu in the mobile drawer footer without theme or language controls", async () => {
         const user = userEvent.setup();
         render(

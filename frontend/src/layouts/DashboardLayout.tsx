@@ -9,6 +9,7 @@ import { Button } from "../components/ui/Button";
 import { getStoredUser, isTenantAdminUser } from "../lib/session";
 import { SETTINGS_PATH } from "../lib/account";
 import { useSidebarCollapsed } from "../hooks/useSidebarCollapsed";
+import { APPLICATION_VERSION, CHANGELOG_URL, MCP_SCHEMA_VERSION, PLUGIN_VERSION } from "../lib/release";
 import {
     Tooltip,
     TooltipContent,
@@ -101,7 +102,7 @@ export default function DashboardLayout() {
             </aside>
 
             {/* Main Content Area */}
-            <div className="flex flex-1 flex-col min-w-0">
+            <div className="flex min-w-0 flex-1 flex-col">
                 {/* Mobile Header (Visible only on Mobile) */}
                 <header data-testid="mobile-header" className="sticky top-0 z-30 flex h-16 items-center border-b bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60 md:hidden">
                     <Button
@@ -168,6 +169,23 @@ export default function DashboardLayout() {
                 <main className="flex-1 overflow-x-hidden p-4 md:p-8">
                     <Outlet />
                 </main>
+                <footer data-testid="application-footer" className="border-t px-4 py-4 text-xs text-muted-foreground md:px-8">
+                    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                        <a
+                            className="font-medium text-foreground underline-offset-4 hover:underline"
+                            href={CHANGELOG_URL}
+                            target="_blank"
+                            rel="noreferrer"
+                        >
+                            {t("footer.changelog", "Changelog")}
+                        </a>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                            <span>{t("footer.applicationVersion", { version: APPLICATION_VERSION, defaultValue: "CreditSync v{{version}}" })}</span>
+                            <span>{t("footer.mcpVersion", { version: MCP_SCHEMA_VERSION, defaultValue: "MCP v{{version}}" })}</span>
+                            <span>{t("footer.pluginVersion", { version: PLUGIN_VERSION, defaultValue: "Plugin v{{version}}" })}</span>
+                        </div>
+                    </div>
+                </footer>
             </div>
         </div>
     );

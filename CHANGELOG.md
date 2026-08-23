@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.40 - 2026-08-23
+
+### Added
+- Added an authenticated application footer with a Changelog link and visible CreditSync, MCP schema, and Plugin release versions.
+
 ## v0.3.39 - 2026-08-23
 
 ### Added

@@ -47,6 +47,12 @@
         "add": "Add",
         "close": "Close"
     },
+    "footer": {
+        "changelog": "Changelog",
+        "applicationVersion": "CreditSync v{{version}}",
+        "mcpVersion": "MCP v{{version}}",
+        "pluginVersion": "Plugin v{{version}}"
+    },
     "evidence": {
         "description": "Preview the selected evidence without leaving this page.",
         "loading": "Loading evidence...",
