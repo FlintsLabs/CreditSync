@@ -66,6 +66,7 @@ export async function executeRenewal(
     previewHash: string,
     reason: string,
     idempotencyKey: string,
+    confirmedCashDirection?: "collection",
 ) {
     requireUuid(renewalPublicId, "renewalPublicId");
     if (!reason.trim()) throw new Error("Renewal reason is required");
@@ -74,5 +75,6 @@ export async function executeRenewal(
         previewHash,
         confirmed: true,
         reason: reason.trim(),
+        ...(confirmedCashDirection ? { confirmedCashDirection } : {}),
     }, { headers: { "Idempotency-Key": idempotencyKey } }).then((response) => response.data);
 }

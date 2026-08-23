@@ -9,6 +9,7 @@
 - Added atomic full-interest renewal execution with component-level accounting entries, immutable manual-line provenance, explicit collection confirmation, exact retry behavior, and append-only compensating reversal of both accounting and manual adjustment rows.
 - Added a tenant- and portfolio-scoped renewal summary read model and REST endpoint that returns persisted composition, complete payment detail, safe borrower/contract/replacement fields, and preview/executed/reversed watermark state without financial writes.
 - Exposed configurable daily-renewal settlement policies, structured adjustments, exact frozen composition, and explicit collection confirmation through the closed MCP contract and synchronized CreditSync plugin 7.4.0 workflow and evals.
+- Added a localized manual renewal UI that defaults to full-contract interest, accepts reasoned adjustment rows, invalidates approval after edits, renders backend-owned payment/composition values, and requires a separate collection acknowledgment.
 - Added the approved design for an operator-selectable daily-loan renewal policy that defaults to full-contract interest, supports reasoned manual charge/waiver lines, exposes one backend-authoritative preview through Web UI and MCP, and produces deterministic customer summary images.
 - Added the task-by-task implementation plan covering exact renewal composition, immutable ledger records, REST/MCP contracts, manual UI controls, deterministic PNG export, and full financial verification gates.
 
