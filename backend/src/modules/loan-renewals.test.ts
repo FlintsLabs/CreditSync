@@ -109,6 +109,16 @@ describe("loan renewal REST adapter", () => {
         });
         expect(preview.body).not.toHaveProperty("oldLoanId");
 
+        const summary = await jsonRequest(app, `/loan-renewals/${preview.body.publicId}/summary`, token);
+        expect(summary.response.status).toBe(200);
+        expect(summary.body).toMatchObject({
+            status: "preview",
+            watermark: "preview_not_executed",
+            renewalPublicId: preview.body.publicId,
+            borrower: { displayName: "Route Borrower" },
+            composition: preview.body.composition,
+        });
+
         const missingConfirmation = await jsonRequest(app, `/loan-renewals/${preview.body.publicId}/execute`, token, {
             method: "POST",
             headers: { "idempotency-key": "rest-renewal-execute-missing-confirm" },

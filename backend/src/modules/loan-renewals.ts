@@ -7,6 +7,7 @@ import {
     previewLoanRenewal,
     reverseLoanRenewal,
 } from "../services/loan-renewal-service";
+import { getLoanRenewalSummary } from "../services/loan-renewal-summary-service";
 
 type RouteUser = { id: number; tenantId: string };
 
@@ -48,6 +49,14 @@ function assertClosedPreviewBody(body: Record<string, unknown>) {
 
 export const loanRenewalsRoute = new Elysia({ prefix: "/loan-renewals", normalize: false })
     .use(authPlugin)
+    .get("/:id/summary", async ({ params, user, request, set }) => {
+        if (!user) return unauthorized(set);
+        try {
+            return await getLoanRenewalSummary(commandContext(user, request), params.id);
+        } catch (error) {
+            return domainFailure(error, set);
+        }
+    }, { params: t.Object({ id: t.String({ format: "uuid" }) }, { additionalProperties: false }) })
     .post("/preview", async ({ body, user, request, set }) => {
         if (!user) return unauthorized(set);
         try {
