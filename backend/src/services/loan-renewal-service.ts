@@ -5,6 +5,7 @@ import { db } from "../db";
 import {
     loanAdjustments,
     loanFundingAllocations,
+    loanRenewalAdjustmentLines,
     loanRenewals,
     loanSchedules,
     loans,
@@ -429,6 +430,7 @@ export interface ExecuteLoanRenewalInput {
     previewHash: string;
     confirmed: boolean;
     reason: string;
+    confirmedCashDirection?: "collection";
 }
 
 function requireExecution(ctx: CommandContext, input: ExecuteLoanRenewalInput) {
@@ -477,6 +479,8 @@ async function presentExecution(executor: Executor, renewal: RenewalRow, oldLoan
         id: renewal.publicId,
         publicId: renewal.publicId,
         status: renewal.status,
+        settlementPolicy: renewal.settlementPolicy,
+        composition: renewal.composition,
         oldLoanPublicId: oldLoan.publicId,
         newLoanPublicId: newLoan?.publicId ?? null,
         previewHash: renewal.previewHash,
@@ -596,6 +600,20 @@ export async function executeLoanRenewal(
                 .where(and(eq(loanRenewals.id, renewal.id), eq(loanRenewals.tenantId, ctx.tenantId)));
             return { stale: true as const };
         }
+        if (renewal.cashDirection === "collection" && input.confirmedCashDirection !== "collection") {
+            throw new DomainError(
+                "RENEWAL_COLLECTION_CONFIRMATION_REQUIRED",
+                "Collection renewals require explicit cash-direction confirmation",
+                400,
+            );
+        }
+        if (renewal.cashDirection !== "collection" && input.confirmedCashDirection !== undefined) {
+            throw new DomainError(
+                "UNEXPECTED_RENEWAL_COLLECTION_CONFIRMATION",
+                "Collection confirmation is only valid for a collection renewal",
+                400,
+            );
+        }
         if (oldLoan.status !== "active" && oldLoan.status !== "paid") {
             throw new DomainError("LOAN_NOT_RENEWABLE", "Only active or paid daily loans can be renewed", 409);
         }
@@ -703,7 +721,32 @@ export async function executeLoanRenewal(
                 createdByUserId: ctx.actorUserId,
             }]);
         }
-        const settlementAmount = new Decimal(renewal.dueCharges).minus(renewal.waivedCharges);
+        const composition = frozenComposition ?? snapshot.composition;
+        const settlementAmount = new Decimal(composition.settlementAmount);
+        if (composition.adjustments.length > 0) {
+            const adjustmentAudit = await createAuditLog(tx, {
+                ...auditContext(ctx),
+                entityType: "loan_renewal_adjustment_lines",
+                entityId: renewal.publicId,
+                action: "posted",
+                payload: { renewalPublicId: renewal.publicId, adjustments: composition.adjustments },
+            });
+            await tx.insert(loanRenewalAdjustmentLines).values(composition.adjustments.map((line) => ({
+                tenantId: ctx.tenantId,
+                renewalId: renewal.id,
+                lineNo: line.lineNo,
+                kind: line.kind,
+                amount: line.amount,
+                reason: line.reason,
+                status: "posted" as const,
+                actorSource: ctx.actorSource,
+                requestId: ctx.requestId,
+                correlationId: ctx.correlationId,
+                idempotencyKey: `renewal:${idempotencyKey}:manual-line:${line.lineNo}`,
+                auditPublicId: adjustmentAudit.publicId,
+                createdByUserId: ctx.actorUserId,
+            })));
+        }
         const adjustments: Array<{
             loanId: number;
             adjustmentType: string;
@@ -716,18 +759,35 @@ export async function executeLoanRenewal(
             amount: serializeMoney(renewal.outstandingPrincipal),
             suffix: "principal-transfer",
         }];
-        if (settlementAmount.gt(0)) adjustments.push({
+        const policyInterest = new Decimal(composition.settlementPolicy === "full_contract_interest"
+            ? composition.remainingContractInterest
+            : composition.accruedDueInterest);
+        if (policyInterest.gt(0)) adjustments.push({
             loanId: oldLoan.id,
-            adjustmentType: "charge_settlement",
-            amount: serializeMoney(settlementAmount),
-            suffix: "charge-settlement",
+            adjustmentType: composition.settlementPolicy === "full_contract_interest"
+                ? "contract_interest_settlement"
+                : "accrued_interest_settlement",
+            amount: serializeMoney(policyInterest),
+            suffix: "policy-interest-settlement",
         });
-        if (new Decimal(renewal.waivedCharges).gt(0)) adjustments.push({
+        if (new Decimal(composition.dueFees).gt(0)) adjustments.push({
             loanId: oldLoan.id,
-            adjustmentType: "charge_waiver",
-            amount: serializeMoney(renewal.waivedCharges),
-            suffix: "charge-waiver",
-            reason: renewal.reason ?? reason,
+            adjustmentType: "due_fee_settlement",
+            amount: composition.dueFees,
+            suffix: "due-fee-settlement",
+        });
+        if (new Decimal(composition.duePenalties).gt(0)) adjustments.push({
+            loanId: oldLoan.id,
+            adjustmentType: "due_penalty_settlement",
+            amount: composition.duePenalties,
+            suffix: "due-penalty-settlement",
+        });
+        for (const line of composition.adjustments) adjustments.push({
+            loanId: oldLoan.id,
+            adjustmentType: `manual_${line.kind}`,
+            amount: line.amount,
+            suffix: `manual-${line.lineNo}-${line.kind}`,
+            reason: line.reason,
         });
         if (new Decimal(renewal.cashAmount).gt(0) && renewal.cashDirection !== "none") adjustments.push({
             loanId: renewal.cashDirection === "payout" ? newLoan.id : oldLoan.id,
@@ -783,6 +843,8 @@ export async function executeLoanRenewal(
                 outstandingPrincipal: serializeMoney(snapshot.outstandingPrincipal),
                 requestedPrincipal: serializeMoney(requestedPrincipal),
                 dueCharges: serializeMoney(snapshot.dueCharges),
+                settlementPolicy: composition.settlementPolicy,
+                composition,
                 settlementAmount: serializeMoney(settlementAmount),
                 waivedCharges: serializeMoney(renewal.waivedCharges),
                 cashDirection: renewal.cashDirection,
@@ -922,6 +984,37 @@ export async function reverseLoanRenewal(
             await tx.update(loanAdjustments).set({
                 status: "reversed", updatedByUserId: ctx.actorUserId, updatedAt: effectiveAt,
             }).where(and(eq(loanAdjustments.id, original.id), eq(loanAdjustments.tenantId, ctx.tenantId)));
+        }
+        const originalManualLines = await tx.select().from(loanRenewalAdjustmentLines).where(and(
+            eq(loanRenewalAdjustmentLines.tenantId, ctx.tenantId),
+            eq(loanRenewalAdjustmentLines.renewalId, renewal.id),
+            eq(loanRenewalAdjustmentLines.status, "posted"),
+        )).orderBy(loanRenewalAdjustmentLines.lineNo);
+        if (originalManualLines.length > 0) {
+            const manualReversalAudit = await createAuditLog(tx, {
+                ...auditContext(ctx),
+                entityType: "loan_renewal_adjustment_lines",
+                entityId: renewal.publicId,
+                action: "reversed",
+                payload: { renewalPublicId: renewal.publicId, reason, lineCount: originalManualLines.length },
+            });
+            const firstReversalLineNo = originalManualLines.at(-1)!.lineNo + 1;
+            await tx.insert(loanRenewalAdjustmentLines).values(originalManualLines.map((line, index) => ({
+                tenantId: ctx.tenantId,
+                renewalId: renewal.id,
+                lineNo: firstReversalLineNo + index,
+                kind: line.kind,
+                amount: line.amount,
+                reason,
+                status: "reversed" as const,
+                reversesLineId: line.id,
+                actorSource: ctx.actorSource,
+                requestId: ctx.requestId,
+                correlationId: ctx.correlationId,
+                idempotencyKey: `renewal-reversal:${idempotencyKey}:manual-line:${line.lineNo}`,
+                auditPublicId: manualReversalAudit.publicId,
+                createdByUserId: ctx.actorUserId,
+            })));
         }
         const reversalDate = effectiveAt.toISOString().slice(0, 10);
         for (const carried of carriedFunding) {

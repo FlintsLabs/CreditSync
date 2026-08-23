@@ -97,6 +97,7 @@ export const loanRenewalsRoute = new Elysia({ prefix: "/loan-renewals", normaliz
             previewHash: t.String(),
             confirmed: t.Boolean(),
             reason: t.String(),
+            confirmedCashDirection: t.Optional(t.Literal("collection")),
         }),
     })
     .post("/:id/reverse", async ({ params, body, user, request, set }) => {

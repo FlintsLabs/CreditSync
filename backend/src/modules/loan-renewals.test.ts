@@ -120,7 +120,7 @@ describe("loan renewal REST adapter", () => {
         const executed = await jsonRequest(app, `/loan-renewals/${preview.body.publicId}/execute`, token, {
             method: "POST",
             headers: { "idempotency-key": "rest-renewal-execute" },
-            body: JSON.stringify({ previewHash: preview.body.previewHash, confirmed: true, reason: "route renewal" }),
+            body: JSON.stringify({ previewHash: preview.body.previewHash, confirmed: true, reason: "route renewal", confirmedCashDirection: "collection" }),
         });
         expect(executed.response.status).toBe(200);
         expect(executed.body).toMatchObject({ status: "executed", requestedPrincipal: "1000.00", cashAmount: "100.00" });
@@ -210,6 +210,7 @@ describe("loan renewal REST adapter", () => {
                 body: JSON.stringify({
                     previewHash: renewal.body.previewHash,
                     confirmed: true,
+                    confirmedCashDirection: "collection",
                     reason: "HTTP concurrency proof",
                 }),
             },
@@ -258,6 +259,7 @@ describe("loan renewal REST adapter", () => {
                 body: JSON.stringify({
                     previewHash: otherPreview.body.previewHash,
                     confirmed: true,
+                    confirmedCashDirection: "collection",
                     reason: "must remain hidden",
                 }),
             },
@@ -311,7 +313,7 @@ describe("loan renewal REST adapter", () => {
         const executePending = jsonRequest(app, `/loan-renewals/${preview.body.publicId}/execute`, token, {
             method: "POST",
             headers: { "idempotency-key": "route-reallocation-race" },
-            body: JSON.stringify({ previewHash: preview.body.previewHash, confirmed: true, reason: "locked race" }),
+            body: JSON.stringify({ previewHash: preview.body.previewHash, confirmed: true, reason: "locked race", confirmedCashDirection: "collection" }),
         });
         await Bun.sleep(100);
         const reallocationPending = jsonRequest(app, `/loans/${seeded.loan.publicId}/funding-reallocations`, token, {

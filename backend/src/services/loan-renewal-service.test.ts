@@ -352,6 +352,102 @@ describe("daily-loan renewal service", () => {
         expect(await db.select().from(loanFundingAllocations)).toEqual(fundingBefore);
     });
 
+    integrationTest("executes the exact full-interest 600 payout without rewriting original repayments", async () => {
+        const seeded = await seedDailyLoan({
+            principalAmount: "2000.00",
+            interestRate: "20.00",
+            installmentAmount: "100.00",
+            totalInstallments: 24,
+            paidInstallments: 10,
+        });
+        const tenth = await db.query.transactions.findFirst({ where: and(
+            eq(transactions.loanId, seeded.oldLoan.id), eq(transactions.scheduleId, seeded.schedules[9]!.id),
+        ) });
+        await db.update(transactions).set({ principalComponent: "83.36", interestComponent: "16.64" })
+            .where(eq(transactions.id, tenth!.id));
+        const originals = await db.select().from(transactions).where(eq(transactions.loanId, seeded.oldLoan.id)).orderBy(transactions.id);
+        const preview = await previewLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id), seeded.oldLoan.publicId, { requestedPrincipal: "2000.00" },
+        );
+        await expect(executeLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "unexpected-collection-confirmation"), preview.publicId,
+            { previewHash: preview.previewHash, confirmed: true, reason: "invalid extra confirmation", confirmedCashDirection: "collection" },
+        )).rejects.toMatchObject({ code: "UNEXPECTED_RENEWAL_COLLECTION_CONFIRMATION", status: 400 });
+        const executed = await executeLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "exact-600-execute"), preview.publicId,
+            { previewHash: preview.previewHash, confirmed: true, reason: "renew exact daily contract" },
+        );
+
+        expect(executed).toMatchObject({
+            settlementPolicy: "full_contract_interest",
+            oldLoanPublicId: seeded.oldLoan.publicId,
+            requestedPrincipal: "2000.00",
+            cashDirection: "payout",
+            cashAmount: "600.00",
+        });
+        const replacement = await db.query.loans.findFirst({ where: eq(loans.publicId, executed.newLoanPublicId) });
+        const replacementSchedule = await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, replacement!.id));
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.oldLoan.id) })).toMatchObject({ status: "renewed" });
+        expect(replacement).toMatchObject({ status: "active", principalAmount: "2000.00" });
+        expect(replacementSchedule.reduce((total, row) => total.plus(row.scheduledTotal), new Decimal(0)).toFixed(2)).toBe("2400.00");
+        expect(await db.select().from(transactions).where(eq(transactions.loanId, seeded.oldLoan.id)).orderBy(transactions.id)).toEqual(originals);
+        const renewal = await db.query.loanRenewals.findFirst({ where: eq(loanRenewals.publicId, preview.publicId) });
+        expect((await db.select().from(loanAdjustments).where(eq(loanAdjustments.renewalId, renewal!.id)).orderBy(loanAdjustments.id))
+            .map((row) => ({ type: row.adjustmentType, amount: row.amount }))).toEqual([
+            { type: "principal_transfer", amount: "1166.67" },
+            { type: "contract_interest_settlement", amount: "233.33" },
+            { type: "cash_payout", amount: "600.00" },
+        ]);
+    });
+
+    integrationTest("posts every reasoned manual adjustment line and its linked accounting entry", async () => {
+        const seeded = await seedDailyLoan();
+        const preview = await previewLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id), seeded.oldLoan.publicId, {
+                requestedPrincipal: "2500.00",
+                adjustments: [
+                    { kind: "fee", amount: "5.00", reason: "Manual fee" },
+                    { kind: "penalty", amount: "4.00", reason: "Manual penalty" },
+                    { kind: "other_charge", amount: "3.00", reason: "Other cost" },
+                    { kind: "waiver", amount: "2.00", reason: "Approved waiver" },
+                ],
+            },
+        );
+        await executeLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "manual-lines-execute"), preview.publicId,
+            { previewHash: preview.previewHash, confirmed: true, reason: "execute manual composition" },
+        );
+        const renewal = await db.query.loanRenewals.findFirst({ where: eq(loanRenewals.publicId, preview.publicId) });
+        expect((await db.select().from(loanRenewalAdjustmentLines).where(eq(loanRenewalAdjustmentLines.renewalId, renewal!.id)).orderBy(loanRenewalAdjustmentLines.lineNo))
+            .map(({ lineNo, kind, amount, reason, status }) => ({ lineNo, kind, amount, reason, status }))).toEqual([
+            { lineNo: 1, kind: "fee", amount: "5.00", reason: "Manual fee", status: "posted" },
+            { lineNo: 2, kind: "penalty", amount: "4.00", reason: "Manual penalty", status: "posted" },
+            { lineNo: 3, kind: "other_charge", amount: "3.00", reason: "Other cost", status: "posted" },
+            { lineNo: 4, kind: "waiver", amount: "2.00", reason: "Approved waiver", status: "posted" },
+        ]);
+        expect((await db.select().from(loanAdjustments).where(eq(loanAdjustments.renewalId, renewal!.id)))
+            .filter((row) => row.adjustmentType.startsWith("manual_"))
+            .map(({ adjustmentType, amount, reason }) => ({ adjustmentType, amount, reason }))).toEqual([
+            { adjustmentType: "manual_fee", amount: "5.00", reason: "Manual fee" },
+            { adjustmentType: "manual_penalty", amount: "4.00", reason: "Manual penalty" },
+            { adjustmentType: "manual_other_charge", amount: "3.00", reason: "Other cost" },
+            { adjustmentType: "manual_waiver", amount: "2.00", reason: "Approved waiver" },
+        ]);
+        await reverseLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "manual-lines-reverse"), preview.publicId,
+            { reason: "reverse manual composition" },
+        );
+        const reversedLines = await db.select().from(loanRenewalAdjustmentLines)
+            .where(eq(loanRenewalAdjustmentLines.renewalId, renewal!.id)).orderBy(loanRenewalAdjustmentLines.lineNo);
+        expect(reversedLines.slice(0, 4).map((line) => line.status)).toEqual(["posted", "posted", "posted", "posted"]);
+        expect(reversedLines.slice(4).map(({ lineNo, kind, amount, status, reversesLineId }) => ({ lineNo, kind, amount, status, reversesLineId }))).toEqual([
+            { lineNo: 5, kind: "fee", amount: "5.00", status: "reversed", reversesLineId: reversedLines[0]!.id },
+            { lineNo: 6, kind: "penalty", amount: "4.00", status: "reversed", reversesLineId: reversedLines[1]!.id },
+            { lineNo: 7, kind: "other_charge", amount: "3.00", status: "reversed", reversesLineId: reversedLines[2]!.id },
+            { lineNo: 8, kind: "waiver", amount: "2.00", status: "reversed", reversesLineId: reversedLines[3]!.id },
+        ]);
+    });
+
     integrationTest("freezes explicit accrued policy and ordered adjustments while adapting legacy waivers", async () => {
         const seeded = await seedDailyLoan({ paidInstallments: 9 });
         const preview = await previewLoanRenewal(
@@ -505,17 +601,21 @@ describe("daily-loan renewal service", () => {
             cashDirection: "collection",
             cashAmount: "136.67",
         });
+        await expect(executeLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "missing-collection-confirmation"), preview.publicId,
+            { previewHash: preview.previewHash, confirmed: true, reason: "missing collection confirmation" },
+        )).rejects.toMatchObject({ code: "RENEWAL_COLLECTION_CONFIRMATION_REQUIRED", status: 400 });
         await executeLoanRenewal(
             context(seeded.tenantId, seeded.actor.id, "execute-cash-collection"), preview.publicId,
-            { previewHash: preview.previewHash, confirmed: true, reason: "collect renewal shortfall" },
+            { previewHash: preview.previewHash, confirmed: true, reason: "collect renewal shortfall", confirmedCashDirection: "collection" },
         );
         const renewal = await db.query.loanRenewals.findFirst({ where: eq(loanRenewals.publicId, preview.publicId) });
         const adjustments = await db.select().from(loanAdjustments)
             .where(eq(loanAdjustments.renewalId, renewal!.id)).orderBy(loanAdjustments.id);
         expect(adjustments.map((row) => ({ type: row.adjustmentType, amount: row.amount }))).toEqual([
             { type: "principal_transfer", amount: "999.97" },
-            { type: "charge_settlement", amount: "136.70" },
-            { type: "charge_waiver", amount: "3.33" },
+            { type: "contract_interest_settlement", amount: "140.03" },
+            { type: "manual_waiver", amount: "3.33" },
             { type: "cash_collection", amount: "136.67" },
         ]);
     });
@@ -629,7 +729,7 @@ describe("daily-loan renewal service", () => {
             renewalRow!.id,
         )).orderBy(loanAdjustments.id)).map((row) => ({ type: row.adjustmentType, amount: row.amount }))).toEqual([
             { type: "principal_transfer", amount: "833.30" },
-            { type: "charge_settlement", amount: "116.70" },
+            { type: "contract_interest_settlement", amount: "116.70" },
             { type: "cash_payout", amount: "1550.00" },
         ]);
         expect(await db.select().from(transactions).where(eq(transactions.loanId, replacement!.id))).toHaveLength(0);
@@ -1162,7 +1262,7 @@ describe("daily-loan renewal service", () => {
             .where(eq(loanAdjustments.renewalId, renewal!.id)).orderBy(loanAdjustments.id);
         expect(adjustments.map((row) => ({ type: row.adjustmentType, amount: row.amount, status: row.status }))).toEqual([
             { type: "principal_transfer", amount: "833.30", status: "reversed" },
-            { type: "charge_settlement", amount: "116.70", status: "reversed" },
+            { type: "contract_interest_settlement", amount: "116.70", status: "reversed" },
             { type: "cash_payout", amount: "1550.00", status: "reversed" },
             { type: "reversal", amount: "-833.30", status: "posted" },
             { type: "reversal", amount: "-116.70", status: "posted" },
