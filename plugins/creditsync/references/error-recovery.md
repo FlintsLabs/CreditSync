@@ -1,6 +1,6 @@
 # CreditSync error recovery
 
-Tool errors have `{ code, message, retryable, reviewRequired, details }`. Treat the flags and current record as authoritative; never infer success from a timeout.
+Tool errors have `{ code, message, retryable, reviewRequired, repreviewRequired, humanReviewRequired, details }`. Treat the flags and current record as authoritative; never infer success from a timeout. `repreviewRequired` invalidates prior approval; `humanReviewRequired` stops the workflow for an operator decision.
 
 | Error class | Recovery |
 | --- | --- |

@@ -14,12 +14,19 @@ export const MCP_TOOL_NAMES = [
     "borrower.alias",
     "intake.get",
     "intake.list",
+    "payment.batch.get",
     "intake.create",
     "evidence.prepare",
     "evidence.finalize",
     "payment.preview",
     "payment.post",
     "payment.reverse",
+    "payment.batch.create",
+    "payment.batch.item.add",
+    "payment.batch.evidence.prepare",
+    "payment.batch.evidence.finalize",
+    "payment.batch.preview",
+    "payment.batch.execute",
     "payment.reconcile.preview",
     "payment.reconcile.execute",
     "loan.preview",
@@ -932,6 +939,12 @@ const paymentAttributionOutput = z.object({
     auditPublicId: uuid, correlationId: uuid, createdAt: isoDateTime,
 }).strict();
 
+const batchWarningOutput = z.object({ code: z.string(), itemPublicId: uuid.optional(), message: z.string().optional() }).strict();
+const batchAllocationOutput = z.object({ itemPublicId: uuid, loanPublicId: uuid, schedulePublicId: uuid, amount: money, targetDueDate: date, intent: z.enum(["on_time", "advance", "backdated"]), matchSource: z.enum(["human_explicit", "unique_exact", "selected_candidate"]).optional() }).strict();
+const batchOutput = z.object({ id: uuid, publicId: uuid, status: z.string(), version: z.number().int(), borrowerPublicId: uuid.nullable().optional(), stateHash: z.string(), confirmationHash: z.string().nullable().optional(), confirmedVersion: z.number().int().nullable().optional(), notes: z.string().nullable().optional(), items: z.array(z.object({ id: uuid, publicId: uuid, itemOrder: z.number().int(), paymentIntakePublicId: uuid.nullable(), evidenceStatus: z.string().nullable() }).strict()), latestPreview: z.unknown().nullable().optional(), postedAt: isoDateTime.nullable().optional(), createdAt: isoDateTime, updatedAt: isoDateTime }).strict();
+const batchPreviewOutput = z.object({ id: uuid, publicId: uuid, batchPublicId: uuid, version: z.number().int(), status: z.string(), stateHash: z.string(), previewHash: z.string(), confirmationHash: z.string(), evidenceReady: z.boolean(), allocations: z.array(batchAllocationOutput), candidates: z.array(z.unknown()), warnings: z.array(batchWarningOutput) }).strict();
+const batchExecutionOutput = z.object({ batchPublicId: uuid, status: z.literal("posted"), posted: z.array(z.object({ intakePublicId: uuid, transactionPublicIds: z.array(uuid) }).strict()).optional(), auditPublicIds: z.array(uuid), correlationId: uuid }).strict();
+
 const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
     "borrower.search": z.object({
         resolution: z.enum(["none", "unique", "ambiguous", "candidates"]),
@@ -976,6 +989,13 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "payment.preview": proposalOutput,
     "payment.post": intakeOutput.extend({ transactions: z.array(transactionOutput) }),
     "payment.reverse": intakeOutput.extend({ transactions: z.array(transactionOutput) }),
+    "payment.batch.create": batchOutput,
+    "payment.batch.item.add": batchOutput,
+    "payment.batch.evidence.prepare": evidenceIntentOutput,
+    "payment.batch.evidence.finalize": evidenceFinalOutput,
+    "payment.batch.get": batchOutput,
+    "payment.batch.preview": batchPreviewOutput,
+    "payment.batch.execute": batchExecutionOutput,
     "payment.reconcile.preview": reconciliationPreviewOutput,
     "payment.reconcile.execute": reconciliationExecuteOutput,
     "loan.preview": z.union([
@@ -1195,6 +1215,13 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
         paymentIntakePublicId: uuid,
         reason: shortText.optional(),
     }).strict(),
+    "payment.batch.create": z.object({ borrowerPublicId: uuid.nullable().optional(), notes: optionalNullableText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
+    "payment.batch.item.add": z.object({ batchPublicId: uuid, paymentIntakePublicId: uuid, itemOrder: z.number().int().positive() }).strict(),
+    "payment.batch.evidence.prepare": z.object({ batchItemPublicId: uuid, paymentIntakePublicId: uuid, mimeType: z.enum(["image/jpeg", "image/png", "application/pdf"]), size: z.number().int().positive(), sha256: z.string().regex(/^[0-9a-f]{64}$/i), evidenceType: z.enum(["slip", "qr"]).optional() }).strict(),
+    "payment.batch.evidence.finalize": z.object({ batchItemPublicId: uuid, paymentIntakePublicId: uuid, evidencePublicId: uuid }).strict(),
+    "payment.batch.get": z.object({ batchPublicId: uuid }).strict(),
+    "payment.batch.preview": z.object({ batchPublicId: uuid, borrowerPublicId: uuid, allocations: z.array(z.object({ itemPublicId: uuid, loanPublicId: uuid, schedulePublicId: uuid, amount: money, targetDueDate: date, intent: z.enum(["on_time", "advance", "backdated"]) }).strict()).max(200).optional() }).strict(),
+    "payment.batch.execute": z.object({ batchPublicId: uuid, previewPublicId: uuid, previewHash: z.string(), confirmationHash: z.string(), confirmed: z.literal(true), idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
     "payment.reconcile.preview": z.object({
         paymentIntakePublicId: uuid,
         allocations: z.array(reconciliationAllocation).min(1).max(1_000),
@@ -1512,6 +1539,8 @@ const safeErrorSchema = z.object({
     message: z.string(),
     retryable: z.boolean(),
     reviewRequired: z.boolean(),
+    repreviewRequired: z.boolean().optional(),
+    humanReviewRequired: z.boolean().optional(),
     details: z.record(z.string(), z.unknown()),
 }).strict();
 
@@ -1573,8 +1602,14 @@ const destructiveTools = new Set<McpToolName>([
     "payment.preview",
     "payment.post",
     "payment.reverse",
+    "payment.batch.create",
+    "payment.batch.item.add",
+    "payment.batch.evidence.prepare",
+    "payment.batch.evidence.finalize",
+    "payment.batch.preview",
     "payment.reconcile.preview",
     "payment.reconcile.execute",
+    "payment.batch.execute",
     "loan.draft.delete",
     "loan.activate",
     "loan.payment-start-date.update",
@@ -1610,6 +1645,7 @@ const financialTools = new Set<McpToolName>([
     "payment.post",
     "payment.reverse",
     "payment.reconcile.execute",
+    "payment.batch.execute",
     "loan.activate",
     "loan.payment-start-date.update",
     "loan.interest-rate.execute",
@@ -1640,6 +1676,7 @@ const idempotentTools = new Set<McpToolName>([
     "payment.post",
     "payment.reverse",
     "payment.reconcile.execute",
+    "payment.batch.execute",
     "loan.draft.delete",
     "loan.activate",
     "loan.payment-start-date.update",
@@ -1687,6 +1724,13 @@ const toolDescriptions: Record<McpToolName, string> = {
     "payment.preview": "Preview and persist a versioned payment match proposal.",
     "payment.post": "Post a ready payment proposal atomically.",
     "payment.reverse": "Reverse a posted payment with compensating entries.",
+    "payment.batch.create": "Create an editable atomic payment batch.",
+    "payment.batch.item.add": "Add one payment intake to an atomic batch.",
+    "payment.batch.evidence.prepare": "Prepare evidence for a payment batch item.",
+    "payment.batch.evidence.finalize": "Finalize evidence for a payment batch item.",
+    "payment.batch.get": "Inspect an atomic payment batch and its latest preview.",
+    "payment.batch.preview": "Preview the complete atomic payment batch allocation.",
+    "payment.batch.execute": "Execute one explicitly confirmed atomic payment batch.",
     "payment.reconcile.preview": "Preview an interest-only posting for a reviewed historical needs_review payment intake without reducing principal.",
     "payment.reconcile.execute": "Execute a confirmed, idempotent payment reconciliation with append-only provenance.",
     "loan.preview": "Preview an exact loan schedule without persistence.",
@@ -1810,11 +1854,15 @@ function sanitizeDetails(details: Record<string, unknown> | undefined): Record<s
 
 function safeToolError(error: unknown) {
     if (error instanceof DomainError) {
+        const isBatchError = error.code.startsWith("BATCH_");
+        const repreviewRequired = ["BATCH_STATE_CHANGED_SEMANTICS_SAME", "BATCH_EXECUTION_CONFLICT"].includes(error.code);
+        const humanReviewRequired = ["BATCH_NEEDS_REVIEW", "BATCH_DUPLICATE_EVIDENCE", "BATCH_ALLOCATION_MISMATCH", "BATCH_CONFIRMATION_STALE"].includes(error.code);
         return {
             code: error.code,
             message: error.message,
             retryable: error.status === 429 || error.status >= 500,
             reviewRequired: error.status === 409 || /(AMBIGUOUS|MISMATCH|REVIEW|STALE|NOT_LATEST|OUTPUT)/u.test(error.code),
+            ...(isBatchError ? { repreviewRequired, humanReviewRequired } : {}),
             details: sanitizeDetails(error.details),
         };
     }
@@ -1823,6 +1871,8 @@ function safeToolError(error: unknown) {
         message: "The MCP tool could not complete the request",
         retryable: true,
         reviewRequired: false,
+        repreviewRequired: false,
+        humanReviewRequired: false,
         details: {},
     };
 }

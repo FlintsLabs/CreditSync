@@ -1472,6 +1472,27 @@ const SCENARIOS: Record<string, Scenario> = {
         ],
         run: (mcp) => paymentFlow(mcp, {}),
     },
+    "payment-batch-unique-exact": {
+        script: [
+            { name: "payment.batch.create", arguments: { idempotencyKey: "batch-unique-1" }, result: { publicId: "0198c481-3e2b-7000-8000-000000000501" } },
+            { name: "payment.batch.item.add", arguments: { batchPublicId: "0198c481-3e2b-7000-8000-000000000501", paymentIntakePublicId: INTAKE, itemOrder: 1 }, result: { publicId: "0198c481-3e2b-7000-8000-000000000502" } },
+            { name: "payment.batch.get", arguments: { batchPublicId: "0198c481-3e2b-7000-8000-000000000501" }, result: { publicId: "0198c481-3e2b-7000-8000-000000000501", status: "draft" } },
+            { name: "payment.batch.preview", arguments: { batchPublicId: "0198c481-3e2b-7000-8000-000000000501", borrowerPublicId: BORROWER_A }, result: { publicId: "0198c481-3e2b-7000-8000-000000000503", status: "ready", previewHash: "a".repeat(64), confirmationHash: "b".repeat(64), warnings: [] } },
+            { name: "payment.batch.execute", arguments: { batchPublicId: "0198c481-3e2b-7000-8000-000000000501", previewPublicId: "0198c481-3e2b-7000-8000-000000000503", previewHash: "a".repeat(64), confirmationHash: "b".repeat(64), confirmed: true, idempotencyKey: "batch-execute-1" }, result: { status: "posted" } },
+        ],
+        run: async (mcp) => { await mcp.call("payment.batch.create", { idempotencyKey: "batch-unique-1" }); await mcp.call("payment.batch.item.add", { batchPublicId: "0198c481-3e2b-7000-8000-000000000501", paymentIntakePublicId: INTAKE, itemOrder: 1 }); await mcp.call("payment.batch.get", { batchPublicId: "0198c481-3e2b-7000-8000-000000000501" }); await mcp.call("payment.batch.preview", { batchPublicId: "0198c481-3e2b-7000-8000-000000000501", borrowerPublicId: BORROWER_A }); await mcp.call("payment.batch.execute", { batchPublicId: "0198c481-3e2b-7000-8000-000000000501", previewPublicId: "0198c481-3e2b-7000-8000-000000000503", previewHash: "a".repeat(64), confirmationHash: "b".repeat(64), confirmed: true, idempotencyKey: "batch-execute-1" }); return { outcome: "completed" } as const; },
+    },
+    "payment-batch-ambiguous-stops": {
+        script: [{ name: "payment.batch.create", arguments: { idempotencyKey: "batch-ambiguous-1" }, result: { publicId: "0198c481-3e2b-7000-8000-000000000504" } }, { name: "payment.batch.item.add", arguments: { batchPublicId: "0198c481-3e2b-7000-8000-000000000504", paymentIntakePublicId: INTAKE, itemOrder: 1 }, result: { publicId: "0198c481-3e2b-7000-8000-000000000505" } }, { name: "payment.batch.preview", arguments: { batchPublicId: "0198c481-3e2b-7000-8000-000000000504", borrowerPublicId: BORROWER_A }, result: { status: "needs_review", warnings: [{ code: "AMBIGUOUS_ALLOCATION" }] } }],
+        run: async (mcp) => { await mcp.call("payment.batch.create", { idempotencyKey: "batch-ambiguous-1" }); await mcp.call("payment.batch.item.add", { batchPublicId: "0198c481-3e2b-7000-8000-000000000504", paymentIntakePublicId: INTAKE, itemOrder: 1 }); await mcp.call("payment.batch.preview", { batchPublicId: "0198c481-3e2b-7000-8000-000000000504", borrowerPublicId: BORROWER_A }); return { outcome: "stopped", stopReason: "batch-human-review-required" } as const; },
+    },
+    "payment-batch-human-explicit-edit": {
+        script: [{ name: "payment.batch.preview", arguments: { batchPublicId: "0198c481-3e2b-7000-8000-000000000506", borrowerPublicId: BORROWER_A, allocations: [{ itemPublicId: "0198c481-3e2b-7000-8000-000000000507", loanPublicId: LOAN_A, schedulePublicId: LOAN_A, amount: "50.00", targetDueDate: "2026-08-23", intent: "on_time" }] }, result: { status: "ready", warnings: [] } }],
+        run: async (mcp) => { await mcp.call("payment.batch.preview", { batchPublicId: "0198c481-3e2b-7000-8000-000000000506", borrowerPublicId: BORROWER_A, allocations: [{ itemPublicId: "0198c481-3e2b-7000-8000-000000000507", loanPublicId: LOAN_A, schedulePublicId: LOAN_A, amount: "50.00", targetDueDate: "2026-08-23", intent: "on_time" }] }); return { outcome: "completed" } as const; },
+    },
+    "payment-batch-duplicate-stops": { script: [{ name: "payment.batch.preview", arguments: { batchPublicId: "0198c481-3e2b-7000-8000-000000000508", borrowerPublicId: BORROWER_A }, result: { status: "needs_review", warnings: [{ code: "DUPLICATE_PAYMENT" }] } }], run: async (mcp) => { await mcp.call("payment.batch.preview", { batchPublicId: "0198c481-3e2b-7000-8000-000000000508", borrowerPublicId: BORROWER_A }); return { outcome: "stopped", stopReason: "batch-duplicate-human-review" } as const; } },
+    "payment-batch-same-semantics-repreview": { script: [{ name: "payment.batch.get", arguments: { batchPublicId: "0198c481-3e2b-7000-8000-000000000509" }, result: { publicId: "0198c481-3e2b-7000-8000-000000000509", status: "preview_required" } }, { name: "payment.batch.preview", arguments: { batchPublicId: "0198c481-3e2b-7000-8000-000000000509", borrowerPublicId: BORROWER_A }, result: { status: "ready", warnings: [] } }], run: async (mcp) => { await mcp.call("payment.batch.get", { batchPublicId: "0198c481-3e2b-7000-8000-000000000509" }); await mcp.call("payment.batch.preview", { batchPublicId: "0198c481-3e2b-7000-8000-000000000509", borrowerPublicId: BORROWER_A }); return { outcome: "stopped", stopReason: "batch-confirmation-required-after-repreview" } as const; } },
+    "payment-batch-changed-semantics-requires-confirmation": { script: [{ name: "payment.batch.preview", arguments: { batchPublicId: "0198c481-3e2b-7000-8000-000000000510", borrowerPublicId: BORROWER_A }, result: { status: "needs_review", warnings: [{ code: "BATCH_STATE_CHANGED_SEMANTICS_SAME" }] } }], run: async (mcp) => { await mcp.call("payment.batch.preview", { batchPublicId: "0198c481-3e2b-7000-8000-000000000510", borrowerPublicId: BORROWER_A }); return { outcome: "stopped", stopReason: "batch-repreview-required" } as const; } },
     "payment-slip": {
         script: [
             { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null, ...noRepostLineage } },
@@ -2031,7 +2052,8 @@ const SCENARIOS: Record<string, Scenario> = {
     },
 };
 
-export const EVAL_SCENARIO_IDS = Object.freeze(Object.keys(SCENARIOS));
+const BATCH_EVAL_IDS = ["payment-batch-unique-exact", "payment-batch-ambiguous-stops", "payment-batch-human-explicit-edit", "payment-batch-duplicate-stops", "payment-batch-same-semantics-repreview", "payment-batch-changed-semantics-requires-confirmation"];
+export const EVAL_SCENARIO_IDS = Object.freeze([...Object.keys(SCENARIOS).filter((id) => !BATCH_EVAL_IDS.includes(id)), ...BATCH_EVAL_IDS]);
 
 export async function runEvalScenario(id: string, validators?: HarnessSchemaValidators): Promise<HarnessResult> {
     const scenario = SCENARIOS[id];

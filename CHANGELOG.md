@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.39 - 2026-08-23
+
+### Added
+- Added closed MCP payment-batch tools, recovery flags, plugin guidance, and six batch eval scenarios for inspect, preview, one-time confirmation, atomic execution, and stop-all review boundaries.
+
+### Changed
+- Synchronized the CreditSync plugin contract and validator at version 7.4.0 for the atomic scheduled-loan payment batch workflow.
+
 ## v0.3.38 - 2026-08-23
 
 ### Added
