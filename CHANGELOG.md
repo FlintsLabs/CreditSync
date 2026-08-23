@@ -3,6 +3,7 @@
 ## v0.3.38 - 2026-08-23
 
 ### Added
+- Added tenant-scoped atomic payment batch tables with versioned previews, exact allocation records, command idempotency, and database immutability guards for posted batches.
 - Added the task-by-task implementation plan for atomic multi-slip and multi-loan payment batches, covering schema immutability, deterministic exact allocation, one-time semantic confirmation, all-or-nothing posting, MCP/plugin synchronization, localized editing, and full financial verification.
 - Added the approved atomic batch-payment design for multi-slip and multi-loan exact allocation, whole-batch prompt editing, one-time semantic confirmation, and all-or-nothing posting with finalized evidence and append-only audit history.
 - Added the approved design for an operator-selectable daily-loan renewal policy that defaults to full-contract interest, supports reasoned manual charge/waiver lines, exposes one backend-authoritative preview through Web UI and MCP, and produces deterministic customer summary images.
