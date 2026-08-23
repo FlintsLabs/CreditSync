@@ -92,6 +92,7 @@ describe("LoanList", () => {
         render(<MemoryRouter><LoanList /></MemoryRouter>);
 
         const navigation = await screen.findByRole("navigation", { name: "Borrower navigation" });
+        expect(navigation.closest("aside")).toHaveClass("xl:fixed", "xl:right-8", "xl:top-24");
         expect(within(navigation).getByText("Alpha Borrower")).toBeInTheDocument();
         expect(within(navigation).getByText("Beta Borrower")).toBeInTheDocument();
         expect(within(navigation).getAllByText("VIP")).toHaveLength(2);

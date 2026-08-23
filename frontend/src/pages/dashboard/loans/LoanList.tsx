@@ -515,7 +515,7 @@ export default function LoanList() {
                 </div>
 
                 {!isLoading && !loadError && groupedVisibleLoans.length > 0 && (
-                    <aside className="order-1 xl:order-2 xl:sticky xl:top-6 xl:self-start" aria-label={t("loans.borrowerNavigation.ariaLabel", "Borrower navigation")}>
+                    <aside className="order-1 xl:order-2 xl:fixed xl:right-8 xl:top-24 xl:z-20 xl:w-72" aria-label={t("loans.borrowerNavigation.ariaLabel", "Borrower navigation")}>
                         <Card>
                             <CardHeader className="pb-3">
                                 <CardTitle className="text-base">{t("loans.borrowerNavigation.title", "Borrowers")}</CardTitle>
