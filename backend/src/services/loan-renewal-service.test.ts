@@ -60,8 +60,16 @@ async function seedDailyLoan(options: {
     allocatedAmount?: string;
     lateFeeMode?: "none" | "daily_percent";
     lateFeeAmount?: string;
+    principalAmount?: string;
+    interestRate?: string;
+    installmentAmount?: string;
+    totalInstallments?: number;
 } = {}) {
     const paidInstallments = options.paidInstallments ?? 10;
+    const principalAmount = options.principalAmount ?? "2500.00";
+    const interestRate = options.interestRate ?? "14.00";
+    const installmentAmount = options.installmentAmount ?? "190.00";
+    const totalInstallments = options.totalInstallments ?? 15;
     const seedId = crypto.randomUUID();
     const tenantId = "tenant-renewal";
     const actor = await db.insert(users).values({
@@ -78,27 +86,27 @@ async function seedDailyLoan(options: {
         tenantId,
         ownerUserId: actor.id,
         borrowerId: borrower.id,
-        principalAmount: "2500.00",
-        interestRate: "14.00",
+        principalAmount,
+        interestRate,
         repaymentType: "daily",
         termMonths: 1,
-        installmentAmount: "190.00",
-        totalInstallments: 15,
+        installmentAmount,
+        totalInstallments,
         startDate: utcDateOffset(-10),
-        outstandingPrincipal: "2500.00", // intentionally stale: renewal must use posted principal
-        outstandingInterest: "350.00",
+        outstandingPrincipal: principalAmount, // intentionally stale: renewal must use posted principal
+        outstandingInterest: new Decimal(installmentAmount).times(totalInstallments).minus(principalAmount).toFixed(2),
         outstandingFees: "0.00",
         lateFeeMode: options.lateFeeMode ?? "none",
         lateFeeAmount: options.lateFeeAmount ?? "0.00",
         status: "active",
     }).returning().then((rows) => rows[0]!);
     const generated = generateLoanSchedule({
-        principal: "2500.00",
-        interestRate: "14.00",
+        principal: principalAmount,
+        interestRate,
         repaymentType: "daily",
         termMonths: 1,
-        installmentAmount: "190.00",
-        totalInstallments: 15,
+        installmentAmount,
+        totalInstallments,
         startDate: utcDateOffset(-10),
     });
     const schedules = await db.insert(loanSchedules).values(generated.map((row, index) => ({
@@ -145,7 +153,7 @@ async function seedDailyLoan(options: {
         bankProfileId: profile.id,
         bankLoanId: drawdown.id,
         loanId: oldLoan.id,
-        allocatedAmount: options.allocatedAmount ?? "2500.00",
+        allocatedAmount: options.allocatedAmount ?? principalAmount,
         allocationDate: oldLoan.startDate!,
         allocationType: "initial",
         createdByUserId: actor.id,
@@ -201,7 +209,31 @@ describe("daily-loan renewal service", () => {
             status: "preview",
             previewHash: `v1:${"1".repeat(64)}`,
             settlementPolicy: "full_contract_interest",
-            composition: { contractualInterest: "350.00", cashAmount: "125.00" },
+            composition: {
+                settlementPolicy: "full_contract_interest",
+                contractStartDate: seeded.oldLoan.startDate!,
+                contractDueDate: seeded.schedules.at(-1)!.dueDate,
+                renewalDate: seeded.oldLoan.startDate!,
+                requestedPrincipal: "2500.00",
+                originalPrincipal: "2500.00",
+                totalScheduledAmount: "2850.00",
+                contractualInterest: "350.00",
+                totalPaid: "0.00",
+                receivedPrincipal: "0.00",
+                receivedInterest: "0.00",
+                remainingContractInterest: "350.00",
+                accruedDueInterest: "0.00",
+                dueFees: "0.00",
+                duePenalties: "0.00",
+                recoveredBeforeAdjustments: "0.00",
+                manualCharges: "0.00",
+                manualWaivers: "0.00",
+                settlementAmount: "350.00",
+                cashDirection: "collection",
+                cashAmount: "350.00",
+                payments: [],
+                adjustments: [],
+            },
             requestedPrincipal: "2500.00",
             outstandingPrincipal: "2375.00",
             dueCharges: "0.00",
@@ -259,12 +291,12 @@ describe("daily-loan renewal service", () => {
             dueInterest: "0.00",
             dueFees: "0.00",
             duePenalties: "0.00",
-            dueCharges: "0.00",
-            settlementAmount: "0.00",
+            dueCharges: "116.70",
+            settlementAmount: "116.70",
             waivedCharges: "0.00",
             requestedPrincipal: "2500.00",
             cashDirection: "payout",
-            cashAmount: "1666.70",
+            cashAmount: "1550.00",
         });
         expect(preview.previewHash).toMatch(/^v1:[0-9a-f]{64}$/);
         expect(preview.expiresAt.getTime()).toBeGreaterThan(Date.now());
@@ -276,15 +308,48 @@ describe("daily-loan renewal service", () => {
             previewHash: preview.previewHash,
             requestedPrincipal: "2500.00",
             outstandingPrincipal: "833.30",
-            dueCharges: "0.00",
+            dueCharges: "116.70",
             waivedCharges: "0.00",
             cashDirection: "payout",
-            cashAmount: "1666.70",
+            cashAmount: "1550.00",
         });
         expect(await db.select().from(auditLogs).where(and(
             eq(auditLogs.entityId, preview.publicId),
             eq(auditLogs.action, "previewed"),
         ))).toHaveLength(1);
+    });
+
+    integrationTest("defaults to full-contract interest and previews an exact 600 payout without financial side effects", async () => {
+        const seeded = await seedDailyLoan({
+            principalAmount: "2000.00",
+            interestRate: "20.00",
+            installmentAmount: "100.00",
+            totalInstallments: 24,
+            paidInstallments: 10,
+        });
+        const fundingBefore = await db.select().from(loanFundingAllocations);
+
+        const preview = await previewLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id),
+            seeded.oldLoan.publicId,
+            { requestedPrincipal: "2000.00" },
+        );
+
+        expect(preview.composition).toMatchObject({
+            settlementPolicy: "full_contract_interest",
+            contractualInterest: "400.00",
+            totalPaid: "1000.00",
+            receivedPrincipal: "833.30",
+            receivedInterest: "166.70",
+            remainingContractInterest: "233.30",
+            recoveredBeforeAdjustments: "600.00",
+            cashDirection: "payout",
+            cashAmount: "600.00",
+        });
+        expect(preview).toMatchObject({ settlementPolicy: "full_contract_interest", cashDirection: "payout", cashAmount: "600.00" });
+        expect(await db.select().from(loanAdjustments)).toHaveLength(0);
+        expect(await db.select().from(loans).where(eq(loans.clonedFromLoanId, seeded.oldLoan.id))).toHaveLength(0);
+        expect(await db.select().from(loanFundingAllocations)).toEqual(fundingBefore);
     });
 
     // Break caught: a reversed principal receipt still reduces renewal outstanding principal.
@@ -321,9 +386,9 @@ describe("daily-loan renewal service", () => {
         expect(preview).toMatchObject({
             principalPaid: "500.01",
             outstandingPrincipal: "1999.99",
-            dueCharges: "163.31",
+            dueCharges: "280.01",
             cashDirection: "payout",
-            cashAmount: "336.70",
+            cashAmount: "220.00",
         });
     });
 
@@ -343,10 +408,10 @@ describe("daily-loan renewal service", () => {
             dueInterest: "23.33",
             dueFees: "0.00",
             duePenalties: "0.00",
-            dueCharges: "23.33",
-            settlementAmount: "23.33",
+            dueCharges: "140.03",
+            settlementAmount: "140.03",
             cashDirection: "payout",
-            cashAmount: "1476.70",
+            cashAmount: "1360.00",
         });
     });
 
@@ -362,8 +427,8 @@ describe("daily-loan renewal service", () => {
         await expect(previewLoanRenewal(
             context(seeded.tenantId, seeded.actor.id),
             seeded.oldLoan.publicId,
-            { requestedPrincipal: "2500.00", waivedCharges: "23.34", waiverReason: "incorrect late charge" },
-        )).rejects.toMatchObject({ code: "WAIVER_EXCEEDS_DUE_CHARGES", status: 400 });
+            { requestedPrincipal: "2500.00", waivedCharges: "140.04", waiverReason: "incorrect late charge" },
+        )).rejects.toMatchObject({ code: "RENEWAL_WAIVER_EXCEEDS_ELIGIBLE_CHARGES", status: 400 });
 
         const preview = await previewLoanRenewal(
             context(seeded.tenantId, seeded.actor.id),
@@ -371,10 +436,10 @@ describe("daily-loan renewal service", () => {
             { requestedPrincipal: "2500.00", waivedCharges: "23.33", waiverReason: "approved hardship waiver" },
         );
         expect(preview).toMatchObject({
-            dueCharges: "23.33",
+            dueCharges: "140.03",
             waivedCharges: "23.33",
-            settlementAmount: "0.00",
-            cashAmount: "1500.03",
+            settlementAmount: "116.70",
+            cashAmount: "1383.33",
             waiverReason: "approved hardship waiver",
         });
         const persisted = await db.query.loanRenewals.findFirst({ where: eq(loanRenewals.publicId, preview.publicId) });
@@ -390,10 +455,10 @@ describe("daily-loan renewal service", () => {
         );
         expect(preview).toMatchObject({
             outstandingPrincipal: "999.97",
-            dueCharges: "23.33",
-            settlementAmount: "20.00",
+            dueCharges: "140.03",
+            settlementAmount: "136.70",
             cashDirection: "collection",
-            cashAmount: "19.97",
+            cashAmount: "136.67",
         });
         await executeLoanRenewal(
             context(seeded.tenantId, seeded.actor.id, "execute-cash-collection"), preview.publicId,
@@ -404,9 +469,9 @@ describe("daily-loan renewal service", () => {
             .where(eq(loanAdjustments.renewalId, renewal!.id)).orderBy(loanAdjustments.id);
         expect(adjustments.map((row) => ({ type: row.adjustmentType, amount: row.amount }))).toEqual([
             { type: "principal_transfer", amount: "999.97" },
-            { type: "charge_settlement", amount: "20.00" },
+            { type: "charge_settlement", amount: "136.70" },
             { type: "charge_waiver", amount: "3.33" },
-            { type: "cash_collection", amount: "19.97" },
+            { type: "cash_collection", amount: "136.67" },
         ]);
     });
 
@@ -476,7 +541,7 @@ describe("daily-loan renewal service", () => {
             outstandingPrincipal: "833.30",
             requestedPrincipal: "2500.00",
             cashDirection: "payout",
-            cashAmount: "1666.70",
+            cashAmount: "1550.00",
             reason: "borrower requested renewal",
         });
         expect(first.newLoanPublicId).toMatch(/^[0-9a-f-]{36}$/);
@@ -519,7 +584,8 @@ describe("daily-loan renewal service", () => {
             renewalRow!.id,
         )).orderBy(loanAdjustments.id)).map((row) => ({ type: row.adjustmentType, amount: row.amount }))).toEqual([
             { type: "principal_transfer", amount: "833.30" },
-            { type: "cash_payout", amount: "1666.70" },
+            { type: "charge_settlement", amount: "116.70" },
+            { type: "cash_payout", amount: "1550.00" },
         ]);
         expect(await db.select().from(transactions).where(eq(transactions.loanId, replacement!.id))).toHaveLength(0);
         expect(await db.select().from(auditLogs).where(and(
@@ -565,7 +631,7 @@ describe("daily-loan renewal service", () => {
         const replacements = await db.select().from(loans).where(sql`${loans.clonedFromLoanId} IS NOT NULL`);
         expect(replacements).toHaveLength(1);
         expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, replacements[0]!.id))).toHaveLength(15);
-        expect(await db.select().from(loanAdjustments)).toHaveLength(2);
+        expect(await db.select().from(loanAdjustments)).toHaveLength(3);
         expect(await db.select().from(loanRenewals).where(eq(loanRenewals.status, "executed"))).toHaveLength(1);
         expect(await db.select().from(loanRenewals).where(eq(loanRenewals.status, "preview"))).toHaveLength(1);
         expect(await db.select().from(auditLogs).where(eq(auditLogs.action, "executed"))).toHaveLength(1);
@@ -628,7 +694,7 @@ describe("daily-loan renewal service", () => {
             const preview = await previewLoanRenewal(
                 context(seeded.tenantId, seeded.actor.id), seeded.oldLoan.publicId, { requestedPrincipal: "2500.00" },
             );
-            expect(preview.dueCharges).toBe("0.00");
+            expect(preview.dueCharges).toBe("116.70");
             await db.update(loanRenewals).set({ createdAt: new Date("2026-08-10T23:59:00.000Z") })
                 .where(eq(loanRenewals.publicId, preview.publicId));
 
@@ -1025,11 +1091,13 @@ describe("daily-loan renewal service", () => {
             .where(eq(loanAdjustments.renewalId, renewal!.id)).orderBy(loanAdjustments.id);
         expect(adjustments.map((row) => ({ type: row.adjustmentType, amount: row.amount, status: row.status }))).toEqual([
             { type: "principal_transfer", amount: "833.30", status: "reversed" },
-            { type: "cash_payout", amount: "1666.70", status: "reversed" },
+            { type: "charge_settlement", amount: "116.70", status: "reversed" },
+            { type: "cash_payout", amount: "1550.00", status: "reversed" },
             { type: "reversal", amount: "-833.30", status: "posted" },
-            { type: "reversal", amount: "-1666.70", status: "posted" },
+            { type: "reversal", amount: "-116.70", status: "posted" },
+            { type: "reversal", amount: "-1550.00", status: "posted" },
         ]);
-        expect(adjustments.slice(2).map((row) => row.reversedAdjustmentId)).toEqual(adjustments.slice(0, 2).map((row) => row.id));
+        expect(adjustments.slice(3).map((row) => row.reversedAdjustmentId)).toEqual(adjustments.slice(0, 3).map((row) => row.id));
 
         const oldFunding = await db.select().from(loanFundingAllocations)
             .where(eq(loanFundingAllocations.loanId, seeded.oldLoan.id)).orderBy(loanFundingAllocations.id);

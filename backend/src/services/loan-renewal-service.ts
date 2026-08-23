@@ -15,6 +15,12 @@ import { canAccessTenantWideData } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
 import { invalidateTenantCache } from "../lib/cache";
 import { generateLoanSchedule } from "../lib/loan-schedule";
+import {
+    calculateRenewalComposition,
+    type RenewalComposition,
+    type RenewalManualAdjustment,
+    type RenewalSettlementPolicy,
+} from "../lib/loan-renewal-composition";
 import { parseMoney, serializeMoney } from "../lib/money";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
@@ -29,11 +35,14 @@ const defaultPreviewTtlSeconds = 900;
 
 export interface PreviewLoanRenewalInput {
     requestedPrincipal: string;
+    settlementPolicy?: RenewalSettlementPolicy;
+    adjustments?: RenewalManualAdjustment[];
     waivedCharges?: string;
     waiverReason?: string;
 }
 
 interface RenewalSnapshot {
+    composition: RenewalComposition;
     principalPaid: Decimal;
     outstandingPrincipal: Decimal;
     dueInterest: Decimal;
@@ -41,6 +50,12 @@ interface RenewalSnapshot {
     duePenalties: Decimal;
     dueCharges: Decimal;
     state: Record<string, unknown>;
+}
+
+interface RenewalSnapshotOptions {
+    requestedPrincipal: Decimal;
+    settlementPolicy: RenewalSettlementPolicy;
+    adjustments: RenewalManualAdjustment[];
 }
 
 function auditContext(ctx: CommandContext) {
@@ -100,6 +115,15 @@ function utcDay(value: Date | string) {
     return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
 }
 
+function bangkokDate(value: Date) {
+    return new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Bangkok",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).format(value);
+}
+
 function activeRepayments(rows: Array<typeof transactions.$inferSelect>) {
     const reversedIds = new Set(rows
         .filter((row) => row.entryType === "reversal" && row.reversedTransactionId !== null)
@@ -123,7 +147,13 @@ function penaltyDue(loan: LoanRow, remainingDue: Decimal, paidPenalty: Decimal, 
     return Decimal.max(0, accrued.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).minus(paidPenalty));
 }
 
-async function renewalSnapshot(executor: Executor, ctx: CommandContext, loan: LoanRow, asOf: Date): Promise<RenewalSnapshot> {
+async function renewalSnapshot(
+    executor: Executor,
+    ctx: CommandContext,
+    loan: LoanRow,
+    asOf: Date,
+    options: RenewalSnapshotOptions,
+): Promise<RenewalSnapshot> {
     const [scheduleRows, transactionRows] = await Promise.all([
         executor.select().from(loanSchedules).where(and(
             eq(loanSchedules.tenantId, ctx.tenantId),
@@ -174,7 +204,41 @@ async function renewalSnapshot(executor: Executor, ctx: CommandContext, loan: Lo
     dueInterest = dueInterest.toDecimalPlaces(2);
     dueFees = dueFees.toDecimalPlaces(2);
     duePenalties = duePenalties.toDecimalPlaces(2);
+    let composition: RenewalComposition;
+    try {
+        composition = calculateRenewalComposition({
+            settlementPolicy: options.settlementPolicy,
+            renewalDate: bangkokDate(asOf),
+            requestedPrincipal: serializeMoney(options.requestedPrincipal),
+            originalPrincipal: serializeMoney(loan.principalAmount),
+            contractStartDate: loan.startDate ?? scheduleRows[0]?.dueDate ?? bangkokDate(asOf),
+            contractDueDate: scheduleRows.at(-1)?.dueDate ?? loan.startDate ?? bangkokDate(asOf),
+            schedules: scheduleRows.map((row: typeof loanSchedules.$inferSelect) => ({
+                dueDate: row.dueDate,
+                principal: serializeMoney(row.scheduledPrincipal),
+                interest: serializeMoney(row.scheduledInterest),
+                fee: serializeMoney(row.scheduledFee),
+            })),
+            payments: posted.map((row: typeof transactions.$inferSelect) => ({
+                transactionPublicId: row.publicId,
+                paidAt: (row.transactionDate ?? row.postedAt).toISOString(),
+                amount: serializeMoney(row.amount),
+                principal: serializeMoney(row.principalComponent),
+                interest: serializeMoney(row.interestComponent),
+                fee: serializeMoney(row.feeComponent),
+                penalty: serializeMoney(row.penaltyComponent),
+            })),
+            accruedDueInterest: serializeMoney(dueInterest),
+            dueFees: serializeMoney(dueFees),
+            duePenalties: serializeMoney(duePenalties),
+            adjustments: options.adjustments,
+        });
+    } catch (error) {
+        const code = error instanceof Error ? error.message : "INVALID_RENEWAL_COMPOSITION";
+        throw new DomainError(code, "Renewal composition is invalid", 400);
+    }
     return {
+        composition,
         principalPaid,
         outstandingPrincipal,
         dueInterest,
@@ -206,13 +270,12 @@ async function renewalSnapshot(executor: Executor, ctx: CommandContext, loan: Lo
     };
 }
 
-function previewHash(snapshot: RenewalSnapshot, requestedPrincipal: Decimal, waivedCharges: Decimal, asOf: Date) {
+function previewHash(snapshot: RenewalSnapshot, asOf: Date) {
     const payload = JSON.stringify({
         contract: "loan-renewal-preview",
         version: previewHashVersion,
         asOfDate: new Date(utcDay(asOf)).toISOString().slice(0, 10),
-        requestedPrincipal: serializeMoney(requestedPrincipal),
-        waivedCharges: serializeMoney(waivedCharges),
+        composition: snapshot.composition,
         principalPaid: serializeMoney(snapshot.principalPaid),
         outstandingPrincipal: serializeMoney(snapshot.outstandingPrincipal),
         dueInterest: serializeMoney(snapshot.dueInterest),
@@ -223,21 +286,14 @@ function previewHash(snapshot: RenewalSnapshot, requestedPrincipal: Decimal, wai
     return `${previewHashVersion}:${createHash("sha256").update(payload).digest("hex")}`;
 }
 
-function cashResult(requestedPrincipal: Decimal, outstandingPrincipal: Decimal, settlementAmount: Decimal) {
-    const netCash = requestedPrincipal.minus(outstandingPrincipal).minus(settlementAmount).toDecimalPlaces(2);
-    return netCash.gt(0)
-        ? { cashDirection: "payout" as const, cashAmount: netCash }
-        : netCash.lt(0)
-            ? { cashDirection: "collection" as const, cashAmount: netCash.abs() }
-            : { cashDirection: "none" as const, cashAmount: new Decimal(0) };
-}
-
 function presentPreview(row: RenewalRow, loan: LoanRow, snapshot: RenewalSnapshot) {
     return {
         id: row.publicId,
         publicId: row.publicId,
         oldLoanPublicId: loan.publicId,
         status: row.status,
+        settlementPolicy: snapshot.composition.settlementPolicy,
+        composition: snapshot.composition,
         previewHash: row.previewHash,
         hashVersion: previewHashVersion,
         principalPaid: serializeMoney(snapshot.principalPaid),
@@ -272,6 +328,11 @@ export async function previewLoanRenewal(
     if (waivedCharges.gt(0) && !waiverReason) {
         throw new DomainError("WAIVER_REASON_REQUIRED", "A waiver reason is required when charges are waived", 400);
     }
+    const settlementPolicy = input.settlementPolicy ?? "full_contract_interest";
+    const adjustments = [...(input.adjustments ?? [])];
+    if (waivedCharges.gt(0)) {
+        adjustments.push({ kind: "waiver", amount: serializeMoney(waivedCharges), reason: waiverReason! });
+    }
     const accessible = await accessibleLoan(ctx, oldLoanPublicId);
     return db.transaction(async (tx) => {
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${accessible.id} FOR UPDATE`);
@@ -280,15 +341,11 @@ export async function previewLoanRenewal(
             throw new DomainError("LOAN_NOT_RENEWABLE", "Only active or paid daily loans can be renewed", 409);
         }
         const asOf = new Date();
-        const snapshot = await renewalSnapshot(tx, ctx, loan, asOf);
-        if (waivedCharges.gt(snapshot.dueCharges)) {
-            throw new DomainError("WAIVER_EXCEEDS_DUE_CHARGES", "Waived charges cannot exceed charges due", 400, {
-                dueCharges: serializeMoney(snapshot.dueCharges),
-            });
-        }
-        const settlementAmount = snapshot.dueCharges.minus(waivedCharges);
-        const cash = cashResult(requestedPrincipal, snapshot.outstandingPrincipal, settlementAmount);
-        const hash = previewHash(snapshot, requestedPrincipal, waivedCharges, asOf);
+        const snapshot = await renewalSnapshot(tx, ctx, loan, asOf, { requestedPrincipal, settlementPolicy, adjustments });
+        const composition = snapshot.composition;
+        const dueCharges = new Decimal(composition.settlementAmount).plus(composition.manualWaivers);
+        const totalWaivers = new Decimal(composition.manualWaivers);
+        const hash = previewHash(snapshot, asOf);
         await tx.update(loanRenewals).set({
             status: "expired",
             updatedByUserId: ctx.actorUserId,
@@ -302,14 +359,15 @@ export async function previewLoanRenewal(
             tenantId: ctx.tenantId,
             oldLoanId: loan.id,
             status: "preview",
-            settlementPolicy: "full_contract_interest",
+            settlementPolicy,
+            composition,
             previewHash: hash,
             requestedPrincipal: serializeMoney(requestedPrincipal),
             outstandingPrincipal: serializeMoney(snapshot.outstandingPrincipal),
-            dueCharges: serializeMoney(snapshot.dueCharges),
-            waivedCharges: serializeMoney(waivedCharges),
-            cashDirection: cash.cashDirection,
-            cashAmount: serializeMoney(cash.cashAmount),
+            dueCharges: serializeMoney(dueCharges),
+            waivedCharges: serializeMoney(totalWaivers),
+            cashDirection: composition.cashDirection,
+            cashAmount: composition.cashAmount,
             reason: waiverReason,
             expiresAt: new Date(asOf.getTime() + previewTtlSeconds() * 1000),
             createdByUserId: ctx.actorUserId,
@@ -324,12 +382,14 @@ export async function previewLoanRenewal(
                 oldLoanPublicId: loan.publicId,
                 principalPaid: serializeMoney(snapshot.principalPaid),
                 outstandingPrincipal: serializeMoney(snapshot.outstandingPrincipal),
-                dueCharges: serializeMoney(snapshot.dueCharges),
-                waivedCharges: serializeMoney(waivedCharges),
-                settlementAmount: serializeMoney(settlementAmount),
+                settlementPolicy,
+                composition,
+                dueCharges: serializeMoney(dueCharges),
+                waivedCharges: serializeMoney(totalWaivers),
+                settlementAmount: composition.settlementAmount,
                 requestedPrincipal: serializeMoney(requestedPrincipal),
-                cashDirection: cash.cashDirection,
-                cashAmount: serializeMoney(cash.cashAmount),
+                cashDirection: composition.cashDirection,
+                cashAmount: composition.cashAmount,
                 previewHash: hash,
                 expiresAt: row.expiresAt.toISOString(),
             },
@@ -493,16 +553,18 @@ export async function executeLoanRenewal(
                 .where(and(eq(loanRenewals.id, renewal.id), eq(loanRenewals.tenantId, ctx.tenantId)));
             return { stale: true as const };
         }
-        const snapshot = await renewalSnapshot(tx, ctx, oldLoan, effectiveAt);
-        const currentHash = previewHash(
-            snapshot,
-            new Decimal(renewal.requestedPrincipal),
-            new Decimal(renewal.waivedCharges),
-            effectiveAt,
-        );
+        const frozenComposition = renewal.composition as RenewalComposition | null;
+        const snapshot = await renewalSnapshot(tx, ctx, oldLoan, effectiveAt, {
+            requestedPrincipal: new Decimal(renewal.requestedPrincipal),
+            settlementPolicy: renewal.settlementPolicy,
+            adjustments: frozenComposition?.adjustments.map(({ kind, amount, reason }) => ({ kind, amount, reason })) ?? [],
+        });
+        const currentHash = previewHash(snapshot, effectiveAt);
+        const currentDueCharges = new Decimal(snapshot.composition.settlementAmount)
+            .plus(snapshot.composition.manualWaivers);
         if (currentHash !== renewal.previewHash
             || !snapshot.outstandingPrincipal.eq(renewal.outstandingPrincipal)
-            || !snapshot.dueCharges.eq(renewal.dueCharges)) {
+            || !currentDueCharges.eq(renewal.dueCharges)) {
             await tx.update(loanRenewals).set({ status: "expired", updatedByUserId: ctx.actorUserId, updatedAt: effectiveAt })
                 .where(and(eq(loanRenewals.id, renewal.id), eq(loanRenewals.tenantId, ctx.tenantId)));
             return { stale: true as const };

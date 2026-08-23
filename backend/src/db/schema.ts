@@ -17,6 +17,7 @@ import {
     uuid,
 } from "drizzle-orm/pg-core";
 import type { PersistedLoanReplacementProposal } from "../lib/loan-replacement-proposal";
+import type { RenewalComposition } from "../lib/loan-renewal-composition";
 
 export type RenewalSettlementPolicy = "full_contract_interest" | "accrued_to_date";
 
@@ -1566,7 +1567,7 @@ export const loanRenewals = pgTable("loan_renewals", {
     newLoanId: integer("new_loan_id"),
     status: text("status").default("preview").notNull(), // preview, executed, reversed, expired
     settlementPolicy: text("settlement_policy").$type<RenewalSettlementPolicy>().notNull(),
-    composition: jsonb("composition").$type<Record<string, unknown>>(),
+    composition: jsonb("composition").$type<RenewalComposition>(),
     previewHash: text("preview_hash").notNull(),
     requestedPrincipal: numeric("requested_principal").notNull(),
     outstandingPrincipal: numeric("outstanding_principal").notNull(),
