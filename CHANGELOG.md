@@ -11,6 +11,9 @@
 - Documented operator recovery flags, stop-all batch semantics, and post-execution verification in the README and plugin skills.
 - Updated the plugin README and approved implementation plan to reflect the completed 7.4.0 batch workflow.
 
+### Fixed
+- Narrowed the latest batch preview locally before checking warning and allocation readiness, keeping the frontend TypeScript build safe under strict null checks.
+
 ## v0.3.38 - 2026-08-23
 
 ### Added
@@ -29,7 +32,7 @@
 - Updated loan agent agreements with localized role selection, a right-aligned datetime picker action, and numeric-only commission input that supports zero-commission collection agents.
 - Replaced the loan-agent role dropdown with accessible selectable cards, including a direct-collection option that locks commission at 0%.
 
-### Fixed
+### Added
 - Corrected the forward atomic-batch immutability trigger migration so posted allocation updates inspect their preview relationship instead of a nonexistent batch column.
 - Corrected the shared trigger implementation to resolve row-specific OLD fields safely across batch, item, preview, and allocation tables.
 - Returned batch-post audit metadata through MCP and kept the all-tools adapter and migration reconciliation tests aligned with the added batch migrations.
