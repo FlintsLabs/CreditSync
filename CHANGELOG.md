@@ -3,6 +3,7 @@
 ## v0.3.38 - 2026-08-23
 
 ### Added
+- Added tenant-scoped payment batch creation, item membership, safe reads/cancellation, and versioned preview persistence over existing payment intakes.
 - Added a bounded deterministic joint exact-combination solver for multi-slip payment batches, including ambiguity, exact decimal, advance, and solver-limit safety handling.
 - Added tenant-scoped atomic payment batch tables with versioned previews, exact allocation records, command idempotency, and database immutability guards for posted batches.
 - Added the task-by-task implementation plan for atomic multi-slip and multi-loan payment batches, covering schema immutability, deterministic exact allocation, one-time semantic confirmation, all-or-nothing posting, MCP/plugin synchronization, localized editing, and full financial verification.
