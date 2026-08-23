@@ -18,7 +18,7 @@ async function json(path: string) {
     return JSON.parse(await readFile(resolve(pluginRoot, path), "utf8")) as Record<string, unknown>;
 }
 
-describe("CreditSync plugin 7.3.0 contract", () => {
+describe("CreditSync plugin 7.4.0 contract", () => {
     test("exposes the documented local validation command", async () => {
         const packageManifest = await json("package.json");
         expect(packageManifest.private).toBe(true);
@@ -28,7 +28,7 @@ describe("CreditSync plugin 7.3.0 contract", () => {
     test("manifest exposes only the private app and orchestration skills", async () => {
         const manifest = await json(".codex-plugin/plugin.json");
         expect(manifest.name).toBe("creditsync");
-        expect(manifest.version).toBe("7.3.0");
+        expect(manifest.version).toBe("7.4.0");
         expect(manifest.skills).toBe("./skills/");
         expect(manifest.apps).toBe("./.app.json");
         expect(manifest).not.toHaveProperty("mcpServers");
@@ -120,10 +120,18 @@ describe("CreditSync plugin 7.3.0 contract", () => {
         expect(skill).not.toContain("report those blockers");
     });
 
+    test("daily renewal guidance binds full-interest defaults, adjustments, collection acknowledgement, and presentation-only images", async () => {
+        const skill = await readFile(resolve(pluginRoot, "skills/renew-daily-loan/SKILL.md"), "utf8");
+        for (const boundary of [
+            "`full_contract_interest`", "`accrued_to_date`", "contractualInterest", "remainingContractInterest",
+            "confirmedCashDirection", "List every manual line and reason", "presentation-only", "never executes the renewal",
+        ]) expect(skill).toContain(boundary);
+    });
+
     test("frozen full MCP metadata matches an actual MCP tools/list response", async () => {
         const contract = await json("references/mcp-tool-contract.json") as unknown as FrozenMcpContract;
         expect(contract.schemaVersion).toBe("1.0");
-        expect(contract.compatibility).toBe("Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 7.3.0; breaking changes require plugin 8.0.0.");
+        expect(contract.compatibility).toBe("Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 7.4.0; breaking changes require plugin 8.0.0.");
         expect(contract.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
         expect(contract.tools).toHaveLength(84);
         expect(contract.tools.every((tool) => tool.inputSchema && tool.outputSchema && tool.annotations)).toBe(true);
@@ -148,6 +156,16 @@ describe("CreditSync plugin 7.3.0 contract", () => {
         expect(floatingInput?.properties.floatingDailyInterest.additionalProperties).toBe(false);
         expect(dailyInput?.properties.dailyEntry.additionalProperties).toBe(false);
         expect(dailyInput?.properties.dailyEntry.properties.interestInput.additionalProperties).toBe(false);
+
+        const renewalPreview = contract.tools.find((tool) => tool.name === "renewal.preview") as any;
+        expect(renewalPreview.inputSchema.additionalProperties).toBe(false);
+        expect(renewalPreview.inputSchema.properties.settlementPolicy.enum).toEqual(["full_contract_interest", "accrued_to_date"]);
+        expect(renewalPreview.inputSchema.properties.adjustments.maxItems).toBe(50);
+        expect(renewalPreview.inputSchema.properties.adjustments.items.additionalProperties).toBe(false);
+        const renewalData = renewalPreview.outputSchema.properties.data;
+        expect(renewalData.required).toContain("composition");
+        expect(renewalData.properties.composition.additionalProperties).toBe(false);
+        expect(renewalData.properties.composition.required).toContain("payments");
 
         const atomicReplacement = contract.tools.find((tool) => tool.name === "loan.replacement.preview")?.outputSchema as any;
         const atomicReplacementData = atomicReplacement.properties.data;
@@ -216,6 +234,7 @@ describe("CreditSync plugin 7.3.0 contract", () => {
             "disbursement-draft-update",
             "disbursement-evidence-ready-retry",
             "renewal-execute",
+            "renewal-accrued-policy",
             "restructure-execute",
             "waiver-execute",
             "payment-reversal",
@@ -265,7 +284,7 @@ describe("CreditSync plugin 7.3.0 contract", () => {
             "loan-replacement-direct-status-mutation",
             "loan-replacement-portfolio-scope-mismatch",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
-        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(30);
+        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(31);
         expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(50);
     });
 

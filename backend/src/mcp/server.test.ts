@@ -898,6 +898,35 @@ describe("CreditSync stateless MCP contract", () => {
         await client.close();
     });
 
+    test("advertises closed configurable renewal inputs and rejects invalid adjustment lines before handlers", async () => {
+        let calls = 0;
+        const baseUrl = await startServer({
+            toolHandlers: {
+                "renewal.preview": async () => { calls += 1; return {}; },
+            },
+        });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const preview = (await client.listTools()).tools.find((tool) => tool.name === "renewal.preview") as any;
+        expect(preview.inputSchema.additionalProperties).toBe(false);
+        expect(preview.inputSchema.properties.settlementPolicy.enum).toEqual(["full_contract_interest", "accrued_to_date"]);
+        expect(preview.inputSchema.properties.adjustments.maxItems).toBe(50);
+        expect(preview.inputSchema.properties.adjustments.items.additionalProperties).toBe(false);
+        for (const adjustments of [
+            [{ kind: "fee", amount: "1.00", reason: " " }],
+            [{ kind: "fee", amount: "1.00", reason: "x", extra: true }],
+            [{ kind: "credit", amount: "1.00", reason: "x" }],
+        ]) {
+            const result = await client.callTool({
+                name: "renewal.preview",
+                arguments: { oldLoanPublicId: BORROWER_ID, requestedPrincipal: "2000.00", adjustments },
+            });
+            expect(result.isError).toBe(true);
+        }
+        expect(calls).toBe(0);
+        await client.close();
+    });
+
     test("lists complete contract terms and repayment schedule read-only", async () => {
         const loanPublicId = "0198c481-3e2b-7000-8000-000000000008";
         const baseUrl = await startServer({

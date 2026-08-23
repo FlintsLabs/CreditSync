@@ -1,10 +1,10 @@
-# CreditSync Plugin 7.3.0
+# CreditSync Plugin 7.4.0
 
 This private Codex plugin orchestrates the CreditSync MCP app for borrower and intermediary identity, payments, intermediary remittances and multi-leg disbursements, generalized floating-interest origination and settlement, effective-dated rate changes, direct loan disbursements, renewals, and append-only reversal.
 
 ## Package contract
 
-- Plugin version: `7.3.0`
+- Plugin version: `7.4.0`
 - MCP schema version: `1.0`
 - 11 orchestration skills: `creditsync`, `manage-borrowers`, `reconcile-payments`, `reconcile-intermediary-remittances`, `manage-loans`, `manage-floating-interest-rates`, `settle-floating-loans`, `manage-disbursements`, `manage-intermediated-disbursements`, `renew-daily-loan`, `restructure-loan`
 - App manifest: `.app.json`
@@ -21,6 +21,8 @@ For an actual loan disbursement, first inspect `loan.disbursement.list` and pres
 For an actual payout routed through an intermediary, resolve exact borrower and intermediary identities, verify an active disbursement assignment, then create the group and its exact funding, borrower-payout, and advance-interest-return transfer events. Every supplied slip follows prepare → unchanged-byte PUT → finalize against its exact event, retaining and comparing the evidence/file UUID plus MIME, size, and SHA-256 at every boundary; an already-ready retry must match the same immutable metadata. Bank-account save, assignment create/end, and transfer-evidence prepare/finalize results each include the exact audit public UUID and correlation UUID; retain and report those identifiers without adding them to the corresponding REST response DTOs. Re-inspect the group and post only when every event role/reference/amount/payee and safe evidence identity matches, followed by a fresh `ready` preview with no warnings, evidence ready, retained balance `0.00`, and variance `0.00`, after explicit confirmation. Stale state, duplicate transfer, binding mismatch, missing evidence/assignment/confirmation, or unexplained retained balance stops the flow. General MCP group/list inspection returns normalized reference displays and safe per-event evidence status/count/public IDs/MIME types only; signed evidence access URLs, storage keys, and checksums remain excluded, while the prepare tool may return its short-lived upload URL.
 
 For floating-loan settlement, inspect the portfolio and call `loan.settlement.preview` with the operator's Bangkok as-of date. Show every exact backend component, including accrued-not-due interest and already-paid `nonRefundableAdvanceInterest`, before asking for confirmation. Execute only the same settlement ID and preview hash with a reason and stable idempotency key. Stale state requires re-inspection, a fresh preview, and fresh confirmation; already-paid advance interest is never refunded or credited through settlement. Reversal requires the exact executed settlement ID, a separate reason and confirmation, and a new stable key; `loan.settlement.reverse` appends compensating negative history and stops on downstream activity.
+
+For daily renewal, `renewal.preview` defaults to full old-contract interest and returns one authoritative composition with complete payments, received and remaining interest, structured reasoned adjustments, and exact payout or collection. An explicit `accrued_to_date` policy remains available. Present old-contract and replacement-contract interest separately, re-preview after every change, and never alter frozen terms during execute. Collection requires a separate `confirmedCashDirection: "collection"` acknowledgement; payout and zero-cash previews reject that field. Summary-image export is presentation-only and never executes a renewal.
 
 ## Register before installation
 

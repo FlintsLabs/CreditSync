@@ -434,6 +434,8 @@ export function createDefaultMcpToolHandlers(
     "intermediary.remittance.post": (ctx, input) => postIntermediaryRemittance(ctx, asString(input, "remittancePublicId"), { proposalPublicId: asString(input, "proposalPublicId"), confirmed: input.confirmed as boolean }),
     "renewal.preview": (ctx, input) => previewLoanRenewal(ctx, asString(input, "oldLoanPublicId"), {
         requestedPrincipal: asString(input, "requestedPrincipal"),
+        settlementPolicy: input.settlementPolicy as "full_contract_interest" | "accrued_to_date" | undefined,
+        adjustments: input.adjustments as Array<{ kind: "fee" | "penalty" | "other_charge" | "waiver"; amount: string; reason: string }> | undefined,
         waivedCharges: input.waivedCharges as string | undefined,
         waiverReason: (input.waiverReason as string | null | undefined) ?? undefined,
     }),
@@ -441,6 +443,7 @@ export function createDefaultMcpToolHandlers(
         previewHash: asString(input, "previewHash"),
         confirmed: input.confirmed as boolean,
         reason: asString(input, "reason"),
+        confirmedCashDirection: input.confirmedCashDirection as "collection" | undefined,
     }),
     "renewal.reverse": (ctx, input) => reverseLoanRenewal(ctx, asString(input, "renewalPublicId"), {
         reason: asString(input, "reason"),

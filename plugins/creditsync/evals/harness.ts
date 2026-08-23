@@ -531,20 +531,50 @@ const loanTerms = {
     installmentAmount: "190.00",
 } as const;
 
+const RENEWAL_COMPOSITION_FIELDS = {
+    settlementPolicy: "full_contract_interest",
+    composition: {
+        settlementPolicy: "full_contract_interest",
+        contractStartDate: "2026-08-01",
+        contractDueDate: "2026-08-24",
+        renewalDate: "2026-08-10",
+        requestedPrincipal: "2000.00",
+        originalPrincipal: "2000.00",
+        totalScheduledAmount: "2400.00",
+        contractualInterest: "400.00",
+        totalPaid: "1000.00",
+        receivedPrincipal: "833.33",
+        receivedInterest: "166.67",
+        remainingContractInterest: "233.33",
+        accruedDueInterest: "0.00",
+        dueFees: "0.00",
+        duePenalties: "0.00",
+        recoveredBeforeAdjustments: "600.00",
+        manualCharges: "0.00",
+        manualWaivers: "0.00",
+        settlementAmount: "233.33",
+        cashDirection: "payout",
+        cashAmount: "600.00",
+        payments: [],
+        adjustments: [],
+    },
+} as const;
+
 const EXECUTED_RENEWAL_RESULT = {
+    ...RENEWAL_COMPOSITION_FIELDS,
     publicId: RENEWAL,
     status: "executed",
     oldLoanPublicId: LOAN_A,
     newLoanPublicId: LOAN_B,
     previewHash: PREVIEW_HASH,
-    principalPaid: "1666.70",
-    outstandingPrincipal: "833.30",
-    dueCharges: "0.00",
-    settlementAmount: "833.30",
+    principalPaid: "833.33",
+    outstandingPrincipal: "1166.67",
+    dueCharges: "233.33",
+    settlementAmount: "233.33",
     waivedCharges: "0.00",
-    requestedPrincipal: "2500.00",
+    requestedPrincipal: "2000.00",
     cashDirection: "payout",
-    cashAmount: "1666.70",
+    cashAmount: "600.00",
 } satisfies SameTaskRenewalExecutionContext["executeResult"];
 
 const SAME_TASK_RENEWAL_CONTEXT: SameTaskRenewalExecutionContext = {
@@ -725,10 +755,10 @@ async function disbursementIdempotencyConflict(mcp: ScriptedMcp) {
     }
 }
 
-async function renewalExecute(mcp: ScriptedMcp, operatorConfirmed = true) {
+async function renewalExecute(mcp: ScriptedMcp, operatorConfirmed = true, settlementPolicy?: "accrued_to_date") {
     await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A });
-    const preview = await mcp.call("renewal.preview", { oldLoanPublicId: LOAN_A, requestedPrincipal: "2500.00" });
-    if (preview.dueCharges !== "0.00") return { outcome: "stopped", stopReason: "unsettled-charges" } as const;
+    const preview = await mcp.call("renewal.preview", { oldLoanPublicId: LOAN_A, requestedPrincipal: "2000.00", ...(settlementPolicy ? { settlementPolicy } : {}) });
+    if (preview.cashDirection === "collection") return { outcome: "stopped", stopReason: "collection-acknowledgement-required" } as const;
     if (!operatorConfirmed) return { outcome: "stopped", stopReason: "confirmation-required" } as const;
     const executeResult = await mcp.call("renewal.execute", {
         renewalPublicId: preview.publicId,
@@ -1633,10 +1663,18 @@ const SCENARIOS: Record<string, Scenario> = {
     "renewal-execute": {
         script: [
             { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000284", name: "fixture" }, aliases: [], loans: [] } },
-            { name: "renewal.preview", arguments: { oldLoanPublicId: LOAN_A, requestedPrincipal: "2500.00" }, result: { publicId: RENEWAL, previewHash: PREVIEW_HASH, dueCharges: "0.00", status: "fixture", oldLoanPublicId: "0198c481-3e2b-7000-8000-000000000285", principalPaid: "0.00", outstandingPrincipal: "0.00", settlementAmount: "0.00", waivedCharges: "0.00", requestedPrincipal: "0.00", cashDirection: "payout", cashAmount: "0.00" } },
+            { name: "renewal.preview", arguments: { oldLoanPublicId: LOAN_A, requestedPrincipal: "2000.00" }, result: { ...RENEWAL_COMPOSITION_FIELDS, publicId: RENEWAL, previewHash: PREVIEW_HASH, dueCharges: "233.33", status: "fixture", oldLoanPublicId: "0198c481-3e2b-7000-8000-000000000285", principalPaid: "833.33", outstandingPrincipal: "1166.67", settlementAmount: "233.33", waivedCharges: "0.00", requestedPrincipal: "2000.00", cashDirection: "payout", cashAmount: "600.00" } },
             { name: "renewal.execute", arguments: { renewalPublicId: RENEWAL, previewHash: PREVIEW_HASH, confirmed: true, reason: "Owner confirmed the displayed renewal", idempotencyKey: "renewal-execute-20260810-1" }, result: EXECUTED_RENEWAL_RESULT },
         ],
         run: (mcp) => renewalExecute(mcp),
+    },
+    "renewal-accrued-policy": {
+        script: [
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: BORROWER_A, name: "fixture" }, aliases: [], loans: [] } },
+            { name: "renewal.preview", arguments: { oldLoanPublicId: LOAN_A, requestedPrincipal: "2000.00", settlementPolicy: "accrued_to_date" }, result: { ...RENEWAL_COMPOSITION_FIELDS, settlementPolicy: "accrued_to_date", composition: { ...RENEWAL_COMPOSITION_FIELDS.composition, settlementPolicy: "accrued_to_date", settlementAmount: "0.00", cashAmount: "833.33" }, publicId: RENEWAL, previewHash: PREVIEW_HASH, dueCharges: "0.00", status: "fixture", oldLoanPublicId: LOAN_A, principalPaid: "833.33", outstandingPrincipal: "1166.67", settlementAmount: "0.00", waivedCharges: "0.00", requestedPrincipal: "2000.00", cashDirection: "payout", cashAmount: "833.33" } },
+            { name: "renewal.execute", arguments: { renewalPublicId: RENEWAL, previewHash: PREVIEW_HASH, confirmed: true, reason: "Owner confirmed the displayed renewal", idempotencyKey: "renewal-execute-20260810-1" }, result: { ...EXECUTED_RENEWAL_RESULT, settlementPolicy: "accrued_to_date", composition: { ...RENEWAL_COMPOSITION_FIELDS.composition, settlementPolicy: "accrued_to_date", settlementAmount: "0.00", cashAmount: "833.33" }, cashAmount: "833.33", settlementAmount: "0.00" } },
+        ],
+        run: (mcp) => renewalExecute(mcp, true, "accrued_to_date"),
     },
     "payment-reversal": {
         script: [
@@ -1648,7 +1686,7 @@ const SCENARIOS: Record<string, Scenario> = {
     "renewal-reversal": {
         script: [
             { name: "borrower.portfolio", arguments: { borrowerPublicId: SAME_TASK_RENEWAL_CONTEXT.retainedBorrowerPublicId }, result: RENEWAL_PORTFOLIO },
-            { name: "renewal.reverse", arguments: { renewalPublicId: SAME_TASK_RENEWAL_CONTEXT.executeResult.publicId, reason: "Owner confirmed renewal reversal; backend must atomically check downstream activity", idempotencyKey: "renewal-reverse-20260810-1" }, result: { publicId: "0198c481-3e2b-7000-8000-000000000289", status: "fixture", oldLoanPublicId: "0198c481-3e2b-7000-8000-000000000290", previewHash: "v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", principalPaid: "0.00", outstandingPrincipal: "0.00", dueCharges: "0.00", settlementAmount: "0.00", waivedCharges: "0.00", requestedPrincipal: "0.00", cashDirection: "payout", cashAmount: "0.00" } },
+            { name: "renewal.reverse", arguments: { renewalPublicId: SAME_TASK_RENEWAL_CONTEXT.executeResult.publicId, reason: "Owner confirmed renewal reversal; backend must atomically check downstream activity", idempotencyKey: "renewal-reverse-20260810-1" }, result: { ...RENEWAL_COMPOSITION_FIELDS, publicId: "0198c481-3e2b-7000-8000-000000000289", status: "fixture", oldLoanPublicId: "0198c481-3e2b-7000-8000-000000000290", previewHash: "v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", principalPaid: "0.00", outstandingPrincipal: "0.00", dueCharges: "0.00", settlementAmount: "0.00", waivedCharges: "0.00", requestedPrincipal: "0.00", cashDirection: "payout", cashAmount: "0.00" } },
         ],
         run: (mcp) => reverseRenewal(mcp, SAME_TASK_RENEWAL_CONTEXT),
     },
@@ -1786,14 +1824,14 @@ const SCENARIOS: Record<string, Scenario> = {
     "renewal-unsettled-charges": {
         script: [
             { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000352", name: "fixture" }, aliases: [], loans: [] } },
-            { name: "renewal.preview", arguments: { oldLoanPublicId: LOAN_A, requestedPrincipal: "2500.00" }, result: { publicId: RENEWAL, previewHash: PREVIEW_HASH, dueCharges: "23.00", status: "fixture", oldLoanPublicId: "0198c481-3e2b-7000-8000-000000000353", principalPaid: "0.00", outstandingPrincipal: "0.00", settlementAmount: "0.00", waivedCharges: "0.00", requestedPrincipal: "0.00", cashDirection: "payout", cashAmount: "0.00" } },
+            { name: "renewal.preview", arguments: { oldLoanPublicId: LOAN_A, requestedPrincipal: "2000.00" }, result: { ...RENEWAL_COMPOSITION_FIELDS, publicId: RENEWAL, previewHash: PREVIEW_HASH, dueCharges: "300.00", status: "fixture", oldLoanPublicId: "0198c481-3e2b-7000-8000-000000000353", principalPaid: "0.00", outstandingPrincipal: "2000.00", settlementAmount: "300.00", waivedCharges: "0.00", requestedPrincipal: "2000.00", cashDirection: "collection", cashAmount: "300.00" } },
         ],
         run: (mcp) => renewalExecute(mcp),
     },
     "renewal-missing-confirmation": {
         script: [
             { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: "0198c481-3e2b-7000-8000-000000000354", name: "fixture" }, aliases: [], loans: [] } },
-            { name: "renewal.preview", arguments: { oldLoanPublicId: LOAN_A, requestedPrincipal: "2500.00" }, result: { publicId: RENEWAL, previewHash: PREVIEW_HASH, dueCharges: "0.00", status: "fixture", oldLoanPublicId: "0198c481-3e2b-7000-8000-000000000355", principalPaid: "0.00", outstandingPrincipal: "0.00", settlementAmount: "0.00", waivedCharges: "0.00", requestedPrincipal: "0.00", cashDirection: "payout", cashAmount: "0.00" } },
+            { name: "renewal.preview", arguments: { oldLoanPublicId: LOAN_A, requestedPrincipal: "2000.00" }, result: { ...RENEWAL_COMPOSITION_FIELDS, publicId: RENEWAL, previewHash: PREVIEW_HASH, dueCharges: "233.33", status: "fixture", oldLoanPublicId: "0198c481-3e2b-7000-8000-000000000355", principalPaid: "833.33", outstandingPrincipal: "1166.67", settlementAmount: "233.33", waivedCharges: "0.00", requestedPrincipal: "2000.00", cashDirection: "payout", cashAmount: "600.00" } },
         ],
         run: (mcp) => renewalExecute(mcp, false),
     },

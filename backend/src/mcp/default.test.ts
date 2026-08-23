@@ -1465,6 +1465,7 @@ describe("default MCP adapter integration", () => {
             previewHash: renewal.previewHash,
             confirmed: true,
             reason: "MCP all-tools contract",
+            ...(renewal.cashDirection === "collection" ? { confirmedCashDirection: "collection" } : {}),
             idempotencyKey: "mcp-all-tools-renewal-execute",
         });
         await call("renewal.reverse", {
