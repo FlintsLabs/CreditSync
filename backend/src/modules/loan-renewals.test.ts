@@ -104,8 +104,8 @@ describe("loan renewal REST adapter", () => {
             oldLoanPublicId: seeded.loan.publicId,
             requestedPrincipal: "1000.00",
             outstandingPrincipal: "1000.00",
-            cashDirection: "none",
-            cashAmount: "0.00",
+            cashDirection: "collection",
+            cashAmount: "100.00",
         });
         expect(preview.body).not.toHaveProperty("oldLoanId");
 
@@ -123,7 +123,7 @@ describe("loan renewal REST adapter", () => {
             body: JSON.stringify({ previewHash: preview.body.previewHash, confirmed: true, reason: "route renewal" }),
         });
         expect(executed.response.status).toBe(200);
-        expect(executed.body).toMatchObject({ status: "executed", requestedPrincipal: "1000.00", cashAmount: "0.00" });
+        expect(executed.body).toMatchObject({ status: "executed", requestedPrincipal: "1000.00", cashAmount: "100.00" });
         expect(executed.body.newLoanPublicId).toMatch(/^[0-9a-f-]{36}$/);
 
         const reversed = await jsonRequest(app, `/loan-renewals/${preview.body.publicId}/reverse`, token, {
@@ -147,6 +147,37 @@ describe("loan renewal REST adapter", () => {
         });
         expect(invalid.response.status).toBe(400);
         expect(invalid.body).toMatchObject({ code: "INVALID_PUBLIC_ID", details: { field: "oldLoanId" } });
+    });
+
+    integrationTest("accepts closed policy and adjustment inputs and rejects invalid REST boundaries", async () => {
+        const seeded = await seedRouteLoan();
+        const token = await authToken(seeded.actor);
+        const app = new Elysia().use(loanRenewalsRoute);
+        const post = (body: Record<string, unknown>) => jsonRequest(app, "/loan-renewals/preview", token, {
+            method: "POST",
+            body: JSON.stringify({ oldLoanPublicId: seeded.loan.publicId, requestedPrincipal: "1000.00", ...body }),
+        });
+
+        const valid = await post({
+            settlementPolicy: "accrued_to_date",
+            adjustments: [{ kind: "fee", amount: "5.00", reason: "Manual fee" }],
+        });
+        expect(valid.response.status).toBe(200);
+        expect(valid.body.composition).toMatchObject({
+            settlementPolicy: "accrued_to_date",
+            adjustments: [{ lineNo: 1, kind: "fee", amount: "5.00", reason: "Manual fee" }],
+        });
+
+        const invalidBodies = [
+            { unknown: true },
+            { settlementPolicy: "unknown" },
+            { adjustments: [{ kind: "credit", amount: "1.00", reason: "x" }] },
+            { adjustments: [{ kind: "fee", amount: "0.00", reason: "x" }] },
+            { adjustments: [{ kind: "fee", amount: "1.00", reason: " " }] },
+            { adjustments: Array.from({ length: 51 }, () => ({ kind: "fee", amount: "1.00", reason: "x" })) },
+        ];
+        const statuses = await Promise.all(invalidBodies.map(async (body) => (await post(body)).response.status));
+        expect(statuses).toEqual([422, 422, 422, 400, 400, 422]);
     });
 
     integrationTest("returns one stable HTTP conflict for concurrent different renewals sharing an execution key", async () => {

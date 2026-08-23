@@ -32,13 +32,30 @@ function unauthorized(set: { status?: number | string }) {
     return domainFailure(new DomainError("UNAUTHORIZED", "Unauthorized", 401), set);
 }
 
-export const loanRenewalsRoute = new Elysia({ prefix: "/loan-renewals" })
+function assertClosedPreviewBody(body: Record<string, unknown>) {
+    const allowed = ["oldLoanPublicId", "requestedPrincipal", "settlementPolicy", "adjustments", "waivedCharges", "waiverReason"];
+    const unexpectedFields = Object.keys(body).filter((key) => !allowed.includes(key)).map((key) => `body.${key}`);
+    const adjustments = body.adjustments as Array<Record<string, unknown>> | undefined;
+    adjustments?.forEach((line, index) => {
+        for (const key of Object.keys(line)) {
+            if (!["kind", "amount", "reason"].includes(key)) unexpectedFields.push(`body.adjustments.${index}.${key}`);
+        }
+    });
+    if (unexpectedFields.length) {
+        throw new DomainError("VALIDATION_ERROR", "Request body contains unknown fields", 422, { unexpectedFields });
+    }
+}
+
+export const loanRenewalsRoute = new Elysia({ prefix: "/loan-renewals", normalize: false })
     .use(authPlugin)
     .post("/preview", async ({ body, user, request, set }) => {
         if (!user) return unauthorized(set);
         try {
+            assertClosedPreviewBody(body as unknown as Record<string, unknown>);
             return await previewLoanRenewal(commandContext(user, request), body.oldLoanPublicId, {
                 requestedPrincipal: body.requestedPrincipal,
+                settlementPolicy: body.settlementPolicy,
+                adjustments: body.adjustments,
                 waivedCharges: body.waivedCharges,
                 waiverReason: body.waiverReason ?? undefined,
             });
@@ -49,9 +66,23 @@ export const loanRenewalsRoute = new Elysia({ prefix: "/loan-renewals" })
         body: t.Object({
             oldLoanPublicId: t.String(),
             requestedPrincipal: t.String(),
+            settlementPolicy: t.Optional(t.Union([
+                t.Literal("full_contract_interest"),
+                t.Literal("accrued_to_date"),
+            ])),
+            adjustments: t.Optional(t.Array(t.Object({
+                kind: t.Union([
+                    t.Literal("fee"),
+                    t.Literal("penalty"),
+                    t.Literal("other_charge"),
+                    t.Literal("waiver"),
+                ]),
+                amount: t.String({ pattern: "^(?:0|[1-9]\\d{0,28})\\.\\d{2}$" }),
+                reason: t.String({ minLength: 1, maxLength: 500 }),
+            }, { additionalProperties: true }), { maxItems: 50 })),
             waivedCharges: t.Optional(t.String()),
             waiverReason: t.Optional(t.Nullable(t.String())),
-        }),
+        }, { additionalProperties: true }),
     })
     .post("/:id/execute", async ({ params, body, user, request, set }) => {
         if (!user) return unauthorized(set);

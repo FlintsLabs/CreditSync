@@ -154,7 +154,7 @@ async function renewalSnapshot(
     asOf: Date,
     options: RenewalSnapshotOptions,
 ): Promise<RenewalSnapshot> {
-    const [scheduleRows, transactionRows] = await Promise.all([
+    const [scheduleRows, transactionRows, fundingRows] = await Promise.all([
         executor.select().from(loanSchedules).where(and(
             eq(loanSchedules.tenantId, ctx.tenantId),
             eq(loanSchedules.loanId, loan.id),
@@ -163,6 +163,10 @@ async function renewalSnapshot(
             eq(transactions.tenantId, ctx.tenantId),
             eq(transactions.loanId, loan.id),
         )).orderBy(transactions.id),
+        executor.select().from(loanFundingAllocations).where(and(
+            eq(loanFundingAllocations.tenantId, ctx.tenantId),
+            eq(loanFundingAllocations.loanId, loan.id),
+        )).orderBy(loanFundingAllocations.id),
     ]);
     const posted = activeRepayments(transactionRows);
     const actualPrincipalPaid = posted.reduce(
@@ -223,10 +227,10 @@ async function renewalSnapshot(
                 transactionPublicId: row.publicId,
                 paidAt: (row.transactionDate ?? row.postedAt).toISOString(),
                 amount: serializeMoney(row.amount),
-                principal: serializeMoney(row.principalComponent),
-                interest: serializeMoney(row.interestComponent),
-                fee: serializeMoney(row.feeComponent),
-                penalty: serializeMoney(row.penaltyComponent),
+                principal: new Decimal(row.principalComponent).toFixed(2),
+                interest: new Decimal(row.interestComponent).toFixed(2),
+                fee: new Decimal(row.feeComponent).toFixed(2),
+                penalty: new Decimal(row.penaltyComponent).toFixed(2),
             })),
             accruedDueInterest: serializeMoney(dueInterest),
             dueFees: serializeMoney(dueFees),
@@ -259,22 +263,34 @@ async function renewalSnapshot(
                 scheduledInterest: serializeMoney(row.scheduledInterest),
                 scheduledFee: serializeMoney(row.scheduledFee),
             })),
-            repayments: posted.map((row: typeof transactions.$inferSelect) => ({
+            repaymentLedger: transactionRows.map((row: typeof transactions.$inferSelect) => ({
                 publicId: row.publicId,
-                principal: serializeMoney(row.principalComponent),
-                interest: serializeMoney(row.interestComponent),
-                fee: serializeMoney(row.feeComponent),
-                penalty: serializeMoney(row.penaltyComponent),
+                entryType: row.entryType,
+                reversedTransactionId: row.reversedTransactionId,
+                amount: row.amount,
+                principal: new Decimal(row.principalComponent).toFixed(2),
+                interest: new Decimal(row.interestComponent).toFixed(2),
+                fee: new Decimal(row.feeComponent).toFixed(2),
+                penalty: new Decimal(row.penaltyComponent).toFixed(2),
+            })),
+            fundingAllocations: fundingRows.map((row: typeof loanFundingAllocations.$inferSelect) => ({
+                publicId: row.publicId,
+                bankProfileId: row.bankProfileId,
+                bankLoanId: row.bankLoanId,
+                amount: new Decimal(row.allocatedAmount).toFixed(2),
+                allocationType: row.allocationType,
+                reversedAllocationId: row.reversedAllocationId,
             })),
         },
     };
 }
 
-function previewHash(snapshot: RenewalSnapshot, asOf: Date) {
+function previewHash(snapshot: RenewalSnapshot, asOf: Date, expiresAt: Date) {
     const payload = JSON.stringify({
         contract: "loan-renewal-preview",
         version: previewHashVersion,
-        asOfDate: new Date(utcDay(asOf)).toISOString().slice(0, 10),
+        asOfDate: bangkokDate(asOf),
+        expiresAt: expiresAt.toISOString(),
         composition: snapshot.composition,
         principalPaid: serializeMoney(snapshot.principalPaid),
         outstandingPrincipal: serializeMoney(snapshot.outstandingPrincipal),
@@ -319,6 +335,16 @@ export async function previewLoanRenewal(
     oldLoanPublicId: string,
     input: PreviewLoanRenewalInput,
 ) {
+    if (input.adjustments !== undefined && (input.waivedCharges !== undefined || input.waiverReason !== undefined)) {
+        throw new DomainError(
+            "RENEWAL_ADJUSTMENT_INPUT_CONFLICT",
+            "Structured adjustments cannot be combined with legacy waiver fields",
+            400,
+        );
+    }
+    if ((input.adjustments?.length ?? 0) > 50) {
+        throw new DomainError("TOO_MANY_RENEWAL_ADJUSTMENTS", "At most 50 renewal adjustments are allowed", 400);
+    }
     const requestedPrincipal = renewalMoney(input.requestedPrincipal, "requestedPrincipal");
     if (requestedPrincipal.isZero()) {
         throw new DomainError("INVALID_RENEWAL_AMOUNT", "requestedPrincipal must be greater than zero", 400, { field: "requestedPrincipal" });
@@ -345,7 +371,8 @@ export async function previewLoanRenewal(
         const composition = snapshot.composition;
         const dueCharges = new Decimal(composition.settlementAmount).plus(composition.manualWaivers);
         const totalWaivers = new Decimal(composition.manualWaivers);
-        const hash = previewHash(snapshot, asOf);
+        const expiresAt = new Date(asOf.getTime() + previewTtlSeconds() * 1000);
+        const hash = previewHash(snapshot, asOf, expiresAt);
         await tx.update(loanRenewals).set({
             status: "expired",
             updatedByUserId: ctx.actorUserId,
@@ -369,7 +396,7 @@ export async function previewLoanRenewal(
             cashDirection: composition.cashDirection,
             cashAmount: composition.cashAmount,
             reason: waiverReason,
-            expiresAt: new Date(asOf.getTime() + previewTtlSeconds() * 1000),
+            expiresAt,
             createdByUserId: ctx.actorUserId,
             updatedByUserId: ctx.actorUserId,
         }).returning().then((rows) => rows[0]!);
@@ -559,7 +586,7 @@ export async function executeLoanRenewal(
             settlementPolicy: renewal.settlementPolicy,
             adjustments: frozenComposition?.adjustments.map(({ kind, amount, reason }) => ({ kind, amount, reason })) ?? [],
         });
-        const currentHash = previewHash(snapshot, effectiveAt);
+        const currentHash = previewHash(snapshot, effectiveAt, renewal.expiresAt);
         const currentDueCharges = new Decimal(snapshot.composition.settlementAmount)
             .plus(snapshot.composition.manualWaivers);
         if (currentHash !== renewal.previewHash

@@ -352,6 +352,51 @@ describe("daily-loan renewal service", () => {
         expect(await db.select().from(loanFundingAllocations)).toEqual(fundingBefore);
     });
 
+    integrationTest("freezes explicit accrued policy and ordered adjustments while adapting legacy waivers", async () => {
+        const seeded = await seedDailyLoan({ paidInstallments: 9 });
+        const preview = await previewLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id),
+            seeded.oldLoan.publicId,
+            {
+                requestedPrincipal: "2500.00",
+                settlementPolicy: "accrued_to_date",
+                adjustments: [
+                    { kind: "other_charge", amount: "5.00", reason: "Document expense" },
+                    { kind: "waiver", amount: "3.00", reason: "Approved concession" },
+                ],
+            },
+        );
+        expect(preview.composition).toMatchObject({
+            settlementPolicy: "accrued_to_date",
+            adjustments: [
+                { lineNo: 1, kind: "other_charge", amount: "5.00", reason: "Document expense" },
+                { lineNo: 2, kind: "waiver", amount: "3.00", reason: "Approved concession" },
+            ],
+        });
+        expect(await db.query.loanRenewals.findFirst({ where: eq(loanRenewals.publicId, preview.publicId) }))
+            .toMatchObject({ settlementPolicy: "accrued_to_date", composition: preview.composition });
+
+        const legacy = await previewLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id),
+            seeded.oldLoan.publicId,
+            { requestedPrincipal: "2500.00", waivedCharges: "1.00", waiverReason: "Legacy waiver" },
+        );
+        expect(legacy.composition.adjustments).toEqual([
+            { lineNo: 1, kind: "waiver", amount: "1.00", reason: "Legacy waiver" },
+        ]);
+
+        await expect(previewLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id),
+            seeded.oldLoan.publicId,
+            {
+                requestedPrincipal: "2500.00",
+                adjustments: [{ kind: "fee", amount: "1.00", reason: "New input" }],
+                waivedCharges: "1.00",
+                waiverReason: "Legacy input",
+            },
+        )).rejects.toMatchObject({ code: "RENEWAL_ADJUSTMENT_INPUT_CONFLICT", status: 400 });
+    });
+
     // Break caught: a reversed principal receipt still reduces renewal outstanding principal.
     integrationTest("uses only non-reversed posted principal for a partial-pay renewal", async () => {
         const seeded = await seedDailyLoan({ paidInstallments: 4 });
@@ -669,6 +714,32 @@ describe("daily-loan renewal service", () => {
         expect(await db.query.loanRenewals.findFirst({ where: eq(loanRenewals.publicId, preview.publicId) }))
             .toMatchObject({ status: "expired", newLoanId: null });
         expect(await db.select().from(loans).where(eq(loans.clonedFromLoanId, seeded.oldLoan.id))).toHaveLength(0);
+    });
+
+    integrationTest("expires a preview after the old loan funding state changes", async () => {
+        const seeded = await seedDailyLoan();
+        const preview = await previewLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id), seeded.oldLoan.publicId, { requestedPrincipal: "2500.00" },
+        );
+        await db.insert(loanFundingAllocations).values({
+            tenantId: seeded.tenantId,
+            bankProfileId: seeded.profile.id,
+            bankLoanId: seeded.drawdown.id,
+            loanId: seeded.oldLoan.id,
+            allocatedAmount: "1.00",
+            allocationDate: seeded.oldLoan.startDate!,
+            allocationType: "manual_adjustment",
+            createdByUserId: seeded.actor.id,
+        });
+
+        await expect(executeLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "funding-stale-renewal"),
+            preview.publicId,
+            { previewHash: preview.previewHash, confirmed: true, reason: "stale funding attempt" },
+        )).rejects.toMatchObject({ code: "STALE_RENEWAL_PREVIEW", status: 409 });
+        expect(await db.select().from(loanAdjustments).where(eq(loanAdjustments.renewalId,
+            (await db.query.loanRenewals.findFirst({ where: eq(loanRenewals.publicId, preview.publicId) }))!.id,
+        ))).toHaveLength(0);
     });
 
     integrationTest("expires and rejects a preview whose explicit TTL has elapsed", async () => {
