@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.3.39 - 2026-08-23
+
+### Added
+- Added closed MCP payment-batch tools, recovery flags, plugin guidance, and six batch eval scenarios for inspect, preview, one-time confirmation, atomic execution, and stop-all review boundaries.
+
+### Changed
+- Synchronized the CreditSync plugin contract and validator at version 7.4.0 for the atomic scheduled-loan payment batch workflow.
+- Added a localized frontend atomic-batch editor/model with exact decimal totals and explicit preview/execute confirmation controls.
+- Documented operator recovery flags, stop-all batch semantics, and post-execution verification in the README and plugin skills.
+- Updated the plugin README and approved implementation plan to reflect the completed 7.4.0 batch workflow.
+
+### Fixed
+- Narrowed the latest batch preview locally before checking warning and allocation readiness, keeping the frontend TypeScript build safe under strict null checks.
+
 ## v0.3.38 - 2026-08-23
 
 ### Added
@@ -11,11 +25,27 @@
 - Exposed configurable daily-renewal settlement policies, structured adjustments, exact frozen composition, and explicit collection confirmation through the closed MCP contract and synchronized CreditSync plugin 7.4.0 workflow and evals.
 - Added a localized manual renewal UI that defaults to full-contract interest, accepts reasoned adjustment rows, invalidates approval after edits, renders backend-owned payment/composition values, and requires a separate collection acknowledgment.
 - Added deterministic 1080×1350 preview/executed renewal summary images with safe typed data, explicit watermarks, bounded payment history, localized display, and presentation-only PNG download.
+- Added all-or-nothing batch execution that reuses the existing payment posting kernel inside one transaction, carries confirmation/idempotency context, and records batch audit lineage.
+- Added authenticated REST endpoints for creating, reading, editing, previewing, cancelling, and executing payment batches with closed request schemas.
+- Added versioned batch previews with stable state/preview/confirmation hashes, explicit whole-batch allocations, evidence readiness gating, and stale prior previews.
+- Added tenant-scoped payment batch creation, item membership, safe reads/cancellation, and versioned preview persistence over existing payment intakes.
+- Added a bounded deterministic joint exact-combination solver for multi-slip payment batches, including ambiguity, exact decimal, advance, and solver-limit safety handling.
+- Added tenant-scoped atomic payment batch tables with versioned previews, exact allocation records, command idempotency, and database immutability guards for posted batches.
+- Added the task-by-task implementation plan for atomic multi-slip and multi-loan payment batches, covering schema immutability, deterministic exact allocation, one-time semantic confirmation, all-or-nothing posting, MCP/plugin synchronization, localized editing, and full financial verification.
+- Added the approved atomic batch-payment design for multi-slip and multi-loan exact allocation, whole-batch prompt editing, one-time semantic confirmation, and all-or-nothing posting with finalized evidence and append-only audit history.
 - Added the approved design for an operator-selectable daily-loan renewal policy that defaults to full-contract interest, supports reasoned manual charge/waiver lines, exposes one backend-authoritative preview through Web UI and MCP, and produces deterministic customer summary images.
 - Added the task-by-task implementation plan covering exact renewal composition, immutable ledger records, REST/MCP contracts, manual UI controls, deterministic PNG export, and full financial verification gates.
 
+### Changed
+- Updated loan agent agreements with localized role selection, a right-aligned datetime picker action, and numeric-only commission input that supports zero-commission collection agents.
+- Replaced the loan-agent role dropdown with accessible selectable cards, including a direct-collection option that locks commission at 0%.
+
 ### Fixed
-- Updated production mixed-lineage verification and migration test timing for the migration 0050 journal tail while retaining exact historical 53-row validation.
+- Updated production mixed-lineage verification and migration test timing for the combined migration journal tail while retaining exact historical 53-row validation.
+- Corrected the forward atomic-batch immutability trigger migration so posted allocation updates inspect their preview relationship instead of a nonexistent batch column.
+- Corrected the shared trigger implementation to resolve row-specific OLD fields safely across batch, item, preview, and allocation tables.
+- Returned batch-post audit metadata through MCP and kept the all-tools adapter and migration reconciliation tests aligned with the added batch migrations.
+- Allowed audited commission-participant agreements at 0% through the service and PostgreSQL constraint, with migration and regression coverage.
 
 ## v0.3.37 - 2026-08-21
 

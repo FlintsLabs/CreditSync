@@ -112,6 +112,8 @@ export async function validatePlugin() {
             "loan.commission-participant.end", "loan.commission.preview", "loan.commission.list", "loan.commission.calculate",
             "loan.commission.reverse", "payment.intermediary-attribution.create", "payment.intermediary-attribution.list",
             "payment.intermediary-attribution.reverse",
+            "payment.batch.create", "payment.batch.item.add", "payment.batch.evidence.prepare",
+            "payment.batch.evidence.finalize", "payment.batch.get", "payment.batch.preview", "payment.batch.execute",
         ],
         "manage-loans": [
             "loan.commission-participant.list", "loan.commission-participant.add", "loan.commission-participant.update",

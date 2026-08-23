@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Decimal from "decimal.js";
-import { Loader2, Pencil, Plus, XCircle } from "lucide-react";
+import { Calendar, CheckCircle2, HandCoins, Handshake, Loader2, Pencil, Plus, WalletCards, XCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api } from "../../../lib/api";
 import { bangkokLocalDateTimeToIso } from "../../../lib/bangkok-time";
@@ -29,6 +29,17 @@ type Mode = "add" | "update" | "end";
 
 const initialForm = { intermediaryPublicId: "", commissionRate: "", role: "", effectiveAt: "", note: "", confirmed: false };
 const ratePattern = /^(?:0|[1-9]\d{0,2})(?:\.\d{1,4})?$/;
+const commissionRoles = [
+    { value: "collector", icon: HandCoins },
+    { value: "introducer", icon: Handshake },
+    { value: "direct_collection", icon: WalletCards },
+] as const;
+
+function sanitizeCommissionRate(value: string) {
+    const digitsAndDecimal = value.replace(/[^\d.]/g, "");
+    const [whole = "", ...decimalParts] = digitsAndDecimal.split(".");
+    return decimalParts.length === 0 ? whole : `${whole}.${decimalParts.join("")}`;
+}
 
 function domainMessage(error: unknown, fallback: string) {
     const data = (error as { response?: { data?: { message?: string; error?: string } } }).response?.data;
@@ -46,6 +57,7 @@ export function LoanAgentsTab({ loanPublicId }: { loanPublicId: string }) {
     const [form, setForm] = useState(initialForm);
     const [saving, setSaving] = useState(false);
     const commandIntentRef = useRef<{ fingerprint: string; idempotencyKey: string } | null>(null);
+    const effectiveAtRef = useRef<HTMLInputElement>(null);
 
     const load = async () => {
         setLoading(true);
@@ -74,6 +86,7 @@ export function LoanAgentsTab({ loanPublicId }: { loanPublicId: string }) {
     const intermediaryById = useMemo(() => new Map(intermediaries.map((item) => [item.publicId, item])), [intermediaries]);
     const totalRate = participants.filter((item) => item.status === "active").reduce((sum, item) => sum.plus(item.commissionRate), new Decimal(0)).toFixed(4);
     const formatDate = (value: string | null) => value ? new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeZone: "Asia/Bangkok" }).format(new Date(value)) : "—";
+    const isDirectCollection = form.role === "direct_collection";
 
     const open = (nextMode: Mode, participant?: Participant) => {
         setMode(nextMode);
@@ -93,8 +106,8 @@ export function LoanAgentsTab({ loanPublicId }: { loanPublicId: string }) {
         if (!mode || saving) return;
         if (!form.confirmed) { setError(t("loanDetail.agents.errors.confirm", "Confirm this change before saving.")); return; }
         if (mode !== "end") {
-            if (!ratePattern.test(form.commissionRate) || !new Decimal(form.commissionRate || 0).gt(0) || new Decimal(form.commissionRate || 0).gt(100)) {
-                setError(t("loanDetail.agents.errors.rate", "Commission rate must be greater than 0 and at most 100 with up to four decimals."));
+            if (!ratePattern.test(form.commissionRate) || new Decimal(form.commissionRate || 0).lt(0) || new Decimal(form.commissionRate || 0).gt(100)) {
+                setError(t("loanDetail.agents.errors.rate", "Commission rate must be between 0 and 100 with up to four decimals."));
                 return;
             }
             if (!form.role.trim() || (mode === "add" && !form.intermediaryPublicId)) {
@@ -152,7 +165,7 @@ export function LoanAgentsTab({ loanPublicId }: { loanPublicId: string }) {
                     </TableRow></TableHeader><TableBody>
                         {participants.map((participant) => { const intermediary = intermediaryById.get(participant.intermediaryPublicId); return <TableRow key={participant.publicId}>
                             <TableCell><div className="font-medium">{participant.intermediaryName ?? intermediary?.name ?? participant.intermediaryPublicId}</div>{(participant.intermediaryAliases ?? intermediary?.aliases)?.length ? <div className="text-xs text-muted-foreground">{(participant.intermediaryAliases ?? intermediary?.aliases)?.join(", ")}</div> : null}</TableCell>
-                            <TableCell>{participant.role}</TableCell><TableCell className="text-right font-medium tabular-nums">{participant.commissionRate}%</TableCell><TableCell className="whitespace-nowrap text-sm">{formatDate(participant.effectiveFrom)} – {formatDate(participant.effectiveTo)}</TableCell><TableCell><Badge variant={participant.status === "active" ? "default" : "outline"}>{t(`loanDetail.agents.status.${participant.status}`, participant.status)}</Badge></TableCell>
+                            <TableCell>{t(`loanDetail.agents.roles.${participant.role}`, participant.role)}</TableCell><TableCell className="text-right font-medium tabular-nums">{participant.commissionRate}%</TableCell><TableCell className="whitespace-nowrap text-sm">{formatDate(participant.effectiveFrom)} – {formatDate(participant.effectiveTo)}</TableCell><TableCell><Badge variant={participant.status === "active" ? "default" : "outline"}>{t(`loanDetail.agents.status.${participant.status}`, participant.status)}</Badge></TableCell>
                             <TableCell className="text-right">{participant.status === "active" && <div className="flex justify-end gap-1"><Button size="sm" variant="outline" onClick={() => open("update", participant)} aria-label={t("loanDetail.agents.update", "Update agent")}><Pencil className="h-4 w-4" /></Button><Button size="sm" variant="outline" onClick={() => open("end", participant)} aria-label={t("loanDetail.agents.end", "End agent")}><XCircle className="h-4 w-4" /></Button></div>}</TableCell>
                         </TableRow>; })}
                         <TableRow><TableCell colSpan={2} className="font-semibold">{t("loanDetail.agents.total", "Active total")}</TableCell><TableCell className="text-right font-semibold tabular-nums">{totalRate}%</TableCell><TableCell colSpan={3} /></TableRow>
@@ -161,8 +174,8 @@ export function LoanAgentsTab({ loanPublicId }: { loanPublicId: string }) {
             <Dialog open={mode !== null} onOpenChange={(isOpen) => !saving && !isOpen && setMode(null)}><DialogContent><DialogHeader><DialogTitle>{t(`loanDetail.agents.dialog.${mode ?? "add"}.title`, mode === "update" ? "Update agent" : mode === "end" ? "End agent" : "Add agent")}</DialogTitle><DialogDescription>{t("loanDetail.agents.dialog.description", "Changes create an effective-dated participant version and require confirmation.")}</DialogDescription></DialogHeader>
                 <div className="space-y-4">
                     {mode === "add" && <div className="grid gap-2"><label htmlFor="agent-intermediary">{t("loanDetail.agents.agent", "Agent")}</label><select id="agent-intermediary" className="h-10 rounded-md border bg-background px-3" value={form.intermediaryPublicId} onChange={(event) => setForm({ ...form, intermediaryPublicId: event.target.value, confirmed: false })}><option value="">{t("loanDetail.agents.choose", "Choose an agent")}</option>{intermediaries.map((item) => <option key={item.publicId} value={item.publicId}>{item.name}</option>)}</select></div>}
-                    {mode !== "end" && <><div className="grid gap-2"><label htmlFor="agent-rate">{t("loanDetail.agents.rateInput", "Commission rate (%)")}</label><Input id="agent-rate" inputMode="decimal" value={form.commissionRate} onChange={(event) => setForm({ ...form, commissionRate: event.target.value, confirmed: false })} /></div><div className="grid gap-2"><label htmlFor="agent-role">{t("loanDetail.agents.role", "Role")}</label><Input id="agent-role" value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value, confirmed: false })} /></div></>}
-                    <div className="grid gap-2"><label htmlFor="agent-effective">{t(mode === "end" ? "loanDetail.agents.effectiveTo" : "loanDetail.agents.effectiveFrom", mode === "end" ? "Effective to" : "Effective from")}</label><Input id="agent-effective" type="datetime-local" value={form.effectiveAt} onChange={(event) => setForm({ ...form, effectiveAt: event.target.value, confirmed: false })} /></div>
+                    {mode !== "end" && <><div className="grid gap-2"><span id="agent-role-label" className="font-medium">{t("loanDetail.agents.careType", "Contract care type")}</span><p className="text-sm text-muted-foreground">{t("loanDetail.agents.careTypeHint", "Choose one type.")}</p><div role="radiogroup" aria-labelledby="agent-role-label" className="grid gap-2">{commissionRoles.map(({ value, icon: Icon }) => <button key={value} type="button" role="radio" aria-checked={form.role === value} className={`flex items-start gap-3 rounded-lg border p-3 text-left transition-colors ${form.role === value ? "border-primary bg-primary/5 ring-1 ring-primary" : "hover:bg-muted/50"}`} onClick={() => setForm({ ...form, role: value, commissionRate: value === "direct_collection" ? "0.00" : form.commissionRate, confirmed: false })}><span className={`rounded-md p-2 ${form.role === value ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}><Icon className="h-4 w-4" /></span><span className="min-w-0 flex-1"><span className="block font-medium">{t(`loanDetail.agents.roles.${value}`, value)}</span><span className="mt-0.5 block text-sm text-muted-foreground">{t(`loanDetail.agents.roleDescriptions.${value}`, value)}</span></span>{form.role === value && <CheckCircle2 className="mt-1 h-5 w-5 shrink-0 text-primary" aria-hidden="true" />}</button>)}</div></div><div className="grid gap-2"><label htmlFor="agent-rate">{t("loanDetail.agents.rateInput", "Commission rate (%)")}</label><Input id="agent-rate" inputMode="decimal" disabled={isDirectCollection} value={form.commissionRate} onChange={(event) => setForm({ ...form, commissionRate: sanitizeCommissionRate(event.target.value), confirmed: false })} />{isDirectCollection && <p className="text-sm text-muted-foreground">{t("loanDetail.agents.directCollectionRateHint", "Set to 0% for direct collection.")}</p>}</div></>}
+                    <div className="grid gap-2"><label htmlFor="agent-effective">{t(mode === "end" ? "loanDetail.agents.effectiveTo" : "loanDetail.agents.effectiveFrom", mode === "end" ? "Effective to" : "Effective from")}</label><div className="relative"><Input ref={effectiveAtRef} id="agent-effective" className="pr-10 [&::-webkit-calendar-picker-indicator]:opacity-0" type="datetime-local" value={form.effectiveAt} onChange={(event) => setForm({ ...form, effectiveAt: event.target.value, confirmed: false })} /><button type="button" aria-label={t("loanDetail.agents.openDatePicker", "Open date picker")} className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-muted-foreground" onClick={() => effectiveAtRef.current?.showPicker?.()}><Calendar className="h-4 w-4" aria-hidden="true" /></button></div></div>
                     <div className="grid gap-2"><label htmlFor="agent-note">{t(mode === "end" ? "loanDetail.agents.reason" : "loanDetail.agents.note", mode === "end" ? "Reason" : "Note")}</label><Input id="agent-note" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value, confirmed: false })} /></div>
                     <label className="flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={form.confirmed} onChange={(event) => setForm({ ...form, confirmed: event.target.checked })} /><span>{t("loanDetail.agents.confirmation", "I confirm this commission agreement")}</span></label>
                     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}

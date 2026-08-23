@@ -61,9 +61,9 @@ function timestamp(value: string, field: string) {
 }
 
 function rate(value: string) {
-    if (!/^(?:0|[1-9]\d{0,2})(?:\.\d{1,4})?$/.test(value)) throw new DomainError("INVALID_COMMISSION_RATE", "commissionRate must be greater than 0 and at most 100 with up to four decimals", 400);
+    if (!/^(?:0|[1-9]\d{0,2})(?:\.\d{1,4})?$/.test(value)) throw new DomainError("INVALID_COMMISSION_RATE", "commissionRate must be between 0 and 100 with up to four decimals", 400);
     const parsed = new FinancialDecimal(value);
-    if (!parsed.gt(0) || parsed.gt(100)) throw new DomainError("INVALID_COMMISSION_RATE", "commissionRate must be greater than 0 and at most 100 with up to four decimals", 400);
+    if (parsed.lt(0) || parsed.gt(100)) throw new DomainError("INVALID_COMMISSION_RATE", "commissionRate must be between 0 and 100 with up to four decimals", 400);
     return parsed;
 }
 

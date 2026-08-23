@@ -29,7 +29,7 @@
 ### Task 1: Persist Renewal Policy, Frozen Composition, and Immutable Adjustment Lines
 
 **Files:**
-- Create: `backend/drizzle/0050_daily_renewal_full_contract_interest.sql`
+- Create: `backend/drizzle/0054_daily_renewal_full_contract_interest.sql`
 - Modify: `backend/drizzle/meta/_journal.json`
 - Modify: `backend/src/db/schema.ts:1559-1634`
 - Test: `backend/src/services/loan-renewal-service.test.ts`
@@ -74,7 +74,7 @@ cd backend
 
 Expected: FAIL because the new columns/table mappings do not exist.
 
-- [ ] **Step 3: Add migration 0050 and Drizzle mappings**
+- [ ] **Step 3: Add the renewal migration and Drizzle mappings**
 
 Migration requirements:
 
@@ -125,7 +125,7 @@ Run the Step 2 command. Expected: all renewal tests pass, including the new data
 Add a concise `v0.3.38` `### Added` bullet for persisted full-interest renewal policy and immutable manual adjustment lines, then run:
 
 ```bash
-git add CHANGELOG.md backend/drizzle/0050_daily_renewal_full_contract_interest.sql backend/drizzle/meta/_journal.json backend/src/db/schema.ts backend/src/services/loan-renewal-service.test.ts
+git add CHANGELOG.md backend/drizzle/0054_daily_renewal_full_contract_interest.sql backend/drizzle/meta/_journal.json backend/src/db/schema.ts backend/src/services/loan-renewal-service.test.ts
 git diff --cached --check
 git commit -m "feat: persist full-interest renewal terms"
 ```
@@ -753,4 +753,4 @@ docker compose --env-file .env.production -f docker-compose.infra.yml up -d
 docker compose --env-file .env.production -f docker-compose.app.yml up --build -d
 ```
 
-Verify migration 0050 columns/table/constraints through PostgreSQL, successful backend migration logs, MCP health inside the backend container, local frontend HTTP 200, and public frontend HTTP 200. Do not create a production renewal as a smoke test.
+Verify the renewal migration columns/table/constraints through PostgreSQL, successful backend migration logs, MCP health inside the backend container, local frontend HTTP 200, and public frontend HTTP 200. Do not create a production renewal as a smoke test.

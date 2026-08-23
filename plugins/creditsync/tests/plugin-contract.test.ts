@@ -133,7 +133,7 @@ describe("CreditSync plugin 7.4.0 contract", () => {
         expect(contract.schemaVersion).toBe("1.0");
         expect(contract.compatibility).toBe("Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 7.4.0; breaking changes require plugin 8.0.0.");
         expect(contract.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
-        expect(contract.tools).toHaveLength(84);
+        expect(contract.tools).toHaveLength(91);
         expect(contract.tools.every((tool) => tool.inputSchema && tool.outputSchema && tool.annotations)).toBe(true);
         const advertised = await captureAdvertisedMcpContract();
         expect(canonicalContractJson(contract)).toBe(canonicalContractJson(advertised));
@@ -284,8 +284,8 @@ describe("CreditSync plugin 7.4.0 contract", () => {
             "loan-replacement-direct-status-mutation",
             "loan-replacement-portfolio-scope-mismatch",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
-        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(31);
-        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(50);
+        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(33);
+        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(54);
     });
 
     test("floating settlement skill preserves exact composition and all execution stop gates", async () => {

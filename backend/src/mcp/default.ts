@@ -138,6 +138,7 @@ import {
     type CreatePaymentAttributionInput,
 } from "../services/payment-attribution-service";
 import { executePaymentReconciliation, previewPaymentReconciliation, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
+import { addPaymentBatchItem, createPaymentBatch, executePaymentBatch, getPaymentBatch, previewPaymentBatch } from "../services/payment-batch-service";
 
 type ToolInput = Record<string, unknown>;
 
@@ -233,6 +234,13 @@ export function createDefaultMcpToolHandlers(
     "payment.reverse": (ctx, input) => reversePayment(paymentReverseCommandContext(ctx, input), asString(input, "paymentIntakePublicId"), {
         reason: paymentReversalReason(input),
     }),
+    "payment.batch.create": (ctx, input) => createPaymentBatch(ctx, { idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"), borrowerPublicId: input.borrowerPublicId as string | null | undefined, notes: input.notes as string | null | undefined }),
+    "payment.batch.item.add": (ctx, input) => addPaymentBatchItem(ctx, asString(input, "batchPublicId"), { paymentIntakePublicId: asString(input, "paymentIntakePublicId"), itemOrder: input.itemOrder as number }),
+    "payment.batch.evidence.prepare": (ctx, input) => preparePaymentEvidence(ctx, asString(input, "paymentIntakePublicId"), { mimeType: input.mimeType as string, size: input.size as number, sha256: asString(input, "sha256"), evidenceType: input.evidenceType as "slip" | "qr" | undefined }, dependencies.evidenceGateway),
+    "payment.batch.evidence.finalize": (ctx, input) => finalizePaymentEvidence(ctx, asString(input, "paymentIntakePublicId"), asString(input, "evidencePublicId"), dependencies.evidenceGateway),
+    "payment.batch.get": (ctx, input) => getPaymentBatch(ctx, asString(input, "batchPublicId")),
+    "payment.batch.preview": (ctx, input) => previewPaymentBatch(ctx, asString(input, "batchPublicId"), { borrowerPublicId: asString(input, "borrowerPublicId"), allocations: input.allocations as any[] | undefined }),
+    "payment.batch.execute": (ctx, input) => executePaymentBatch(ctx, asString(input, "batchPublicId"), { previewPublicId: asString(input, "previewPublicId"), previewHash: asString(input, "previewHash"), confirmationHash: asString(input, "confirmationHash"), confirmed: true, idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey") }),
     "payment.reconcile.preview": (ctx, input) => previewPaymentReconciliation(ctx, {
         paymentIntakePublicId: asString(input, "paymentIntakePublicId"),
         allocations: input.allocations as ReconciliationAllocation[],
@@ -484,6 +492,7 @@ export function createDefaultMcpToolHandlers(
 const auditTarget: Partial<Record<McpToolName, { entityType: string; action: string }>> = {
     "payment.post": { entityType: "payment_intake", action: "posted" },
     "payment.reverse": { entityType: "payment_intake", action: "reversed" },
+    "payment.batch.execute": { entityType: "payment_batch", action: "posted" },
     "payment.reconcile.execute": { entityType: "payment_reconciliation", action: "executed" },
     "loan.activate": { entityType: "loan", action: "activated" },
     "loan.payment-start-date.update": { entityType: "loan", action: "payment_start_date_changed" },
@@ -518,7 +527,8 @@ function resultPublicId(result: unknown) {
         ?? record.loanPublicId
         ?? record.settlementPublicId
         ?? record.replacementPublicId
-        ?? record.reconciliationPublicId;
+        ?? record.reconciliationPublicId
+        ?? record.batchPublicId;
     return typeof value === "string" ? value : null;
 }
 
