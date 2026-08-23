@@ -10,6 +10,7 @@
 - Added a localized frontend atomic-batch editor/model with exact decimal totals and explicit preview/execute confirmation controls.
 - Documented operator recovery flags, stop-all batch semantics, and post-execution verification in the README and plugin skills.
 - Updated the plugin README and approved implementation plan to reflect the completed 7.4.0 batch workflow.
+- Ignored local agent workspace metadata and the transient `note.txt` secret file.
 
 ### Fixed
 - Narrowed the latest batch preview locally before checking warning and allocation readiness, keeping the frontend TypeScript build safe under strict null checks.

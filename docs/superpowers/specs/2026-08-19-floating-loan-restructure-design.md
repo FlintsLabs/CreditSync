@@ -32,4 +32,3 @@ If carried charges exist, the preview exposes them separately. They are carried 
 ## Verification
 
 Add service tests for floating-source preview, execution, carried-component payment allocation, stale preview, and reversal blockers. Run the disposable PostgreSQL service suites, backend typecheck, MCP/plugin contract tests, and the relevant payment/floating regression suites.
-

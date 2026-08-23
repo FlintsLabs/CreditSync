@@ -113,4 +113,3 @@
 - [ ] Add a positive floating-source restructure eval and negative stale/missing-confirmation cases if the frozen contract supports them.
 - [ ] Run backend typecheck, focused disposable suites, MCP/plugin tests and validator, and frontend checks required by the repository before completion.
 - [ ] Update the newest changelog version with the feature summary, then review the final diff and commit all feature/docs/tests together.
-
