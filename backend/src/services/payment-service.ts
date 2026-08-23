@@ -1818,6 +1818,21 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
     return result;
 }
 
+/**
+ * Transaction-aware posting primitive for aggregate workflows. The caller owns
+ * the transaction and must have created/validated the ready proposal; this
+ * function deliberately routes through the same locked posting kernel used by
+ * the single-intake endpoint.
+ */
+export async function postPaymentAllocationInTransaction(
+    tx: Executor,
+    ctx: CommandContext,
+    intake: Pick<IntakeRow, "publicId">,
+    allocations: { proposalPublicId: string },
+) {
+    return postPayment(ctx, intake.publicId, allocations, tx);
+}
+
 export async function reversePayment(ctx: CommandContext, intakePublicId: string, input: { reason: string }, executor?: Executor) {
     const reason = input.reason?.trim();
     if (!reason) throw new DomainError("REVERSAL_REASON_REQUIRED", "Payment reversal requires a reason", 400);

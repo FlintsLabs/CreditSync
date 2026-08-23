@@ -365,6 +365,20 @@
       "when": 1787481003374,
       "tag": "0051_atomic_batch_payments",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1787484600000,
+      "tag": "0052_fix_atomic_batch_immutability_trigger",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1787488200000,
+      "tag": "0053_fix_atomic_batch_trigger_record_fields",
+      "breakpoints": true
     }
   ]
 }

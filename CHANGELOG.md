@@ -19,6 +19,8 @@
 - Replaced the loan-agent role dropdown with accessible selectable cards, including a direct-collection option that locks commission at 0%.
 
 ### Fixed
+- Corrected the forward atomic-batch immutability trigger migration so posted allocation updates inspect their preview relationship instead of a nonexistent batch column.
+- Corrected the shared trigger implementation to resolve row-specific OLD fields safely across batch, item, preview, and allocation tables.
 - Allowed audited commission-participant agreements at 0% through the service and PostgreSQL constraint, with migration and regression coverage.
 
 ## v0.3.37 - 2026-08-21
