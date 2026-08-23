@@ -9,6 +9,7 @@
 
 ### Changed
 - Updated loan agent agreements with localized role selection, a right-aligned datetime picker action, and numeric-only commission input that supports zero-commission collection agents.
+- Replaced the loan-agent role dropdown with accessible selectable cards, including a direct-collection option that locks commission at 0%.
 
 ### Fixed
 - Allowed audited commission-participant agreements at 0% through the service and PostgreSQL constraint, with migration and regression coverage.

@@ -30,7 +30,7 @@ describe("LoanAgentsTab", () => {
         expect(within(table).getByText("50.0000%")).toBeInTheDocument();
     });
 
-    it("allows a zero-commission collection agent selected from a role dropdown", async () => {
+    it("sets and locks zero commission for a direct-collection agent card", async () => {
         vi.mocked(api.get).mockImplementation(async (url) => url === "/intermediaries?status=active"
             ? { data: [{ publicId: "agent-a", name: "Agent A", aliases: [] }] }
             : { data: [] });
@@ -39,14 +39,16 @@ describe("LoanAgentsTab", () => {
         await screen.findByText("No agents assigned");
         await userEvent.click(screen.getByRole("button", { name: "Add agent" }));
         await userEvent.selectOptions(screen.getByLabelText("Agent"), "agent-a");
-        await userEvent.type(screen.getByLabelText("Commission rate (%)"), "0.0000");
-        await userEvent.selectOptions(screen.getByLabelText("Role"), "collector");
+        await userEvent.type(screen.getByLabelText("Commission rate (%)"), "12.50");
+        await userEvent.click(screen.getByRole("radio", { name: /Direct collection/i }));
         fireEvent.change(screen.getByLabelText("Effective from"), { target: { value: "2026-08-16T10:00" } });
-        expect(screen.getByLabelText("Role")).toHaveValue("collector");
+        expect(screen.getByRole("radio", { name: /Direct collection/i })).toHaveAttribute("aria-checked", "true");
+        expect(screen.getByLabelText("Commission rate (%)")).toHaveValue("0.00");
+        expect(screen.getByLabelText("Commission rate (%)")).toBeDisabled();
         await userEvent.click(screen.getByLabelText("I confirm this commission agreement"));
         await userEvent.click(screen.getByRole("button", { name: "Confirm add" }));
         await waitFor(() => expect(api.post).toHaveBeenCalled());
-        expect(vi.mocked(api.post).mock.calls[0]?.[1]).toMatchObject({ commissionRate: "0.0000", role: "collector" });
+        expect(vi.mocked(api.post).mock.calls[0]?.[1]).toMatchObject({ commissionRate: "0.00", role: "direct_collection" });
     });
 
     it("filters non-numeric characters from the commission rate and reserves space for the datetime icon", async () => {
@@ -97,7 +99,7 @@ describe("LoanAgentsTab", () => {
         await userEvent.click(screen.getByRole("button", { name: "Add agent" }));
         await userEvent.selectOptions(screen.getByLabelText("Agent"), "agent-a");
         await userEvent.type(screen.getByLabelText("Commission rate (%)"), "10.00");
-        await userEvent.selectOptions(screen.getByLabelText("Role"), "collector");
+        await userEvent.click(screen.getByRole("radio", { name: /Collection agent/i }));
         fireEvent.change(screen.getByLabelText("Effective from"), { target: { value: "2026-08-16T10:00" } });
         await userEvent.click(screen.getByLabelText("I confirm this commission agreement"));
 
@@ -126,7 +128,7 @@ describe("LoanAgentsTab", () => {
         await userEvent.click(screen.getByRole("button", { name: "Add agent" }));
         await userEvent.selectOptions(screen.getByLabelText("Agent"), "agent-a");
         await userEvent.type(screen.getByLabelText("Commission rate (%)"), "10.00");
-        await userEvent.selectOptions(screen.getByLabelText("Role"), "collector");
+        await userEvent.click(screen.getByRole("radio", { name: /Collection agent/i }));
         fireEvent.change(screen.getByLabelText("Effective from"), { target: { value: "2026-08-16T10:30" } });
         await userEvent.click(screen.getByLabelText("I confirm this commission agreement"));
         await userEvent.click(screen.getByRole("button", { name: "Confirm add" }));
