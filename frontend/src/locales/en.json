@@ -1363,4 +1363,5 @@
             "load": "Unable to load loan detail right now."
         }
     }
+    ,"paymentBatch": { "title": "Atomic payment batch", "borrower": "Borrower UUID", "borrowerPlaceholder": "Resolved borrower UUID", "intake": "Payment intake {{index}}", "intakePlaceholder": "Payment intake UUID", "amount": "Amount", "dueDate": "Target due date", "loan": "Loan UUID", "loanPlaceholder": "Active scheduled-loan UUID", "schedule": "Schedule UUID", "schedulePlaceholder": "Target schedule UUID", "intent": "Allocation intent", "onTime": "On time", "advance": "Advance", "backdated": "Backdated", "addItem": "Add payment", "total": "Batch total: {{amount}}", "previewStatus": "Preview {{status}} (revision {{version}})", "allocationCount": "{{count}} allocation(s) in the complete preview", "warning": "Warning: {{code}}", "posted": "Batch posted", "confirm": "I reviewed the complete batch preview and confirm this exact execution", "preview": "Preview complete batch", "execute": "Execute batch" }
 }

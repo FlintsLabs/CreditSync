@@ -7,6 +7,8 @@
 
 ### Changed
 - Synchronized the CreditSync plugin contract and validator at version 7.4.0 for the atomic scheduled-loan payment batch workflow.
+- Added a localized frontend atomic-batch editor/model with exact decimal totals and explicit preview/execute confirmation controls.
+- Documented operator recovery flags, stop-all batch semantics, and post-execution verification in the README and plugin skills.
 
 ## v0.3.38 - 2026-08-23
 
