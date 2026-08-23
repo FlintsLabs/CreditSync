@@ -3,6 +3,7 @@
 ## v0.3.38 - 2026-08-23
 
 ### Added
+- Added versioned batch previews with stable state/preview/confirmation hashes, explicit whole-batch allocations, evidence readiness gating, and stale prior previews.
 - Added tenant-scoped payment batch creation, item membership, safe reads/cancellation, and versioned preview persistence over existing payment intakes.
 - Added a bounded deterministic joint exact-combination solver for multi-slip payment batches, including ambiguity, exact decimal, advance, and solver-limit safety handling.
 - Added tenant-scoped atomic payment batch tables with versioned previews, exact allocation records, command idempotency, and database immutability guards for posted batches.
