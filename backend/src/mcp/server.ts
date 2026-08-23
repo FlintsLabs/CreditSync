@@ -536,6 +536,8 @@ const renewalOutput = z.object({
     ...publicEntity,
     status: z.string(),
     settlementPolicy: renewalSettlementPolicy,
+    renewalDate: date,
+    paymentStartDate: date.nullable(),
     composition: renewalCompositionOutput,
     oldLoanPublicId: uuid,
     newLoanPublicId: uuid.nullable().optional(),
@@ -1514,6 +1516,8 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
     "renewal.preview": z.object({
         oldLoanPublicId: uuid,
         requestedPrincipal: money,
+        renewalDate: date.optional(),
+        paymentStartDate: date.optional(),
         settlementPolicy: renewalSettlementPolicy.optional(),
         adjustments: z.array(z.object({
             kind: z.enum(["fee", "penalty", "other_charge", "waiver"]),

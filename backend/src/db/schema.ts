@@ -1669,6 +1669,8 @@ export const loanRenewals = pgTable("loan_renewals", {
     status: text("status").default("preview").notNull(), // preview, executed, reversed, expired
     settlementPolicy: text("settlement_policy").$type<RenewalSettlementPolicy>().notNull(),
     composition: jsonb("composition").$type<RenewalComposition>(),
+    renewalDate: date("renewal_date"),
+    paymentStartDate: date("payment_start_date"),
     previewHash: text("preview_hash").notNull(),
     requestedPrincipal: numeric("requested_principal").notNull(),
     outstandingPrincipal: numeric("outstanding_principal").notNull(),

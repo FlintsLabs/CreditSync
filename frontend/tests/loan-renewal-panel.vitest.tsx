@@ -21,7 +21,34 @@ const renewal = {
     requestedPrincipal: "9007199254741002.07",
     cashDirection: "payout",
     cashAmount: "9.00",
+    renewalDate: "2026-08-10",
+    paymentStartDate: "2026-08-11",
     expiresAt: "2026-08-10T12:00:00.000Z",
+    composition: {
+        settlementPolicy: "full_contract_interest",
+        contractStartDate: "2026-08-01",
+        contractDueDate: "2026-08-24",
+        renewalDate: "2026-08-10",
+        requestedPrincipal: "9007199254741002.07",
+        originalPrincipal: "100.00",
+        totalScheduledAmount: "100.00",
+        contractualInterest: "10.00",
+        totalPaid: "1.00",
+        receivedPrincipal: "1.00",
+        receivedInterest: "0.00",
+        remainingContractInterest: "9.00",
+        accruedDueInterest: "2.01",
+        dueFees: "3.02",
+        duePenalties: "4.03",
+        recoveredBeforeAdjustments: "1.00",
+        manualCharges: "0.00",
+        manualWaivers: "0.00",
+        settlementAmount: "9.06",
+        cashDirection: "payout",
+        cashAmount: "9.00",
+        payments: [],
+        adjustments: [],
+    },
 };
 
 const loan = {
@@ -38,7 +65,7 @@ const loan = {
 describe("LoanRenewalPanel", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        vi.mocked(api.get).mockResolvedValue({ data: [] });
+        vi.mocked(api.get).mockImplementation(async (url) => ({ data: String(url).includes("/summary") ? null : [] }));
     });
 
     it("shows every charge component exactly and reuses the execution key for a retry", async () => {
@@ -57,10 +84,11 @@ describe("LoanRenewalPanel", () => {
         render(<LoanRenewalPanel loan={loan} />);
         await user.click(screen.getByRole("button", { name: /preview renewal/i }));
 
-        expect(await screen.findByText("Interest due")).toBeInTheDocument();
+        expect(await screen.findByText("Accrued interest due")).toBeInTheDocument();
         expect(screen.getByText("Fees due")).toBeInTheDocument();
         expect(screen.getByText("Penalties due")).toBeInTheDocument();
-        expect(screen.getByText(/9,007,199,254,740,993\.01/)).toBeInTheDocument();
+        expect(screen.getByText("Renewal effective date")).toBeInTheDocument();
+        expect(screen.getByText("First payment date")).toBeInTheDocument();
 
         await user.type(screen.getByLabelText("Execution reason"), "Renew agreement");
         await user.click(screen.getByRole("checkbox"));

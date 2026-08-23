@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.45 - 2026-08-24
+
+### Added
+- Added explicit daily-renewal effective dates and independent first-payment dates across the database, service, REST/MCP contracts, frontend, and CreditSync plugin guidance.
+
 ## v0.3.44 - 2026-08-24
 
 ### Added

@@ -268,6 +268,8 @@ describe("CreditSync plugin 7.4.0 contract", () => {
             "intermediated-disbursement-missing-confirmation",
             "renewal-unsettled-charges",
             "renewal-missing-confirmation",
+            "renewal-independent-dates",
+            "renewal-date-mismatch",
             "renewal-reversal-without-result",
             "renewal-reversal-without-borrower",
             "renewal-reversal-blocked",
@@ -284,8 +286,8 @@ describe("CreditSync plugin 7.4.0 contract", () => {
             "loan-replacement-direct-status-mutation",
             "loan-replacement-portfolio-scope-mismatch",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
-        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(33);
-        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(54);
+        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(34);
+        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(55);
     });
 
     test("floating settlement skill preserves exact composition and all execution stop gates", async () => {

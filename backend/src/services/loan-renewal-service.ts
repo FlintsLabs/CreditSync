@@ -36,6 +36,8 @@ const defaultPreviewTtlSeconds = 900;
 
 export interface PreviewLoanRenewalInput {
     requestedPrincipal: string;
+    renewalDate?: string;
+    paymentStartDate?: string;
     settlementPolicy?: RenewalSettlementPolicy;
     adjustments?: RenewalManualAdjustment[];
     waivedCharges?: string;
@@ -57,6 +59,8 @@ interface RenewalSnapshotOptions {
     requestedPrincipal: Decimal;
     settlementPolicy: RenewalSettlementPolicy;
     adjustments: RenewalManualAdjustment[];
+    renewalDate: string;
+    validateActivityDate?: boolean;
 }
 
 function auditContext(ctx: CommandContext) {
@@ -125,6 +129,44 @@ function bangkokDate(value: Date) {
     }).format(value);
 }
 
+const businessDatePattern = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseBusinessDate(value: string | undefined, field: "renewalDate" | "paymentStartDate") {
+    if (!value || !businessDatePattern.test(value)) {
+        throw new DomainError("INVALID_RENEWAL_DATE", `${field} must use YYYY-MM-DD`, 400, { field });
+    }
+    const [year, month, day] = value.split("-").map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+        throw new DomainError("INVALID_RENEWAL_DATE", `${field} must be a valid calendar date`, 400, { field });
+    }
+    return value;
+}
+
+function businessDateAsOf(value: string) {
+    return new Date(`${value}T23:59:59.999+07:00`);
+}
+
+function resolveRenewalDates(input: PreviewLoanRenewalInput, loan: LoanRow, now: Date) {
+    const hasExplicitRenewalDate = input.renewalDate !== undefined;
+    const renewalDate = hasExplicitRenewalDate ? parseBusinessDate(input.renewalDate, "renewalDate") : bangkokDate(now);
+    const loanStartDate = loan.startDate ?? renewalDate;
+    if (hasExplicitRenewalDate && renewalDate < loanStartDate) {
+        throw new DomainError("RENEWAL_DATE_BEFORE_LOAN_START", "renewalDate cannot be before the old loan start date", 400, { renewalDate, loanStartDate });
+    }
+    const today = bangkokDate(now);
+    if (hasExplicitRenewalDate && renewalDate > today) {
+        throw new DomainError("RENEWAL_DATE_IN_FUTURE", "renewalDate cannot be in the future", 400, { renewalDate, today });
+    }
+    const paymentStartDate = input.paymentStartDate === undefined
+        ? undefined
+        : parseBusinessDate(input.paymentStartDate, "paymentStartDate");
+    if (paymentStartDate !== undefined && paymentStartDate < renewalDate) {
+        throw new DomainError("PAYMENT_START_DATE_BEFORE_RENEWAL", "paymentStartDate cannot be before renewalDate", 400, { renewalDate, paymentStartDate });
+    }
+    return { renewalDate, paymentStartDate };
+}
+
 function activeRepayments(rows: Array<typeof transactions.$inferSelect>) {
     const reversedIds = new Set(rows
         .filter((row) => row.entryType === "reversal" && row.reversedTransactionId !== null)
@@ -169,6 +211,15 @@ async function renewalSnapshot(
             eq(loanFundingAllocations.loanId, loan.id),
         )).orderBy(loanFundingAllocations.id),
     ]);
+    const lateActivity = options.validateActivityDate
+        ? transactionRows.find((row: typeof transactions.$inferSelect) => row.transactionDate !== null && bangkokDate(row.transactionDate) > options.renewalDate)
+        : undefined;
+    if (lateActivity) {
+        throw new DomainError("RENEWAL_DATE_AFTER_POSTED_ACTIVITY", "renewalDate is before posted loan activity", 409, {
+            renewalDate: options.renewalDate,
+            transactionPublicId: lateActivity.publicId,
+        });
+    }
     const posted = activeRepayments(transactionRows);
     const actualPrincipalPaid = posted.reduce(
         (total: Decimal, row: typeof transactions.$inferSelect) => total.plus(row.principalComponent),
@@ -213,7 +264,7 @@ async function renewalSnapshot(
     try {
         composition = calculateRenewalComposition({
             settlementPolicy: options.settlementPolicy,
-            renewalDate: bangkokDate(asOf),
+            renewalDate: options.renewalDate,
             requestedPrincipal: serializeMoney(options.requestedPrincipal),
             originalPrincipal: serializeMoney(loan.principalAmount),
             contractStartDate: loan.startDate ?? scheduleRows[0]?.dueDate ?? bangkokDate(asOf),
@@ -286,12 +337,13 @@ async function renewalSnapshot(
     };
 }
 
-function previewHash(snapshot: RenewalSnapshot, asOf: Date, expiresAt: Date) {
+function previewHash(snapshot: RenewalSnapshot, asOfDate: string, expiresAt: Date, paymentStartDate?: string, includeDateFields = true) {
     const payload = JSON.stringify({
         contract: "loan-renewal-preview",
         version: previewHashVersion,
-        asOfDate: bangkokDate(asOf),
+        asOfDate,
         expiresAt: expiresAt.toISOString(),
+        ...(includeDateFields ? { renewalDate: asOfDate, paymentStartDate: paymentStartDate ?? null } : {}),
         composition: snapshot.composition,
         principalPaid: serializeMoney(snapshot.principalPaid),
         outstandingPrincipal: serializeMoney(snapshot.outstandingPrincipal),
@@ -308,6 +360,8 @@ function presentPreview(row: RenewalRow, loan: LoanRow, snapshot: RenewalSnapsho
         id: row.publicId,
         publicId: row.publicId,
         oldLoanPublicId: loan.publicId,
+        renewalDate: row.renewalDate ?? snapshot.composition.renewalDate,
+        paymentStartDate: row.paymentStartDate,
         status: row.status,
         settlementPolicy: snapshot.composition.settlementPolicy,
         composition: snapshot.composition,
@@ -368,12 +422,20 @@ export async function previewLoanRenewal(
             throw new DomainError("LOAN_NOT_RENEWABLE", "Only active or paid daily loans can be renewed", 409);
         }
         const asOf = new Date();
-        const snapshot = await renewalSnapshot(tx, ctx, loan, asOf, { requestedPrincipal, settlementPolicy, adjustments });
+        const { renewalDate, paymentStartDate } = resolveRenewalDates(input, loan, asOf);
+        const renewalAsOf = renewalDate === bangkokDate(asOf) ? asOf : businessDateAsOf(renewalDate);
+        const snapshot = await renewalSnapshot(tx, ctx, loan, renewalAsOf, {
+            requestedPrincipal,
+            settlementPolicy,
+            adjustments,
+            renewalDate,
+            validateActivityDate: input.renewalDate !== undefined,
+        });
         const composition = snapshot.composition;
         const dueCharges = new Decimal(composition.settlementAmount).plus(composition.manualWaivers);
         const totalWaivers = new Decimal(composition.manualWaivers);
         const expiresAt = new Date(asOf.getTime() + previewTtlSeconds() * 1000);
-        const hash = previewHash(snapshot, asOf, expiresAt);
+        const hash = previewHash(snapshot, renewalDate, expiresAt, paymentStartDate);
         await tx.update(loanRenewals).set({
             status: "expired",
             updatedByUserId: ctx.actorUserId,
@@ -389,6 +451,8 @@ export async function previewLoanRenewal(
             status: "preview",
             settlementPolicy,
             composition,
+            renewalDate,
+            paymentStartDate: paymentStartDate ?? null,
             previewHash: hash,
             requestedPrincipal: serializeMoney(requestedPrincipal),
             outstandingPrincipal: serializeMoney(snapshot.outstandingPrincipal),
@@ -411,6 +475,8 @@ export async function previewLoanRenewal(
                 principalPaid: serializeMoney(snapshot.principalPaid),
                 outstandingPrincipal: serializeMoney(snapshot.outstandingPrincipal),
                 settlementPolicy,
+                renewalDate,
+                paymentStartDate,
                 composition,
                 dueCharges: serializeMoney(dueCharges),
                 waivedCharges: serializeMoney(totalWaivers),
@@ -481,6 +547,8 @@ async function presentExecution(executor: Executor, renewal: RenewalRow, oldLoan
         status: renewal.status,
         settlementPolicy: renewal.settlementPolicy,
         composition: renewal.composition,
+        renewalDate: renewal.renewalDate ?? (renewal.composition as RenewalComposition | null)?.renewalDate ?? bangkokDate(renewal.createdAt),
+        paymentStartDate: renewal.paymentStartDate,
         oldLoanPublicId: oldLoan.publicId,
         newLoanPublicId: newLoan?.publicId ?? null,
         previewHash: renewal.previewHash,
@@ -585,12 +653,15 @@ export async function executeLoanRenewal(
             return { stale: true as const };
         }
         const frozenComposition = renewal.composition as RenewalComposition | null;
-        const snapshot = await renewalSnapshot(tx, ctx, oldLoan, effectiveAt, {
+        const renewalDate = renewal.renewalDate ?? frozenComposition?.renewalDate ?? bangkokDate(effectiveAt);
+        const snapshotAsOf = renewalDate === bangkokDate(effectiveAt) ? effectiveAt : businessDateAsOf(renewalDate);
+        const snapshot = await renewalSnapshot(tx, ctx, oldLoan, snapshotAsOf, {
             requestedPrincipal: new Decimal(renewal.requestedPrincipal),
             settlementPolicy: renewal.settlementPolicy,
             adjustments: frozenComposition?.adjustments.map(({ kind, amount, reason }) => ({ kind, amount, reason })) ?? [],
+            renewalDate,
         });
-        const currentHash = previewHash(snapshot, effectiveAt, renewal.expiresAt);
+        const currentHash = previewHash(snapshot, renewalDate, renewal.expiresAt, renewal.paymentStartDate ?? undefined, renewal.renewalDate !== null);
         const currentDueCharges = new Decimal(snapshot.composition.settlementAmount)
             .plus(snapshot.composition.manualWaivers);
         if (currentHash !== renewal.previewHash
@@ -634,7 +705,8 @@ export async function executeLoanRenewal(
             });
         }
         let generated;
-        const startDate = effectiveAt.toISOString().slice(0, 10);
+        const startDate = renewalDate;
+        const paymentStartDate = renewal.paymentStartDate ?? undefined;
         try {
             generated = generateLoanSchedule({
                 principal: renewal.requestedPrincipal,
@@ -642,6 +714,7 @@ export async function executeLoanRenewal(
                 termMonths: oldLoan.termMonths,
                 repaymentType: oldLoan.repaymentType as "daily",
                 startDate,
+                paymentStartDate,
                 totalInstallments: oldLoan.totalInstallments ?? undefined,
                 installmentAmount: oldLoan.installmentAmount ?? undefined,
             });
@@ -669,6 +742,7 @@ export async function executeLoanRenewal(
             lateFeeMode: oldLoan.lateFeeMode,
             lateFeeAmount: oldLoan.lateFeeAmount,
             startDate,
+            paymentStartDate,
             nextDueDate: generated[0]?.dueDate ?? null,
             outstandingPrincipal: serializeMoney(requestedPrincipal),
             outstandingInterest: serializeMoney(outstandingInterest),

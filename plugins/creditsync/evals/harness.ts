@@ -533,6 +533,8 @@ const loanTerms = {
 
 const RENEWAL_COMPOSITION_FIELDS = {
     settlementPolicy: "full_contract_interest",
+    renewalDate: "2026-08-10",
+    paymentStartDate: "2026-08-11",
     composition: {
         settlementPolicy: "full_contract_interest",
         contractStartDate: "2026-08-01",
@@ -1702,6 +1704,20 @@ const SCENARIOS: Record<string, Scenario> = {
         ],
         run: (mcp) => renewalExecute(mcp, true, "accrued_to_date"),
     },
+    "renewal-independent-dates": {
+        script: [
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: BORROWER_A, name: "fixture" }, aliases: [], loans: [] } },
+            { name: "renewal.preview", arguments: { oldLoanPublicId: LOAN_A, requestedPrincipal: "2000.00", renewalDate: "2026-08-22", paymentStartDate: "2026-08-24" }, result: { ...RENEWAL_COMPOSITION_FIELDS, renewalDate: "2026-08-22", paymentStartDate: "2026-08-24", composition: { ...RENEWAL_COMPOSITION_FIELDS.composition, renewalDate: "2026-08-22" }, publicId: RENEWAL, previewHash: PREVIEW_HASH, dueCharges: "233.33", status: "fixture", oldLoanPublicId: LOAN_A, principalPaid: "833.33", outstandingPrincipal: "1166.67", settlementAmount: "233.33", waivedCharges: "0.00", requestedPrincipal: "2000.00", cashDirection: "payout", cashAmount: "600.00" } },
+            { name: "renewal.execute", arguments: { renewalPublicId: RENEWAL, previewHash: PREVIEW_HASH, confirmed: true, reason: "Owner confirmed the dated renewal", idempotencyKey: "renewal-independent-dates-1" }, result: { ...EXECUTED_RENEWAL_RESULT, renewalDate: "2026-08-22", paymentStartDate: "2026-08-24", composition: { ...EXECUTED_RENEWAL_RESULT.composition, renewalDate: "2026-08-22" } } },
+        ],
+        run: async (mcp) => {
+            await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A });
+            const preview = await mcp.call("renewal.preview", { oldLoanPublicId: LOAN_A, requestedPrincipal: "2000.00", renewalDate: "2026-08-22", paymentStartDate: "2026-08-24" });
+            if (preview.renewalDate !== "2026-08-22" || preview.paymentStartDate !== "2026-08-24") return { outcome: "stopped", stopReason: "renewal-dates-not-preserved" } as const;
+            await mcp.call("renewal.execute", { renewalPublicId: preview.publicId, previewHash: preview.previewHash, confirmed: true, reason: "Owner confirmed the dated renewal", idempotencyKey: "renewal-independent-dates-1" });
+            return { outcome: "completed" } as const;
+        },
+    },
     "payment-reversal": {
         script: [
             { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { status: "posted", publicId: "0198c481-3e2b-7000-8000-000000000286", ...noRepostLineage, evidence: [], latestProposal: { publicId: "0198c481-3e2b-7000-8000-000000000287", version: -9007199254740991, status: "fixture", warnings: [], totalAllocated: "0.00", allocations: [] } } },
@@ -1860,6 +1876,19 @@ const SCENARIOS: Record<string, Scenario> = {
             { name: "renewal.preview", arguments: { oldLoanPublicId: LOAN_A, requestedPrincipal: "2000.00" }, result: { ...RENEWAL_COMPOSITION_FIELDS, publicId: RENEWAL, previewHash: PREVIEW_HASH, dueCharges: "233.33", status: "fixture", oldLoanPublicId: "0198c481-3e2b-7000-8000-000000000355", principalPaid: "833.33", outstandingPrincipal: "1166.67", settlementAmount: "233.33", waivedCharges: "0.00", requestedPrincipal: "2000.00", cashDirection: "payout", cashAmount: "600.00" } },
         ],
         run: (mcp) => renewalExecute(mcp, false),
+    },
+    "renewal-date-mismatch": {
+        script: [
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: { borrower: { publicId: BORROWER_A, name: "fixture" }, aliases: [], loans: [] } },
+            { name: "renewal.preview", arguments: { oldLoanPublicId: LOAN_A, requestedPrincipal: "2000.00", renewalDate: "2026-08-22", paymentStartDate: "2026-08-24" }, result: { ...RENEWAL_COMPOSITION_FIELDS, renewalDate: "2026-08-21", paymentStartDate: "2026-08-23", publicId: RENEWAL, previewHash: PREVIEW_HASH, status: "fixture", oldLoanPublicId: LOAN_A, requestedPrincipal: "2000.00", cashDirection: "payout", cashAmount: "600.00" } },
+        ],
+        run: async (mcp) => {
+            await mcp.call("borrower.portfolio", { borrowerPublicId: BORROWER_A });
+            const preview = await mcp.call("renewal.preview", { oldLoanPublicId: LOAN_A, requestedPrincipal: "2000.00", renewalDate: "2026-08-22", paymentStartDate: "2026-08-24" });
+            return preview.renewalDate === "2026-08-22" && preview.paymentStartDate === "2026-08-24"
+                ? { outcome: "completed" } as const
+                : { outcome: "stopped", stopReason: "renewal-date-mismatch" } as const;
+        },
     },
     "renewal-reversal-without-result": {
         script: [],

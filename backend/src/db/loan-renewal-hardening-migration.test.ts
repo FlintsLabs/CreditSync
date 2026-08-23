@@ -4,6 +4,19 @@ const backendRoot = `${import.meta.dir}/../../`;
 const migrationPath = `${backendRoot}drizzle/0011_loan_renewal_hardening.sql`;
 
 describe("loan renewal hardening migration contract", () => {
+    test("registers the additive effective and payment-start date migration", async () => {
+        const journal = await Bun.file(`${backendRoot}drizzle/meta/_journal.json`).json();
+        expect(journal.entries.find((entry: { tag: string }) => entry.tag === "0055_renewal_effective_payment_dates"))
+            .toMatchObject({ idx: 55, tag: "0055_renewal_effective_payment_dates" });
+        const file = Bun.file(`${backendRoot}drizzle/0055_renewal_effective_payment_dates.sql`);
+        expect(await file.exists()).toBe(true);
+        const migration = await file.text();
+        expect(migration).toContain('ADD COLUMN "renewal_date" date');
+        expect(migration).toContain('ADD COLUMN "payment_start_date" date');
+        expect(migration).toContain("composition");
+        expect(migration).not.toMatch(/\bDROP\b/i);
+    });
+
     test("registers an additive migration with structural funding provenance and reversal state", async () => {
         const journal = await Bun.file(`${backendRoot}drizzle/meta/_journal.json`).json();
         expect(journal.entries.find((entry: { tag: string }) => entry.tag === "0011_loan_renewal_hardening"))

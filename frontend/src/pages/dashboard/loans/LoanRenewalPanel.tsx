@@ -46,6 +46,8 @@ interface RenewalPreview {
     requestedPrincipal: string;
     cashDirection: "payout" | "collection" | "none";
     cashAmount: string;
+    renewalDate: string;
+    paymentStartDate: string | null;
     expiresAt: string;
     settlementPolicy: RenewalSettlementPolicy;
     composition: RenewalComposition;
@@ -57,6 +59,13 @@ interface AuditEntry { id: number; action: string; correlationId?: string | null
 type AuditState = { status: "idle" | "loading" | "empty" | "forbidden" | "error" } | { status: "ready"; entries: AuditEntry[] };
 type IntentKey = { fingerprint: string; key: string };
 
+function bangkokBusinessDate(offsetDays = 0) {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit" })
+        .formatToParts(new Date()).reduce<Record<string, string>>((result, part) => ({ ...result, [part.type]: part.value }), {});
+    const date = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day) + offsetDays));
+    return date.toISOString().slice(0, 10);
+}
+
 function stableIntentKey(ref: MutableRefObject<IntentKey | null>, fingerprint: string) {
     if (ref.current?.fingerprint !== fingerprint) ref.current = { fingerprint, key: crypto.randomUUID() };
     return ref.current.key;
@@ -65,6 +74,8 @@ function stableIntentKey(ref: MutableRefObject<IntentKey | null>, fingerprint: s
 export function LoanRenewalPanel({ loan }: { loan: RenewableLoan }) {
     const { t, i18n } = useTranslation();
     const [requestedPrincipal, setRequestedPrincipal] = useState(loan.principalAmount);
+    const [renewalDate, setRenewalDate] = useState(() => bangkokBusinessDate());
+    const [paymentStartDate, setPaymentStartDate] = useState(() => bangkokBusinessDate(1));
     const [settlementPolicy, setSettlementPolicy] = useState<RenewalSettlementPolicy>(defaultRenewalPolicy);
     const [adjustments, setAdjustments] = useState<RenewalAdjustmentDraft[]>([]);
     const [executionReason, setExecutionReason] = useState("");
@@ -96,6 +107,8 @@ export function LoanRenewalPanel({ loan }: { loan: RenewableLoan }) {
     };
 
     const editRequestedPrincipal = (value: string) => { discardApproval(); setRequestedPrincipal(value); };
+    const editRenewalDate = (value: string) => { discardApproval(); setRenewalDate(value); if (paymentStartDate < value) setPaymentStartDate(value); };
+    const editPaymentStartDate = (value: string) => { discardApproval(); setPaymentStartDate(value); };
     const editPolicy = (value: RenewalSettlementPolicy) => { discardApproval(); setSettlementPolicy(value); };
     const editAdjustment = (index: number, field: keyof RenewalAdjustmentDraft, value: string) => {
         discardApproval();
@@ -122,13 +135,16 @@ export function LoanRenewalPanel({ loan }: { loan: RenewableLoan }) {
                 api.post("/loan-renewals/preview", {
                     oldLoanPublicId: loan.publicId,
                     requestedPrincipal: normalizeMoney(requestedPrincipal),
+                    renewalDate,
+                    paymentStartDate,
                     settlementPolicy,
                     adjustments: adjustments.map((line) => ({ ...line, amount: normalizeMoney(line.amount), reason: line.reason.trim() })),
                 }),
                 api.post("/loans/preview", {
                     principal: normalizeMoney(requestedPrincipal), interestRate: loan.interestRate,
                     termMonths: loan.termMonths, repaymentType: "daily",
-                    startDate: new Date().toISOString().slice(0, 10),
+                    startDate: renewalDate,
+                    paymentStartDate,
                     ...(loan.totalInstallments ? { totalInstallments: loan.totalInstallments } : {}),
                     ...(loan.installmentAmount ? { installmentAmount: loan.installmentAmount } : {}),
                 }),
@@ -191,6 +207,8 @@ export function LoanRenewalPanel({ loan }: { loan: RenewableLoan }) {
             {!execution && !preview && <div className="space-y-4">
                 <div className="grid gap-3 md:grid-cols-2">
                     <label className="grid gap-1 text-sm">{t("renewal.requestedPrincipal")}<Input value={requestedPrincipal} onChange={(event) => editRequestedPrincipal(event.target.value)} /></label>
+                    <label className="grid gap-1 text-sm">{t("renewal.renewalDate")}<Input type="date" value={renewalDate} onChange={(event) => editRenewalDate(event.target.value)} /></label>
+                    <label className="grid gap-1 text-sm">{t("renewal.paymentStartDate")}<Input type="date" min={renewalDate} value={paymentStartDate} onChange={(event) => editPaymentStartDate(event.target.value)} /></label>
                     <label className="grid gap-1 text-sm">{t("renewal.settlementPolicy.label")}<select className="h-10 rounded-md border bg-background px-3" value={settlementPolicy} onChange={(event) => editPolicy(event.target.value as RenewalSettlementPolicy)}><option value="full_contract_interest">{t("renewal.settlementPolicy.full_contract_interest")}</option><option value="accrued_to_date">{t("renewal.settlementPolicy.accrued_to_date")}</option></select></label>
                 </div>
                 <div className="space-y-3 rounded border p-4"><div className="flex items-center justify-between"><strong>{t("renewal.adjustments.title")}</strong><Button type="button" variant="outline" onClick={() => { discardApproval(); setAdjustments((current) => [...current, newRenewalAdjustment()]); }}><Plus className="mr-2 h-4 w-4" />{t("renewal.adjustments.add")}</Button></div>
@@ -201,7 +219,7 @@ export function LoanRenewalPanel({ loan }: { loan: RenewableLoan }) {
             </div>}
             {preview && <div className="space-y-4">
                 <div className="rounded border p-4"><div className="flex items-center justify-between gap-3"><strong>{t("renewal.previewTitle")}</strong><div className="flex gap-2"><Badge>{t(`renewal.status.${execution?.status ?? preview.status}`)}</Badge>{!execution && <Button variant="outline" onClick={discardApproval}>{t("renewal.edit")}</Button>}</div></div><div className="mt-3 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-                    <div><span className="text-muted-foreground">{t("renewal.settlementPolicy.label")}</span><div className="font-medium">{t(`renewal.settlementPolicy.${preview.composition.settlementPolicy}`)}</div></div>
+                    <div><span className="text-muted-foreground">{t("renewal.settlementPolicy.label")}</span><div className="font-medium">{t(`renewal.settlementPolicy.${preview.composition.settlementPolicy}`)}</div></div><div><span className="text-muted-foreground">{t("renewal.renewalDate")}</span><div className="font-medium">{preview.renewalDate}</div></div><div><span className="text-muted-foreground">{t("renewal.paymentStartDate")}</span><div className="font-medium">{preview.paymentStartDate ?? t("renewal.nextDayDefault")}</div></div>
                     {[["contractualInterest", preview.composition.contractualInterest], ["receivedInterest", preview.composition.receivedInterest], ["remainingContractInterest", preview.composition.remainingContractInterest], ["accruedDueInterest", preview.composition.accruedDueInterest], ["totalPaid", preview.composition.totalPaid], ["recoveredBeforeAdjustments", preview.composition.recoveredBeforeAdjustments], ["dueFees", preview.composition.dueFees], ["duePenalties", preview.composition.duePenalties], ["manualCharges", preview.composition.manualCharges], ["manualWaivers", preview.composition.manualWaivers], ["settlement", preview.composition.settlementAmount]].map(([label, value]) => <div key={label}><span className="text-muted-foreground">{t(`renewal.${label}`)}</span><div className="font-medium">{money(value)}</div></div>)}
                     <div><span className="text-muted-foreground">{t("renewal.cashPayout")}</span><div className="font-medium">{t(`renewal.cashDirection.${preview.cashDirection}`)} · {money(preview.cashAmount)}</div></div><div className="sm:col-span-2"><span className="text-muted-foreground">{t("renewal.renewalId")}</span><div className="break-all font-mono text-xs">{preview.publicId}</div><div className="text-xs text-muted-foreground">{t("renewal.expires")}: {dateTime(preview.expiresAt)}</div></div>
                 </div>{preview.composition.payments.length > 0 && <div className="mt-4"><strong>{t("renewal.payments")}</strong>{preview.composition.payments.map((payment) => <div className="mt-2 grid gap-1 rounded bg-muted/30 p-2 text-xs sm:grid-cols-3" key={payment.transactionPublicId}><span>{dateTime(payment.paidAt)}</span><span>{money(payment.amount)}</span><span className="break-all font-mono">{payment.transactionPublicId}</span></div>)}</div>}{preview.composition.adjustments.length > 0 && <div className="mt-4"><strong>{t("renewal.adjustments.title")}</strong>{preview.composition.adjustments.map((line) => <div className="mt-2 flex justify-between gap-3 rounded bg-muted/30 p-2 text-xs" key={line.lineNo}><span>{t(`renewal.adjustments.kinds.${line.kind}`)} · {line.reason}</span><span>{money(line.amount)}</span></div>)}</div>}</div>

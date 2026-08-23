@@ -352,6 +352,32 @@ describe("daily-loan renewal service", () => {
         expect(await db.select().from(loanFundingAllocations)).toEqual(fundingBefore);
     });
 
+    integrationTest("freezes an explicit renewal date separately from the first payment date", async () => {
+        setSystemTime(new Date("2026-08-24T02:00:00.000Z"));
+        try {
+            const seeded = await seedDailyLoan({ paidInstallments: 0 });
+            const preview = await previewLoanRenewal(
+                context(seeded.tenantId, seeded.actor.id), seeded.oldLoan.publicId,
+                { requestedPrincipal: "2500.00", renewalDate: "2026-08-22", paymentStartDate: "2026-08-24" },
+            );
+            expect(preview).toMatchObject({ renewalDate: "2026-08-22", paymentStartDate: "2026-08-24" });
+            expect(preview.composition.renewalDate).toBe("2026-08-22");
+            const persisted = await db.query.loanRenewals.findFirst({ where: eq(loanRenewals.publicId, preview.publicId) });
+            expect(persisted).toMatchObject({ renewalDate: "2026-08-22", paymentStartDate: "2026-08-24" });
+
+            const executed = await executeLoanRenewal(
+                context(seeded.tenantId, seeded.actor.id, "explicit-renewal-dates-execute"), preview.publicId,
+                { previewHash: preview.previewHash, confirmed: true, reason: "execute dated renewal", confirmedCashDirection: "collection" },
+            );
+            const replacement = await db.query.loans.findFirst({ where: eq(loans.publicId, executed.newLoanPublicId) });
+            const firstSchedule = await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.loanId, replacement!.id) });
+            expect(replacement).toMatchObject({ startDate: "2026-08-22", paymentStartDate: "2026-08-24", nextDueDate: "2026-08-24" });
+            expect(firstSchedule?.dueDate).toBe("2026-08-24");
+        } finally {
+            setSystemTime();
+        }
+    });
+
     integrationTest("executes the exact full-interest 600 payout without rewriting original repayments", async () => {
         const seeded = await seedDailyLoan({
             principalAmount: "2000.00",

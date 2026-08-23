@@ -442,6 +442,8 @@ export function createDefaultMcpToolHandlers(
     "intermediary.remittance.post": (ctx, input) => postIntermediaryRemittance(ctx, asString(input, "remittancePublicId"), { proposalPublicId: asString(input, "proposalPublicId"), confirmed: input.confirmed as boolean }),
     "renewal.preview": (ctx, input) => previewLoanRenewal(ctx, asString(input, "oldLoanPublicId"), {
         requestedPrincipal: asString(input, "requestedPrincipal"),
+        renewalDate: input.renewalDate as string | undefined,
+        paymentStartDate: input.paymentStartDate as string | undefined,
         settlementPolicy: input.settlementPolicy as "full_contract_interest" | "accrued_to_date" | undefined,
         adjustments: input.adjustments as Array<{ kind: "fee" | "penalty" | "other_charge" | "waiver"; amount: string; reason: string }> | undefined,
         waivedCharges: input.waivedCharges as string | undefined,

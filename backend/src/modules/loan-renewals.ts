@@ -34,7 +34,7 @@ function unauthorized(set: { status?: number | string }) {
 }
 
 function assertClosedPreviewBody(body: Record<string, unknown>) {
-    const allowed = ["oldLoanPublicId", "requestedPrincipal", "settlementPolicy", "adjustments", "waivedCharges", "waiverReason"];
+    const allowed = ["oldLoanPublicId", "requestedPrincipal", "renewalDate", "paymentStartDate", "settlementPolicy", "adjustments", "waivedCharges", "waiverReason"];
     const unexpectedFields = Object.keys(body).filter((key) => !allowed.includes(key)).map((key) => `body.${key}`);
     const adjustments = body.adjustments as Array<Record<string, unknown>> | undefined;
     adjustments?.forEach((line, index) => {
@@ -63,6 +63,8 @@ export const loanRenewalsRoute = new Elysia({ prefix: "/loan-renewals", normaliz
             assertClosedPreviewBody(body as unknown as Record<string, unknown>);
             return await previewLoanRenewal(commandContext(user, request), body.oldLoanPublicId, {
                 requestedPrincipal: body.requestedPrincipal,
+                renewalDate: body.renewalDate,
+                paymentStartDate: body.paymentStartDate,
                 settlementPolicy: body.settlementPolicy,
                 adjustments: body.adjustments,
                 waivedCharges: body.waivedCharges,
@@ -75,6 +77,8 @@ export const loanRenewalsRoute = new Elysia({ prefix: "/loan-renewals", normaliz
         body: t.Object({
             oldLoanPublicId: t.String(),
             requestedPrincipal: t.String(),
+            renewalDate: t.Optional(t.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" })),
+            paymentStartDate: t.Optional(t.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" })),
             settlementPolicy: t.Optional(t.Union([
                 t.Literal("full_contract_interest"),
                 t.Literal("accrued_to_date"),
