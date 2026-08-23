@@ -33,6 +33,20 @@ function ctx(actor: typeof users.$inferSelect, idempotencyKey?: string): Command
 describe("loan commission participant ledger", () => {
     if (integrationEnabled) beforeEach(resetTables);
 
+    integrationTest("creates a zero-commission collection participant", async () => {
+        const seeded = await seedTenant("commission-zero", "zero");
+
+        const participant = await addLoanCommissionParticipant(ctx(seeded.actor, "zero-rate"), {
+            loanPublicId: seeded.loan.publicId,
+            intermediaryPublicId: seeded.intermediary.publicId,
+            commissionRate: "0",
+            role: "collector",
+            effectiveFrom: "2026-08-01T00:00:00.000Z",
+        });
+
+        expect(participant.commissionRate).toBe("0.00");
+    });
+
     integrationTest("enforces tenant-scoped participants and a maximum overlapping rate of 100 percent", async () => {
         const seeded = await seedTenant("commission-a", "a");
         const second = await db.insert(intermediaries).values({ tenantId: seeded.actor.tenantId, ownerUserId: seeded.actor.id, name: "Agent B", normalizedName: "agent-b", createdByUserId: seeded.actor.id, updatedByUserId: seeded.actor.id }).returning().then((rows) => rows[0]!);

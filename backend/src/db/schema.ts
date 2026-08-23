@@ -2246,7 +2246,7 @@ export const loanCommissionParticipants = pgTable("loan_commission_participants"
     uniqueIndex("loan_commission_participants_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
     uniqueIndex("loan_commission_participants_tenant_previous_unique").on(table.tenantId, table.previousParticipantId).where(sql`${table.previousParticipantId} IS NOT NULL`),
     index("loan_commission_participants_tenant_loan_effective_idx").on(table.tenantId, table.loanId, table.effectiveFrom),
-    check("loan_commission_participants_rate_check", sql`${table.commissionRate} > 0 AND ${table.commissionRate} <= 100 AND scale(${table.commissionRate}) <= 4`),
+    check("loan_commission_participants_rate_check", sql`${table.commissionRate} >= 0 AND ${table.commissionRate} <= 100 AND scale(${table.commissionRate}) <= 4`),
     check("loan_commission_participants_status_check", sql`${table.status} IN ('active', 'ended')`),
     check("loan_commission_participants_role_check", sql`${table.role} ~ '[^[:space:]]'`),
     check("loan_commission_participants_idempotency_check", sql`${table.idempotencyKey} ~ '[^[:space:]]'`),
