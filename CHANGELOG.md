@@ -3,6 +3,8 @@
 ## v0.3.38 - 2026-08-23
 
 ### Added
+- Added all-or-nothing batch execution that reuses the existing payment posting kernel inside one transaction, carries confirmation/idempotency context, and records batch audit lineage.
+- Added authenticated REST endpoints for creating, reading, editing, previewing, cancelling, and executing payment batches with closed request schemas.
 - Added versioned batch previews with stable state/preview/confirmation hashes, explicit whole-batch allocations, evidence readiness gating, and stale prior previews.
 - Added tenant-scoped payment batch creation, item membership, safe reads/cancellation, and versioned preview persistence over existing payment intakes.
 - Added a bounded deterministic joint exact-combination solver for multi-slip payment batches, including ambiguity, exact decimal, advance, and solver-limit safety handling.

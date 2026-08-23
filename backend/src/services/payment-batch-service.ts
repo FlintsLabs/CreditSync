@@ -9,6 +9,7 @@ import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import { solvePaymentBatch } from "./payment-batch-solver";
 import type { BatchObligation, BatchSlip, ExplicitBatchAllocation } from "./payment-batch-types";
+import { postPayment, previewPaymentMatch } from "./payment-service";
 
 type BatchRow = typeof paymentBatches.$inferSelect;
 type ItemRow = typeof paymentBatchItems.$inferSelect;
@@ -132,6 +133,42 @@ export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: st
     });
     return { id: created.publicId, publicId: created.publicId, batchPublicId: batch.publicId, version: created.version, status, stateHash, previewHash, confirmationHash, evidenceReady, allocations: solved.allocations, candidates: solved.candidates, warnings: solved.warnings };
 }
-export async function executePaymentBatch(_ctx: CommandContext, _batchPublicId: string, _input: unknown) { throw new DomainError("BATCH_EXECUTION_NOT_IMPLEMENTED", "Batch execution is not implemented yet", 501); }
+export async function executePaymentBatch(ctx: CommandContext, batchPublicId: string, input: { previewPublicId: string; previewHash: string; confirmationHash: string; confirmed: true; idempotencyKey: string }) {
+    const batch = await accessibleBatch(ctx, batchPublicId);
+    if (batch.status === "posted" && batch.executeIdempotencyKey === input.idempotencyKey) return { batchPublicId: batch.publicId, status: "posted", auditPublicIds: [], correlationId: ctx.correlationId };
+    if (!input.confirmed) throw new DomainError("BATCH_CONFIRMATION_REQUIRED", "Batch execution requires explicit confirmation", 409);
+    requireId(input.previewPublicId, "previewPublicId");
+    const run = async (tx: DbExecutor) => {
+        const locked = await tx.query.paymentBatches.findFirst({ where: and(eq(paymentBatches.tenantId, ctx.tenantId), eq(paymentBatches.id, batch.id)) });
+        if (!locked) throw new DomainError("PAYMENT_BATCH_NOT_FOUND", "Payment batch not found", 404);
+        if (locked.status === "posted" && locked.executeIdempotencyKey === input.idempotencyKey) return { batchPublicId: locked.publicId, status: "posted", auditPublicIds: [], correlationId: ctx.correlationId };
+        const preview = await tx.query.paymentBatchPreviews.findFirst({ where: and(eq(paymentBatchPreviews.tenantId, ctx.tenantId), eq(paymentBatchPreviews.publicId, input.previewPublicId), eq(paymentBatchPreviews.batchId, locked.id)) });
+        if (!preview || preview.status !== "ready" || preview.previewHash !== input.previewHash || preview.confirmationHash !== input.confirmationHash) throw new DomainError("BATCH_CONFIRMATION_STALE", "The batch preview no longer matches the confirmed semantics", 409);
+        const items = await tx.select().from(paymentBatchItems).where(and(eq(paymentBatchItems.tenantId, ctx.tenantId), eq(paymentBatchItems.batchId, locked.id))).orderBy(asc(paymentBatchItems.itemOrder));
+        const allocationRows = await tx.select().from(paymentBatchAllocations).where(and(eq(paymentBatchAllocations.tenantId, ctx.tenantId), eq(paymentBatchAllocations.previewId, preview.id))).orderBy(asc(paymentBatchAllocations.allocationOrder));
+        const [borrowerRows, loanRows, scheduleRows, intakeRows] = await Promise.all([
+            tx.select().from(borrowers).where(and(eq(borrowers.tenantId, ctx.tenantId), eq(borrowers.id, locked.borrowerId!))),
+            tx.select().from(loans).where(and(eq(loans.tenantId, ctx.tenantId), inArray(loans.id, [...new Set(allocationRows.map((row) => row.loanId))]))),
+            tx.select().from(loanSchedules).where(and(eq(loanSchedules.tenantId, ctx.tenantId), inArray(loanSchedules.id, [...new Set(allocationRows.map((row) => row.scheduleId))]))),
+            tx.select().from(paymentIntakes).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.id, items.map((item) => item.paymentIntakeId)))),
+        ]);
+        const posted: Array<{ intakePublicId: string; transactionPublicIds: string[] }> = [];
+        for (const item of items) {
+            const intake = intakeRows.find((row) => row.id === item.paymentIntakeId);
+            if (!intake) throw new DomainError("PAYMENT_INTAKE_NOT_FOUND", "Payment intake not found", 404);
+            const rows = allocationRows.filter((row) => row.itemId === item.id);
+            const allocationInput = rows.map((row) => ({ borrowerPublicId: borrowerRows[0]!.publicId, loanPublicId: loanRows.find((loan) => loan.id === row.loanId)!.publicId, schedulePublicId: scheduleRows.find((schedule) => schedule.id === row.scheduleId)!.publicId, amount: row.amount }));
+            const proposal = await previewPaymentMatch(ctx, intake.publicId, { allocations: allocationInput }, tx);
+            const result = await postPayment(ctx, intake.publicId, { proposalPublicId: proposal.publicId }, tx);
+            posted.push({ intakePublicId: intake.publicId, transactionPublicIds: result.transactions.map((transaction: { publicId: string }) => transaction.publicId) });
+        }
+        await tx.update(paymentBatchAllocations).set({ status: "posted" }).where(and(eq(paymentBatchAllocations.tenantId, ctx.tenantId), eq(paymentBatchAllocations.previewId, preview.id)));
+        await tx.update(paymentBatchPreviews).set({ status: "posted" }).where(and(eq(paymentBatchPreviews.tenantId, ctx.tenantId), eq(paymentBatchPreviews.id, preview.id)));
+        const updated = await tx.update(paymentBatches).set({ status: "posted", executeIdempotencyKey: input.idempotencyKey, executeRequestHash: digest(input), postedAt: new Date(), updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(eq(paymentBatches.tenantId, ctx.tenantId), eq(paymentBatches.id, locked.id))).returning().then((rows) => rows[0]!);
+        await createAuditLog(tx, { tenantId: ctx.tenantId, actorUserId: ctx.actorUserId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, entityType: "payment_batch", entityId: updated.publicId, action: "posted", payload: { batchPublicId: updated.publicId, intakePublicIds: posted.map((item) => item.intakePublicId), transactionPublicIds: posted.flatMap((item) => item.transactionPublicIds) } });
+        return { batchPublicId: updated.publicId, status: "posted", posted, auditPublicIds: [], correlationId: ctx.correlationId };
+    };
+    return db.transaction(run);
+}
 
 export type { BatchObligation, BatchSlip };
