@@ -4,6 +4,7 @@
 
 ### Added
 - Added the approved design for an operator-selectable daily-loan renewal policy that defaults to full-contract interest, supports reasoned manual charge/waiver lines, exposes one backend-authoritative preview through Web UI and MCP, and produces deterministic customer summary images.
+- Added the task-by-task implementation plan covering exact renewal composition, immutable ledger records, REST/MCP contracts, manual UI controls, deterministic PNG export, and full financial verification gates.
 
 ## v0.3.37 - 2026-08-21
 
