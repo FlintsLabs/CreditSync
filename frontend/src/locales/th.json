@@ -560,6 +560,11 @@
             "loanCount_one": "{{count}} สัญญา",
             "loanCount_other": "{{count}} สัญญา"
         },
+        "borrowerNavigation": {
+            "title": "รายชื่อลูกหนี้",
+            "ariaLabel": "เมนูนำทางรายชื่อลูกหนี้",
+            "noTags": "ไม่มีแท็ก"
+        },
         "loanLabel": "รหัสสัญญา #{{id}}",
         "originalPrincipal": "เงินต้นตั้งต้น",
         "outstandingPrincipal": "ยอดเงินต้นคงเหลือ",
@@ -1028,6 +1033,9 @@
             "editName": "แก้ไขชื่อ",
             "nameLabel": "ชื่อคนกลาง",
             "nameError": "กรุณาระบุชื่อ หรือทดลองบันทึกอีกครั้ง",
+            "editAliases": "แก้ไขชื่อเรียกอื่น",
+            "aliasesLabel": "ชื่อเรียกอื่นของคนกลาง",
+            "aliasesError": "บันทึกชื่อเรียกอื่นไม่สำเร็จ โปรดลองอีกครั้ง",
             "notFound": "ไม่พบโปรไฟล์คนกลาง",
             "loadError": "โหลดโปรไฟล์คนกลางไม่สำเร็จ",
             "remittances": "ยอดเก็บและรายการนำส่ง",

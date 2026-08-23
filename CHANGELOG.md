@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.43 - 2026-08-24
+
+### Changed
+- Updated the loan list to a maximum three-column card grid with responsive borrower navigation showing real names, contract counts, and borrower tags with smooth section scrolling.
+
 ## v0.3.42 - 2026-08-24
 
 ### Added

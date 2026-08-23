@@ -116,6 +116,13 @@ function response(config: InternalAxiosRequestConfig, data: unknown, status = 20
     return { data, status, statusText: status === 200 ? "OK" : "Error", headers: {}, config };
 }
 
+async function findLoanCardByBorrower(name: string) {
+    const matches = await screen.findAllByText(name);
+    const card = matches.find((node) => node.closest("a"));
+    if (!card) throw new Error(`Loan card not found for ${name}`);
+    return card.closest("a")!;
+}
+
 function AppRoutes() {
     const navigate = useNavigate();
     return <>
@@ -185,10 +192,10 @@ describe("loan replacement query integration", () => {
         expect(getLoanQueryRevision(loanDetailQueryKey(DRAFT_LOAN_ID))).toBe(1);
 
         await user.click(screen.getByRole("button", { name: "All loans" }));
-        expect(await screen.findByText("Replacement Borrower")).toBeInTheDocument();
+        expect(await findLoanCardByBorrower("Replacement Borrower")).toBeInTheDocument();
         expect(screen.queryByText("Source Borrower")).not.toBeInTheDocument();
         await user.click(screen.getByRole("tab", { name: "Done" }));
-        const replacedCard = (await screen.findByText("Source Borrower")).closest("a")!;
+        const replacedCard = await findLoanCardByBorrower("Source Borrower");
         expect(within(replacedCard).getByText("Closed — Replaced")).toBeInTheDocument();
         expect(within(replacedCard).queryByText("PAID")).not.toBeInTheDocument();
 

@@ -560,6 +560,11 @@
             "loanCount_one": "{{count}} loan",
             "loanCount_other": "{{count}} loans"
         },
+        "borrowerNavigation": {
+            "title": "Borrowers",
+            "ariaLabel": "Borrower navigation",
+            "noTags": "No tags"
+        },
         "loanLabel": "Loan #{{id}}",
         "originalPrincipal": "Original principal",
         "outstandingPrincipal": "Outstanding Principal",
@@ -1102,6 +1107,9 @@
             "editName": "Edit name",
             "nameLabel": "Intermediary name",
             "nameError": "Enter a name or try saving again.",
+            "editAliases": "Edit aliases",
+            "aliasesLabel": "Intermediary aliases",
+            "aliasesError": "Could not save aliases. Try again.",
             "notFound": "Intermediary profile not found.",
             "loadError": "Could not load intermediary profile.",
             "remittances": "Collections and remittances",

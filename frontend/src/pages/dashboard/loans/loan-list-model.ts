@@ -41,6 +41,35 @@ export function getBorrowerLabels(loan: BorrowerLabelLoan): string[] {
     return result;
 }
 
+export function getBorrowerTags(loan: BorrowerLabelLoan): string[] {
+    const result: string[] = [];
+    const seen = new Set<string>();
+    for (const rawTag of loan.borrowerTags ?? []) {
+        if (!rawTag) continue;
+        const tag = rawTag.trim();
+        if (!tag) continue;
+        const normalized = normalizeLabel(tag);
+        if (seen.has(normalized)) continue;
+        seen.add(normalized);
+        result.push(tag);
+    }
+    return result;
+}
+
+export function getUniqueBorrowerTags(loans: BorrowerLabelLoan[]): string[] {
+    const result: string[] = [];
+    const seen = new Set<string>();
+    for (const loan of loans) {
+        for (const tag of getBorrowerTags(loan)) {
+            const normalized = normalizeLabel(tag);
+            if (seen.has(normalized)) continue;
+            seen.add(normalized);
+            result.push(tag);
+        }
+    }
+    return result;
+}
+
 export function getVisibleBorrowerLabels(loan: BorrowerLabelLoan, limit = 3) {
     const all = getBorrowerLabels(loan);
     return {

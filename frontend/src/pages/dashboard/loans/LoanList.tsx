@@ -9,7 +9,7 @@ import { useTranslation } from "react-i18next";
 import { formatMoneyExact } from "../../../lib/workflow-model";
 import { LoanPaymentHealthBadge, type LoanPaymentHealth } from "./LoanPaymentHealthBadge";
 import { Badge } from "../../../components/ui/badge";
-import { getVisibleBorrowerLabels, isDoneLoanStatus, loanMatchesSearch, type BorrowerLabelLoan } from "./loan-list-model";
+import { getUniqueBorrowerTags, getVisibleBorrowerLabels, isDoneLoanStatus, loanMatchesSearch, type BorrowerLabelLoan } from "./loan-list-model";
 import { loanListHeaderActionsClassName, loanListHeaderClassName } from "./loan-list-layout";
 import { LoanCardFinancialSummary } from "./LoanCardFinancialSummary";
 import { fetchLoanList, loanListQueryKey, useLoanQueryRevision } from "../../../lib/loan-query-invalidation";
@@ -59,6 +59,7 @@ export default function LoanList() {
     const [fundingFilter, setFundingFilter] = useState("all");
     const [sortBy, setSortBy] = useState("newest");
     const [copiedLoanId, setCopiedLoanId] = useState<string | null>(null);
+    const [activeBorrowerGroup, setActiveBorrowerGroup] = useState<number | null>(null);
     const loanListRevision = useLoanQueryRevision(loanListQueryKey);
 
     const retryLoans = useCallback(async () => {
@@ -121,6 +122,29 @@ export default function LoanList() {
         }
         return [...groups.values()];
     }, [visibleLoans]);
+
+    useEffect(() => {
+        if (typeof IntersectionObserver === "undefined") return;
+        const sections = groupedVisibleLoans
+            .map((_, groupIndex) => document.getElementById(`borrower-group-${groupIndex}`))
+            .filter((section): section is HTMLElement => section !== null);
+        if (sections.length === 0) return;
+
+        const observer = new IntersectionObserver(
+            (entries) => {
+                const visibleEntry = entries
+                    .filter((entry) => entry.isIntersecting)
+                    .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+                if (!visibleEntry) return;
+                const groupIndex = sections.indexOf(visibleEntry.target as HTMLElement);
+                if (groupIndex >= 0) setActiveBorrowerGroup(groupIndex);
+            },
+            { rootMargin: "-96px 0px -65% 0px", threshold: 0 },
+        );
+
+        sections.forEach((section) => observer.observe(section));
+        return () => observer.disconnect();
+    }, [groupedVisibleLoans]);
 
     return (
         <div className="space-y-6">
@@ -204,24 +228,28 @@ export default function LoanList() {
                 </CardContent>
             </Card>
 
-            <div className="space-y-8">
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_18rem]">
+                <div className="order-2 min-w-0 xl:order-1">
+                    <div className="space-y-8">
                 {groupedVisibleLoans.map((group, groupIndex) => (
                     <section
                         key={group.loans[0]?.borrowerPublicId ?? `group-${groupIndex}`}
-                        aria-labelledby={group.loans.length > 1 ? `borrower-group-${groupIndex}` : undefined}
-                        className="space-y-3"
+                        id={`borrower-group-${groupIndex}`}
+                        aria-labelledby={group.loans.length > 1 ? `borrower-group-heading-${groupIndex}` : undefined}
+                        aria-label={group.loans.length === 1 ? group.borrowerName : undefined}
+                        className="scroll-mt-6 space-y-3"
                     >
-                        {group.loans.length > 1 && (
-                            <div className="flex items-baseline gap-2 border-b border-border/60 pb-2">
-                                <h3 id={`borrower-group-${groupIndex}`} className="text-lg font-semibold tracking-tight text-foreground">
+                        <div className="flex items-baseline gap-2 border-b border-border/60 pb-2">
+                            {group.loans.length > 1 && (
+                                <h3 id={`borrower-group-heading-${groupIndex}`} className="text-lg font-semibold tracking-tight text-foreground">
                                     {group.borrowerName}
                                 </h3>
-                                <span className="text-sm text-muted-foreground">
-                                    {t("loans.borrowerGroup.loanCount", { count: group.loans.length })}
-                                </span>
-                            </div>
-                        )}
-                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                            )}
+                            <span className="text-sm text-muted-foreground">
+                                {t("loans.borrowerGroup.loanCount", { count: group.loans.length })}
+                            </span>
+                        </div>
+                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3" data-testid="loan-card-grid">
                             {group.loans.map((loan) => {
                     const labelState = getVisibleBorrowerLabels(loan);
                     const agentName = loan.currentAgent?.name ?? loan.currentAgentName;
@@ -445,7 +473,7 @@ export default function LoanList() {
                         </div>
                     </section>
                 ))}
-            </div>
+                    </div>
 
             {isLoading && (
                 <div className="py-16 text-center text-muted-foreground" role="status">
@@ -484,6 +512,48 @@ export default function LoanList() {
                     </Link>
                 </div>
             )}
+                </div>
+
+                {!isLoading && !loadError && groupedVisibleLoans.length > 0 && (
+                    <aside className="order-1 xl:order-2 xl:sticky xl:top-6 xl:self-start" aria-label={t("loans.borrowerNavigation.ariaLabel", "Borrower navigation")}>
+                        <Card>
+                            <CardHeader className="pb-3">
+                                <CardTitle className="text-base">{t("loans.borrowerNavigation.title", "Borrowers")}</CardTitle>
+                            </CardHeader>
+                            <CardContent className="pt-0">
+                                <nav aria-label={t("loans.borrowerNavigation.ariaLabel", "Borrower navigation")} className="max-h-[min(70vh,44rem)] space-y-1 overflow-y-auto pr-1">
+                                    {groupedVisibleLoans.map((group, groupIndex) => {
+                                        const tags = getUniqueBorrowerTags(group.loans);
+                                        const isActive = activeBorrowerGroup === groupIndex || (activeBorrowerGroup === null && groupIndex === 0);
+                                        return (
+                                            <button
+                                                key={group.loans[0]?.borrowerPublicId ?? `group-${groupIndex}`}
+                                                type="button"
+                                                aria-current={isActive ? "true" : undefined}
+                                                className={`w-full rounded-lg border px-3 py-2 text-left transition-colors ${isActive ? "border-primary/40 bg-primary/5" : "border-transparent hover:border-border hover:bg-muted/50"}`}
+                                                onClick={() => {
+                                                    setActiveBorrowerGroup(groupIndex);
+                                                    document.getElementById(`borrower-group-${groupIndex}`)?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+                                                }}
+                                            >
+                                                <span className="block truncate text-sm font-semibold text-foreground">{group.borrowerName}</span>
+                                                <span className="mt-0.5 block text-xs text-muted-foreground">{t("loans.borrowerGroup.loanCount", { count: group.loans.length })}</span>
+                                                {tags.length > 0 ? (
+                                                    <span className="mt-1.5 flex flex-wrap gap-1">
+                                                        {tags.map((tag) => <Badge key={tag} variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">{tag}</Badge>)}
+                                                    </span>
+                                                ) : (
+                                                    <span className="mt-1.5 block text-[11px] text-muted-foreground">{t("loans.borrowerNavigation.noTags", "No tags")}</span>
+                                                )}
+                                            </button>
+                                        );
+                                    })}
+                                </nav>
+                            </CardContent>
+                        </Card>
+                    </aside>
+                )}
+            </div>
 
             {closingLoanId && (
                 <LoanClosingModal
