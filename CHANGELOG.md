@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.38 - 2026-08-23
+
+### Added
+- Added the approved design for an operator-selectable daily-loan renewal policy that defaults to full-contract interest, supports reasoned manual charge/waiver lines, exposes one backend-authoritative preview through Web UI and MCP, and produces deterministic customer summary images.
+
 ## v0.3.37 - 2026-08-21
 
 ### Added
