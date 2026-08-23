@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.42 - 2026-08-24
+
+### Added
+- Added the approved design for explicit daily-renewal effective dates and independent payment-start dates, including backdated safety validation, frozen preview/execute semantics, MCP/plugin contract changes, and verification coverage.
+
 ## v0.3.41 - 2026-08-24
 
 ### Added
