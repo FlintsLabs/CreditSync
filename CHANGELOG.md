@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.58 - 2026-08-25
+
+### Added
+- Added the approved design for batch payment capture and multi-item evidence MCP operations, reducing multi-slip orchestration while retaining atomic preview and explicit execution.
+
 ## v0.3.57 - 2026-08-24
 
 ### Fixed
