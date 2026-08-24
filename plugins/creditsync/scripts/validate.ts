@@ -80,7 +80,7 @@ export async function validatePlugin() {
     const errors: string[] = [];
     const manifest = await parseJson(resolve(pluginRoot, ".codex-plugin/plugin.json"));
     if (manifest.name !== "creditsync") errors.push("manifest name must be creditsync");
-    if (manifest.version !== "7.4.0") errors.push("manifest version must be 7.4.0");
+    if (manifest.version !== "7.5.0") errors.push("manifest version must be 7.5.0");
     if (manifest.skills !== "./skills/") errors.push("manifest skills path must be ./skills/");
     if (manifest.apps !== "./.app.json") errors.push("manifest apps path must be ./.app.json");
     for (const field of ["mcpServers", "hooks", "ui", "oauth"]) {
@@ -112,8 +112,8 @@ export async function validatePlugin() {
             "loan.commission-participant.end", "loan.commission.preview", "loan.commission.list", "loan.commission.calculate",
             "loan.commission.reverse", "payment.intermediary-attribution.create", "payment.intermediary-attribution.list",
             "payment.intermediary-attribution.reverse",
-            "payment.batch.create", "payment.batch.item.add", "payment.batch.evidence.prepare",
-            "payment.batch.evidence.finalize", "payment.batch.get", "payment.batch.preview", "payment.batch.execute",
+            "payment.batch.create", "payment.batch.capture", "payment.batch.item.add", "payment.batch.evidence.prepare",
+            "payment.batch.evidence.finalize", "payment.batch.evidence.prepare-many", "payment.batch.evidence.finalize-many", "payment.batch.get", "payment.batch.preview", "payment.batch.execute",
         ],
         "manage-loans": [
             "loan.commission-participant.list", "loan.commission-participant.add", "loan.commission-participant.update",
@@ -223,5 +223,5 @@ if (import.meta.main) {
     }
     const app = await parseJson(resolve(pluginRoot, ".app.json")) as { apps?: Record<string, { id?: string }> };
     const registration = classifyPrivateAppId(app.apps?.creditsync?.id);
-    console.log(`CreditSync plugin validation passed (7.4.0, 11 skills, ${MCP_TOOL_NAMES.length} tools, no bundled MCP/secrets; private app: ${registration}${registration === "placeholder" ? ", non-live" : ""}).`);
+    console.log(`CreditSync plugin validation passed (7.5.0, 11 skills, ${MCP_TOOL_NAMES.length} tools, no bundled MCP/secrets; private app: ${registration}${registration === "placeholder" ? ", non-live" : ""}).`);
 }

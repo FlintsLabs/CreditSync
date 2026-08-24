@@ -5,7 +5,7 @@ description: Use when managing CreditSync borrowers, payment reconciliation, int
 
 # CreditSync
 
-Atomic scheduled-loan payment batches use the closed `payment.batch.create`, `payment.batch.item.add`, `payment.batch.evidence.prepare`, `payment.batch.evidence.finalize`, `payment.batch.get`, `payment.batch.preview`, and `payment.batch.execute` tools. Inspect first, preview the complete batch, obtain explicit confirmation, execute once with stable idempotency, and verify every posted item; never continue a partial batch after ambiguity or duplicate review.
+Atomic scheduled-loan payment batches use the closed `payment.batch.capture`, `payment.batch.evidence.prepare-many`, `payment.batch.evidence.finalize-many`, `payment.batch.preview`, and `payment.batch.execute` tools for multi-slip capture. The lower-level `payment.batch.create`, `payment.batch.item.add`, `payment.batch.evidence.prepare`, `payment.batch.evidence.finalize`, and `payment.batch.get` tools remain available. Inspect first, preview the complete batch, obtain explicit confirmation, execute once with stable idempotency, and verify every posted item; never continue a partial batch after ambiguity or duplicate review.
 
 ## Overview
 

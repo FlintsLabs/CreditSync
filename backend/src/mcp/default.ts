@@ -138,7 +138,7 @@ import {
     type CreatePaymentAttributionInput,
 } from "../services/payment-attribution-service";
 import { executePaymentReconciliation, previewPaymentReconciliation, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
-import { addPaymentBatchItem, createPaymentBatch, executePaymentBatch, getPaymentBatch, previewPaymentBatch } from "../services/payment-batch-service";
+import { addPaymentBatchItem, capturePaymentBatch, createPaymentBatch, executePaymentBatch, finalizePaymentBatchEvidenceMany, getPaymentBatch, preparePaymentBatchEvidenceMany, previewPaymentBatch } from "../services/payment-batch-service";
 
 type ToolInput = Record<string, unknown>;
 
@@ -235,6 +235,9 @@ export function createDefaultMcpToolHandlers(
         reason: paymentReversalReason(input),
     }),
     "payment.batch.create": (ctx, input) => createPaymentBatch(ctx, { idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"), borrowerPublicId: input.borrowerPublicId as string | null | undefined, notes: input.notes as string | null | undefined }),
+    "payment.batch.capture": (ctx, input) => capturePaymentBatch(ctx, { idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"), borrowerPublicId: input.borrowerPublicId as string | null | undefined, notes: input.notes as string | null | undefined, items: input.items as any[] }),
+    "payment.batch.evidence.prepare-many": (ctx, input) => preparePaymentBatchEvidenceMany(ctx, asString(input, "batchPublicId"), input.items as any[], dependencies.evidenceGateway),
+    "payment.batch.evidence.finalize-many": (ctx, input) => finalizePaymentBatchEvidenceMany(ctx, asString(input, "batchPublicId"), input.items as any[], dependencies.evidenceGateway),
     "payment.batch.item.add": (ctx, input) => addPaymentBatchItem(ctx, asString(input, "batchPublicId"), { paymentIntakePublicId: asString(input, "paymentIntakePublicId"), itemOrder: input.itemOrder as number }),
     "payment.batch.evidence.prepare": (ctx, input) => preparePaymentEvidence(ctx, asString(input, "paymentIntakePublicId"), { mimeType: input.mimeType as string, size: input.size as number, sha256: asString(input, "sha256"), evidenceType: input.evidenceType as "slip" | "qr" | undefined }, dependencies.evidenceGateway),
     "payment.batch.evidence.finalize": (ctx, input) => finalizePaymentEvidence(ctx, asString(input, "paymentIntakePublicId"), asString(input, "evidencePublicId"), dependencies.evidenceGateway),

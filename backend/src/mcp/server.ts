@@ -22,6 +22,9 @@ export const MCP_TOOL_NAMES = [
     "payment.post",
     "payment.reverse",
     "payment.batch.create",
+    "payment.batch.capture",
+    "payment.batch.evidence.prepare-many",
+    "payment.batch.evidence.finalize-many",
     "payment.batch.item.add",
     "payment.batch.evidence.prepare",
     "payment.batch.evidence.finalize",
@@ -987,6 +990,9 @@ const paymentAttributionOutput = z.object({
 const batchWarningOutput = z.object({ code: z.string(), itemPublicId: uuid.optional(), message: z.string().optional() }).strict();
 const batchAllocationOutput = z.object({ itemPublicId: uuid, loanPublicId: uuid, schedulePublicId: uuid, amount: money, targetDueDate: date, intent: z.enum(["on_time", "advance", "backdated"]), matchSource: z.enum(["human_explicit", "unique_exact", "selected_candidate"]).optional() }).strict();
 const batchOutput = z.object({ id: uuid, publicId: uuid, status: z.string(), version: z.number().int(), borrowerPublicId: uuid.nullable().optional(), stateHash: z.string(), confirmationHash: z.string().nullable().optional(), confirmedVersion: z.number().int().nullable().optional(), notes: z.string().nullable().optional(), items: z.array(z.object({ id: uuid, publicId: uuid, itemOrder: z.number().int(), paymentIntakePublicId: uuid.nullable(), evidenceStatus: z.string().nullable() }).strict()), latestPreview: z.unknown().nullable().optional(), postedAt: isoDateTime.nullable().optional(), createdAt: isoDateTime, updatedAt: isoDateTime }).strict();
+const batchCaptureOutput = z.object({ id: uuid, publicId: uuid, status: z.string(), version: z.number().int(), borrowerPublicId: uuid.nullable().optional(), stateHash: z.string(), confirmationHash: z.string().nullable().optional(), confirmedVersion: z.number().int().nullable().optional(), notes: z.string().nullable().optional(), items: z.array(z.object({ clientItemKey: z.string(), paymentIntakePublicId: uuid, batchItemPublicId: uuid, status: z.string(), duplicate: z.boolean() }).strict()), latestPreview: z.unknown().nullable().optional(), postedAt: isoDateTime.nullable().optional(), createdAt: isoDateTime, updatedAt: isoDateTime }).strict();
+const batchEvidencePrepareManyOutput = z.object({ batchPublicId: uuid, items: z.array(evidenceIntentOutput.extend({ batchItemPublicId: uuid, paymentIntakePublicId: uuid })) }).strict();
+const batchEvidenceFinalizeManyOutput = z.object({ batchPublicId: uuid, allEvidenceReady: z.boolean(), items: z.array(evidenceFinalOutput.extend({ batchItemPublicId: uuid, paymentIntakePublicId: uuid })) }).strict();
 const batchPreviewOutput = z.object({ id: uuid, publicId: uuid, batchPublicId: uuid, version: z.number().int(), status: z.string(), stateHash: z.string(), previewHash: z.string(), confirmationHash: z.string(), evidenceReady: z.boolean(), allocations: z.array(batchAllocationOutput), candidates: z.array(z.unknown()), warnings: z.array(batchWarningOutput) }).strict();
 const batchExecutionOutput = z.object({ batchPublicId: uuid, status: z.literal("posted"), posted: z.array(z.object({ intakePublicId: uuid, transactionPublicIds: z.array(uuid) }).strict()).optional(), auditPublicIds: z.array(uuid), correlationId: uuid }).strict();
 
@@ -1035,6 +1041,9 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "payment.post": intakeOutput.extend({ transactions: z.array(transactionOutput) }),
     "payment.reverse": intakeOutput.extend({ transactions: z.array(transactionOutput) }),
     "payment.batch.create": batchOutput,
+    "payment.batch.capture": batchCaptureOutput,
+    "payment.batch.evidence.prepare-many": batchEvidencePrepareManyOutput,
+    "payment.batch.evidence.finalize-many": batchEvidenceFinalizeManyOutput,
     "payment.batch.item.add": batchOutput,
     "payment.batch.evidence.prepare": evidenceIntentOutput,
     "payment.batch.evidence.finalize": evidenceFinalOutput,
@@ -1261,6 +1270,9 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
         reason: shortText.optional(),
     }).strict(),
     "payment.batch.create": z.object({ borrowerPublicId: uuid.nullable().optional(), notes: optionalNullableText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
+    "payment.batch.capture": z.object({ borrowerPublicId: uuid.nullable().optional(), notes: optionalNullableText, idempotencyKey: z.string().trim().min(1).max(200), items: z.array(z.object({ clientItemKey: z.string().trim().min(1).max(100), amount: money, receivedAt: dateTime, payerName: optionalNullableText, bankReference: optionalNullableText, intakeIdempotencyKey: z.string().trim().min(1).max(200) }).strict()).min(1).max(50) }).strict(),
+    "payment.batch.evidence.prepare-many": z.object({ batchPublicId: uuid, items: z.array(z.object({ batchItemPublicId: uuid, paymentIntakePublicId: uuid, mimeType: z.enum(["image/jpeg", "image/png", "application/pdf"]), size: z.number().int().positive(), sha256: z.string().regex(/^[0-9a-f]{64}$/i), evidenceType: z.enum(["slip", "qr"]).optional() }).strict()).min(1).max(50) }).strict(),
+    "payment.batch.evidence.finalize-many": z.object({ batchPublicId: uuid, items: z.array(z.object({ batchItemPublicId: uuid, paymentIntakePublicId: uuid, evidencePublicId: uuid }).strict()).min(1).max(50) }).strict(),
     "payment.batch.item.add": z.object({ batchPublicId: uuid, paymentIntakePublicId: uuid, itemOrder: z.number().int().positive() }).strict(),
     "payment.batch.evidence.prepare": z.object({ batchItemPublicId: uuid, paymentIntakePublicId: uuid, mimeType: z.enum(["image/jpeg", "image/png", "application/pdf"]), size: z.number().int().positive(), sha256: z.string().regex(/^[0-9a-f]{64}$/i), evidenceType: z.enum(["slip", "qr"]).optional() }).strict(),
     "payment.batch.evidence.finalize": z.object({ batchItemPublicId: uuid, paymentIntakePublicId: uuid, evidencePublicId: uuid }).strict(),
@@ -1657,6 +1669,9 @@ const destructiveTools = new Set<McpToolName>([
     "payment.post",
     "payment.reverse",
     "payment.batch.create",
+    "payment.batch.capture",
+    "payment.batch.evidence.prepare-many",
+    "payment.batch.evidence.finalize-many",
     "payment.batch.item.add",
     "payment.batch.evidence.prepare",
     "payment.batch.evidence.finalize",
@@ -1779,6 +1794,9 @@ const toolDescriptions: Record<McpToolName, string> = {
     "payment.post": "Post a ready payment proposal atomically.",
     "payment.reverse": "Reverse a posted payment with compensating entries.",
     "payment.batch.create": "Create an editable atomic payment batch.",
+    "payment.batch.capture": "Capture multiple payment intakes and batch items atomically.",
+    "payment.batch.evidence.prepare-many": "Prepare evidence for multiple payment batch items.",
+    "payment.batch.evidence.finalize-many": "Finalize evidence for multiple payment batch items.",
     "payment.batch.item.add": "Add one payment intake to an atomic batch.",
     "payment.batch.evidence.prepare": "Prepare evidence for a payment batch item.",
     "payment.batch.evidence.finalize": "Finalize evidence for a payment batch item.",
