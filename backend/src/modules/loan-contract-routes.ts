@@ -2,7 +2,7 @@ import { Elysia, t } from "elysia";
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import Decimal from "decimal.js";
 import { db } from "../db";
-import { borrowerAliases, borrowers, intermediaries, loanCommissionParticipants, loanSchedules, loans, paymentIntakes, transactions } from "../db/schema";
+import { borrowerAliases, borrowers, intermediaries, loanCommissionParticipants, loanScheduleDeferrals, loanSchedules, loans, paymentIntakes, transactions } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
 import { calculateLoanClosingSummary } from "../lib/calculator";
 import { createAuditLog } from "../lib/audit-log";
@@ -27,6 +27,7 @@ import {
 import { listCanonicalPostedPaymentsForLoan } from "../services/posted-payment-access";
 import { loanCommandContext, loanDomainFailure, loanUnauthorized } from "./loan-http-support";
 import { loanCancellationExecuteBody, loanCancellationPreviewBody, loanDraftBody, loanDraftUpdateBody, loanTermsBody } from "./loan-route-schemas";
+import { deferLoanSchedule } from "../services/loan-schedule-deferral-service";
 import { executeUnfundedLoanCancellation, previewUnfundedLoanCancellation } from "../services/loan-cancellation-service";
 
 export const loanListLoanProjection = {
@@ -66,6 +67,7 @@ export function summarizeLoanSchedule(loan: typeof loans.$inferSelect, scheduleR
     };
 
     for (const row of scheduleRows) {
+        if (row.status === "deferred") continue;
         const overdue = computeOverdueSnapshot({
             dueDate: row.dueDate,
             remainingDue: row.remainingDue,
@@ -432,13 +434,19 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
             key: `schedule:${loan.id}:${scopeKey}`,
             ttlSeconds: 20,
             loader: async () => {
-                const [scheduleRows, paymentRows] = await Promise.all([
+                const [scheduleRows, paymentRows, deferralRows] = await Promise.all([
                     db.select().from(loanSchedules).where(and(
                         eq(loanSchedules.loanId, loan.id),
                         eq(loanSchedules.tenantId, user.tenantId),
                     )).orderBy(loanSchedules.installmentNo),
                     listCanonicalPostedPaymentsForLoan(user.tenantId, loan.id),
+                    db.select().from(loanScheduleDeferrals).where(and(
+                        eq(loanScheduleDeferrals.tenantId, user.tenantId),
+                        eq(loanScheduleDeferrals.loanId, loan.id),
+                    )),
                 ]);
+                const deferralBySource = new Map(deferralRows.map((row) => [row.sourceScheduleId, row]));
+                const deferralByReplacement = new Map(deferralRows.map((row) => [row.replacementScheduleId, row]));
                 const paymentIdsBySchedule = new Map<number, string[]>();
                 for (const payment of paymentRows) {
                     if (payment.scheduleId === null) continue;
@@ -478,7 +486,9 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                         overdueDays: overdue.overdueDays,
                         penaltyDue: overdue.penaltyDue.toFixed(2),
                         totalDueNow: overdue.totalDueNow.toFixed(2),
-                        status: overdue.effectiveStatus,
+                        status: row.status === "deferred" ? "deferred" : overdue.effectiveStatus,
+                        deferredReplacementSchedulePublicId: deferralBySource.get(row.id) ? scheduleRows.find((candidate) => candidate.id === deferralBySource.get(row.id)!.replacementScheduleId)?.publicId ?? null : null,
+                        deferredSourceSchedulePublicId: deferralByReplacement.get(row.id) ? scheduleRows.find((candidate) => candidate.id === deferralByReplacement.get(row.id)!.sourceScheduleId)?.publicId ?? null : null,
                         createdAt: row.createdAt,
                         updatedAt: row.updatedAt,
                     };
@@ -486,6 +496,19 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
             },
         });
     }, { params: t.Object({ id: t.String() }) })
+    .post("/:id/schedule/:scheduleId/defer", async ({ params, body, user, request, set }) => {
+        if (!user) return loanUnauthorized(set);
+        try {
+            const result = await deferLoanSchedule(loanCommandContext(user, request), params.id, params.scheduleId, body);
+            await invalidateTenantCache(user.tenantId);
+            return result;
+        } catch (error) {
+            return loanDomainFailure(error, set);
+        }
+    }, {
+        params: t.Object({ id: t.String(), scheduleId: t.String() }),
+        body: t.Object({ reason: t.String({ minLength: 1, maxLength: 2000 }) }),
+    })
     .get("/:id/closing-summary", async ({ params, user, set }) => {
         if (!user) return loanUnauthorized(set);
         try {

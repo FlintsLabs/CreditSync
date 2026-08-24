@@ -331,6 +331,31 @@ export const loanSchedules = pgTable("loan_schedules", {
     uniqueIndex("loan_schedules_tenant_id_id_unique").on(table.tenantId, table.id),
 ]);
 
+export const loanScheduleDeferrals = pgTable("loan_schedule_deferrals", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    loanId: integer("loan_id").notNull(),
+    sourceScheduleId: integer("source_schedule_id").notNull(),
+    replacementScheduleId: integer("replacement_schedule_id").notNull(),
+    reason: text("reason").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestId: text("request_id").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    actorSource: text("actor_source").default("web").notNull(),
+    createdByUserId: integer("created_by_user_id").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("loan_schedule_deferrals_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("loan_schedule_deferrals_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
+    foreignKey({ name: "loan_schedule_deferrals_tenant_loan_fk", columns: [table.tenantId, table.loanId], foreignColumns: [loans.tenantId, loans.id] }),
+    foreignKey({ name: "loan_schedule_deferrals_tenant_source_schedule_fk", columns: [table.tenantId, table.sourceScheduleId], foreignColumns: [loanSchedules.tenantId, loanSchedules.id] }),
+    foreignKey({ name: "loan_schedule_deferrals_tenant_replacement_schedule_fk", columns: [table.tenantId, table.replacementScheduleId], foreignColumns: [loanSchedules.tenantId, loanSchedules.id] }),
+    foreignKey({ name: "loan_schedule_deferrals_tenant_actor_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+    check("loan_schedule_deferrals_actor_source_check", sql`${table.actorSource} IN ('web', 'mcp', 'system')`),
+    check("loan_schedule_deferrals_reason_check", sql`length(btrim(${table.reason})) > 0`),
+]);
+
 type StoredRatePeriod = {
     publicId: string;
     effectiveDate: string;

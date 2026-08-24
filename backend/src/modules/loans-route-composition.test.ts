@@ -64,6 +64,7 @@ describe("loans route composition", () => {
             "POST /loans/:id/interest-rates/execute",
             "POST /loans/:id/interest-rates/preview",
             "POST /loans/:id/restructures/preview",
+            "POST /loans/:id/schedule/:scheduleId/defer",
             "POST /loans/:id/waivers/preview",
             "POST /loans/calculate",
             "POST /loans/cancel/:previewId/execute",
