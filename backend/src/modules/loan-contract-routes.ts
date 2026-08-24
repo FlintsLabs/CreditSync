@@ -26,7 +26,8 @@ import {
 } from "../services/loan-commission-service";
 import { listCanonicalPostedPaymentsForLoan } from "../services/posted-payment-access";
 import { loanCommandContext, loanDomainFailure, loanUnauthorized } from "./loan-http-support";
-import { loanDraftBody, loanDraftUpdateBody, loanTermsBody } from "./loan-route-schemas";
+import { loanCancellationExecuteBody, loanCancellationPreviewBody, loanDraftBody, loanDraftUpdateBody, loanTermsBody } from "./loan-route-schemas";
+import { executeUnfundedLoanCancellation, previewUnfundedLoanCancellation } from "../services/loan-cancellation-service";
 
 export const loanListLoanProjection = {
     id: loans.id,
@@ -548,6 +549,28 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
             return loanDomainFailure(error, set);
         }
     }, { params: t.Object({ id: t.String() }), body: t.Object({ note: t.Optional(t.String()) }) })
+    .post("/:id/cancel/preview", async ({ params, body, user, request, set }) => {
+        if (!user) return loanUnauthorized(set);
+        try {
+            return await previewUnfundedLoanCancellation(loanCommandContext(user, request), params.id, body.reason);
+        } catch (error) {
+            return loanDomainFailure(error, set);
+        }
+    }, { params: t.Object({ id: t.String() }), body: loanCancellationPreviewBody })
+    .post("/cancel/:previewId/execute", async ({ params, body, user, request, set }) => {
+        if (!user) return loanUnauthorized(set);
+        try {
+            return await executeUnfundedLoanCancellation(loanCommandContext(user, request), {
+                previewPublicId: params.previewId,
+                previewHash: body.previewHash,
+                expectedBalanceVersion: body.expectedBalanceVersion,
+                confirmed: body.confirmed,
+                reason: body.reason,
+            });
+        } catch (error) {
+            return loanDomainFailure(error, set);
+        }
+    }, { params: t.Object({ previewId: t.String() }), body: loanCancellationExecuteBody })
     .post("/calculate", ({ body, set }) => {
         try {
             assertClosedLoanTerms(body, false);

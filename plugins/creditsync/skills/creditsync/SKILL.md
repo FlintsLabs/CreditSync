@@ -57,6 +57,7 @@ Every activation, post, write reversal, and renewal uses explicit public IDs. Su
 - Borrower payments held by a collector, remittance slips, exact allocation, and posting: use `reconcile-intermediary-remittances`.
 - Daily-loan reset/renewal and reversal: use `renew-daily-loan`.
 - Single-payment settlement/restructure, component waiver, additional principal, and their reversals: use `restructure-loan`.
+- Unfunded active-contract cancellation: inspect `loan.contract.get` and `loan.disbursement.list`, preview `loan.cancel.preview`, obtain exact human confirmation, then execute `loan.cancel.execute`; never use it for a funded loan or to silently forgive a remaining balance.
 
 Use the plugin references for the frozen tool contract, matching policy, financial rules, and error recovery. Do not use generic HTTP, SQL, or web requests as a substitute for a missing CreditSync tool.
 

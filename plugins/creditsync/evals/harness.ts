@@ -16,6 +16,8 @@ const LOAN_C = "0198c481-3e2b-7000-8000-000000000033";
 const DRAFT = "0198c481-3e2b-7000-8000-000000000034";
 const REPLACEMENT = "0198c481-3e2b-7000-8000-000000000035";
 const REPLACEMENT_AUDIT = "0198c481-3e2b-7000-8000-000000000037";
+const CANCELLATION_PREVIEW = "0198c481-3e2b-7000-8000-000000000038";
+const CANCELLATION_AUDIT = "0198c481-3e2b-7000-8000-000000000039";
 const DISBURSEMENT = "0198c481-3e2b-7000-8000-000000000051";
 const DISBURSEMENT_EVIDENCE = "0198c481-3e2b-7000-8000-000000000052";
 const RENEWAL = "0198c481-3e2b-7000-8000-000000000041";
@@ -1383,7 +1385,56 @@ const batchFixture = (publicId: string) => ({ id: publicId, publicId, status: "d
 const batchPreviewFixture = (batchPublicId: string) => ({ id: "0198c481-3e2b-7000-8000-000000000503", publicId: "0198c481-3e2b-7000-8000-000000000503", batchPublicId, version: 1, status: "ready", stateHash: "s".repeat(64), previewHash: "a".repeat(64), confirmationHash: "b".repeat(64), evidenceReady: true, allocations: [], candidates: [], warnings: [] });
 const batchExecutionFixture = (batchPublicId: string) => ({ batchPublicId, status: "posted", posted: [], auditPublicIds: ["0198c481-3e2b-7000-8000-000000000511"], correlationId: "0198c481-3e2b-7000-8000-000000000512" });
 
+async function unfundedCancellationFlow(mcp: ScriptedMcp, execute = true) {
+    const search = await mcp.call("borrower.search", { query: "Unfunded Borrower" });
+    const borrowerPublicId = (search.candidates as Array<{ publicId?: unknown }> | undefined)?.[0]?.publicId;
+    if (typeof borrowerPublicId !== "string") return { outcome: "stopped", stopReason: "cancellation-borrower-ambiguous" } as const;
+    await mcp.call("borrower.portfolio", { borrowerPublicId });
+    let preview: Record<string, unknown>;
+    try {
+        preview = await mcp.call("loan.cancel.preview", { loanPublicId: LOAN_A, reason: "Contract was never funded" });
+    } catch (error) {
+        if (error instanceof ScriptedMcpError) return { outcome: "stopped", stopReason: `cancellation-preview-${error.code}` } as const;
+        throw error;
+    }
+    if (!execute) return { outcome: "stopped", stopReason: "cancellation-confirmation-required" } as const;
+    await mcp.call("loan.cancel.execute", {
+        previewPublicId: String(preview.publicId),
+        previewHash: String(preview.previewHash),
+        expectedBalanceVersion: String(preview.balanceVersion),
+        confirmed: true,
+        reason: "Contract was never funded",
+        idempotencyKey: "loan-cancel-execute-20260825-1",
+    });
+    return { outcome: "completed" } as const;
+}
+
 const SCENARIOS: Record<string, Scenario> = {
+    "loan-cancel-unfunded": {
+        script: [
+            { name: "borrower.search", arguments: { query: "Unfunded Borrower" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_A, name: "fixture" }] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: replacementPortfolio() },
+            { name: "loan.cancel.preview", arguments: { loanPublicId: LOAN_A, reason: "Contract was never funded" }, result: { publicId: CANCELLATION_PREVIEW, loanPublicId: LOAN_A, reason: "Contract was never funded", eligibility: "unfunded", before: { status: "active", outstandingPrincipal: "20000.00", outstandingInterest: "10000.00", outstandingFees: "0.00", netDisbursed: "0.00" }, balanceVersion: BALANCE_VERSION, previewHash: PREVIEW_HASH, status: "ready", expiresAt: "2026-08-25T07:00:00.000Z" } },
+            { name: "loan.cancel.execute", arguments: { previewPublicId: CANCELLATION_PREVIEW, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, confirmed: true, reason: "Contract was never funded", idempotencyKey: "loan-cancel-execute-20260825-1" }, result: { publicId: LOAN_A, status: "cancelled", outstandingPrincipal: "0.00", outstandingInterest: "0.00", outstandingFees: "0.00", auditPublicId: CANCELLATION_AUDIT, auditPublicIds: [CANCELLATION_AUDIT], correlationId: CANCELLATION_AUDIT } },
+        ],
+        run: (mcp) => unfundedCancellationFlow(mcp),
+    },
+    "loan-cancel-funded-stop": {
+        script: [
+            { name: "borrower.search", arguments: { query: "Unfunded Borrower" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_A, name: "fixture" }] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: replacementPortfolio() },
+            { name: "loan.cancel.preview", arguments: { loanPublicId: LOAN_A, reason: "Contract was never funded" }, error: { code: "LOAN_CANCEL_FUNDED", message: "Loan has actual disbursement history", retryable: false, reviewRequired: true, details: {} } },
+        ],
+        run: (mcp) => unfundedCancellationFlow(mcp),
+    },
+    "loan-cancel-posted-payment-stop": {
+        script: [
+            { name: "borrower.search", arguments: { query: "Unfunded Borrower" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_A, name: "fixture" }] } },
+            { name: "borrower.portfolio", arguments: { borrowerPublicId: BORROWER_A }, result: replacementPortfolio() },
+            { name: "loan.cancel.preview", arguments: { loanPublicId: LOAN_A, reason: "Contract was never funded" }, error: { code: "LOAN_CANCEL_POSTED_PAYMENT", message: "Loan has effective posted payment history", retryable: false, reviewRequired: true, details: {} } },
+        ],
+        run: (mcp) => unfundedCancellationFlow(mcp),
+    },
     "loan-replacement-execute": {
         script: [
             { name: "borrower.search", arguments: { query: "Replacement Borrower" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_A, name: "fixture" }] } },

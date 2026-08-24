@@ -188,14 +188,14 @@ async function run() {
       await tx.unsafe(`LOCK TABLE audit_logs, bank_profiles, borrowers, drizzle.__drizzle_migrations, files, intermediaries, intermediary_compensation_settlements, public.intermediary_bank_accounts, loan_disbursement_events, loan_funding_allocations, loan_funding_previews, loan_interest_accruals, loan_interest_rate_periods, loan_schedules, loans, transactions, users IN ACCESS EXCLUSIVE MODE`);
       const journal = await tx<{ hash: string; created_at: string }[]>`SELECT hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id`;
       const count = journal.length;
-      if (![30, 40, 42, 53, 54, 57, 58].includes(count)) throw new Error(`mixed-lineage state is not exact: ${count} journal rows`);
+       if (![30, 40, 42, 53, 54, 57, 58, 60].includes(count)) throw new Error(`mixed-lineage state is not exact: ${count} journal rows`);
       const pending = await expectedPending();
       const authoritativeRows = authoritative.map((entry) => [entry.hash, entry.when] as const);
       const forwardTail = count >= 53 ? (await expectedForwardTail()).slice(0, count - 42) : [];
       const expected = count === 30 ? pending : count === 40 ? [...pending, ...authoritativeRows] : [...pending, ...authoritativeRows, ...stock, ...forwardTail];
       if (expected.length !== count) throw new Error("internal journal manifest length mismatch");
       if (journal.some((row, i) => row.hash !== expected[i]![0] || Number(row.created_at) !== expected[i]![1])) throw new Error("mixed-lineage journal tuple array is not exact");
-      if ([40, 42, 53, 54, 57, 58].includes(count)) { await verifyCatalogAndData(tx, count as 40 | 42 | 53 | 54 | 57 | 58); return "already-complete"; }
+      if ([40, 42, 53, 54, 57, 58, 60].includes(count)) { await verifyCatalogAndData(tx, (count === 60 ? 58 : count) as 40 | 42 | 53 | 54 | 57 | 58); return "already-complete"; }
       await tx.unsafe(preflightDo);
       await verifyLegacyCatalog(tx, "public.intermediary_bank_accounts");
       const quarantine = await tx<{ relation: string | null }[]>`SELECT to_regclass('creditsync_quarantine.intermediary_bank_accounts')::text AS relation`;

@@ -371,6 +371,18 @@ describe("CreditSync stateless MCP contract", () => {
             idempotentHint: true,
             openWorldHint: false,
         });
+        expect(listed.tools.find((tool) => tool.name === "loan.cancel.preview")?.annotations).toMatchObject({
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: false,
+        });
+        expect(listed.tools.find((tool) => tool.name === "loan.cancel.execute")?.annotations).toMatchObject({
+            readOnlyHint: false,
+            destructiveHint: true,
+            idempotentHint: true,
+            openWorldHint: false,
+        });
 
         const previewed = await client.callTool({
             name: "loan.settlement.preview",
@@ -839,6 +851,7 @@ describe("CreditSync stateless MCP contract", () => {
             "loan.interest-rate.execute",
             "loan.settlement.execute",
             "loan.settlement.reverse",
+            "loan.cancel.execute",
             "loan.replacement.execute",
             "loan.replacement.reverse",
             "loan.disbursement.update",

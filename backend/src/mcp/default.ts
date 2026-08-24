@@ -140,6 +140,7 @@ import {
 } from "../services/payment-attribution-service";
 import { executePaymentReconciliation, previewPaymentReconciliation, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
 import { addPaymentBatchItem, capturePaymentBatch, createPaymentBatch, executePaymentBatch, finalizePaymentBatchEvidenceMany, getPaymentBatch, preparePaymentBatchEvidenceMany, previewPaymentBatch } from "../services/payment-batch-service";
+import { executeUnfundedLoanCancellation, previewUnfundedLoanCancellation } from "../services/loan-cancellation-service";
 
 type ToolInput = Record<string, unknown>;
 
@@ -302,6 +303,14 @@ export function createDefaultMcpToolHandlers(
     }),
     "loan.settlement.reverse": (ctx, input) => reverseLoanSettlement(ctx, {
         settlementPublicId: asString(input, "settlementPublicId"),
+        reason: asString(input, "reason"),
+    }),
+    "loan.cancel.preview": (ctx, input) => previewUnfundedLoanCancellation(ctx, asString(input, "loanPublicId"), asString(input, "reason")),
+    "loan.cancel.execute": (ctx, input) => executeUnfundedLoanCancellation(ctx, {
+        previewPublicId: asString(input, "previewPublicId"),
+        previewHash: asString(input, "previewHash"),
+        expectedBalanceVersion: asString(input, "expectedBalanceVersion"),
+        confirmed: input.confirmed as true,
         reason: asString(input, "reason"),
     }),
     "loan.replacement.preview": (ctx, input) => previewLoanReplacement(ctx, {
@@ -511,6 +520,7 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "loan.interest-rate.execute": { entityType: "loan_interest_rate_timeline", action: "interest_rate_timeline_changed" },
     "loan.settlement.execute": { entityType: "loan_settlement", action: "executed" },
     "loan.settlement.reverse": { entityType: "loan_settlement", action: "reversed" },
+    "loan.cancel.execute": { entityType: "loan", action: "cancelled_unfunded" },
     "loan.replacement.execute": { entityType: "loan_replacement", action: "executed" },
     "loan.replacement.reverse": { entityType: "loan_replacement", action: "reversed" },
     "loan.disbursement.post": { entityType: "loan_disbursement", action: "posted" },
