@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.53 - 2026-08-24
+
+### Changed
+- Increased finance watermark opacity in renewal summaries so the background illustration is visibly present in both preview and exported/copied images without obscuring financial text.
+
 ## v0.3.52 - 2026-08-24
 
 ### Fixed
