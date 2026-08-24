@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.56 - 2026-08-24
+
+### Fixed
+- Restored MCP loan previews for daily floating-interest contracts, including first-day interest deduction and exact net borrower payout fields.
+
 ## v0.3.55 - 2026-08-24
 
 ### Fixed
