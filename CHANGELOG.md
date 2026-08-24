@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.54 - 2026-08-24
+
+### Changed
+- Increased renewal watermark contrast with multiply blending so the finance illustration remains visible over the light summary card background.
+
 ## v0.3.53 - 2026-08-24
 
 ### Changed
