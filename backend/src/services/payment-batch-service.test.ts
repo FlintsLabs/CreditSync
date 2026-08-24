@@ -3,7 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { borrowers, loanSchedules, loans, paymentBatchAllocations, paymentBatchItems, paymentBatchPreviews, paymentBatches, paymentIntakes, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
-import { createPaymentBatch, previewPaymentBatch } from "./payment-batch-service";
+import { capturePaymentBatch, createPaymentBatch, previewPaymentBatch } from "./payment-batch-service";
 import type { PreviewPaymentBatchInput } from "./payment-batch-service";
 import { executePaymentBatch } from "./payment-batch-service";
 
@@ -25,6 +25,10 @@ async function fixture() {
 }
 
 describe("payment batch service contract", () => {
+    test("exports compact multi-item capture", () => {
+        expect(typeof capturePaymentBatch).toBe("function");
+    });
+
     test("exports the lifecycle and preview entry points", () => {
         expect(typeof createPaymentBatch).toBe("function");
         expect(typeof previewPaymentBatch).toBe("function");

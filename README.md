@@ -33,7 +33,7 @@ The repo already contains a working MVP foundation:
 - Loan calculation plus draft-review-activation flow
 - Payment intake, evidence, review, grouped allocation, posting, and compensating reversal workflow
 - Interest-only historical payment reconciliation for reviewed `needs_review` intakes and fully compensated, finalized-evidence-backed `reversed` sources; reversed reposts create one linked posted child, retain source evidence unchanged, and never reduce principal
-- Atomic scheduled-loan payment batches through the closed `payment.batch.*` workflow: inspect all items, complete evidence, preview the whole batch, confirm once, execute with stable idempotency, and verify every posted intake and loan balance. Any duplicate, ambiguity, mismatch, or changed semantics stops the whole batch for review.
+- Atomic scheduled-loan payment batches through the closed `payment.batch.*` workflow: for multiple slips, use one compact capture call and multi-item evidence preparation/finalization, then preview the whole batch, confirm once, execute with stable idempotency, and verify every posted intake and loan balance. Any duplicate, ambiguity, mismatch, or changed semantics stops the whole batch for review.
 - Daily-loan renewal preview, confirmed execution, and compensating reversal workflow
 - Single-payment settlement/restructure preview, explicit confirmation, component waivers, replacement contracts, and compensating reversal workflow
 - Owner/manager scheduled-loan replacement preview, confirmed execution, public lineage, and compensating reversal workflow

@@ -5,16 +5,19 @@ import { db, type DbExecutor } from "../db";
 import { borrowers, loans, paymentBatchAllocations, paymentBatchItems, paymentBatchPreviews, paymentBatches, paymentEvidence, paymentIntakes, loanSchedules } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import { canAccessTenantWideData } from "../lib/access";
+import { parseMoney, serializeMoney } from "../lib/money";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
+import { normalizeBorrowerText } from "./borrower-service";
 import { solvePaymentBatch } from "./payment-batch-solver";
 import type { BatchObligation, BatchSlip, ExplicitBatchAllocation } from "./payment-batch-types";
-import { postPaymentAllocationInTransaction, previewPaymentMatch } from "./payment-service";
+import { finalizePaymentEvidence, normalizeBankReference, postPaymentAllocationInTransaction, preparePaymentEvidence, previewPaymentMatch, type EvidenceStorageGateway } from "./payment-service";
 
 type BatchRow = typeof paymentBatches.$inferSelect;
 type ItemRow = typeof paymentBatchItems.$inferSelect;
 
 function digest(value: unknown) { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
+function digestBankReference(value: string) { return createHash("sha256").update(value).digest("hex"); }
 function requireId(value: string, field: string) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) throw new DomainError("INVALID_PUBLIC_ID", `${field} must be a UUID`, 400);
 }
@@ -63,6 +66,74 @@ export async function createPaymentBatch(ctx: CommandContext, input: { idempoten
     return view(ctx, created);
 }
 
+export type CapturePaymentBatchItemInput = {
+    clientItemKey: string;
+    amount: string;
+    receivedAt: string;
+    payerName?: string | null;
+    bankReference?: string | null;
+    intakeIdempotencyKey: string;
+};
+
+export async function capturePaymentBatch(ctx: CommandContext, input: {
+    idempotencyKey: string;
+    borrowerPublicId?: string | null;
+    notes?: string | null;
+    items: CapturePaymentBatchItemInput[];
+}) {
+    await actor(ctx);
+    const batchKey = input.idempotencyKey.trim();
+    if (!batchKey) throw new DomainError("INVALID_IDEMPOTENCY_KEY", "idempotencyKey must not be blank", 400);
+    if (!Array.isArray(input.items) || input.items.length < 1 || input.items.length > 50) throw new DomainError("INVALID_BATCH_ITEMS", "Payment batch must contain 1 to 50 items", 400);
+    const clientKeys = input.items.map((item) => item.clientItemKey.trim());
+    if (clientKeys.some((key) => !key) || new Set(clientKeys).size !== clientKeys.length) throw new DomainError("DUPLICATE_BATCH_ITEM_KEY", "Batch item keys must be unique and non-blank", 400);
+    const intakeKeys = input.items.map((item) => item.intakeIdempotencyKey.trim());
+    if (intakeKeys.some((key) => !key) || new Set(intakeKeys).size !== intakeKeys.length) throw new DomainError("DUPLICATE_IDEMPOTENCY_KEY", "Payment intake idempotency keys must be unique and non-blank", 400);
+    const parsed = input.items.map((item, index) => {
+        let amount: Decimal;
+        try { amount = parseMoney(item.amount); } catch { throw new DomainError("INVALID_PAYMENT_AMOUNT", "Payment amounts must be positive strings with exactly two decimals", 400); }
+        if (amount.lte(0)) throw new DomainError("INVALID_PAYMENT_AMOUNT", "Payment amounts must be positive strings with exactly two decimals", 400);
+        const receivedAt = new Date(item.receivedAt);
+        if (Number.isNaN(receivedAt.getTime())) throw new DomainError("INVALID_RECEIVED_AT", "receivedAt must be an ISO date-time", 400);
+        const reference = item.bankReference?.trim() || null;
+        return { ...item, clientItemKey: clientKeys[index]!, intakeIdempotencyKey: intakeKeys[index]!, amount: serializeMoney(amount), receivedAt, reference, bankReferenceHash: reference ? digestBankReference(normalizeBankReference(reference)) : null };
+    });
+    if (new Set(parsed.map((item) => item.bankReferenceHash).filter((value): value is string => value !== null)).size !== parsed.filter((item) => item.bankReferenceHash !== null).length) throw new DomainError("DUPLICATE_BANK_REFERENCE", "Bank reference appears more than once in this batch", 409);
+
+    const created = await db.transaction(async (tx) => {
+        const existing = await tx.query.paymentBatches.findFirst({ where: and(eq(paymentBatches.tenantId, ctx.tenantId), eq(paymentBatches.createIdempotencyKey, batchKey)) });
+        if (existing) return { batch: existing, items: null as null | Array<{ clientItemKey: string; intakePublicId: string; itemPublicId: string }> };
+        let borrowerId: number | null = null;
+        if (input.borrowerPublicId) {
+            requireId(input.borrowerPublicId, "borrowerPublicId");
+            const borrower = await tx.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, ctx.tenantId), eq(borrowers.publicId, input.borrowerPublicId)) });
+            if (!borrower) throw new DomainError("BORROWER_NOT_FOUND", "Borrower not found", 404);
+            borrowerId = borrower.id;
+        }
+        const allIntakes = await tx.select().from(paymentIntakes).where(eq(paymentIntakes.tenantId, ctx.tenantId));
+        for (const item of parsed) {
+            if (allIntakes.some((row) => row.idempotencyKey === item.intakeIdempotencyKey || (item.bankReferenceHash !== null && row.bankReferenceHash === item.bankReferenceHash))) {
+                throw new DomainError("DUPLICATE_PAYMENT_INTAKE", "A payment intake with this idempotency key or bank reference already exists", 409);
+            }
+        }
+        const batch = await tx.insert(paymentBatches).values({ tenantId: ctx.tenantId, borrowerId, status: borrowerId ? "draft" : "needs_review", version: parsed.length, stateHash: digest({ borrowerPublicId: input.borrowerPublicId ?? null, items: parsed.map((item) => ({ key: item.clientItemKey, amount: item.amount, receivedAt: item.receivedAt.toISOString() })) }), createIdempotencyKey: batchKey, notes: input.notes ?? null, createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((rows) => rows[0]!);
+        await createAuditLog(tx, { tenantId: ctx.tenantId, actorUserId: ctx.actorUserId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, entityType: "payment_batch", entityId: batch.publicId, action: "created", payload: { batchPublicId: batch.publicId, itemCount: parsed.length } });
+        const rows: Array<{ clientItemKey: string; intakePublicId: string; itemPublicId: string }> = [];
+        for (const [index, item] of parsed.entries()) {
+            const warnings = allIntakes.filter((candidate) => candidate.amount === item.amount && candidate.payerName && normalizeBorrowerText(candidate.payerName) === normalizeBorrowerText(item.payerName ?? "") && Math.abs(candidate.receivedAt.getTime() - item.receivedAt.getTime()) <= 5 * 60 * 1000).length ? [{ code: "POSSIBLE_SEMANTIC_DUPLICATE" }] : [];
+            const intake = await tx.insert(paymentIntakes).values({ tenantId: ctx.tenantId, ownerUserId: ctx.actorUserId, source: ctx.actorSource === "mcp" ? "mcp" : "web", status: warnings.length ? "needs_review" : "draft", amount: item.amount, receivedAt: item.receivedAt, payerName: item.payerName?.trim() || null, bankReference: item.reference, bankReferenceHash: item.bankReferenceHash, warnings, idempotencyKey: item.intakeIdempotencyKey, notes: input.notes ?? null, createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((values) => values[0]!);
+            const batchItem = await tx.insert(paymentBatchItems).values({ tenantId: ctx.tenantId, batchId: batch.id, paymentIntakeId: intake.id, itemOrder: index + 1 }).returning().then((values) => values[0]!);
+            await createAuditLog(tx, { tenantId: ctx.tenantId, actorUserId: ctx.actorUserId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, entityType: "payment_intake", entityId: intake.publicId, action: "created", payload: { amount: item.amount, receivedAt: item.receivedAt.toISOString(), warningCodes: warnings.map((warning) => warning.code) } });
+            rows.push({ clientItemKey: item.clientItemKey, intakePublicId: intake.publicId, itemPublicId: batchItem.publicId });
+        }
+        return { batch, items: rows };
+    });
+    const batchView = await view(ctx, created.batch);
+    const itemMap = new Map(batchView.items.map((item) => [item.paymentIntakePublicId, item.publicId]));
+    const items = created.items ?? batchView.items.map((item, index) => ({ clientItemKey: clientKeys[index]!, intakePublicId: item.paymentIntakePublicId!, itemPublicId: item.publicId }));
+    return { ...batchView, items: items.map((item) => ({ clientItemKey: item.clientItemKey, paymentIntakePublicId: item.intakePublicId, batchItemPublicId: item.itemPublicId, status: "draft", duplicate: false })) };
+}
+
 export async function addPaymentBatchItem(ctx: CommandContext, batchPublicId: string, input: { paymentIntakePublicId: string; itemOrder: number }) {
     const batch = await accessibleBatch(ctx, batchPublicId);
     if (!Number.isInteger(input.itemOrder) || input.itemOrder < 1) throw new DomainError("INVALID_ITEM_ORDER", "itemOrder must be positive", 400);
@@ -85,6 +156,34 @@ export async function addPaymentBatchItem(ctx: CommandContext, batchPublicId: st
 }
 
 export async function getPaymentBatch(ctx: CommandContext, batchPublicId: string) { return view(ctx, await accessibleBatch(ctx, batchPublicId)); }
+
+type BatchEvidencePrepareItem = { batchItemPublicId: string; paymentIntakePublicId: string; mimeType: "image/jpeg" | "image/png" | "application/pdf"; size: number; sha256: string; evidenceType?: "slip" | "qr" };
+type BatchEvidenceFinalizeItem = { batchItemPublicId: string; paymentIntakePublicId: string; evidencePublicId: string };
+async function assertBatchEvidenceItems(ctx: CommandContext, batchPublicId: string, items: Array<{ batchItemPublicId: string; paymentIntakePublicId: string }>) {
+    const batch = await accessibleBatch(ctx, batchPublicId);
+    if (!items.length || items.length > 50) throw new DomainError("INVALID_BATCH_EVIDENCE_ITEMS", "Batch evidence requires 1 to 50 items", 400);
+    if (new Set(items.map((item) => item.batchItemPublicId)).size !== items.length) throw new DomainError("DUPLICATE_BATCH_ITEM", "Each batch item may appear only once", 400);
+    const rows = await db.select().from(paymentBatchItems).where(and(eq(paymentBatchItems.tenantId, ctx.tenantId), eq(paymentBatchItems.batchId, batch.id)));
+    const intakeRows = await db.select().from(paymentIntakes).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.publicId, items.map((item) => item.paymentIntakePublicId))));
+    for (const item of items) {
+        requireId(item.batchItemPublicId, "batchItemPublicId"); requireId(item.paymentIntakePublicId, "paymentIntakePublicId");
+        const intake = intakeRows.find((row) => row.publicId === item.paymentIntakePublicId);
+        if (!intake || !rows.some((row) => row.publicId === item.batchItemPublicId && row.paymentIntakeId === intake.id)) throw new DomainError("PAYMENT_BATCH_ITEM_MISMATCH", "Evidence item does not belong to the payment batch", 409);
+    }
+}
+export async function preparePaymentBatchEvidenceMany(ctx: CommandContext, batchPublicId: string, items: BatchEvidencePrepareItem[], gateway?: EvidenceStorageGateway) {
+    await assertBatchEvidenceItems(ctx, batchPublicId, items);
+    const results = await Promise.all(items.map(async (item) => ({ batchItemPublicId: item.batchItemPublicId, paymentIntakePublicId: item.paymentIntakePublicId, ...(await preparePaymentEvidence(ctx, item.paymentIntakePublicId, item, gateway)) })));
+    return { batchPublicId, items: results };
+}
+export async function finalizePaymentBatchEvidenceMany(ctx: CommandContext, batchPublicId: string, items: BatchEvidenceFinalizeItem[], gateway?: EvidenceStorageGateway) {
+    await assertBatchEvidenceItems(ctx, batchPublicId, items);
+    const results = await Promise.all(items.map(async (item) => ({ batchItemPublicId: item.batchItemPublicId, paymentIntakePublicId: item.paymentIntakePublicId, ...(await finalizePaymentEvidence(ctx, item.paymentIntakePublicId, item.evidencePublicId, gateway)) })));
+    const batch = await accessibleBatch(ctx, batchPublicId);
+    const members = await db.select().from(paymentBatchItems).where(and(eq(paymentBatchItems.tenantId, ctx.tenantId), eq(paymentBatchItems.batchId, batch.id)));
+    const evidence = members.length ? await db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, ctx.tenantId), inArray(paymentEvidence.paymentIntakeId, members.map((member) => member.paymentIntakeId)))) : [];
+    return { batchPublicId, allEvidenceReady: members.every((member) => evidence.some((entry) => entry.paymentIntakeId === member.paymentIntakeId && entry.status === "ready")), items: results };
+}
 export async function cancelPaymentBatch(ctx: CommandContext, batchPublicId: string) {
     const batch = await accessibleBatch(ctx, batchPublicId);
     if (batch.status === "posted") throw new DomainError("PAYMENT_BATCH_NOT_EDITABLE", "Posted payment batches cannot be cancelled", 409);
