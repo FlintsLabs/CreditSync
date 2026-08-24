@@ -29,7 +29,7 @@ describe("LoanRenewalPanel manual renewal", () => {
         fireEvent.change(screen.getByLabelText(/required reason/i), { target: { value: "manual review" } });
         fireEvent.click(screen.getByRole("button", { name: /preview renewal/i }));
         await screen.findByText(/full old-contract interest/i);
-        expect((api.post as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]).toEqual({ oldLoanPublicId: "019ff2b2-15e2-7df7-a594-eb836ff388f0", requestedPrincipal: "2000.00", settlementPolicy: "full_contract_interest", adjustments: [{ kind: "fee", amount: "25.00", reason: "manual review" }] });
+        expect((api.post as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]).toEqual({ oldLoanPublicId: "019ff2b2-15e2-7df7-a594-eb836ff388f0", requestedPrincipal: "2000.00", renewalDate: "2026-08-24", paymentStartDate: "2026-08-25", settlementPolicy: "full_contract_interest", adjustments: [{ kind: "fee", amount: "25.00", reason: "manual review" }] });
         expect(screen.getByText(/manual review/)).not.toBeNull();
         expect(screen.getAllByText(/908\.34/).length).toBeGreaterThan(0);
         fireEvent.click(screen.getByRole("button", { name: /edit and re-preview/i }));

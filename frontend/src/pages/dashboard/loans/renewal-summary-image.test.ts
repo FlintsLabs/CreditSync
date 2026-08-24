@@ -21,6 +21,14 @@ describe("deterministic renewal summary SVG", () => {
         expect(svg).not.toContain("payment-11");
     });
 
+    test("adds a subtle finance watermark and visually separates net cash", () => {
+        const svg = buildRenewalSummarySvg(summaryFixture, "th");
+        expect(svg).toContain('href="/renewal-finance-watermark.png"');
+        expect(svg).toContain('opacity="0.08"');
+        expect(svg).toContain('data-summary="net-cash"');
+        expect(svg).toContain('stroke="#0f5ea8"');
+    });
+
     test("distinguishes executed export names", () => {
         expect(buildRenewalSummarySvg({ ...summaryFixture, status: "executed", watermark: "renewal_executed" }, "en")).toContain("RENEWAL EXECUTED");
         expect(renewalSummaryFilename({ ...summaryFixture, status: "executed" })).toMatch(/-executed\.png$/);

@@ -1016,7 +1016,7 @@
         "confirmation": "I reviewed recovered principal, old outstanding, charges, waivers, cash movement, and the complete new schedule.",
         "collectionConfirmation": "I explicitly acknowledge that {{amount}} must be collected from the borrower.",
         "approvalSummary": "{{policy}} · old settlement {{oldInterest}} · new-contract interest {{newInterest}} · {{direction}} {{cash}}",
-        "summary": { "title": "Customer renewal summary", "preview": "Summary image preview", "download": "Download summary image", "exportError": "Unable to export the PNG. The preview remains available; try again." },
+        "summary": { "title": "Customer renewal summary", "preview": "Summary image preview", "download": "Download summary image", "copy": "Copy summary image", "copied": "Copied", "exportError": "Unable to export the PNG. The preview remains available; try again.", "copyError": "Unable to copy the image. Please use download instead." },
         "confirm": "Confirm renewal",
         "executed": "Renewal executed. New loan: {{id}}",
         "reverseReason": "Reversal reason",

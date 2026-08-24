@@ -10,6 +10,7 @@ describe("RenewalSummaryCard", () => {
         render(<RenewalSummaryCard summary={summaryFixture} />);
         expect(screen.getByLabelText(/summary image preview/i)).not.toBeNull();
         expect(screen.getByRole("button", { name: /download summary image/i })).not.toBeNull();
+        expect(screen.getByRole("button", { name: /copy summary image/i })).not.toBeNull();
         expect(screen.queryByRole("button", { name: /confirm renewal/i })).toBeNull();
     });
 });

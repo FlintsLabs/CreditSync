@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.48 - 2026-08-24
+
+### Added
+- Added a subtle finance watermark and emphasized net cash in customer renewal summary images, with direct image-copy support alongside PNG download.
+
+### Fixed
+- Updated the daily-renewal panel regression assertion for the current independent renewal and first-payment date request contract.
+
 ## v0.3.47 - 2026-08-24
 
 ### Added
