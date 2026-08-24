@@ -912,7 +912,28 @@ export async function executeLoanRenewal(
                 updatedAt: effectiveAt,
             });
         }
-        await tx.update(loans).set({ status: "renewed", updatedAt: effectiveAt }).where(and(
+        const openSchedules = await tx.select().from(loanSchedules).where(and(
+            eq(loanSchedules.tenantId, ctx.tenantId),
+            eq(loanSchedules.loanId, oldLoan.id),
+            sql`${loanSchedules.remainingDue} > 0`,
+        ));
+        for (const schedule of openSchedules) {
+            await tx.update(loanSchedules).set({
+                paidTotal: schedule.scheduledTotal,
+                remainingDue: "0.00",
+                overdueDays: 0,
+                status: "paid",
+                updatedAt: effectiveAt,
+            }).where(and(eq(loanSchedules.id, schedule.id), eq(loanSchedules.tenantId, ctx.tenantId)));
+        }
+        await tx.update(loans).set({
+            status: "renewed",
+            outstandingPrincipal: "0.00",
+            outstandingInterest: "0.00",
+            outstandingFees: "0.00",
+            nextDueDate: null,
+            updatedAt: effectiveAt,
+        }).where(and(
             eq(loans.id, oldLoan.id), eq(loans.tenantId, ctx.tenantId),
         ));
         const executed = await tx.update(loanRenewals).set({

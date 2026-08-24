@@ -722,7 +722,15 @@ describe("daily-loan renewal service", () => {
 
         const oldLoan = await db.query.loans.findFirst({ where: eq(loans.id, seeded.oldLoan.id) });
         const replacement = await db.query.loans.findFirst({ where: eq(loans.publicId, first.newLoanPublicId) });
-        expect(oldLoan?.status).toBe("renewed");
+        expect(oldLoan).toMatchObject({
+            status: "renewed",
+            outstandingPrincipal: "0.00",
+            outstandingInterest: "0.00",
+            outstandingFees: "0.00",
+            nextDueDate: null,
+        });
+        expect((await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, seeded.oldLoan.id)))
+            .every((row) => row.status === "paid" && row.remainingDue === "0.00")).toBe(true);
         expect(replacement).toMatchObject({
             borrowerId: seeded.borrower.id,
             principalAmount: "2500.00",

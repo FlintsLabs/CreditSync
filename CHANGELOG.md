@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.57 - 2026-08-24
+
+### Fixed
+- Applied renewal settlement to the old loan schedule and economic rollup so renewed contracts close at ฿0.00.
+
 ## v0.3.56 - 2026-08-24
 
 ### Fixed

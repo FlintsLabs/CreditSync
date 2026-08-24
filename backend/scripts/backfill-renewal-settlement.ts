@@ -2,7 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import Decimal from "decimal.js";
 import { db } from "../src/db";
 import { createAuditLog } from "../src/lib/audit-log";
-import { loanRenewals, loans, transactions } from "../src/db/schema";
+import { loanRenewals, loanSchedules, loans, transactions } from "../src/db/schema";
 
 const renewalPublicId = process.env.TARGET_RENEWAL_PUBLIC_ID;
 const execute = process.env.EXECUTE_BACKFILL === "yes";
@@ -56,7 +56,30 @@ const result = await db.transaction(async (tx) => {
         eq(transactions.idempotencyKey, idempotencyKey),
         eq(transactions.entryType, "repayment"),
     ) });
-    if (existing) return { status: "already_backfilled", transactionPublicId: existing.publicId };
+    const openSchedules = await tx.select().from(loanSchedules).where(and(
+        eq(loanSchedules.tenantId, renewal.tenantId),
+        eq(loanSchedules.loanId, oldLoan.id),
+        sql`${loanSchedules.remainingDue} > 0`,
+    ));
+    const repairedAt = new Date();
+    for (const schedule of openSchedules) {
+        await tx.update(loanSchedules).set({
+            paidTotal: schedule.scheduledTotal,
+            remainingDue: "0.00",
+            overdueDays: 0,
+            status: "paid",
+            updatedAt: repairedAt,
+        }).where(and(eq(loanSchedules.id, schedule.id), eq(loanSchedules.tenantId, renewal.tenantId)));
+    }
+    await tx.update(loans).set({
+        status: "renewed",
+        outstandingPrincipal: "0.00",
+        outstandingInterest: "0.00",
+        outstandingFees: "0.00",
+        nextDueDate: null,
+        updatedAt: repairedAt,
+    }).where(and(eq(loans.id, oldLoan.id), eq(loans.tenantId, renewal.tenantId)));
+    if (existing) return { status: "already_backfilled_repaired", transactionPublicId: existing.publicId, schedulesClosed: openSchedules.length };
 
     const transaction = await tx.insert(transactions).values({
         tenantId: renewal.tenantId,
@@ -73,9 +96,9 @@ const result = await db.transaction(async (tx) => {
         recordedByUserId: actorUserId,
         entryType: "repayment",
         idempotencyKey,
-        postedAt: new Date(),
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        postedAt: repairedAt,
+        createdAt: repairedAt,
+        updatedAt: repairedAt,
     }).returning().then((rows) => rows[0]!);
     const audit = await createAuditLog(tx, {
         tenantId: renewal.tenantId,
@@ -91,6 +114,7 @@ const result = await db.transaction(async (tx) => {
             oldLoanPublicId: oldLoan.publicId,
             transactionPublicId: transaction.publicId,
             amount,
+            schedulesClosed: openSchedules.length,
             reason: "Record final installment paid from renewal proceeds",
         },
     });
