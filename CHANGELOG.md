@@ -12,6 +12,9 @@
 - Added a test-first implementation plan for compact batch capture and multi-item evidence MCP operations.
 - Added compact multi-slip batch capture and batch evidence MCP tools, preserving one atomic preview and explicit execution.
 
+### Changed
+- Updated the dashboard footer to display the current CreditSync and plugin versions.
+
 ### Fixed
 - Kept captured payment bank-reference hashes compatible with existing duplicate detection.
 
