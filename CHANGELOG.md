@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.49 - 2026-08-24
+
+### Changed
+- Softened the net-cash summary highlight to a lighter blue-gray frame while preserving the prominent amount and separator.
+
 ## v0.3.48 - 2026-08-24
 
 ### Added

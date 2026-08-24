@@ -26,7 +26,8 @@ describe("deterministic renewal summary SVG", () => {
         expect(svg).toContain('href="/renewal-finance-watermark.png"');
         expect(svg).toContain('opacity="0.08"');
         expect(svg).toContain('data-summary="net-cash"');
-        expect(svg).toContain('stroke="#0f5ea8"');
+        expect(svg).toContain('stroke="#cbd5e1"');
+        expect(svg).toContain('fill="#f8fbff"');
     });
 
     test("distinguishes executed export names", () => {
