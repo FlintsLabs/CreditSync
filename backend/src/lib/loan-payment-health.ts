@@ -85,6 +85,16 @@ export function computeScheduledOutstandingPenalty(
 }
 
 export function computeLoanPaymentHealth(input: LoanPaymentHealthInput): LoanPaymentHealth {
+    if (input.lifecycleStatus === "renewed") {
+        return {
+            status: "settled",
+            dueTodayAmount: "0.00",
+            overdueAmount: "0.00",
+            overdueItemCount: 0,
+            maxOverdueDays: 0,
+        };
+    }
+
     let dueNow = zero();
     let overdue = zero();
     let overdueItemCount = 0;

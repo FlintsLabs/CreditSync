@@ -404,7 +404,15 @@ export async function listLoanPaymentIntakes(ctx: CommandContext, loanPublicId: 
         intakeConditions.push(eq(paymentIntakes.ownerUserId, actor.id));
     }
     const intakeRows = await db.select().from(paymentIntakes).where(and(...intakeConditions));
-    if (!intakeRows.length) return [];
+    const renewalSettlementRows = await db.select().from(transactions).where(and(
+        eq(transactions.tenantId, ctx.tenantId),
+        eq(transactions.loanId, loan.id),
+        sql`${transactions.paymentIntakeId} IS NULL`,
+        eq(transactions.type, "close_account"),
+        eq(transactions.entryType, "repayment"),
+        eq(transactions.notes, "Renewal settlement — final installment paid from renewal proceeds"),
+    ));
+    if (!intakeRows.length && !renewalSettlementRows.length) return [];
 
     const intakeIds = intakeRows.map((row) => row.id);
     const [transactionRows, proposalRows] = await Promise.all([
@@ -442,7 +450,7 @@ export async function listLoanPaymentIntakes(ctx: CommandContext, loanPublicId: 
     }
 
     const lineage = await loadIntakeLineage(ctx, intakeRows);
-    return intakeRows
+    const intakeItems = intakeRows
         .filter((intake) => intake.originLoanId === loan.id
             || transactionsByIntake.has(intake.id)
             || allocationByProposal.has(latestProposalByIntake.get(intake.id)?.id ?? -1))
@@ -467,6 +475,33 @@ export async function listLoanPaymentIntakes(ctx: CommandContext, loanPublicId: 
                 } : null,
             };
         });
+    const renewalItems = renewalSettlementRows.map((transaction) => ({
+        id: transaction.publicId,
+        publicId: transaction.publicId,
+        source: "renewal",
+        status: "posted",
+        amount: serializeMoney(transaction.amount),
+        receivedAt: transaction.transactionDate ?? transaction.postedAt,
+        payerName: null,
+        bankReference: null,
+        warnings: [],
+        notes: transaction.notes,
+        postedAt: transaction.postedAt,
+        createdAt: transaction.createdAt,
+        updatedAt: transaction.updatedAt,
+        repostOfIntakePublicId: null,
+        repostedByIntakePublicId: null,
+        originLoanPublicId: loan.publicId,
+        latestAllocation: null,
+        postedComponents: {
+            principal: serializeMoney(transaction.principalComponent),
+            interest: serializeMoney(transaction.interestComponent),
+            fee: serializeMoney(transaction.feeComponent),
+            penalty: serializeMoney(transaction.penaltyComponent),
+        },
+    }));
+    return [...intakeItems, ...renewalItems].sort((left, right) =>
+        right.receivedAt.getTime() - left.receivedAt.getTime());
 }
 
 export async function listPaymentReviewQueue(ctx: CommandContext) {

@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.55 - 2026-08-24
+
+### Fixed
+- Recorded renewal-funded final-installment settlement in the immutable payment ledger and history, prevented renewed loans from appearing overdue, and added reversal support.
+
 ## v0.3.54 - 2026-08-24
 
 ### Changed

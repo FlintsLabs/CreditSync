@@ -884,6 +884,34 @@ export async function executeLoanRenewal(
                 updatedByUserId: ctx.actorUserId,
             })));
         }
+        const settlementPrincipal = new Decimal(snapshot.outstandingPrincipal);
+        const settlementInterest = new Decimal(composition.settlementPolicy === "full_contract_interest"
+            ? composition.remainingContractInterest
+            : composition.accruedDueInterest);
+        const settlementFee = new Decimal(composition.dueFees);
+        const settlementPenalty = new Decimal(composition.duePenalties);
+        const renewalSettlementAmount = settlementPrincipal.plus(settlementAmount);
+        if (renewalSettlementAmount.gt(0)) {
+            await tx.insert(transactions).values({
+                tenantId: ctx.tenantId,
+                ownerUserId: oldLoan.ownerUserId ?? ctx.actorUserId,
+                loanId: oldLoan.id,
+                amount: renewalSettlementAmount.toFixed(2),
+                principalComponent: settlementPrincipal.toFixed(2),
+                interestComponent: settlementInterest.toFixed(2),
+                feeComponent: settlementFee.toFixed(2),
+                penaltyComponent: settlementPenalty.toFixed(2),
+                type: "close_account",
+                transactionDate: businessDateAsOf(renewalDate),
+                notes: "Renewal settlement — final installment paid from renewal proceeds",
+                recordedByUserId: ctx.actorUserId,
+                entryType: "repayment",
+                idempotencyKey: `renewal:${idempotencyKey}:settlement`,
+                postedAt: effectiveAt,
+                createdAt: effectiveAt,
+                updatedAt: effectiveAt,
+            });
+        }
         await tx.update(loans).set({ status: "renewed", updatedAt: effectiveAt }).where(and(
             eq(loans.id, oldLoan.id), eq(loans.tenantId, ctx.tenantId),
         ));
@@ -1058,6 +1086,36 @@ export async function reverseLoanRenewal(
             await tx.update(loanAdjustments).set({
                 status: "reversed", updatedByUserId: ctx.actorUserId, updatedAt: effectiveAt,
             }).where(and(eq(loanAdjustments.id, original.id), eq(loanAdjustments.tenantId, ctx.tenantId)));
+        }
+        const renewalSettlement = renewal.idempotencyKey
+            ? await tx.query.transactions.findFirst({ where: and(
+                eq(transactions.tenantId, ctx.tenantId),
+                eq(transactions.loanId, oldLoan.id),
+                eq(transactions.idempotencyKey, `renewal:${renewal.idempotencyKey}:settlement`),
+                eq(transactions.entryType, "repayment"),
+            ) })
+            : null;
+        if (renewalSettlement) {
+            await tx.insert(transactions).values({
+                tenantId: ctx.tenantId,
+                ownerUserId: renewalSettlement.ownerUserId,
+                loanId: oldLoan.id,
+                amount: new Decimal(renewalSettlement.amount).negated().toFixed(2),
+                principalComponent: new Decimal(renewalSettlement.principalComponent).negated().toFixed(2),
+                interestComponent: new Decimal(renewalSettlement.interestComponent).negated().toFixed(2),
+                feeComponent: new Decimal(renewalSettlement.feeComponent).negated().toFixed(2),
+                penaltyComponent: new Decimal(renewalSettlement.penaltyComponent).negated().toFixed(2),
+                type: "close_account",
+                transactionDate: effectiveAt,
+                notes: reason,
+                recordedByUserId: ctx.actorUserId,
+                entryType: "reversal",
+                reversedTransactionId: renewalSettlement.id,
+                idempotencyKey: `renewal-reversal:${idempotencyKey}:settlement`,
+                postedAt: effectiveAt,
+                createdAt: effectiveAt,
+                updatedAt: effectiveAt,
+            });
         }
         const originalManualLines = await tx.select().from(loanRenewalAdjustmentLines).where(and(
             eq(loanRenewalAdjustmentLines.tenantId, ctx.tenantId),

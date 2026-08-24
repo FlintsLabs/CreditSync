@@ -219,4 +219,21 @@ describe("computeLoanPaymentHealth", () => {
             maxOverdueDays: 0,
         });
     });
+
+    test("returns settled for a renewed lifecycle even when legacy schedules remain open", () => {
+        expect(computeLoanPaymentHealth({
+            ...base,
+            lifecycleStatus: "renewed",
+            businessDate: "2026-08-24",
+            schedules: [
+                { dueDate: "2026-08-22", remainingDue: "380.00", paidPenalty: "0.00", baseStatus: "pending" },
+            ],
+        })).toEqual({
+            status: "settled",
+            dueTodayAmount: "0.00",
+            overdueAmount: "0.00",
+            overdueItemCount: 0,
+            maxOverdueDays: 0,
+        });
+    });
 });

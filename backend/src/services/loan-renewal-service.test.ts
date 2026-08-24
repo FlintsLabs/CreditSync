@@ -416,7 +416,10 @@ describe("daily-loan renewal service", () => {
         expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.oldLoan.id) })).toMatchObject({ status: "renewed" });
         expect(replacement).toMatchObject({ status: "active", principalAmount: "2000.00" });
         expect(replacementSchedule.reduce((total, row) => total.plus(row.scheduledTotal), new Decimal(0)).toFixed(2)).toBe("2400.00");
-        expect(await db.select().from(transactions).where(eq(transactions.loanId, seeded.oldLoan.id)).orderBy(transactions.id)).toEqual(originals);
+        const oldTransactions = await db.select().from(transactions).where(eq(transactions.loanId, seeded.oldLoan.id)).orderBy(transactions.id);
+        expect(oldTransactions.slice(0, originals.length)).toEqual(originals);
+        expect(oldTransactions).toHaveLength(originals.length + 1);
+        expect(oldTransactions.at(-1)).toMatchObject({ type: "close_account", entryType: "repayment" });
         const renewal = await db.query.loanRenewals.findFirst({ where: eq(loanRenewals.publicId, preview.publicId) });
         expect((await db.select().from(loanAdjustments).where(eq(loanAdjustments.renewalId, renewal!.id)).orderBy(loanAdjustments.id))
             .map((row) => ({ type: row.adjustmentType, amount: row.amount }))).toEqual([
@@ -758,6 +761,19 @@ describe("daily-loan renewal service", () => {
             { type: "contract_interest_settlement", amount: "116.70" },
             { type: "cash_payout", amount: "1550.00" },
         ]);
+        const renewalSettlement = await db.select().from(transactions).where(and(
+            eq(transactions.loanId, seeded.oldLoan.id),
+            eq(transactions.type, "close_account"),
+            eq(transactions.entryType, "repayment"),
+        ));
+        expect(renewalSettlement).toHaveLength(1);
+        expect(renewalSettlement[0]).toMatchObject({
+            amount: "950.00",
+            principalComponent: "833.30",
+            interestComponent: "116.70",
+            paymentIntakeId: null,
+            notes: "Renewal settlement — final installment paid from renewal proceeds",
+        });
         expect(await db.select().from(transactions).where(eq(transactions.loanId, replacement!.id))).toHaveLength(0);
         expect(await db.select().from(auditLogs).where(and(
             eq(auditLogs.entityId, preview.publicId),
