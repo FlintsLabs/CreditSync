@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.51 - 2026-08-24
+
+### Changed
+- Increased the renewal summary finance watermark visibility while keeping the financial text readable.
+
 ## v0.3.50 - 2026-08-24
 
 ### Changed
