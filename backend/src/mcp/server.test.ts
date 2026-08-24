@@ -860,6 +860,7 @@ describe("CreditSync stateless MCP contract", () => {
             "loan.restructure.reverse",
             "loan.waiver.execute",
             "loan.waiver.reverse",
+            "funding-allocation.create",
         ]);
         expect(listed.tools.filter((tool) => tool.annotations?.destructiveHint).map((tool) => tool.name)).toEqual(
             MCP_TOOL_NAMES.filter((name) => destructive.has(name)),
@@ -880,6 +881,38 @@ describe("CreditSync stateless MCP contract", () => {
         expect(observedContext?.requestId).toMatch(/^[0-9a-f-]{36}$/);
         expect(observedContext?.correlationId).toMatch(/^[0-9a-f-]{36}$/);
 
+        await client.close();
+    });
+
+    test("advertises funding allocation tools for post-activation funding", async () => {
+        const baseUrl = await startServer({});
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const listed = await client.listTools();
+        const tools = new Map(listed.tools.map((tool) => [tool.name, tool]));
+
+        expect(tools.get("funding-allocation.preview")?.annotations).toMatchObject({
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: false,
+        });
+        expect(tools.get("funding-allocation.list")?.annotations).toMatchObject({
+            readOnlyHint: true,
+            destructiveHint: false,
+            idempotentHint: true,
+            openWorldHint: false,
+        });
+        expect(tools.get("funding-allocation.create")?.annotations).toMatchObject({
+            readOnlyHint: false,
+            destructiveHint: true,
+            idempotentHint: true,
+            openWorldHint: false,
+        });
+
+        const input = tools.get("funding-allocation.create")?.inputSchema as { additionalProperties?: boolean; required?: string[] };
+        expect(input.additionalProperties).toBe(false);
+        expect(input.required).toEqual(["allocatedAmount", "allocationDate", "loanPublicId"]);
         await client.close();
     });
 

@@ -15,6 +15,7 @@ import {
 import { DomainError } from "../services/domain-error";
 import type { CommandContext } from "../services/command-context";
 import { listFundingSources } from "../services/funding-source-service";
+import { createFundingAllocation, listLoanFundingAllocations, previewFundingAllocation, type FundingAllocationInput } from "../services/loan-funding-service";
 import {
     activateLoan,
     createLoanDraft,
@@ -488,6 +489,12 @@ export function createDefaultMcpToolHandlers(
     "funding-source.list": (ctx, input) => listFundingSources(ctx, {
         status: input.status as "active" | "closed" | "all" | undefined,
     }),
+    "funding-allocation.preview": (ctx, input) => previewFundingAllocation(ctx, input as unknown as FundingAllocationInput),
+    "funding-allocation.create": (ctx, input) => createFundingAllocation({
+        ...ctx,
+        idempotencyKey: ctx.idempotencyKey ?? `mcp:funding-allocation:${asString(input, "loanPublicId")}:${asString(input, "allocatedAmount")}:${asString(input, "allocationDate")}`,
+    }, input as unknown as FundingAllocationInput),
+    "funding-allocation.list": async (ctx, input) => ({ items: await listLoanFundingAllocations(ctx, asString(input, "loanPublicId")) }),
     };
 }
 
@@ -519,6 +526,7 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "loan.restructure.reverse": { entityType: "loan_restructure", action: "reversed" },
     "loan.waiver.execute": { entityType: "loan_restructure_waiver", action: "executed" },
     "loan.waiver.reverse": { entityType: "loan_restructure_waiver", action: "reversed" },
+    "funding-allocation.create": { entityType: "loan_funding_allocation", action: "created" },
 };
 
 function resultPublicId(result: unknown) {

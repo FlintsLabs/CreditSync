@@ -98,6 +98,9 @@ export const MCP_TOOL_NAMES = [
     "loan.waiver.execute",
     "loan.waiver.reverse",
     "funding-source.list",
+    "funding-allocation.preview",
+    "funding-allocation.create",
+    "funding-allocation.list",
 ] as const;
 
 export type McpToolName = (typeof MCP_TOOL_NAMES)[number];
@@ -989,6 +992,20 @@ const batchAllocationOutput = z.object({ itemPublicId: uuid, loanPublicId: uuid,
 const batchOutput = z.object({ id: uuid, publicId: uuid, status: z.string(), version: z.number().int(), borrowerPublicId: uuid.nullable().optional(), stateHash: z.string(), confirmationHash: z.string().nullable().optional(), confirmedVersion: z.number().int().nullable().optional(), notes: z.string().nullable().optional(), items: z.array(z.object({ id: uuid, publicId: uuid, itemOrder: z.number().int(), paymentIntakePublicId: uuid.nullable(), evidenceStatus: z.string().nullable() }).strict()), latestPreview: z.unknown().nullable().optional(), postedAt: isoDateTime.nullable().optional(), createdAt: isoDateTime, updatedAt: isoDateTime }).strict();
 const batchPreviewOutput = z.object({ id: uuid, publicId: uuid, batchPublicId: uuid, version: z.number().int(), status: z.string(), stateHash: z.string(), previewHash: z.string(), confirmationHash: z.string(), evidenceReady: z.boolean(), allocations: z.array(batchAllocationOutput), candidates: z.array(z.unknown()), warnings: z.array(batchWarningOutput) }).strict();
 const batchExecutionOutput = z.object({ batchPublicId: uuid, status: z.literal("posted"), posted: z.array(z.object({ intakePublicId: uuid, transactionPublicIds: z.array(uuid) }).strict()).optional(), auditPublicIds: z.array(uuid), correlationId: uuid }).strict();
+const fundingAllocationOutput = z.object({
+    id: uuid, publicId: uuid, loanPublicId: uuid,
+    bankProfilePublicId: uuid.nullable(), bankLoanPublicId: uuid.nullable(),
+    allocatedAmount: signedMoney, allocationDate: date,
+    allocationType: z.enum(["initial", "manual_adjustment", "reallocation_in", "reallocation_out"]),
+    note: z.string().nullable(), createdAt: isoDateTime,
+}).strict();
+const fundingAllocationPreviewOutput = z.object({
+    source: z.object({ bankProfilePublicId: uuid.nullable(), bankLoanPublicId: uuid.nullable(), remainingCapacity: money }).strict(),
+    target: z.object({ loanPublicId: uuid, principalAmount: money, remainingUnfundedPrincipal: money }).strict(),
+    requestedAmount: money,
+    resultingFunding: z.object({ netAllocatedPrincipal: money, remainingGap: money, state: z.enum(["unfunded", "partially_funded", "fully_funded"]) }).strict(),
+    warnings: z.array(z.string()),
+}).strict();
 
 const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
     "borrower.search": z.object({
@@ -1206,6 +1223,9 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "loan.waiver.execute": waiverExecutionOutput,
     "loan.waiver.reverse": waiverExecutionOutput,
     "funding-source.list": z.object({ profiles: z.array(fundingProfileOutput) }).strict(),
+    "funding-allocation.preview": fundingAllocationPreviewOutput,
+    "funding-allocation.create": fundingAllocationOutput.extend({ auditPublicId: uuid, correlationId: uuid }).strict(),
+    "funding-allocation.list": z.object({ items: z.array(fundingAllocationOutput) }).strict(),
 };
 
 const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
@@ -1586,6 +1606,25 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
         idempotencyKey: z.string().trim().min(1).max(200),
     }).strict(),
     "funding-source.list": z.object({ status: z.enum(["active", "closed", "all"]).optional() }).strict(),
+    "funding-allocation.preview": z.object({
+        allocatedAmount: money, allocationDate: date, loanPublicId: uuid,
+        bankProfilePublicId: uuid.optional(), bankLoanPublicId: uuid.optional(),
+        allocationType: z.enum(["initial", "manual_adjustment", "reallocation_in", "reallocation_out"]).optional(),
+        note: optionalNullableText,
+    }).strict().superRefine((value, ctx) => {
+        if (!value.bankProfilePublicId && !value.bankLoanPublicId) ctx.addIssue({ code: "custom", message: "Either bankProfilePublicId or bankLoanPublicId is required" });
+        if (value.bankProfilePublicId && value.bankLoanPublicId) ctx.addIssue({ code: "custom", message: "Only one funding source may be selected" });
+    }),
+    "funding-allocation.create": z.object({
+        allocatedAmount: money, allocationDate: date, loanPublicId: uuid,
+        bankProfilePublicId: uuid.optional(), bankLoanPublicId: uuid.optional(),
+        allocationType: z.enum(["initial", "manual_adjustment", "reallocation_in", "reallocation_out"]).optional(),
+        note: optionalNullableText,
+    }).strict().superRefine((value, ctx) => {
+        if (!value.bankProfilePublicId && !value.bankLoanPublicId) ctx.addIssue({ code: "custom", message: "Either bankProfilePublicId or bankLoanPublicId is required" });
+        if (value.bankProfilePublicId && value.bankLoanPublicId) ctx.addIssue({ code: "custom", message: "Only one funding source may be selected" });
+    }),
+    "funding-allocation.list": z.object({ loanPublicId: uuid }).strict(),
 };
 
 const safeErrorSchema = z.object({
@@ -1647,6 +1686,8 @@ const readOnlyTools = new Set<McpToolName>([
     "intermediary.collection.list",
     "intermediary.remittance.get",
     "funding-source.list",
+    "funding-allocation.preview",
+    "funding-allocation.list",
 ]);
 const destructiveTools = new Set<McpToolName>([
     "borrower.update",
@@ -1694,6 +1735,7 @@ const destructiveTools = new Set<McpToolName>([
     "loan.restructure.reverse",
     "loan.waiver.execute",
     "loan.waiver.reverse",
+    "funding-allocation.create",
 ]);
 const financialTools = new Set<McpToolName>([
     "payment.post",
@@ -1723,6 +1765,7 @@ const financialTools = new Set<McpToolName>([
     "loan.restructure.reverse",
     "loan.waiver.execute",
     "loan.waiver.reverse",
+    "funding-allocation.create",
 ]);
 const idempotentTools = new Set<McpToolName>([
     ...[...readOnlyTools].filter((toolName) => toolName !== "loan.commission.reverse"),
@@ -1762,6 +1805,7 @@ const idempotentTools = new Set<McpToolName>([
     "loan.restructure.reverse",
     "loan.waiver.execute",
     "loan.waiver.reverse",
+    "funding-allocation.create",
 ]);
 
 const toolDescriptions: Record<McpToolName, string> = {
@@ -1856,6 +1900,9 @@ const toolDescriptions: Record<McpToolName, string> = {
     "loan.waiver.execute": "Execute an explicitly confirmed component waiver preview idempotently.",
     "loan.waiver.reverse": "Reverse an executed component waiver with a compensating record.",
     "funding-source.list": "List tenant funding profiles and drawdowns read-only.",
+    "funding-allocation.preview": "Preview attaching an active funding profile or drawdown to an active loan.",
+    "funding-allocation.create": "Create an idempotent append-only funding allocation for an active loan, including after activation.",
+    "funding-allocation.list": "List append-only funding allocations for one loan read-only.",
 };
 
 function titleFor(toolName: McpToolName) {

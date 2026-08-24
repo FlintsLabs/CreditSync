@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.59 - 2026-08-25
+
+### Added
+- Added closed MCP preview/create/list tools for attaching an active funding profile or drawdown to an active non-terminal loan after activation, with strict public schemas, idempotency, audit metadata, and a synchronized plugin contract.
+
 ## v0.3.58 - 2026-08-25
 
 ### Added

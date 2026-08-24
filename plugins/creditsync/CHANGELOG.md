@@ -1,5 +1,15 @@
 # CreditSync Plugin Changelog
 
+## 7.4.0 - 2026-08-25
+
+### Added
+
+- Added `funding-allocation.preview`, `funding-allocation.create`, and `funding-allocation.list` for attaching an active funding profile or drawdown to an active non-terminal loan after activation.
+
+### Changed
+
+- Synchronized the frozen 94-tool MCP contract, strict public money/UUID schemas, idempotency metadata, and append-only audit guidance for deferred funding allocation.
+
 ## 7.1.0 - 2026-08-17
 
 ### Added

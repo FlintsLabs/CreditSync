@@ -19,7 +19,7 @@ If the contract already exists and the first repayment date needs correction, in
 To remove an abandoned draft, inspect it first and call `loan.draft.delete` with `confirmed: true`, a reason, and an idempotency key. This is allowed only for unactivated drafts and stops when schedule or financial dependencies exist.
 3. Call `loan.preview`; present the exact terms plus schedule totals, count, dates, and first/final installment returned by CreditSync. Do not independently recompute or smooth the final installment.
 4. Ask the operator to approve those terms and schedule summary.
-5. Call `loan.draft` with the same terms and borrower public UUID. A funding source is optional and must use a public UUID returned by `funding-source.list`; never create or modify funding through MCP.
+5. Call `loan.draft` with the same terms and borrower public UUID. A funding source is optional and must use a public UUID returned by `funding-source.list`. If funding is intentionally deferred, activate first and later call `funding-allocation.preview`, then `funding-allocation.create` after inspecting the active loan and source; this is an append-only, idempotent allocation and does not rewrite loan terms.
 6. Show the draft public UUID and re-check that terms match the approved preview.
 7. Call `loan.activate` with that draft public UUID and a stable idempotency key only after the activation decision is explicit. Reuse the same key only for an identical retry; a different loan or activation intent needs a different key. Return the activated status and audit/correlation metadata.
 
@@ -58,6 +58,7 @@ Payment source attribution is independent from the participant agreement. Inspec
 | Preview only | `borrower.search` → `borrower.portfolio` → `loan.preview` | No persisted loan |
 | New agreement | above → approval → `loan.draft` → activation approval → `loan.activate` | Terms must remain identical |
 | View funding | `funding-source.list` | Read-only |
+| Attach deferred funding | `funding-allocation.preview` → `funding-allocation.create` | Active non-terminal loan; append-only, idempotent |
 | View commission | `loan.commission-participant.list` → `loan.commission.preview` | Read-only backend calculation |
 | Change participant | list → approval → `loan.commission-participant.add` / `loan.commission-participant.update` / `loan.commission-participant.end` | Confirmed, idempotent, effective-dated append |
 | Preview reversal commission | `loan.commission.reverse` with posted reversal payment UUIDs | Read-only; no audit IDs |
