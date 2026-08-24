@@ -15,6 +15,15 @@ export interface LoanRenewalSummary {
 const escapeXml = (value: string) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[character]!));
 const maskUuid = (value: string) => `${value.slice(0, 8)}…${value.slice(-4)}`;
 
+async function embedWatermarkForExport(svg: string) {
+    const response = await fetch("/renewal-finance-watermark.png");
+    if (!response.ok) throw new Error("RENEWAL_SUMMARY_WATERMARK_LOAD_FAILED");
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    let binary = "";
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return svg.replace('href="/renewal-finance-watermark.png"', `href="data:image/png;base64,${btoa(binary)}"`);
+}
+
 function date(value: string, locale: string) {
     return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: "Asia/Bangkok" }).format(new Date(`${value.slice(0, 10)}T12:00:00+07:00`));
 }
@@ -40,7 +49,7 @@ export function buildRenewalSummarySvg(summary: LoanRenewalSummary, locale: stri
 }
 
 export async function renewalSummaryPng(summary: LoanRenewalSummary, locale: string): Promise<Blob> {
-    const svg = buildRenewalSummarySvg(summary, locale);
+    const svg = await embedWatermarkForExport(buildRenewalSummarySvg(summary, locale));
     const image = new Image();
     const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
     try {

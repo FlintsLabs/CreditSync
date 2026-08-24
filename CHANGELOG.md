@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.52 - 2026-08-24
+
+### Fixed
+- Embedded the renewal finance watermark into exported and copied PNG summaries so it remains visible after rasterization.
+
 ## v0.3.51 - 2026-08-24
 
 ### Changed

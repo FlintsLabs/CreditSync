@@ -39,15 +39,21 @@ describe("deterministic renewal summary SVG", () => {
     test("converts the SVG to PNG through canvas without financial summation", async () => {
         class LoadedImage { onload: null | (() => void) = null; onerror: null | (() => void) = null; set src(_value: string) { queueMicrotask(() => this.onload?.()); } }
         globalThis.Image = LoadedImage as unknown as typeof Image;
-        Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:summary") });
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = vi.fn(async () => ({ ok: true, arrayBuffer: async () => new Uint8Array([137, 80, 78, 71]).buffer })) as unknown as typeof fetch;
+        let sourceBlob: Blob | null = null;
+        Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn((blob: Blob) => { sourceBlob = blob; return "blob:summary"; }) });
         Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
         const originalCreate = document.createElement.bind(document);
         vi.spyOn(document, "createElement").mockImplementation(((tag: string) => tag === "canvas"
             ? { width: 0, height: 0, getContext: () => ({ drawImage: vi.fn() }), toBlob: (callback: (blob: Blob | null) => void) => callback(new Blob(["png"], { type: "image/png" })) }
             : originalCreate(tag)) as typeof document.createElement);
         await expect(renewalSummaryPng(summaryFixture, "en")).resolves.toBeInstanceOf(Blob);
+        expect(fetch).toHaveBeenCalledWith("/renewal-finance-watermark.png");
+        expect(await sourceBlob!.text()).toContain("data:image/png;base64,iVBORw==");
         const source = buildRenewalSummarySvg.toString();
         expect(source).not.toContain("new Decimal");
         expect(source).not.toContain("Number(");
+        globalThis.fetch = originalFetch;
     });
 });
