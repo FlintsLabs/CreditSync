@@ -7,6 +7,9 @@
 - Added a test-first implementation plan for compact batch capture and multi-item evidence MCP operations.
 - Added compact multi-slip batch capture and batch evidence MCP tools, preserving one atomic preview and explicit execution.
 
+### Fixed
+- Kept captured payment bank-reference hashes compatible with existing duplicate detection.
+
 ## v0.3.57 - 2026-08-24
 
 ### Fixed

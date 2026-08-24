@@ -17,6 +17,7 @@ type BatchRow = typeof paymentBatches.$inferSelect;
 type ItemRow = typeof paymentBatchItems.$inferSelect;
 
 function digest(value: unknown) { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
+function digestBankReference(value: string) { return createHash("sha256").update(value).digest("hex"); }
 function requireId(value: string, field: string) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) throw new DomainError("INVALID_PUBLIC_ID", `${field} must be a UUID`, 400);
 }
@@ -95,7 +96,7 @@ export async function capturePaymentBatch(ctx: CommandContext, input: {
         const receivedAt = new Date(item.receivedAt);
         if (Number.isNaN(receivedAt.getTime())) throw new DomainError("INVALID_RECEIVED_AT", "receivedAt must be an ISO date-time", 400);
         const reference = item.bankReference?.trim() || null;
-        return { ...item, clientItemKey: clientKeys[index]!, intakeIdempotencyKey: intakeKeys[index]!, amount: serializeMoney(amount), receivedAt, reference, bankReferenceHash: reference ? digest(normalizeBankReference(reference)) : null };
+        return { ...item, clientItemKey: clientKeys[index]!, intakeIdempotencyKey: intakeKeys[index]!, amount: serializeMoney(amount), receivedAt, reference, bankReferenceHash: reference ? digestBankReference(normalizeBankReference(reference)) : null };
     });
     if (new Set(parsed.map((item) => item.bankReferenceHash).filter((value): value is string => value !== null)).size !== parsed.filter((item) => item.bankReferenceHash !== null).length) throw new DomainError("DUPLICATE_BANK_REFERENCE", "Bank reference appears more than once in this batch", 409);
 
