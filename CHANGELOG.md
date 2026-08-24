@@ -4,6 +4,7 @@
 
 ### Fixed
 - Restored MCP loan previews for daily floating-interest contracts, including first-day interest deduction and exact net borrower payout fields.
+- Added a guarded, idempotent backfill script for renewal-funded final-installment settlement records.
 
 ## v0.3.55 - 2026-08-24
 

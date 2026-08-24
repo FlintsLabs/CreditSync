@@ -243,7 +243,7 @@ describe("CreditSync stateless MCP contract", () => {
                 schedule: [],
             },
         });
-        const legacy = await client.callTool({
+        const daily = await client.callTool({
             name: "loan.preview",
             arguments: {
                 principal: "4000.00",
@@ -251,10 +251,20 @@ describe("CreditSync stateless MCP contract", () => {
                 termMonths: 1,
                 repaymentType: "floating",
                 startDate: "2026-08-13",
-                floatingDailyInterest: { mode: "percent", rate: "12", firstDayTreatment: "deduct" },
+                floatingDailyInterest: { mode: "percent", rate: "1.5", firstDayTreatment: "deduct" },
             },
         });
-        expect(legacy.isError).toBe(true);
+        expect(daily.isError).not.toBe(true);
+        expect(daily.structuredContent).toMatchObject({
+            schemaVersion: "1.0",
+            data: {
+                floatingDailyInterest: { mode: "percent", rate: "1.5000", firstDayTreatment: "deduct" },
+                firstDayInterest: "60.00",
+                dailyInterestAtCurrentPrincipal: "60.00",
+                netDisbursement: "3940.00",
+                nextInterestDate: "2026-08-13",
+            },
+        });
         await client.close();
     });
 

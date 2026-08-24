@@ -1989,10 +1989,15 @@ function frozenToolData(toolName: McpToolName, value: unknown): Record<string, u
         ? projected.terms as Record<string, unknown>
         : undefined;
     const generalizedPreview = Boolean(projectedTerms?.floatingInterestPolicy);
-    if (toolName === "loan.preview" && typeof projected.fullPeriodInterest === "string" && !generalizedPreview) {
-        projected.firstDayInterest = projected.advanceInterestAmount;
-        projected.dailyInterestAtCurrentPrincipal = projected.fullPeriodInterest;
-        projected.nextInterestDate = projected.nextAccrualDate;
+    const dailyFloatingPreview = toolName === "loan.preview"
+        && projected.periodDays === 1
+        && typeof projected.dailyInterestAtCurrentPrincipal === "string";
+    if (toolName === "loan.preview" && typeof projected.fullPeriodInterest === "string" && (!generalizedPreview || dailyFloatingPreview)) {
+        if (!dailyFloatingPreview) {
+            projected.firstDayInterest = projected.advanceInterestAmount;
+            projected.dailyInterestAtCurrentPrincipal = projected.fullPeriodInterest;
+            projected.nextInterestDate = projected.nextAccrualDate;
+        }
         delete projected.fullPeriodInterest;
         delete projected.firstPeriodStartDate;
         delete projected.advanceInterestAmount;
@@ -2002,6 +2007,11 @@ function frozenToolData(toolName: McpToolName, value: unknown): Record<string, u
         delete projected.nextAccrualDate;
         delete projected.periodDays;
         delete projected.advanceInterestRefundPolicy;
+        if (dailyFloatingPreview) {
+            delete projected.floatingInterestPolicy;
+            delete projected.advanceInterest;
+            delete projected.netBorrowerPayout;
+        }
     }
     if (projected.terms && typeof projected.terms === "object" && !Array.isArray(projected.terms)) {
         projected.terms = projectLoanFields({ ...(projected.terms as Record<string, unknown>) });
