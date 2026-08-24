@@ -28,6 +28,7 @@ describe("deterministic renewal summary SVG", () => {
         expect(svg).toContain('data-summary="net-cash"');
         expect(svg).toContain('stroke="#cbd5e1"');
         expect(svg).toContain('fill="#f8fbff"');
+        expect(svg).toContain('y="742" width="930" height="84"');
     });
 
     test("distinguishes executed export names", () => {

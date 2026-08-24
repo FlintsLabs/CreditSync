@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.50 - 2026-08-24
+
+### Changed
+- Added vertical padding and spacing around the renewal summary net-cash highlight for clearer separation from adjacent rows.
+
 ## v0.3.49 - 2026-08-24
 
 ### Changed
