@@ -1312,6 +1312,34 @@ describe("default MCP adapter integration", () => {
             itemOrder: 1,
         })).data;
         const batchItemPublicId = String((batchItem.items as Array<{ publicId: string }>)[0]!.publicId);
+        await call("payment.batch.capture", {
+            borrowerPublicId,
+            idempotencyKey: "mcp-all-tools-batch-capture",
+            items: [{
+                clientItemKey: "capture-1", amount: "2.00", receivedAt: "2026-08-10T00:00:00.000Z",
+                payerName: "MCP captured payer", bankReference: "MCP-CAPTURE-1",
+                intakeIdempotencyKey: "mcp-all-tools-capture-intake-1",
+            }],
+        });
+        const manyIntake = (await call("intake.create", {
+            amount: "1.00", receivedAt: "2026-08-10T00:00:00.000Z", payerName: "MCP many payer",
+            idempotencyKey: "mcp-all-tools-many-intake",
+        })).data;
+        const manyBatch = (await call("payment.batch.create", {
+            borrowerPublicId, idempotencyKey: "mcp-all-tools-many-batch",
+        })).data;
+        const manyBatchItem = (await call("payment.batch.item.add", {
+            batchPublicId: manyBatch.publicId, paymentIntakePublicId: manyIntake.publicId, itemOrder: 1,
+        })).data;
+        const manyBatchItemPublicId = String((manyBatchItem.items as Array<{ publicId: string }>).at(-1)!.publicId);
+        const manyEvidence = (await call("payment.batch.evidence.prepare-many", {
+            batchPublicId: manyBatch.publicId,
+            items: [{ batchItemPublicId: manyBatchItemPublicId, paymentIntakePublicId: manyIntake.publicId, mimeType: "image/png", size: 4, sha256: "f".repeat(64), evidenceType: "slip" }],
+        })).data;
+        await call("payment.batch.evidence.finalize-many", {
+            batchPublicId: manyBatch.publicId,
+            items: [{ batchItemPublicId: manyBatchItemPublicId, paymentIntakePublicId: manyIntake.publicId, evidencePublicId: (manyEvidence.items as Array<{ publicId: string }>)[0]!.publicId }],
+        });
         const batchEvidence = (await call("payment.batch.evidence.prepare", {
             batchItemPublicId,
             paymentIntakePublicId: batchIntakePublicId,
@@ -1576,6 +1604,34 @@ describe("default MCP adapter integration", () => {
             idempotencyKey: "mcp-waiver-reverse",
         });
         await call("funding-source.list", { status: "active" });
+        await call("funding-allocation.preview", {
+            allocatedAmount: "10.00", allocationDate: "2026-08-10", loanPublicId: floatingLoan.publicId,
+            bankLoanPublicId: drawdown.publicId, allocationType: "manual_adjustment",
+        });
+        await call("funding-allocation.create", {
+            allocatedAmount: "10.00", allocationDate: "2026-08-10", loanPublicId: floatingLoan.publicId,
+            bankLoanPublicId: drawdown.publicId, allocationType: "manual_adjustment",
+        });
+        await call("funding-allocation.list", { loanPublicId: floatingLoan.publicId });
+
+        const unfundedCancellationLoan = await db.insert(loans).values({
+            tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower!.id,
+            principalAmount: "30.00", outstandingPrincipal: "30.00", outstandingInterest: "0.00",
+            outstandingFees: "0.00", interestRate: "0.00", repaymentType: "floating",
+            startDate: "2026-08-20", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        const cancellationPreview = (await call("loan.cancel.preview", {
+            loanPublicId: unfundedCancellationLoan.publicId,
+            reason: "MCP all-tools unfunded cancellation",
+        })).data;
+        await call("loan.cancel.execute", {
+            previewPublicId: cancellationPreview.publicId,
+            previewHash: cancellationPreview.previewHash,
+            expectedBalanceVersion: cancellationPreview.balanceVersion,
+            confirmed: true,
+            reason: "MCP all-tools unfunded cancellation",
+            idempotencyKey: "mcp-all-tools-unfunded-cancellation",
+        });
 
         const replacementFixture = await seedReplacementFixture({ tenantId: TENANT_ID });
         const replacementPreview = (await call("loan.replacement.preview", {
@@ -1603,7 +1659,7 @@ describe("default MCP adapter integration", () => {
         expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length);
         expect(called.filter((name) => name === "intermediary.disbursement.event.create")).toHaveLength(2);
         expect(called.filter((name) => name === "loan.restructure.execute")).toHaveLength(2);
-        expect(called).toHaveLength(MCP_TOOL_NAMES.length + 4);
+        expect(called).toHaveLength(MCP_TOOL_NAMES.length + 7);
 
         await client.close();
     }, 10_000);

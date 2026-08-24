@@ -104,3 +104,14 @@ export const loanReplacementReverseBody = t.Object({
     confirmed: t.Literal(true),
     reason: t.String(),
 }, closed);
+
+export const loanCancellationPreviewBody = t.Object({
+    reason: t.String(),
+}, closed);
+
+export const loanCancellationExecuteBody = t.Object({
+    confirmed: t.Literal(true),
+    expectedBalanceVersion: t.String(),
+    previewHash: t.String(),
+    reason: t.String(),
+}, closed);

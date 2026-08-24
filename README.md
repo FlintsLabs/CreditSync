@@ -36,6 +36,7 @@ The repo already contains a working MVP foundation:
 - Atomic scheduled-loan payment batches through the closed `payment.batch.*` workflow: for multiple slips, use one compact capture call and multi-item evidence preparation/finalization, then preview the whole batch, confirm once, execute with stable idempotency, and verify every posted intake and loan balance. Any duplicate, ambiguity, mismatch, or changed semantics stops the whole batch for review.
 - Daily-loan renewal preview, confirmed execution, and compensating reversal workflow
 - Single-payment settlement/restructure preview, explicit confirmation, component waivers, replacement contracts, and compensating reversal workflow
+- Explicitly confirmed, idempotent unfunded-loan cancellation preview/execute workflow, guarded by zero actual disbursement, no effective posted payment, and no downstream financial activity
 - Owner/manager scheduled-loan replacement preview, confirmed execution, public lineage, and compensating reversal workflow
 - Legacy repayment-history reads remain available; repayment writes use the payment-intake workflow exclusively
 - Closing summary calculation for loans

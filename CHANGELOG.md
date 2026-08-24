@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.60 - 2026-08-25
+
+### Added
+- Added an auditable REST and MCP preview/execute workflow for cancelling active loans as `unfunded` only when actual disbursement and effective posted payment history are both zero, with stale-preview protection, idempotency, schedule cleanup, and append-only audit metadata.
+
 ## v0.3.59 - 2026-08-25
 
 ### Added

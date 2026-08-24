@@ -557,6 +557,53 @@ export const loanSettlementPreviews = pgTable("loan_settlement_previews", {
     `),
 ]);
 
+export const loanCancellationPreviews = pgTable("loan_cancellation_previews", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    loanId: integer("loan_id").notNull(),
+    reason: text("reason").notNull(),
+    eligibility: text("eligibility").default("unfunded").notNull(),
+    beforeSnapshot: jsonb("before_snapshot").$type<Record<string, unknown>>().notNull(),
+    balanceVersion: text("balance_version").notNull(),
+    previewHash: text("preview_hash").notNull(),
+    status: text("status").default("ready").notNull(),
+    executeIdempotencyKey: text("execute_idempotency_key"),
+    executedAuditPublicId: uuid("executed_audit_public_id"),
+    correlationId: text("correlation_id"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    executedAt: timestamp("executed_at", { withTimezone: true }),
+    createdByUserId: integer("created_by_user_id"),
+    executedByUserId: integer("executed_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("loan_cancellation_previews_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("loan_cancellation_previews_tenant_execute_idempotency_unique")
+        .on(table.tenantId, table.executeIdempotencyKey)
+        .where(sql`${table.executeIdempotencyKey} IS NOT NULL`),
+    index("loan_cancellation_previews_tenant_loan_created_idx").on(table.tenantId, table.loanId, table.createdAt),
+    foreignKey({
+        name: "loan_cancellation_previews_tenant_loan_fk",
+        columns: [table.tenantId, table.loanId],
+        foreignColumns: [loans.tenantId, loans.id],
+    }),
+    foreignKey({
+        name: "loan_cancellation_previews_tenant_created_by_fk",
+        columns: [table.tenantId, table.createdByUserId],
+        foreignColumns: [users.tenantId, users.id],
+    }),
+    foreignKey({
+        name: "loan_cancellation_previews_tenant_executed_by_fk",
+        columns: [table.tenantId, table.executedByUserId],
+        foreignColumns: [users.tenantId, users.id],
+    }),
+    check("loan_cancellation_previews_status_check", sql`${table.status} IN ('ready', 'executed', 'expired')`),
+    check("loan_cancellation_previews_eligibility_check", sql`${table.eligibility} = 'unfunded'`),
+    check("loan_cancellation_previews_hash_check", sql`length(${table.balanceVersion}) > 0 AND length(${table.previewHash}) > 0`),
+    check("loan_cancellation_previews_expiry_check", sql`${table.expiresAt} > ${table.createdAt}`),
+]);
+
 export const loanDisbursements = pgTable("loan_disbursements", {
     id: serial("id").primaryKey(),
     publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),

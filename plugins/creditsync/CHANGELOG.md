@@ -1,5 +1,15 @@
 # CreditSync Plugin Changelog
 
+## 7.5.0 - 2026-08-25
+
+### Added
+
+- Added `loan.cancel.preview` and `loan.cancel.execute` for explicitly confirmed, idempotent cancellation of active loans that have no actual disbursement, no effective posted payment, and no downstream financial activity.
+
+### Changed
+
+- Synchronized the frozen 99-tool MCP contract and loan-management guidance with public audit/correlation metadata and append-only unfunded cancellation safeguards.
+
 ## 7.4.0 - 2026-08-25
 
 ### Added

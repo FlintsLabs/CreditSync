@@ -46,6 +46,8 @@ Payment source attribution is independent from the participant agreement. Inspec
 
 ## Existing loans
 
+For an active contract that was never actually disbursed, inspect `loan.contract.get` and `loan.disbursement.list`, then use `loan.cancel.preview` with a specific reason. This workflow may cancel a non-zero contractual schedule only when actual disbursement is `0.00`, no payment remains posted after compensating reversals, and no downstream dependency blocks cancellation. Show the exact eligibility, before balances, preview hash, balance version, and expiry; require explicit confirmation before `loan.cancel.execute` with literal `confirmed: true` and a stable idempotency key. Cancellation marks the loan and unpaid schedules `cancelled`, preserves all original/reversal/audit history, and never acts as a waiver for funded money. If any actual disbursement or posted payment remains, stop and route to settlement, waiver, or reversal instead.
+
 - Draft: inspect it in `borrower.portfolio`; if the required edit tool is unavailable, report that limitation rather than activating incorrect terms.
 - Active, paid, or renewed: principal, installment, term, rate, and schedule are historical facts. Do not update them or describe a new draft as an edit.
 - A new agreement, renewal, or audited correcting workflow may be appropriate, but only use a workflow the operator explicitly chooses and the available CreditSync tools support.
@@ -64,6 +66,7 @@ Payment source attribution is independent from the participant agreement. Inspec
 | Preview reversal commission | `loan.commission.reverse` with posted reversal payment UUIDs | Read-only; no audit IDs |
 | Edit active terms | inspect and refuse direct edit | Use supported new/correcting flow |
 | Replace active scheduled contract | search → portfolio → `loan.replacement.preview` → exact confirmation → `loan.replacement.execute` | Existing funded draft only; no direct status mutation |
+| Cancel unfunded active contract | contract → disbursement list → `loan.cancel.preview` → exact confirmation → `loan.cancel.execute` | Actual disbursement `0.00`, no posted payment, downstream-safe; append-only audit |
 
 ## Common mistakes
 
