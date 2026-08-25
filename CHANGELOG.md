@@ -4,6 +4,7 @@
 
 ### Added
 - Added the approved design for append-only scheduled-loan payment-start amendments, preserving active contractual schedule rows while supporting preview, confirmation, execution, and compensating reversal.
+- Added a test-first implementation plan for the payment-start amendment workflow, including persistence, projections, REST/MCP, UI, plugin synchronization, and deployment verification.
 
 ## v0.3.62 - 2026-08-25
 
