@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.63 - 2026-08-26
+
+### Added
+- Added the approved design for append-only scheduled-loan payment-start amendments, preserving active contractual schedule rows while supporting preview, confirmation, execution, and compensating reversal.
+
 ## v0.3.62 - 2026-08-25
 
 ### Added
