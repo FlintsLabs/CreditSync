@@ -845,6 +845,8 @@ describe("CreditSync stateless MCP contract", () => {
             "payment.batch.execute",
             "payment.reconcile.preview",
             "payment.reconcile.execute",
+            "payment.restore.preview",
+            "payment.restore.execute",
             "loan.draft.delete",
             "loan.activate",
             "loan.payment-start-date.update",

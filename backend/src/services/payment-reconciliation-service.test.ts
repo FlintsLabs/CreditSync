@@ -2,16 +2,26 @@ import { describe, expect, test } from "bun:test";
 import Decimal from "decimal.js";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db";
-import { floatingTransactionAllocations, loanInterestAccruals, loans, paymentEvidence, paymentIntakes, paymentReconciliationEntries, paymentReconciliationGroups, paymentReconciliationProposals, transactions, users } from "../db/schema";
+import { borrowers, floatingTransactionAllocations, loanInterestAccruals, loans, paymentEvidence, paymentIntakes, paymentReconciliationEntries, paymentReconciliationGroups, paymentReconciliationProposals, transactions, users } from "../db/schema";
 import { createBorrower } from "./borrower-service";
 import { createLoanDraft, activateLoan } from "./loan-application-service";
 import { createPaymentIntake, reviewPaymentIntake } from "./payment-service";
 import type { CommandContext } from "./command-context";
-import { calculateReconciliationComponents, executePaymentReconciliation, previewPaymentReconciliation, type ReconciliationAllocation } from "./payment-reconciliation-service";
+import { calculateReconciliationComponents, deriveExactRestoreComponents, executePaymentReconciliation, previewPaymentRestore, previewPaymentReconciliation, type ReconciliationAllocation } from "./payment-reconciliation-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
 
 describe("payment reconciliation allocation kernel", () => {
+    test("derives an exact restore split from the immutable source transaction", () => {
+        expect(deriveExactRestoreComponents([{
+            amount: "100.00",
+            principalComponent: "83.33",
+            interestComponent: "16.67",
+            feeComponent: "0.00",
+            penaltyComponent: "0.00",
+        }])).toEqual({ amount: "100.00", principal: "83.33", interest: "16.67", fee: "0.00", penalty: "0.00" });
+    });
+
     test("preserves explicit component allocations and conserves the source amount", () => {
         const allocations: ReconciliationAllocation[] = [
             { borrowerPublicId: "b", loanPublicId: "l", amount: "100.00", component: "interest" },
@@ -58,6 +68,33 @@ describe("payment reconciliation allocation kernel", () => {
 });
 
 describe("payment reconciliation persistence", () => {
+    integrationTest("restores a reversed mixed-component payment exactly into a linked child", async () => {
+        const tenantId = `exact-restore-${crypto.randomUUID()}`;
+        const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+        const ctx: CommandContext = { tenantId, actorUserId: actor.id, actorSource: "mcp", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() };
+        const borrower = await createBorrower(ctx, { name: "Exact Restore Borrower" });
+        const borrowerRow = await db.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, tenantId), eq(borrowers.publicId, borrower.publicId)) });
+        const loan = await db.insert(loans).values({ tenantId, ownerUserId: actor.id, borrowerId: borrowerRow!.id, principalAmount: "1000.00", interestRate: "0.00", repaymentType: "daily", termMonths: 1, startDate: "2026-08-01", outstandingPrincipal: "1000.00", outstandingInterest: "16.67", outstandingFees: "0.00", status: "active" }).returning().then((rows) => rows[0]!);
+        const source = await db.insert(paymentIntakes).values({ tenantId, status: "reversed", amount: "100.00", receivedAt: new Date("2026-08-24T08:57:00.000Z"), payerName: borrower.name, createdByUserId: actor.id, postedByUserId: actor.id, postedAt: new Date() }).returning().then((rows) => rows[0]!);
+        const original = await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan.id, amount: "100.00", principalComponent: "83.33", interestComponent: "16.67", feeComponent: "0.00", penaltyComponent: "0.00", paymentIntakeId: source.id, entryType: "repayment", transactionDate: source.receivedAt, recordedByUserId: actor.id }).returning().then((rows) => rows[0]!);
+        await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan.id, amount: "-100.00", principalComponent: "-83.33", interestComponent: "-16.67", feeComponent: "0.00", penaltyComponent: "0.00", paymentIntakeId: source.id, entryType: "reversal", reversedTransactionId: original.id, transactionDate: new Date(), recordedByUserId: actor.id });
+        await db.insert(paymentEvidence).values({ tenantId, paymentIntakeId: source.id, status: "ready", evidenceType: "legacy_slip", legacyReference: "fixture", finalizedAt: new Date(), createdByUserId: actor.id });
+
+        const preview = await previewPaymentRestore(ctx, { paymentIntakePublicId: source.publicId, reason: "Restore mistakenly reversed payment exactly" });
+        expect(preview.sourcePayment).toMatchObject({ mode: "exact_restore", status: "reversed" });
+        expect(preview.correction).toEqual({ principal: "83.33", interest: "16.67", fee: "0.00", penalty: "0.00" });
+        const executed = await executePaymentReconciliation(ctx, preview.publicId, { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "exact-restore-once" });
+        const child = await db.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, tenantId), eq(paymentIntakes.repostOfIntakeId, source.id)) });
+        expect(executed.postedPaymentPublicId).toBe(child!.publicId);
+        expect(child).toMatchObject({ status: "posted", amount: "100.00", bankReference: null, qrPayloadHash: null });
+        const restored = await db.select().from(transactions).where(and(eq(transactions.tenantId, tenantId), eq(transactions.paymentIntakeId, child!.id), eq(transactions.entryType, "repayment")));
+        expect(restored.map((row) => [row.principalComponent, row.interestComponent])).toEqual([["83.33", "0.00"], ["0.00", "16.67"]]);
+        const balances = await db.query.loans.findFirst({ where: eq(loans.id, loan.id) });
+        expect(balances).toMatchObject({ outstandingPrincipal: "916.67", outstandingInterest: "0.00" });
+        expect(await db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, tenantId), eq(paymentEvidence.paymentIntakeId, child!.id)))).toHaveLength(0);
+        expect((await executePaymentReconciliation(ctx, preview.publicId, { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "exact-restore-once" })).postedPaymentPublicId).toBe(child!.publicId);
+    });
+
     integrationTest("previews only fully reversed evidence-backed sources without a repost child", async () => {
         const tenantId = `repost-preview-${crypto.randomUUID()}`;
         const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);

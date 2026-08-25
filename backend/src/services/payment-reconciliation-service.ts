@@ -55,6 +55,29 @@ export function calculateReconciliationComponents(input: ReconciliationAllocatio
     };
 }
 
+export function deriveExactRestoreComponents(input: Array<{
+    amount: string;
+    principalComponent: string;
+    interestComponent: string;
+    feeComponent: string;
+    penaltyComponent: string;
+}>) {
+    if (input.length === 0) throw new DomainError("RECONCILIATION_SOURCE_NOT_FULLY_REVERSED", "A reversed source must contain repayment transactions", 409);
+    const totals = input.reduce((result, row) => {
+        result.amount = result.amount.plus(money(row.amount));
+        result.principal = result.principal.plus(money(row.principalComponent));
+        result.interest = result.interest.plus(money(row.interestComponent));
+        result.fee = result.fee.plus(money(row.feeComponent));
+        result.penalty = result.penalty.plus(money(row.penaltyComponent));
+        return result;
+    }, { amount: new Decimal(0), principal: new Decimal(0), interest: new Decimal(0), fee: new Decimal(0), penalty: new Decimal(0) });
+    const components = { amount: totals.amount.toFixed(2), principal: totals.principal.toFixed(2), interest: totals.interest.toFixed(2), fee: totals.fee.toFixed(2), penalty: totals.penalty.toFixed(2) };
+    if (!totals.amount.eq(totals.principal.plus(totals.interest).plus(totals.fee).plus(totals.penalty))) {
+        throw new DomainError("RECONCILIATION_SOURCE_COMPONENT_MISMATCH", "Source transaction components do not conserve the payment amount", 409);
+    }
+    return components;
+}
+
 function contextPayload(ctx: CommandContext) {
     return { tenantId: ctx.tenantId, actorUserId: ctx.actorUserId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId };
 }
@@ -177,6 +200,49 @@ function presentProposal(row: typeof paymentReconciliationProposals.$inferSelect
     };
 }
 
+async function deriveRestoreAllocations(ctx: CommandContext, executor: any, originals: Array<typeof transactions.$inferSelect>) {
+    const allocations: ReconciliationAllocation[] = [];
+    for (const original of originals) {
+        const loan = await executor.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, original.loanId)) });
+        if (!loan) throw new DomainError("RECONCILIATION_TARGET_MISSING", "Source loan no longer exists", 409);
+        const borrower = await executor.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, ctx.tenantId), eq(borrowers.id, loan.borrowerId)) });
+        if (!borrower) throw new DomainError("RECONCILIATION_TARGET_MISSING", "Source borrower no longer exists", 409);
+        const schedule = original.scheduleId === null ? null : await executor.query.loanSchedules.findFirst({ where: and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.id, original.scheduleId)) });
+        for (const component of components) {
+            const amount = money(original[`${component}Component` as keyof typeof original] as string);
+            if (amount.isZero()) continue;
+            allocations.push({ borrowerPublicId: borrower.publicId, loanPublicId: loan.publicId, schedulePublicId: schedule?.publicId ?? undefined, amount: amount.toFixed(2), component });
+        }
+    }
+    return allocations;
+}
+
+export async function previewPaymentRestore(ctx: CommandContext, input: { paymentIntakePublicId: string; reason: string }) {
+    if (!input.reason?.trim()) throw new DomainError("RECONCILIATION_REASON_REQUIRED", "Restore requires a reason", 400);
+    return db.transaction(async (tx) => {
+        const intake = await accessibleIntake(ctx, input.paymentIntakePublicId, tx);
+        await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id = ${intake.id} FOR UPDATE`);
+        const inspected = await inspectReconciliationSource(tx, ctx, intake);
+        const allocations = await deriveRestoreAllocations(ctx, tx, inspected.originals);
+        const calculated = calculateReconciliationComponents(allocations, intake.amount);
+        const source = {
+            mode: "exact_restore", sourceMode: inspected.mode, paymentIntakePublicId: intake.publicId, status: intake.status,
+            amount: serializeMoney(intake.amount), receivedAt: intake.receivedAt, hasReadyEvidence: inspected.hasReadyEvidence,
+            currentAllocationSnapshot: inspected.originals.map(sourceTransactionSnapshot), reversalSnapshot: inspected.reversals.map(sourceTransactionSnapshot),
+        };
+        const financialBalanceVersion = await authoritativeBalanceVersion(tx, ctx, inspected.originals.map((item) => item.loanId));
+        const expectedBalanceVersion = hash({ financialBalanceVersion, source });
+        const previewHash = hash({ source, allocations: allocations.map(presentAllocation), expectedBalanceVersion, reason: input.reason.trim() });
+        const expiresAt = new Date(Date.now() + Math.max(60, Number(process.env.PAYMENT_PREVIEW_TTL_SECONDS ?? 900)) * 1000);
+        const row = await tx.insert(paymentReconciliationProposals).values({
+            tenantId: ctx.tenantId, paymentIntakeId: intake.id, status: "ready", previewHash, expectedBalanceVersion,
+            sourceSnapshot: source, proposedAllocations: allocations.map(presentAllocation), warnings: [], reason: input.reason.trim(), expiresAt, createdByUserId: ctx.actorUserId,
+        }).returning().then((rows) => rows[0]!);
+        await createAuditLog(tx, { ...contextPayload(ctx), entityType: "payment_reconciliation", entityId: row.publicId, action: "restore_previewed", payload: { paymentIntakePublicId: intake.publicId, previewHash, expectedBalanceVersion, reason: input.reason.trim() } });
+        return presentProposal(row, source, allocations, calculated.components, []);
+    });
+}
+
 export async function previewPaymentReconciliation(ctx: CommandContext, input: { paymentIntakePublicId: string; allocations: ReconciliationAllocation[]; reason: string }) {
     if (!input.reason?.trim()) throw new DomainError("RECONCILIATION_REASON_REQUIRED", "Reconciliation requires a reason", 400);
     if (!Array.isArray(input.allocations) || input.allocations.length === 0) throw new DomainError("RECONCILIATION_ALLOCATIONS_REQUIRED", "At least one explicit allocation is required", 400);
@@ -239,7 +305,8 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
         const priorForIntake = await tx.query.paymentReconciliationGroups.findFirst({ where: and(eq(paymentReconciliationGroups.tenantId, ctx.tenantId), eq(paymentReconciliationGroups.paymentIntakeId, intake.id)) });
         if (priorForIntake) throw new DomainError("RECONCILIATION_SOURCE_ALREADY_COMPENSATED", "The payment intake has already been reconciled", 409);
         const allocations = await resolveAllocations(ctx, proposal.proposedAllocations as ReconciliationAllocation[], tx);
-        if (allocations.some((item) => item.component !== "interest")) throw new DomainError("RECONCILIATION_COMPONENT_NOT_SUPPORTED", "Historical reconciliation supports interest-only allocations", 409);
+        const restoreMode = (proposal.sourceSnapshot as { mode?: string }).mode === "exact_restore";
+        if (!restoreMode && allocations.some((item) => item.component !== "interest")) throw new DomainError("RECONCILIATION_COMPONENT_NOT_SUPPORTED", "Historical reconciliation supports interest-only allocations", 409);
         const sourceRowsForLock: Array<{ loanId: number }> = inspectedBeforeLocks.originals;
         const lockLoanIds = [...new Set([...allocations.map((item) => item.loanId), ...sourceRowsForLock.map((item) => item.loanId)])].sort((left, right) => left - right);
         if (lockLoanIds.length) await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(lockLoanIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
@@ -248,13 +315,15 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
         const inspected = await inspectReconciliationSource(tx, ctx, intake);
         const currentOriginals = inspected.originals;
         const currentSource = {
-            mode: inspected.mode, paymentIntakePublicId: intake.publicId, status: intake.status, amount: serializeMoney(intake.amount), receivedAt: intake.receivedAt,
+            mode: restoreMode ? "exact_restore" : inspected.mode,
+            ...(restoreMode ? { sourceMode: inspected.mode } : {}),
+            paymentIntakePublicId: intake.publicId, status: intake.status, amount: serializeMoney(intake.amount), receivedAt: intake.receivedAt,
             hasReadyEvidence: inspected.hasReadyEvidence,
             currentAllocationSnapshot: currentOriginals.map(sourceTransactionSnapshot),
             reversalSnapshot: inspected.reversals.map(sourceTransactionSnapshot),
         };
         const financialBalanceVersion = await authoritativeBalanceVersion(tx, ctx, [...allocations.map((item) => item.loanId), ...currentOriginals.map((item) => item.loanId)]);
-        const currentBalanceVersion = inspected.mode === "reversed_repost" ? hash({ financialBalanceVersion, source: currentSource }) : financialBalanceVersion;
+        const currentBalanceVersion = (proposal.sourceSnapshot as { mode?: string }).mode === "exact_restore" || inspected.mode === "reversed_repost" ? hash({ financialBalanceVersion, source: currentSource }) : financialBalanceVersion;
         if (currentBalanceVersion !== proposal.expectedBalanceVersion) throw new DomainError("STALE_RECONCILIATION_PREVIEW", "Affected financial state differs from preview", 409);
         if (hash({ source: currentSource, allocations: allocations.map(presentAllocation), expectedBalanceVersion: proposal.expectedBalanceVersion, reason: proposal.reason }) !== proposal.previewHash) throw new DomainError("STALE_RECONCILIATION_PREVIEW", "Current payment state differs from preview", 409);
         const audit = await createAuditLog(tx, { ...contextPayload(ctx), entityType: "payment_reconciliation", entityId: proposal.publicId, action: "executed", payload: { paymentIntakePublicId: intake.publicId, reason: input.reason.trim(), idempotencyKey: input.idempotencyKey, before: proposal.sourceSnapshot, after: proposal.proposedAllocations } });

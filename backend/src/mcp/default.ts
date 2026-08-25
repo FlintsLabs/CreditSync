@@ -138,7 +138,7 @@ import {
     reversePaymentAttribution,
     type CreatePaymentAttributionInput,
 } from "../services/payment-attribution-service";
-import { executePaymentReconciliation, previewPaymentReconciliation, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
+import { executePaymentReconciliation, previewPaymentReconciliation, previewPaymentRestore, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
 import { addPaymentBatchItem, capturePaymentBatch, createPaymentBatch, executePaymentBatch, finalizePaymentBatchEvidenceMany, getPaymentBatch, preparePaymentBatchEvidenceMany, previewPaymentBatch } from "../services/payment-batch-service";
 import { executeUnfundedLoanCancellation, previewUnfundedLoanCancellation } from "../services/loan-cancellation-service";
 
@@ -257,6 +257,21 @@ export function createDefaultMcpToolHandlers(
             throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Payment reconciliation requires an idempotency key", 400);
         }
         return executePaymentReconciliation(ctx, asString(input, "reconciliationPreviewPublicId"), {
+            previewHash: asString(input, "previewHash"),
+            expectedBalanceVersion: asString(input, "expectedBalanceVersion"),
+            confirmed: true,
+            reason: asString(input, "reason"),
+            idempotencyKey,
+        });
+    },
+    "payment.restore.preview": (ctx, input) => previewPaymentRestore(ctx, {
+        paymentIntakePublicId: asString(input, "paymentIntakePublicId"),
+        reason: asString(input, "reason"),
+    }),
+    "payment.restore.execute": (ctx, input) => {
+        const idempotencyKey = ctx.idempotencyKey;
+        if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Payment restore requires an idempotency key", 400);
+        return executePaymentReconciliation(ctx, asString(input, "restorePreviewPublicId"), {
             previewHash: asString(input, "previewHash"),
             expectedBalanceVersion: asString(input, "expectedBalanceVersion"),
             confirmed: true,
@@ -515,6 +530,7 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "payment.reverse": { entityType: "payment_intake", action: "reversed" },
     "payment.batch.execute": { entityType: "payment_batch", action: "posted" },
     "payment.reconcile.execute": { entityType: "payment_reconciliation", action: "executed" },
+    "payment.restore.execute": { entityType: "payment_reconciliation", action: "restored" },
     "loan.activate": { entityType: "loan", action: "activated" },
     "loan.payment-start-date.update": { entityType: "loan", action: "payment_start_date_changed" },
     "loan.interest-rate.execute": { entityType: "loan_interest_rate_timeline", action: "interest_rate_timeline_changed" },

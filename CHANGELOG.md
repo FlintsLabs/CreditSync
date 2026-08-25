@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.61 - 2026-08-25
+
+### Added
+- Added `payment.restore.preview` and `payment.restore.execute` for exact, audited restoration of a mistakenly reversed payment as a linked child intake, preserving original principal/interest/fee/penalty components and source evidence lineage.
+
 ## v0.3.60 - 2026-08-25
 
 ### Added

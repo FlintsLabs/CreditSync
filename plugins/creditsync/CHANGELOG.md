@@ -1,5 +1,15 @@
 # CreditSync Plugin Changelog
 
+## 7.6.0 - 2026-08-25
+
+### Added
+
+- Added `payment.restore.preview` and `payment.restore.execute` for explicit, idempotent exact restoration of a mistakenly reversed payment as a linked child while preserving the original component split and evidence lineage.
+
+### Changed
+
+- Synchronized the frozen MCP contract and reconciliation guidance with exact reversed-payment restoration safeguards.
+
 ## 7.5.0 - 2026-08-25
 
 ### Added
