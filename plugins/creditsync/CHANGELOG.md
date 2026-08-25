@@ -1,5 +1,15 @@
 # CreditSync Plugin Changelog
 
+## 7.7.0 - 2026-08-25
+
+### Added
+
+- Added `payment.restore.create` for creating one safe evidence-bearing restore draft before exact restoration of a mistakenly reversed payment.
+
+### Changed
+
+- Updated restore guidance and the frozen MCP contract for the required create → evidence → preview → execute workflow.
+
 ## 7.6.0 - 2026-08-25
 
 ### Added

@@ -138,7 +138,7 @@ import {
     reversePaymentAttribution,
     type CreatePaymentAttributionInput,
 } from "../services/payment-attribution-service";
-import { executePaymentReconciliation, previewPaymentReconciliation, previewPaymentRestore, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
+import { createPaymentRestoreDraft, executePaymentReconciliation, previewPaymentReconciliation, previewPaymentRestore, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
 import { addPaymentBatchItem, capturePaymentBatch, createPaymentBatch, executePaymentBatch, finalizePaymentBatchEvidenceMany, getPaymentBatch, preparePaymentBatchEvidenceMany, previewPaymentBatch } from "../services/payment-batch-service";
 import { executeUnfundedLoanCancellation, previewUnfundedLoanCancellation } from "../services/loan-cancellation-service";
 
@@ -268,6 +268,15 @@ export function createDefaultMcpToolHandlers(
         paymentIntakePublicId: asString(input, "paymentIntakePublicId"),
         reason: asString(input, "reason"),
     }),
+    "payment.restore.create": (ctx, input) => {
+        const idempotencyKey = ctx.idempotencyKey;
+        if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Payment restore draft requires an idempotency key", 400);
+        return createPaymentRestoreDraft(ctx, {
+            paymentIntakePublicId: asString(input, "paymentIntakePublicId"),
+            reason: asString(input, "reason"),
+            idempotencyKey,
+        });
+    },
     "payment.restore.execute": (ctx, input) => {
         const idempotencyKey = ctx.idempotencyKey;
         if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Payment restore requires an idempotency key", 400);
@@ -531,6 +540,7 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "payment.batch.execute": { entityType: "payment_batch", action: "posted" },
     "payment.reconcile.execute": { entityType: "payment_reconciliation", action: "executed" },
     "payment.restore.execute": { entityType: "payment_reconciliation", action: "restored" },
+    "payment.restore.create": { entityType: "payment_intake", action: "restore_draft_created" },
     "loan.activate": { entityType: "loan", action: "activated" },
     "loan.payment-start-date.update": { entityType: "loan", action: "payment_start_date_changed" },
     "loan.interest-rate.execute": { entityType: "loan_interest_rate_timeline", action: "interest_rate_timeline_changed" },

@@ -5,9 +5,9 @@ import { db } from "../db";
 import { borrowers, floatingTransactionAllocations, loanInterestAccruals, loans, paymentEvidence, paymentIntakes, paymentReconciliationEntries, paymentReconciliationGroups, paymentReconciliationProposals, transactions, users } from "../db/schema";
 import { createBorrower } from "./borrower-service";
 import { createLoanDraft, activateLoan } from "./loan-application-service";
-import { createPaymentIntake, reviewPaymentIntake } from "./payment-service";
+import { createPaymentIntake, previewPaymentMatch, reviewPaymentIntake } from "./payment-service";
 import type { CommandContext } from "./command-context";
-import { calculateReconciliationComponents, deriveExactRestoreComponents, executePaymentReconciliation, previewPaymentRestore, previewPaymentReconciliation, type ReconciliationAllocation } from "./payment-reconciliation-service";
+import { calculateReconciliationComponents, createPaymentRestoreDraft, deriveExactRestoreComponents, executePaymentReconciliation, previewPaymentRestore, previewPaymentReconciliation, type ReconciliationAllocation } from "./payment-reconciliation-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
 
@@ -68,7 +68,7 @@ describe("payment reconciliation allocation kernel", () => {
 });
 
 describe("payment reconciliation persistence", () => {
-    integrationTest("restores a reversed mixed-component payment exactly into a linked child", async () => {
+    integrationTest("creates an evidence-bearing draft and restores a reversed mixed-component payment exactly into it", async () => {
         const tenantId = `exact-restore-${crypto.randomUUID()}`;
         const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
         const ctx: CommandContext = { tenantId, actorUserId: actor.id, actorSource: "mcp", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() };
@@ -78,20 +78,41 @@ describe("payment reconciliation persistence", () => {
         const source = await db.insert(paymentIntakes).values({ tenantId, status: "reversed", amount: "100.00", receivedAt: new Date("2026-08-24T08:57:00.000Z"), payerName: borrower.name, createdByUserId: actor.id, postedByUserId: actor.id, postedAt: new Date() }).returning().then((rows) => rows[0]!);
         const original = await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan.id, amount: "100.00", principalComponent: "83.33", interestComponent: "16.67", feeComponent: "0.00", penaltyComponent: "0.00", paymentIntakeId: source.id, entryType: "repayment", transactionDate: source.receivedAt, recordedByUserId: actor.id }).returning().then((rows) => rows[0]!);
         await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan.id, amount: "-100.00", principalComponent: "-83.33", interestComponent: "-16.67", feeComponent: "0.00", penaltyComponent: "0.00", paymentIntakeId: source.id, entryType: "reversal", reversedTransactionId: original.id, transactionDate: new Date(), recordedByUserId: actor.id });
-        await db.insert(paymentEvidence).values({ tenantId, paymentIntakeId: source.id, status: "ready", evidenceType: "legacy_slip", legacyReference: "fixture", finalizedAt: new Date(), createdByUserId: actor.id });
+        const draftResult = await createPaymentRestoreDraft(ctx, {
+            paymentIntakePublicId: source.publicId,
+            reason: "Restore mistakenly reversed payment exactly",
+            idempotencyKey: "exact-restore-draft-once",
+        });
+        const child = await db.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, tenantId), eq(paymentIntakes.repostOfIntakeId, source.id)) });
+        expect(draftResult).toMatchObject({ sourcePaymentPublicId: source.publicId, restoreDraftPublicId: child!.publicId, status: "draft" });
+        expect(child).toMatchObject({ status: "draft", amount: "100.00", bankReference: null, bankReferenceHash: null, qrPayloadHash: null });
+        expect(await db.select().from(transactions).where(and(eq(transactions.tenantId, tenantId), eq(transactions.paymentIntakeId, child!.id)))).toHaveLength(0);
+        expect((await createPaymentRestoreDraft(ctx, {
+            paymentIntakePublicId: source.publicId,
+            reason: "Restore mistakenly reversed payment exactly",
+            idempotencyKey: "exact-restore-draft-once",
+        })).restoreDraftPublicId).toBe(child!.publicId);
+        await expect(createPaymentRestoreDraft(ctx, {
+            paymentIntakePublicId: source.publicId,
+            reason: "A different restore command must not reuse this draft",
+            idempotencyKey: "exact-restore-draft-conflict",
+        })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+        await expect(previewPaymentMatch(ctx, child!.publicId, {})).rejects.toMatchObject({ code: "PAYMENT_RESTORE_DRAFT_REQUIRES_RESTORE_WORKFLOW" });
+        await expect(previewPaymentRestore(ctx, { paymentIntakePublicId: source.publicId, reason: "Restore mistakenly reversed payment exactly" })).rejects.toMatchObject({ code: "RECONCILIATION_RESTORE_DRAFT_EVIDENCE_REQUIRED" });
+        await db.insert(paymentEvidence).values({ tenantId, paymentIntakeId: child!.id, status: "ready", evidenceType: "legacy_slip", legacyReference: "new-slip-fixture", finalizedAt: new Date(), createdByUserId: actor.id });
 
         const preview = await previewPaymentRestore(ctx, { paymentIntakePublicId: source.publicId, reason: "Restore mistakenly reversed payment exactly" });
         expect(preview.sourcePayment).toMatchObject({ mode: "exact_restore", status: "reversed" });
         expect(preview.correction).toEqual({ principal: "83.33", interest: "16.67", fee: "0.00", penalty: "0.00" });
         const executed = await executePaymentReconciliation(ctx, preview.publicId, { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "exact-restore-once" });
-        const child = await db.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, tenantId), eq(paymentIntakes.repostOfIntakeId, source.id)) });
         expect(executed.postedPaymentPublicId).toBe(child!.publicId);
-        expect(child).toMatchObject({ status: "posted", amount: "100.00", bankReference: null, qrPayloadHash: null });
-        const restored = await db.select().from(transactions).where(and(eq(transactions.tenantId, tenantId), eq(transactions.paymentIntakeId, child!.id), eq(transactions.entryType, "repayment")));
+        const postedChild = await db.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, tenantId), eq(paymentIntakes.id, child!.id)) });
+        expect(postedChild).toMatchObject({ status: "posted", amount: "100.00", bankReference: null, qrPayloadHash: null });
+        const restored = await db.select().from(transactions).where(and(eq(transactions.tenantId, tenantId), eq(transactions.paymentIntakeId, postedChild!.id), eq(transactions.entryType, "repayment")));
         expect(restored.map((row) => [row.principalComponent, row.interestComponent])).toEqual([["83.33", "0.00"], ["0.00", "16.67"]]);
         const balances = await db.query.loans.findFirst({ where: eq(loans.id, loan.id) });
         expect(balances).toMatchObject({ outstandingPrincipal: "916.67", outstandingInterest: "0.00" });
-        expect(await db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, tenantId), eq(paymentEvidence.paymentIntakeId, child!.id)))).toHaveLength(0);
+        expect(await db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, tenantId), eq(paymentEvidence.paymentIntakeId, postedChild!.id)))).toHaveLength(1);
         expect((await executePaymentReconciliation(ctx, preview.publicId, { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "exact-restore-once" })).postedPaymentPublicId).toBe(child!.publicId);
     });
 

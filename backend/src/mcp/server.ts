@@ -32,6 +32,7 @@ export const MCP_TOOL_NAMES = [
     "payment.batch.execute",
     "payment.reconcile.preview",
     "payment.reconcile.execute",
+    "payment.restore.create",
     "payment.restore.preview",
     "payment.restore.execute",
     "loan.preview",
@@ -390,6 +391,13 @@ const reconciliationExecuteOutput = z.object({
     compensatingTransactionPublicIds: z.array(uuid),
     correctedTransactionPublicIds: z.array(uuid).optional(),
     auditPublicIds: z.array(uuid),
+    correlationId: uuid,
+}).strict();
+const paymentRestoreDraftOutput = z.object({
+    sourcePaymentPublicId: uuid,
+    restoreDraftPublicId: uuid,
+    status: z.literal("draft"),
+    auditPublicId: uuid.optional(),
     correlationId: uuid,
 }).strict();
 const loanPaymentHistoryItemOutput = intakeOutput.extend({
@@ -1073,6 +1081,7 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "payment.batch.execute": batchExecutionOutput,
     "payment.reconcile.preview": reconciliationPreviewOutput,
     "payment.reconcile.execute": reconciliationExecuteOutput,
+    "payment.restore.create": paymentRestoreDraftOutput,
     "payment.restore.preview": reconciliationPreviewOutput,
     "payment.restore.execute": reconciliationExecuteOutput,
     "loan.preview": z.union([
@@ -1336,6 +1345,7 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
         allocations: z.array(reconciliationAllocation).min(1).max(1_000),
         reason: shortText,
     }).strict(),
+    "payment.restore.create": z.object({ paymentIntakePublicId: uuid, reason: shortText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
     "payment.restore.preview": z.object({ paymentIntakePublicId: uuid, reason: shortText }).strict(),
     "payment.restore.execute": z.object({
         restorePreviewPublicId: uuid,
@@ -1770,6 +1780,7 @@ const destructiveTools = new Set<McpToolName>([
     "payment.batch.preview",
     "payment.reconcile.preview",
     "payment.reconcile.execute",
+    "payment.restore.create",
     "payment.restore.preview",
     "payment.restore.execute",
     "payment.batch.execute",
@@ -1811,6 +1822,7 @@ const financialTools = new Set<McpToolName>([
     "payment.reverse",
     "payment.reconcile.execute",
     "payment.restore.execute",
+    "payment.restore.create",
     "payment.batch.execute",
     "loan.activate",
     "loan.payment-start-date.update",
@@ -1845,6 +1857,7 @@ const idempotentTools = new Set<McpToolName>([
     "payment.reverse",
     "payment.reconcile.execute",
     "payment.restore.execute",
+    "payment.restore.create",
     "payment.batch.execute",
     "loan.draft.delete",
     "loan.activate",
@@ -1908,6 +1921,7 @@ const toolDescriptions: Record<McpToolName, string> = {
     "payment.reconcile.preview": "Preview an interest-only posting for a reviewed historical needs_review payment intake without reducing principal.",
     "payment.reconcile.execute": "Execute a confirmed, idempotent payment reconciliation with append-only provenance.",
     "payment.restore.preview": "Preview exact restoration of a fully reversed payment using its original principal and interest components.",
+    "payment.restore.create": "Create one linked restore draft so new payment-slip evidence can be finalized before an exact restore preview.",
     "payment.restore.execute": "Execute a confirmed, idempotent exact restoration of a reversed payment as a linked child intake.",
     "loan.preview": "Preview an exact loan schedule without persistence.",
     "loan.draft": "Create an editable loan draft.",

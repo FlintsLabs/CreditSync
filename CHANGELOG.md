@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.62 - 2026-08-25
+
+### Added
+- Added `payment.restore.create`, creating one auditable linked draft so operators can finalize a newly supplied original slip before previewing and exactly restoring a mistakenly reversed payment.
+
+### Changed
+- Updated exact payment restoration to require finalized evidence on the linked draft and post that evidence-bearing child, while retaining the reversed source and normal duplicate safeguards.
+
 ## v0.3.61 - 2026-08-25
 
 ### Added

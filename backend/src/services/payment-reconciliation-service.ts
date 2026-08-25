@@ -134,13 +134,14 @@ function isExactCompensation(original: typeof transactions.$inferSelect, reversa
         && new Decimal(reversal.penaltyComponent).plus(original.penaltyComponent).isZero();
 }
 
-async function inspectReconciliationSource(executor: any, ctx: CommandContext, intake: typeof paymentIntakes.$inferSelect): Promise<{
+async function inspectReconciliationSource(executor: any, ctx: CommandContext, intake: typeof paymentIntakes.$inferSelect, options: { requireSourceEvidence?: boolean; allowDraftChild?: boolean } = {}): Promise<{
     mode: ReconciliationMode;
     originals: Array<typeof transactions.$inferSelect>;
     reversals: Array<typeof transactions.$inferSelect>;
     hasReadyEvidence: boolean;
+    repostChild: typeof paymentIntakes.$inferSelect | null;
 }> {
-    if (intake.status === "needs_review") return { mode: "historical_needs_review", originals: [], reversals: [], hasReadyEvidence: false };
+    if (intake.status === "needs_review") return { mode: "historical_needs_review", originals: [], reversals: [], hasReadyEvidence: false, repostChild: null };
     if (intake.status !== "reversed") throw new DomainError("RECONCILIATION_INTAKE_INVALID", "Only needs_review or fully reversed intakes can be reconciled", 409);
     const originals: Array<typeof transactions.$inferSelect> = await executor.select().from(transactions).where(and(
         eq(transactions.tenantId, ctx.tenantId), eq(transactions.paymentIntakeId, intake.id), eq(transactions.entryType, "repayment"),
@@ -161,9 +162,42 @@ async function inspectReconciliationSource(executor: any, ctx: CommandContext, i
         const reversal = reversalByOriginal.get(row.id);
         return !reversal || !isExactCompensation(row, reversal);
     })) throw new DomainError("RECONCILIATION_SOURCE_NOT_FULLY_REVERSED", "Every source repayment must have one exact compensating reversal", 409);
-    if (!hasReadyEvidence) throw new DomainError("RECONCILIATION_SOURCE_EVIDENCE_REQUIRED", "A finalized ready source evidence record is required", 409);
-    if (child) throw new DomainError("RECONCILIATION_SOURCE_ALREADY_REPOSTED", "The reversed source already has a repost child", 409);
-    return { mode: "reversed_repost", originals, reversals, hasReadyEvidence: true };
+    if (options.requireSourceEvidence !== false && !hasReadyEvidence) throw new DomainError("RECONCILIATION_SOURCE_EVIDENCE_REQUIRED", "A finalized ready source evidence record is required", 409);
+    if (child && !(options.allowDraftChild && child.status === "draft")) throw new DomainError("RECONCILIATION_SOURCE_ALREADY_REPOSTED", "The reversed source already has a repost child", 409);
+    return { mode: "reversed_repost", originals, reversals, hasReadyEvidence, repostChild: child ?? null };
+}
+
+async function restoreDraftEvidence(executor: any, ctx: CommandContext, draft: typeof paymentIntakes.$inferSelect | null) {
+    if (!draft || draft.status !== "draft") throw new DomainError("RECONCILIATION_RESTORE_DRAFT_REQUIRED", "A restore draft is required before preview", 409);
+    const hasReadyEvidence = Boolean(await executor.query.paymentEvidence.findFirst({ where: and(
+        eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.paymentIntakeId, draft.id), eq(paymentEvidence.status, "ready"), sql`${paymentEvidence.finalizedAt} IS NOT NULL`,
+    ) }));
+    if (!hasReadyEvidence) throw new DomainError("RECONCILIATION_RESTORE_DRAFT_EVIDENCE_REQUIRED", "A finalized ready restore-draft evidence record is required", 409);
+    return draft;
+}
+
+export async function createPaymentRestoreDraft(ctx: CommandContext, input: { paymentIntakePublicId: string; reason: string; idempotencyKey: string }) {
+    if (!input.reason?.trim() || !input.idempotencyKey?.trim()) throw new DomainError("RECONCILIATION_COMMAND_CONTEXT_REQUIRED", "Reason and idempotency key are required", 400);
+    return db.transaction(async (tx) => {
+        const intake = await accessibleIntake(ctx, input.paymentIntakePublicId, tx);
+        await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id = ${intake.id} FOR UPDATE`);
+        const inspected = await inspectReconciliationSource(tx, ctx, intake, { requireSourceEvidence: false, allowDraftChild: true });
+        const existing = inspected.repostChild;
+        if (existing) {
+            if (existing.idempotencyKey !== input.idempotencyKey || existing.notes !== `Restore draft after reversal: ${input.reason.trim()}`) {
+                throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was used for a different restore draft", 409);
+            }
+            return { sourcePaymentPublicId: intake.publicId, restoreDraftPublicId: existing.publicId, status: existing.status, correlationId: ctx.correlationId };
+        }
+        const draft = await tx.insert(paymentIntakes).values({
+            tenantId: ctx.tenantId, ownerUserId: intake.ownerUserId, source: intake.source, status: "draft", amount: serializeMoney(intake.amount), receivedAt: intake.receivedAt,
+            payerName: intake.payerName, originLoanId: intake.originLoanId, repostOfIntakeId: intake.id,
+            notes: `Restore draft after reversal: ${input.reason.trim()}`, idempotencyKey: input.idempotencyKey,
+            createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId,
+        }).returning().then((rows) => rows[0]!);
+        const audit = await createAuditLog(tx, { ...contextPayload(ctx), entityType: "payment_intake", entityId: draft.publicId, action: "restore_draft_created", payload: { sourcePaymentPublicId: intake.publicId, reason: input.reason.trim(), idempotencyKey: input.idempotencyKey } });
+        return { sourcePaymentPublicId: intake.publicId, restoreDraftPublicId: draft.publicId, status: draft.status, auditPublicId: audit.publicId, correlationId: ctx.correlationId };
+    });
 }
 
 function sourceTransactionSnapshot(row: typeof transactions.$inferSelect) {
@@ -222,12 +256,13 @@ export async function previewPaymentRestore(ctx: CommandContext, input: { paymen
     return db.transaction(async (tx) => {
         const intake = await accessibleIntake(ctx, input.paymentIntakePublicId, tx);
         await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id = ${intake.id} FOR UPDATE`);
-        const inspected = await inspectReconciliationSource(tx, ctx, intake);
+        const inspected = await inspectReconciliationSource(tx, ctx, intake, { requireSourceEvidence: false, allowDraftChild: true });
+        const draft = await restoreDraftEvidence(tx, ctx, inspected.repostChild);
         const allocations = await deriveRestoreAllocations(ctx, tx, inspected.originals);
         const calculated = calculateReconciliationComponents(allocations, intake.amount);
         const source = {
             mode: "exact_restore", sourceMode: inspected.mode, paymentIntakePublicId: intake.publicId, status: intake.status,
-            amount: serializeMoney(intake.amount), receivedAt: intake.receivedAt, hasReadyEvidence: inspected.hasReadyEvidence,
+            amount: serializeMoney(intake.amount), receivedAt: intake.receivedAt, hasReadyEvidence: true, restoreDraftPublicId: draft.publicId,
             currentAllocationSnapshot: inspected.originals.map(sourceTransactionSnapshot), reversalSnapshot: inspected.reversals.map(sourceTransactionSnapshot),
         };
         const financialBalanceVersion = await authoritativeBalanceVersion(tx, ctx, inspected.originals.map((item) => item.loanId));
@@ -301,24 +336,26 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
         if (proposal.previewHash !== input.previewHash || proposal.expectedBalanceVersion !== input.expectedBalanceVersion) throw new DomainError("STALE_RECONCILIATION_PREVIEW", "Reconciliation preview no longer matches current state", 409);
         if (proposal.reason !== input.reason.trim()) throw new DomainError("RECONCILIATION_REASON_MISMATCH", "Execution reason must match the preview reason", 409);
         const intake = await accessibleIntake(ctx, (await tx.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.id, proposal.paymentIntakeId) }))!.publicId, tx);
-        const inspectedBeforeLocks = await inspectReconciliationSource(tx, ctx, intake);
+        const restoreMode = (proposal.sourceSnapshot as { mode?: string }).mode === "exact_restore";
+        const inspectedBeforeLocks = await inspectReconciliationSource(tx, ctx, intake, restoreMode ? { requireSourceEvidence: false, allowDraftChild: true } : undefined);
         const priorForIntake = await tx.query.paymentReconciliationGroups.findFirst({ where: and(eq(paymentReconciliationGroups.tenantId, ctx.tenantId), eq(paymentReconciliationGroups.paymentIntakeId, intake.id)) });
         if (priorForIntake) throw new DomainError("RECONCILIATION_SOURCE_ALREADY_COMPENSATED", "The payment intake has already been reconciled", 409);
         const allocations = await resolveAllocations(ctx, proposal.proposedAllocations as ReconciliationAllocation[], tx);
-        const restoreMode = (proposal.sourceSnapshot as { mode?: string }).mode === "exact_restore";
         if (!restoreMode && allocations.some((item) => item.component !== "interest")) throw new DomainError("RECONCILIATION_COMPONENT_NOT_SUPPORTED", "Historical reconciliation supports interest-only allocations", 409);
         const sourceRowsForLock: Array<{ loanId: number }> = inspectedBeforeLocks.originals;
         const lockLoanIds = [...new Set([...allocations.map((item) => item.loanId), ...sourceRowsForLock.map((item) => item.loanId)])].sort((left, right) => left - right);
         if (lockLoanIds.length) await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(lockLoanIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
         if (lockLoanIds.length) await tx.execute(sql`SELECT id FROM loan_interest_accruals WHERE tenant_id = ${ctx.tenantId} AND loan_id IN (${sql.join(lockLoanIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY loan_id, id FOR UPDATE`);
         if (lockLoanIds.length) await tx.execute(sql`SELECT id FROM transactions WHERE tenant_id = ${ctx.tenantId} AND loan_id IN (${sql.join(lockLoanIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY loan_id, id FOR UPDATE`);
-        const inspected = await inspectReconciliationSource(tx, ctx, intake);
+        const inspected = await inspectReconciliationSource(tx, ctx, intake, restoreMode ? { requireSourceEvidence: false, allowDraftChild: true } : undefined);
+        const restoreDraft = restoreMode ? await restoreDraftEvidence(tx, ctx, inspected.repostChild) : null;
         const currentOriginals = inspected.originals;
         const currentSource = {
             mode: restoreMode ? "exact_restore" : inspected.mode,
             ...(restoreMode ? { sourceMode: inspected.mode } : {}),
             paymentIntakePublicId: intake.publicId, status: intake.status, amount: serializeMoney(intake.amount), receivedAt: intake.receivedAt,
-            hasReadyEvidence: inspected.hasReadyEvidence,
+            hasReadyEvidence: restoreMode ? true : inspected.hasReadyEvidence,
+            ...(restoreMode ? { restoreDraftPublicId: restoreDraft!.publicId } : {}),
             currentAllocationSnapshot: currentOriginals.map(sourceTransactionSnapshot),
             reversalSnapshot: inspected.reversals.map(sourceTransactionSnapshot),
         };
@@ -327,7 +364,14 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
         if (currentBalanceVersion !== proposal.expectedBalanceVersion) throw new DomainError("STALE_RECONCILIATION_PREVIEW", "Affected financial state differs from preview", 409);
         if (hash({ source: currentSource, allocations: allocations.map(presentAllocation), expectedBalanceVersion: proposal.expectedBalanceVersion, reason: proposal.reason }) !== proposal.previewHash) throw new DomainError("STALE_RECONCILIATION_PREVIEW", "Current payment state differs from preview", 409);
         const audit = await createAuditLog(tx, { ...contextPayload(ctx), entityType: "payment_reconciliation", entityId: proposal.publicId, action: "executed", payload: { paymentIntakePublicId: intake.publicId, reason: input.reason.trim(), idempotencyKey: input.idempotencyKey, before: proposal.sourceSnapshot, after: proposal.proposedAllocations } });
-        const postedIntake = inspected.mode === "reversed_repost"
+        const postedIntake = restoreMode
+            ? await tx.update(paymentIntakes).set({ status: "posted", postedAt: new Date(), postedByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(
+                eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, restoreDraft!.id), eq(paymentIntakes.status, "draft"),
+            )).returning().then((rows) => {
+                if (!rows[0]) throw new DomainError("RECONCILIATION_RESTORE_DRAFT_REQUIRED", "Restore draft is no longer postable", 409);
+                return rows[0];
+            })
+            : inspected.mode === "reversed_repost"
             ? await tx.insert(paymentIntakes).values({
                 tenantId: ctx.tenantId, ownerUserId: intake.ownerUserId, source: intake.source, status: "posted", amount: serializeMoney(intake.amount), receivedAt: intake.receivedAt,
                 payerName: intake.payerName, originLoanId: intake.originLoanId, repostOfIntakeId: intake.id,

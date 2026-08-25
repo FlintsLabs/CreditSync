@@ -1147,6 +1147,7 @@ export async function previewPaymentMatch(
 ) {
     const existing = await accessibleIntake(ctx, intakePublicId, executor ?? db);
     if (["posted", "reversed", "duplicate"].includes(existing.status)) throw new DomainError("PAYMENT_INTAKE_IMMUTABLE", "This intake cannot be matched", 409);
+    if (existing.repostOfIntakeId !== null) throw new DomainError("PAYMENT_RESTORE_DRAFT_REQUIRES_RESTORE_WORKFLOW", "Restore drafts must use payment.restore workflow", 409);
     const run = async (tx: Executor) => {
         await tx.execute(sql`SELECT id FROM payment_intakes WHERE id = ${existing.id} FOR UPDATE`);
         const intake = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.id, existing.id), eq(paymentIntakes.tenantId, ctx.tenantId)) });
@@ -1154,6 +1155,7 @@ export async function previewPaymentMatch(
         if (["posted", "reversed", "duplicate"].includes(intake.status)) {
             throw new DomainError("PAYMENT_INTAKE_IMMUTABLE", "This intake cannot be matched", 409);
         }
+        if (intake.repostOfIntakeId !== null) throw new DomainError("PAYMENT_RESTORE_DRAFT_REQUIRES_RESTORE_WORKFLOW", "Restore drafts must use payment.restore workflow", 409);
         const actor = await actorFor(ctx, tx);
         const requested = input.allocations;
         const match = requested
@@ -1558,6 +1560,7 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
         const intake = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.id, accessible.id), eq(paymentIntakes.tenantId, ctx.tenantId)) });
         if (!intake) throw new DomainError("PAYMENT_INTAKE_NOT_FOUND", "Payment intake not found", 404);
         if (intake.status === "posted" || intake.status === "reversed") return postedResult(tx, intake);
+        if (intake.repostOfIntakeId !== null) throw new DomainError("PAYMENT_RESTORE_DRAFT_REQUIRES_RESTORE_WORKFLOW", "Restore drafts must use payment.restore workflow", 409);
         if (intake.status !== "ready") {
             throw new DomainError("PAYMENT_NOT_READY", "Payment intake must be ready before posting", 409);
         }
