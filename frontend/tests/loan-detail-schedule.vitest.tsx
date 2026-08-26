@@ -48,7 +48,7 @@ function renderLoanDetail(loanData = loan) {
         if (url === `/loans/${LOAN_ID}`) return { data: loanData };
         if (url === `/borrowers/${BORROWER_ID}`) return { data: { id: BORROWER_ID, publicId: BORROWER_ID, name: "พี่ฟ้า" } };
         if (url.endsWith("/schedule")) return { data: schedule };
-        if (url.endsWith("/schedule-summary")) return { data: { businessDate: "2026-08-18", totalInstallments: 25, paidInstallments: 1, overdueInstallments: 10, dueTodayInstallments: 1, dueTodayAmount: "200.00", pendingInstallments: 13 } };
+        if (url.endsWith("/schedule-summary")) return { data: { businessDate: "2026-08-18", totalInstallments: 25, deferralCount: 2, paidInstallments: 1, overdueInstallments: 10, dueTodayInstallments: 1, dueTodayAmount: "200.00", pendingInstallments: 13 } };
         if (url.endsWith("/funding-allocations")) return { data: [] };
         if (url.endsWith("/allocation-state")) return { data: { principalAmount: "4000.00", netAllocatedPrincipal: "0.00", remainingGap: "4000.00", overfundedAmount: "0.00", state: "unfunded" } };
         throw new Error(`Unexpected GET ${url}`);
@@ -89,6 +89,8 @@ describe("Loan detail repayment schedule table", () => {
         expect(within(section as HTMLElement).getByTestId("schedule-summary")).toHaveTextContent("ค้างชำระ");
         expect(within(section as HTMLElement).getByTestId("schedule-summary")).toHaveTextContent("ถึงกำหนดวันนี้");
         expect(within(section as HTMLElement).getByTestId("schedule-summary")).toHaveTextContent("รอชำระ");
+        expect(within(section as HTMLElement).getByTestId("schedule-summary")).toHaveTextContent("เลื่อนชำระ");
+        expect(within(section as HTMLElement).getByTestId("schedule-summary")).toHaveTextContent("2 ครั้ง");
         expect(within(table).getAllByRole("row")).toHaveLength(11);
         expect(within(table).getByTestId("schedule-row-number-1")).toHaveTextContent("1");
         expect(within(table).getByText("งวด #1")).toBeInTheDocument();
@@ -137,5 +139,21 @@ describe("Loan detail repayment schedule table", () => {
         expect(section?.querySelector("svg.lucide-coins")).toBeInTheDocument();
         expect(section?.querySelector("svg.lucide-circle-dollar-sign")).toBeInTheDocument();
         expect(section?.querySelector("svg.lucide-percent")).toBeInTheDocument();
+    });
+
+    it("shows a deferral error inside the confirmation dialog when the request fails", async () => {
+        vi.mocked(api.post).mockRejectedValueOnce({ response: { data: { message: "งวดนี้ไม่สามารถเลื่อนได้" } } });
+
+        renderLoanDetail();
+        await userEvent.click(await screen.findByRole("tab", { name: "ตารางผ่อน" }));
+
+        const section = (await screen.findByRole("heading", { name: "ตารางผ่อน" })).closest("div.rounded-lg");
+        expect(section).not.toBeNull();
+        await userEvent.click(within(section as HTMLElement).getAllByRole("button", { name: "เลื่อนชำระ" })[0]);
+        await userEvent.type(screen.getByLabelText("เหตุผล"), "ป่วย");
+        await userEvent.click(screen.getByRole("button", { name: "ยืนยันเลื่อนชำระ" }));
+
+        expect(await screen.findByRole("alert")).toHaveTextContent("งวดนี้ไม่สามารถเลื่อนได้");
+        expect(screen.getByRole("dialog")).toHaveTextContent("งวดนี้ไม่สามารถเลื่อนได้");
     });
 });

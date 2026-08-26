@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.64 - 2026-08-26
+
+### Added
+- Added an auditable deferral-count summary card to the loan repayment schedule, sourced from the deferral ledger.
+
+### Fixed
+- Fixed scheduled-loan payment deferral rollback caused by updating immutable contract installment counts.
+- Displayed deferral request errors inside the confirmation dialog.
+
 ## v0.3.63 - 2026-08-26
 
 ### Added

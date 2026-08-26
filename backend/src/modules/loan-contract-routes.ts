@@ -27,7 +27,7 @@ import {
 import { listCanonicalPostedPaymentsForLoan } from "../services/posted-payment-access";
 import { loanCommandContext, loanDomainFailure, loanUnauthorized } from "./loan-http-support";
 import { loanCancellationExecuteBody, loanCancellationPreviewBody, loanDraftBody, loanDraftUpdateBody, loanTermsBody } from "./loan-route-schemas";
-import { deferLoanSchedule } from "../services/loan-schedule-deferral-service";
+import { countLoanScheduleDeferrals, deferLoanSchedule } from "../services/loan-schedule-deferral-service";
 import { executeUnfundedLoanCancellation, previewUnfundedLoanCancellation } from "../services/loan-cancellation-service";
 
 export const loanListLoanProjection = {
@@ -54,11 +54,12 @@ export const loanListLoanProjection = {
 
 const bangkokCurrentInstant = sql`((CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Bangkok') AT TIME ZONE 'Asia/Bangkok')`;
 
-export function summarizeLoanSchedule(loan: typeof loans.$inferSelect, scheduleRows: Array<typeof loanSchedules.$inferSelect>) {
+export function summarizeLoanSchedule(loan: typeof loans.$inferSelect, scheduleRows: Array<typeof loanSchedules.$inferSelect>, deferralCount = scheduleRows.filter((row) => row.status === "deferred").length) {
     const today = bangkokBusinessDate(new Date());
     const summary = {
         businessDate: today,
         totalInstallments: scheduleRows.length,
+        deferralCount,
         paidInstallments: 0,
         overdueInstallments: 0,
         dueTodayInstallments: 0,
@@ -414,11 +415,17 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
             key: `schedule-summary:${loan.id}:${scopeKey}`,
             ttlSeconds: 20,
             loader: async () => {
-                const scheduleRows = await db.select().from(loanSchedules).where(and(
+                const [scheduleRows, deferralRows] = await Promise.all([
+                    db.select().from(loanSchedules).where(and(
                     eq(loanSchedules.loanId, loan.id),
                     eq(loanSchedules.tenantId, user.tenantId),
-                ));
-                return summarizeLoanSchedule(loan, scheduleRows);
+                    )),
+                    db.select({ id: loanScheduleDeferrals.id }).from(loanScheduleDeferrals).where(and(
+                        eq(loanScheduleDeferrals.loanId, loan.id),
+                        eq(loanScheduleDeferrals.tenantId, user.tenantId),
+                    )),
+                ]);
+                return summarizeLoanSchedule(loan, scheduleRows, countLoanScheduleDeferrals(deferralRows));
             },
         });
     }, { params: t.Object({ id: t.String() }) })

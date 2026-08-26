@@ -27,6 +27,20 @@ function normalizeReason(reason: string) {
     return normalized;
 }
 
+export function getDeferredLoanRollupUpdate(rollup: ReturnType<typeof computeLoanRollup>) {
+    return {
+        outstandingPrincipal: rollup.outstandingPrincipal.toFixed(2),
+        outstandingInterest: rollup.outstandingInterest.toFixed(2),
+        outstandingFees: rollup.outstandingFees.toFixed(2),
+        nextDueDate: rollup.nextDueDate,
+        status: rollup.status === "paid" ? "paid" : "active",
+    };
+}
+
+export function countLoanScheduleDeferrals(deferralRows: readonly unknown[]) {
+    return deferralRows.length;
+}
+
 async function accessibleLoan(ctx: CommandContext, publicId: string, executor: typeof db | any = db) {
     const actor = ctx.actorUserId === null ? null : await executor.query.users.findFirst({
         where: and(eq(users.id, ctx.actorUserId), eq(users.tenantId, ctx.tenantId)),
@@ -117,12 +131,7 @@ export async function deferLoanSchedule(ctx: CommandContext, loanPublicId: strin
         const allSchedules = await tx.select().from(loanSchedules).where(and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.loanId, loan.id))).orderBy(asc(loanSchedules.installmentNo));
         const rollup = computeLoanRollup(allSchedules);
         const updatedLoan = await tx.update(loans).set({
-            totalInstallments: allSchedules.length,
-            outstandingPrincipal: rollup.outstandingPrincipal.toFixed(2),
-            outstandingInterest: rollup.outstandingInterest.toFixed(2),
-            outstandingFees: rollup.outstandingFees.toFixed(2),
-            nextDueDate: rollup.nextDueDate,
-            status: rollup.status === "paid" ? "paid" : "active",
+            ...getDeferredLoanRollupUpdate(rollup),
             updatedAt: new Date(),
         }).where(and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, loan.id))).returning().then((rows) => rows[0]!);
 

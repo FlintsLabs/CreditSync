@@ -38,6 +38,7 @@ The repo already contains a working MVP foundation:
 - Single-payment settlement/restructure preview, explicit confirmation, component waivers, replacement contracts, and compensating reversal workflow
 - Explicitly confirmed, idempotent unfunded-loan cancellation preview/execute workflow, guarded by zero actual disbursement, no effective posted payment, and no downstream financial activity
 - Owner/manager scheduled-loan replacement preview, confirmed execution, public lineage, and compensating reversal workflow
+- Scheduled-loan payment deferral with append-only source/replacement history, visible deferral counts, and inline request errors
 - Legacy repayment-history reads remain available; repayment writes use the payment-intake workflow exclusively
 - Closing summary calculation for loans
 - LINE webhook ingestion for image uploads
