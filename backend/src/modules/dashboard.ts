@@ -2,7 +2,7 @@ import { Elysia } from "elysia";
 import { and, eq } from "drizzle-orm";
 import Decimal from "decimal.js";
 import { db } from "../db";
-import { bankLoanRepayments, bankLoanSchedules, bankLoans, bankTransactions, borrowers, botUploads, loanFundingAllocations, loanSchedules, loans, reconciliationEntries, transactions } from "../db/schema";
+import { bankLoanRepayments, bankLoanSchedules, bankLoans, bankTransactions, borrowers, botUploads, intermediaries, loanFundingAllocations, loanIntermediaryAssignments, loanSchedules, loans, reconciliationEntries, transactions } from "../db/schema";
 import { authPlugin } from "../middleware/auth";
 import { isTenantAdminUser } from "../lib/access";
 import { getTenantProfitabilitySummary } from "../lib/fund-settlement";
@@ -10,6 +10,8 @@ import { computeOverdueSnapshot } from "../lib/overdue";
 import { withTenantCache } from "../lib/cache";
 import { aggregateDashboardMoney, compareDashboardMoneyDescending, isPositiveDashboardMoney, positiveDashboardDifference, serializeDashboardProfitability, subtractDashboardMoney, sumDashboardMoney, sumDashboardPayableHealth } from "../lib/dashboard-money";
 import { getDashboardBorrowerHealth } from "../services/dashboard-borrower-health-service";
+import { bangkokBusinessDate } from "../services/loan-payment-health-service";
+import { buildDashboardCollectionSummary } from "../services/dashboard-collection-summary-service";
 import { loanCommandContext } from "./loan-http-support";
 
 function todayString() {
@@ -83,6 +85,55 @@ export const dashboardRoute = new Elysia({ prefix: "/dashboard" })
             underfundedLoanCount,
             unallocatedDrawdownCount,
                 };
+            },
+        });
+    })
+    .get("/collection-summary", async ({ user, request, set }) => {
+        if (!isTenantAdminUser(user)) {
+            set.status = user ? 403 : 401;
+            return { error: user ? "Forbidden" : "Unauthorized" };
+        }
+
+        return await withTenantCache({
+            tenantId: user.tenantId,
+            namespace: "dashboard",
+            key: "collection-summary",
+            ttlSeconds: 20,
+            loader: async () => {
+                const asOf = new Date();
+                const [borrowerHealth, tenantLoans, assignments] = await Promise.all([
+                    getDashboardBorrowerHealth(db, { context: loanCommandContext(user, request), asOf }),
+                    db.select().from(loans).where(and(eq(loans.tenantId, user.tenantId), eq(loans.status, "active"))),
+                    db.select({
+                        loanId: loanIntermediaryAssignments.loanId,
+                        intermediaryPublicId: intermediaries.publicId,
+                        intermediaryName: intermediaries.name,
+                        role: loanIntermediaryAssignments.role,
+                        status: loanIntermediaryAssignments.status,
+                        effectiveFrom: loanIntermediaryAssignments.effectiveFrom,
+                        effectiveTo: loanIntermediaryAssignments.effectiveTo,
+                    })
+                        .from(loanIntermediaryAssignments)
+                        .innerJoin(intermediaries, eq(loanIntermediaryAssignments.intermediaryId, intermediaries.id))
+                        .where(eq(loanIntermediaryAssignments.tenantId, user.tenantId)),
+                ]);
+                const loansById = new Map(tenantLoans.map((loan) => [loan.id, loan]));
+                return buildDashboardCollectionSummary({
+                    businessDate: bangkokBusinessDate(asOf),
+                    loans: borrowerHealth.flatMap((health) => {
+                        const loan = loansById.get(health.loanId);
+                        return loan ? [{
+                            ...health,
+                            interestPeriodUnit: loan.interestPeriodUnit,
+                            floatingAccrualCycle: loan.floatingAccrualCycle,
+                        }] : [];
+                    }),
+                    assignments: assignments.map((assignment) => ({
+                        ...assignment,
+                        effectiveFrom: assignment.effectiveFrom.toISOString(),
+                        effectiveTo: assignment.effectiveTo?.toISOString() ?? null,
+                    })),
+                });
             },
         });
     })

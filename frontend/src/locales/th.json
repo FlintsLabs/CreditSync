@@ -802,6 +802,10 @@
             "reconciliationStatus": "สถานะกระทบยอด",
             "borrowerDueQueue": "คิวรับชำระลูกหนี้",
             "fundDueQueue": "คิวจ่ายคืนแหล่งเงิน",
+            "collectionSummary": "สรุปยอดรับวันนี้แยกประเภท",
+            "collectionSummaryDescription": "เฉพาะยอดครบกำหนดวันนี้ ไม่รวมยอดค้างและค่าปรับ",
+            "intermediaryCollections": "ยอดที่คนกลางต้องเก็บวันนี้",
+            "intermediaryCollectionsDescription": "เฉพาะสัญญาที่คนกลางได้รับมอบหมายให้เก็บเงินในวันนี้",
             "analytics": "ภาพรวมผลการเก็บเงิน",
             "analyticsDescription": "ดูยอดที่ควรรับ ยอดรับจริง ดอกเบี้ย และวงเงินที่ปล่อยไป"
         },
@@ -831,7 +835,19 @@
             "noUnderfundedLoans": "ไม่มีสัญญาที่เงินไม่พอในตอนนี้",
             "noUnallocatedDrawdowns": "ไม่มีรายการเบิกใช้ที่ยังไม่จัดสรรในตอนนี้",
             "noBorrowerDue": "ไม่มีงวดลูกหนี้ที่ถึงกำหนดในตอนนี้",
-            "noFundDue": "ไม่มีงวดจ่ายคืนแหล่งเงินที่ถึงกำหนดในตอนนี้"
+            "noFundDue": "ไม่มีงวดจ่ายคืนแหล่งเงินที่ถึงกำหนดในตอนนี้",
+            "noIntermediaryCollection": "ยังไม่มีคนกลางที่รับผิดชอบยอดเก็บวันนี้"
+        },
+        "collectionSummary": {
+            "totalDueToday": "รวมยอดรับวันนี้",
+            "categories": {
+                "floating_daily_interest": "ยอดลอย — ดอกรายวัน",
+                "floating_weekly_interest": "ยอดลอย — ดอกรายอาทิตย์",
+                "daily_installment": "งวดรายวัน (ต้น+ดอก)",
+                "weekly_installment": "งวดรายอาทิตย์ (ต้น+ดอก)",
+                "monthly_installment": "งวดรายเดือน (ต้น+ดอก)",
+                "other": "อื่น ๆ"
+            }
         },
         "reconciliation": {
             "unmatchedBorrowerPayments": "ยอดรับลูกหนี้ที่ยังไม่ผูกกับงวด",

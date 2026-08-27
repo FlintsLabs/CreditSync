@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bu
 import { sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { borrowers, loanInterestRatePeriods, loanSchedules, loans, users } from "../db/schema";
+import { borrowers, intermediaries, loanInterestRatePeriods, loanIntermediaryAssignments, loanSchedules, loans, users } from "../db/schema";
 import { dashboardRoute } from "../modules/dashboard";
 import { getDashboardBorrowerHealth } from "./dashboard-borrower-health-service";
 
@@ -117,5 +117,41 @@ describe("dashboard borrower health projection", () => {
             status: "overdue",
         });
         expect(queue[0]).not.toHaveProperty("schedulePublicId");
+    });
+
+    integrationTest("returns today-only collection categories and the active collection intermediary", async () => {
+        setSystemTime(new Date("2026-08-11T12:00:00+07:00"));
+        const tenantId = "dashboard-collection-summary";
+        const actor = await db.insert(users).values({ tenantId, email: "owner@dashboard-collection-summary.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const dueBorrower = await db.insert(borrowers).values({ tenantId, ownerUserId: actor.id, name: "Due Today" }).returning().then((rows) => rows[0]!);
+        const overdueBorrower = await db.insert(borrowers).values({ tenantId, ownerUserId: actor.id, name: "Overdue Only" }).returning().then((rows) => rows[0]!);
+        const dueLoan = await db.insert(loans).values({ tenantId, ownerUserId: actor.id, borrowerId: dueBorrower.id, principalAmount: "1000.00", outstandingPrincipal: "1000.00", interestRate: "0.00", repaymentType: "daily", status: "active" }).returning().then((rows) => rows[0]!);
+        const overdueLoan = await db.insert(loans).values({ tenantId, ownerUserId: actor.id, borrowerId: overdueBorrower.id, principalAmount: "1000.00", outstandingPrincipal: "1000.00", interestRate: "0.00", repaymentType: "daily", gracePeriodDays: 0, status: "active" }).returning().then((rows) => rows[0]!);
+        await db.insert(loanSchedules).values([
+            { tenantId, loanId: dueLoan.id, installmentNo: 1, dueDate: "2026-08-11", scheduledTotal: "120.00", remainingDue: "120.00", status: "pending" },
+            { tenantId, loanId: overdueLoan.id, installmentNo: 1, dueDate: "2026-08-10", scheduledTotal: "90.00", remainingDue: "90.00", status: "pending" },
+        ]);
+        const intermediary = await db.insert(intermediaries).values({ tenantId, ownerUserId: actor.id, name: "Collector Alice", normalizedName: "collector alice", createdByUserId: actor.id, updatedByUserId: actor.id }).returning().then((rows) => rows[0]!);
+        await db.insert(loanIntermediaryAssignments).values({
+            tenantId, loanId: dueLoan.id, intermediaryId: intermediary.id, role: "collection",
+            effectiveFrom: new Date("2026-08-01T00:00:00.000Z"), idempotencyKey: "dashboard-collection-summary-assignment",
+            createdByUserId: actor.id, updatedByUserId: actor.id,
+        });
+        const app = new Elysia().use(dashboardRoute);
+        const response = await app.handle(new Request("http://localhost/dashboard/collection-summary", { headers: { authorization: `Bearer ${await authToken(actor)}` } }));
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({
+            totalDueToday: "120.00",
+            categories: [
+                { key: "floating_daily_interest", totalDueToday: "0.00", items: [] },
+                { key: "floating_weekly_interest", totalDueToday: "0.00", items: [] },
+                { key: "daily_installment", totalDueToday: "120.00", items: [{ loanPublicId: dueLoan.publicId, borrowerName: "Due Today", dueTodayAmount: "120.00" }] },
+                { key: "weekly_installment", totalDueToday: "0.00", items: [] },
+                { key: "monthly_installment", totalDueToday: "0.00", items: [] },
+                { key: "other", totalDueToday: "0.00", items: [] },
+            ],
+            intermediaries: [{ intermediaryPublicId: intermediary.publicId, intermediaryName: "Collector Alice", totalDueToday: "120.00", items: [{ loanPublicId: dueLoan.publicId, borrowerName: "Due Today", dueTodayAmount: "120.00" }] }],
+        });
     });
 });

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.65 - 2026-08-28
+
+### Added
+- Added a dashboard summary of today’s expected borrower collections by floating-interest and repayment cadence, with exact per-borrower amounts and no overdue balances or penalties.
+- Added today’s expected collections by active collection intermediary, including each intermediary’s assigned borrowers and amounts.
+
 ## v0.3.64 - 2026-08-26
 
 ### Added

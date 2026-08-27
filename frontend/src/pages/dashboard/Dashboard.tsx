@@ -33,6 +33,7 @@ import {
 import { api } from "../../lib/api";
 import { formatMoneyExact } from "../../lib/workflow-model";
 import { getStoredUser, isTenantAdminUser } from "../../lib/session";
+import DashboardCollectionSummary from "./DashboardCollectionSummary";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/Button";
 import {
@@ -49,6 +50,7 @@ import {
   type BorrowerDueItem,
   type DashboardPriority,
     type DashboardSummary,
+    type DashboardCollectionSummary as DashboardCollectionSummaryData,
     type DashboardAnalytics,
   type FundDueItem,
   type FundingAlerts,
@@ -252,6 +254,21 @@ export default function Dashboard() {
     "/dashboard/borrower-due-queue",
     [],
   );
+  const collectionSummary = useDashboardResource<DashboardCollectionSummaryData>(
+    "/dashboard/collection-summary",
+    {
+      totalDueToday: "0.00",
+      categories: [
+        { key: "floating_daily_interest", totalDueToday: "0.00", items: [] },
+        { key: "floating_weekly_interest", totalDueToday: "0.00", items: [] },
+        { key: "daily_installment", totalDueToday: "0.00", items: [] },
+        { key: "weekly_installment", totalDueToday: "0.00", items: [] },
+        { key: "monthly_installment", totalDueToday: "0.00", items: [] },
+        { key: "other", totalDueToday: "0.00", items: [] },
+      ],
+      intermediaries: [],
+    },
+  );
   const fundQueue = useDashboardResource<FundDueItem[]>(
     "/dashboard/fund-due-queue",
     [],
@@ -414,6 +431,21 @@ export default function Dashboard() {
           )}
         </div>
       </section>
+
+      {collectionSummary.error ? (
+        <SectionError retry={collectionSummary.retry} />
+      ) : collectionSummary.loading ? (
+        <div className="grid gap-6 xl:grid-cols-2">
+          <Skeleton className="h-80 w-full" />
+          <Skeleton className="h-80 w-full" />
+        </div>
+      ) : (
+        <DashboardCollectionSummary summary={collectionSummary.data ?? {
+          totalDueToday: "0.00",
+          categories: [],
+          intermediaries: [],
+        }} />
+      )}
 
       <DashboardAnalyticsSection analytics={analytics} />
 

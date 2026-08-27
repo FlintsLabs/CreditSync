@@ -802,6 +802,10 @@
             "reconciliationStatus": "Reconciliation Status",
             "borrowerDueQueue": "Borrower Due Queue",
             "fundDueQueue": "Fund Due Queue",
+            "collectionSummary": "Today’s collections by type",
+            "collectionSummaryDescription": "Only amounts due today; overdue balances and penalties are excluded.",
+            "intermediaryCollections": "Amount intermediaries must collect today",
+            "intermediaryCollectionsDescription": "Only loans with an active collection assignment today.",
             "analytics": "Collection & portfolio overview",
             "analyticsDescription": "Track expected cash, actual collections, interest, and deployed principal"
         },
@@ -831,7 +835,19 @@
             "noUnderfundedLoans": "No underfunded loans right now.",
             "noUnallocatedDrawdowns": "No unallocated drawdowns right now.",
             "noBorrowerDue": "No borrower installments are due right now.",
-            "noFundDue": "No fund repayments are due right now."
+            "noFundDue": "No fund repayments are due right now.",
+            "noIntermediaryCollection": "No intermediary is responsible for a collection today."
+        },
+        "collectionSummary": {
+            "totalDueToday": "Total due today",
+            "categories": {
+                "floating_daily_interest": "Floating — daily interest",
+                "floating_weekly_interest": "Floating — weekly interest",
+                "daily_installment": "Daily installment (principal + interest)",
+                "weekly_installment": "Weekly installment (principal + interest)",
+                "monthly_installment": "Monthly installment (principal + interest)",
+                "other": "Other"
+            }
         },
         "reconciliation": {
             "unmatchedBorrowerPayments": "Borrower payments not matched to schedule",

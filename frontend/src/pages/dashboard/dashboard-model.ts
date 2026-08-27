@@ -8,6 +8,20 @@ export interface DashboardSummary {
     unallocatedDrawdownCount: number;
 }
 
+export type DashboardCollectionCategoryKey = "floating_daily_interest" | "floating_weekly_interest" | "daily_installment" | "weekly_installment" | "monthly_installment" | "other";
+
+export interface DashboardCollectionItem {
+    loanPublicId: string;
+    borrowerName: string;
+    dueTodayAmount: string;
+}
+
+export interface DashboardCollectionSummary {
+    totalDueToday: string;
+    categories: Array<{ key: DashboardCollectionCategoryKey; totalDueToday: string; items: DashboardCollectionItem[] }>;
+    intermediaries: Array<{ intermediaryPublicId: string; intermediaryName: string; totalDueToday: string; items: DashboardCollectionItem[] }>;
+}
+
 export interface BorrowerDueItem {
     scheduleId: number | null;
     schedulePublicId?: string;
