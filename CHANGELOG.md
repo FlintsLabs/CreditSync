@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.67 - 2026-09-01
+
+### Added
+- Added an explicit MCP preview/execute workflow to reverse floating-loan payments atomically while materializing missing interest accruals through the original payment business date, with reversal lineage, audit metadata, stale-preview protection, and idempotent retry handling.
+
 ## v0.3.66 - 2026-08-31
 
 ### Added

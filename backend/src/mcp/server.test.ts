@@ -834,6 +834,7 @@ describe("CreditSync stateless MCP contract", () => {
             "payment.preview",
             "payment.post",
             "payment.reverse",
+            "payment.reverse-with-accrual.execute",
             "payment.batch.create",
             "payment.batch.capture",
             "payment.batch.evidence.prepare-many",

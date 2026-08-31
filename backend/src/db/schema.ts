@@ -461,6 +461,10 @@ export const loanInterestAccruals = pgTable("loan_interest_accruals", {
     status: text("status").default("accrued").notNull(),
     sourceTransactionId: integer("source_transaction_id").references(() => transactions.id),
     reversedAccrualId: integer("reversed_accrual_id"),
+    materializationSource: text("materialization_source"),
+    sourcePaymentIntakeId: integer("source_payment_intake_id"),
+    sourceReversalTransactionId: integer("source_reversal_transaction_id"),
+    materializationReason: text("materialization_reason"),
     createdByUserId: integer("created_by_user_id").references(() => users.id),
     createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
@@ -472,6 +476,18 @@ export const loanInterestAccruals = pgTable("loan_interest_accruals", {
         columns: [table.tenantId, table.interestRatePeriodId],
         foreignColumns: [loanInterestRatePeriods.tenantId, loanInterestRatePeriods.id],
     }),
+    foreignKey({
+        name: "loan_interest_accruals_source_payment_intake_fk",
+        columns: [table.tenantId, table.sourcePaymentIntakeId],
+        foreignColumns: [paymentIntakes.tenantId, paymentIntakes.id],
+    }),
+    foreignKey({
+        name: "loan_interest_accruals_source_reversal_transaction_fk",
+        columns: [table.tenantId, table.sourceReversalTransactionId],
+        foreignColumns: [transactions.tenantId, transactions.id],
+    }),
+    check("loan_interest_accruals_materialization_source_check", sql`${table.materializationSource} IS NULL OR ${table.materializationSource} IN ('scheduled', 'payment_reversal', 'manual')`),
+    check("loan_interest_accruals_materialization_reason_check", sql`${table.materializationSource} IS NULL OR length(btrim(${table.materializationReason})) > 0`),
     check("loan_interest_accruals_status_check", sql`${table.status} IN ('accrued', 'accruing', 'due', 'paid', 'partially_paid', 'reversed')`),
     check("loan_interest_accruals_penalty_money_check", sql`
         ${table.accruedPenalty} >= 0 AND scale(${table.accruedPenalty}) <= 2

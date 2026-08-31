@@ -71,6 +71,10 @@ import {
     type ExplicitPaymentAllocation,
     type PrepareEvidenceInput,
 } from "../services/payment-service";
+import {
+    executeReverseWithInterestAccrual,
+    previewReverseWithInterestAccrual,
+} from "../services/payment-reverse-with-accrual-service";
 import { createMcpRateLimiter } from "./rate-limit";
 import { createMcpHttpPlugin, type McpToolHandler, type McpToolName } from "./server";
 import { parseMcpRuntimeConfig } from "./security";
@@ -236,6 +240,21 @@ export function createDefaultMcpToolHandlers(
     "payment.reverse": (ctx, input) => reversePayment(paymentReverseCommandContext(ctx, input), asString(input, "paymentIntakePublicId"), {
         reason: paymentReversalReason(input),
     }),
+    "payment.reverse-with-accrual.preview": (ctx, input) => previewReverseWithInterestAccrual(
+        ctx,
+        asString(input, "paymentIntakePublicId"),
+    ),
+    "payment.reverse-with-accrual.execute": (ctx, input) => executeReverseWithInterestAccrual(
+        { ...ctx, idempotencyKey: asString(input, "idempotencyKey") },
+        asString(input, "paymentIntakePublicId"),
+        {
+            reason: asString(input, "reason"),
+            previewHash: asString(input, "previewHash"),
+            confirmed: true,
+            interestAccrualMode: "ensure_due_through_payment_date",
+            idempotencyKey: asString(input, "idempotencyKey"),
+        },
+    ),
     "payment.batch.create": (ctx, input) => createPaymentBatch(ctx, { idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"), borrowerPublicId: input.borrowerPublicId as string | null | undefined, notes: input.notes as string | null | undefined }),
     "payment.batch.capture": (ctx, input) => capturePaymentBatch(ctx, { idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"), borrowerPublicId: input.borrowerPublicId as string | null | undefined, notes: input.notes as string | null | undefined, items: input.items as any[] }),
     "payment.batch.evidence.prepare-many": (ctx, input) => preparePaymentBatchEvidenceMany(ctx, asString(input, "batchPublicId"), input.items as any[], dependencies.evidenceGateway),
@@ -537,6 +556,7 @@ export function createDefaultMcpToolHandlers(
 const auditTarget: Partial<Record<McpToolName, { entityType: string; action: string }>> = {
     "payment.post": { entityType: "payment_intake", action: "posted" },
     "payment.reverse": { entityType: "payment_intake", action: "reversed" },
+    "payment.reverse-with-accrual.execute": { entityType: "payment_intake", action: "reversed_with_interest_accruals_materialized" },
     "payment.batch.execute": { entityType: "payment_batch", action: "posted" },
     "payment.reconcile.execute": { entityType: "payment_reconciliation", action: "executed" },
     "payment.restore.execute": { entityType: "payment_reconciliation", action: "restored" },

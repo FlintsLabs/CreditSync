@@ -31,6 +31,12 @@ import type { CommandContext } from "./command-context";
 
 type Executor = any;
 
+export type FloatingAccrualMaterializationProvenance = {
+    sourcePaymentIntakeId: number;
+    sourceReversalTransactionId: number;
+    reason: string;
+};
+
 /** Returns only payment allocations that have not been compensated by a reversal. */
 export async function findActiveFloatingTransactionAllocation(
     executor: Executor,
@@ -115,6 +121,7 @@ async function accrueLegacyFloatingInterestThrough(
     loan: typeof loans.$inferSelect,
     throughDate: string,
     actorUserId: number | null,
+    provenance?: FloatingAccrualMaterializationProvenance,
 ) {
     if (!loan.dailyInterestMode || !loan.dailyInterestRate || !loan.firstDayTreatment || !loan.interestStartDate) return [];
     const firstDayTreatment = loan.firstDayTreatment as FloatingDailyInterest["firstDayTreatment"];
@@ -149,6 +156,10 @@ async function accrueLegacyFloatingInterestThrough(
                 interestAmount: row.interestAmount,
                 paidAmount: row.paidAmount,
                 status: row.status,
+                materializationSource: provenance ? "payment_reversal" : undefined,
+                sourcePaymentIntakeId: provenance?.sourcePaymentIntakeId,
+                sourceReversalTransactionId: provenance?.sourceReversalTransactionId,
+                materializationReason: provenance?.reason,
                 createdByUserId: actorUserId,
             }))).onConflictDoNothing();
         }
@@ -223,11 +234,11 @@ async function accrueLegacyFloatingInterestThrough(
     ));
 }
 
-async function accrueFloatingInterestThroughInTransaction(tx: Executor, loan: typeof loans.$inferSelect, through: Date, ctx: CommandContext) {
+async function accrueFloatingInterestThroughInTransaction(tx: Executor, loan: typeof loans.$inferSelect, through: Date, ctx: CommandContext, provenance?: FloatingAccrualMaterializationProvenance) {
     if (loan.repaymentType !== "floating") return [];
     if (loan.tenantId !== ctx.tenantId) throw new DomainError("FLOATING_LOAN_NOT_FOUND", "Floating loan not found", 404);
     const throughDate = bangkokDate(through);
-    if (!hasPeriodPolicy(loan)) return accrueLegacyFloatingInterestThrough(tx, loan, throughDate, ctx.actorUserId);
+    if (!hasPeriodPolicy(loan)) return accrueLegacyFloatingInterestThrough(tx, loan, throughDate, ctx.actorUserId, provenance);
     const anchorDate = loan.interestPeriodAnchorDate!;
     const existing = await tx.select().from(loanInterestAccruals).where(and(
         eq(loanInterestAccruals.tenantId, loan.tenantId),
@@ -340,6 +351,10 @@ async function accrueFloatingInterestThroughInTransaction(tx: Executor, loan: ty
             status: policy.periodUnit === "day"
                 ? "accrued"
                 : interestPeriod.nextPeriodStart <= throughDate ? "due" : "accruing",
+            materializationSource: provenance ? "payment_reversal" : undefined,
+            sourcePaymentIntakeId: provenance?.sourcePaymentIntakeId,
+            sourceReversalTransactionId: provenance?.sourceReversalTransactionId,
+            materializationReason: provenance?.reason,
             createdByUserId: ctx.actorUserId,
         });
     }
@@ -373,7 +388,7 @@ async function accrueFloatingInterestThroughInTransaction(tx: Executor, loan: ty
     )).orderBy(asc(loanInterestAccruals.accrualDate), asc(loanInterestAccruals.id));
 }
 
-export async function accrueFloatingInterestThrough(executor: Executor, loan: typeof loans.$inferSelect, through: Date, context: CommandContext | number | null) {
+export async function accrueFloatingInterestThrough(executor: Executor, loan: typeof loans.$inferSelect, through: Date, context: CommandContext | number | null, provenance?: FloatingAccrualMaterializationProvenance) {
     const ctx = floatingCommandContext(loan, context);
     if (loan.repaymentType !== "floating") return [];
     if (loan.tenantId !== ctx.tenantId) {
@@ -404,7 +419,7 @@ export async function accrueFloatingInterestThrough(executor: Executor, loan: ty
         const beforeById = new Map<number, typeof loanInterestAccruals.$inferSelect>(before.map(
             (row: typeof loanInterestAccruals.$inferSelect) => [row.id, row],
         ));
-        const rows = await accrueFloatingInterestThroughInTransaction(tx, lockedLoan, through, ctx);
+        const rows = await accrueFloatingInterestThroughInTransaction(tx, lockedLoan, through, ctx, provenance);
         const inserted = rows.filter((row: typeof loanInterestAccruals.$inferSelect) => !beforeById.has(row.id));
         const promoted = rows.filter((row: typeof loanInterestAccruals.$inferSelect) => {
             const old = beforeById.get(row.id);
