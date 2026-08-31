@@ -41,6 +41,13 @@ export function countLoanScheduleDeferrals(deferralRows: readonly unknown[]) {
     return deferralRows.length;
 }
 
+export function getDeferralReasonForSchedule(
+    scheduleId: number,
+    deferralRows: readonly Pick<typeof loanScheduleDeferrals.$inferSelect, "sourceScheduleId" | "replacementScheduleId" | "reason">[],
+) {
+    return deferralRows.find((row) => row.sourceScheduleId === scheduleId || row.replacementScheduleId === scheduleId)?.reason ?? null;
+}
+
 async function accessibleLoan(ctx: CommandContext, publicId: string, executor: typeof db | any = db) {
     const actor = ctx.actorUserId === null ? null : await executor.query.users.findFirst({
         where: and(eq(users.id, ctx.actorUserId), eq(users.tenantId, ctx.tenantId)),

@@ -87,6 +87,20 @@ describe("Loan Calculator", () => {
         expect(schedule.at(-1)?.remainingPrincipal).toBe("0.00");
     });
 
+    it("keeps every custom installment non-negative when interest is only a few cents", () => {
+        const schedule = calculateLoanSchedule({
+            principal: "100.00", interestRate: "0.00", termMonths: 12,
+            repaymentType: "monthly", startDate: new Date("2026-08-31T00:00:00Z"),
+            totalInstallments: 12, installmentAmount: "8.34",
+        });
+
+        expect(schedule.map((row) => row.amount)).toEqual(Array(12).fill("8.34"));
+        expect(schedule.every((row) => new FinancialDecimal(row.principalComponent).greaterThanOrEqualTo(0)
+            && new FinancialDecimal(row.interestComponent).greaterThanOrEqualTo(0))).toBe(true);
+        expect(schedule.reduce((sum, row) => sum.plus(row.interestComponent), new FinancialDecimal("0.00")).toFixed(2)).toBe("0.08");
+        expect(schedule.at(-1)?.remainingPrincipal).toBe("0.00");
+    });
+
     it("should reject one-sided custom scheduled terms and totals below principal", () => {
         expect(() => calculatePublicLoanSchedule({
             principal: "1000.00", interestRate: "0.00", termMonths: 3,

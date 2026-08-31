@@ -86,6 +86,15 @@ function presentAllocation(item: ReconciliationAllocation & { borrowerId?: numbe
     return { borrowerPublicId: item.borrowerPublicId, loanPublicId: item.loanPublicId, schedulePublicId: item.schedulePublicId ?? null, amount: money(item.amount).toFixed(2), component: item.component };
 }
 
+function restoreScheduleAggregate(schedule: typeof loanSchedules.$inferSelect, amounts: Record<Component, string>) {
+    const nonPenalty = new Decimal(amounts.principal).plus(amounts.interest).plus(amounts.fee);
+    const paidTotal = new Decimal(schedule.paidTotal).plus(nonPenalty);
+    const paidPenalty = new Decimal(schedule.paidPenalty).plus(amounts.penalty);
+    const remainingDue = Decimal.max(0, new Decimal(schedule.remainingDue).minus(nonPenalty));
+    const status = remainingDue.isZero() ? "paid" : paidTotal.gt(0) || paidPenalty.gt(0) ? "partial" : "pending";
+    return { paidTotal: paidTotal.toFixed(2), paidPenalty: paidPenalty.toFixed(2), remainingDue: remainingDue.toFixed(2), status };
+}
+
 async function accessibleIntake(ctx: CommandContext, publicId: string, executor: any) {
     const row = await executor.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.publicId, publicId)) });
     if (!row) throw new DomainError("PAYMENT_INTAKE_NOT_FOUND", "Payment intake not found", 404);
@@ -197,6 +206,41 @@ export async function createPaymentRestoreDraft(ctx: CommandContext, input: { pa
         }).returning().then((rows) => rows[0]!);
         const audit = await createAuditLog(tx, { ...contextPayload(ctx), entityType: "payment_intake", entityId: draft.publicId, action: "restore_draft_created", payload: { sourcePaymentPublicId: intake.publicId, reason: input.reason.trim(), idempotencyKey: input.idempotencyKey } });
         return { sourcePaymentPublicId: intake.publicId, restoreDraftPublicId: draft.publicId, status: draft.status, auditPublicId: audit.publicId, correlationId: ctx.correlationId };
+    });
+}
+
+export async function backfillPostedRestoreSchedule(ctx: CommandContext, input: { paymentIntakePublicId: string; reason: string; idempotencyKey: string }) {
+    if (!input.reason?.trim() || !input.idempotencyKey?.trim()) throw new DomainError("RECONCILIATION_COMMAND_CONTEXT_REQUIRED", "Backfill requires a reason and idempotency key", 400);
+    return db.transaction(async (tx) => {
+        const intake = await accessibleIntake(ctx, input.paymentIntakePublicId, tx);
+        if (intake.status !== "posted" || intake.repostOfIntakeId === null) throw new DomainError("RESTORE_BACKFILL_TARGET_INVALID", "Only a posted restore child can be backfilled", 409);
+        const source = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, intake.repostOfIntakeId)) });
+        if (!source || source.status !== "reversed") throw new DomainError("RESTORE_BACKFILL_SOURCE_INVALID", "Restore source must remain reversed", 409);
+        await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id IN (${source.id}, ${intake.id}) FOR UPDATE`);
+        const repayments = await tx.select().from(transactions).where(and(
+            eq(transactions.tenantId, ctx.tenantId), eq(transactions.paymentIntakeId, intake.id), eq(transactions.entryType, "repayment"),
+        )).orderBy(transactions.id);
+        const scheduleIds = [...new Set(repayments.map((row) => row.scheduleId).filter((id): id is number => id !== null))];
+        if (scheduleIds.length !== 1) throw new DomainError("RESTORE_BACKFILL_TARGET_INVALID", "Restore must target exactly one scheduled installment", 409);
+        const schedule = await tx.query.loanSchedules.findFirst({ where: and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.id, scheduleIds[0]!)) });
+        if (!schedule) throw new DomainError("RESTORE_BACKFILL_TARGET_INVALID", "Restore schedule no longer exists", 409);
+        await tx.execute(sql`SELECT id FROM loan_schedules WHERE tenant_id = ${ctx.tenantId} AND id = ${schedule.id} FOR UPDATE`);
+        const activeRepayments = await tx.select().from(transactions).where(and(
+            eq(transactions.tenantId, ctx.tenantId), eq(transactions.loanId, schedule.loanId), eq(transactions.scheduleId, schedule.id), eq(transactions.entryType, "repayment"),
+            sql`NOT EXISTS (SELECT 1 FROM transactions AS reversal WHERE reversal.tenant_id = ${ctx.tenantId} AND reversal.reversed_transaction_id = transactions.id)`,
+        )).orderBy(transactions.id);
+        const totals = activeRepayments.reduce((result, row) => ({
+            principal: result.principal.plus(row.principalComponent), interest: result.interest.plus(row.interestComponent),
+            fee: result.fee.plus(row.feeComponent), penalty: result.penalty.plus(row.penaltyComponent),
+        }), { principal: new Decimal(0), interest: new Decimal(0), fee: new Decimal(0), penalty: new Decimal(0) });
+        const paidTotal = totals.principal.plus(totals.interest).plus(totals.fee);
+        const remainingDue = Decimal.max(0, new Decimal(schedule.scheduledTotal).minus(paidTotal));
+        const paidPenalty = totals.penalty;
+        const status = remainingDue.isZero() ? "paid" : paidTotal.gt(0) || paidPenalty.gt(0) ? "partial" : "pending";
+        const changed = schedule.paidTotal !== paidTotal.toFixed(2) || schedule.paidPenalty !== paidPenalty.toFixed(2) || schedule.remainingDue !== remainingDue.toFixed(2) || schedule.status !== status;
+        if (changed) await tx.update(loanSchedules).set({ paidTotal: paidTotal.toFixed(2), paidPenalty: paidPenalty.toFixed(2), remainingDue: remainingDue.toFixed(2), status, overdueDays: remainingDue.isZero() ? 0 : schedule.overdueDays, updatedAt: new Date() }).where(and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.id, schedule.id)));
+        const audit = await createAuditLog(tx, { ...contextPayload(ctx), entityType: "loan_schedule", entityId: schedule.publicId, action: "restore_schedule_backfilled", payload: { paymentIntakePublicId: intake.publicId, sourcePaymentPublicId: source.publicId, schedulePublicId: schedule.publicId, changed, reason: input.reason.trim(), idempotencyKey: input.idempotencyKey, before: { paidTotal: schedule.paidTotal, paidPenalty: schedule.paidPenalty, remainingDue: schedule.remainingDue, status: schedule.status }, after: { paidTotal: paidTotal.toFixed(2), paidPenalty: paidPenalty.toFixed(2), remainingDue: remainingDue.toFixed(2), status } } });
+        return { changed, paymentIntakePublicId: intake.publicId, schedulePublicId: schedule.publicId, auditPublicId: audit.publicId, correlationId: ctx.correlationId };
     });
 }
 
@@ -405,6 +449,10 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
             const updatedPrincipal = Decimal.max(0, new Decimal(target.outstandingPrincipal ?? target.principalAmount).minus(amounts.principal));
             const updatedInterest = Decimal.max(0, new Decimal(target.outstandingInterest ?? "0.00").minus(amounts.interest));
             await tx.update(loans).set({ outstandingPrincipal: serializeMoney(updatedPrincipal), outstandingInterest: serializeMoney(updatedInterest), updatedAt: new Date() }).where(and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, target.id)));
+            if (schedule) {
+                const aggregate = restoreScheduleAggregate(schedule, amounts);
+                await tx.update(loanSchedules).set({ ...aggregate, updatedAt: new Date() }).where(and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.id, schedule.id)));
+            }
             if (allocation.component === "interest" && target.repaymentType === "floating") {
                 await accrueFloatingInterestThrough(tx, target, intake.receivedAt, ctx);
                 let remaining = money(allocation.amount);

@@ -47,6 +47,7 @@ const terms = {
     repaymentType: "monthly" as const,
     termMonths: 3,
     totalInstallments: 3,
+    installmentAmount: "412.00",
     startDate: "2026-08-10",
 };
 
@@ -366,6 +367,7 @@ describe("loan application service", () => {
             interestRate: "10.00",
             termMonths: 3,
             totalInstallments: 3,
+            installmentAmount: "512.50",
             repaymentType: "monthly",
             startDate: "2026-08-11",
         });
@@ -1437,7 +1439,10 @@ describe("loan application service", () => {
         });
 
         const updated = await jsonRequest(app, `/loans/${created.body.publicId}`, {
-            method: "PUT", headers, body: JSON.stringify({ principal: "100.00", interestRate: "0.00", termMonths: 12 }),
+            method: "PUT", headers, body: JSON.stringify({
+                principal: "100.00", interestRate: "0.00", termMonths: 12,
+                totalInstallments: 12, installmentAmount: "8.34",
+            }),
         });
         expect(updated.response.status, updated.text).toBe(200);
         expect(updated.body).toMatchObject({ status: "draft", principal: "100.00" });
@@ -1472,11 +1477,11 @@ describe("loan application service", () => {
         expect(schedule.body[0]).toMatchObject({
             id: schedule.body[0].publicId,
             loanPublicId: created.body.publicId,
-            scheduledPrincipal: "8.33",
-            scheduledTotal: "8.33",
-            remainingDue: "8.33",
+            scheduledPrincipal: "8.34",
+            scheduledTotal: "8.34",
+            remainingDue: "8.34",
             penaltyDue: "0.00",
-            totalDueNow: "8.33",
+            totalDueNow: "8.34",
         });
         expect(schedule.body[0]).not.toHaveProperty("loanId");
 

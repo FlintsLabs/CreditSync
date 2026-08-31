@@ -2,12 +2,12 @@ import { describe, expect, test } from "bun:test";
 import Decimal from "decimal.js";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, floatingTransactionAllocations, loanInterestAccruals, loans, paymentEvidence, paymentIntakes, paymentReconciliationEntries, paymentReconciliationGroups, paymentReconciliationProposals, transactions, users } from "../db/schema";
+import { borrowers, floatingTransactionAllocations, loanInterestAccruals, loanSchedules, loans, paymentEvidence, paymentIntakes, paymentReconciliationEntries, paymentReconciliationGroups, paymentReconciliationProposals, transactions, users } from "../db/schema";
 import { createBorrower } from "./borrower-service";
 import { createLoanDraft, activateLoan } from "./loan-application-service";
 import { createPaymentIntake, previewPaymentMatch, reviewPaymentIntake } from "./payment-service";
 import type { CommandContext } from "./command-context";
-import { calculateReconciliationComponents, createPaymentRestoreDraft, deriveExactRestoreComponents, executePaymentReconciliation, previewPaymentRestore, previewPaymentReconciliation, type ReconciliationAllocation } from "./payment-reconciliation-service";
+import { backfillPostedRestoreSchedule, calculateReconciliationComponents, createPaymentRestoreDraft, deriveExactRestoreComponents, executePaymentReconciliation, previewPaymentRestore, previewPaymentReconciliation, type ReconciliationAllocation } from "./payment-reconciliation-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
 
@@ -75,9 +75,11 @@ describe("payment reconciliation persistence", () => {
         const borrower = await createBorrower(ctx, { name: "Exact Restore Borrower" });
         const borrowerRow = await db.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, tenantId), eq(borrowers.publicId, borrower.publicId)) });
         const loan = await db.insert(loans).values({ tenantId, ownerUserId: actor.id, borrowerId: borrowerRow!.id, principalAmount: "1000.00", interestRate: "0.00", repaymentType: "daily", termMonths: 1, startDate: "2026-08-01", outstandingPrincipal: "1000.00", outstandingInterest: "16.67", outstandingFees: "0.00", status: "active" }).returning().then((rows) => rows[0]!);
+        await db.insert(loanSchedules).values({ tenantId, loanId: loan.id, installmentNo: 1, dueDate: "2026-08-24", scheduledPrincipal: "83.33", scheduledInterest: "16.67", scheduledFee: "0.00", scheduledTotal: "100.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "100.00", status: "pending" });
         const source = await db.insert(paymentIntakes).values({ tenantId, status: "reversed", amount: "100.00", receivedAt: new Date("2026-08-24T08:57:00.000Z"), payerName: borrower.name, createdByUserId: actor.id, postedByUserId: actor.id, postedAt: new Date() }).returning().then((rows) => rows[0]!);
-        const original = await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan.id, amount: "100.00", principalComponent: "83.33", interestComponent: "16.67", feeComponent: "0.00", penaltyComponent: "0.00", paymentIntakeId: source.id, entryType: "repayment", transactionDate: source.receivedAt, recordedByUserId: actor.id }).returning().then((rows) => rows[0]!);
-        await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan.id, amount: "-100.00", principalComponent: "-83.33", interestComponent: "-16.67", feeComponent: "0.00", penaltyComponent: "0.00", paymentIntakeId: source.id, entryType: "reversal", reversedTransactionId: original.id, transactionDate: new Date(), recordedByUserId: actor.id });
+        const schedule = await db.query.loanSchedules.findFirst({ where: and(eq(loanSchedules.tenantId, tenantId), eq(loanSchedules.loanId, loan.id), eq(loanSchedules.dueDate, "2026-08-24")) });
+        const original = await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan.id, scheduleId: schedule!.id, amount: "100.00", principalComponent: "83.33", interestComponent: "16.67", feeComponent: "0.00", penaltyComponent: "0.00", paymentIntakeId: source.id, entryType: "repayment", transactionDate: source.receivedAt, recordedByUserId: actor.id }).returning().then((rows) => rows[0]!);
+        await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan.id, scheduleId: schedule!.id, amount: "-100.00", principalComponent: "-83.33", interestComponent: "-16.67", feeComponent: "0.00", penaltyComponent: "0.00", paymentIntakeId: source.id, entryType: "reversal", reversedTransactionId: original.id, transactionDate: new Date(), recordedByUserId: actor.id });
         const draftResult = await createPaymentRestoreDraft(ctx, {
             paymentIntakePublicId: source.publicId,
             reason: "Restore mistakenly reversed payment exactly",
@@ -112,8 +114,31 @@ describe("payment reconciliation persistence", () => {
         expect(restored.map((row) => [row.principalComponent, row.interestComponent])).toEqual([["83.33", "0.00"], ["0.00", "16.67"]]);
         const balances = await db.query.loans.findFirst({ where: eq(loans.id, loan.id) });
         expect(balances).toMatchObject({ outstandingPrincipal: "916.67", outstandingInterest: "0.00" });
+        const restoredSchedule = await db.query.loanSchedules.findFirst({ where: and(eq(loanSchedules.tenantId, tenantId), eq(loanSchedules.loanId, loan.id), eq(loanSchedules.dueDate, "2026-08-24")) });
+        expect(restoredSchedule).toMatchObject({ paidTotal: "100.00", remainingDue: "0.00", status: "paid" });
         expect(await db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, tenantId), eq(paymentEvidence.paymentIntakeId, postedChild!.id)))).toHaveLength(1);
         expect((await executePaymentReconciliation(ctx, preview.publicId, { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "exact-restore-once" })).postedPaymentPublicId).toBe(child!.publicId);
+    });
+
+    integrationTest("backfills a stale schedule aggregate from a posted restore without creating another transaction", async () => {
+        const tenantId = `restore-backfill-${crypto.randomUUID()}`;
+        const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+        const ctx: CommandContext = { tenantId, actorUserId: actor.id, actorSource: "system", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: "restore-schedule-backfill-once" };
+        const borrower = await createBorrower(ctx, { name: "Restore Backfill Borrower" });
+        const borrowerRow = await db.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, tenantId), eq(borrowers.publicId, borrower.publicId)) });
+        const loan = await db.insert(loans).values({ tenantId, ownerUserId: actor.id, borrowerId: borrowerRow!.id, principalAmount: "1000.00", interestRate: "0.00", repaymentType: "daily", termMonths: 1, startDate: "2026-08-01", outstandingPrincipal: "916.67", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" }).returning().then((rows) => rows[0]!);
+        const schedule = await db.insert(loanSchedules).values({ tenantId, loanId: loan.id, installmentNo: 1, dueDate: "2026-08-24", scheduledPrincipal: "83.33", scheduledInterest: "16.67", scheduledFee: "0.00", scheduledTotal: "100.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "100.00", status: "pending" }).returning().then((rows) => rows[0]!);
+        const source = await db.insert(paymentIntakes).values({ tenantId, status: "reversed", amount: "100.00", receivedAt: new Date("2026-08-24T08:57:00.000Z"), createdByUserId: actor.id }).returning().then((rows) => rows[0]!);
+        const child = await db.insert(paymentIntakes).values({ tenantId, status: "posted", amount: "100.00", receivedAt: source.receivedAt, repostOfIntakeId: source.id, createdByUserId: actor.id, postedByUserId: actor.id, postedAt: new Date() }).returning().then((rows) => rows[0]!);
+        await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan.id, scheduleId: schedule.id, amount: "100.00", principalComponent: "83.33", interestComponent: "16.67", feeComponent: "0.00", penaltyComponent: "0.00", paymentIntakeId: child.id, entryType: "repayment", transactionDate: child.receivedAt, recordedByUserId: actor.id });
+
+        const result = await backfillPostedRestoreSchedule(ctx, { paymentIntakePublicId: child.publicId, reason: "Repair schedule aggregate after exact restore", idempotencyKey: ctx.idempotencyKey! });
+        expect(result).toMatchObject({ changed: true, paymentIntakePublicId: child.publicId, schedulePublicId: schedule.publicId });
+        expect(await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.id, schedule.id) })).toMatchObject({ paidTotal: "100.00", remainingDue: "0.00", status: "paid" });
+        expect(await db.select().from(transactions).where(and(eq(transactions.tenantId, tenantId), eq(transactions.paymentIntakeId, child.id)))).toHaveLength(1);
+
+        const replay = await backfillPostedRestoreSchedule(ctx, { paymentIntakePublicId: child.publicId, reason: "Repair schedule aggregate after exact restore", idempotencyKey: ctx.idempotencyKey! });
+        expect(replay).toMatchObject({ changed: false, paymentIntakePublicId: child.publicId, schedulePublicId: schedule.publicId });
     });
 
     integrationTest("previews only fully reversed evidence-backed sources without a repost child", async () => {

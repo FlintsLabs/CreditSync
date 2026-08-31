@@ -142,7 +142,7 @@ import {
     reversePaymentAttribution,
     type CreatePaymentAttributionInput,
 } from "../services/payment-attribution-service";
-import { createPaymentRestoreDraft, executePaymentReconciliation, previewPaymentReconciliation, previewPaymentRestore, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
+import { backfillPostedRestoreSchedule, createPaymentRestoreDraft, executePaymentReconciliation, previewPaymentReconciliation, previewPaymentRestore, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
 import { addPaymentBatchItem, capturePaymentBatch, createPaymentBatch, executePaymentBatch, finalizePaymentBatchEvidenceMany, getPaymentBatch, preparePaymentBatchEvidenceMany, previewPaymentBatch } from "../services/payment-batch-service";
 import { executeUnfundedLoanCancellation, previewUnfundedLoanCancellation } from "../services/loan-cancellation-service";
 
@@ -303,6 +303,15 @@ export function createDefaultMcpToolHandlers(
             previewHash: asString(input, "previewHash"),
             expectedBalanceVersion: asString(input, "expectedBalanceVersion"),
             confirmed: true,
+            reason: asString(input, "reason"),
+            idempotencyKey,
+        });
+    },
+    "payment.restore.schedule-backfill": (ctx, input) => {
+        const idempotencyKey = ctx.idempotencyKey;
+        if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Payment restore schedule backfill requires an idempotency key", 400);
+        return backfillPostedRestoreSchedule(ctx, {
+            paymentIntakePublicId: asString(input, "paymentIntakePublicId"),
             reason: asString(input, "reason"),
             idempotencyKey,
         });

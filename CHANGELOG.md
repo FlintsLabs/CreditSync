@@ -4,6 +4,12 @@
 
 ### Added
 - Added an explicit MCP preview/execute workflow to reverse floating-loan payments atomically while materializing missing interest accruals through the original payment business date, with reversal lineage, audit metadata, stale-preview protection, and idempotent retry handling.
+- Added the closed, audited `payment.restore.schedule-backfill` MCP command to repair only derived installment aggregates for one verified posted exact-payment restore.
+
+### Fixed
+- Exact scheduled-payment restores now update the linked installment aggregate from the immutable restored components.
+- Fixed fixed-installment schedule rounding so small interest remainders cannot create a negative final component.
+- Added deferral-reason visibility for both sides of a deferred schedule entry, plus responsive loan-list layout refinements.
 
 ## v0.3.66 - 2026-08-31
 
