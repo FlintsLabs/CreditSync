@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.66 - 2026-08-31
+
+### Added
+- Added the approved design for custom fixed-total weekly and monthly loan schedules, preserving exact borrower-agreed installment counts and amounts.
+
 ## v0.3.65 - 2026-08-28
 
 ### Added
