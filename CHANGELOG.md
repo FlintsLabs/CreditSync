@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.3.67 - 2026-09-01
+
+### Added
+- Added the closed, audited `payment.restore.schedule-backfill` MCP command to repair only derived installment aggregates for one verified posted exact-payment restore.
+
+### Fixed
+- Exact scheduled-payment restores now update the linked installment aggregate from the immutable restored components.
+- Fixed fixed-installment schedule rounding so small interest remainders cannot create a negative final component.
+- Added deferral-reason visibility for both sides of a deferred schedule entry, plus responsive loan-list layout refinements.
+
 ## v0.3.66 - 2026-08-31
 
 ### Added

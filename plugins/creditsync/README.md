@@ -70,6 +70,7 @@ Publishing to Git does not hot-reload an installed copy. Start a new Codex task 
 - `needs_review`, fuzzy identity, allocation mismatch, stale preview, and unresolved renewal charges stop for human input.
 - Hard duplicates return the original intake and never create a second payment.
 - A fully reversed payment may be restored only through `payment.restore.create` → finalized evidence on its linked draft → `payment.restore.preview` → explicit confirmed `payment.restore.execute`. The result posts that one linked child with the original principal/interest/fee/penalty component split; the immutable source remains reversed, and bank-reference data is not copied.
+- If a verified posted restore child has stale derived schedule totals, inspect the lineage first and use `payment.restore.schedule-backfill` only with that exact child, a reason, and a stable idempotency key. It repairs schedule aggregates only and never creates a second payment, transaction, or evidence record.
 - Loan activation sends a stable idempotency key, and activation and every renewal show the backend result before explicit confirmation.
 - Floating origination preserves the backend's explicit day-or-week policy, including rate mode, rate, advance periods, and non-refundable treatment.
 - Floating-interest changes follow list → preview → exact confirmation → idempotent execute; accrued dates and stale previews always stop the workflow.

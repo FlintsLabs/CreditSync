@@ -35,6 +35,7 @@ export const MCP_TOOL_NAMES = [
     "payment.restore.create",
     "payment.restore.preview",
     "payment.restore.execute",
+    "payment.restore.schedule-backfill",
     "loan.preview",
     "loan.cancel.preview",
     "loan.draft",
@@ -398,6 +399,13 @@ const paymentRestoreDraftOutput = z.object({
     restoreDraftPublicId: uuid,
     status: z.literal("draft"),
     auditPublicId: uuid.optional(),
+    correlationId: uuid,
+}).strict();
+const paymentRestoreScheduleBackfillOutput = z.object({
+    changed: z.boolean(),
+    paymentIntakePublicId: uuid,
+    schedulePublicId: uuid,
+    auditPublicId: uuid,
     correlationId: uuid,
 }).strict();
 const loanPaymentHistoryItemOutput = intakeOutput.extend({
@@ -1084,6 +1092,7 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "payment.restore.create": paymentRestoreDraftOutput,
     "payment.restore.preview": reconciliationPreviewOutput,
     "payment.restore.execute": reconciliationExecuteOutput,
+    "payment.restore.schedule-backfill": paymentRestoreScheduleBackfillOutput,
     "loan.preview": z.union([
         z.object({
             terms: z.object({ ...loanTerms }).strict(),
@@ -1355,6 +1364,7 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
         reason: shortText,
         idempotencyKey: z.string().trim().min(1).max(200),
     }).strict(),
+    "payment.restore.schedule-backfill": z.object({ paymentIntakePublicId: uuid, reason: shortText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
     "payment.reconcile.execute": z.object({
         reconciliationPreviewPublicId: uuid,
         previewHash: z.string().regex(/^v1:[0-9a-f]{64}$/i),
@@ -1783,6 +1793,7 @@ const destructiveTools = new Set<McpToolName>([
     "payment.restore.create",
     "payment.restore.preview",
     "payment.restore.execute",
+    "payment.restore.schedule-backfill",
     "payment.batch.execute",
     "loan.draft.delete",
     "loan.activate",
@@ -1822,6 +1833,7 @@ const financialTools = new Set<McpToolName>([
     "payment.reverse",
     "payment.reconcile.execute",
     "payment.restore.execute",
+    "payment.restore.schedule-backfill",
     "payment.restore.create",
     "payment.batch.execute",
     "loan.activate",
@@ -1857,6 +1869,7 @@ const idempotentTools = new Set<McpToolName>([
     "payment.reverse",
     "payment.reconcile.execute",
     "payment.restore.execute",
+    "payment.restore.schedule-backfill",
     "payment.restore.create",
     "payment.batch.execute",
     "loan.draft.delete",
@@ -1923,6 +1936,7 @@ const toolDescriptions: Record<McpToolName, string> = {
     "payment.restore.preview": "Preview exact restoration of a fully reversed payment using its original principal and interest components.",
     "payment.restore.create": "Create one linked restore draft so new payment-slip evidence can be finalized before an exact restore preview.",
     "payment.restore.execute": "Execute a confirmed, idempotent exact restoration of a reversed payment as a linked child intake.",
+    "payment.restore.schedule-backfill": "Repair derived schedule aggregates for one verified posted exact-payment restore without creating a payment.",
     "loan.preview": "Preview an exact loan schedule without persistence.",
     "loan.draft": "Create an editable loan draft.",
     "loan.draft.delete": "Permanently delete an unactivated draft loan after dependency checks and audit logging.",

@@ -215,8 +215,16 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
         throw new Error("Installment total cannot be less than principal");
     }
     const scheduledInterest = fixedInstallmentSchedule ? fixedTotal.minus(principalMoney) : totalInterest;
-    const principalPerInstallment = principalMoney.div(installments).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
-    const interestPerInstallment = scheduledInterest.div(installments).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
+    const fixedInstallmentAmount = fixedInstallmentSchedule ? new FinancialDecimal(params.installmentAmount!) : null;
+    // A custom installment is contractual. Round its recurring interest portion down so
+    // rounding cannot consume more interest than exists and leave the final row negative.
+    const interestPerInstallment = scheduledInterest.div(installments).toDecimalPlaces(
+        2,
+        fixedInstallmentSchedule ? FinancialDecimal.ROUND_DOWN : FinancialDecimal.ROUND_HALF_UP,
+    );
+    const principalPerInstallment = fixedInstallmentAmount
+        ? fixedInstallmentAmount.minus(interestPerInstallment)
+        : principalMoney.div(installments).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
     let allocatedPrincipal = new FinancialDecimal("0");
     let allocatedInterest = new FinancialDecimal("0");
     let remainingPrincipal = principalMoney;
@@ -238,7 +246,7 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
         allocatedPrincipal = allocatedPrincipal.plus(principalComponent);
         allocatedInterest = allocatedInterest.plus(interestComponent);
         remainingPrincipal = FinancialDecimal.max(new FinancialDecimal("0"), remainingPrincipal.minus(principalComponent));
-        const rowTotal = principalComponent.plus(interestComponent)
+        const rowTotal = fixedInstallmentAmount ?? principalComponent.plus(interestComponent)
             .toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
 
         // Validating dates
