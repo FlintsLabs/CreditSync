@@ -358,6 +358,20 @@ export default function LoanWizard() {
                                     <Input type="number" value={formData.termMonths} onChange={(e) => setFormData({ ...formData, termMonths: e.target.value })} />
                                 </div>
                             )}
+                            {["weekly", "monthly"].includes(formData.repaymentType) && (
+                                <fieldset className="grid gap-3 rounded border p-4 md:col-span-2">
+                                    <legend className="px-1 font-medium">{t("loanWizard.customSchedule.title")}</legend>
+                                    <div className="grid gap-4 sm:grid-cols-2">
+                                        <label className="grid gap-2" htmlFor="custom-installment-count">{t("loanWizard.totalInstallments")}
+                                            <Input id="custom-installment-count" type="number" min="1" step="1" value={formData.totalInstallments} onChange={(e) => setFormData({ ...formData, totalInstallments: e.target.value })} />
+                                        </label>
+                                        <label className="grid gap-2" htmlFor="custom-installment-amount">{t("loanWizard.installmentAmount")}
+                                            <Input id="custom-installment-amount" type="number" min="0.01" step="0.01" value={formData.installmentAmount} onChange={(e) => setFormData({ ...formData, installmentAmount: e.target.value })} />
+                                        </label>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground">{t("loanWizard.customSchedule.help")}</p>
+                                </fieldset>
+                            )}
                             <div className="grid gap-2">
                                 <label>{t("loanWizard.startDate", "Start Date")}</label>
                                 <Input

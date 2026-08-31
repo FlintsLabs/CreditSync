@@ -116,6 +116,10 @@ export function normalizePublicLoanTerms(input: PublicLoanTerms): NormalizedPubl
             ? "Daily total installments must be a positive integer"
             : "Total installments must be a positive integer");
     }
+    if ((input.repaymentType === "weekly" || input.repaymentType === "monthly")
+        && (input.totalInstallments === undefined) !== (input.installmentAmount === undefined)) {
+        throw new Error("Fixed installment count and amount must be entered together");
+    }
     if (input.repaymentType === "single_payment" && input.singlePayment === undefined) {
         throw new Error("Single-payment terms are required");
     }
@@ -178,7 +182,10 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
     const totalAmount = principalMoney.plus(totalInterest);
 
     let installments = 0;
-    let dailyInstallmentMoney: Decimal | undefined;
+
+    const customFixedScheduled = (repaymentType === "weekly" || repaymentType === "monthly")
+        && params.totalInstallments !== undefined
+        && params.installmentAmount !== undefined;
 
     // Determine number of installments based on type
     if (repaymentType === "daily") {
@@ -189,28 +196,25 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
             throw new Error("Daily total installments must be a positive integer");
         }
         installments = params.totalInstallments ?? termMonths * 30; // Approx
-        dailyInstallmentMoney = params.installmentAmount === undefined
-            ? undefined
-            : new FinancialDecimal(params.installmentAmount).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
     } else if (repaymentType === "weekly") {
-        installments = termMonths * 4;
+        installments = customFixedScheduled ? params.totalInstallments! : termMonths * 4;
     } else if (repaymentType === "monthly") {
-        installments = termMonths;
+        installments = customFixedScheduled ? params.totalInstallments! : termMonths;
     } else {
         // Floating: No fixed schedule, interest accrues daily
         return [];
     }
 
-    const fixedDailyInstallment = repaymentType === "daily"
+    const fixedInstallmentSchedule = customFixedScheduled || (repaymentType === "daily"
         && params.totalInstallments !== undefined
-        && params.installmentAmount !== undefined;
-    const fixedTotal = fixedDailyInstallment
-        ? dailyInstallmentMoney!.times(installments)
+        && params.installmentAmount !== undefined);
+    const fixedTotal = fixedInstallmentSchedule
+        ? new FinancialDecimal(params.installmentAmount!).times(installments)
         : totalAmount;
     if (fixedTotal.lessThan(principalMoney)) {
         throw new Error("Installment total cannot be less than principal");
     }
-    const scheduledInterest = fixedDailyInstallment ? fixedTotal.minus(principalMoney) : totalInterest;
+    const scheduledInterest = fixedInstallmentSchedule ? fixedTotal.minus(principalMoney) : totalInterest;
     const principalPerInstallment = principalMoney.div(installments).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
     const interestPerInstallment = scheduledInterest.div(installments).toDecimalPlaces(2, FinancialDecimal.ROUND_HALF_UP);
     let allocatedPrincipal = new FinancialDecimal("0");

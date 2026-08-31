@@ -81,6 +81,13 @@ describe("workflow view models", () => {
         })).toMatchObject({ totalInstallments: 360, installmentAmount: "3.20" });
     });
 
+    test("preserves custom weekly count and fixed amount in preview and draft", () => {
+        expect(buildLoanTermsInput({
+            principal: "30000", interestRate: "0", termMonths: "3", repaymentType: "weekly", startDate: "2026-08-31",
+            totalInstallments: "10", installmentAmount: "5000",
+        })).toMatchObject({ totalInstallments: 10, installmentAmount: "5000.00" });
+    });
+
     test("sends a daily entry source without calculating financial terms in the browser", () => {
         expect(buildLoanTermsInput({
             principal: "2500", interestRate: "0", termMonths: "1", repaymentType: "daily", startDate: "2026-08-10",

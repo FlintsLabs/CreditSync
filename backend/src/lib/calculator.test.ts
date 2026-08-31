@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { calculateLoanSchedule, calculateProRatedClosing, calculateLoanClosingSummary } from "./calculator";
+import { calculateLoanSchedule, calculateProRatedClosing, calculateLoanClosingSummary, calculatePublicLoanSchedule } from "./calculator";
+import { FinancialDecimal } from "./financial-decimal";
 import dayjs from "dayjs";
 
 describe("Loan Calculator", () => {
@@ -52,6 +53,50 @@ describe("Loan Calculator", () => {
         });
 
         expect(schedule.map((row) => row.dueDate)).toEqual(["2024-01-05", "2024-01-06"]);
+    });
+
+    it("should use custom weekly count and fixed amount to derive scheduled interest", () => {
+        const schedule = calculateLoanSchedule({
+            principal: "30000.00",
+            interestRate: "0.00",
+            termMonths: 3,
+            repaymentType: "weekly",
+            startDate: new Date("2026-08-31T00:00:00Z"),
+            totalInstallments: 10,
+            installmentAmount: "5000.00",
+        });
+
+        expect(schedule).toHaveLength(10);
+        expect(schedule[0]).toMatchObject({
+            dueDate: "2026-09-07", amount: "5000.00", principalComponent: "3000.00", interestComponent: "2000.00",
+        });
+        expect(schedule.at(-1)).toMatchObject({ dueDate: "2026-11-09", remainingPrincipal: "0.00" });
+        const totalInterest = schedule.reduce((sum, row) => sum.plus(row.interestComponent), new FinancialDecimal("0.00"));
+        expect(totalInterest.toFixed(2)).toBe("20000.00");
+    });
+
+    it("should use custom monthly count and fixed amount", () => {
+        const schedule = calculateLoanSchedule({
+            principal: "1000.00", interestRate: "0.00", termMonths: 12,
+            repaymentType: "monthly", startDate: new Date("2026-08-31T00:00:00Z"),
+            totalInstallments: 3, installmentAmount: "500.00",
+        });
+
+        expect(schedule.map((row) => row.dueDate)).toEqual(["2026-09-30", "2026-10-30", "2026-11-30"]);
+        expect(schedule.map((row) => row.amount)).toEqual(["500.00", "500.00", "500.00"]);
+        expect(schedule.at(-1)?.remainingPrincipal).toBe("0.00");
+    });
+
+    it("should reject one-sided custom scheduled terms and totals below principal", () => {
+        expect(() => calculatePublicLoanSchedule({
+            principal: "1000.00", interestRate: "0.00", termMonths: 3,
+            repaymentType: "weekly", startDate: "2026-08-31", totalInstallments: 10,
+        })).toThrow("Fixed installment count and amount must be entered together");
+        expect(() => calculateLoanSchedule({
+            principal: "1000.00", interestRate: "0.00", termMonths: 3,
+            repaymentType: "weekly", startDate: new Date("2026-08-31T00:00:00Z"),
+            totalInstallments: 2, installmentAmount: "400.00",
+        })).toThrow("Installment total cannot be less than principal");
     });
 
     it("should calculate pro-rated closing amount", () => {

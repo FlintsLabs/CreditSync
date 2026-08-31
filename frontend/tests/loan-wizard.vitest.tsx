@@ -101,4 +101,16 @@ describe("LoanWizard", () => {
             expect(draft[field]).toEqual(preview[field]);
         }
     });
+
+    it("exposes custom count and amount fields for scheduled repayment types", async () => {
+        const user = userEvent.setup();
+        render(<LoanWizard />);
+        const firstStepSelects = await screen.findAllByRole("combobox");
+        await user.selectOptions(firstStepSelects[0]!, "11111111-1111-4111-8111-111111111111");
+        await user.click(screen.getByRole("button", { name: /next/i }));
+        expect(screen.getByLabelText(/number of installments/i)).toBeInTheDocument();
+        expect(screen.getByLabelText(/amount per installment/i)).toBeInTheDocument();
+        await user.click(screen.getByRole("radio", { name: /weekly installment/i }));
+        expect(screen.getByLabelText(/number of installments/i)).toBeInTheDocument();
+    });
 });
