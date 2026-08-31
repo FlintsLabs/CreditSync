@@ -22,7 +22,8 @@ const schedule = Array.from({ length: 25 }, (_, index) => ({
     dueDate: `2026-07-${String(index + 1).padStart(2, "0")}`,
     scheduledTotal: "200.00",
     remainingDue: index === 1 ? "0.00" : "200.00",
-    status: index === 0 ? "overdue" : index === 1 ? "paid" : "scheduled",
+    status: index === 0 ? "overdue" : index === 1 ? "paid" : index === 2 ? "deferred" : "scheduled",
+    ...(index === 2 ? { deferralReason: "ลูกหนี้ป่วย", deferredReplacementSchedulePublicId: "schedule-public-26" } : {}),
 }));
 
 const loan = {
@@ -155,5 +156,16 @@ describe("Loan detail repayment schedule table", () => {
 
         expect(await screen.findByRole("alert")).toHaveTextContent("งวดนี้ไม่สามารถเลื่อนได้");
         expect(screen.getByRole("dialog")).toHaveTextContent("งวดนี้ไม่สามารถเลื่อนได้");
+    });
+
+    it("opens the deferral reason from an info action on a deferred installment", async () => {
+        renderLoanDetail();
+        await userEvent.click(await screen.findByRole("tab", { name: "ตารางผ่อน" }));
+
+        const section = (await screen.findByRole("heading", { name: "ตารางผ่อน" })).closest("div.rounded-lg");
+        expect(section).not.toBeNull();
+        await userEvent.click(within(section as HTMLElement).getByRole("button", { name: "ดูเหตุผลการเลื่อนชำระ งวดที่ 3" }));
+
+        expect(screen.getByRole("dialog")).toHaveTextContent("ลูกหนี้ป่วย");
     });
 });

@@ -93,6 +93,8 @@ When the user says `ใช้ tmux implement`, `implement ด้วย tmux`, or
 
 ## Lending Workflows
 
+- เมื่อผู้ใช้แนบภาพสลิปหรือหลักฐานการโอนเงิน ให้ใช้ CreditSync MCP ตรวจสอบข้อมูลกับระบบโดยอัตโนมัติ ทั้งกรณียอดชำระเงินของผู้กู้และกรณีที่เกี่ยวข้องกับรายการกู้ใหม่ โดยอ่านข้อมูลจากภาพเป็นเพียงหลักฐานประกอบ ต้องค้นหาผู้กู้/alias ตรวจสอบสัญญา ยอด งวด วันเวลา ผู้โอน และผู้รับให้ตรงกันก่อนเสมอ
+- สำหรับภาพสลิป ให้ทำ OCR ตาม skill `creditsync-slip-ocr` และทำ workflow ผ่าน MCP แบบ `inspect -> preview -> explicit human confirmation -> post` เมื่อเป็นการเขียนรายการการเงินจริง ห้ามสร้างหรือโพสต์รายการจาก OCR เพียงอย่างเดียว และหากชื่อ ยอด วันเวลา สัญญา หรือสถานะไม่ตรงกัน ให้หยุดเพื่อขอทบทวนจากมนุษย์
 - A new loan follows `preview -> draft -> activate`. Activation locks loan terms and creates any applicable immutable schedule.
 - For scheduled daily loans, support an agreed fixed daily installment or an explicit flat daily-interest term (amount, percent, or per-thousand), with day/month duration. The backend owns calculations and rounding; UI/agents must not recreate the accounting calculation.
 - A floating loan has no fixed schedule/term. Treat daily interest policy and first-day deduction as explicit policy data, not inferred behavior.

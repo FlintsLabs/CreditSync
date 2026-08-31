@@ -27,7 +27,7 @@ import {
 import { listCanonicalPostedPaymentsForLoan } from "../services/posted-payment-access";
 import { loanCommandContext, loanDomainFailure, loanUnauthorized } from "./loan-http-support";
 import { loanCancellationExecuteBody, loanCancellationPreviewBody, loanDraftBody, loanDraftUpdateBody, loanTermsBody } from "./loan-route-schemas";
-import { countLoanScheduleDeferrals, deferLoanSchedule } from "../services/loan-schedule-deferral-service";
+import { countLoanScheduleDeferrals, deferLoanSchedule, getDeferralReasonForSchedule } from "../services/loan-schedule-deferral-service";
 import { executeUnfundedLoanCancellation, previewUnfundedLoanCancellation } from "../services/loan-cancellation-service";
 
 export const loanListLoanProjection = {
@@ -496,6 +496,7 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                         status: row.status === "deferred" ? "deferred" : overdue.effectiveStatus,
                         deferredReplacementSchedulePublicId: deferralBySource.get(row.id) ? scheduleRows.find((candidate) => candidate.id === deferralBySource.get(row.id)!.replacementScheduleId)?.publicId ?? null : null,
                         deferredSourceSchedulePublicId: deferralByReplacement.get(row.id) ? scheduleRows.find((candidate) => candidate.id === deferralByReplacement.get(row.id)!.sourceScheduleId)?.publicId ?? null : null,
+                        deferralReason: getDeferralReasonForSchedule(row.id, deferralRows),
                         createdAt: row.createdAt,
                         updatedAt: row.updatedAt,
                     };

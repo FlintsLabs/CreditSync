@@ -277,7 +277,7 @@ export default function LoanList() {
                         : loanPublicId;
 
                     return (
-                        <Link key={loan.id} to={`/loans/${loan.publicId ?? loan.id}`} className="block group">
+                        <Link key={loan.id} to={`/loans/${loan.publicId ?? loan.id}`} className="block min-w-0 group">
                             <Card className="hover:shadow-md transition-all flex flex-col h-full border-border/80 hover:border-primary/30 rounded-2xl">
                                 <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3 gap-2">
                                     <div className="flex items-start gap-3 min-w-0 flex-1 pr-1">
@@ -548,7 +548,7 @@ export default function LoanList() {
                                                 <span className="mt-0.5 block text-xs text-muted-foreground">{t("loans.borrowerGroup.loanCount", { count: group.loans.length })}</span>
                                                 {tags.length > 0 ? (
                                                     <span className="mt-1.5 flex flex-wrap gap-1">
-                                                        {tags.map((tag) => <Badge key={tag} variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">{tag}</Badge>)}
+                                                        {tags.map((tag) => <Badge key={tag} variant="secondary" className="px-1.5 py-0 text-sm font-normal">{tag}</Badge>)}
                                                     </span>
                                                 ) : (
                                                     <span className="mt-1.5 block text-[11px] text-muted-foreground">{t("loans.borrowerNavigation.noTags", "No tags")}</span>

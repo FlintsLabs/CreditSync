@@ -41,7 +41,9 @@ describe("LoanList", () => {
 
         render(<MemoryRouter><LoanList /></MemoryRouter>);
 
-        expect(await findLoanCardByBorrower("Single Contract Borrower")).toBeInTheDocument();
+        const card = await findLoanCardByBorrower("Single Contract Borrower");
+        expect(card).toBeInTheDocument();
+        expect(card).toHaveClass("min-w-0");
         expect(screen.getAllByText("1 loan")).toHaveLength(2);
     });
 
@@ -97,6 +99,7 @@ describe("LoanList", () => {
         expect(within(navigation).getByText("Beta Borrower")).toBeInTheDocument();
         expect(within(navigation).getAllByText("VIP")).toHaveLength(2);
         expect(within(navigation).getByText("Market stall")).toBeInTheDocument();
+        expect(within(navigation).getByText("Market stall")).toHaveClass("text-sm");
         expect(within(navigation).queryByText("Alpha nickname")).not.toBeInTheDocument();
         expect(within(navigation).getByRole("img", { name: "Has overdue payments" })).toBeInTheDocument();
         const cardGrids = screen.getAllByTestId("loan-card-grid");

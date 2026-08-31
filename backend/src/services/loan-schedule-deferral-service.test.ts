@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { getReplacementScheduleDate, canDeferSchedule, getDeferredLoanRollupUpdate, countLoanScheduleDeferrals } from "./loan-schedule-deferral-service";
+import { getReplacementScheduleDate, canDeferSchedule, getDeferredLoanRollupUpdate, countLoanScheduleDeferrals, getDeferralReasonForSchedule } from "./loan-schedule-deferral-service";
 
 test("places a replacement installment on the next calendar day after the schedule tail", () => {
     expect(getReplacementScheduleDate("2026-08-31")).toBe("2026-09-01");
@@ -33,4 +33,12 @@ test("does not change the immutable contract installment count during deferral",
 
 test("counts deferral ledger entries for the schedule summary", () => {
     expect(countLoanScheduleDeferrals([{ id: 1 }, { id: 2 }, { id: 3 }])).toBe(3);
+});
+
+test("finds the deferral reason for either side of a moved installment", () => {
+    const deferrals = [{ sourceScheduleId: 20, replacementScheduleId: 26, reason: "ลูกหนี้ป่วย" }];
+
+    expect(getDeferralReasonForSchedule(20, deferrals)).toBe("ลูกหนี้ป่วย");
+    expect(getDeferralReasonForSchedule(26, deferrals)).toBe("ลูกหนี้ป่วย");
+    expect(getDeferralReasonForSchedule(21, deferrals)).toBeNull();
 });

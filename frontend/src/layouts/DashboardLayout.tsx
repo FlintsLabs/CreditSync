@@ -166,7 +166,7 @@ export default function DashboardLayout() {
                 )}
 
                 {/* Page Content */}
-                <main className="flex-1 overflow-x-hidden p-4 md:p-8">
+                <main className="min-w-0 flex-1 overflow-x-hidden p-4 md:p-8">
                     <Outlet />
                 </main>
                 <footer data-testid="application-footer" className="border-t px-4 py-4 text-xs text-muted-foreground md:px-8">
