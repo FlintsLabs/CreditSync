@@ -222,6 +222,7 @@ export const loans = pgTable("loans", {
     termMonths: integer("term_months"), // Nullable so pre-draft-workflow active loans remain compatible
     installmentAmount: numeric("installment_amount"), // e.g. 400 per day
     totalInstallments: integer("total_installments"),
+    scheduledInstallmentMode: text("scheduled_installment_mode"), // rate_derived, fixed_total; weekly/monthly only
     gracePeriodDays: integer("grace_period_days").default(0),
     lateFeeMode: text("late_fee_mode").default("none"),
     lateFeeAmount: numeric("late_fee_amount").default("0"),
@@ -243,6 +244,7 @@ export const loans = pgTable("loans", {
         .on(table.tenantId, table.activationIdempotencyKey)
         .where(sql`${table.activationIdempotencyKey} IS NOT NULL`),
     check("loans_term_months_check", sql`${table.termMonths} IS NULL OR ${table.termMonths} > 0`),
+    check("loans_scheduled_installment_mode_check", sql`${table.scheduledInstallmentMode} IS NULL OR ${table.scheduledInstallmentMode} IN ('rate_derived', 'fixed_total')`),
     check("loans_one_funding_source_check", sql`${table.bankLoanId} IS NULL OR ${table.fundingBankProfileId} IS NULL`),
     check("loans_single_payment_terms_check", sql`
         (${table.repaymentType} <> 'single_payment' AND

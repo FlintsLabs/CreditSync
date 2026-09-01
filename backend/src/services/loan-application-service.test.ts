@@ -47,7 +47,6 @@ const terms = {
     repaymentType: "monthly" as const,
     termMonths: 3,
     totalInstallments: 3,
-    installmentAmount: "412.00",
     startDate: "2026-08-10",
 };
 
@@ -94,7 +93,7 @@ describe("loan application service", () => {
     test("previews exact public schedule money without persistence", () => {
         const preview = previewLoan(terms);
         expect(preview.schedule).toHaveLength(3);
-        expect(preview.terms).toMatchObject({ principal: "1200.00", interestRate: "12.00" });
+        expect(preview.terms).toMatchObject({ principal: "1200.00", interestRate: "12.00", totalInstallments: 3, installmentAmount: "412.00" });
         expect(preview.schedule[0]).toMatchObject({ amount: "412.00", principalComponent: "400.00" });
     });
 
@@ -408,6 +407,27 @@ describe("loan application service", () => {
             after: { publicId: draft.publicId, status: "active" },
             scheduleCount: 3,
         });
+    });
+
+    integrationTest("preserves rate-derived schedule totals after a count-only draft is activated", async () => {
+        const actor = await seedUser("tenant-a", "derived-rounding@example.test", "collector");
+        const ctx = context("tenant-a", actor.id, "derived-rounding");
+        const borrower = await createBorrower(ctx, { name: "Derived Rounding Borrower" });
+
+        const draft = await createLoanDraft(ctx, {
+            borrowerPublicId: borrower.publicId,
+            principal: "1010.00",
+            interestRate: "0.00",
+            repaymentType: "monthly",
+            termMonths: 3,
+            totalInstallments: 3,
+            startDate: "2026-08-10",
+        });
+        expect(draft).toMatchObject({ totalInstallments: 3, installmentAmount: "336.67" });
+
+        await activateLoan(ctx, draft.publicId);
+        const schedule = await db.select().from(loanSchedules);
+        expect(schedule.map((row) => row.scheduledTotal)).toEqual(["336.67", "336.67", "336.66"]);
     });
 
     // Break caught: single-payment terms are dropped from drafts, reconstructed

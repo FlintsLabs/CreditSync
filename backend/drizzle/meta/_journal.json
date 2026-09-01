@@ -414,6 +414,13 @@
       "when": 1788235200000,
       "tag": "0058_reverse_interest_accrual_lineage",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1788242400000,
+      "tag": "0059_scheduled_installment_mode",
+      "breakpoints": true
     }
   ]
 }

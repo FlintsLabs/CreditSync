@@ -209,7 +209,7 @@
         },
         "termMonths": "Term (Months)",
         "totalInstallments": "Number of installments",
-        "installmentAmount": "Amount per installment (optional)",
+        "installmentAmount": "Amount per installment (optional fixed-total override)",
         "customSchedule": {
             "title": "Custom fixed schedule (optional)",
             "help": "Enter both fields to use the exact installment count and amount. Any total above principal is recorded as scheduled interest."

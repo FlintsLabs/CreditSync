@@ -264,6 +264,7 @@ function normalizeReplacement(input: ReplacementLoanTerms, replacementPrincipal:
         principal: terms.principal, interestRate: terms.interestRate, termMonths: terms.termMonths,
         repaymentType: terms.repaymentType, startDate: terms.startDate,
         totalInstallments: terms.totalInstallments, installmentAmount: terms.installmentAmount,
+        scheduledInstallmentMode: terms.scheduledInstallmentMode,
         singlePayment: terms.singlePayment,
     });
     return {
@@ -509,7 +510,7 @@ function replacementColumns(replacement: ReturnType<typeof normalizeReplacement>
     const sp = terms.singlePayment;
     return {
         principalAmount: terms.principal, interestRate: terms.interestRate, repaymentType: terms.repaymentType,
-        termMonths: terms.repaymentType === "floating" ? null : terms.termMonths, totalInstallments: terms.totalInstallments ?? null, installmentAmount: terms.installmentAmount ?? null,
+        termMonths: terms.repaymentType === "floating" ? null : terms.termMonths, totalInstallments: terms.totalInstallments ?? null, installmentAmount: terms.installmentAmount ?? null, scheduledInstallmentMode: terms.scheduledInstallmentMode ?? null,
         startDate: terms.startDate!, dailyTermUnit: dailyEntry?.durationUnit ?? null, dailyTermValue: dailyEntry?.durationValue ?? null,
         dailyEntryMode: dailyEntry?.entryMode ?? null, dailyInterestInputMode: dailyEntry?.interestInput?.mode ?? null, dailyInterestInputValue: dailyEntry?.interestInput?.value ?? null, dailyFlatRatePercent: dailyEntry?.flatDailyRatePercent ?? null,
         dailyInterestMode: floating?.mode ?? null, dailyInterestRate: floating?.rate ?? null, firstDayTreatment: floating?.firstDayTreatment ?? null, floatingAccrualCycle: floating?.accrualCycle ?? null, interestStartDate: floating ? terms.startDate! : null,

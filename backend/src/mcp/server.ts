@@ -208,6 +208,7 @@ const loanTerms = {
     paymentStartDate: date.optional(),
     totalInstallments: z.number().int().positive().max(100_000).optional(),
     installmentAmount: money.optional(),
+    scheduledInstallmentMode: z.enum(["rate_derived", "fixed_total"]).optional(),
     floatingInterestPolicy: floatingInterestPolicy.optional(),
     floatingDailyInterest: floatingDailyInterest.optional(),
     singlePayment: singlePayment.optional(),
@@ -234,11 +235,11 @@ const publicReplacementTermsInput = z.discriminatedUnion("repaymentType", [
     }).strict(),
     z.object({
         ...replacementBase, repaymentType: z.literal("weekly"),
-        totalInstallments: z.number().int().positive().max(100_000).optional(), installmentAmount: money.optional(),
+        totalInstallments: z.number().int().positive().max(100_000).optional(), installmentAmount: money.optional(), scheduledInstallmentMode: z.enum(["rate_derived", "fixed_total"]).optional(),
     }).strict(),
     z.object({
         ...replacementBase, repaymentType: z.literal("monthly"),
-        totalInstallments: z.number().int().positive().max(100_000).optional(), installmentAmount: money.optional(),
+        totalInstallments: z.number().int().positive().max(100_000).optional(), installmentAmount: money.optional(), scheduledInstallmentMode: z.enum(["rate_derived", "fixed_total"]).optional(),
     }).strict(),
     z.object({
         ...replacementBase, repaymentType: z.literal("floating"),
@@ -257,11 +258,11 @@ const publicReplacementTermsOutput = z.discriminatedUnion("repaymentType", [
     }).strict(),
     z.object({
         ...publicReplacementBase, repaymentType: z.literal("weekly"),
-        totalInstallments: z.number().int().positive().max(100_000).optional(), installmentAmount: money.optional(),
+        totalInstallments: z.number().int().positive().max(100_000).optional(), installmentAmount: money.optional(), scheduledInstallmentMode: z.enum(["rate_derived", "fixed_total"]).optional(),
     }).strict(),
     z.object({
         ...publicReplacementBase, repaymentType: z.literal("monthly"),
-        totalInstallments: z.number().int().positive().max(100_000).optional(), installmentAmount: money.optional(),
+        totalInstallments: z.number().int().positive().max(100_000).optional(), installmentAmount: money.optional(), scheduledInstallmentMode: z.enum(["rate_derived", "fixed_total"]).optional(),
     }).strict(),
     z.object({
         ...publicReplacementBase, repaymentType: z.literal("floating"),
@@ -387,6 +388,11 @@ const reconciliationPreviewOutput = z.object({
     historicalReconciliationGroupPublicIds: z.array(uuid),
     reason: z.string(),
 }).strict();
+const restorePreviewOutput = reconciliationPreviewOutput.extend({
+    proposedAllocation: z.array(reconciliationAllocationOutput.extend({
+        component: z.enum(["principal", "interest", "fee", "penalty"]),
+    }).strict()),
+}).strict();
 const reconciliationExecuteOutput = z.object({
     reconciliationPublicId: uuid,
     sourcePaymentPublicId: uuid,
@@ -454,6 +460,7 @@ const loanOutput = z.object({
     termMonths: z.number().int().nullable(),
     installmentAmount: money.nullable(),
     totalInstallments: z.number().int().nullable(),
+    scheduledInstallmentMode: z.enum(["rate_derived", "fixed_total"]).nullable().optional(),
     startDate: date.nullable(),
     paymentStartDate: date.nullable().optional(),
     nextDueDate: date.nullable(),
@@ -1117,7 +1124,7 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "payment.reconcile.preview": reconciliationPreviewOutput,
     "payment.reconcile.execute": reconciliationExecuteOutput,
     "payment.restore.create": paymentRestoreDraftOutput,
-    "payment.restore.preview": reconciliationPreviewOutput,
+    "payment.restore.preview": restorePreviewOutput,
     "payment.restore.execute": reconciliationExecuteOutput,
     "payment.restore.schedule-backfill": paymentRestoreScheduleBackfillOutput,
     "loan.preview": z.union([

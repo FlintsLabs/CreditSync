@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -670,6 +670,8 @@ describe("default MCP adapter integration", () => {
     });
 
     integrationTest("lists, previews, and executes a confirmed floating interest-rate change", async () => {
+        setSystemTime(new Date("2026-08-31T12:00:00.000Z"));
+        try {
         const actor = await db.insert(users).values({ tenantId: TENANT_ID, email: ACTOR_EMAIL, role: "owner" }).returning().then((rows) => rows[0]!);
         const borrower = await db.insert(borrowers).values({ tenantId: TENANT_ID, ownerUserId: actor.id, name: "MCP rate borrower" }).returning().then((rows) => rows[0]!);
         const loan = await db.insert(loans).values({
@@ -705,6 +707,9 @@ describe("default MCP adapter integration", () => {
         expect(executed.auditPublicIds).toHaveLength(1);
         expect(executed.correlationId).toMatch(UUID_PATTERN);
         await client.close();
+        } finally {
+            setSystemTime();
+        }
     });
 
     integrationTest("rejects evidence IDs on disbursement draft so callers use prepare then finalize", async () => {
@@ -1164,6 +1169,17 @@ describe("default MCP adapter integration", () => {
             reason: "MCP all-tools historical interest reconciliation",
             idempotencyKey: "mcp-all-tools-reconciliation-execute",
         });
+        const accrualReversalPreview = (await call("payment.reverse-with-accrual.preview", {
+            paymentIntakePublicId: reconciliationIntake.publicId,
+        })).data;
+        await call("payment.reverse-with-accrual.execute", {
+            paymentIntakePublicId: reconciliationIntake.publicId,
+            previewHash: accrualReversalPreview.previewHash,
+            interestAccrualMode: "ensure_due_through_payment_date",
+            confirmed: true,
+            reason: "MCP all-tools floating payment reversal",
+            idempotencyKey: "mcp-all-tools-floating-reversal",
+        });
 
         const loanTerms = {
             principal: "100.00",
@@ -1407,6 +1423,36 @@ describe("default MCP adapter integration", () => {
             reason: "Correct duplicate transfer",
         })).data;
         const reversalPaymentPublicId = String((reversedPayment.transactions as Array<{ publicId: string }>).at(-1)!.publicId);
+        const restoreDraft = (await call("payment.restore.create", {
+            paymentIntakePublicId: intakePublicId,
+            reason: "MCP all-tools exact payment restore",
+            idempotencyKey: "mcp-all-tools-restore-draft",
+        })).data;
+        const restoreEvidence = (await call("evidence.prepare", {
+            paymentIntakePublicId: restoreDraft.restoreDraftPublicId,
+            mimeType: "image/png", size: 4, sha256: "9".repeat(64), evidenceType: "slip",
+        })).data;
+        await call("evidence.finalize", {
+            paymentIntakePublicId: restoreDraft.restoreDraftPublicId,
+            evidencePublicId: restoreEvidence.publicId,
+        });
+        const restorePreview = (await call("payment.restore.preview", {
+            paymentIntakePublicId: intakePublicId,
+            reason: "MCP all-tools exact payment restore",
+        })).data;
+        const restoredPayment = (await call("payment.restore.execute", {
+            restorePreviewPublicId: restorePreview.publicId,
+            previewHash: restorePreview.previewHash,
+            expectedBalanceVersion: restorePreview.expectedBalanceVersion,
+            confirmed: true,
+            reason: "MCP all-tools exact payment restore",
+            idempotencyKey: "mcp-all-tools-restore-execute",
+        })).data;
+        await call("payment.restore.schedule-backfill", {
+            paymentIntakePublicId: restoredPayment.postedPaymentPublicId,
+            reason: "MCP all-tools restore schedule verification",
+            idempotencyKey: "mcp-all-tools-restore-backfill",
+        });
 
         await call("loan.commission-participant.list", { loanPublicId });
         const participant = (await call("loan.commission-participant.add", {
@@ -1659,7 +1705,7 @@ describe("default MCP adapter integration", () => {
         expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length);
         expect(called.filter((name) => name === "intermediary.disbursement.event.create")).toHaveLength(2);
         expect(called.filter((name) => name === "loan.restructure.execute")).toHaveLength(2);
-        expect(called).toHaveLength(MCP_TOOL_NAMES.length + 7);
+        expect(called).toHaveLength(MCP_TOOL_NAMES.length + 9);
 
         await client.close();
     }, 10_000);

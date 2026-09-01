@@ -16,7 +16,7 @@ CreditSync is designed for workflows like:
 - Uploading ID card images and extracting text with OCR
 - Creating loan agreements with single-payment, daily, weekly, monthly, or floating interest logic
 - Generating installment schedules before confirming a loan
-- Supporting custom fixed weekly or monthly schedules by entering both the installment count and amount; the amount above principal is treated as scheduled interest
+- Supporting weekly or monthly schedules with a borrower-agreed installment count: the backend derives the rate-based amount when no amount is supplied, while an explicit count-plus-amount pair creates a fixed-total schedule whose amount above principal is scheduled interest
 - Capturing data-only or image-first repayments, reviewing matches, posting allocations, and reversing corrections
 - Calculating closing balances for early payoff
 - Tracking source-of-funds profiles and traceability between bank funding and downstream loans

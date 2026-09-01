@@ -212,7 +212,7 @@ if (!testDatabaseUrl) {
                     single_payment_late_penalty_mode
                 )
                 SELECT users.tenant_id, users.id, borrowers.id, 1000, 0, 'single_payment', 'active',
-                       DATE '2026-09-01', 100, 'fixed_only', 'percent_per_day', 1, 'none'
+                       DATE '2030-09-01', 100, 'fixed_only', 'percent_per_day', 1, 'none'
                 FROM users JOIN borrowers USING (tenant_id) WHERE users.tenant_id = 'tenant-a'
             `)).toMatchObject({ code: "23514" });
 
@@ -223,7 +223,7 @@ if (!testDatabaseUrl) {
                     single_payment_late_penalty_mode
                 )
                 SELECT users.tenant_id, users.id, borrowers.id, 1000, 0, 'single_payment', 'active',
-                       DATE '2026-09-01', 100, 'fixed_only', 'none'
+                       DATE '2030-09-01', 100, 'fixed_only', 'none'
                 FROM users JOIN borrowers USING (tenant_id) WHERE users.tenant_id IN ('tenant-a', 'tenant-b')
             `;
 
@@ -234,7 +234,7 @@ if (!testDatabaseUrl) {
                     single_payment_late_penalty_mode
                 )
                 SELECT users.tenant_id, users.id, borrowers.id, 1000 + generated.sequence, 0, 'single_payment', 'active',
-                       DATE '2026-09-01' + generated.sequence::integer, 100, 'fixed_only', 'none'
+                       DATE '2030-09-01' + generated.sequence::integer, 100, 'fixed_only', 'none'
                 FROM users JOIN borrowers USING (tenant_id)
                 CROSS JOIN generate_series(1, 2) AS generated(sequence)
                 WHERE users.tenant_id = 'tenant-a'
@@ -255,18 +255,18 @@ if (!testDatabaseUrl) {
                     single_payment_late_penalty_mode
                 )
                 SELECT users.tenant_id, users.id, borrowers.id, 500, 0, 'single_payment', 'draft',
-                       DATE '2026-10-01', 50, 'fixed_only', 'none'
+                       DATE '2030-10-01', 50, 'fixed_only', 'none'
                 FROM users JOIN borrowers USING (tenant_id) WHERE users.tenant_id = 'tenant-a'
                 RETURNING id
             `;
             expect((await sql`UPDATE loans SET single_payment_fixed_agreed_interest = 55 WHERE id = ${draftLoan[0]!.id}`).count).toBe(1);
             await sql`UPDATE loans SET status = 'active', outstanding_principal = 500 WHERE id = ${draftLoan[0]!.id}`;
             expect(String(await postgresError(sql`UPDATE loans SET status = 'draft' WHERE id = ${draftLoan[0]!.id}`))).toMatch(/cannot transition back to draft/);
-            expect(String(await postgresError(sql`UPDATE loans SET single_payment_due_date = DATE '2026-10-02' WHERE id = ${draftLoan[0]!.id}`))).toMatch(/contractual terms are immutable/);
+            expect(String(await postgresError(sql`UPDATE loans SET single_payment_due_date = DATE '2030-10-02' WHERE id = ${draftLoan[0]!.id}`))).toMatch(/contractual terms are immutable/);
             expect(String(await postgresError(sql`DELETE FROM loans WHERE id = ${draftLoan[0]!.id}`))).toMatch(/activated loans are immutable/);
             expect((await sql`
                 UPDATE loans SET outstanding_principal = 400, outstanding_interest = 5,
-                    outstanding_fees = 2, next_due_date = DATE '2026-10-01', status = 'paid'
+                    outstanding_fees = 2, next_due_date = DATE '2030-10-01', status = 'paid'
                 WHERE id = ${draftLoan[0]!.id}
             `).count).toBe(1);
             expect(String(await postgresError(sql`UPDATE loans SET status = 'draft' WHERE id = ${draftLoan[0]!.id}`))).toMatch(/cannot transition back to draft/);

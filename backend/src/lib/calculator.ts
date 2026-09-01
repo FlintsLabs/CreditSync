@@ -13,6 +13,7 @@ import {
 } from "./single-payment";
 
 export type RepaymentType = "single_payment" | "daily" | "weekly" | "monthly" | "floating";
+export type ScheduledInstallmentMode = "rate_derived" | "fixed_total";
 
 export interface LoanCalculationParams {
     principal: Decimal.Value;
@@ -23,6 +24,7 @@ export interface LoanCalculationParams {
     paymentStartDate?: Date;
     totalInstallments?: number;
     installmentAmount?: Decimal.Value;
+    scheduledInstallmentMode?: ScheduledInstallmentMode;
     singlePayment?: SinglePaymentTerms;
 }
 
@@ -44,6 +46,7 @@ export interface PublicLoanCalculationParams {
     paymentStartDate?: string;
     totalInstallments?: number;
     installmentAmount?: string;
+    scheduledInstallmentMode?: ScheduledInstallmentMode;
     dailyEntry?: DailyLoanEntryInput;
     floatingInterestPolicy?: FloatingInterestPolicy;
     floatingDailyInterest?: FloatingDailyInterestInput;
@@ -79,6 +82,7 @@ export interface PublicLoanTerms {
     repaymentType: RepaymentType;
     totalInstallments?: number;
     installmentAmount?: string;
+    scheduledInstallmentMode?: ScheduledInstallmentMode;
     startDate?: string;
     paymentStartDate?: string;
     singlePayment?: SinglePaymentTermsInput;
@@ -117,8 +121,24 @@ export function normalizePublicLoanTerms(input: PublicLoanTerms): NormalizedPubl
             : "Total installments must be a positive integer");
     }
     if ((input.repaymentType === "weekly" || input.repaymentType === "monthly")
-        && (input.totalInstallments === undefined) !== (input.installmentAmount === undefined)) {
-        throw new Error("Fixed installment count and amount must be entered together");
+        && input.totalInstallments === undefined && input.installmentAmount !== undefined) {
+        throw new Error("Installment amount requires total installments");
+    }
+    const scheduled = input.repaymentType === "weekly" || input.repaymentType === "monthly";
+    if (input.scheduledInstallmentMode !== undefined && !scheduled) {
+        throw new Error("Scheduled installment mode requires weekly or monthly repayment");
+    }
+    if (input.scheduledInstallmentMode !== undefined
+        && input.scheduledInstallmentMode !== "rate_derived"
+        && input.scheduledInstallmentMode !== "fixed_total") {
+        throw new Error("Scheduled installment mode is not supported");
+    }
+    const scheduledInstallmentMode = !scheduled ? undefined
+        : input.scheduledInstallmentMode
+            ?? (input.totalInstallments !== undefined && input.installmentAmount !== undefined ? "fixed_total" : "rate_derived");
+    if (scheduledInstallmentMode === "fixed_total"
+        && (input.totalInstallments === undefined || input.installmentAmount === undefined)) {
+        throw new Error("Fixed-total installments require count and amount");
     }
     if (input.repaymentType === "single_payment" && input.singlePayment === undefined) {
         throw new Error("Single-payment terms are required");
@@ -138,8 +158,30 @@ export function normalizePublicLoanTerms(input: PublicLoanTerms): NormalizedPubl
         installmentAmount: input.installmentAmount === undefined
             ? undefined
             : serializeMoney(parseMoney(input.installmentAmount)),
+        ...(scheduledInstallmentMode === undefined ? {} : { scheduledInstallmentMode }),
         singlePayment,
     };
+}
+
+export function resolvePublicLoanCalculationTerms(input: PublicLoanCalculationParams): NormalizedPublicLoanTerms {
+    const terms = normalizePublicLoanTerms(input);
+    if (!(terms.repaymentType === "weekly" || terms.repaymentType === "monthly")
+        || terms.totalInstallments === undefined
+        || terms.scheduledInstallmentMode === "fixed_total") {
+        return terms;
+    }
+    const startDate = normalizeBangkokBusinessDate(input.startDate);
+    const paymentStartDate = input.paymentStartDate === undefined ? undefined : normalizeBangkokBusinessDate(input.paymentStartDate);
+    const schedule = calculateLoanSchedule({
+        principal: parseMoney(terms.principal),
+        interestRate: parseMoney(terms.interestRate),
+        termMonths: terms.termMonths,
+        repaymentType: terms.repaymentType,
+        startDate: new Date(`${startDate}T00:00:00Z`),
+        ...(paymentStartDate === undefined ? {} : { paymentStartDate: new Date(`${paymentStartDate}T00:00:00Z`) }),
+        totalInstallments: terms.totalInstallments,
+    });
+    return { ...terms, scheduledInstallmentMode: "rate_derived", installmentAmount: schedule[0]?.amount };
 }
 
 export function calculateLoanSchedule(params: LoanCalculationParams): InstallmentSchedule[] {
@@ -183,9 +225,11 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
 
     let installments = 0;
 
-    const customFixedScheduled = (repaymentType === "weekly" || repaymentType === "monthly")
-        && params.totalInstallments !== undefined
-        && params.installmentAmount !== undefined;
+    const customScheduledCount = (repaymentType === "weekly" || repaymentType === "monthly")
+        && params.totalInstallments !== undefined;
+    const customFixedScheduled = customScheduledCount
+        && params.installmentAmount !== undefined
+        && params.scheduledInstallmentMode !== "rate_derived";
 
     // Determine number of installments based on type
     if (repaymentType === "daily") {
@@ -197,9 +241,9 @@ export function calculateLoanSchedule(params: LoanCalculationParams): Installmen
         }
         installments = params.totalInstallments ?? termMonths * 30; // Approx
     } else if (repaymentType === "weekly") {
-        installments = customFixedScheduled ? params.totalInstallments! : termMonths * 4;
+        installments = customScheduledCount ? params.totalInstallments! : termMonths * 4;
     } else if (repaymentType === "monthly") {
-        installments = customFixedScheduled ? params.totalInstallments! : termMonths;
+        installments = customScheduledCount ? params.totalInstallments! : termMonths;
     } else {
         // Floating: No fixed schedule, interest accrues daily
         return [];
@@ -274,7 +318,7 @@ export function calculatePublicLoanSchedule(params: PublicLoanCalculationParams)
         if (params.repaymentType !== "daily") throw new Error("Daily entry requires daily repayment");
         return normalizeDailyLoanEntry({ principal: params.principal, ...params.dailyEntry });
     })();
-    const terms = normalizePublicLoanTerms({
+    const terms = resolvePublicLoanCalculationTerms({
         ...params,
         interestRate: dailyEntry ? "0.00" : params.interestRate,
         termMonths: dailyEntry?.termMonths ?? params.termMonths,
@@ -293,6 +337,7 @@ export function calculatePublicLoanSchedule(params: PublicLoanCalculationParams)
         ...(paymentStartDate === undefined ? {} : { paymentStartDate: new Date(`${paymentStartDate}T00:00:00Z`) }),
         totalInstallments: terms.totalInstallments,
         installmentAmount: terms.installmentAmount === undefined ? undefined : parseMoney(terms.installmentAmount),
+        scheduledInstallmentMode: terms.scheduledInstallmentMode,
         singlePayment: terms.singlePayment,
     });
 

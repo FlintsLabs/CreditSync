@@ -1,5 +1,5 @@
 {
-  "compatibility": "Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 7.7.0; breaking changes require plugin 8.0.0.",
+  "compatibility": "Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 8.0.0; breaking changes require plugin 9.0.0.",
   "schemaVersion": "1.0",
   "sourceOfTruth": "Local MCP SDK Client tools/list response from backend/src/mcp/server.ts",
   "tools": [
@@ -6297,7 +6297,12 @@
                       "type": "string"
                     },
                     "component": {
-                      "const": "interest",
+                      "enum": [
+                        "principal",
+                        "interest",
+                        "fee",
+                        "penalty"
+                      ],
                       "type": "string"
                     },
                     "loanPublicId": {
@@ -6829,6 +6834,13 @@
             ],
             "type": "string"
           },
+          "scheduledInstallmentMode": {
+            "enum": [
+              "rate_derived",
+              "fixed_total"
+            ],
+            "type": "string"
+          },
           "singlePayment": {
             "anyOf": [
               {
@@ -7298,6 +7310,13 @@
                           "monthly",
                           "floating",
                           "single_payment"
+                        ],
+                        "type": "string"
+                      },
+                      "scheduledInstallmentMode": {
+                        "enum": [
+                          "rate_derived",
+                          "fixed_total"
                         ],
                         "type": "string"
                       },
@@ -7783,6 +7802,13 @@
                           "monthly",
                           "floating",
                           "single_payment"
+                        ],
+                        "type": "string"
+                      },
+                      "scheduledInstallmentMode": {
+                        "enum": [
+                          "rate_derived",
+                          "fixed_total"
                         ],
                         "type": "string"
                       },
@@ -8362,6 +8388,13 @@
                           "monthly",
                           "floating",
                           "single_payment"
+                        ],
+                        "type": "string"
+                      },
+                      "scheduledInstallmentMode": {
+                        "enum": [
+                          "rate_derived",
+                          "fixed_total"
                         ],
                         "type": "string"
                       },
@@ -8981,6 +9014,13 @@
             ],
             "type": "string"
           },
+          "scheduledInstallmentMode": {
+            "enum": [
+              "rate_derived",
+              "fixed_total"
+            ],
+            "type": "string"
+          },
           "singlePayment": {
             "anyOf": [
               {
@@ -9596,6 +9636,20 @@
                   "single_payment"
                 ],
                 "type": "string"
+              },
+              "scheduledInstallmentMode": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "rate_derived",
+                      "fixed_total"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "singlePayment": {
                 "anyOf": [
@@ -10416,6 +10470,20 @@
                   "single_payment"
                 ],
                 "type": "string"
+              },
+              "scheduledInstallmentMode": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "rate_derived",
+                      "fixed_total"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "singlePayment": {
                 "anyOf": [
@@ -12674,6 +12742,20 @@
                 ],
                 "type": "string"
               },
+              "scheduledInstallmentMode": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "rate_derived",
+                      "fixed_total"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "singlePayment": {
                 "anyOf": [
                   {
@@ -14468,6 +14550,20 @@
                 },
                 "type": "array"
               },
+              "scheduledInstallmentMode": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "rate_derived",
+                      "fixed_total"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "singlePayment": {
                 "anyOf": [
                   {
@@ -15221,6 +15317,20 @@
                   "single_payment"
                 ],
                 "type": "string"
+              },
+              "scheduledInstallmentMode": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "rate_derived",
+                      "fixed_total"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "singlePayment": {
                 "anyOf": [
@@ -24844,6 +24954,13 @@
                     "const": "weekly",
                     "type": "string"
                   },
+                  "scheduledInstallmentMode": {
+                    "enum": [
+                      "rate_derived",
+                      "fixed_total"
+                    ],
+                    "type": "string"
+                  },
                   "startDate": {
                     "format": "date",
                     "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
@@ -24883,6 +25000,13 @@
                   },
                   "repaymentType": {
                     "const": "monthly",
+                    "type": "string"
+                  },
+                  "scheduledInstallmentMode": {
+                    "enum": [
+                      "rate_derived",
+                      "fixed_total"
+                    ],
                     "type": "string"
                   },
                   "startDate": {
@@ -25715,6 +25839,13 @@
                         "const": "weekly",
                         "type": "string"
                       },
+                      "scheduledInstallmentMode": {
+                        "enum": [
+                          "rate_derived",
+                          "fixed_total"
+                        ],
+                        "type": "string"
+                      },
                       "startDate": {
                         "format": "date",
                         "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
@@ -25760,6 +25891,13 @@
                       },
                       "repaymentType": {
                         "const": "monthly",
+                        "type": "string"
+                      },
+                      "scheduledInstallmentMode": {
+                        "enum": [
+                          "rate_derived",
+                          "fixed_total"
+                        ],
                         "type": "string"
                       },
                       "startDate": {

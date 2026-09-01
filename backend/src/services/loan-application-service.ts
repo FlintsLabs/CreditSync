@@ -6,6 +6,7 @@ import { createAuditLog } from "../lib/audit-log";
 import {
     calculatePublicLoanSchedule,
     normalizePublicLoanTerms,
+    resolvePublicLoanCalculationTerms,
     type PublicLoanCalculationParams,
     type RepaymentType,
     type PublicWeeklyFloatingInterestPreviewFields,
@@ -403,6 +404,7 @@ export async function presentLoan(row: LoanRow) {
         termMonths: row.termMonths,
         installmentAmount: row.installmentAmount === null ? null : serializeMoney(row.installmentAmount),
         totalInstallments: row.totalInstallments,
+        scheduledInstallmentMode: row.scheduledInstallmentMode,
         startDate: row.startDate,
         nextDueDate: row.nextDueDate,
         paymentStartDate: row.paymentStartDate,
@@ -452,7 +454,7 @@ function normalizeTerms(input: PublicLoanCalculationParams): { terms: ReturnType
         if (input.dailyEntry !== undefined && input.repaymentType !== "daily") throw new Error("Daily entry requires daily repayment");
         const dailyEntry = input.dailyEntry === undefined ? null : normalizeDailyLoanEntry({ principal: input.principal, ...input.dailyEntry });
         return {
-            terms: normalizePublicLoanTerms({
+            terms: resolvePublicLoanCalculationTerms({
                 ...input,
                 interestRate: dailyEntry ? "0.00" : input.interestRate,
                 termMonths: dailyEntry?.termMonths ?? input.termMonths,
@@ -808,6 +810,7 @@ export async function createLoanDraft(ctx: CommandContext, input: LoanDraftInput
             termMonths: terms.repaymentType === "floating" ? null : terms.termMonths,
             totalInstallments: terms.totalInstallments ?? null,
             installmentAmount: terms.installmentAmount ?? null,
+            scheduledInstallmentMode: terms.scheduledInstallmentMode ?? null,
             startDate: input.startDate,
             paymentStartDate: input.paymentStartDate ?? null,
             outstandingPrincipal: "0.00",
@@ -883,8 +886,17 @@ export async function updateLoanDraft(ctx: CommandContext, publicId: string, inp
         termMonths: input.termMonths ?? existing.termMonths ?? 1,
         totalInstallments: input.totalInstallments ?? (repaymentTypeChanged ? undefined : existing.totalInstallments ?? undefined),
         installmentAmount: input.installmentAmount === undefined
-            ? repaymentTypeChanged || existing.installmentAmount === null ? undefined : serializeMoney(existing.installmentAmount)
+            ? repaymentTypeChanged || existing.installmentAmount === null || existing.scheduledInstallmentMode === "rate_derived"
+                ? undefined
+                : serializeMoney(existing.installmentAmount)
             : input.installmentAmount,
+        // An amount supplied by a draft-update command is a new fixed-total
+        // instruction unless the caller explicitly selects another mode. Do
+        // not inherit a stored rate-derived mode across that semantic change.
+        scheduledInstallmentMode: input.scheduledInstallmentMode
+            ?? (input.installmentAmount === undefined && !repaymentTypeChanged
+                ? existing.scheduledInstallmentMode as "rate_derived" | "fixed_total" | null ?? undefined
+                : undefined),
         startDate: input.startDate ?? existing.startDate ?? new Date().toISOString().slice(0, 10),
         paymentStartDate: input.paymentStartDate ?? (repaymentTypeChanged ? undefined : existing.paymentStartDate ?? undefined),
         dailyEntry: input.dailyEntry ?? (repaymentTypeChanged ? undefined : existingDailyEntry(existing)),
@@ -908,6 +920,7 @@ export async function updateLoanDraft(ctx: CommandContext, publicId: string, inp
             termMonths: merged.repaymentType === "floating" ? null : merged.termMonths,
             totalInstallments: merged.totalInstallments ?? null,
             installmentAmount: merged.installmentAmount ?? null,
+            scheduledInstallmentMode: merged.scheduledInstallmentMode ?? null,
             dailyInterestMode: policy?.rateMode ?? null,
             dailyInterestRate: policy?.rate ?? null,
             firstDayTreatment: policy ? policy.advanceInterestPeriods === 1 ? "deduct" : "start_next_day" : null,
@@ -1085,6 +1098,9 @@ export async function activateLoanInTransaction(
                 paymentStartDate: current.paymentStartDate ?? undefined,
                 totalInstallments: current.totalInstallments ?? undefined,
                 installmentAmount: current.installmentAmount ?? undefined,
+                scheduledInstallmentMode: current.scheduledInstallmentMode === null
+                    ? undefined
+                    : current.scheduledInstallmentMode as "rate_derived" | "fixed_total",
                 singlePayment: singlePaymentFor(current) ?? undefined,
             });
         } catch (error) {

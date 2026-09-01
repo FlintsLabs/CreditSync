@@ -10,6 +10,7 @@ export interface LoanTermsForm {
     startDate: string;
     totalInstallments?: string;
     installmentAmount?: string;
+    scheduledInstallmentMode?: "rate_derived" | "fixed_total";
     dailyDurationUnit?: "days" | "months";
     dailyDurationValue?: string;
     dailyEntryMode?: "daily_payment" | "daily_interest";
@@ -45,6 +46,7 @@ export function buildLoanTermsInput(form: LoanTermsForm) {
         startDate: string;
         totalInstallments?: number;
         installmentAmount?: string;
+        scheduledInstallmentMode?: "rate_derived" | "fixed_total";
         dailyEntry?: {
             durationUnit: "days" | "months";
             durationValue: number;
@@ -106,10 +108,14 @@ export function buildLoanTermsInput(form: LoanTermsForm) {
     }
     const hasFixedCount = Boolean(form.totalInstallments?.trim());
     const hasFixedAmount = Boolean(form.installmentAmount?.trim());
-    if (hasFixedCount !== hasFixedAmount) throw new Error("Fixed installment count and amount must be entered together");
-    if (hasFixedCount && hasFixedAmount) {
+    const scheduled = form.repaymentType === "weekly" || form.repaymentType === "monthly";
+    if (scheduled && hasFixedAmount && !hasFixedCount) throw new Error("Installment amount requires total installments");
+    if (hasFixedCount) {
         terms.totalInstallments = positiveInteger(form.totalInstallments!, "totalInstallments");
+    }
+    if (hasFixedAmount) {
         terms.installmentAmount = normalizeMoney(form.installmentAmount!);
+        if (scheduled) terms.scheduledInstallmentMode = "fixed_total";
     }
     return terms;
 }

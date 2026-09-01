@@ -4,7 +4,7 @@ import { authPlugin } from "../middleware/auth";
 import { DomainError } from "../services/domain-error";
 import { executeLoanRestructure, getLoanRestructure, listLoanRestructures, previewLoanRestructure, reverseLoanRestructure, type PreviewLoanRestructureInput } from "../services/loan-restructure-service";
 import { loanCommandContext, loanDomainFailure, loanUnauthorized } from "./loan-http-support";
-import { floatingDailyInterest, floatingInterestPolicy, repaymentType } from "./loan-route-schemas";
+import { floatingDailyInterest, floatingInterestPolicy, repaymentType, scheduledInstallmentMode } from "./loan-route-schemas";
 
 const strict = { additionalProperties: false } as const;
 const preserveUnknown = { additionalProperties: true } as const;
@@ -24,7 +24,7 @@ const singlePayment = t.Object({
 }, preserveUnknown);
 const replacementTerms = t.Object({
     interestRate: t.String(), termMonths: t.Number(), repaymentType, startDate: t.String(),
-    totalInstallments: t.Optional(t.Number()), installmentAmount: t.Optional(t.String()),
+    totalInstallments: t.Optional(t.Number()), installmentAmount: t.Optional(t.String()), scheduledInstallmentMode: t.Optional(scheduledInstallmentMode),
     floatingInterestPolicy: t.Optional(floatingInterestPolicy), floatingDailyInterest: t.Optional(floatingDailyInterest),
     dailyEntry: t.Optional(dailyEntry), singlePayment: t.Optional(singlePayment),
 }, preserveUnknown);
@@ -42,7 +42,7 @@ function assertKnownKeys(value: Record<string, unknown>, allowed: readonly strin
 function assertClosedReplacementInput(body: Record<string, unknown>) {
     assertKnownKeys(body, ["settlementDate", "replacementTerms", "waivers", "externalSettlementCredit", "additionalPrincipal", "reason"], "body");
     const terms = body.replacementTerms as Record<string, unknown>;
-    assertKnownKeys(terms, ["interestRate", "termMonths", "repaymentType", "startDate", "totalInstallments", "installmentAmount", "floatingInterestPolicy", "floatingDailyInterest", "dailyEntry", "singlePayment"], "body.replacementTerms");
+    assertKnownKeys(terms, ["interestRate", "termMonths", "repaymentType", "startDate", "totalInstallments", "installmentAmount", "scheduledInstallmentMode", "floatingInterestPolicy", "floatingDailyInterest", "dailyEntry", "singlePayment"], "body.replacementTerms");
     const policy = terms.floatingInterestPolicy as Record<string, unknown> | undefined;
     if (policy) assertKnownKeys(policy, ["periodUnit", "periodLength", "rateMode", "rate", "advanceInterestPeriods", "advanceInterestRefundPolicy"], "body.replacementTerms.floatingInterestPolicy");
     const floating = terms.floatingDailyInterest as Record<string, unknown> | undefined;

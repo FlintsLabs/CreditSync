@@ -814,6 +814,7 @@ function authoritativeReplacementSchedule(loan: Loan) {
             principal: loan.principalAmount, interestRate: loan.interestRate, termMonths: loan.termMonths,
             repaymentType: loan.repaymentType as RepaymentType, startDate: loan.startDate,
             totalInstallments: loan.totalInstallments ?? undefined, installmentAmount: loan.installmentAmount ?? undefined,
+            scheduledInstallmentMode: loan.scheduledInstallmentMode === null ? undefined : loan.scheduledInstallmentMode as "rate_derived" | "fixed_total",
         });
     } catch (error) {
         throw new DomainError("REPLACEMENT_TERMS_INVALID", error instanceof Error ? error.message : "Replacement terms cannot be activated", 409, { reviewRequired: true, blockerPublicIds: [loan.publicId] });

@@ -10,6 +10,7 @@
 - Exact scheduled-payment restores now update the linked installment aggregate from the immutable restored components.
 - Fixed fixed-installment schedule rounding so small interest remainders cannot create a negative final component.
 - Added deferral-reason visibility for both sides of a deferred schedule entry, plus responsive loan-list layout refinements.
+- Fixed weekly/monthly count-only loan terms to derive their nominal installment from the existing annual-rate calculation instead of rejecting the request, and persist their rate-derived versus fixed-total mode so activation preserves exact rounding.
 
 ## v0.3.66 - 2026-08-31
 

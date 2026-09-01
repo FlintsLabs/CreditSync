@@ -11,6 +11,7 @@ export const repaymentType = t.Union([
     t.Literal("monthly"),
     t.Literal("floating"),
 ]);
+export const scheduledInstallmentMode = t.Union([t.Literal("rate_derived"), t.Literal("fixed_total")]);
 
 export const floatingInterestPolicy = t.Object({
     periodUnit: t.Union([t.Literal("day"), t.Literal("week")]),
@@ -66,6 +67,7 @@ export const loanTermsBody = t.Object({
     paymentStartDate: t.Optional(t.String()),
     totalInstallments: t.Optional(t.Number()),
     installmentAmount: t.Optional(publicMoney),
+    scheduledInstallmentMode: t.Optional(scheduledInstallmentMode),
     floatingInterestPolicy: t.Optional(floatingInterestPolicy),
     floatingDailyInterest: t.Optional(floatingDailyInterest),
     dailyEntry: t.Optional(dailyEntry),

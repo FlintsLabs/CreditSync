@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, setSystemTime, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import Decimal from "decimal.js";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
@@ -162,7 +162,11 @@ async function seedDailyLoan(options: {
 }
 
 describe("daily-loan renewal service", () => {
-    if (integrationEnabled) beforeEach(resetRenewalTables);
+    if (integrationEnabled) beforeEach(async () => {
+        setSystemTime(new Date("2026-08-31T12:00:00.000Z"));
+        await resetRenewalTables();
+    });
+    if (integrationEnabled) afterEach(() => setSystemTime());
 
     test("distributes uneven funding in integer cents with an exact deterministic sum", () => {
         const allocation = allocateFundingByLargestRemainder([
@@ -339,9 +343,9 @@ describe("daily-loan renewal service", () => {
             settlementPolicy: "full_contract_interest",
             contractualInterest: "400.00",
             totalPaid: "1000.00",
-            receivedPrincipal: "833.30",
-            receivedInterest: "166.70",
-            remainingContractInterest: "233.30",
+            receivedPrincipal: "833.40",
+            receivedInterest: "166.60",
+            remainingContractInterest: "233.40",
             recoveredBeforeAdjustments: "600.00",
             cashDirection: "payout",
             cashAmount: "600.00",
@@ -423,8 +427,8 @@ describe("daily-loan renewal service", () => {
         const renewal = await db.query.loanRenewals.findFirst({ where: eq(loanRenewals.publicId, preview.publicId) });
         expect((await db.select().from(loanAdjustments).where(eq(loanAdjustments.renewalId, renewal!.id)).orderBy(loanAdjustments.id))
             .map((row) => ({ type: row.adjustmentType, amount: row.amount }))).toEqual([
-            { type: "principal_transfer", amount: "1166.67" },
-            { type: "contract_interest_settlement", amount: "233.33" },
+            { type: "principal_transfer", amount: "1166.58" },
+            { type: "contract_interest_settlement", amount: "233.42" },
             { type: "cash_payout", amount: "600.00" },
         ]);
     });

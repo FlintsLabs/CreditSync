@@ -1,5 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+// @ts-expect-error Bun runs this source-level test, while the frontend build excludes Bun's test types.
+import { setSystemTime } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../../../lib/api";
 import appI18n from "../../../lib/i18n";
 import { LoanRenewalPanel } from "./LoanRenewalPanel";
@@ -17,7 +19,8 @@ const composition = {
 } as const;
 
 describe("LoanRenewalPanel manual renewal", () => {
-    beforeEach(async () => { vi.clearAllMocks(); await appI18n.changeLanguage("en"); (api.get as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => ({ data: url.endsWith("/summary") ? { status: "preview", watermark: "preview_not_executed", renewalPublicId: "01a01eaf-fdec-79a1-9e0c-fa66a5efa4cc", borrower: { displayName: "Customer" }, oldContract: { publicId: "019ff2b2-15e2-7df7-a594-eb836ff388f0", startDate: "2026-08-01", dueDate: "2026-08-24" }, replacement: { publicId: null, principal: "2000.00", installmentAmount: "100.00", totalInstallments: 24 }, composition, generatedAt: "2026-08-10T10:00:00.000Z" } : [] })); });
+    beforeEach(async () => { setSystemTime(new Date("2026-08-24T12:00:00.000Z")); vi.clearAllMocks(); await appI18n.changeLanguage("en"); (api.get as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => ({ data: url.endsWith("/summary") ? { status: "preview", watermark: "preview_not_executed", renewalPublicId: "01a01eaf-fdec-79a1-9e0c-fa66a5efa4cc", borrower: { displayName: "Customer" }, oldContract: { publicId: "019ff2b2-15e2-7df7-a594-eb836ff388f0", startDate: "2026-08-01", dueDate: "2026-08-24" }, replacement: { publicId: null, principal: "2000.00", installmentAmount: "100.00", totalInstallments: 24 }, composition, generatedAt: "2026-08-10T10:00:00.000Z" } : [] })); });
+    afterEach(() => { setSystemTime(); });
 
     test("sends explicit policy and manual lines, renders backend values, and edit discards approval", async () => {
         (api.post as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => url === "/loan-renewals/preview"

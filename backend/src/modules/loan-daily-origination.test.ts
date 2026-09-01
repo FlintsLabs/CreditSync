@@ -20,6 +20,7 @@ const migration0042 = `${backendRoot}drizzle/0042_atomic_loan_replacement.sql`;
 const migration0044 = `${backendRoot}drizzle/0044_atomic_loan_replacement_hardening.sql`;
 const migration0045 = `${backendRoot}drizzle/0045_atomic_loan_replacement_proposal.sql`;
 const migration0046 = `${backendRoot}drizzle/0046_payment_start_date.sql`;
+const migration0059 = `${backendRoot}drizzle/0059_scheduled_installment_mode.sql`;
 const tenantId = "tenant-task-3-regression";
 const productionLoanColumns = [
     "interest_period_unit", "interest_period_length", "advance_interest_periods", "advance_interest_refund_policy",
@@ -196,7 +197,7 @@ integrationTest("repairs the actual authenticated loan detail read on the same h
         // Current authenticated detail also inspects commission participants,
         // replacement lineage, and payment_start_date; these objects are
         // independent from the 0038 drift.
-        for (const compatibilityMigration of [migration0039, migration0042, migration0044, migration0045, migration0046]) {
+        for (const compatibilityMigration of [migration0039, migration0042, migration0044, migration0045, migration0046, migration0059]) {
             await applySqlFile(client, compatibilityMigration);
         }
         await createCapturedProductionDrift(client);

@@ -244,17 +244,20 @@ export function createDefaultMcpToolHandlers(
         ctx,
         asString(input, "paymentIntakePublicId"),
     ),
-    "payment.reverse-with-accrual.execute": (ctx, input) => executeReverseWithInterestAccrual(
-        { ...ctx, idempotencyKey: asString(input, "idempotencyKey") },
-        asString(input, "paymentIntakePublicId"),
-        {
-            reason: asString(input, "reason"),
-            previewHash: asString(input, "previewHash"),
-            confirmed: true,
-            interestAccrualMode: "ensure_due_through_payment_date",
-            idempotencyKey: asString(input, "idempotencyKey"),
-        },
-    ),
+    "payment.reverse-with-accrual.execute": (ctx, input) => {
+        const idempotencyKey = ctx.idempotencyKey ?? asString(input, "idempotencyKey");
+        return executeReverseWithInterestAccrual(
+            { ...ctx, idempotencyKey },
+            asString(input, "paymentIntakePublicId"),
+            {
+                reason: asString(input, "reason"),
+                previewHash: asString(input, "previewHash"),
+                confirmed: true,
+                interestAccrualMode: "ensure_due_through_payment_date",
+                idempotencyKey,
+            },
+        );
+    },
     "payment.batch.create": (ctx, input) => createPaymentBatch(ctx, { idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"), borrowerPublicId: input.borrowerPublicId as string | null | undefined, notes: input.notes as string | null | undefined }),
     "payment.batch.capture": (ctx, input) => capturePaymentBatch(ctx, { idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"), borrowerPublicId: input.borrowerPublicId as string | null | undefined, notes: input.notes as string | null | undefined, items: input.items as any[] }),
     "payment.batch.evidence.prepare-many": (ctx, input) => preparePaymentBatchEvidenceMany(ctx, asString(input, "batchPublicId"), input.items as any[], dependencies.evidenceGateway),
@@ -288,7 +291,7 @@ export function createDefaultMcpToolHandlers(
         reason: asString(input, "reason"),
     }),
     "payment.restore.create": (ctx, input) => {
-        const idempotencyKey = ctx.idempotencyKey;
+        const idempotencyKey = ctx.idempotencyKey ?? asString(input, "idempotencyKey");
         if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Payment restore draft requires an idempotency key", 400);
         return createPaymentRestoreDraft(ctx, {
             paymentIntakePublicId: asString(input, "paymentIntakePublicId"),
@@ -297,7 +300,7 @@ export function createDefaultMcpToolHandlers(
         });
     },
     "payment.restore.execute": (ctx, input) => {
-        const idempotencyKey = ctx.idempotencyKey;
+        const idempotencyKey = ctx.idempotencyKey ?? asString(input, "idempotencyKey");
         if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Payment restore requires an idempotency key", 400);
         return executePaymentReconciliation(ctx, asString(input, "restorePreviewPublicId"), {
             previewHash: asString(input, "previewHash"),
@@ -308,7 +311,7 @@ export function createDefaultMcpToolHandlers(
         });
     },
     "payment.restore.schedule-backfill": (ctx, input) => {
-        const idempotencyKey = ctx.idempotencyKey;
+        const idempotencyKey = ctx.idempotencyKey ?? asString(input, "idempotencyKey");
         if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Payment restore schedule backfill requires an idempotency key", 400);
         return backfillPostedRestoreSchedule(ctx, {
             paymentIntakePublicId: asString(input, "paymentIntakePublicId"),
@@ -568,8 +571,9 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "payment.reverse-with-accrual.execute": { entityType: "payment_intake", action: "reversed_with_interest_accruals_materialized" },
     "payment.batch.execute": { entityType: "payment_batch", action: "posted" },
     "payment.reconcile.execute": { entityType: "payment_reconciliation", action: "executed" },
-    "payment.restore.execute": { entityType: "payment_reconciliation", action: "restored" },
+    "payment.restore.execute": { entityType: "payment_reconciliation", action: "executed" },
     "payment.restore.create": { entityType: "payment_intake", action: "restore_draft_created" },
+    "payment.restore.schedule-backfill": { entityType: "loan_schedule", action: "restore_schedule_backfilled" },
     "loan.activate": { entityType: "loan", action: "activated" },
     "loan.payment-start-date.update": { entityType: "loan", action: "payment_start_date_changed" },
     "loan.interest-rate.execute": { entityType: "loan_interest_rate_timeline", action: "interest_rate_timeline_changed" },
@@ -638,7 +642,11 @@ export function createDefaultMcpHttpPlugin(
         },
         findAuditPublicIds: async ({ ctx, toolName, result }) => {
             const target = auditTarget[toolName];
-            const entityId = resultPublicId(result);
+            const entityId = result && typeof result === "object" && toolName === "payment.restore.create"
+                ? (result as Record<string, unknown>).restoreDraftPublicId as string | undefined
+                : result && typeof result === "object" && toolName === "payment.restore.schedule-backfill"
+                    ? (result as Record<string, unknown>).schedulePublicId as string | undefined
+                    : resultPublicId(result);
             if (!target || !entityId) return [];
             if (result && typeof result === "object") {
                 const record = result as Record<string, unknown>;
