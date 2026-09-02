@@ -1,7 +1,7 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, lte, sql } from "drizzle-orm";
 import type Decimal from "decimal.js";
 import { db } from "../db";
-import { loanInterestAccruals, loanSchedules, loans } from "../db/schema";
+import { floatingTransactionAllocations, loanInterestAccruals, loanSchedules, loans } from "../db/schema";
 import { FinancialDecimal } from "../lib/financial-decimal";
 import { computeLoanPaymentHealth, type LoanPaymentHealth } from "../lib/loan-payment-health";
 import type { CommandContext } from "./command-context";
@@ -97,6 +97,36 @@ export async function getLoanPaymentHealth(
             existing.paidAmount = existing.paidAmount.plus(row.paidAmount);
             if (row.status !== "paid") {
                 existing.status = row.status === "accruing" && existing.status === "accruing" ? "accruing" : "due";
+            }
+        }
+        // A contract that deducted the first weekly period collects each later
+        // anchored period in advance.  Surface that full contractual amount on
+        // its start date, using the same allocation provenance as posting.
+        if (loan.advanceInterestPeriods === 1) {
+            const advanceRow = balances.rows.find((row) => row.periodStartDate !== null
+                && row.periodEndDate !== null
+                && row.periodStartDate !== loan.interestPeriodAnchorDate
+                && row.periodStartDate <= businessDate
+                && businessDate < row.periodEndDate);
+            if (advanceRow?.periodStartDate && advanceRow.periodEndDate && advanceRow.contractualInterestAmount) {
+                const allocated = await executor.select({ total: sql<string>`coalesce(sum(${floatingTransactionAllocations.amount}), 0)` })
+                    .from(floatingTransactionAllocations).where(and(
+                        eq(floatingTransactionAllocations.tenantId, loan.tenantId),
+                        eq(floatingTransactionAllocations.loanId, loan.id),
+                        eq(floatingTransactionAllocations.component, "interest"),
+                        eq(floatingTransactionAllocations.dueDate, advanceRow.periodEndDate),
+                        lte(floatingTransactionAllocations.effectiveDate, businessDate),
+                    ));
+                const paidAmount = new FinancialDecimal(allocated[0]?.total ?? "0.00");
+                dueGroups.set(advanceRow.periodEndDate, {
+                    accrualDate: advanceRow.periodStartDate,
+                    // Advance collection is due when the anchored period opens;
+                    // allocation provenance still retains periodEndDate.
+                    dueDate: advanceRow.periodStartDate,
+                    interestAmount: new FinancialDecimal(advanceRow.contractualInterestAmount),
+                    paidAmount,
+                    status: paidAmount.gte(advanceRow.contractualInterestAmount) ? "paid" : "due",
+                });
             }
         }
         return computeLoanPaymentHealth({
