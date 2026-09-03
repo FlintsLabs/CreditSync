@@ -613,6 +613,14 @@
             "defaulted": "ผิดนัด"
         },
         "paymentHealth": {
+            "overdueObligations": {
+                "day_one": "ค้างชำระ {{count}} วัน",
+                "day_other": "ค้างชำระ {{count}} วัน",
+                "week_one": "ค้างชำระ {{count}} สัปดาห์",
+                "week_other": "ค้างชำระ {{count}} สัปดาห์",
+                "installment_one": "ค้างชำระ {{count}} งวด",
+                "installment_other": "ค้างชำระ {{count}} งวด"
+            },
             "overdueInstallments_one": "ค้างชำระ {{count}} งวด",
             "overdueInstallments_other": "ค้างชำระ {{count}} งวด",
             "overdueDays_one": "ค้างชำระ {{count}} วัน",

@@ -78,7 +78,7 @@ describe("loan payment-health service", () => {
 
         expect(await getLoanPaymentHealth(db, loan, {
             asOf: new Date("2026-08-11T12:00:00+07:00"), context: context(actor),
-        })).toEqual({
+        })).toMatchObject({
             status: "overdue", dueTodayAmount: "50.10", overdueAmount: "125.25",
             overdueItemCount: 1, maxOverdueDays: 1,
         });
@@ -129,6 +129,8 @@ describe("loan payment-health service", () => {
             dueTodayAmount: "0.20",
             overdueAmount: "12345678901234567890123456789.15",
             overdueItemCount: 1,
+            overdueObligationUnit: "day",
+            overdueObligationCount: 1,
             maxOverdueDays: 1,
         } as const;
         expect(await getLoanListLegacyPaymentHealth(db, loan!, { asOf: new Date() })).toEqual(expectedHealth);
@@ -189,7 +191,7 @@ describe("loan payment-health service", () => {
         const first = await getLoanPaymentHealth(db, loan, input);
         const second = await getLoanPaymentHealth(db, loan, input);
 
-        expect(first).toEqual({
+        expect(first).toMatchObject({
             status: "overdue", dueTodayAmount: "15.00", overdueAmount: "7.50",
             overdueItemCount: 1, maxOverdueDays: 1,
         });
@@ -236,7 +238,8 @@ describe("loan payment-health service", () => {
             asOf: new Date("2026-08-18T12:00:00+07:00"), actorUserId: actor.id,
         })).toMatchObject({
             status: "overdue", dueTodayAmount: "0.00", overdueAmount: "600.00",
-            accruingInterestAmount: "85.71", overdueItemCount: 1, maxOverdueDays: 1,
+            accruingInterestAmount: "85.71", overdueItemCount: 1,
+            overdueObligationUnit: "week", overdueObligationCount: 1, maxOverdueDays: 1,
         });
         expect(await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id))).toHaveLength(0);
     });
@@ -336,19 +339,19 @@ describe("loan payment-health service", () => {
 
         expect(await getLoanPaymentHealth(db, loan, {
             asOf: new Date("2026-08-18T12:00:00+07:00"), context: context(actor),
-        })).toEqual({
+        })).toMatchObject({
             status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00",
             overdueItemCount: 0, maxOverdueDays: 0, accruingInterestAmount: "514.29",
         });
         expect(await getLoanPaymentHealth(db, loan, {
             asOf: new Date("2026-08-20T12:00:00+07:00"), context: context(actor),
-        })).toEqual({
+        })).toMatchObject({
             status: "due_today", dueTodayAmount: "600.00", overdueAmount: "0.00",
             overdueItemCount: 0, maxOverdueDays: 0, accruingInterestAmount: "85.71",
         });
         expect(await getLoanPaymentHealth(db, loan, {
             asOf: new Date("2026-08-21T12:00:00+07:00"), context: context(actor),
-        })).toEqual({
+        })).toMatchObject({
             status: "overdue", dueTodayAmount: "0.00", overdueAmount: "600.00",
             overdueItemCount: 1, maxOverdueDays: 1, accruingInterestAmount: "171.43",
         });
@@ -366,7 +369,7 @@ describe("loan payment-health service", () => {
 
         expect(await getLoanPaymentHealth(db, loan, {
             asOf: new Date("2026-08-11T12:00:00+07:00"), context: context(actor),
-        })).toEqual({
+        })).toMatchObject({
             status: "current", dueTodayAmount: "0.00", overdueAmount: "0.00",
             overdueItemCount: 0, maxOverdueDays: 0,
         });

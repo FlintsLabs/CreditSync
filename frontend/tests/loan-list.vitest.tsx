@@ -21,6 +21,39 @@ describe("LoanList", () => {
         await i18n.changeLanguage("en");
     });
 
+    test("renders backend-provided daily and weekly overdue obligations without changing the amount", async () => {
+        vi.mocked(api.get).mockResolvedValue({ data: [
+            {
+                id: "daily-overdue", publicId: "daily-overdue", borrowerName: "Daily Overdue", principal: "1000.00", outstandingPrincipal: "1000.00", interestReceived: "0.00", paidToDate: "0.00", status: "active", repaymentType: "floating", installmentAmount: null, totalInstallments: null, startDate: "2026-08-01", createdAt: "2026-08-10T07:30:00.000Z",
+                paymentHealth: { status: "overdue", dueTodayAmount: "0.00", overdueAmount: "45.00", overdueItemCount: 3, overdueObligationUnit: "day", overdueObligationCount: 3, maxOverdueDays: 3 },
+            },
+            {
+                id: "weekly-overdue", publicId: "weekly-overdue", borrowerName: "Weekly Overdue", principal: "5000.00", outstandingPrincipal: "5000.00", interestReceived: "0.00", paidToDate: "0.00", status: "active", repaymentType: "floating", installmentAmount: null, totalInstallments: null, startDate: "2026-08-01", createdAt: "2026-08-10T07:30:00.000Z",
+                paymentHealth: { status: "overdue", dueTodayAmount: "0.00", overdueAmount: "1800.00", overdueItemCount: 3, overdueObligationUnit: "week", overdueObligationCount: 3, maxOverdueDays: 3 },
+            },
+        ] });
+
+        render(<MemoryRouter><LoanList /></MemoryRouter>);
+
+        expect(await screen.findByText("Overdue 3 days")).toBeInTheDocument();
+        expect(screen.getByText("Overdue 3 weeks")).toBeInTheDocument();
+        expect(screen.getAllByText(/THB\s*1,800\.00/)).toHaveLength(2);
+        expect(screen.getByText(/THB\s*1,800\.00 · up to 3 days overdue/)).toBeInTheDocument();
+    });
+
+    test("localizes weekly overdue obligations in Thai", async () => {
+        await i18n.changeLanguage("th");
+        vi.mocked(api.get).mockResolvedValue({ data: [{
+            id: "weekly-th", publicId: "weekly-th", borrowerName: "ลูกค้ารายสัปดาห์", principal: "5000.00", outstandingPrincipal: "5000.00", interestReceived: "0.00", paidToDate: "0.00", status: "active", repaymentType: "floating", installmentAmount: null, totalInstallments: null, startDate: "2026-08-01", createdAt: "2026-08-10T07:30:00.000Z",
+            paymentHealth: { status: "overdue", dueTodayAmount: "0.00", overdueAmount: "1800.00", overdueItemCount: 3, overdueObligationUnit: "week", overdueObligationCount: 3, maxOverdueDays: 3 },
+        }] });
+
+        render(<MemoryRouter><LoanList /></MemoryRouter>);
+
+        expect(await screen.findByText("ค้างชำระ 3 สัปดาห์")).toBeInTheDocument();
+        expect(screen.getByText("฿1,800.00 · ค้างสูงสุด 3 วัน")).toBeInTheDocument();
+    });
+
     test("shows the contract count label for borrowers with a single contract", async () => {
         vi.mocked(api.get).mockResolvedValue({ data: [{
             id: "single-contract",

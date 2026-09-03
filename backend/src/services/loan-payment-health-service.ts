@@ -7,6 +7,13 @@ import { computeLoanPaymentHealth, type LoanPaymentHealth } from "../lib/loan-pa
 import type { CommandContext } from "./command-context";
 import { floatingInterestBalances } from "./floating-interest-service";
 
+function overdueObligationUnitForLoan(loan: typeof loans.$inferSelect) {
+    if (loan.repaymentType !== "floating") return "installment" as const;
+    return loan.interestPeriodUnit === "week" || loan.floatingAccrualCycle === "weekly"
+        ? "week" as const
+        : "day" as const;
+}
+
 export const loanListLegacyAccrualProjection = {
     tenantId: loanInterestAccruals.tenantId,
     loanId: loanInterestAccruals.loanId,
@@ -43,6 +50,7 @@ export async function getLoanListLegacyPaymentHealth(
         lifecycleStatus: loan.status ?? "draft",
         repaymentType: loan.repaymentType,
         businessDate: bangkokBusinessDate(input.asOf),
+        overdueObligationUnit: overdueObligationUnitForLoan(loan),
         gracePeriodDays: loan.gracePeriodDays,
         lateFeeMode: loan.lateFeeMode,
         lateFeeAmount: loan.lateFeeAmount,
@@ -133,6 +141,7 @@ export async function getLoanPaymentHealth(
             lifecycleStatus: loan.status ?? "draft",
             repaymentType: loan.repaymentType,
             businessDate,
+            overdueObligationUnit: overdueObligationUnitForLoan(loan),
             gracePeriodDays: loan.gracePeriodDays,
             lateFeeMode: loan.lateFeeMode,
             lateFeeAmount: loan.lateFeeAmount,
@@ -156,6 +165,7 @@ export async function getLoanPaymentHealth(
         lifecycleStatus: loan.status ?? "draft",
         repaymentType: loan.repaymentType,
         businessDate,
+        overdueObligationUnit: overdueObligationUnitForLoan(loan),
         gracePeriodDays: loan.gracePeriodDays,
         lateFeeMode: loan.lateFeeMode,
         lateFeeAmount: loan.lateFeeAmount,

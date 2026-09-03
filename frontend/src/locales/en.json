@@ -613,6 +613,14 @@
             "defaulted": "Defaulted"
         },
         "paymentHealth": {
+            "overdueObligations": {
+                "day_one": "Overdue {{count}} day",
+                "day_other": "Overdue {{count}} days",
+                "week_one": "Overdue {{count}} week",
+                "week_other": "Overdue {{count}} weeks",
+                "installment_one": "Overdue {{count}} installment",
+                "installment_other": "Overdue {{count}} installments"
+            },
             "overdueInstallments_one": "Overdue {{count}} installment",
             "overdueInstallments_other": "Overdue {{count}} installments",
             "overdueDays_one": "Overdue {{count}} day",
