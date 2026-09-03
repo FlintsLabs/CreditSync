@@ -14,8 +14,8 @@ describe("loan list projection", () => {
         expect(query).toContain('"daily_interest_rate"');
         expect(query).toContain('"first_day_treatment"');
         expect(query).toContain('"interest_start_date"');
-        expect(query).not.toContain('"floating_accrual_cycle"');
-        expect(query).not.toContain('"interest_period_unit"');
+        expect(query).toContain('"floating_accrual_cycle"');
+        expect(query).toContain('"interest_period_unit"');
         expect(query).not.toContain('"interest_period_length"');
         expect(query).not.toContain('"advance_interest_periods"');
         expect(query).not.toContain('"advance_interest_refund_policy"');

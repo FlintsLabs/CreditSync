@@ -250,13 +250,15 @@ describe("loan settlement REST adapter", () => {
             expect.objectContaining({
                 publicId: seeded.loan.publicId,
                 status: "paid",
-                paymentHealth: {
+                paymentHealth: expect.objectContaining({
                     status: "settled",
                     dueTodayAmount: "0.00",
                     overdueAmount: "0.00",
                     overdueItemCount: 0,
+                    overdueObligationUnit: "week",
+                    overdueObligationCount: 0,
                     maxOverdueDays: 0,
-                },
+                }),
             }),
         ]);
         expect(await db.select().from(loanInterestAccruals)
