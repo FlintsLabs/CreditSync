@@ -33,6 +33,7 @@ export const MCP_TOOL_NAMES = [
     "payment.batch.preview",
     "payment.batch.execute",
     "payment.reconcile.preview",
+    "payment.reconcile.preflight",
     "payment.reconcile.execute",
     "payment.restore.create",
     "payment.restore.preview",
@@ -401,6 +402,16 @@ const reconciliationExecuteOutput = z.object({
     correctedTransactionPublicIds: z.array(uuid).optional(),
     auditPublicIds: z.array(uuid),
     correlationId: uuid,
+}).strict();
+const paymentExecutionPreflightOutput = z.object({
+    status: z.enum(["ready_to_execute", "review_required", "blocked"]),
+    wouldWrite: z.literal(false), sourcePaymentPublicId: uuid, affectedLoanPublicIds: z.array(uuid), exactAmount: money,
+    proposedComponents: z.object({ principal: money, interest: money, fee: money, penalty: money }).strict(),
+    allocationPlan: z.array(z.object({ loanPublicId: uuid, component: z.enum(["interest", "principal", "fee", "penalty"]), amount: money, accrualPublicIds: z.array(uuid).optional() }).strict()),
+    checks: z.array(z.object({ name: z.string(), status: z.enum(["pass", "fail", "warning"]), code: z.string().optional() }).strict()),
+    previewHash: z.string().regex(/^v1:[0-9a-f]{64}$/i), expectedBalanceVersion: z.string().regex(/^v1:[0-9a-f]{64}$/i), reviewRequired: z.boolean(),
+    previewPersistence: z.object({ proposalPublicId: uuid, expiresAt: isoDateTime }).strict().optional(),
+    warning: z.object({ code: z.string(), message: z.string() }).strict().optional(),
 }).strict();
 const paymentRestoreDraftOutput = z.object({
     sourcePaymentPublicId: uuid,
@@ -1122,6 +1133,7 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "payment.batch.preview": batchPreviewOutput,
     "payment.batch.execute": batchExecutionOutput,
     "payment.reconcile.preview": reconciliationPreviewOutput,
+    "payment.reconcile.preflight": paymentExecutionPreflightOutput,
     "payment.reconcile.execute": reconciliationExecuteOutput,
     "payment.restore.create": paymentRestoreDraftOutput,
     "payment.restore.preview": restorePreviewOutput,
@@ -1396,6 +1408,9 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
         paymentIntakePublicId: uuid,
         allocations: z.array(reconciliationAllocation).min(1).max(1_000),
         reason: shortText,
+    }).strict(),
+    "payment.reconcile.preflight": z.object({
+        paymentIntakePublicId: uuid, allocations: z.array(reconciliationAllocation).min(1).max(1_000).optional(), proposalPublicId: uuid.optional(), reason: shortText,
     }).strict(),
     "payment.restore.create": z.object({ paymentIntakePublicId: uuid, reason: shortText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
     "payment.restore.preview": z.object({ paymentIntakePublicId: uuid, reason: shortText }).strict(),
@@ -1815,6 +1830,7 @@ const readOnlyTools = new Set<McpToolName>([
     "funding-allocation.preview",
     "funding-allocation.list",
     "payment.reverse-with-accrual.preview",
+    "payment.reconcile.preflight",
 ]);
 const destructiveTools = new Set<McpToolName>([
     "borrower.update",
@@ -1980,6 +1996,7 @@ const toolDescriptions: Record<McpToolName, string> = {
     "payment.batch.preview": "Preview the complete atomic payment batch allocation.",
     "payment.batch.execute": "Execute one explicitly confirmed atomic payment batch.",
     "payment.reconcile.preview": "Preview an interest-only posting for a reviewed historical needs_review payment intake without reducing principal.",
+    "payment.reconcile.preflight": "Run a no-write execution feasibility check for an explicit payment reconciliation before confirmation.",
     "payment.reconcile.execute": "Execute a confirmed, idempotent payment reconciliation with append-only provenance.",
     "payment.restore.preview": "Preview exact restoration of a fully reversed payment using its original principal and interest components.",
     "payment.restore.create": "Create one linked restore draft so new payment-slip evidence can be finalized before an exact restore preview.",

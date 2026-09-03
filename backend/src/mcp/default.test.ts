@@ -1397,6 +1397,12 @@ describe("default MCP adapter integration", () => {
             paymentIntakePublicId: intakePublicId,
             allocations: [{ borrowerPublicId, loanPublicId, amount: "40.00" }],
         })).data;
+        const preflight = (await call("payment.reconcile.preflight", {
+            paymentIntakePublicId: intakePublicId,
+            proposalPublicId: proposal.publicId,
+            reason: "MCP all-tools ordinary payment preflight",
+        })).data;
+        expect(preflight).toMatchObject({ status: "ready_to_execute", wouldWrite: false, reviewRequired: false });
         const postedPayment = (await call("payment.post", {
             paymentIntakePublicId: intakePublicId,
             proposalPublicId: proposal.publicId,

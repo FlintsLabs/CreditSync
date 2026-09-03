@@ -142,7 +142,7 @@ import {
     reversePaymentAttribution,
     type CreatePaymentAttributionInput,
 } from "../services/payment-attribution-service";
-import { backfillPostedRestoreSchedule, createPaymentRestoreDraft, executePaymentReconciliation, previewPaymentReconciliation, previewPaymentRestore, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
+import { backfillPostedRestoreSchedule, createPaymentRestoreDraft, executePaymentReconciliation, preflightPaymentExecution, previewPaymentReconciliation, previewPaymentRestore, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
 import { addPaymentBatchItem, capturePaymentBatch, createPaymentBatch, executePaymentBatch, finalizePaymentBatchEvidenceMany, getPaymentBatch, preparePaymentBatchEvidenceMany, previewPaymentBatch } from "../services/payment-batch-service";
 import { executeUnfundedLoanCancellation, previewUnfundedLoanCancellation } from "../services/loan-cancellation-service";
 
@@ -272,6 +272,12 @@ export function createDefaultMcpToolHandlers(
         paymentIntakePublicId: asString(input, "paymentIntakePublicId"),
         allocations: input.allocations as ReconciliationAllocation[],
         reason: asString(input, "reason"),
+    }),
+    "payment.reconcile.preflight": (ctx, input) => preflightPaymentExecution(ctx, {
+        paymentIntakePublicId: asString(input, "paymentIntakePublicId"),
+        allocations: input.allocations as ReconciliationAllocation[] | undefined,
+        reason: asString(input, "reason"),
+        proposalPublicId: input.proposalPublicId as string | undefined,
     }),
     "payment.reconcile.execute": (ctx, input) => {
         const idempotencyKey = ctx.idempotencyKey;

@@ -42,6 +42,15 @@ function conciseSchemaErrors(errors: null | undefined | Array<{ instancePath?: s
 }
 
 describe("CreditSync executable orchestration evals", () => {
+    test("requires no-write preflight before normal payment posting and blocks review-required preflight", async () => {
+        const ready = await runEvalScenario("payment-slip");
+        expect(ready.calls.map((call) => call.name)).toContainEqual("payment.reconcile.preflight");
+        expect(ready.calls.findIndex((call) => call.name === "payment.reconcile.preflight")).toBeLessThan(ready.calls.findIndex((call) => call.name === "payment.post"));
+        expect(await runEvalScenario("payment-preflight-review-stops")).toMatchObject({ outcome: "stopped", stopReason: "payment-preflight-review-required" });
+        const blocked = await runEvalScenario("payment-preflight-review-stops");
+        expect(blocked.calls.some((call) => ["payment.post", "payment.reconcile.execute"].includes(call.name))).toBe(false);
+    });
+
     test("intermediated disbursement posts only an exact assigned three-slip group after confirmation", async () => {
         const result = await runEvalScenario("intermediated-disbursement-full-lifecycle");
         expect(result).toMatchObject({ outcome: "completed" });
@@ -426,6 +435,7 @@ describe("CreditSync executable orchestration evals", () => {
             "evidence.prepare",
             "evidence.finalize",
             "payment.preview",
+            "payment.reconcile.preflight",
             "payment.post",
         ]);
         const bytes = Buffer.from("payment-slip-fixture-bytes", "utf8");

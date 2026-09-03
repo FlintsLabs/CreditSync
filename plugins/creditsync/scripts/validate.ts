@@ -125,6 +125,7 @@ export async function validatePlugin() {
             "payment.intermediary-attribution.create", "payment.intermediary-attribution.list",
             "payment.intermediary-attribution.reverse",
             "payment.restore.create", "payment.restore.preview", "payment.restore.execute",
+            "payment.reconcile.preflight",
         ],
     };
     for (const [skill, toolNames] of Object.entries(requiredSkillToolGuidance)) {
