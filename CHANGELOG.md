@@ -5,6 +5,7 @@
 ### Fixed
 - Fixed weekly floating loans with one period of deducted advance interest so the next anchored period is shown and posted as interest due, with immutable per-accrual allocation provenance, rather than silently reducing principal.
 - Added a no-write reconciliation preflight that proves execute feasibility, binds exact floating-accrual provenance to the preview hash/version, and fails closed before confirmation on stale, duplicate, mismatch, or unavailable-provenance states.
+- Extended the no-write preflight contract to gate ordinary payment posting proposals and added executable plugin coverage for review-required stop behavior.
 
 ## v0.3.67 - 2026-09-01
 

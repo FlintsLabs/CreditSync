@@ -1410,7 +1410,7 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
         reason: shortText,
     }).strict(),
     "payment.reconcile.preflight": z.object({
-        paymentIntakePublicId: uuid, allocations: z.array(reconciliationAllocation).min(1).max(1_000), reason: shortText,
+        paymentIntakePublicId: uuid, allocations: z.array(reconciliationAllocation).min(1).max(1_000).optional(), proposalPublicId: uuid.optional(), reason: shortText,
     }).strict(),
     "payment.restore.create": z.object({ paymentIntakePublicId: uuid, reason: shortText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
     "payment.restore.preview": z.object({ paymentIntakePublicId: uuid, reason: shortText }).strict(),

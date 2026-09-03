@@ -442,6 +442,7 @@ async function waiverFlow(mcp: ScriptedMcp, reason?: string) {
 async function paymentFlow(mcp: ScriptedMcp, options: {
     evidence?: boolean;
     explicitAllocations?: typeof allocations;
+    preflight?: boolean;
 }) {
     const intake = await mcp.call("intake.create", intakeArgs);
     if (intake.duplicate === true) {
@@ -499,6 +500,15 @@ async function paymentFlow(mcp: ScriptedMcp, options: {
             continue;
         }
         if (proposal.status !== "ready") return { outcome: "stopped", stopReason: String(proposal.status) } as const;
+        if (options.preflight) {
+            try {
+                const preflight = await mcp.call("payment.reconcile.preflight", { paymentIntakePublicId: INTAKE, proposalPublicId: proposal.publicId, reason: "Normal payment execution preflight" });
+                if (preflight.status !== "ready_to_execute" || preflight.wouldWrite !== false || preflight.reviewRequired !== false) return { outcome: "stopped", stopReason: "payment-preflight-review-required" } as const;
+            } catch (error) {
+                if (error instanceof ScriptedMcpError) return { outcome: "stopped", stopReason: "payment-preflight-review-required" } as const;
+                throw error;
+            }
+        }
         await mcp.call("payment.post", {
             paymentIntakePublicId: INTAKE,
             proposalPublicId: proposal.publicId,
@@ -1587,9 +1597,18 @@ const SCENARIOS: Record<string, Scenario> = {
             { name: "evidence.prepare", arguments: { paymentIntakePublicId: INTAKE, mimeType: "image/jpeg", size: PAYMENT_EVIDENCE_BYTES.byteLength, sha256: FILE_HASH, evidenceType: "slip" }, result: { publicId: EVIDENCE, filePublicId: EVIDENCE_FILE, duplicate: false, uploadUrl: "https://storage.example/payment-upload", requiredHeaders: {} } },
             { name: "evidence.finalize", arguments: { paymentIntakePublicId: INTAKE, evidencePublicId: EVIDENCE }, result: { publicId: EVIDENCE, status: "ready", sha256: FILE_HASH, filePublicId: EVIDENCE_FILE } },
             { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: PROPOSAL, status: "ready", version: -9007199254740991, warnings: [], totalAllocated: "0.00", allocations: [] } },
+            { name: "payment.reconcile.preflight", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL, reason: "Normal payment execution preflight" }, result: { status: "ready_to_execute", wouldWrite: false, sourcePaymentPublicId: INTAKE, affectedLoanPublicIds: [LOAN_A], exactAmount: "300.00", proposedComponents: { principal: "0.00", interest: "0.00", fee: "0.00", penalty: "0.00" }, allocationPlan: [{ loanPublicId: LOAN_A, component: "principal", amount: "300.00" }], checks: [{ name: "source", status: "pass" }], previewHash: "v1:" + "a".repeat(64), expectedBalanceVersion: "v1:" + "b".repeat(64), reviewRequired: false } },
             { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, result: { publicId: "0198c481-3e2b-7000-8000-000000000205", status: "fixture", ...noRepostLineage, transactions: [] } },
         ],
-        run: (mcp) => paymentFlow(mcp, { evidence: true }),
+        run: (mcp) => paymentFlow(mcp, { evidence: true, preflight: true }),
+    },
+    "payment-preflight-review-stops": {
+        script: [
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null, ...noRepostLineage } },
+            { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: PROPOSAL, status: "ready", version: -9007199254740991, warnings: [], totalAllocated: "0.00", allocations: [] } },
+            { name: "payment.reconcile.preflight", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL, reason: "Normal payment execution preflight" }, error: { code: "PAYMENT_PREFLIGHT_REVIEW_REQUIRED", message: "Review required", retryable: false, reviewRequired: true, details: {} } },
+        ],
+        run: (mcp) => paymentFlow(mcp, { preflight: true }),
     },
     "payment-stale-repreview": {
         script: [

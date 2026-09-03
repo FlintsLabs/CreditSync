@@ -7,7 +7,7 @@ import { createBorrower } from "./borrower-service";
 import { createLoanDraft, activateLoan } from "./loan-application-service";
 import { createPaymentIntake, previewPaymentMatch, reviewPaymentIntake } from "./payment-service";
 import type { CommandContext } from "./command-context";
-import { backfillPostedRestoreSchedule, calculateReconciliationComponents, createPaymentRestoreDraft, deriveExactRestoreComponents, executePaymentReconciliation, previewPaymentRestore, previewPaymentReconciliation, type ReconciliationAllocation } from "./payment-reconciliation-service";
+import { backfillPostedRestoreSchedule, calculateReconciliationComponents, createPaymentRestoreDraft, deriveExactRestoreComponents, executePaymentReconciliation, preflightPaymentExecution, previewPaymentRestore, previewPaymentReconciliation, type ReconciliationAllocation } from "./payment-reconciliation-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
 
@@ -68,6 +68,31 @@ describe("payment reconciliation allocation kernel", () => {
 });
 
 describe("payment reconciliation persistence", () => {
+    integrationTest("preflight proves a ready payment is executable without changing financial state", async () => {
+        const tenantId = `payment-preflight-${crypto.randomUUID()}`;
+        const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+        const ctx: CommandContext = { tenantId, actorUserId: actor.id, actorSource: "mcp", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() };
+        const borrower = await db.insert(borrowers).values({ tenantId, ownerUserId: actor.id, name: "Payment Preflight Borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({ tenantId, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "1000.00", interestRate: "0.00", repaymentType: "daily", termMonths: 1, startDate: "2026-08-01", outstandingPrincipal: "1000.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" }).returning().then((rows) => rows[0]!);
+        await db.insert(loanSchedules).values({ tenantId, loanId: loan.id, installmentNo: 1, dueDate: "2026-08-24", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "100.00", status: "pending" });
+        const intake = await createPaymentIntake(ctx, { amount: "100.00", receivedAt: "2026-08-24T08:57:00.000Z", payerName: borrower.name });
+        const preview = await previewPaymentMatch(ctx, intake.publicId, { allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: loan.publicId, amount: "100.00" }] });
+        expect(preview.status).toBe("ready");
+
+        const snapshot = async () => ({
+            loans: await db.select({ id: loans.id, outstandingPrincipal: loans.outstandingPrincipal, outstandingInterest: loans.outstandingInterest, outstandingFees: loans.outstandingFees }).from(loans).where(eq(loans.tenantId, tenantId)),
+            intakes: await db.select({ id: paymentIntakes.id, status: paymentIntakes.status }).from(paymentIntakes).where(eq(paymentIntakes.tenantId, tenantId)),
+            transactions: await db.select({ id: transactions.id }).from(transactions).where(eq(transactions.tenantId, tenantId)),
+            accruals: await db.select({ id: loanInterestAccruals.id }).from(loanInterestAccruals).where(eq(loanInterestAccruals.tenantId, tenantId)),
+            floatingAllocations: await db.select({ id: floatingTransactionAllocations.id }).from(floatingTransactionAllocations).where(eq(floatingTransactionAllocations.tenantId, tenantId)),
+        });
+        const before = await snapshot();
+        const result = await preflightPaymentExecution(ctx, { paymentIntakePublicId: intake.publicId, proposalPublicId: preview.publicId, reason: "Confirm ordinary payment execution feasibility" });
+        const after = await snapshot();
+        expect(result).toMatchObject({ status: "ready_to_execute", wouldWrite: false, reviewRequired: false, exactAmount: "100.00" });
+        expect(after).toEqual(before);
+    });
+
     integrationTest("creates an evidence-bearing draft and restores a reversed mixed-component payment exactly into it", async () => {
         const tenantId = `exact-restore-${crypto.randomUUID()}`;
         const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
@@ -141,7 +166,7 @@ describe("payment reconciliation persistence", () => {
         expect(replay).toMatchObject({ changed: false, paymentIntakePublicId: child.publicId, schedulePublicId: schedule.publicId });
     });
 
-    integrationTest("previews only fully reversed evidence-backed sources without a repost child", async () => {
+    integrationTest("fails closed when a reversed floating replacement lacks complete accrual provenance", async () => {
         const tenantId = `repost-preview-${crypto.randomUUID()}`;
         const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
         const ctx: CommandContext = { tenantId, actorUserId: actor.id, actorSource: "mcp", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() };
@@ -156,23 +181,9 @@ describe("payment reconciliation persistence", () => {
 
         await expect(previewPaymentReconciliation(ctx, request)).rejects.toMatchObject({ code: "RECONCILIATION_SOURCE_EVIDENCE_REQUIRED" });
         await db.insert(paymentEvidence).values({ tenantId, paymentIntakeId: source.id, status: "ready", evidenceType: "legacy_slip", legacyReference: "fixture", finalizedAt: new Date(), createdByUserId: actor.id });
-        const preview = await previewPaymentReconciliation(ctx, request);
-        expect(preview.sourcePayment).toMatchObject({ mode: "reversed_repost", status: "reversed", hasReadyEvidence: true });
-        expect(preview.correction).toEqual({ principal: "0.00", interest: "45.00", fee: "0.00", penalty: "0.00" });
-        const command = { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true as const, reason: preview.reason, idempotencyKey: crypto.randomUUID() };
-        const executed = await executePaymentReconciliation(ctx, preview.publicId, command);
-        const replay = await executePaymentReconciliation(ctx, preview.publicId, command);
-        expect(replay).toMatchObject({ reconciliationPublicId: executed.reconciliationPublicId, sourcePaymentPublicId: source.publicId, postedPaymentPublicId: executed.postedPaymentPublicId, correctedTransactionPublicIds: executed.correctedTransactionPublicIds });
-        const child = await db.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, tenantId), eq(paymentIntakes.repostOfIntakeId, source.id)) });
-        expect(child).toMatchObject({ status: "posted", amount: "45.00", bankReference: null, bankReferenceHash: null, qrPayloadHash: null });
-        expect(executed).toMatchObject({ sourcePaymentPublicId: source.publicId, postedPaymentPublicId: child!.publicId });
-        expect(await db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, tenantId), eq(paymentEvidence.paymentIntakeId, source.id)))).toHaveLength(1);
-        expect(await db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, tenantId), eq(paymentEvidence.paymentIntakeId, child!.id)))).toHaveLength(0);
-        const replacementRows = await db.select().from(transactions).where(and(eq(transactions.tenantId, tenantId), eq(transactions.paymentIntakeId, child!.id), eq(transactions.entryType, "repayment")));
-        expect(replacementRows).toHaveLength(1);
-        expect(replacementRows[0]).toMatchObject({ principalComponent: "0.00", interestComponent: "45.00" });
+        await expect(previewPaymentReconciliation(ctx, request)).rejects.toMatchObject({ code: "RECONCILIATION_INTEREST_PROVENANCE_UNAVAILABLE" });
+        expect(await db.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, tenantId), eq(paymentIntakes.repostOfIntakeId, source.id)) })).toBeUndefined();
         expect((await db.query.loans.findFirst({ where: eq(loans.id, loan!.id) }))?.outstandingPrincipal).toBe("1000.00");
-        await expect(previewPaymentReconciliation(ctx, request)).rejects.toMatchObject({ code: "RECONCILIATION_SOURCE_ALREADY_REPOSTED" });
 
         const activeSource = await db.insert(paymentIntakes).values({ tenantId, status: "reversed", amount: "45.00", receivedAt: source.receivedAt, createdByUserId: actor.id }).returning().then((rows) => rows[0]!);
         await db.insert(paymentEvidence).values({ tenantId, paymentIntakeId: activeSource.id, status: "ready", evidenceType: "legacy_slip", legacyReference: "active-fixture", finalizedAt: new Date(), createdByUserId: actor.id });

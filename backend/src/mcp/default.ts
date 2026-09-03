@@ -275,8 +275,9 @@ export function createDefaultMcpToolHandlers(
     }),
     "payment.reconcile.preflight": (ctx, input) => preflightPaymentExecution(ctx, {
         paymentIntakePublicId: asString(input, "paymentIntakePublicId"),
-        allocations: input.allocations as ReconciliationAllocation[],
+        allocations: input.allocations as ReconciliationAllocation[] | undefined,
         reason: asString(input, "reason"),
+        proposalPublicId: input.proposalPublicId as string | undefined,
     }),
     "payment.reconcile.execute": (ctx, input) => {
         const idempotencyKey = ctx.idempotencyKey;

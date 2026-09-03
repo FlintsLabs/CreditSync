@@ -543,7 +543,9 @@ export async function resolveFloatingInterestAllocationPlan(
         await accrueFloatingInterestThroughInTransaction(tx, loan, materializeThrough, context);
     }
     const projected = await projectFloatingAccrualRows(tx, loan, mode === "execute" ? addCalendarDays(target.nextPeriodStart, -1) : throughDate);
-    const periodRows = projected.filter((row) => row.periodStartDate === target.periodStart && row.periodEndDate === target.nextPeriodStart && row.status !== "reversed");
+    const periodRows = projected.filter((row) => (hasPeriodPolicy(loan)
+        ? row.periodStartDate === target.periodStart && row.periodEndDate === target.nextPeriodStart
+        : accrualDueDate(row) <= throughDate) && row.status !== "reversed");
     const warnings: FloatingInterestAllocationPlan["warnings"] = [];
     const corrupt = periodRows.find((row) => new FinancialDecimal(row.openingPrincipal).eq(0) && new FinancialDecimal(row.interestAmount).eq(0) && new FinancialDecimal(row.rate).gt(0));
     if (corrupt) warnings.push({ code: "FLOATING_INTEREST_ACCRUAL_CORRUPT", details: { accrualPublicId: corrupt.publicId, accrualDate: corrupt.accrualDate } });
@@ -555,14 +557,13 @@ export async function resolveFloatingInterestAllocationPlan(
     for (const { row, available } of availableRows) {
         if (remaining.lte(0)) break;
         const amount = FinancialDecimal.min(remaining, available);
-        if (amount.gt(0) && row.id > 0) allocations.push({ accrualId: row.id, accrualPublicId: row.publicId, amount: amount.toFixed(2), dueDate: accrualDueDate(row) });
+        if (amount.gt(0)) allocations.push({ accrualId: row.id, accrualPublicId: row.publicId, amount: amount.toFixed(2), dueDate: accrualDueDate(row) });
         remaining = remaining.minus(amount);
     }
     if (availableRows.length === 0) warnings.push({ code: "NO_ACTIVE_ACCRUAL_ROWS", details: { periodStartDate: target.periodStart } });
     if (requested.gt(availableAmount)) warnings.push({ code: "AMOUNT_EXCEEDS_AVAILABLE_ACCRUAL", details: { availableAmount: availableAmount.toFixed(2) } });
     if (target.periodStart === loan.interestPeriodAnchorDate) warnings.push({ code: "ADVANCE_PERIOD_NON_REFUNDABLE", details: { periodStartDate: target.periodStart } });
-    if (mode === "preview" && allocations.some((item) => item.accrualPublicId.startsWith("projected:"))) warnings.push({ code: "PROVENANCE_NOT_MATERIALIZED", details: { periodStartDate: target.periodStart } });
-    const provenanceReady = !warnings.some((warning) => ["NO_ACTIVE_ACCRUAL_ROWS", "AMOUNT_EXCEEDS_AVAILABLE_ACCRUAL", "FLOATING_INTEREST_ACCRUAL_CORRUPT", "PROVENANCE_NOT_MATERIALIZED", "ADVANCE_PERIOD_NON_REFUNDABLE"].includes(warning.code)) && remaining.isZero();
+    const provenanceReady = !warnings.some((warning) => ["NO_ACTIVE_ACCRUAL_ROWS", "AMOUNT_EXCEEDS_AVAILABLE_ACCRUAL", "FLOATING_INTEREST_ACCRUAL_CORRUPT", "ADVANCE_PERIOD_NON_REFUNDABLE"].includes(warning.code)) && remaining.isZero();
     return { loanPublicId: loan.publicId, throughDate, periodStartDate: target.periodStart, periodEndDate: target.nextPeriodStart, requestedAmount, availableAmount: availableAmount.toFixed(2), allocations, provenanceReady, warnings };
 }
 

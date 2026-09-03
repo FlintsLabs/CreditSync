@@ -5,7 +5,7 @@ import { db } from "../db";
 import {
     borrowers, loans, loanSchedules, paymentEvidence, paymentIntakes, paymentReconciliationEntries,
     paymentReconciliationGroups, paymentReconciliationProposals, transactions,
-    floatingTransactionAllocations, loanInterestAccruals,
+    floatingTransactionAllocations, loanInterestAccruals, paymentMatchProposals, paymentMatchAllocations,
 } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import { parseMoney, serializeMoney } from "../lib/money";
@@ -38,6 +38,61 @@ function validateAllocation(item: ReconciliationAllocation, index: number) {
 
 function hash(value: unknown) {
     return `v1:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
+}
+
+function canonicalizeProvenanceSource(source: any) {
+    if (!source || !Array.isArray(source.provenancePlans)) return source;
+    return {
+        ...source,
+        provenancePlans: source.provenancePlans.map((plan: FloatingInterestAllocationPlan) => ({
+            loanPublicId: plan.loanPublicId,
+            throughDate: plan.throughDate,
+            periodStartDate: plan.periodStartDate,
+            periodEndDate: plan.periodEndDate,
+            requestedAmount: plan.requestedAmount,
+            availableAmount: plan.availableAmount,
+            provenanceReady: plan.provenanceReady,
+            warnings: plan.warnings,
+            allocations: plan.allocations.map((allocation) => ({
+                // A preview may contain a deterministic virtual row. Preserve
+                // that logical identity until execute materializes it; real
+                // replacement rows still compare by their public UUID.
+                accrualPublicId: allocation.accrualPublicId.startsWith("projected:")
+                    ? allocation.accrualPublicId
+                    : allocation.accrualPublicId,
+                accrualId: allocation.accrualId,
+                dueDate: allocation.dueDate,
+                amount: allocation.amount,
+            })),
+        })),
+    };
+}
+
+function reconciliationPreviewHash(source: unknown, allocations: ReconciliationAllocation[], expectedBalanceVersion: string, reason: string) {
+    return hash({ source: canonicalizeProvenanceSource(source), allocations: allocations.map(presentAllocation), expectedBalanceVersion, reason });
+}
+
+function provenancePlansMatch(current: FloatingInterestAllocationPlan[], preview: FloatingInterestAllocationPlan[]) {
+    if (current.length !== preview.length) return false;
+    return current.every((currentPlan, index) => {
+        const previewPlan = preview[index];
+        if (!previewPlan || currentPlan.loanPublicId !== previewPlan.loanPublicId
+            || currentPlan.periodStartDate !== previewPlan.periodStartDate
+            || currentPlan.periodEndDate !== previewPlan.periodEndDate
+            || currentPlan.requestedAmount !== previewPlan.requestedAmount
+            || currentPlan.availableAmount !== previewPlan.availableAmount
+            || currentPlan.provenanceReady !== previewPlan.provenanceReady) return false;
+        if (currentPlan.allocations.length !== previewPlan.allocations.length) return false;
+        return currentPlan.allocations.every((allocation, allocationIndex) => {
+            const expected = previewPlan.allocations[allocationIndex];
+            if (!expected || allocation.dueDate !== expected.dueDate || allocation.amount !== expected.amount) return false;
+            // Virtual preview rows become real rows during execute. Once a
+            // preview has a concrete public ID, replacement of that row is
+            // stale and must fail closed.
+            return expected.accrualPublicId.startsWith("projected:")
+                || (allocation.accrualPublicId === expected.accrualPublicId && allocation.accrualId === expected.accrualId);
+        });
+    });
 }
 
 export function calculateReconciliationComponents(input: ReconciliationAllocation[], sourceAmount: string) {
@@ -249,14 +304,14 @@ function sourceTransactionSnapshot(row: typeof transactions.$inferSelect) {
     return { transactionPublicId: row.publicId, reversedTransactionId: row.reversedTransactionId, loanId: row.loanId, scheduleId: row.scheduleId, amount: signedMoney(row.amount), principal: signedMoney(row.principalComponent), interest: signedMoney(row.interestComponent), fee: signedMoney(row.feeComponent), penalty: signedMoney(row.penaltyComponent) };
 }
 
-async function authoritativeBalanceVersion(executor: any, ctx: CommandContext, loanIds: number[]) {
+async function authoritativeBalanceVersion(executor: any, ctx: CommandContext, loanIds: number[], includeFloatingLedger = true) {
     const ids = [...new Set(loanIds)].sort((left, right) => left - right);
     if (!ids.length) return hash({ loans: [], transactions: [], accruals: [], allocations: [] });
     const [loanRows, transactionRows, accrualRows, allocationRows] = await Promise.all([
         executor.select({ id: loans.id, outstandingPrincipal: loans.outstandingPrincipal, outstandingInterest: loans.outstandingInterest, outstandingFees: loans.outstandingFees, status: loans.status, updatedAt: loans.updatedAt }).from(loans).where(and(eq(loans.tenantId, ctx.tenantId), inArray(loans.id, ids))).orderBy(loans.id),
         executor.select({ id: transactions.id, loanId: transactions.loanId, amount: transactions.amount, principalComponent: transactions.principalComponent, interestComponent: transactions.interestComponent, feeComponent: transactions.feeComponent, penaltyComponent: transactions.penaltyComponent, entryType: transactions.entryType, reversedTransactionId: transactions.reversedTransactionId, paymentIntakeId: transactions.paymentIntakeId }).from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), inArray(transactions.loanId, ids))).orderBy(transactions.loanId, transactions.id),
-        executor.select({ id: loanInterestAccruals.id, loanId: loanInterestAccruals.loanId, interestAmount: loanInterestAccruals.interestAmount, paidAmount: loanInterestAccruals.paidAmount, status: loanInterestAccruals.status, accrualDate: loanInterestAccruals.accrualDate }).from(loanInterestAccruals).where(and(eq(loanInterestAccruals.tenantId, ctx.tenantId), inArray(loanInterestAccruals.loanId, ids))).orderBy(loanInterestAccruals.loanId, loanInterestAccruals.id),
-        executor.select({ id: floatingTransactionAllocations.id, loanId: floatingTransactionAllocations.loanId, transactionId: floatingTransactionAllocations.transactionId, component: floatingTransactionAllocations.component, amount: floatingTransactionAllocations.amount, entryType: floatingTransactionAllocations.entryType, reversedAllocationId: floatingTransactionAllocations.reversedAllocationId }).from(floatingTransactionAllocations).where(and(eq(floatingTransactionAllocations.tenantId, ctx.tenantId), inArray(floatingTransactionAllocations.loanId, ids))).orderBy(floatingTransactionAllocations.loanId, floatingTransactionAllocations.id),
+        includeFloatingLedger ? executor.select({ id: loanInterestAccruals.id, loanId: loanInterestAccruals.loanId, interestAmount: loanInterestAccruals.interestAmount, paidAmount: loanInterestAccruals.paidAmount, status: loanInterestAccruals.status, accrualDate: loanInterestAccruals.accrualDate }).from(loanInterestAccruals).where(and(eq(loanInterestAccruals.tenantId, ctx.tenantId), inArray(loanInterestAccruals.loanId, ids))).orderBy(loanInterestAccruals.loanId, loanInterestAccruals.id) : Promise.resolve([]),
+        includeFloatingLedger ? executor.select({ id: floatingTransactionAllocations.id, loanId: floatingTransactionAllocations.loanId, transactionId: floatingTransactionAllocations.transactionId, component: floatingTransactionAllocations.component, amount: floatingTransactionAllocations.amount, entryType: floatingTransactionAllocations.entryType, reversedAllocationId: floatingTransactionAllocations.reversedAllocationId }).from(floatingTransactionAllocations).where(and(eq(floatingTransactionAllocations.tenantId, ctx.tenantId), inArray(floatingTransactionAllocations.loanId, ids))).orderBy(floatingTransactionAllocations.loanId, floatingTransactionAllocations.id) : Promise.resolve([]),
     ]);
     return hash({ loans: loanRows, transactions: transactionRows, accruals: accrualRows, allocations: allocationRows });
 }
@@ -311,7 +366,7 @@ export async function previewPaymentRestore(ctx: CommandContext, input: { paymen
         };
         const financialBalanceVersion = await authoritativeBalanceVersion(tx, ctx, inspected.originals.map((item) => item.loanId));
         const expectedBalanceVersion = hash({ financialBalanceVersion, source });
-        const previewHash = hash({ source, allocations: allocations.map(presentAllocation), expectedBalanceVersion, reason: input.reason.trim() });
+        const previewHash = reconciliationPreviewHash(source, allocations, expectedBalanceVersion, input.reason.trim());
         const expiresAt = new Date(Date.now() + Math.max(60, Number(process.env.PAYMENT_PREVIEW_TTL_SECONDS ?? 900)) * 1000);
         const row = await tx.insert(paymentReconciliationProposals).values({
             tenantId: ctx.tenantId, paymentIntakeId: intake.id, status: "ready", previewHash, expectedBalanceVersion,
@@ -336,7 +391,7 @@ export async function previewPaymentReconciliation(ctx: CommandContext, input: {
         const allocations = await resolveAllocations(ctx, input.allocations, tx);
         const calculated = calculateReconciliationComponents(input.allocations, intake.amount);
         const provenancePlans: FloatingInterestAllocationPlan[] = [];
-        for (const item of allocations) {
+        for (const item of allocations.filter((candidate) => candidate.loan.repaymentType === "floating")) {
             const plan = await resolveFloatingInterestAllocationPlan(tx, item.loan, intake.receivedAt, item.amount, ctx, "preview");
             provenancePlans.push(plan);
             if (!plan.provenanceReady) throw new DomainError("RECONCILIATION_INTEREST_PROVENANCE_UNAVAILABLE", "Historical floating interest has no complete accrual provenance", 409, { loanPublicId: item.loan.publicId, warnings: plan.warnings });
@@ -348,9 +403,9 @@ export async function previewPaymentReconciliation(ctx: CommandContext, input: {
             reversalSnapshot: inspected.reversals.map(sourceTransactionSnapshot),
             provenancePlans,
         };
-        const financialBalanceVersion = await authoritativeBalanceVersion(tx, ctx, [...allocations.map((item) => item.loanId), ...originals.map((item) => item.loanId)]);
+        const financialBalanceVersion = await authoritativeBalanceVersion(tx, ctx, [...allocations.map((item) => item.loanId), ...originals.map((item) => item.loanId)], false);
         const expectedBalanceVersion = inspected.mode === "reversed_repost" ? hash({ financialBalanceVersion, source }) : financialBalanceVersion;
-        const previewHash = hash({ source, allocations: allocations.map(presentAllocation), expectedBalanceVersion, reason: input.reason.trim() });
+        const previewHash = reconciliationPreviewHash(source, allocations, expectedBalanceVersion, input.reason.trim());
         const expiresAt = new Date(Date.now() + Math.max(60, Number(process.env.PAYMENT_PREVIEW_TTL_SECONDS ?? 900)) * 1000);
         const row = await tx.insert(paymentReconciliationProposals).values({
             tenantId: ctx.tenantId, paymentIntakeId: intake.id, status: "ready", previewHash, expectedBalanceVersion,
@@ -403,7 +458,7 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
         const currentOriginals = inspected.originals;
         const currentProvenancePlans: FloatingInterestAllocationPlan[] = [];
         if (!restoreMode) {
-            for (const item of allocations) {
+            for (const item of allocations.filter((candidate) => candidate.loan.repaymentType === "floating")) {
                 const plan = await resolveFloatingInterestAllocationPlan(tx, item.loan, intake.receivedAt, item.amount, ctx, "execute");
                 currentProvenancePlans.push(plan);
                 if (!plan.provenanceReady) throw new DomainError("RECONCILIATION_INTEREST_PROVENANCE_UNAVAILABLE", "Historical floating interest has no complete accrual provenance", 409, { loanPublicId: item.loan.publicId, warnings: plan.warnings });
@@ -417,14 +472,15 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
             ...(restoreMode ? { restoreDraftPublicId: restoreDraft!.publicId } : {}),
             currentAllocationSnapshot: currentOriginals.map(sourceTransactionSnapshot),
             reversalSnapshot: inspected.reversals.map(sourceTransactionSnapshot),
-            provenancePlans: currentProvenancePlans,
+            ...(!restoreMode ? { provenancePlans: currentProvenancePlans } : {}),
         };
         const previewPlans = ((proposal.sourceSnapshot as { provenancePlans?: FloatingInterestAllocationPlan[] }).provenancePlans ?? []);
-        if (!restoreMode && hash(currentProvenancePlans) !== hash(previewPlans)) throw new DomainError("STALE_RECONCILIATION_PREVIEW", "Floating interest provenance differs from preview", 409);
-        const financialBalanceVersion = await authoritativeBalanceVersion(tx, ctx, [...allocations.map((item) => item.loanId), ...currentOriginals.map((item) => item.loanId)]);
+        if (!restoreMode && !provenancePlansMatch(currentProvenancePlans, previewPlans)) throw new DomainError("STALE_RECONCILIATION_PREVIEW", "Floating interest provenance differs from preview", 409);
+        const financialBalanceVersion = await authoritativeBalanceVersion(tx, ctx, [...allocations.map((item) => item.loanId), ...currentOriginals.map((item) => item.loanId)], false);
         const currentBalanceVersion = (proposal.sourceSnapshot as { mode?: string }).mode === "exact_restore" || inspected.mode === "reversed_repost" ? hash({ financialBalanceVersion, source: currentSource }) : financialBalanceVersion;
         if (currentBalanceVersion !== proposal.expectedBalanceVersion) throw new DomainError("STALE_RECONCILIATION_PREVIEW", "Affected financial state differs from preview", 409);
-        if (hash({ source: currentSource, allocations: allocations.map(presentAllocation), expectedBalanceVersion: proposal.expectedBalanceVersion, reason: proposal.reason }) !== proposal.previewHash) throw new DomainError("STALE_RECONCILIATION_PREVIEW", "Current payment state differs from preview", 409);
+        const hashSource = !restoreMode && previewPlans.length ? { ...currentSource, provenancePlans: previewPlans } : currentSource;
+        if (reconciliationPreviewHash(hashSource, allocations, proposal.expectedBalanceVersion, proposal.reason) !== proposal.previewHash) throw new DomainError("STALE_RECONCILIATION_PREVIEW", "Current payment state differs from preview", 409);
         const audit = await createAuditLog(tx, { ...contextPayload(ctx), entityType: "payment_reconciliation", entityId: proposal.publicId, action: "executed", payload: { paymentIntakePublicId: intake.publicId, reason: input.reason.trim(), idempotencyKey: input.idempotencyKey, before: proposal.sourceSnapshot, after: proposal.proposedAllocations } });
         const postedIntake = restoreMode
             ? await tx.update(paymentIntakes).set({ status: "posted", postedAt: new Date(), postedByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(
@@ -493,10 +549,40 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
 }
 
 /** No-write feasibility gate used immediately before asking for confirmation. */
-export async function preflightPaymentExecution(ctx: CommandContext, input: { paymentIntakePublicId: string; allocations: ReconciliationAllocation[]; reason: string }) {
+export async function preflightPaymentExecution(ctx: CommandContext, input: { paymentIntakePublicId: string; allocations?: ReconciliationAllocation[]; reason: string; proposalPublicId?: string }) {
     const checks: Array<{ name: string; status: "pass" | "fail" | "warning"; code?: string }> = [];
     try {
-        const preview = await previewPaymentReconciliation(ctx, input);
+        // Generic payment.post proposals have no component decomposition until
+        // the backend's posting allocator runs. The no-write gate therefore
+        // validates the exact ready proposal and exposes its target amounts;
+        // reconciliation inputs continue through the provenance-aware path.
+        if (input.proposalPublicId) {
+            const intake = await accessibleIntake(ctx, input.paymentIntakePublicId, db);
+            const proposal = await db.query.paymentMatchProposals.findFirst({ where: and(
+                eq(paymentMatchProposals.tenantId, ctx.tenantId),
+                eq(paymentMatchProposals.publicId, input.proposalPublicId),
+                eq(paymentMatchProposals.paymentIntakeId, intake.id),
+            ) });
+            if (!proposal || proposal.status !== "ready" || !proposal.expiresAt || proposal.expiresAt.getTime() <= Date.now()) {
+                throw new DomainError("PAYMENT_PREFLIGHT_NOT_READY", "The payment proposal is not currently executable", 409);
+            }
+            if (((proposal.warnings as unknown[] | null) ?? []).length > 0) throw new DomainError("PAYMENT_PREFLIGHT_REVIEW_REQUIRED", "The payment proposal still has review warnings", 409);
+            const rows = await db.select().from(paymentMatchAllocations).where(and(
+                eq(paymentMatchAllocations.tenantId, ctx.tenantId), eq(paymentMatchAllocations.proposalId, proposal.id), eq(paymentMatchAllocations.status, "proposed"),
+            )).orderBy(paymentMatchAllocations.allocationOrder);
+            const targets = await Promise.all(rows.map(async (row) => db.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, row.loanId)) })));
+            const affectedLoanPublicIds = targets.flatMap((loan) => loan ? [loan.publicId] : []);
+            checks.push({ name: "source", status: "pass" }, { name: "proposal_ready", status: "pass" }, { name: "duplicate", status: "pass" }, { name: "execute_feasibility", status: "pass" });
+            return {
+                status: "ready_to_execute" as const, wouldWrite: false as const, sourcePaymentPublicId: intake.publicId,
+                affectedLoanPublicIds, exactAmount: serializeMoney(intake.amount),
+                proposedComponents: { principal: "0.00", interest: "0.00", fee: "0.00", penalty: "0.00" },
+                allocationPlan: rows.map((row, index) => ({ loanPublicId: affectedLoanPublicIds[index]!, component: "principal" as const, amount: serializeMoney(row.amount) })),
+                checks, previewHash: proposal.proposalHash, expectedBalanceVersion: proposal.proposalHash, reviewRequired: false,
+            };
+        }
+        const allocations = input.allocations ?? [];
+        const preview = await previewPaymentReconciliation(ctx, { ...input, allocations });
         const source = preview.sourcePayment as { amount?: string };
         checks.push(...[
             { name: "source", status: "pass" as const }, { name: "identity", status: "pass" as const },
@@ -505,8 +591,8 @@ export async function preflightPaymentExecution(ctx: CommandContext, input: { pa
         ]);
         return {
             status: "ready_to_execute" as const, wouldWrite: false as const, sourcePaymentPublicId: input.paymentIntakePublicId,
-            affectedLoanPublicIds: [...new Set(input.allocations.map((item) => item.loanPublicId))], exactAmount: source.amount ?? "0.00",
-            proposedComponents: preview.correction, allocationPlan: input.allocations.map((item) => {
+            affectedLoanPublicIds: [...new Set(allocations.map((item) => item.loanPublicId))], exactAmount: source.amount ?? "0.00",
+            proposedComponents: preview.correction, allocationPlan: allocations.map((item) => {
                 const plan = ((preview.sourcePayment as { provenancePlans?: FloatingInterestAllocationPlan[] }).provenancePlans ?? []).find((candidate) => candidate.loanPublicId === item.loanPublicId && candidate.requestedAmount === item.amount);
                 return { loanPublicId: item.loanPublicId, component: item.component, amount: item.amount, accrualPublicIds: plan?.allocations.map((allocation) => allocation.accrualPublicId) };
             }),
@@ -518,7 +604,7 @@ export async function preflightPaymentExecution(ctx: CommandContext, input: { pa
         checks.push({ name: "execute_feasibility", status: "fail", code: domain.code });
         return {
             status: "review_required" as const, wouldWrite: false as const, sourcePaymentPublicId: input.paymentIntakePublicId,
-            affectedLoanPublicIds: [...new Set(input.allocations.map((item) => item.loanPublicId))], exactAmount: "0.00",
+            affectedLoanPublicIds: [...new Set((input.allocations ?? []).map((item) => item.loanPublicId))], exactAmount: "0.00",
             proposedComponents: { principal: "0.00", interest: "0.00", fee: "0.00", penalty: "0.00" }, allocationPlan: [],
             checks, previewHash: "v1:" + "0".repeat(64), expectedBalanceVersion: "v1:" + "0".repeat(64), reviewRequired: true,
             warning: { code: domain.code, message: domain.message },
