@@ -2,12 +2,15 @@ import type Decimal from "decimal.js";
 import { FinancialDecimal } from "./financial-decimal";
 
 export type LoanPaymentHealthStatus = "current" | "due_today" | "overdue" | "settled";
+export type LoanPaymentHealthObligationUnit = "day" | "week" | "installment";
 
 export interface LoanPaymentHealth {
     status: LoanPaymentHealthStatus;
     dueTodayAmount: string;
     overdueAmount: string;
     overdueItemCount: number;
+    overdueObligationUnit: LoanPaymentHealthObligationUnit;
+    overdueObligationCount: number;
     maxOverdueDays: number;
     accruingInterestAmount?: string;
 }
@@ -15,6 +18,7 @@ export interface LoanPaymentHealth {
 export interface LoanPaymentHealthInput {
     lifecycleStatus: string;
     repaymentType: string;
+    overdueObligationUnit?: LoanPaymentHealthObligationUnit;
     businessDate: string;
     gracePeriodDays?: number | null;
     lateFeeMode?: string | null;
@@ -91,6 +95,8 @@ export function computeLoanPaymentHealth(input: LoanPaymentHealthInput): LoanPay
             dueTodayAmount: "0.00",
             overdueAmount: "0.00",
             overdueItemCount: 0,
+            overdueObligationUnit: input.overdueObligationUnit ?? "installment",
+            overdueObligationCount: 0,
             maxOverdueDays: 0,
         };
     }
@@ -165,6 +171,9 @@ export function computeLoanPaymentHealth(input: LoanPaymentHealthInput): LoanPay
         dueTodayAmount: money(dueNow),
         overdueAmount: money(overdue),
         overdueItemCount,
+        overdueObligationUnit: input.overdueObligationUnit
+            ?? (input.repaymentType === "floating" ? "day" : "installment"),
+        overdueObligationCount: overdueItemCount,
         maxOverdueDays,
     };
     if (input.repaymentType === "floating" && input.accruals.some((row) => ["accruing", "due", "partially_paid"].includes(row.status))) {

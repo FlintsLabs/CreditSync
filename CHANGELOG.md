@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.69 - 2026-09-03
+
+### Fixed
+- Fixed loan-list overdue cards to distinguish daily, weekly, and installment obligations using backend-authoritative counts while preserving exact overdue amounts and calendar overdue age.
+
 ## v0.3.68 - 2026-09-03
 
 ### Fixed

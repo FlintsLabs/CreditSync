@@ -19,11 +19,15 @@ type LoanPaymentHealth = {
     dueTodayAmount: string;
     overdueAmount: string;
     overdueItemCount: number;
+    overdueObligationUnit: "day" | "week" | "installment";
+    overdueObligationCount: number;
     maxOverdueDays: number;
 };
 ```
 
-All money fields are two-decimal decimal strings. The backend calculates and aggregates them with `decimal.js`; the frontend must not recreate accounting calculations or convert these values through JavaScript `Number`.
+All money fields are two-decimal decimal strings. The backend calculates and aggregates them with `decimal.js`; the frontend must not recreate accounting calculations or convert these values through JavaScript `Number`. `overdueObligationCount` counts the payable groups represented by `overdueAmount`, and `overdueObligationUnit` identifies those groups. `maxOverdueDays` remains the calendar age of the oldest overdue due date, not a count of weekly periods.
+
+For example, `{ overdueAmount: "1800.00", overdueObligationUnit: "week", overdueObligationCount: 3, maxOverdueDays: 3 }` means three weekly obligations total THB 1,800.00, while the oldest due date is three calendar days overdue.
 
 The states mean:
 
@@ -60,7 +64,7 @@ The existing short loan-list cache may retain a just-crossed-midnight state for 
 
 Keep the existing lifecycle status on each card. Add a separate, localized payment-health treatment near the outstanding balance:
 
-- `overdue`: destructive/red badge with an alert icon. Scheduled loans show “Overdue {{count}} installments”; floating loans show “Overdue {{count}} days”. A secondary line shows the exact overdue amount and “up to {{days}} days overdue”.
+- `overdue`: destructive/red badge with an alert icon. Scheduled loans show “Overdue {{count}} installments”; floating daily loans show “Overdue {{count}} days”; floating weekly loans show “Overdue {{count}} weeks”. A secondary line shows the exact overdue amount and “up to {{days}} days overdue”. Older responses without the additive unit/count fields retain the existing repayment-type wording.
 - `due_today`: amber/secondary badge with a clock or calendar icon and the exact amount currently due, using localized “Due now” copy.
 - `current`: no payment-health badge.
 - `settled`: no overdue treatment.

@@ -8,6 +8,8 @@ export interface LoanPaymentHealth {
     dueTodayAmount: string;
     overdueAmount: string;
     overdueItemCount: number;
+    overdueObligationUnit?: "day" | "week" | "installment";
+    overdueObligationCount?: number;
     maxOverdueDays: number;
 }
 interface Props {
@@ -20,9 +22,13 @@ export function LoanPaymentHealthBadge({ health, repaymentType }: Props) {
     if (health.status === "current" || health.status === "settled") return null;
 
     if (health.status === "overdue") {
-        const countKey = repaymentType === "floating"
-            ? "loans.paymentHealth.overdueDays"
-            : "loans.paymentHealth.overdueInstallments";
+        const unit = health.overdueObligationUnit;
+        const countKey = unit
+            ? `loans.paymentHealth.overdueObligations.${unit}`
+            : repaymentType === "floating"
+                ? "loans.paymentHealth.overdueDays"
+                : "loans.paymentHealth.overdueInstallments";
+        const obligationCount = health.overdueObligationCount ?? health.overdueItemCount;
         return (
             <div
                 className="space-y-2 rounded-xl border border-destructive/25 bg-red-50/70 p-3 dark:border-destructive/30 dark:bg-destructive/10"
@@ -32,7 +38,7 @@ export function LoanPaymentHealthBadge({ health, repaymentType }: Props) {
                 <div className="flex items-center gap-2">
                     <Badge variant="destructive" className="gap-1.5 px-2 py-0.5 text-xs font-semibold shadow-none rounded-md">
                         <AlertTriangle aria-hidden="true" className="h-3.5 w-3.5" />
-                        <span>{t(countKey, { count: health.overdueItemCount })}</span>
+                        <span>{t(countKey, { count: obligationCount })}</span>
                     </Badge>
                 </div>
                 <div className="grid grid-cols-2 gap-2 pt-1.5 border-t border-destructive/15">

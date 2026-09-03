@@ -48,6 +48,8 @@ export const loanListLoanProjection = {
     createdAt: loans.createdAt,
     dailyInterestMode: loans.dailyInterestMode,
     dailyInterestRate: loans.dailyInterestRate,
+    interestPeriodUnit: loans.interestPeriodUnit,
+    floatingAccrualCycle: loans.floatingAccrualCycle,
     firstDayTreatment: loans.firstDayTreatment,
     interestStartDate: loans.interestStartDate,
 };

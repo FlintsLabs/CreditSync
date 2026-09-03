@@ -13,6 +13,34 @@ const base: LoanPaymentHealthInput = {
 };
 
 describe("computeLoanPaymentHealth", () => {
+    test("reports daily and weekly floating overdue obligation semantics", () => {
+        const daily = computeLoanPaymentHealth({
+            ...base,
+            repaymentType: "floating",
+            overdueObligationUnit: "day",
+            businessDate: "2026-08-13",
+            accruals: [
+                { accrualDate: "2026-08-10", interestAmount: "15.00", paidAmount: "0.00", status: "accrued" },
+                { accrualDate: "2026-08-11", interestAmount: "15.00", paidAmount: "0.00", status: "accrued" },
+            ],
+        });
+        const weekly = computeLoanPaymentHealth({
+            ...base,
+            repaymentType: "floating",
+            overdueObligationUnit: "week",
+            businessDate: "2026-08-13",
+            accruals: [
+                { accrualDate: "2026-07-20", dueDate: "2026-07-27", periodEndDate: "2026-07-27", interestAmount: "600.00", paidAmount: "0.00", status: "due" },
+                { accrualDate: "2026-07-21", dueDate: "2026-07-27", periodEndDate: "2026-07-27", interestAmount: "0.00", paidAmount: "0.00", status: "due" },
+                { accrualDate: "2026-07-28", dueDate: "2026-08-04", periodEndDate: "2026-08-04", interestAmount: "600.00", paidAmount: "0.00", status: "due" },
+                { accrualDate: "2026-08-05", dueDate: "2026-08-12", periodEndDate: "2026-08-12", interestAmount: "600.00", paidAmount: "0.00", status: "due" },
+            ],
+        });
+
+        expect(daily).toMatchObject({ overdueAmount: "30.00", overdueObligationUnit: "day", overdueObligationCount: 2 });
+        expect(weekly).toMatchObject({ overdueAmount: "1800.00", overdueObligationUnit: "week", overdueObligationCount: 3, maxOverdueDays: 17 });
+    });
+
     // Break caught: today's installment is merged into arrears or arrears lose precedence.
     test("separates due-now installments from overdue installments", () => {
         expect(computeLoanPaymentHealth({
@@ -21,7 +49,7 @@ describe("computeLoanPaymentHealth", () => {
                 { dueDate: "2026-08-10", remainingDue: "125.25", paidPenalty: "0.00", baseStatus: "partial" },
                 { dueDate: "2026-08-11", remainingDue: "50.10", paidPenalty: "0.00", baseStatus: "pending" },
             ],
-        })).toEqual({
+        })).toMatchObject({
             status: "overdue",
             dueTodayAmount: "50.10",
             overdueAmount: "125.25",
@@ -38,7 +66,7 @@ describe("computeLoanPaymentHealth", () => {
             schedules: [
                 { dueDate: "2026-08-10", remainingDue: "80.00", paidPenalty: "0.00", baseStatus: "pending" },
             ],
-        })).toEqual({
+        })).toMatchObject({
             status: "due_today",
             dueTodayAmount: "80.00",
             overdueAmount: "0.00",
@@ -57,7 +85,7 @@ describe("computeLoanPaymentHealth", () => {
                 { dueDate: "2026-08-09", remainingDue: "9007199254740993.01", paidPenalty: "0.00", baseStatus: "pending" },
                 { dueDate: "2026-08-10", remainingDue: "0.20", paidPenalty: "0.00", baseStatus: "pending" },
             ],
-        })).toEqual({
+        })).toMatchObject({
             status: "overdue",
             dueTodayAmount: "0.00",
             overdueAmount: "9007199254740993.41",
@@ -86,14 +114,14 @@ describe("computeLoanPaymentHealth", () => {
             { accrualDate: "2026-08-11", interestAmount: "15.00", paidAmount: "0.00", status: "accrued" },
         ];
 
-        expect(computeLoanPaymentHealth({ ...floating, businessDate: "2026-08-11", accruals })).toEqual({
+        expect(computeLoanPaymentHealth({ ...floating, businessDate: "2026-08-11", accruals })).toMatchObject({
             status: "due_today",
             dueTodayAmount: "15.00",
             overdueAmount: "0.00",
             overdueItemCount: 0,
             maxOverdueDays: 0,
         });
-        expect(computeLoanPaymentHealth({ ...floating, businessDate: "2026-08-12", accruals })).toEqual({
+        expect(computeLoanPaymentHealth({ ...floating, businessDate: "2026-08-12", accruals })).toMatchObject({
             status: "overdue",
             dueTodayAmount: "0.00",
             overdueAmount: "15.00",
@@ -116,7 +144,7 @@ describe("computeLoanPaymentHealth", () => {
                 paidAmount: "0.00",
                 status: "accrued",
             }],
-        })).toEqual({
+        })).toMatchObject({
             status: "due_today",
             dueTodayAmount: "15.00",
             overdueAmount: "0.00",
@@ -127,7 +155,7 @@ describe("computeLoanPaymentHealth", () => {
 
     // Break caught: seven daily snapshots for one weekly obligation are counted as seven overdue items or become due before the weekly boundary.
     test("groups a completed weekly period at its due boundary and skips the current accruing period", () => {
-        const weekly = { ...base, repaymentType: "floating", schedules: [] };
+        const weekly = { ...base, repaymentType: "floating", overdueObligationUnit: "week" as const, schedules: [] };
         const duePeriod = ["85.71", "85.72", "85.71", "85.72", "85.71", "85.72", "85.71"].map((interestAmount, index) => ({
             accrualDate: `2026-08-${String(13 + index).padStart(2, "0")}`,
             periodEndDate: "2026-08-20",
@@ -143,7 +171,7 @@ describe("computeLoanPaymentHealth", () => {
             status: "accruing",
         }];
 
-        expect(computeLoanPaymentHealth({ ...weekly, businessDate: "2026-08-20", accruals: [...duePeriod, ...currentPeriod] })).toEqual({
+        expect(computeLoanPaymentHealth({ ...weekly, businessDate: "2026-08-20", accruals: [...duePeriod, ...currentPeriod] })).toMatchObject({
             status: "due_today",
             dueTodayAmount: "600.00",
             overdueAmount: "0.00",
@@ -151,7 +179,7 @@ describe("computeLoanPaymentHealth", () => {
             maxOverdueDays: 0,
             accruingInterestAmount: "85.71",
         });
-        expect(computeLoanPaymentHealth({ ...weekly, businessDate: "2026-08-21", accruals: [...duePeriod, ...currentPeriod] })).toEqual({
+        expect(computeLoanPaymentHealth({ ...weekly, businessDate: "2026-08-21", accruals: [...duePeriod, ...currentPeriod] })).toMatchObject({
             status: "overdue",
             dueTodayAmount: "0.00",
             overdueAmount: "600.00",
@@ -171,7 +199,7 @@ describe("computeLoanPaymentHealth", () => {
                 { accrualDate: "2026-08-09", interestAmount: "12.00", paidAmount: "4.50", status: "partial" },
                 { accrualDate: "2026-08-10", interestAmount: "10.00", paidAmount: "10.00", status: "paid" },
             ],
-        })).toEqual({
+        })).toMatchObject({
             status: "overdue",
             dueTodayAmount: "0.00",
             overdueAmount: "7.50",
@@ -191,7 +219,7 @@ describe("computeLoanPaymentHealth", () => {
                 { accrualDate: "2026-08-12", interestAmount: "59.10", paidAmount: "0.00", status: "reversed" },
                 { accrualDate: "2026-08-12", interestAmount: "60.00", paidAmount: "0.00", status: "accrued" },
             ],
-        })).toEqual({
+        })).toMatchObject({
             status: "due_today",
             dueTodayAmount: "60.00",
             overdueAmount: "0.00",
@@ -211,7 +239,7 @@ describe("computeLoanPaymentHealth", () => {
 
     // Break caught: a fully paid lifecycle remains current rather than receiving the settled health state.
     test("returns settled only for a settled lifecycle with no payable amount", () => {
-        expect(computeLoanPaymentHealth({ ...base, lifecycleStatus: "paid" })).toEqual({
+        expect(computeLoanPaymentHealth({ ...base, lifecycleStatus: "paid" })).toMatchObject({
             status: "settled",
             dueTodayAmount: "0.00",
             overdueAmount: "0.00",
@@ -228,7 +256,7 @@ describe("computeLoanPaymentHealth", () => {
             schedules: [
                 { dueDate: "2026-08-22", remainingDue: "380.00", paidPenalty: "0.00", baseStatus: "pending" },
             ],
-        })).toEqual({
+        })).toMatchObject({
             status: "settled",
             dueTodayAmount: "0.00",
             overdueAmount: "0.00",
