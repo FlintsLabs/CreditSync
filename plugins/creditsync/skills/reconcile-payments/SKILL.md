@@ -30,10 +30,11 @@ If no image is supplied, data-only capture is valid and skips all evidence calls
 
 1. Resolve canonical borrowers/aliases and inspect candidate portfolios when identity is not explicit.
 2. Call `payment.preview` with the intake public UUID. Include explicit allocations when the operator identifies loans/schedules, grouped payments, intermediary payers, or partial payments.
-3. Display backend status, allocation targets, exact amounts, warnings, difference, expiry, and proposal public UUID.
-4. `ready`: call `payment.post` only for that latest proposal public UUID. The agent may finish this unambiguous flow.
-5. `needs_review`: show candidates and obligations, then wait for a human allocation choice. Fuzzy matches never auto-post.
-6. Re-preview after any edit or stale/not-latest result.
+3. Immediately before confirmation, call `payment.reconcile.preflight` for every payment/reconciliation write. It is a no-write feasibility check (`wouldWrite: false`); show exact allocations, accrual provenance, preview hash, expected balance version, and checks. Any `review_required`, warning, stale/duplicate/mismatch, missing evidence, or incomplete provenance is a hard stop; never call an execute/post tool.
+4. Display backend status, allocation targets, exact amounts, warnings, difference, expiry, and proposal public UUID.
+5. `ready`: ask for explicit confirmation only after preflight returns `ready_to_execute`, then call `payment.post` only for that latest proposal public UUID. If state changes, run a fresh preflight and obtain fresh confirmation.
+6. `needs_review`: show candidates and obligations, then wait for a human allocation choice. Fuzzy matches never auto-post.
+7. Re-preview after any edit or stale/not-latest result.
 
 One transfer may allocate across many loans and borrowers. Never force an allocation to make totals fit; let the backend validate the sum and outstanding obligations.
 
@@ -57,7 +58,7 @@ For a floating-loan correction where the original payment must be reversed and a
 
 ## Reconcile or repost a historical interest-only intake
 
-Use reconciliation only for an operator-reviewed historical intake that remains `needs_review`, or a `reversed` source whose original repayments are all exactly compensated and which retains finalized `ready` evidence. First inspect the exact intake, its source/child lineage, and affected loans, then call `payment.reconcile.preview` with every explicit allocation using component `interest` plus a non-blank reason. The backend derives `historical_needs_review` or `reversed_repost`, verifies no prior child exists, and returns the source snapshot, signed component correction, exact amount conservation, preview hash, balance version, expiry, and any historical group IDs. The preview must show `principal: "0.00"`.
+Use reconciliation only for an operator-reviewed historical intake that remains `needs_review`, or a `reversed` source whose original repayments are all exactly compensated and which retains finalized `ready` evidence. First inspect the exact intake, its source/child lineage, and affected loans, then call `payment.reconcile.preview` with every explicit allocation using component `interest` plus a non-blank reason. Immediately before confirmation, call `payment.reconcile.preflight`; proceed only when it returns `ready_to_execute`, `wouldWrite: false`, current hash/version, passing checks, and complete accrual provenance. The backend derives `historical_needs_review` or `reversed_repost`, verifies no prior child exists, and returns the source snapshot, signed component correction, exact amount conservation, preview hash, balance version, expiry, and any historical group IDs. The preview must show `principal: "0.00"`.
 
 Execution appends only the explicit interest allocations and does not synthesize a reversal. For `reversed_repost`, it preserves the source and evidence unchanged, creates one linked posted child, and returns both `sourcePaymentPublicId` and `postedPaymentPublicId`; evidence is not copied. Other posted intakes and principal, fee, or penalty components are rejected. Call `payment.reconcile.execute` only after displaying the exact preview and obtaining explicit human confirmation, passing the unchanged preview hash/version, reason, and a new stable idempotency key. Stale, expired, mismatched, ambiguous, missing-evidence, partially reversed, already-reposted, or conflicting retries stop for review. Same-key identical retries return the original reconciliation result.
 

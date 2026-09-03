@@ -133,7 +133,7 @@ describe("CreditSync plugin 8.0.0 contract", () => {
         expect(contract.schemaVersion).toBe("1.0");
         expect(contract.compatibility).toBe("Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 8.0.0; breaking changes require plugin 9.0.0.");
         expect(contract.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
-        expect(contract.tools).toHaveLength(105);
+        expect(contract.tools).toHaveLength(106);
         expect(contract.tools.every((tool) => tool.inputSchema && tool.outputSchema && tool.annotations)).toBe(true);
         const advertised = await captureAdvertisedMcpContract();
         expect(canonicalContractJson(contract)).toBe(canonicalContractJson(advertised));

@@ -142,7 +142,7 @@ import {
     reversePaymentAttribution,
     type CreatePaymentAttributionInput,
 } from "../services/payment-attribution-service";
-import { backfillPostedRestoreSchedule, createPaymentRestoreDraft, executePaymentReconciliation, previewPaymentReconciliation, previewPaymentRestore, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
+import { backfillPostedRestoreSchedule, createPaymentRestoreDraft, executePaymentReconciliation, preflightPaymentExecution, previewPaymentReconciliation, previewPaymentRestore, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
 import { addPaymentBatchItem, capturePaymentBatch, createPaymentBatch, executePaymentBatch, finalizePaymentBatchEvidenceMany, getPaymentBatch, preparePaymentBatchEvidenceMany, previewPaymentBatch } from "../services/payment-batch-service";
 import { executeUnfundedLoanCancellation, previewUnfundedLoanCancellation } from "../services/loan-cancellation-service";
 
@@ -269,6 +269,11 @@ export function createDefaultMcpToolHandlers(
     "payment.batch.preview": (ctx, input) => previewPaymentBatch(ctx, asString(input, "batchPublicId"), { borrowerPublicId: asString(input, "borrowerPublicId"), allocations: input.allocations as any[] | undefined }),
     "payment.batch.execute": (ctx, input) => executePaymentBatch(ctx, asString(input, "batchPublicId"), { previewPublicId: asString(input, "previewPublicId"), previewHash: asString(input, "previewHash"), confirmationHash: asString(input, "confirmationHash"), confirmed: true, idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey") }),
     "payment.reconcile.preview": (ctx, input) => previewPaymentReconciliation(ctx, {
+        paymentIntakePublicId: asString(input, "paymentIntakePublicId"),
+        allocations: input.allocations as ReconciliationAllocation[],
+        reason: asString(input, "reason"),
+    }),
+    "payment.reconcile.preflight": (ctx, input) => preflightPaymentExecution(ctx, {
         paymentIntakePublicId: asString(input, "paymentIntakePublicId"),
         allocations: input.allocations as ReconciliationAllocation[],
         reason: asString(input, "reason"),

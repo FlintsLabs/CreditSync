@@ -494,6 +494,78 @@ export function isFloatingAccrualPayableThrough(row: typeof loanInterestAccruals
     return ["accrued", "due", "partially_paid"].includes(row.status) && accrualDueDate(row) <= throughDate;
 }
 
+export type FloatingInterestAllocationPlan = {
+    loanPublicId: string;
+    throughDate: string;
+    periodStartDate: string;
+    periodEndDate: string;
+    requestedAmount: string;
+    availableAmount: string;
+    allocations: Array<{
+        accrualId: number;
+        accrualPublicId: string;
+        amount: string;
+        dueDate: string;
+    }>;
+    provenanceReady: boolean;
+    warnings: Array<{ code: string; details: Record<string, string> }>;
+};
+
+/**
+ * Resolves an explicit interest-only payment to immutable accrual provenance.
+ * Preview uses the projection path and therefore never inserts accrual rows;
+ * execute materializes the complete anchored target period in the caller's
+ * transaction before resolving the same plan.
+ */
+export async function resolveFloatingInterestAllocationPlan(
+    tx: Executor,
+    loan: typeof loans.$inferSelect,
+    receivedAt: Date,
+    requestedAmount: string,
+    context: CommandContext,
+    mode: "preview" | "execute",
+): Promise<FloatingInterestAllocationPlan> {
+    if (loan.repaymentType !== "floating") {
+        return { loanPublicId: loan.publicId, throughDate: bangkokDate(receivedAt), periodStartDate: "", periodEndDate: "", requestedAmount, availableAmount: "0.00", allocations: [], provenanceReady: false, warnings: [{ code: "FLOATING_LOAN_REQUIRED", details: {} }] };
+    }
+    const throughDate = bangkokDate(receivedAt);
+    const policyRow = await tx.query.loanInterestRatePeriods.findFirst({ where: and(
+        eq(loanInterestRatePeriods.tenantId, loan.tenantId), eq(loanInterestRatePeriods.loanId, loan.id),
+        lte(loanInterestRatePeriods.effectiveDate, throughDate), or(isNull(loanInterestRatePeriods.expiryDate), gte(loanInterestRatePeriods.expiryDate, throughDate)),
+    ) });
+    if (!policyRow || !loan.interestPeriodAnchorDate) {
+        return { loanPublicId: loan.publicId, throughDate, periodStartDate: "", periodEndDate: "", requestedAmount, availableAmount: "0.00", allocations: [], provenanceReady: false, warnings: [{ code: "RATE_PERIOD_MISSING_COVERAGE", details: { throughDate } }] };
+    }
+    const policy = periodPolicy(loan, policyRow);
+    const target = interestPeriodFor(loan.interestPeriodAnchorDate, throughDate, policy);
+    if (mode === "execute") {
+        const materializeThrough = new Date(`${addCalendarDays(target.nextPeriodStart, -1)}T16:59:59.999Z`);
+        await accrueFloatingInterestThroughInTransaction(tx, loan, materializeThrough, context);
+    }
+    const projected = await projectFloatingAccrualRows(tx, loan, mode === "execute" ? addCalendarDays(target.nextPeriodStart, -1) : throughDate);
+    const periodRows = projected.filter((row) => row.periodStartDate === target.periodStart && row.periodEndDate === target.nextPeriodStart && row.status !== "reversed");
+    const warnings: FloatingInterestAllocationPlan["warnings"] = [];
+    const corrupt = periodRows.find((row) => new FinancialDecimal(row.openingPrincipal).eq(0) && new FinancialDecimal(row.interestAmount).eq(0) && new FinancialDecimal(row.rate).gt(0));
+    if (corrupt) warnings.push({ code: "FLOATING_INTEREST_ACCRUAL_CORRUPT", details: { accrualPublicId: corrupt.publicId, accrualDate: corrupt.accrualDate } });
+    const availableRows = periodRows.map((row) => ({ row, available: FinancialDecimal.max(new FinancialDecimal(row.interestAmount).minus(row.paidAmount), 0) })).filter(({ available }) => available.gt(0));
+    const availableAmount = availableRows.reduce((sum, item) => sum.plus(item.available), new FinancialDecimal(0));
+    const requested = new FinancialDecimal(requestedAmount);
+    let remaining = requested;
+    const allocations: FloatingInterestAllocationPlan["allocations"] = [];
+    for (const { row, available } of availableRows) {
+        if (remaining.lte(0)) break;
+        const amount = FinancialDecimal.min(remaining, available);
+        if (amount.gt(0) && row.id > 0) allocations.push({ accrualId: row.id, accrualPublicId: row.publicId, amount: amount.toFixed(2), dueDate: accrualDueDate(row) });
+        remaining = remaining.minus(amount);
+    }
+    if (availableRows.length === 0) warnings.push({ code: "NO_ACTIVE_ACCRUAL_ROWS", details: { periodStartDate: target.periodStart } });
+    if (requested.gt(availableAmount)) warnings.push({ code: "AMOUNT_EXCEEDS_AVAILABLE_ACCRUAL", details: { availableAmount: availableAmount.toFixed(2) } });
+    if (target.periodStart === loan.interestPeriodAnchorDate) warnings.push({ code: "ADVANCE_PERIOD_NON_REFUNDABLE", details: { periodStartDate: target.periodStart } });
+    if (mode === "preview" && allocations.some((item) => item.accrualPublicId.startsWith("projected:"))) warnings.push({ code: "PROVENANCE_NOT_MATERIALIZED", details: { periodStartDate: target.periodStart } });
+    const provenanceReady = !warnings.some((warning) => ["NO_ACTIVE_ACCRUAL_ROWS", "AMOUNT_EXCEEDS_AVAILABLE_ACCRUAL", "FLOATING_INTEREST_ACCRUAL_CORRUPT", "PROVENANCE_NOT_MATERIALIZED", "ADVANCE_PERIOD_NON_REFUNDABLE"].includes(warning.code)) && remaining.isZero();
+    return { loanPublicId: loan.publicId, throughDate, periodStartDate: target.periodStart, periodEndDate: target.nextPeriodStart, requestedAmount, availableAmount: availableAmount.toFixed(2), allocations, provenanceReady, warnings };
+}
+
 export async function floatingInterestDue(tx: Executor, loan: typeof loans.$inferSelect, through: Date, context: CommandContext | number | null) {
     const rows = await accrueFloatingInterestThrough(tx, loan, through, context);
     const throughDate = bangkokDate(through);

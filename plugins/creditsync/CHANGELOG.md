@@ -3,6 +3,7 @@
 ## 8.0.0 - 2026-09-01
 
 - Added explicit scheduled-installment mode metadata so weekly/monthly count-only terms remain rate-derived while count-plus-amount terms remain fixed-total across MCP workflows.
+- Added the no-write `payment.reconcile.preflight` gate and exact floating-interest provenance checks before confirmation and reconciliation execution.
 
 ## 7.7.0 - 2026-08-25
 
