@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.70 - 2026-09-04
+
+### Added
+- Added the optional OpenAI Secure MCP Tunnel client Compose service, setup handoff documentation, and the CreditSync plugin icon asset.
+
+### Changed
+- Expanded agent guidance for evidence-backed payment matching and documented the MCP preflight and tunnel configuration workflows.
+- Recorded the floating-interest provenance repair and weekly-overdue display implementation plans.
+
 ## v0.3.69 - 2026-09-03
 
 ### Fixed

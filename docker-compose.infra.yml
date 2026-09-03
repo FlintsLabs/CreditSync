@@ -64,9 +64,68 @@ services:
     networks:
       - creditsync_runtime
 
+  # OpenAI Secure MCP Tunnel client. This service is intentionally separate
+  # from the Cloudflare tunnel above: it provides private ChatGPT/Codex access
+  # to the backend MCP endpoint without requiring inbound MCP traffic.
+  tunnel-client:
+    image: ghcr.io/openai/tunnel-client:${TUNNEL_CLIENT_VERSION:-latest}
+    container_name: creditsync-openai-tunnel-client
+    restart: unless-stopped
+    profiles:
+      - openai-mcp
+    command:
+      - run
+      - --config
+      - /etc/tunnel-client/config.yaml
+    configs:
+      - source: tunnel_client_config
+        target: /etc/tunnel-client/config.yaml
+    secrets:
+      - control_plane_api_key
+      - creditsync_mcp_authorization
+    environment:
+      CONTROL_PLANE_TUNNEL_ID: ${CONTROL_PLANE_TUNNEL_ID}
+      LOG_LEVEL: ${TUNNEL_CLIENT_LOG_LEVEL:-info}
+      LOG_FORMAT: ${TUNNEL_CLIENT_LOG_FORMAT:-json}
+      HEALTH_LISTEN_ADDR: :8080
+    ports:
+      - "127.0.0.1:${TUNNEL_CLIENT_HEALTH_PORT:-18080}:8080"
+    networks:
+      - creditsync_runtime
+
 volumes:
   postgres_prod_data:
   minio_prod_data:
+
+configs:
+  tunnel_client_config:
+    content: |
+      config_version: 1
+
+      control_plane:
+        base_url: https://api.openai.com
+        tunnel_id: ${CONTROL_PLANE_TUNNEL_ID}
+        api_key: file:/run/secrets/control_plane_api_key
+
+      log:
+        level: ${TUNNEL_CLIENT_LOG_LEVEL:-info}
+        format: ${TUNNEL_CLIENT_LOG_FORMAT:-json}
+
+      health:
+        listen_addr: :8080
+
+      mcp:
+        server_urls:
+          - channel: main
+            url: http://backend:3000/mcp
+        extra_headers:
+          Authorization: file:/run/secrets/creditsync_mcp_authorization
+
+secrets:
+  control_plane_api_key:
+    file: ${OPENAI_TUNNEL_API_KEY_FILE:-./secrets/openai-tunnel-runtime-api-key}
+  creditsync_mcp_authorization:
+    file: ${CREDITSYNC_MCP_AUTHORIZATION_FILE:-./secrets/creditsync-mcp-authorization}
 
 networks:
   creditsync_runtime:
