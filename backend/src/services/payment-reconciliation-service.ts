@@ -40,6 +40,8 @@ function hash(value: unknown) {
     return `v1:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
 }
 
+const publicUuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function canonicalizeProvenanceSource(source: any) {
     if (!source || !Array.isArray(source.provenancePlans)) return source;
     return {
@@ -556,7 +558,7 @@ export async function preflightPaymentExecution(ctx: CommandContext, input: { pa
         // the backend's posting allocator runs. The no-write gate therefore
         // validates the exact ready proposal and exposes its target amounts;
         // reconciliation inputs continue through the provenance-aware path.
-        if (input.proposalPublicId) {
+        if (input.proposalPublicId !== undefined) {
             const intake = await accessibleIntake(ctx, input.paymentIntakePublicId, db);
             const proposal = await db.query.paymentMatchProposals.findFirst({ where: and(
                 eq(paymentMatchProposals.tenantId, ctx.tenantId),
@@ -572,13 +574,14 @@ export async function preflightPaymentExecution(ctx: CommandContext, input: { pa
             )).orderBy(paymentMatchAllocations.allocationOrder);
             const targets = await Promise.all(rows.map(async (row) => db.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, row.loanId)) })));
             const affectedLoanPublicIds = targets.flatMap((loan) => loan ? [loan.publicId] : []);
+            const preflightHash = hash({ paymentIntakePublicId: intake.publicId, proposalPublicId: proposal.publicId, proposalHash: proposal.proposalHash });
             checks.push({ name: "source", status: "pass" }, { name: "proposal_ready", status: "pass" }, { name: "duplicate", status: "pass" }, { name: "execute_feasibility", status: "pass" });
             return {
                 status: "ready_to_execute" as const, wouldWrite: false as const, sourcePaymentPublicId: intake.publicId,
                 affectedLoanPublicIds, exactAmount: serializeMoney(intake.amount),
                 proposedComponents: { principal: "0.00", interest: "0.00", fee: "0.00", penalty: "0.00" },
                 allocationPlan: rows.map((row, index) => ({ loanPublicId: affectedLoanPublicIds[index]!, component: "principal" as const, amount: serializeMoney(row.amount) })),
-                checks, previewHash: proposal.proposalHash, expectedBalanceVersion: proposal.proposalHash, reviewRequired: false,
+                checks, previewHash: preflightHash, expectedBalanceVersion: preflightHash, reviewRequired: false,
             };
         }
         const allocations = input.allocations ?? [];
@@ -594,7 +597,7 @@ export async function preflightPaymentExecution(ctx: CommandContext, input: { pa
             affectedLoanPublicIds: [...new Set(allocations.map((item) => item.loanPublicId))], exactAmount: source.amount ?? "0.00",
             proposedComponents: preview.correction, allocationPlan: allocations.map((item) => {
                 const plan = ((preview.sourcePayment as { provenancePlans?: FloatingInterestAllocationPlan[] }).provenancePlans ?? []).find((candidate) => candidate.loanPublicId === item.loanPublicId && candidate.requestedAmount === item.amount);
-                return { loanPublicId: item.loanPublicId, component: item.component, amount: item.amount, accrualPublicIds: plan?.allocations.map((allocation) => allocation.accrualPublicId) };
+                return { loanPublicId: item.loanPublicId, component: item.component, amount: item.amount, accrualPublicIds: plan?.allocations.map((allocation) => allocation.accrualPublicId).filter((id) => publicUuidPattern.test(id)) };
             }),
             checks, previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, reviewRequired: false,
             previewPersistence: { proposalPublicId: preview.publicId, expiresAt: preview.expiresAt },
