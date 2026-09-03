@@ -186,6 +186,27 @@ describe("weekly floating allocation, penalty, reversal, and projection invarian
         });
     });
 
+    // A first-period advance deduction covers only the initial weekly period.
+    // On the next weekly due date the customer is again due for the next
+    // period's interest; the payment-health read and posting allocation must
+    // agree on that fact.
+    integrationTest("allocates the next weekly amount to interest after an advance-covered first period", async () => {
+        const asOf = new Date("2026-08-17T12:00:00+07:00");
+        setSystemTime(asOf);
+        const seeded = await seedWeeklyLoan({ deduct: true });
+
+        expect(await paymentHealth(seeded, asOf)).toMatchObject({
+            status: "due_today",
+            dueTodayAmount: "600.00",
+        });
+
+        const payment = await postFloatingPayment(seeded, "600.00", "2026-08-17T05:00:00.000Z");
+        expect(payment.posted.transactions).toEqual([expect.objectContaining({
+            interestComponent: "600.00",
+            principalComponent: "0.00",
+        })]);
+    });
+
     // Break caught: a floating payment bypasses an overdue period penalty,
     // pays interest first, and leaves no durable per-period paid-penalty state.
     integrationTest("allocates partial and full floating penalties before interest", async () => {

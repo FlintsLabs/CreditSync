@@ -46,6 +46,7 @@ import {
     accrueFloatingInterestThrough,
     floatingInterestDue,
     floatingPaymentObligations,
+    selectFloatingInterestPaymentTargets,
     materializeFloatingPenaltyAssessments,
     findActiveFloatingTransactionAllocation,
     reconcileFloatingPenaltyLedgerAfterInterestAllocation,
@@ -1614,6 +1615,7 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
             if (!allocation.scheduleId && loan.repaymentType === "floating") {
                 await accrueFloatingInterestThrough(tx, loan, intake.receivedAt, ctx);
                 let obligations = await floatingPaymentObligations(tx, loan, intake.receivedAt, ctx);
+                const advanceInterestTargets = await selectFloatingInterestPaymentTargets(tx, loan, intake.receivedAt, ctx);
                 const restructureBuckets = await currentRestructureBuckets(tx, ctx.tenantId, loan.id);
                 const carriedPenalty = restructureBuckets?.carriedPenalty ?? new Decimal(0);
                 const carriedFee = restructureBuckets?.carriedFee ?? new Decimal(0);
@@ -1641,13 +1643,24 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
                 const paidFloatingInterest = FinancialDecimal.min(remaining, obligations.dueInterest);
                 remaining = remaining.minus(paidFloatingInterest);
 
+                // 5a. For an advance-collection contract, the period that has
+                // started is payable in full even while its daily snapshots are
+                // still accruing.  Never let that confirmed interest fall
+                // through to principal.
+                const advanceInterestDue = advanceInterestTargets.reduce(
+                    (sum: Decimal, row: typeof loanInterestAccruals.$inferSelect) => sum.plus(FinancialDecimal.max(new FinancialDecimal(row.interestAmount).minus(row.paidAmount), 0)),
+                    new FinancialDecimal(0),
+                );
+                const paidAdvanceInterest = FinancialDecimal.min(remaining, advanceInterestDue);
+                remaining = remaining.minus(paidAdvanceInterest);
+
                 // 6. Principal
                 const principal = remaining;
                 if (principal.gt(loan.outstandingPrincipal ?? loan.principalAmount)) throw new DomainError("STALE_PAYMENT_PROPOSAL", "Allocation exceeds the latest floating balance", 409);
 
                 const totalPenalty = paidCarriedPenalty.plus(paidFloatingPenalty);
                 const totalFee = paidCarriedFee;
-                const totalInterest = paidCarriedInterest.plus(paidFloatingInterest);
+                const totalInterest = paidCarriedInterest.plus(paidFloatingInterest).plus(paidAdvanceInterest);
 
                 const effectiveDate = paymentBusinessDate(intake.receivedAt);
                 const laterExactAllocation = paidFloatingPenalty.gt(0) || paidFloatingInterest.gt(0)
@@ -1700,6 +1713,20 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
                     remainingInterest = remainingInterest.minus(applied);
                 }
                 if (remainingInterest.gt(0)) throw new DomainError("FLOATING_INTEREST_ALLOCATION_MISMATCH", "Floating interest history cannot support this payment", 409);
+                let remainingAdvanceInterest = paidAdvanceInterest;
+                for (const accrual of advanceInterestTargets) {
+                    if (remainingAdvanceInterest.lte(0)) break;
+                    const due = FinancialDecimal.max(new FinancialDecimal(accrual.interestAmount).minus(accrual.paidAmount), 0);
+                    const applied = FinancialDecimal.min(remainingAdvanceInterest, due);
+                    if (applied.gt(0)) planned.push({
+                        dueDate: accrual.periodEndDate ?? accrual.accrualDate,
+                        component: "interest",
+                        interestAccrualId: accrual.id,
+                        amount: applied,
+                    });
+                    remainingAdvanceInterest = remainingAdvanceInterest.minus(applied);
+                }
+                if (remainingAdvanceInterest.gt(0)) throw new DomainError("FLOATING_ADVANCE_INTEREST_ALLOCATION_MISMATCH", "Advance floating interest history cannot support this payment", 409);
                 if (planned.length) {
                     const allocationAudit = await createAuditLog(tx, {
                         ...auditContext(ctx), entityType: "transaction", entityId: transaction.publicId,
@@ -1735,9 +1762,12 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
                         createdByUserId: ctx.actorUserId,
                     })));
                 }
-                if (paidFloatingInterest.gt(0)) {
+                if (paidFloatingInterest.plus(paidAdvanceInterest).gt(0)) {
                     for (const item of planned.filter((candidate) => candidate.component === "interest")) {
-                        const accrual = obligations.rows.find((row) => row.id === item.interestAccrualId);
+                        const accrual = await tx.query.loanInterestAccruals.findFirst({ where: and(
+                            eq(loanInterestAccruals.tenantId, ctx.tenantId),
+                            eq(loanInterestAccruals.id, item.interestAccrualId!),
+                        ) });
                         if (!accrual) throw new DomainError("FLOATING_INTEREST_ACCRUAL_MISSING", "Floating interest allocation has no active accrual", 409);
                         const paidAmount = new FinancialDecimal(accrual.paidAmount).plus(item.amount);
                         await tx.update(loanInterestAccruals).set({

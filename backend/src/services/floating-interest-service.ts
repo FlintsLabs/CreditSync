@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type Decimal from "decimal.js";
 import { db } from "../db";
 import {
@@ -446,6 +446,42 @@ export async function accrueFloatingInterestThrough(executor: Executor, loan: ty
         return rows;
     };
     return executor === db ? db.transaction(run) : run(executor);
+}
+
+/**
+ * Returns the earliest uncovered anchored period that can be collected in
+ * advance.  The initial advance period is represented by paid activation
+ * snapshots, so only later periods are eligible here.
+ */
+export async function selectFloatingInterestPaymentTargets(
+    tx: Executor,
+    loan: typeof loans.$inferSelect,
+    receivedAt: Date,
+    context: CommandContext | number | null,
+) {
+    if (loan.repaymentType !== "floating" || loan.advanceInterestPeriods !== 1 || !hasPeriodPolicy(loan)) return [];
+    const receivedDate = bangkokDate(receivedAt);
+    const policyRow = await tx.query.loanInterestRatePeriods.findFirst({ where: and(
+        eq(loanInterestRatePeriods.tenantId, loan.tenantId),
+        eq(loanInterestRatePeriods.loanId, loan.id),
+        lte(loanInterestRatePeriods.effectiveDate, receivedDate),
+        or(isNull(loanInterestRatePeriods.expiryDate), gte(loanInterestRatePeriods.expiryDate, receivedDate)),
+    ) });
+    if (!policyRow) throw new DomainError("RATE_PERIOD_MISSING_COVERAGE", "Floating loan has no interest rate for the receipt date", 409);
+    const period = interestPeriodFor(loan.interestPeriodAnchorDate!, receivedDate, periodPolicy(loan, policyRow));
+    // Materialize the entire anchored period so a single advance payment has
+    // exact immutable daily provenance, rather than falling through to principal.
+    const through = new Date(`${addCalendarDays(period.nextPeriodStart, -1)}T16:59:59.999Z`);
+    await accrueFloatingInterestThroughInTransaction(tx, loan, through, floatingCommandContext(loan, context));
+    const rows = await tx.select().from(loanInterestAccruals).where(and(
+        eq(loanInterestAccruals.tenantId, loan.tenantId),
+        eq(loanInterestAccruals.loanId, loan.id),
+        eq(loanInterestAccruals.periodStartDate, period.periodStart),
+        eq(loanInterestAccruals.periodEndDate, period.nextPeriodStart),
+        sql`${loanInterestAccruals.status} <> 'reversed'`,
+    )).orderBy(asc(loanInterestAccruals.accrualDate), asc(loanInterestAccruals.id));
+    const remaining = rows.reduce((sum: Decimal, row: typeof loanInterestAccruals.$inferSelect) => sum.plus(FinancialDecimal.max(new FinancialDecimal(row.interestAmount).minus(row.paidAmount), 0)), new FinancialDecimal(0));
+    return remaining.gt(0) ? rows : [];
 }
 
 function accrualDueDate(row: typeof loanInterestAccruals.$inferSelect) {

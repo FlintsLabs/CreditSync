@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.68 - 2026-09-03
+
+### Fixed
+- Fixed weekly floating loans with one period of deducted advance interest so the next anchored period is shown and posted as interest due, with immutable per-accrual allocation provenance, rather than silently reducing principal.
+
 ## v0.3.67 - 2026-09-01
 
 ### Added
