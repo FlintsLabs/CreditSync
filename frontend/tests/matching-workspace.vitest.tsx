@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -81,7 +81,7 @@ describe("MatchingWorkspace exact allocation contract", () => {
     });
 
     // Break caught: string allocation-state responses are coerced through Number before display or posting.
-    it("consumes exact backend money strings and posts the normalized allocation unchanged", async () => {
+    it("reviews exact money strings before posting the normalized allocation unchanged", async () => {
         const user = userEvent.setup();
         renderWorkspace();
 
@@ -90,7 +90,14 @@ describe("MatchingWorkspace exact allocation contract", () => {
 
         await user.type(await allocationInput(), "0.20");
         expect(screen.getAllByText(/6\.70/).length).toBeGreaterThan(0);
-        await user.click(screen.getByRole("button", { name: "Save Allocations" }));
+        await user.click(screen.getByRole("button", { name: "Next: Review Allocation" }));
+
+        expect(api.post).not.toHaveBeenCalled();
+        expect(await screen.findByRole("heading", { name: "Review Allocation" })).toBeInTheDocument();
+        expect(screen.getAllByText("Exact borrower").length).toBeGreaterThan(0);
+        expect(screen.getByText(DRAWDOWN_ID)).toBeInTheDocument();
+
+        await user.click(screen.getByRole("button", { name: "Confirm and Save Allocation" }));
 
         await waitFor(() => expect(api.post).toHaveBeenCalledWith(`/loans/${LOAN_ID}/funding-allocations`, {
             bankLoanPublicId: DRAWDOWN_ID,
@@ -107,9 +114,37 @@ describe("MatchingWorkspace exact allocation contract", () => {
         const input = await allocationInput();
 
         fireEvent.change(input, { target: { value: rawValue } });
-        await user.click(screen.getByRole("button", { name: "Save Allocations" }));
+        await user.click(screen.getByRole("button", { name: "Next: Review Allocation" }));
 
         expect(await screen.findByText("Enter allocation amounts with at most two decimal places.")).toBeInTheDocument();
         expect(api.post).not.toHaveBeenCalled();
+    });
+
+    it("blocks an allocation that exceeds the contract gap or source capacity", async () => {
+        const user = userEvent.setup();
+        renderWorkspace();
+
+        await user.type(await allocationInput(), "7.00");
+        await user.click(screen.getByRole("button", { name: "Next: Review Allocation" }));
+
+        expect(await screen.findByText("Allocation total cannot exceed the remaining contract gap or source capacity.")).toBeInTheDocument();
+        expect(screen.queryByRole("heading", { name: "Review Allocation" })).not.toBeInTheDocument();
+        expect(api.post).not.toHaveBeenCalled();
+    });
+
+    // Break caught: the contract rail cannot narrow a long queue by borrower or contract id.
+    it("filters the contract rail by borrower name or contract id", async () => {
+        const user = userEvent.setup();
+        renderWorkspace();
+
+        expect((await screen.findAllByText("Exact borrower")).length).toBeGreaterThan(0);
+        await user.type(screen.getByRole("searchbox", { name: "Search borrower or contract ID" }), "missing contract");
+        const contractRail = screen.getByRole("complementary");
+        expect(within(contractRail).queryByText("Exact borrower")).not.toBeInTheDocument();
+        expect(within(contractRail).getByText("No contracts match this search.")).toBeInTheDocument();
+
+        await user.clear(screen.getByRole("searchbox", { name: "Search borrower or contract ID" }));
+        await user.type(screen.getByRole("searchbox", { name: "Search borrower or contract ID" }), LOAN_ID.slice(0, 8));
+        expect(screen.getAllByText("Exact borrower").length).toBeGreaterThan(0);
     });
 });

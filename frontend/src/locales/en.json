@@ -706,7 +706,7 @@
         }
     },
     "matching": {
-        "title": "Matching Workspace",
+        "title": "Match Funding",
         "description": "Match borrower loans to one or more funding drawdowns with live funding gap checks.",
         "unknownSource": "Unknown source",
         "noSource": "No source",
@@ -717,6 +717,23 @@
         "funded": "Funded",
         "selectedLoan": "Selected Loan",
         "selectLoanPrompt": "Select a borrower loan from the left to start matching.",
+        "searchLabel": "Search borrower or contract ID",
+        "searchPlaceholder": "Search borrower or contract ID",
+        "noSearchResults": "No contracts match this search.",
+        "progressLabel": "Funding allocation progress",
+        "steps": { "1": "Select Contract", "2": "Allocate Funding", "3": "Review and Confirm" },
+        "filters": { "needs": "Needs Funding", "funded": "Funded" },
+        "remainingGap": "Remaining gap",
+        "fundingSource": "Funding source",
+        "allocatingNow": "Allocating now",
+        "wantToReallocate": "Need to move existing funding?",
+        "review": {
+            "title": "Review Allocation",
+            "description": "Confirm the exact contract, funding sources, and amounts before saving.",
+            "immutableNotice": "Saving creates append-only financial allocation records. Corrections require a compensating reallocation.",
+            "next": "Next: Review Allocation",
+            "confirm": "Confirm and Save Allocation"
+        },
         "alreadyFunded": "Already funded",
         "loanProfitabilitySnapshot": "Loan Profitability Snapshot",
         "gapAfterMatching": "Gap after matching",
@@ -746,6 +763,7 @@
             "selectLoanFirst": "Please select a borrower loan first.",
             "enterAllocation": "Enter at least one allocation amount.",
             "invalidAllocation": "Enter allocation amounts with at most two decimal places.",
+            "exceedsAvailable": "Allocation total cannot exceed the remaining contract gap or source capacity.",
             "saveAllocations": "Unable to save allocations right now.",
             "completeReallocation": "Please complete source, target, and amount for reallocation.",
             "reallocate": "Unable to reallocate funding right now."

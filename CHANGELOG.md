@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.72 - 2026-09-06
+
+### Changed
+- Redesigned the funding matching workspace with searchable contract selection, live exact-money allocation summaries, an explicit review step, and pre-review contract-gap and source-capacity safeguards.
+
 ## v0.3.71 - 2026-09-06
 
 ### Added

@@ -36,3 +36,41 @@
 ## Final result
 
 passed
+
+---
+
+# Funding Matching Workspace — Design QA
+
+## Source of truth
+
+- Approved hybrid reference: `/home/flintstone/.codex/generated_images/01a0762c-a68f-76a3-acf7-9610cbe8bcdf/exec-a198dfb6-ed2b-4edd-b78e-532641a456b8.png`
+- Implementation: `frontend/src/pages/dashboard/loans/MatchingWorkspace.tsx`
+
+## Comparison setup
+
+- Reference: 1487 × 1058 px, light theme, Thai synthetic financial state.
+- Implementation: 1440 × 1024 CSS px, light theme, `th-TH`, Asia/Bangkok.
+- Step 2 evidence: `/home/flintstone/.codex/visualizations/2026/09/06/01a0762c-a68f-76a3-acf7-9610cbe8bcdf/matching-implementation-filled.png`
+- Step 3 evidence: `/home/flintstone/.codex/visualizations/2026/09/06/01a0762c-a68f-76a3-acf7-9610cbe8bcdf/matching-implementation-review.png`
+- Side-by-side comparison: `/home/flintstone/.codex/visualizations/2026/09/06/01a0762c-a68f-76a3-acf7-9610cbe8bcdf/matching-compare.png`
+
+## Visual and interaction checks
+
+- Search and funded-state filters make the contract queue navigable without leaving the page.
+- Selected-contract context includes borrower, contract ID, principal, funded amount, and remaining gap.
+- Exact-string allocation inputs update the sticky allocation and remaining-gap summary without floating-point arithmetic.
+- Review is a separate step; the visual QA interaction reached the confirmation state without posting a financial record.
+- Allocation totals that exceed either the contract gap or source capacity are blocked before review.
+- Horizontal overflow is contained within the drawdown table; the desktop document remains within the 1440 px viewport.
+- Thai and English copy remain in locale resources; segmented filters expose pressed state.
+- Runtime capture recorded only the development server's forced secure HMR WebSocket connection failure; no application runtime error occurred.
+
+## Comparison history
+
+1. Initial implementation reproduced the approved split-pane hierarchy and sticky summary.
+2. Comparison found missing already-funded context in the selected-contract summary and a financial guardrail gap.
+3. The summary and pre-review capacity validation were added, then the captures and interaction pass were regenerated.
+
+## Final result
+
+passed
