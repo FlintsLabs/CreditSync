@@ -116,7 +116,7 @@ describe("MatchingWorkspace exact allocation contract", () => {
             allocatedAmount: "0.20",
             allocationDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
             allocationType: "initial",
-        }));
+        }, { headers: { "Idempotency-Key": expect.any(String) } }));
     });
 
     // Break caught: transient or malformed number-input text reaches strict money arithmetic and crashes render.
@@ -160,7 +160,26 @@ describe("MatchingWorkspace exact allocation contract", () => {
             allocatedAmount: "6.90",
             allocationDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
             allocationType: "initial",
-        }));
+        }, { headers: { "Idempotency-Key": expect.any(String) } }));
+    });
+
+    it("reuses the allocation idempotency key when confirmation is retried", async () => {
+        const user = userEvent.setup();
+        vi.mocked(api.post).mockRejectedValue(new Error("temporary failure"));
+        renderWorkspace();
+
+        await user.type(await allocationInput(), "0.20");
+        await user.click(screen.getByRole("button", { name: "Next: Review Allocation" }));
+        const confirm = await screen.findByRole("button", { name: "Confirm and Save Allocation" });
+        await user.click(confirm);
+        await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+        await user.click(confirm);
+        await waitFor(() => expect(api.post).toHaveBeenCalledTimes(2));
+
+        const firstKey = vi.mocked(api.post).mock.calls[0]?.[2]?.headers?.["Idempotency-Key"];
+        const retryKey = vi.mocked(api.post).mock.calls[1]?.[2]?.headers?.["Idempotency-Key"];
+        expect(firstKey).toEqual(expect.any(String));
+        expect(retryKey).toBe(firstKey);
     });
 
     // Break caught: the contract rail cannot narrow a long queue by borrower or contract id.

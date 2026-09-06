@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowRight, Check, ChevronDown, ChevronLeft, Loader2, Search } from "lucide-react";
 import { api } from "../../../lib/api";
@@ -85,7 +85,7 @@ interface BankProfile {
 }
 interface OwnCapitalSource { id: string; bankProfileId: number; name: string; remainingCapacity: string }
 interface FundingSource { id: string; kind: "drawdown" | "own_capital"; name: string; remainingCapacity: string }
-interface ReviewEntry { sourcePublicId: string; sourceKind: "drawdown" | "own_capital"; amount: string }
+interface ReviewEntry { sourcePublicId: string; sourceKind: "drawdown" | "own_capital"; amount: string; idempotencyKey: string }
 
 function moneyInputOrZero(value: string | undefined) {
     if (!value?.trim()) return "0.00";
@@ -113,6 +113,7 @@ export default function MatchingWorkspace() {
     const [searchQuery, setSearchQuery] = useState("");
     const [loanFilter, setLoanFilter] = useState<"needs" | "funded">("needs");
     const [reviewEntries, setReviewEntries] = useState<ReviewEntry[] | null>(null);
+    const allocationIntentKeys = useRef(new Map<string, string>());
     const [showReallocation, setShowReallocation] = useState(false);
     const [reallocationForm, setReallocationForm] = useState({ fromBankLoanId: "", toBankLoanId: "", amount: "", note: "" });
 
@@ -221,6 +222,7 @@ export default function MatchingWorkspace() {
         setAllocationHistory([]);
         setSelectedLoanProfitability(null);
         setShowReallocation(false);
+        allocationIntentKeys.current.clear();
         setErrorMessage("");
     };
 
@@ -246,7 +248,11 @@ export default function MatchingWorkspace() {
                 .map(([sourcePublicId, value]) => {
                     const source = fundingSources.find((item) => item.id === sourcePublicId);
                     if (!source) throw new Error("invalid");
-                    return { sourcePublicId, sourceKind: source.kind, amount: normalizeMoney(value) };
+                    const amount = normalizeMoney(value);
+                    const fingerprint = `${selectedLoan.id}:${source.kind}:${sourcePublicId}:${amount}`;
+                    const idempotencyKey = allocationIntentKeys.current.get(fingerprint) ?? crypto.randomUUID();
+                    allocationIntentKeys.current.set(fingerprint, idempotencyKey);
+                    return { sourcePublicId, sourceKind: source.kind, amount, idempotencyKey };
                 });
             if (entries.length === 0 || entries.some((entry) => !isPositiveMoney(entry.amount))) throw new Error("invalid");
             const exceedsGap = isNegativeMoney(moneyDifference(selectedLoanGap, sumMoney(entries.map((entry) => entry.amount))));
@@ -276,10 +282,11 @@ export default function MatchingWorkspace() {
                     allocatedAmount: entry.amount,
                     allocationDate: new Date().toISOString().slice(0, 10),
                     allocationType: "initial",
-                });
+                }, { headers: { "Idempotency-Key": entry.idempotencyKey } });
             }
             setDraftAllocations({});
             setReviewEntries(null);
+            allocationIntentKeys.current.clear();
             await loadWorkspace();
         } catch (error: any) {
             console.error("Failed to save allocations", error);
