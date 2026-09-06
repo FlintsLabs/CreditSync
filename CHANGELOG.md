@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.78 - 2026-09-07
+
+### Added
+- Added the audited, idempotent `payment.reconcile.mark-review` MCP transition for eligible backdated floating payments, with a separate operator confirmation boundary before reconciliation execution.
+
+### Fixed
+- Made ordinary payment preflight run the real posting allocator inside a rollback-only transaction so later immutable floating allocations are detected without financial writes.
+
 ## v0.3.77 - 2026-09-07
 
 ### Changed

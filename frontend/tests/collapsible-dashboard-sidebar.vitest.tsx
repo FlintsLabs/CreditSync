@@ -146,7 +146,7 @@ describe("compact dashboard sidebar", () => {
         const footer = screen.getByTestId("application-footer");
         expect(within(footer).getByText("CreditSync v0.3.58")).toBeInTheDocument();
         expect(within(footer).getByText("MCP v1.0")).toBeInTheDocument();
-        expect(within(footer).getByText("Plugin v8.0.0")).toBeInTheDocument();
+        expect(within(footer).getByText("Plugin v9.0.0")).toBeInTheDocument();
         expect(within(footer).getByRole("link", { name: "Changelog" })).toHaveAttribute(
             "href",
             "https://github.com/FlintsLabs/CreditSync/blob/main/CHANGELOG.md",

@@ -11,6 +11,7 @@ Tool errors have `{ code, message, retryable, reviewRequired, repreviewRequired,
 | stale / expired / not latest | Re-read the intake, loan, renewal, or settlement target, then request a new preview. Previous approval does not carry over. |
 | settlement balance/accrual changed | Stop. Re-inspect the borrower portfolio, create and show a fresh settlement preview, and obtain fresh confirmation before a new execute attempt. |
 | rate accrued-date / overlap conflict | Re-list the floating timeline and honor `earliestEditableDate`; never rewrite an accrued day or force overlapping periods. |
+| `FLOATING_BACKDATED_ALLOCATION_REQUIRES_RECONCILIATION` | Do not post. Inspect the exact ready intake, obtain confirmation for `payment.reconcile.mark-review`, then run a fresh reconciliation preflight/preview and obtain a separate confirmation before execute. Other preflight errors are not eligible for this transition. |
 | already posted/executed/reversed | Retrieve current state. If it matches the intended idempotent operation, report that result rather than issuing a new intent. |
 | reversal blocked | Identify and reverse later downstream activity in reverse chronological dependency order, then inspect again. |
 | waiver reason/confirmation required | Stop and obtain the exact component, amount, specific reason, and explicit approval; never supply a generic invented reason. |

@@ -34,6 +34,7 @@ export const MCP_TOOL_NAMES = [
     "payment.batch.execute",
     "payment.reconcile.preview",
     "payment.reconcile.preflight",
+    "payment.reconcile.mark-review",
     "payment.reconcile.execute",
     "payment.restore.create",
     "payment.restore.preview",
@@ -412,6 +413,14 @@ const paymentExecutionPreflightOutput = z.object({
     previewHash: z.string().regex(/^v1:[0-9a-f]{64}$/i), expectedBalanceVersion: z.string().regex(/^v1:[0-9a-f]{64}$/i), reviewRequired: z.boolean(),
     previewPersistence: z.object({ proposalPublicId: uuid, expiresAt: isoDateTime }).strict().optional(),
     warning: z.object({ code: z.string(), message: z.string() }).strict().optional(),
+}).strict();
+const paymentReconciliationReviewOutput = z.object({
+    paymentIntakePublicId: uuid,
+    beforeStatus: z.literal("ready"),
+    afterStatus: z.literal("needs_review"),
+    invalidatedProposalCount: z.number().int().nonnegative(),
+    auditPublicId: uuid,
+    correlationId: uuid.nullable(),
 }).strict();
 const paymentRestoreDraftOutput = z.object({
     sourcePaymentPublicId: uuid,
@@ -1134,6 +1143,7 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "payment.batch.execute": batchExecutionOutput,
     "payment.reconcile.preview": reconciliationPreviewOutput,
     "payment.reconcile.preflight": paymentExecutionPreflightOutput,
+    "payment.reconcile.mark-review": paymentReconciliationReviewOutput,
     "payment.reconcile.execute": reconciliationExecuteOutput,
     "payment.restore.create": paymentRestoreDraftOutput,
     "payment.restore.preview": restorePreviewOutput,
@@ -1411,6 +1421,12 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
     }).strict(),
     "payment.reconcile.preflight": z.object({
         paymentIntakePublicId: uuid, allocations: z.array(reconciliationAllocation).min(1).max(1_000).optional(), proposalPublicId: uuid.optional(), reason: shortText,
+    }).strict(),
+    "payment.reconcile.mark-review": z.object({
+        paymentIntakePublicId: uuid,
+        expectedStatus: z.literal("ready"),
+        reason: shortText,
+        idempotencyKey: z.string().trim().min(1).max(200),
     }).strict(),
     "payment.restore.create": z.object({ paymentIntakePublicId: uuid, reason: shortText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
     "payment.restore.preview": z.object({ paymentIntakePublicId: uuid, reason: shortText }).strict(),
@@ -1849,6 +1865,7 @@ const destructiveTools = new Set<McpToolName>([
     "payment.batch.evidence.finalize",
     "payment.batch.preview",
     "payment.reconcile.preview",
+    "payment.reconcile.mark-review",
     "payment.reconcile.execute",
     "payment.restore.create",
     "payment.restore.preview",
@@ -1930,6 +1947,7 @@ const idempotentTools = new Set<McpToolName>([
     "payment.post",
     "payment.reverse",
     "payment.reconcile.execute",
+    "payment.reconcile.mark-review",
     "payment.restore.execute",
     "payment.restore.schedule-backfill",
     "payment.restore.create",
@@ -1997,6 +2015,7 @@ const toolDescriptions: Record<McpToolName, string> = {
     "payment.batch.execute": "Execute one explicitly confirmed atomic payment batch.",
     "payment.reconcile.preview": "Preview an interest-only posting for a reviewed historical needs_review payment intake without reducing principal.",
     "payment.reconcile.preflight": "Run a no-write execution feasibility check for an explicit payment reconciliation before confirmation.",
+    "payment.reconcile.mark-review": "Move an eligible ready backdated floating payment into reconciliation review after explicit confirmation.",
     "payment.reconcile.execute": "Execute a confirmed, idempotent payment reconciliation with append-only provenance.",
     "payment.restore.preview": "Preview exact restoration of a fully reversed payment using its original principal and interest components.",
     "payment.restore.create": "Create one linked restore draft so new payment-slip evidence can be finalized before an exact restore preview.",

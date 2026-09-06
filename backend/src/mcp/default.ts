@@ -142,7 +142,7 @@ import {
     reversePaymentAttribution,
     type CreatePaymentAttributionInput,
 } from "../services/payment-attribution-service";
-import { backfillPostedRestoreSchedule, createPaymentRestoreDraft, executePaymentReconciliation, preflightPaymentExecution, previewPaymentReconciliation, previewPaymentRestore, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
+import { backfillPostedRestoreSchedule, createPaymentRestoreDraft, executePaymentReconciliation, markPaymentReconciliationReview, preflightPaymentExecution, previewPaymentReconciliation, previewPaymentRestore, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
 import { addPaymentBatchItem, capturePaymentBatch, createPaymentBatch, executePaymentBatch, finalizePaymentBatchEvidenceMany, getPaymentBatch, preparePaymentBatchEvidenceMany, previewPaymentBatch } from "../services/payment-batch-service";
 import { executeUnfundedLoanCancellation, previewUnfundedLoanCancellation } from "../services/loan-cancellation-service";
 
@@ -279,6 +279,22 @@ export function createDefaultMcpToolHandlers(
         reason: asString(input, "reason"),
         proposalPublicId: input.proposalPublicId as string | undefined,
     }),
+    "payment.reconcile.mark-review": (ctx, input) => {
+        const argumentKey = asString(input, "idempotencyKey").trim();
+        const contextKey = ctx.idempotencyKey?.trim();
+        if (contextKey && contextKey !== argumentKey) {
+            throw new DomainError("IDEMPOTENCY_CONFLICT", "Command and transport idempotency keys differ", 409);
+        }
+        return markPaymentReconciliationReview(
+            { ...ctx, idempotencyKey: contextKey ?? argumentKey },
+            {
+                paymentIntakePublicId: asString(input, "paymentIntakePublicId"),
+                expectedStatus: "ready",
+                reason: asString(input, "reason"),
+                idempotencyKey: argumentKey,
+            },
+        );
+    },
     "payment.reconcile.execute": (ctx, input) => {
         const idempotencyKey = ctx.idempotencyKey;
         if (!idempotencyKey) {

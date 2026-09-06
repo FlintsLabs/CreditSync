@@ -26,7 +26,7 @@ import type { DisbursementEvidenceStorageGateway } from "../services/loan-disbur
 import type { IntermediaryRemittanceEvidenceGateway } from "../services/intermediary-service";
 import type { TransferEvidenceStorageGateway } from "../services/transfer-evidence-service";
 import { seedReplacementFixture } from "../services/loan-replacement-test-fixture";
-import { createDefaultMcpHttpPlugin, paymentReverseCommandContext } from "./default";
+import { createDefaultMcpHttpPlugin, createDefaultMcpToolHandlers, paymentReverseCommandContext } from "./default";
 import { MCP_TOOL_NAMES, type McpToolName } from "./server";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
@@ -37,6 +37,17 @@ const ACTOR_EMAIL = "mcp-default@example.test";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const runningApps: Array<{ stop(): Promise<unknown> | unknown }> = [];
+
+test("mark-review rejects disagreement between command and transport idempotency keys", async () => {
+    const handler = createDefaultMcpToolHandlers()["payment.reconcile.mark-review"];
+    expect(() => handler({
+        tenantId: "tenant-test", actorUserId: null, actorSource: "mcp",
+        requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: "transport-key",
+    }, {
+        paymentIntakePublicId: crypto.randomUUID(), expectedStatus: "ready",
+        reason: "Backdated floating payment", idempotencyKey: "argument-key",
+    })).toThrow(expect.objectContaining({ code: "IDEMPOTENCY_CONFLICT" }));
+});
 
 function isDisposableTestDatabase(value: string | undefined) {
     if (!value) return false;
@@ -1706,6 +1717,16 @@ describe("default MCP adapter integration", () => {
             reason: "MCP all-tools atomic replacement reversal",
             idempotencyKey: "mcp-all-tools-replacement-reverse",
         });
+
+        const markReviewHandler = createDefaultMcpToolHandlers()["payment.reconcile.mark-review"];
+        await expect(Promise.resolve().then(() => markReviewHandler({
+            tenantId: TENANT_ID, actorUserId: actor.id, actorSource: "mcp",
+            requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: "mcp-all-tools-mark-review",
+        }, {
+            paymentIntakePublicId: reconciliationIntake.publicId, expectedStatus: "ready",
+            reason: "MCP all-tools verifies the guarded review transition", idempotencyKey: "mcp-all-tools-mark-review",
+        }))).rejects.toMatchObject({ code: "PAYMENT_RECONCILIATION_REVIEW_STATE_CONFLICT" });
+        called.push("payment.reconcile.mark-review");
 
         expect([...new Set(called)].sort()).toEqual([...MCP_TOOL_NAMES].sort());
         expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length);

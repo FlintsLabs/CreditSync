@@ -2,12 +2,12 @@ import { describe, expect, test } from "bun:test";
 import Decimal from "decimal.js";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, floatingTransactionAllocations, loanInterestAccruals, loanSchedules, loans, paymentEvidence, paymentIntakes, paymentReconciliationEntries, paymentReconciliationGroups, paymentReconciliationProposals, transactions, users } from "../db/schema";
+import { auditLogs, borrowers, floatingTransactionAllocations, loanInterestAccruals, loanSchedules, loans, paymentEvidence, paymentIntakes, paymentMatchProposals, paymentReconciliationEntries, paymentReconciliationGroups, paymentReconciliationProposals, transactions, users } from "../db/schema";
 import { createBorrower } from "./borrower-service";
 import { createLoanDraft, activateLoan } from "./loan-application-service";
-import { createPaymentIntake, previewPaymentMatch, reviewPaymentIntake } from "./payment-service";
+import { createPaymentIntake, postPayment, previewPaymentMatch, reviewPaymentIntake } from "./payment-service";
 import type { CommandContext } from "./command-context";
-import { backfillPostedRestoreSchedule, calculateReconciliationComponents, createPaymentRestoreDraft, deriveExactRestoreComponents, executePaymentReconciliation, preflightPaymentExecution, previewPaymentRestore, previewPaymentReconciliation, type ReconciliationAllocation } from "./payment-reconciliation-service";
+import { backfillPostedRestoreSchedule, calculateReconciliationComponents, createPaymentRestoreDraft, deriveExactRestoreComponents, executePaymentReconciliation, markPaymentReconciliationReview, preflightPaymentExecution, previewPaymentRestore, previewPaymentReconciliation, type ReconciliationAllocation } from "./payment-reconciliation-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
 
@@ -91,6 +91,123 @@ describe("payment reconciliation persistence", () => {
         const after = await snapshot();
         expect(result).toMatchObject({ status: "ready_to_execute", wouldWrite: false, reviewRequired: false, exactAmount: "100.00" });
         expect(after).toEqual(before);
+    });
+
+    integrationTest("preflight reports a later immutable floating allocation without changing financial state", async () => {
+        const tenantId = `payment-backdated-preflight-${crypto.randomUUID()}`;
+        const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+        const ctx: CommandContext = { tenantId, actorUserId: actor.id, actorSource: "mcp", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() };
+        const borrower = await createBorrower(ctx, { name: "Backdated Preflight Borrower" });
+        const draft = await createLoanDraft(ctx, {
+            borrowerPublicId: borrower.publicId,
+            principal: "1000.00",
+            interestRate: "0.00",
+            repaymentType: "floating",
+            termMonths: 1,
+            startDate: "2026-08-06",
+            floatingDailyInterest: { mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day" },
+        });
+        await activateLoan(ctx, draft.publicId);
+
+        const later = await createPaymentIntake({ ...ctx, idempotencyKey: crypto.randomUUID() }, {
+            amount: "10.00",
+            receivedAt: "2026-08-20T05:00:00.000Z",
+            payerName: borrower.name,
+        });
+        const laterPreview = await previewPaymentMatch(ctx, later.publicId, { allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: draft.publicId, amount: "10.00" }] });
+        expect(laterPreview.status).toBe("ready");
+        await postPayment(ctx, later.publicId, { proposalPublicId: laterPreview.publicId });
+
+        const backdated = await createPaymentIntake({ ...ctx, idempotencyKey: crypto.randomUUID() }, {
+            amount: "10.00",
+            receivedAt: "2026-08-18T05:00:00.000Z",
+            payerName: borrower.name,
+        });
+        const backdatedPreview = await previewPaymentMatch(ctx, backdated.publicId, { allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: draft.publicId, amount: "10.00" }] });
+        expect(backdatedPreview.status).toBe("ready");
+
+        const snapshot = async () => ({
+            loan: await db.query.loans.findFirst({ where: and(eq(loans.tenantId, tenantId), eq(loans.publicId, draft.publicId)) }),
+            intakes: await db.select().from(paymentIntakes).where(eq(paymentIntakes.tenantId, tenantId)),
+            transactions: await db.select().from(transactions).where(eq(transactions.tenantId, tenantId)),
+            accruals: await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.tenantId, tenantId)),
+            floatingAllocations: await db.select().from(floatingTransactionAllocations).where(eq(floatingTransactionAllocations.tenantId, tenantId)),
+        });
+        const before = await snapshot();
+        const result = await preflightPaymentExecution(ctx, {
+            paymentIntakePublicId: backdated.publicId,
+            proposalPublicId: backdatedPreview.publicId,
+            reason: "Check backdated ordinary payment feasibility",
+        });
+        const after = await snapshot();
+
+        expect(result).toMatchObject({
+            status: "review_required",
+            wouldWrite: false,
+            reviewRequired: true,
+            warning: { code: "FLOATING_BACKDATED_ALLOCATION_REQUIRES_RECONCILIATION" },
+        });
+        expect(after).toEqual(before);
+    });
+
+    integrationTest("marks only an eligible backdated ready payment for reconciliation review idempotently", async () => {
+        const tenantId = `payment-mark-review-${crypto.randomUUID()}`;
+        const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+        const ctx: CommandContext = { tenantId, actorUserId: actor.id, actorSource: "mcp", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: "mark-review-once" };
+        const borrower = await createBorrower(ctx, { name: "Mark Review Borrower" });
+        const draft = await createLoanDraft(ctx, {
+            borrowerPublicId: borrower.publicId,
+            principal: "1000.00",
+            interestRate: "0.00",
+            repaymentType: "floating",
+            termMonths: 1,
+            startDate: "2026-08-06",
+            floatingDailyInterest: { mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day" },
+        });
+        await activateLoan(ctx, draft.publicId);
+
+        const later = await createPaymentIntake({ ...ctx, idempotencyKey: crypto.randomUUID() }, { amount: "10.00", receivedAt: "2026-08-20T05:00:00.000Z", payerName: borrower.name });
+        const laterPreview = await previewPaymentMatch(ctx, later.publicId, { allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: draft.publicId, amount: "10.00" }] });
+        await postPayment(ctx, later.publicId, { proposalPublicId: laterPreview.publicId });
+
+        const backdated = await createPaymentIntake({ ...ctx, idempotencyKey: crypto.randomUUID() }, { amount: "10.00", receivedAt: "2026-08-18T05:00:00.000Z", payerName: borrower.name });
+        const backdatedPreview = await previewPaymentMatch(ctx, backdated.publicId, { allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: draft.publicId, amount: "10.00" }] });
+        const transactionCount = await db.select().from(transactions).where(eq(transactions.tenantId, tenantId)).then((rows) => rows.length);
+
+        const input = {
+            paymentIntakePublicId: backdated.publicId,
+            expectedStatus: "ready" as const,
+            reason: " Backdated floating payment requires reconciliation ",
+            idempotencyKey: "mark-review-once",
+        };
+        const result = await markPaymentReconciliationReview(ctx, input);
+        expect(result).toMatchObject({
+            paymentIntakePublicId: backdated.publicId,
+            beforeStatus: "ready",
+            afterStatus: "needs_review",
+            invalidatedProposalCount: 1,
+            correlationId: ctx.correlationId,
+        });
+        expect(await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, backdated.publicId) })).toMatchObject({ status: "needs_review" });
+        expect(await db.query.paymentMatchProposals.findFirst({ where: eq(paymentMatchProposals.publicId, backdatedPreview.publicId) })).toMatchObject({ status: "stale" });
+        expect(await db.select().from(transactions).where(eq(transactions.tenantId, tenantId)).then((rows) => rows.length)).toBe(transactionCount);
+
+        const replay = await markPaymentReconciliationReview({ ...ctx, correlationId: crypto.randomUUID() }, input);
+        expect(replay).toEqual(result);
+        const audits = await db.select().from(auditLogs).where(and(
+            eq(auditLogs.tenantId, tenantId),
+            eq(auditLogs.entityId, backdated.publicId),
+            eq(auditLogs.action, "reconciliation_review_marked"),
+        ));
+        expect(audits).toHaveLength(1);
+        expect(audits[0]!.payload).toMatchObject({
+            beforeStatus: "ready",
+            afterStatus: "needs_review",
+            reason: "Backdated floating payment requires reconciliation",
+            idempotencyKey: "mark-review-once",
+            invalidatedProposalCount: 1,
+        });
+        await expect(markPaymentReconciliationReview(ctx, { ...input, reason: "Different command" })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
     });
 
     integrationTest("creates an evidence-bearing draft and restores a reversed mixed-component payment exactly into it", async () => {

@@ -1,5 +1,10 @@
 # CreditSync Plugin Changelog
 
+## 9.0.0 - 2026-09-07
+
+- Added `payment.reconcile.mark-review` for the narrow, audited transition of an eligible backdated floating payment from `ready` to `needs_review`.
+- Made ordinary payment preflight use a rollback-only execution probe and documented separate confirmations for review transition and reconciliation execution.
+
 ## 8.0.0 - 2026-09-01
 
 - Added explicit scheduled-installment mode metadata so weekly/monthly count-only terms remain rate-derived while count-plus-amount terms remain fixed-total across MCP workflows.

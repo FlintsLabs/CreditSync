@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
-    borrowers, loans, loanSchedules, paymentEvidence, paymentIntakes, paymentReconciliationEntries,
+    auditLogs, borrowers, loans, loanSchedules, paymentEvidence, paymentIntakes, paymentReconciliationEntries,
     paymentReconciliationGroups, paymentReconciliationProposals, transactions,
     floatingTransactionAllocations, loanInterestAccruals, paymentMatchProposals, paymentMatchAllocations,
 } from "../db/schema";
@@ -12,6 +12,7 @@ import { parseMoney, serializeMoney } from "../lib/money";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import { accrueFloatingInterestThrough, resolveFloatingInterestAllocationPlan, type FloatingInterestAllocationPlan } from "./floating-interest-service";
+import { postPayment } from "./payment-service";
 
 export type ReconciliationComponent = "interest" | "principal" | "fee" | "penalty";
 export interface ReconciliationAllocation {
@@ -20,6 +21,129 @@ export interface ReconciliationAllocation {
     amount: string;
     component: ReconciliationComponent;
     schedulePublicId?: string;
+}
+
+export type PaymentPostFeasibility =
+    | { status: "postable"; paymentIntakePublicId: string; proposalPublicId: string }
+    | { status: "blocked"; paymentIntakePublicId: string; proposalPublicId: string; error: DomainError };
+
+class PaymentPostProbeRollback extends Error {}
+
+export async function probePaymentPostFeasibility(
+    ctx: CommandContext,
+    input: { paymentIntakePublicId: string; proposalPublicId: string },
+): Promise<PaymentPostFeasibility> {
+    return probePaymentPostFeasibilityWith(db, ctx, input);
+}
+
+async function probePaymentPostFeasibilityWith(
+    transactionHost: any,
+    ctx: CommandContext,
+    input: { paymentIntakePublicId: string; proposalPublicId: string },
+): Promise<PaymentPostFeasibility> {
+    try {
+        await transactionHost.transaction(async (tx: any) => {
+            const result = await postPayment(ctx, input.paymentIntakePublicId, { proposalPublicId: input.proposalPublicId }, tx);
+            if ("stale" in result) {
+                throw new DomainError("STALE_PAYMENT_PROPOSAL", "Payment proposal changed during feasibility check", 409);
+            }
+            throw new PaymentPostProbeRollback();
+        });
+    } catch (error) {
+        if (error instanceof PaymentPostProbeRollback) return { status: "postable", ...input };
+        if (error instanceof DomainError) return { status: "blocked", ...input, error };
+        throw error;
+    }
+    throw new DomainError("PAYMENT_PREFLIGHT_FAILED", "Payment feasibility probe ended unexpectedly", 500);
+}
+
+export interface MarkPaymentReconciliationReviewInput {
+    paymentIntakePublicId: string;
+    expectedStatus: "ready";
+    reason: string;
+    idempotencyKey: string;
+}
+
+export interface MarkPaymentReconciliationReviewResult {
+    paymentIntakePublicId: string;
+    beforeStatus: "ready";
+    afterStatus: "needs_review";
+    invalidatedProposalCount: number;
+    auditPublicId: string;
+    correlationId: string | null;
+}
+
+export async function markPaymentReconciliationReview(
+    ctx: CommandContext,
+    input: MarkPaymentReconciliationReviewInput,
+): Promise<MarkPaymentReconciliationReviewResult> {
+    const reason = input.reason.trim();
+    const idempotencyKey = input.idempotencyKey.trim();
+    if (!reason) throw new DomainError("RECONCILIATION_REVIEW_REASON_REQUIRED", "A review reason is required", 400);
+    if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Idempotency key is required", 400);
+    const requestFingerprint = hash({ operation: "mark_payment_reconciliation_review", paymentIntakePublicId: input.paymentIntakePublicId, expectedStatus: input.expectedStatus, reason });
+
+    return db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${ctx.tenantId}:payment-reconciliation-review:${idempotencyKey}`}, 0))`);
+        const prior = await tx.select().from(auditLogs).where(and(
+            eq(auditLogs.tenantId, ctx.tenantId),
+            eq(auditLogs.entityType, "payment_intake"),
+            eq(auditLogs.action, "reconciliation_review_marked"),
+            sql`${auditLogs.payload}->>'idempotencyKey' = ${idempotencyKey}`,
+        )).orderBy(desc(auditLogs.id)).limit(1).then((rows: Array<typeof auditLogs.$inferSelect>) => rows[0] ?? null);
+        if (prior) {
+            const payload = prior.payload as Record<string, unknown> | null;
+            if (!payload || payload.requestFingerprint !== requestFingerprint) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was already used for a different command", 409);
+            if (payload.paymentIntakePublicId !== input.paymentIntakePublicId
+                || payload.beforeStatus !== "ready"
+                || payload.afterStatus !== "needs_review"
+                || typeof payload.invalidatedProposalCount !== "number"
+                || !Number.isSafeInteger(payload.invalidatedProposalCount)
+                || payload.invalidatedProposalCount < 0) {
+                throw new DomainError("IDEMPOTENT_RESULT_NOT_FOUND", "The stored idempotent result is unavailable", 409);
+            }
+            return {
+                paymentIntakePublicId: payload.paymentIntakePublicId,
+                beforeStatus: "ready",
+                afterStatus: "needs_review",
+                invalidatedProposalCount: payload.invalidatedProposalCount,
+                auditPublicId: prior.publicId,
+                correlationId: prior.correlationId,
+            };
+        }
+
+        let intake = await accessibleIntake(ctx, input.paymentIntakePublicId, tx);
+        await tx.execute(sql`SELECT 1 FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id = ${intake.id} FOR UPDATE`);
+        intake = await accessibleIntake(ctx, input.paymentIntakePublicId, tx);
+        if (input.expectedStatus !== "ready" || intake.status !== "ready") throw new DomainError("PAYMENT_RECONCILIATION_REVIEW_STATE_CONFLICT", "Payment intake is not in the expected ready state", 409);
+        const proposal = await tx.query.paymentMatchProposals.findFirst({
+            where: and(eq(paymentMatchProposals.tenantId, ctx.tenantId), eq(paymentMatchProposals.paymentIntakeId, intake.id)),
+            orderBy: [desc(paymentMatchProposals.version)],
+        });
+        if (!proposal || proposal.status !== "ready" || !proposal.expiresAt || proposal.expiresAt.getTime() <= Date.now()
+            || ((proposal.warnings as unknown[] | null) ?? []).length > 0) {
+            throw new DomainError("PAYMENT_RECONCILIATION_REVIEW_NOT_ELIGIBLE", "Payment does not have a current warning-free ready proposal", 409);
+        }
+        const existingGroup = await tx.query.paymentReconciliationGroups.findFirst({ where: and(
+            eq(paymentReconciliationGroups.tenantId, ctx.tenantId), eq(paymentReconciliationGroups.paymentIntakeId, intake.id),
+        ) });
+        if (existingGroup) throw new DomainError("PAYMENT_RECONCILIATION_REVIEW_NOT_ELIGIBLE", "Payment already has a reconciliation", 409);
+        const feasibility = await probePaymentPostFeasibilityWith(tx, ctx, { paymentIntakePublicId: intake.publicId, proposalPublicId: proposal.publicId });
+        if (feasibility.status !== "blocked" || feasibility.error.code !== "FLOATING_BACKDATED_ALLOCATION_REQUIRES_RECONCILIATION") {
+            throw new DomainError("PAYMENT_RECONCILIATION_REVIEW_NOT_ELIGIBLE", "Only a backdated floating payment blocked by immutable later allocations can enter reconciliation review", 409);
+        }
+        await tx.update(paymentIntakes).set({ status: "needs_review", updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(
+            eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, intake.id), eq(paymentIntakes.status, "ready"),
+        ));
+        const invalidated = await tx.update(paymentMatchProposals).set({ status: "stale", updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(
+            eq(paymentMatchProposals.tenantId, ctx.tenantId), eq(paymentMatchProposals.paymentIntakeId, intake.id), inArray(paymentMatchProposals.status, ["draft", "needs_review", "ready"]),
+        )).returning({ id: paymentMatchProposals.id });
+        const audit = await createAuditLog(tx, { ...contextPayload(ctx), entityType: "payment_intake", entityId: intake.publicId, action: "reconciliation_review_marked", payload: {
+            paymentIntakePublicId: intake.publicId, beforeStatus: "ready", afterStatus: "needs_review", reason, idempotencyKey,
+            requestFingerprint, invalidatedProposalCount: invalidated.length,
+        } });
+        return { paymentIntakePublicId: intake.publicId, beforeStatus: "ready", afterStatus: "needs_review", invalidatedProposalCount: invalidated.length, auditPublicId: audit.publicId, correlationId: ctx.correlationId };
+    });
 }
 
 const components = ["principal", "interest", "fee", "penalty"] as const;
@@ -575,6 +699,11 @@ export async function preflightPaymentExecution(ctx: CommandContext, input: { pa
             const targets = await Promise.all(rows.map(async (row) => db.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, row.loanId)) })));
             const affectedLoanPublicIds = targets.flatMap((loan) => loan ? [loan.publicId] : []);
             const preflightHash = hash({ paymentIntakePublicId: intake.publicId, proposalPublicId: proposal.publicId, proposalHash: proposal.proposalHash });
+            const feasibility = await probePaymentPostFeasibility(ctx, {
+                paymentIntakePublicId: intake.publicId,
+                proposalPublicId: proposal.publicId,
+            });
+            if (feasibility.status === "blocked") throw feasibility.error;
             checks.push({ name: "source", status: "pass" }, { name: "proposal_ready", status: "pass" }, { name: "duplicate", status: "pass" }, { name: "execute_feasibility", status: "pass" });
             return {
                 status: "ready_to_execute" as const, wouldWrite: false as const, sourcePaymentPublicId: intake.publicId,
