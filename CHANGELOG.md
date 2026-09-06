@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.71 - 2026-09-06
+
+### Added
+- Added the proposed design for ChatGPT-native payment-slip ingestion, append-only late evidence, and signed slip previews from contract payment history.
+
 ## v0.3.70 - 2026-09-04
 
 ### Added
