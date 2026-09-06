@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.79 - 2026-09-07
+
+### Fixed
+- Preserved the `payment.reconcile.mark-review` idempotency key across the MCP transport boundary so eligible backdated payments enter audited reconciliation review instead of failing with `INTERNAL_ERROR`.
+
 ## v0.3.78 - 2026-09-07
 
 ### Added

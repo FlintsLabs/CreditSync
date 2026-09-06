@@ -22,6 +22,10 @@ import {
     users,
 } from "../db/schema";
 import type { EvidenceStorageGateway } from "../services/payment-service";
+import { createPaymentIntake, postPayment, previewPaymentMatch } from "../services/payment-service";
+import { createBorrower } from "../services/borrower-service";
+import { activateLoan, createLoanDraft } from "../services/loan-application-service";
+import type { CommandContext } from "../services/command-context";
 import type { DisbursementEvidenceStorageGateway } from "../services/loan-disbursement-service";
 import type { IntermediaryRemittanceEvidenceGateway } from "../services/intermediary-service";
 import type { TransferEvidenceStorageGateway } from "../services/transfer-evidence-service";
@@ -131,6 +135,78 @@ describe("default MCP adapter integration", () => {
 
         expect(context.idempotencyKey).toBe("mcp:payment-reverse:01a020da-0767-74c0-b31a-29787378c937");
     });
+
+    // Break caught: the MCP transport removes idempotencyKey from handler input
+    // after promoting it into CommandContext, but mark-review still tries to
+    // read the removed argument and reports INTERNAL_ERROR before validation.
+    integrationTest("preserves the mark-review idempotency key across the MCP transport boundary", async () => {
+        const actor = await db.insert(users).values({ tenantId: TENANT_ID, email: ACTOR_EMAIL, role: "owner" }).returning().then((rows) => rows[0]!);
+        const ctx: CommandContext = {
+            tenantId: TENANT_ID,
+            actorUserId: actor.id,
+            actorSource: "mcp",
+            requestId: crypto.randomUUID(),
+            correlationId: crypto.randomUUID(),
+        };
+        const borrower = await createBorrower(ctx, { name: "MCP mark-review transport borrower" });
+        const loan = await createLoanDraft(ctx, {
+            borrowerPublicId: borrower.publicId,
+            principal: "1000.00",
+            interestRate: "0.00",
+            repaymentType: "floating",
+            termMonths: 1,
+            startDate: "2026-08-06",
+            floatingDailyInterest: { mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day" },
+        });
+        await activateLoan({ ...ctx, idempotencyKey: "mcp-mark-review-activate" }, loan.publicId);
+        const later = await createPaymentIntake({ ...ctx, idempotencyKey: "mcp-mark-review-later" }, {
+            amount: "10.00", receivedAt: "2026-08-20T05:00:00.000Z", payerName: borrower.name,
+        });
+        const laterProposal = await previewPaymentMatch(ctx, later.publicId, {
+            allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: loan.publicId, amount: "10.00" }],
+        });
+        await postPayment(
+            { ...ctx, idempotencyKey: "mcp-mark-review-post-later" },
+            later.publicId,
+            { proposalPublicId: laterProposal.publicId },
+        );
+        const backdated = await createPaymentIntake({ ...ctx, idempotencyKey: "mcp-mark-review-backdated" }, {
+            amount: "10.00", receivedAt: "2026-08-18T05:00:00.000Z", payerName: borrower.name,
+        });
+        await previewPaymentMatch(ctx, backdated.publicId, {
+            allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: loan.publicId, amount: "10.00" }],
+        });
+        const { client } = await startDefaultServer();
+        const args = {
+            paymentIntakePublicId: backdated.publicId,
+            expectedStatus: "ready" as const,
+            reason: "Verify transport idempotency propagation",
+            idempotencyKey: "mcp-mark-review-transport",
+        };
+
+        const first = resultData(await client.callTool({
+            name: "payment.reconcile.mark-review",
+            arguments: args,
+        }));
+        const replay = resultData(await client.callTool({ name: "payment.reconcile.mark-review", arguments: args }));
+        expect(first.data).toEqual(replay.data);
+        expect(first.data).toMatchObject({
+            paymentIntakePublicId: backdated.publicId,
+            beforeStatus: "ready",
+            afterStatus: "needs_review",
+            invalidatedProposalCount: 1,
+        });
+        const audits = await db.select().from(auditLogs).where(and(
+            eq(auditLogs.tenantId, TENANT_ID),
+            eq(auditLogs.entityId, backdated.publicId),
+            eq(auditLogs.action, "reconciliation_review_marked"),
+        ));
+        expect(audits).toHaveLength(1);
+        expect(audits[0]!.payload).toMatchObject({ idempotencyKey: "mcp-mark-review-transport" });
+
+        await client.close();
+    });
+
     // Break caught: borrower.portfolio must carry the public-only replacement
     // lineage emitted by the real portfolio projection, both before and after
     // an executed/reversed replacement. A strict MCP output schema must never

@@ -280,18 +280,22 @@ export function createDefaultMcpToolHandlers(
         proposalPublicId: input.proposalPublicId as string | undefined,
     }),
     "payment.reconcile.mark-review": (ctx, input) => {
-        const argumentKey = asString(input, "idempotencyKey").trim();
+        const argumentKey = typeof input.idempotencyKey === "string" ? input.idempotencyKey.trim() : undefined;
         const contextKey = ctx.idempotencyKey?.trim();
-        if (contextKey && contextKey !== argumentKey) {
+        if (contextKey && argumentKey && contextKey !== argumentKey) {
             throw new DomainError("IDEMPOTENCY_CONFLICT", "Command and transport idempotency keys differ", 409);
         }
+        const idempotencyKey = contextKey ?? argumentKey;
+        if (!idempotencyKey) {
+            throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Idempotency key is required", 400);
+        }
         return markPaymentReconciliationReview(
-            { ...ctx, idempotencyKey: contextKey ?? argumentKey },
+            { ...ctx, idempotencyKey },
             {
                 paymentIntakePublicId: asString(input, "paymentIntakePublicId"),
                 expectedStatus: "ready",
                 reason: asString(input, "reason"),
-                idempotencyKey: argumentKey,
+                idempotencyKey,
             },
         );
     },
