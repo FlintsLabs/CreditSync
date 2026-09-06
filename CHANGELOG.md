@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.76 - 2026-09-07
+
+### Added
+- Added the approved design for a narrow, audited, idempotent MCP transition from a backdated payment's `ready` state into historical reconciliation review.
+
 ## v0.3.75 - 2026-09-06
 
 ### Fixed
