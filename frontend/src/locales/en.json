@@ -725,6 +725,7 @@
         "filters": { "needs": "Needs Funding", "funded": "Funded" },
         "remainingGap": "Remaining gap",
         "fundingSource": "Funding source",
+        "sourceKinds": { "drawdown": "Bank drawdown", "own_capital": "Own capital" },
         "allocatingNow": "Allocating now",
         "wantToReallocate": "Need to move existing funding?",
         "review": {
@@ -748,6 +749,7 @@
         "availableDrawdowns": "Available Drawdowns",
         "saveAllocations": "Save Allocations",
         "noActiveDrawdowns": "No active drawdowns available for matching.",
+        "noActiveSources": "No active drawdowns or own-capital pools are available for matching.",
         "notScheduled": "Not scheduled",
         "allocationState": "Allocation state",
         "drawdownTotal": "Drawdown total",

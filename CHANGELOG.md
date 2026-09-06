@@ -2,6 +2,9 @@
 
 ## v0.3.73 - 2026-09-06
 
+### Changed
+- Added active own-capital pools to the funding matching workspace with authoritative available-balance display, distinct source labels, exact pre-review validation, and direct profile allocation payloads.
+
 ### Fixed
 - Kept activated loan schedules immutable at the database boundary while allowing an audited, idempotent payment-start-date amendment to move only unpaid due dates and refresh the loan's next due date.
 

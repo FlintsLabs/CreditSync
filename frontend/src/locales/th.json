@@ -725,6 +725,7 @@
         "filters": { "needs": "ต้องการเงินทุน", "funded": "จัดสรรแล้ว" },
         "remainingGap": "ช่องว่างคงเหลือ",
         "fundingSource": "แหล่งเงินทุน",
+        "sourceKinds": { "drawdown": "รายการเบิกใช้", "own_capital": "ทุนส่วนตัว" },
         "allocatingNow": "กำลังจัดสรร",
         "wantToReallocate": "ต้องการย้ายเงินทุนเดิม?",
         "review": {
@@ -748,6 +749,7 @@
         "availableDrawdowns": "รายการเบิกใช้ที่พร้อมใช้",
         "saveAllocations": "บันทึกการจัดสรร",
         "noActiveDrawdowns": "ไม่มีรายการเบิกใช้ที่พร้อมสำหรับการจับคู่",
+        "noActiveSources": "ไม่มีรายการเบิกใช้หรือทุนส่วนตัวที่พร้อมสำหรับการจับคู่",
         "notScheduled": "ยังไม่มีกำหนด",
         "allocationState": "สถานะการจัดสรร",
         "drawdownTotal": "วงเงินเบิกใช้รวม",

@@ -70,6 +70,7 @@ passed
 1. Initial implementation reproduced the approved split-pane hierarchy and sticky summary.
 2. Comparison found missing already-funded context in the selected-contract summary and a financial guardrail gap.
 3. The summary and pre-review capacity validation were added, then the captures and interaction pass were regenerated.
+4. Active own-capital pools were added as first-class funding rows with distinct source badges; the desktop capture and review interaction were regenerated successfully.
 
 ## Final result
 

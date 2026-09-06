@@ -75,8 +75,17 @@ interface LoanProfitability {
     unallocatedPrincipalGap: string;
 }
 
-interface BankProfile { id: number; name: string }
-interface ReviewEntry { bankLoanPublicId: string; amount: string }
+interface BankProfile {
+    id: number;
+    publicId?: string;
+    name: string;
+    status?: string | null;
+    accountingMode?: string | null;
+    creditLimit?: string | null;
+}
+interface OwnCapitalSource { id: string; bankProfileId: number; name: string; remainingCapacity: string }
+interface FundingSource { id: string; kind: "drawdown" | "own_capital"; name: string; remainingCapacity: string }
+interface ReviewEntry { sourcePublicId: string; sourceKind: "drawdown" | "own_capital"; amount: string }
 
 function moneyInputOrZero(value: string | undefined) {
     if (!value?.trim()) return "0.00";
@@ -95,6 +104,7 @@ export default function MatchingWorkspace() {
     const [errorMessage, setErrorMessage] = useState("");
     const [loans, setLoans] = useState<LoanRow[]>([]);
     const [drawdowns, setDrawdowns] = useState<DrawdownRow[]>([]);
+    const [ownCapitalSources, setOwnCapitalSources] = useState<OwnCapitalSource[]>([]);
     const [bankProfiles, setBankProfiles] = useState<BankProfile[]>([]);
     const [selectedLoanId, setSelectedLoanId] = useState<string | null>(null);
     const [selectedLoanProfitability, setSelectedLoanProfitability] = useState<LoanProfitability | null>(null);
@@ -118,12 +128,15 @@ export default function MatchingWorkspace() {
                 api.get("/loans"), api.get("/bank-loans"), api.get("/bank-profiles"),
             ]);
             const rawLoans: LoanRow[] = loansRes.data ?? [];
+            const rawProfiles: BankProfile[] = profilesRes.data ?? [];
             const rawDrawdowns: DrawdownRow[] = (drawdownsRes.data ?? [])
                 .filter((item: DrawdownRow) => item.status !== "closed")
                 .map((item: DrawdownRow) => ({ ...item, id: item.publicId ?? String(item.id) }));
-            const [loanStates, drawdownStates] = await Promise.all([
+            const capitalProfiles = rawProfiles.filter((profile) => profile.publicId && profile.accountingMode === "capital_pool" && profile.status === "active");
+            const [loanStates, drawdownStates, capitalUsage] = await Promise.all([
                 Promise.all(rawLoans.map((loan) => api.get(`/loans/${loan.id}/allocation-state`).then((res) => ({ id: loan.id, state: res.data as LoanAllocationState })))),
                 Promise.all(rawDrawdowns.map((drawdown) => api.get(`/bank-loans/${drawdown.id}/allocation-state`).then((res) => ({ id: drawdown.id, state: res.data as DrawdownAllocationState })))),
+                Promise.all(capitalProfiles.map((profile) => api.get(`/bank-profiles/${profile.publicId}/funding-usage`).then((res) => ({ profile, availableAmount: String(res.data?.availableAmount ?? "0.00") })))),
             ]);
             const loanStateById = new Map(loanStates.map((row) => [row.id, row.state]));
             const drawdownStateById = new Map(drawdownStates.map((row) => [row.id, row.state]));
@@ -140,7 +153,13 @@ export default function MatchingWorkspace() {
                 remainingCapacity: drawdownStateById.get(drawdown.id)?.remainingCapacity ?? drawdown.amount,
                 allocationState: drawdownStateById.get(drawdown.id)?.state ?? "unallocated",
             })));
-            setBankProfiles(profilesRes.data ?? []);
+            setOwnCapitalSources(capitalUsage.map(({ profile, availableAmount }) => ({
+                id: profile.publicId!,
+                bankProfileId: profile.id,
+                name: profile.name,
+                remainingCapacity: availableAmount,
+            })));
+            setBankProfiles(rawProfiles);
             if (!selectedLoanId && normalizedLoans.length > 0) {
                 setSelectedLoanId(normalizedLoans.find((loan) => loan.allocationState !== "fully_funded")?.id ?? normalizedLoans[0]!.id);
             }
@@ -160,6 +179,15 @@ export default function MatchingWorkspace() {
         ? sumMoney(reviewEntries.map((entry) => entry.amount))
         : sumMoney(Object.values(draftAllocations).map(moneyInputOrZero));
     const remainingFundingGap = remainingMoney(selectedLoanGap, [pendingAllocationTotal]);
+    const fundingSources = useMemo<FundingSource[]>(() => [
+        ...ownCapitalSources.map((source) => ({ id: source.id, kind: "own_capital" as const, name: source.name, remainingCapacity: source.remainingCapacity })),
+        ...drawdowns.map((drawdown) => ({
+            id: drawdown.id,
+            kind: "drawdown" as const,
+            name: drawdown.bankProfileId ? bankProfileNameById.get(drawdown.bankProfileId) ?? t("matching.unknownSource") : t("matching.unknownSource"),
+            remainingCapacity: drawdown.remainingCapacity ?? "0.00",
+        })),
+    ], [bankProfileNameById, drawdowns, ownCapitalSources, t]);
 
     const filteredLoans = useMemo(() => {
         const query = searchQuery.trim().toLocaleLowerCase(i18n.language);
@@ -215,11 +243,15 @@ export default function MatchingWorkspace() {
         try {
             const entries = Object.entries(draftAllocations)
                 .filter(([, value]) => value.trim())
-                .map(([bankLoanPublicId, value]) => ({ bankLoanPublicId, amount: normalizeMoney(value) }));
+                .map(([sourcePublicId, value]) => {
+                    const source = fundingSources.find((item) => item.id === sourcePublicId);
+                    if (!source) throw new Error("invalid");
+                    return { sourcePublicId, sourceKind: source.kind, amount: normalizeMoney(value) };
+                });
             if (entries.length === 0 || entries.some((entry) => !isPositiveMoney(entry.amount))) throw new Error("invalid");
             const exceedsGap = isNegativeMoney(moneyDifference(selectedLoanGap, sumMoney(entries.map((entry) => entry.amount))));
             const exceedsCapacity = entries.some((entry) => {
-                const capacity = drawdowns.find((drawdown) => drawdown.id === entry.bankLoanPublicId)?.remainingCapacity;
+                const capacity = fundingSources.find((source) => source.id === entry.sourcePublicId)?.remainingCapacity;
                 return !capacity || isNegativeMoney(moneyDifference(capacity, entry.amount));
             });
             if (exceedsGap || exceedsCapacity) {
@@ -238,7 +270,9 @@ export default function MatchingWorkspace() {
             setErrorMessage("");
             for (const entry of reviewEntries) {
                 await api.post(`/loans/${selectedLoan.id}/funding-allocations`, {
-                    bankLoanPublicId: entry.bankLoanPublicId,
+                    ...(entry.sourceKind === "own_capital"
+                        ? { bankProfilePublicId: entry.sourcePublicId }
+                        : { bankLoanPublicId: entry.sourcePublicId }),
                     allocatedAmount: entry.amount,
                     allocationDate: new Date().toISOString().slice(0, 10),
                     allocationType: "initial",
@@ -325,14 +359,14 @@ export default function MatchingWorkspace() {
 
                         {reviewEntries ? <section className="space-y-5 p-5 lg:p-7">
                             <div><h3 className="text-xl font-semibold">{t("matching.review.title")}</h3><p className="text-sm text-muted-foreground">{t("matching.review.description")}</p></div>
-                            <div className="overflow-x-auto rounded-md border"><table className="w-full min-w-[620px] text-sm"><thead className="bg-muted/50 text-left text-xs text-muted-foreground"><tr><th className="px-4 py-3">{t("matching.fundingSource")}</th><th className="px-4 py-3 text-right">{t("matching.allocateAmount")}</th></tr></thead><tbody>{reviewEntries.map((entry) => <tr className="border-t" key={entry.bankLoanPublicId}><td className="px-4 py-4"><div className="font-medium">{bankProfileNameById.get(drawdowns.find((row) => row.id === entry.bankLoanPublicId)?.bankProfileId ?? -1) ?? t("matching.unknownSource")}</div><div className="font-mono text-xs text-muted-foreground">{entry.bankLoanPublicId}</div></td><td className="px-4 py-4 text-right font-semibold">{money(entry.amount)}</td></tr>)}</tbody></table></div>
+                            <div className="overflow-x-auto rounded-md border"><table className="w-full min-w-[620px] text-sm"><thead className="bg-muted/50 text-left text-xs text-muted-foreground"><tr><th className="px-4 py-3">{t("matching.fundingSource")}</th><th className="px-4 py-3 text-right">{t("matching.allocateAmount")}</th></tr></thead><tbody>{reviewEntries.map((entry) => { const source = fundingSources.find((item) => item.id === entry.sourcePublicId); return <tr className="border-t" key={entry.sourcePublicId}><td className="px-4 py-4"><div className="flex items-center gap-2 font-medium">{source?.name ?? t("matching.unknownSource")}<span className="rounded-full bg-muted px-2 py-0.5 text-xs font-normal text-muted-foreground">{t(`matching.sourceKinds.${entry.sourceKind}`)}</span></div><div className="font-mono text-xs text-muted-foreground">{entry.sourcePublicId}</div></td><td className="px-4 py-4 text-right font-semibold">{money(entry.amount)}</td></tr>; })}</tbody></table></div>
                             <div className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">{t("matching.review.immutableNotice")}</div>
                         </section> : <section className="space-y-4 p-5 lg:p-7">
                             <div><h3 className="text-xl font-semibold">{t("matching.availableDrawdowns")}</h3><p className="text-sm text-muted-foreground">{t("matching.allocateHelp")}</p></div>
-                            {drawdowns.length === 0 ? <div className="rounded border border-dashed p-5 text-sm text-muted-foreground">{t("matching.noActiveDrawdowns")}</div> : <div className="overflow-x-auto rounded-md border"><table className="w-full min-w-[720px] text-sm"><thead className="bg-muted/50 text-left text-xs text-muted-foreground"><tr><th className="px-4 py-3">{t("matching.fundingSource")}</th><th className="px-4 py-3 text-right">{t("matching.availableNow")}</th><th className="px-4 py-3">{t("matching.allocateAmount")}</th><th className="px-4 py-3 text-right">{t("matching.afterDraft")}</th></tr></thead><tbody>{drawdowns.map((drawdown) => {
-                                const available = drawdown.remainingCapacity ?? "0.00";
-                                const draft = moneyInputOrZero(draftAllocations[drawdown.id]);
-                                return <tr className="border-t" key={drawdown.id}><td className="px-4 py-4"><div className="font-medium">{drawdown.bankProfileId ? bankProfileNameById.get(drawdown.bankProfileId) ?? t("matching.unknownSource") : t("matching.unknownSource")}</div><div className="font-mono text-xs text-muted-foreground">{shortId(drawdown.id)}</div></td><td className="px-4 py-4 text-right">{money(available)}</td><td className="px-4 py-3"><Input type="number" min="0" step="0.01" aria-label={`${t("matching.allocateAmount")} ${drawdown.id}`} inputMode="decimal" value={draftAllocations[drawdown.id] ?? ""} onChange={(event) => { setDraftAllocations((current) => ({ ...current, [drawdown.id]: event.target.value })); setReviewEntries(null); }} className="w-36" placeholder="0.00" /></td><td className="px-4 py-4 text-right font-medium text-emerald-600">{money(remainingMoney(available, [draft]))}</td></tr>;
+                            {fundingSources.length === 0 ? <div className="rounded border border-dashed p-5 text-sm text-muted-foreground">{t("matching.noActiveSources")}</div> : <div className="overflow-x-auto rounded-md border"><table className="w-full min-w-[720px] text-sm"><thead className="bg-muted/50 text-left text-xs text-muted-foreground"><tr><th className="px-4 py-3">{t("matching.fundingSource")}</th><th className="px-4 py-3 text-right">{t("matching.availableNow")}</th><th className="px-4 py-3">{t("matching.allocateAmount")}</th><th className="px-4 py-3 text-right">{t("matching.afterDraft")}</th></tr></thead><tbody>{fundingSources.map((source) => {
+                                const available = source.remainingCapacity;
+                                const draft = moneyInputOrZero(draftAllocations[source.id]);
+                                return <tr className="border-t" key={source.id}><td className="px-4 py-4"><div className="flex items-center gap-2 font-medium">{source.name}<span className="rounded-full bg-muted px-2 py-0.5 text-xs font-normal text-muted-foreground">{t(`matching.sourceKinds.${source.kind}`)}</span></div><div className="font-mono text-xs text-muted-foreground">{shortId(source.id)}</div></td><td className="px-4 py-4 text-right">{money(available)}</td><td className="px-4 py-3"><Input type="number" min="0" step="0.01" aria-label={`${t("matching.allocateAmount")} ${source.id}`} inputMode="decimal" value={draftAllocations[source.id] ?? ""} onChange={(event) => { setDraftAllocations((current) => ({ ...current, [source.id]: event.target.value })); setReviewEntries(null); }} className="w-36" placeholder="0.00" /></td><td className="px-4 py-4 text-right font-medium text-emerald-600">{money(remainingMoney(available, [draft]))}</td></tr>;
                             })}</tbody></table></div>}
                         </section>}
 

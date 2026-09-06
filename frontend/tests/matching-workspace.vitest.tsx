@@ -10,6 +10,7 @@ vi.mock("../src/lib/api", () => ({ api: { get: vi.fn(), post: vi.fn() } }));
 
 const LOAN_ID = "11111111-1111-4111-8111-111111111111";
 const DRAWDOWN_ID = "22222222-2222-4222-8222-222222222222";
+const CAPITAL_ID = "44444444-4444-4444-8444-444444444444";
 
 function mockWorkspaceApi() {
     vi.mocked(api.get).mockImplementation(async (url) => {
@@ -32,7 +33,19 @@ function mockWorkspaceApi() {
             nextDueDate: null,
             status: "active",
         }] };
-        if (url === "/bank-profiles") return { data: [{ id: 7, name: "Exact bank" }] };
+        if (url === "/bank-profiles") return { data: [
+            { id: 7, publicId: "55555555-5555-4555-8555-555555555555", name: "Exact bank", accountingMode: "external_liability", status: "active", creditLimit: "9007199254741000.00" },
+            { id: 8, publicId: CAPITAL_ID, name: "Owner capital", accountingMode: "capital_pool", status: "active", creditLimit: "10.00" },
+        ] };
+        if (url === `/bank-profiles/${CAPITAL_ID}/funding-usage`) return { data: {
+            accountingMode: "capital_pool",
+            creditLimit: "10.00",
+            netAllocatedPrincipal: "3.10",
+            availableAmount: "6.90",
+            linkedBorrowerCashCollected: "0.00",
+            utilizationPercent: "31.00",
+            allocations: [],
+        } };
         if (url === `/loans/${LOAN_ID}/allocation-state`) return { data: {
             loanId: LOAN_ID,
             principalAmount: "9007199254741000.00",
@@ -69,8 +82,7 @@ function renderWorkspace() {
 
 async function allocationInput() {
     await screen.findAllByText("Exact borrower");
-    const inputs = screen.getAllByRole("spinbutton");
-    return inputs[inputs.length - 1]!;
+    return screen.getByRole("spinbutton", { name: `Allocate Amount ${DRAWDOWN_ID}` });
 }
 
 describe("MatchingWorkspace exact allocation contract", () => {
@@ -130,6 +142,25 @@ describe("MatchingWorkspace exact allocation contract", () => {
         expect(await screen.findByText("Allocation total cannot exceed the remaining contract gap or source capacity.")).toBeInTheDocument();
         expect(screen.queryByRole("heading", { name: "Review Allocation" })).not.toBeInTheDocument();
         expect(api.post).not.toHaveBeenCalled();
+    });
+
+    it("reviews and posts an active own-capital pool with bankProfilePublicId", async () => {
+        const user = userEvent.setup();
+        renderWorkspace();
+
+        expect(await screen.findByText("Owner capital")).toBeInTheDocument();
+        expect(screen.getByText("Own capital")).toBeInTheDocument();
+        await user.type(screen.getByRole("spinbutton", { name: `Allocate Amount ${CAPITAL_ID}` }), "6.90");
+        await user.click(screen.getByRole("button", { name: "Next: Review Allocation" }));
+        expect(await screen.findByRole("heading", { name: "Review Allocation" })).toBeInTheDocument();
+        await user.click(screen.getByRole("button", { name: "Confirm and Save Allocation" }));
+
+        await waitFor(() => expect(api.post).toHaveBeenCalledWith(`/loans/${LOAN_ID}/funding-allocations`, {
+            bankProfilePublicId: CAPITAL_ID,
+            allocatedAmount: "6.90",
+            allocationDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+            allocationType: "initial",
+        }));
     });
 
     // Break caught: the contract rail cannot narrow a long queue by borrower or contract id.
