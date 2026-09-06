@@ -2,6 +2,9 @@
 
 ## v0.3.74 - 2026-09-06
 
+### Changed
+- Recorded the remaining backend own-capital allocation-capacity guard as explicit follow-up work.
+
 ### Fixed
 - Added stable per-allocation idempotency keys to funding matching writes and preserved each key across retries, preventing rejected saves and duplicate records after partial failures.
 
