@@ -5,6 +5,9 @@
 ### Added
 - Added the proposed design for ChatGPT-native payment-slip ingestion, append-only late evidence, and signed slip previews from contract payment history.
 
+### Changed
+- Added the test-first implementation plan for verified ChatGPT file ingestion, payment-history slip previews, and append-only late evidence.
+
 ## v0.3.70 - 2026-09-04
 
 ### Added
