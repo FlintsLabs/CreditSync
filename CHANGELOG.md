@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.75 - 2026-09-06
+
+### Fixed
+- Synchronized the dashboard footer's displayed CreditSync plugin version with the validated `8.0.0` plugin manifest and refreshed the release-metadata regression test.
+
 ## v0.3.74 - 2026-09-06
 
 ### Changed
