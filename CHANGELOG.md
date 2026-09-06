@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.77 - 2026-09-07
+
+### Changed
+- Added the test-first implementation plan for the audited backdated-payment review transition, rollback-only posting feasibility probe, synchronized MCP/plugin contract, and full financial verification gates.
+
 ## v0.3.76 - 2026-09-07
 
 ### Added
