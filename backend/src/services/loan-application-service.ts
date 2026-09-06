@@ -736,35 +736,48 @@ export async function updateLoanPaymentStartDate(
                 throw new DomainError("SCHEDULE_CHANGE_CONFLICT", "New payment start date must keep unpaid installments after the last paid installment", 409);
             }
         }
+        const generatedByInstallment = new Map(generated.map((row) => [row.installmentNo, row]));
         const changedSchedule: Array<{ installmentNo: number; before: string; after: string }> = [];
         for (const row of existingSchedule) {
             if (new FinancialDecimal(row.paidTotal).greaterThan(0)) continue;
-            const replacement = generated.find((candidate) => candidate.installmentNo === row.installmentNo);
+            const replacement = generatedByInstallment.get(row.installmentNo);
             if (!replacement || replacement.dueDate === row.dueDate) continue;
-            await tx.update(loanSchedules).set({ dueDate: replacement.dueDate, updatedAt: new Date() }).where(and(
-                eq(loanSchedules.tenantId, ctx.tenantId),
-                eq(loanSchedules.id, row.id),
-            ));
             changedSchedule.push({ installmentNo: row.installmentNo, before: row.dueDate, after: replacement.dueDate });
         }
-        const updated = await tx.update(loans).set({ paymentStartDate: normalized.paymentStartDate, updatedAt: new Date() }).where(and(
-            eq(loans.tenantId, ctx.tenantId),
-            eq(loans.id, current.id),
-        )).returning().then((rows) => rows[0]);
-        if (!updated) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
+        const nextDueDate = existingSchedule.find((row) => new FinancialDecimal(row.remainingDue).greaterThan(0));
+        const amendedNextDueDate = nextDueDate
+            ? (new FinancialDecimal(nextDueDate.paidTotal).greaterThan(0)
+                ? nextDueDate.dueDate
+                : generatedByInstallment.get(nextDueDate.installmentNo)?.dueDate ?? nextDueDate.dueDate)
+            : null;
         const audit = await createAuditLog(tx, {
             ...auditContext(ctx),
             entityType: "loan",
-            entityId: updated.publicId,
+            entityId: current.publicId,
             action: "payment_start_date_changed",
             payload: {
-                before: { paymentStartDate: current.paymentStartDate },
-                after: { paymentStartDate: updated.paymentStartDate },
+                before: { paymentStartDate: current.paymentStartDate, nextDueDate: current.nextDueDate },
+                after: { paymentStartDate: normalized.paymentStartDate, nextDueDate: amendedNextDueDate },
                 changedSchedule,
                 reason: input.reason,
                 idempotencyKey: ctx.idempotencyKey!.trim(),
             },
         });
+        await tx.execute(sql`SELECT set_config('creditsync.payment_start_date_amendment_audit_public_id', ${audit.publicId}, true)`);
+        for (const row of existingSchedule) {
+            if (new FinancialDecimal(row.paidTotal).greaterThan(0)) continue;
+            const replacement = generatedByInstallment.get(row.installmentNo);
+            if (!replacement || replacement.dueDate === row.dueDate) continue;
+            await tx.update(loanSchedules).set({ dueDate: replacement.dueDate, updatedAt: new Date() }).where(and(
+                eq(loanSchedules.tenantId, ctx.tenantId),
+                eq(loanSchedules.id, row.id),
+            ));
+        }
+        const updated = await tx.update(loans).set({ paymentStartDate: normalized.paymentStartDate, nextDueDate: amendedNextDueDate, updatedAt: new Date() }).where(and(
+            eq(loans.tenantId, ctx.tenantId),
+            eq(loans.id, current.id),
+        )).returning().then((rows) => rows[0]);
+        if (!updated) throw new DomainError("LOAN_NOT_FOUND", "Loan not found", 404);
         return { ...await presentLoan(updated), auditPublicId: audit.publicId, correlationId: ctx.correlationId };
     });
 }

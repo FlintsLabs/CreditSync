@@ -12,6 +12,7 @@ const authoritativeCatalogSha25640 = "c08f69e551d54c803064261ad6b253899ce26979a0
 const authoritativeCatalogSha25642 = "0fb05cff74c00051375725b39612f0b100ee87cf891c9e30c1ca24104f017f1a";
 const authoritativeCatalogSha25653 = "8e89adf49b98ceab0e1da40f05c979cf7a88fd1f8b158d5eaf2bdc1e4d87194c";
 const authoritativeCatalogSha25663 = "29d62d6a728e424544c919dc4fe36227a9957c1358fbbff68aa910ffe144a7c7";
+const authoritativeCatalogSha25664 = "efeb5a6978e28312dd4113d76f743ee427deefdaa7377565ad218b4c967fcee9";
 const legacyCatalogSha256Public = "b6e6ea2666b1e3ea92726b22131db420e74221947a43f493aaaa68fdd2f6dacb";
 const legacyCatalogSha256Quarantine = "2fb8cfa9272876a6668d6dd6cdaa97d8e54332df2f82ae1f502227ee5d3399f9";
 const inboundFk = "intermediary_compensation_settlements_tenant_destination_fk";
@@ -117,7 +118,7 @@ async function verify0030Completed(tx: postgres.TransactionSql) {
   if (Number(row.cutovers)!==5 || Number(row.snapshots)!==43 || Number(row.audits)!==5 || Number(row.distinct_dates)!==1 || Number(row.mismatch)!==0 || Number(row.invalid_audits)!==0) throw new Error(`0030 completed ledger/audit content is not exact: ${JSON.stringify(row)}`);
 }
 
-async function verifyCatalogAndData(tx: postgres.TransactionSql, journalCount: 40 | 42 | 53 | 54 | 57 | 58 | 63, compareCaptured = false) {
+async function verifyCatalogAndData(tx: postgres.TransactionSql, journalCount: 40 | 42 | 53 | 54 | 57 | 58 | 63 | 64, compareCaptured = false) {
   await verifyLegacyCatalog(tx, "creditsync_quarantine.intermediary_bank_accounts");
   await verifyQuarantineSchema(tx);
   await verify0030Completed(tx);
@@ -126,7 +127,9 @@ async function verifyCatalogAndData(tx: postgres.TransactionSql, journalCount: 4
     ? authoritativeCatalogSha25640
     : journalCount === 42
       ? authoritativeCatalogSha25642
-      : journalCount === 63
+      : journalCount === 64
+        ? authoritativeCatalogSha25664
+        : journalCount === 63
         ? authoritativeCatalogSha25663
         : authoritativeCatalogSha25653;
   if (catalog !== expectedCatalog) throw new Error(`authoritative catalog fingerprint mismatch: ${catalog}`);
@@ -195,14 +198,14 @@ async function run() {
       await tx.unsafe(`LOCK TABLE audit_logs, bank_profiles, borrowers, drizzle.__drizzle_migrations, files, intermediaries, intermediary_compensation_settlements, public.intermediary_bank_accounts, loan_disbursement_events, loan_funding_allocations, loan_funding_previews, loan_interest_accruals, loan_interest_rate_periods, loan_schedules, loans, transactions, users IN ACCESS EXCLUSIVE MODE`);
       const journal = await tx<{ hash: string; created_at: string }[]>`SELECT hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id`;
       const count = journal.length;
-       if (![30, 40, 42, 53, 54, 57, 58, 60, 63].includes(count)) throw new Error(`mixed-lineage state is not exact: ${count} journal rows`);
+       if (![30, 40, 42, 53, 54, 57, 58, 60, 63, 64].includes(count)) throw new Error(`mixed-lineage state is not exact: ${count} journal rows`);
       const pending = await expectedPending();
       const authoritativeRows = authoritative.map((entry) => [entry.hash, entry.when] as const);
       const forwardTail = count >= 53 ? (await expectedForwardTail()).slice(0, count - 42) : [];
       const expected = count === 30 ? pending : count === 40 ? [...pending, ...authoritativeRows] : [...pending, ...authoritativeRows, ...stock, ...forwardTail];
       if (expected.length !== count) throw new Error("internal journal manifest length mismatch");
       if (journal.some((row, i) => row.hash !== expected[i]![0] || Number(row.created_at) !== expected[i]![1])) throw new Error("mixed-lineage journal tuple array is not exact");
-      if ([40, 42, 53, 54, 57, 58, 60, 63].includes(count)) { await verifyCatalogAndData(tx, (count === 60 ? 58 : count) as 40 | 42 | 53 | 54 | 57 | 58 | 63); return "already-complete"; }
+      if ([40, 42, 53, 54, 57, 58, 60, 63, 64].includes(count)) { await verifyCatalogAndData(tx, (count === 60 ? 58 : count) as 40 | 42 | 53 | 54 | 57 | 58 | 63 | 64); return "already-complete"; }
       await tx.unsafe(preflightDo);
       await verifyLegacyCatalog(tx, "public.intermediary_bank_accounts");
       const quarantine = await tx<{ relation: string | null }[]>`SELECT to_regclass('creditsync_quarantine.intermediary_bank_accounts')::text AS relation`;

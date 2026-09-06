@@ -421,6 +421,13 @@
       "when": 1788242400000,
       "tag": "0059_scheduled_installment_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1788471120000,
+      "tag": "0060_payment_start_date_schedule_amendments",
+      "breakpoints": true
     }
   ]
 }

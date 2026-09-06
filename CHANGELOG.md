@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.73 - 2026-09-06
+
+### Fixed
+- Kept activated loan schedules immutable at the database boundary while allowing an audited, idempotent payment-start-date amendment to move only unpaid due dates and refresh the loan's next due date.
+
 ## v0.3.72 - 2026-09-06
 
 ### Changed
