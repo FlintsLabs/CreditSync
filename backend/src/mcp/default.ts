@@ -145,6 +145,7 @@ import {
 import { backfillPostedRestoreSchedule, createPaymentRestoreDraft, executePaymentReconciliation, markPaymentReconciliationReview, preflightPaymentExecution, previewPaymentReconciliation, previewPaymentRestore, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
 import { addPaymentBatchItem, capturePaymentBatch, createPaymentBatch, executePaymentBatch, finalizePaymentBatchEvidenceMany, getPaymentBatch, preparePaymentBatchEvidenceMany, previewPaymentBatch } from "../services/payment-batch-service";
 import { executeUnfundedLoanCancellation, previewUnfundedLoanCancellation } from "../services/loan-cancellation-service";
+import { executePaymentAllocationCorrection, previewPaymentAllocationCorrection } from "../services/payment-allocation-correction-service";
 
 type ToolInput = Record<string, unknown>;
 
@@ -273,6 +274,14 @@ export function createDefaultMcpToolHandlers(
         allocations: input.allocations as ReconciliationAllocation[],
         reason: asString(input, "reason"),
     }),
+    "payment.allocation-correction.preview": (ctx, input) => previewPaymentAllocationCorrection(ctx, {
+        paymentIntakePublicId: asString(input, "paymentIntakePublicId"), transactionPublicId: asString(input, "transactionPublicId"), targetSchedulePublicId: asString(input, "targetSchedulePublicId"), reason: asString(input, "reason"),
+    }),
+    "payment.allocation-correction.execute": (ctx, input) => {
+        const key = ctx.idempotencyKey ?? asString(input, "idempotencyKey");
+        if (!key) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Payment allocation correction requires an idempotency key", 400);
+        return executePaymentAllocationCorrection({ ...ctx, idempotencyKey: key }, { correctionPreviewPublicId: asString(input, "correctionPreviewPublicId"), previewHash: asString(input, "previewHash"), expectedBalanceVersion: asString(input, "expectedBalanceVersion"), confirmed: true, reason: asString(input, "reason"), idempotencyKey: key });
+    },
     "payment.reconcile.preflight": (ctx, input) => preflightPaymentExecution(ctx, {
         paymentIntakePublicId: asString(input, "paymentIntakePublicId"),
         allocations: input.allocations as ReconciliationAllocation[] | undefined,
@@ -592,6 +601,8 @@ export function createDefaultMcpToolHandlers(
 }
 
 const auditTarget: Partial<Record<McpToolName, { entityType: string; action: string }>> = {
+    "payment.allocation-correction.preview": { entityType: "payment_allocation_correction", action: "previewed" },
+    "payment.allocation-correction.execute": { entityType: "payment_allocation_correction", action: "executed" },
     "payment.post": { entityType: "payment_intake", action: "posted" },
     "payment.reverse": { entityType: "payment_intake", action: "reversed" },
     "payment.reverse-with-accrual.execute": { entityType: "payment_intake", action: "reversed_with_interest_accruals_materialized" },
@@ -636,6 +647,7 @@ function resultPublicId(result: unknown) {
         ?? record.settlementPublicId
         ?? record.replacementPublicId
         ?? record.reconciliationPublicId
+        ?? record.correctionPublicId
         ?? record.batchPublicId;
     return typeof value === "string" ? value : null;
 }

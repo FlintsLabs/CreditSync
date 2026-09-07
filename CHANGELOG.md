@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.87 - 2026-09-08
+
+### Added
+- Exposed strict MCP preview and confirmed execute tools for scheduled payment allocation correction with safe public outputs and audit mapping.
+
 ## v0.3.86 - 2026-09-08
 
 ### Added
