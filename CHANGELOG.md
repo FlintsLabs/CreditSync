@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.82 - 2026-09-07
+
+### Changed
+- Added the detailed test-first implementation plan for deterministic floating-allocation reflow, append-only reconciliation repair, daily payment-health correction, MCP/plugin synchronization, and full financial verification.
+
 ## v0.3.81 - 2026-09-07
 
 ### Infra
