@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.92 - 2026-09-08
+
+### Fixed
+- Serialized scheduled payment allocation correction execution by tenant/idempotency key, persisted complete request identity, blocked later repayment dependencies, froze ready preview content, and enforced signed component conservation at the database boundary.
+
 ## v0.3.91 - 2026-09-08
 
 ### Fixed

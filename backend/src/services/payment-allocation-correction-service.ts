@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, or, sql } from "drizzle-orm";
 import { db, type DbExecutor } from "../db";
 import { auditLogs, loanAdjustments, loanSchedules, loanRenewals, loans, paymentAllocationCorrectionEntries, paymentAllocationCorrectionGroups, paymentAllocationCorrectionPreviews, paymentIntermediaryAttributions, paymentIntakes, paymentReconciliationEntries, paymentReconciliationGroups, transactions } from "../db/schema";
 import { FinancialDecimal } from "../lib/financial-decimal";
@@ -22,6 +22,17 @@ const decimal = (value: string) => new FinancialDecimal(value);
 function requireId(value: string, field: string): void { if (!publicUuid.test(value)) throw new DomainError("INVALID_PUBLIC_ID", `${field} must be a UUID`, 400, { field }); }
 function normalizedReason(value: string): string { const result = value.trim().replace(/\s+/g, " "); if (!result) throw new DomainError("INVALID_REASON", "reason must not be blank", 400); return result; }
 function digest(value: unknown): string { return `v1:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`; }
+function executionRequestHash(input: ExecutePaymentAllocationCorrectionInput, reason: string): string {
+    return digest({
+        contract: "payment-allocation-correction-execute-v1",
+        correctionPreviewPublicId: input.correctionPreviewPublicId,
+        previewHash: input.previewHash,
+        expectedBalanceVersion: input.expectedBalanceVersion,
+        confirmed: input.confirmed,
+        reason,
+        idempotencyKey: input.idempotencyKey.trim(),
+    });
+}
 function componentsOf(row: TransactionRow): Components { return { principal: money(row.principalComponent), interest: money(row.interestComponent), fee: money(row.feeComponent), penalty: money(row.penaltyComponent) }; }
 function componentSum(c: Components): Money { return decimal(c.principal).plus(c.interest).plus(c.fee).plus(c.penalty); }
 
@@ -33,7 +44,7 @@ export interface ExecutedPaymentAllocationCorrection { correctionPublicId: strin
 
 interface Loaded { intake: typeof paymentIntakes.$inferSelect; source: TransactionRow; loan: typeof loans.$inferSelect; sourceSchedule: ScheduleRow; targetSchedule: ScheduleRow; components: Components; amount: string; reason: string; dependencyIds: string[]; }
 
-async function dependencies(ctx: CommandContext, source: TransactionRow, executor: DbExecutor): Promise<string[]> {
+async function dependencies(ctx: CommandContext, source: TransactionRow, targetScheduleId: number, executor: DbExecutor): Promise<string[]> {
     const [attributions, reconciliationEntries, reconciliationGroups, adjustments, renewals] = await Promise.all([
         executor.select({ publicId: paymentIntermediaryAttributions.publicId }).from(paymentIntermediaryAttributions).where(and(eq(paymentIntermediaryAttributions.tenantId, ctx.tenantId), eq(paymentIntermediaryAttributions.paymentId, source.id), sql`${paymentIntermediaryAttributions.reversedAttributionId} IS NULL`)),
         executor.select({ publicId: paymentReconciliationEntries.publicId }).from(paymentReconciliationEntries).where(and(eq(paymentReconciliationEntries.tenantId, ctx.tenantId), eq(paymentReconciliationEntries.sourceTransactionId, source.id))),
@@ -41,7 +52,25 @@ async function dependencies(ctx: CommandContext, source: TransactionRow, executo
         executor.select({ publicId: loanAdjustments.publicId }).from(loanAdjustments).where(and(eq(loanAdjustments.tenantId, ctx.tenantId), eq(loanAdjustments.loanId, source.loanId), eq(loanAdjustments.status, "posted"))),
         executor.select({ publicId: loanRenewals.publicId }).from(loanRenewals).where(and(eq(loanRenewals.tenantId, ctx.tenantId), eq(loanRenewals.oldLoanId, source.loanId), inArray(loanRenewals.status, ["executed", "preview"]))),
     ]);
-    return [...attributions, ...reconciliationEntries, ...reconciliationGroups, ...adjustments, ...renewals].map((row) => row.publicId);
+    const laterRepayments = await executor.select({ id: transactions.id, publicId: transactions.publicId })
+        .from(transactions)
+        .where(and(
+            eq(transactions.tenantId, ctx.tenantId),
+            gt(transactions.id, source.id),
+            eq(transactions.entryType, "repayment"),
+            or(eq(transactions.scheduleId, source.scheduleId!), eq(transactions.scheduleId, targetScheduleId)),
+        ))
+        .orderBy(transactions.id);
+    const activeLaterRepayments: string[] = [];
+    for (const later of laterRepayments) {
+        const reversal = await executor.query.transactions.findFirst({
+            where: and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.reversedTransactionId, later.id)),
+        });
+        if (!reversal) activeLaterRepayments.push(later.publicId);
+    }
+    return [...attributions, ...reconciliationEntries, ...reconciliationGroups, ...adjustments, ...renewals]
+        .map((row) => row.publicId)
+        .concat(activeLaterRepayments);
 }
 
 async function load(ctx: CommandContext, input: PreviewPaymentAllocationCorrectionInput, executor: DbExecutor, checkDependencies = true): Promise<Loaded> {
@@ -67,7 +96,7 @@ async function load(ctx: CommandContext, input: PreviewPaymentAllocationCorrecti
     if (decimal(targetSchedule.remainingDue).lt(amount)) throw new DomainError("TARGET_OVERPAYMENT", "Target schedule cannot accept the complete replacement", 409);
     const existing = await executor.query.paymentAllocationCorrectionGroups.findFirst({ where: and(eq(paymentAllocationCorrectionGroups.tenantId, ctx.tenantId), eq(paymentAllocationCorrectionGroups.sourceTransactionId, source.id)) });
     if (existing) throw new DomainError("CORRECTION_ALREADY_EXECUTED", "Source transaction already has a correction", 409);
-    return { intake, source, loan, sourceSchedule, targetSchedule, components, amount, reason, dependencyIds: checkDependencies ? await dependencies(ctx, source, executor) : [] };
+    return { intake, source, loan, sourceSchedule, targetSchedule, components, amount, reason, dependencyIds: checkDependencies ? await dependencies(ctx, source, targetSchedule.id, executor) : [] };
 }
 
 function projection(schedule: ScheduleRow, paid: Money, penalty: Money, remaining: Money, lifecycle: { status: string }): CorrectionScheduleProjection { return { schedulePublicId: schedule.publicId, dueDate: schedule.dueDate, before: { paidTotal: money(schedule.paidTotal), paidPenalty: money(schedule.paidPenalty), remainingDue: money(schedule.remainingDue), status: schedule.status }, after: { paidTotal: money(paid), paidPenalty: money(penalty), remainingDue: money(remaining), status: lifecycle.status } }; }
@@ -101,11 +130,17 @@ async function rebuild(tx: DbExecutor, loan: typeof loans.$inferSelect, schedule
 }
 
 export async function executePaymentAllocationCorrection(ctx: CommandContext, input: ExecutePaymentAllocationCorrectionInput): Promise<ExecutedPaymentAllocationCorrection> {
-    requireId(input.correctionPreviewPublicId, "correctionPreviewPublicId"); if (!input.confirmed) throw new DomainError("CONFIRMATION_REQUIRED", "confirmed must be true", 400); const reason = normalizedReason(input.reason); const idempotencyKey = input.idempotencyKey.trim(); if (!idempotencyKey) throw new DomainError("INVALID_IDEMPOTENCY_KEY", "idempotencyKey must not be blank", 400);
+    requireId(input.correctionPreviewPublicId, "correctionPreviewPublicId");
+    if (!input.confirmed) throw new DomainError("CONFIRMATION_REQUIRED", "confirmed must be true", 400);
+    const reason = normalizedReason(input.reason);
+    const idempotencyKey = input.idempotencyKey.trim();
+    if (!idempotencyKey) throw new DomainError("INVALID_IDEMPOTENCY_KEY", "idempotencyKey must not be blank", 400);
+    const requestHash = executionRequestHash(input, reason);
     return db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`payment-allocation-correction:${ctx.tenantId}:${idempotencyKey}`}, 0))`);
         const existing = await tx.query.paymentAllocationCorrectionGroups.findFirst({ where: and(eq(paymentAllocationCorrectionGroups.tenantId, ctx.tenantId), eq(paymentAllocationCorrectionGroups.idempotencyKey, idempotencyKey)) });
         if (existing) {
-            if (existing.reason !== reason) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was used with a different correction", 409);
+            if (existing.requestHash !== requestHash) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was used with a different correction", 409);
             const entries = await tx.select().from(paymentAllocationCorrectionEntries).where(and(eq(paymentAllocationCorrectionEntries.tenantId, ctx.tenantId), eq(paymentAllocationCorrectionEntries.groupId, existing.id))).orderBy(paymentAllocationCorrectionEntries.id); const ids = entries.map((entry) => entry.transactionId); const rows = ids.length ? await tx.select().from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), inArray(transactions.id, ids))).orderBy(transactions.id) : [];
             const source = await tx.query.transactions.findFirst({ where: and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.id, existing.sourceTransactionId)) }); const intake = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, existing.paymentIntakeId)) }); const sourceSchedule = await tx.query.loanSchedules.findFirst({ where: and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.id, existing.sourceScheduleId)) }); const targetSchedule = await tx.query.loanSchedules.findFirst({ where: and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.id, existing.targetScheduleId)) }); const reversal = rows.find((row) => row.entryType === "reversal"); const replacement = rows.find((row) => row.entryType === "repayment");
             if (!source || !intake || !sourceSchedule || !targetSchedule || !reversal || !replacement || entries.length !== 2) throw new DomainError("CORRECTION_CORRUPT", "Correction history is incomplete", 409);
@@ -113,13 +148,21 @@ export async function executePaymentAllocationCorrection(ctx: CommandContext, in
         }
         await tx.execute(sql`SELECT id FROM payment_allocation_correction_previews WHERE tenant_id = ${ctx.tenantId} AND public_id = ${input.correctionPreviewPublicId} FOR UPDATE`);
         const preview = await tx.query.paymentAllocationCorrectionPreviews.findFirst({ where: and(eq(paymentAllocationCorrectionPreviews.tenantId, ctx.tenantId), eq(paymentAllocationCorrectionPreviews.publicId, input.correctionPreviewPublicId)) }); if (!preview || preview.status !== "ready") throw new DomainError("PREVIEW_NOT_EXECUTABLE", "Correction preview is not executable", 409); if (preview.previewHash !== input.previewHash || preview.expectedBalanceVersion !== input.expectedBalanceVersion || preview.reason !== reason) throw new DomainError("STALE_CORRECTION_PREVIEW", "Correction preview guards no longer match", 409); if (preview.expiresAt.getTime() <= Date.now()) throw new DomainError("EXPIRED_CORRECTION_PREVIEW", "Correction preview has expired", 409);
-        await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id = ${preview.paymentIntakeId} FOR UPDATE`); const intake = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, preview.paymentIntakeId)) }); const source = await tx.query.transactions.findFirst({ where: and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.id, preview.sourceTransactionId)) }); if (!intake || !source) throw new DomainError("STALE_CORRECTION_PREVIEW", "Correction source no longer exists", 409);
-        await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${preview.loanId} FOR UPDATE`); const firstSchedule = Math.min(preview.sourceScheduleId, preview.targetScheduleId); const lastSchedule = Math.max(preview.sourceScheduleId, preview.targetScheduleId); await tx.execute(sql`SELECT id FROM loan_schedules WHERE tenant_id = ${ctx.tenantId} AND id IN (${firstSchedule}, ${lastSchedule}) ORDER BY id FOR UPDATE`);
+        await tx.execute(sql`SELECT id FROM payment_allocation_correction_groups WHERE tenant_id = ${ctx.tenantId} AND (idempotency_key = ${idempotencyKey} OR source_transaction_id = ${preview.sourceTransactionId}) ORDER BY id FOR UPDATE`);
+        await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id = ${preview.paymentIntakeId} FOR UPDATE`);
+        const intake = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, preview.paymentIntakeId)) });
+        const source = await tx.query.transactions.findFirst({ where: and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.id, preview.sourceTransactionId)) });
+        if (!intake || !source) throw new DomainError("STALE_CORRECTION_PREVIEW", "Correction source no longer exists", 409);
+        await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${preview.loanId} FOR UPDATE`);
+        const firstSchedule = Math.min(preview.sourceScheduleId, preview.targetScheduleId);
+        const lastSchedule = Math.max(preview.sourceScheduleId, preview.targetScheduleId);
+        await tx.execute(sql`SELECT id FROM loan_schedules WHERE tenant_id = ${ctx.tenantId} AND id IN (${firstSchedule}, ${lastSchedule}) ORDER BY id FOR UPDATE`);
+        await tx.execute(sql`SELECT id FROM transactions WHERE tenant_id = ${ctx.tenantId} AND schedule_id IN (${firstSchedule}, ${lastSchedule}) ORDER BY id FOR UPDATE`);
         const target = await tx.query.loanSchedules.findFirst({ where: and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.id, preview.targetScheduleId)) }); if (!target) throw new DomainError("STALE_CORRECTION_PREVIEW", "Correction target no longer exists", 409); const loaded = await load(ctx, { paymentIntakePublicId: intake.publicId, transactionPublicId: source.publicId, targetSchedulePublicId: target.publicId, reason }, tx); if (version(loaded) !== preview.expectedBalanceVersion) throw new DomainError("STALE_CORRECTION_PREVIEW", "Correction balance changed since preview", 409); if (loaded.dependencyIds.length) throw new DomainError("PAYMENT_ALLOCATION_CORRECTION_DEPENDENCY", "Correction has downstream dependencies", 409, { blockerPublicIds: loaded.dependencyIds });
-        const now = new Date(); const c = loaded.components; const reversal = (await tx.insert(transactions).values({ tenantId: ctx.tenantId, ownerUserId: loaded.source.ownerUserId, loanId: loaded.loan.id, scheduleId: loaded.sourceSchedule.id, amount: `-${loaded.amount}`, principalComponent: `-${c.principal}`, interestComponent: `-${c.interest}`, feeComponent: `-${c.fee}`, penaltyComponent: `-${c.penalty}`, type: "repayment", transactionDate: loaded.source.transactionDate, recordedByUserId: ctx.actorUserId, paymentIntakeId: loaded.intake.id, entryType: "reversal", reversedTransactionId: loaded.source.id, idempotencyKey: `payment-allocation-correction:${preview.publicId}:reversal`, postedAt: now }).returning())[0]!;
+        const now = new Date(); const c = loaded.components; const reversal = (await tx.insert(transactions).values({ tenantId: ctx.tenantId, ownerUserId: loaded.source.ownerUserId, loanId: loaded.loan.id, scheduleId: loaded.sourceSchedule.id, amount: `-${loaded.amount}`, principalComponent: `-${c.principal}`, interestComponent: `-${c.interest}`, feeComponent: `-${c.fee}`, penaltyComponent: `-${c.penalty}`, type: "reversal", transactionDate: loaded.source.transactionDate, recordedByUserId: ctx.actorUserId, paymentIntakeId: loaded.intake.id, entryType: "reversal", reversedTransactionId: loaded.source.id, idempotencyKey: `payment-allocation-correction:${preview.publicId}:reversal`, postedAt: now }).returning())[0]!;
         const replacement = (await tx.insert(transactions).values({ tenantId: ctx.tenantId, ownerUserId: loaded.source.ownerUserId, loanId: loaded.loan.id, scheduleId: loaded.targetSchedule.id, amount: loaded.amount, principalComponent: c.principal, interestComponent: c.interest, feeComponent: c.fee, penaltyComponent: c.penalty, type: "repayment", transactionDate: loaded.source.transactionDate, recordedByUserId: ctx.actorUserId, paymentIntakeId: loaded.intake.id, entryType: "repayment", idempotencyKey: `payment-allocation-correction:${preview.publicId}:replacement`, postedAt: now }).returning())[0]!;
         const audit = await createAuditLog(tx, { tenantId: ctx.tenantId, actorUserId: ctx.actorUserId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, entityType: "payment_allocation_correction", entityId: preview.publicId, action: "executed", payload: { correctionPreviewPublicId: preview.publicId, sourceTransactionPublicId: source.publicId, compensatingTransactionPublicId: reversal.publicId, replacementTransactionPublicId: replacement.publicId, reason, netLoanVariance: { amount: "0.00", principal: "0.00", interest: "0.00", fee: "0.00", penalty: "0.00" } } });
-        const group = (await tx.insert(paymentAllocationCorrectionGroups).values({ tenantId: ctx.tenantId, previewId: preview.id, paymentIntakeId: loaded.intake.id, sourceTransactionId: loaded.source.id, sourceScheduleId: loaded.sourceSchedule.id, targetScheduleId: loaded.targetSchedule.id, loanId: loaded.loan.id, reason, idempotencyKey, correlationId: ctx.correlationId, auditPublicId: audit.publicId, createdByUserId: ctx.actorUserId }).returning())[0]!;
+        const group = (await tx.insert(paymentAllocationCorrectionGroups).values({ tenantId: ctx.tenantId, previewId: preview.id, paymentIntakeId: loaded.intake.id, sourceTransactionId: loaded.source.id, sourceScheduleId: loaded.sourceSchedule.id, targetScheduleId: loaded.targetSchedule.id, loanId: loaded.loan.id, reason, idempotencyKey, requestHash, correlationId: ctx.correlationId, auditPublicId: audit.publicId, createdByUserId: ctx.actorUserId }).returning())[0]!;
         await tx.insert(paymentAllocationCorrectionEntries).values([{ tenantId: ctx.tenantId, groupId: group.id, entryType: "reversal", sourceTransactionId: loaded.source.id, transactionId: reversal.id, loanId: loaded.loan.id, scheduleId: loaded.sourceSchedule.id, amount: reversal.amount, principalComponent: reversal.principalComponent, interestComponent: reversal.interestComponent, feeComponent: reversal.feeComponent, penaltyComponent: reversal.penaltyComponent, reason, auditPublicId: audit.publicId, createdByUserId: ctx.actorUserId }, { tenantId: ctx.tenantId, groupId: group.id, entryType: "replacement", sourceTransactionId: loaded.source.id, transactionId: replacement.id, loanId: loaded.loan.id, scheduleId: loaded.targetSchedule.id, amount: replacement.amount, principalComponent: replacement.principalComponent, interestComponent: replacement.interestComponent, feeComponent: replacement.feeComponent, penaltyComponent: replacement.penaltyComponent, reason, auditPublicId: audit.publicId, createdByUserId: ctx.actorUserId }]);
         await rebuild(tx, loaded.loan, loaded.sourceSchedule, now); await rebuild(tx, loaded.loan, loaded.targetSchedule, now); await refreshReplacementLoanEconomicRollup(tx, ctx.tenantId, loaded.loan.id); await tx.update(paymentAllocationCorrectionPreviews).set({ status: "executed", executedByUserId: ctx.actorUserId, executedAt: now }).where(and(eq(paymentAllocationCorrectionPreviews.tenantId, ctx.tenantId), eq(paymentAllocationCorrectionPreviews.id, preview.id)));
         return executionResult(group, loaded.source, reversal, replacement, loaded.intake, loaded.sourceSchedule, loaded.targetSchedule, audit.publicId, loaded.components);

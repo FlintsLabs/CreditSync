@@ -285,9 +285,13 @@ describe("CreditSync plugin 9.1.0 contract", () => {
             "loan-replacement-downstream-activity",
             "loan-replacement-direct-status-mutation",
             "loan-replacement-portfolio-scope-mismatch",
+            "scheduled-allocation-correction-ready",
+            "scheduled-allocation-correction-blocker",
+            "scheduled-allocation-correction-stale",
+            "scheduled-allocation-correction-idempotent-retry",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
-        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(35);
-        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(58);
+        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(37);
+        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(60);
     });
 
     test("floating settlement skill preserves exact composition and all execution stop gates", async () => {

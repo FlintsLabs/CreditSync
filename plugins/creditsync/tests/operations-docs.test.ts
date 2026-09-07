@@ -75,4 +75,12 @@ describe("CreditSync MCP operational safety documentation", () => {
         expect(operations).toContain("Never leave `MCP_API_TOKEN_HASHES` empty");
         expect(operations).not.toContain("remove both MCP token hashes");
     });
+
+    test("scheduled allocation correction recovery is documented", async () => {
+        const paymentSkill = await readFile(resolve(repositoryRoot, "plugins/creditsync/skills/reconcile-payments/SKILL.md"), "utf8");
+        const recovery = await readFile(resolve(repositoryRoot, "plugins/creditsync/references/error-recovery.md"), "utf8");
+        expect(paymentSkill).toContain("payment.allocation-correction.preview");
+        expect(paymentSkill).toContain("payment.allocation-correction.execute");
+        expect(recovery).toContain("scheduled allocation correction");
+    });
 });

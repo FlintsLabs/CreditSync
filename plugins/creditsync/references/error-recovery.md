@@ -9,6 +9,7 @@ Tool errors have `{ code, message, retryable, reviewRequired, repreviewRequired,
 | duplicate | Retrieve the public ID in the response and report the original. Do not create another intake. |
 | ambiguous / mismatch / `reviewRequired` | Show safe candidate context, obligations, warnings, and difference. Wait for a human selection. |
 | stale / expired / not latest | Re-read the intake, loan, renewal, or settlement target, then request a new preview. Previous approval does not carry over. |
+| scheduled allocation correction stale/dependent/overpayment | Re-inspect the exact posted intake, source/target schedules, loan, and dependencies; preview again and stop on any blocker. Execute only a fresh ready preview after explicit confirmation; reuse the key only for identical guards, reason, and preview. |
 | settlement balance/accrual changed | Stop. Re-inspect the borrower portfolio, create and show a fresh settlement preview, and obtain fresh confirmation before a new execute attempt. |
 | rate accrued-date / overlap conflict | Re-list the floating timeline and honor `earliestEditableDate`; never rewrite an accrued day or force overlapping periods. |
 | `FLOATING_BACKDATED_ALLOCATION_REQUIRES_RECONCILIATION` | Do not post. Inspect the exact ready intake, obtain confirmation for `payment.reconcile.mark-review`, then run a fresh reconciliation preflight/preview and obtain a separate confirmation before execute. Other preflight errors are not eligible for this transition. |

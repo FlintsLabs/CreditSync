@@ -1804,6 +1804,7 @@ export const paymentAllocationCorrectionGroups = pgTable("payment_allocation_cor
     loanId: integer("loan_id").notNull(),
     reason: text("reason").notNull(),
     idempotencyKey: text("idempotency_key").notNull(),
+    requestHash: text("request_hash").notNull(),
     correlationId: text("correlation_id").notNull(),
     auditPublicId: uuid("audit_public_id").notNull(),
     createdByUserId: integer("created_by_user_id"),
@@ -1812,6 +1813,8 @@ export const paymentAllocationCorrectionGroups = pgTable("payment_allocation_cor
     uniqueIndex("payment_allocation_correction_groups_tenant_id_id_unique").on(table.tenantId, table.id),
     uniqueIndex("payment_allocation_correction_groups_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
     uniqueIndex("payment_allocation_correction_groups_tenant_source_unique").on(table.tenantId, table.sourceTransactionId),
+    check("payment_allocation_correction_groups_reason_check", sql`length(btrim(${table.reason})) > 0`),
+    check("payment_allocation_correction_groups_idempotency_check", sql`length(btrim(${table.idempotencyKey})) > 0`),
     foreignKey({ name: "payment_allocation_correction_groups_tenant_preview_fk", columns: [table.tenantId, table.previewId], foreignColumns: [paymentAllocationCorrectionPreviews.tenantId, paymentAllocationCorrectionPreviews.id] }),
     foreignKey({ name: "payment_allocation_correction_groups_tenant_intake_fk", columns: [table.tenantId, table.paymentIntakeId], foreignColumns: [paymentIntakes.tenantId, paymentIntakes.id] }),
     foreignKey({ name: "payment_allocation_correction_groups_tenant_source_tx_fk", columns: [table.tenantId, table.sourceTransactionId], foreignColumns: [transactions.tenantId, transactions.id] }),
@@ -1845,6 +1848,13 @@ export const paymentAllocationCorrectionEntries = pgTable("payment_allocation_co
     uniqueIndex("payment_allocation_correction_entries_tenant_id_id_unique").on(table.tenantId, table.id),
     index("payment_allocation_correction_entries_tenant_group_idx").on(table.tenantId, table.groupId, table.id),
     check("payment_allocation_correction_entries_type_check", sql`${table.entryType} IN ('reversal', 'replacement')`),
+    check("payment_allocation_correction_entries_reason_check", sql`length(btrim(${table.reason})) > 0`),
+    check("payment_allocation_correction_entries_amount_scale_check", sql`scale(${table.amount}) <= 2 AND scale(${table.principalComponent}) <= 2 AND scale(${table.interestComponent}) <= 2 AND scale(${table.feeComponent}) <= 2 AND scale(${table.penaltyComponent}) <= 2`),
+    check("payment_allocation_correction_entries_conservation_check", sql`${table.amount} = ${table.principalComponent} + ${table.interestComponent} + ${table.feeComponent} + ${table.penaltyComponent}`),
+    check("payment_allocation_correction_entries_sign_check", sql`(
+        (${table.entryType} = 'reversal' AND ${table.amount} < 0 AND ${table.principalComponent} <= 0 AND ${table.interestComponent} <= 0 AND ${table.feeComponent} <= 0 AND ${table.penaltyComponent} <= 0)
+        OR (${table.entryType} = 'replacement' AND ${table.amount} > 0 AND ${table.principalComponent} >= 0 AND ${table.interestComponent} >= 0 AND ${table.feeComponent} >= 0 AND ${table.penaltyComponent} >= 0)
+    )`),
     foreignKey({ name: "payment_allocation_correction_entries_tenant_group_fk", columns: [table.tenantId, table.groupId], foreignColumns: [paymentAllocationCorrectionGroups.tenantId, paymentAllocationCorrectionGroups.id] }),
     foreignKey({ name: "payment_allocation_correction_entries_tenant_source_tx_fk", columns: [table.tenantId, table.sourceTransactionId], foreignColumns: [transactions.tenantId, transactions.id] }),
     foreignKey({ name: "payment_allocation_correction_entries_tenant_tx_fk", columns: [table.tenantId, table.transactionId], foreignColumns: [transactions.tenantId, transactions.id] }),

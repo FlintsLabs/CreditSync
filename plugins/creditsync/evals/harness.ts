@@ -251,6 +251,25 @@ const intakeArgs = {
     idempotencyKey: "capture-680294",
 };
 const noRepostLineage = { repostOfIntakePublicId: null, repostedByIntakePublicId: null };
+const ALLOCATION_PREVIEW = "0198c481-3e2b-7000-8000-000000000411";
+const ALLOCATION_CORRECTION = "0198c481-3e2b-7000-8000-000000000412";
+const ALLOCATION_SOURCE_SCHEDULE = "0198c481-3e2b-7000-8000-000000000413";
+const ALLOCATION_TARGET_SCHEDULE = "0198c481-3e2b-7000-8000-000000000414";
+const ALLOCATION_SOURCE_TRANSACTION = "0198c481-3e2b-7000-8000-000000000415";
+const ALLOCATION_REVERSAL_TRANSACTION = "0198c481-3e2b-7000-8000-000000000416";
+const ALLOCATION_REPLACEMENT_TRANSACTION = "0198c481-3e2b-7000-8000-000000000417";
+
+const allocationPreviewFixture = (status: "ready" | "blocked" = "ready") => ({
+    publicId: ALLOCATION_PREVIEW, status, paymentIntakePublicId: INTAKE,
+    transactionPublicId: ALLOCATION_SOURCE_TRANSACTION, loanPublicId: LOAN_A,
+    source: { schedulePublicId: ALLOCATION_SOURCE_SCHEDULE, dueDate: "2026-09-06", before: { paidTotal: "200.00", paidPenalty: "0.00", remainingDue: "0.00", status: "paid" }, after: { paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "200.00", status: "pending" } },
+    target: { schedulePublicId: ALLOCATION_TARGET_SCHEDULE, dueDate: "2026-09-07", before: { paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "200.00", status: "pending" }, after: { paidTotal: "200.00", paidPenalty: "0.00", remainingDue: "0.00", status: "paid" } },
+    amount: "200.00", components: { principal: "173.92", interest: "26.08", fee: "0.00", penalty: "0.00" },
+    netLoanVariance: { amount: "0.00", principal: "0.00", interest: "0.00", fee: "0.00", penalty: "0.00" },
+    warnings: status === "blocked" ? [{ code: "PAYMENT_ALLOCATION_CORRECTION_DEPENDENCY", blockerPublicIds: [ALLOCATION_SOURCE_TRANSACTION] }] : [],
+    previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, expiresAt: "2026-09-08T12:00:00.000Z",
+});
+const allocationExecuteFixture = { correctionPublicId: ALLOCATION_CORRECTION, paymentIntakePublicId: INTAKE, sourceTransactionPublicId: ALLOCATION_SOURCE_TRANSACTION, compensatingTransactionPublicId: ALLOCATION_REVERSAL_TRANSACTION, replacementTransactionPublicId: ALLOCATION_REPLACEMENT_TRANSACTION, sourceSchedulePublicId: ALLOCATION_SOURCE_SCHEDULE, targetSchedulePublicId: ALLOCATION_TARGET_SCHEDULE, amount: "200.00", components: { principal: "173.92", interest: "26.08", fee: "0.00", penalty: "0.00" }, auditPublicId: "0198c481-3e2b-7000-8000-000000000418", correlationId: "0198c481-3e2b-7000-8000-000000000419" };
 
 const allocations = [
     { borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, amount: "200.00" },
@@ -1794,6 +1813,42 @@ const SCENARIOS: Record<string, Scenario> = {
             { name: "payment.reverse", arguments: { paymentIntakePublicId: INTAKE, reason: "Owner confirmed duplicate bank posting" }, result: { publicId: "0198c481-3e2b-7000-8000-000000000288", status: "fixture", ...noRepostLineage, transactions: [] } },
         ],
         run: async (mcp) => { await mcp.call("intake.get", { paymentIntakePublicId: INTAKE }); await mcp.call("payment.reverse", { paymentIntakePublicId: INTAKE, reason: "Owner confirmed duplicate bank posting" }); return { outcome: "completed" }; },
+    },
+    "scheduled-allocation-correction-ready": {
+        script: [
+            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: INTAKE, status: "posted", ...noRepostLineage, evidence: [], latestProposal: null } },
+            { name: "payment.allocation-correction.preview", arguments: { paymentIntakePublicId: INTAKE, transactionPublicId: ALLOCATION_SOURCE_TRANSACTION, targetSchedulePublicId: ALLOCATION_TARGET_SCHEDULE, reason: "Move payment to received installment" }, result: allocationPreviewFixture() },
+            { name: "payment.allocation-correction.execute", arguments: { correctionPreviewPublicId: ALLOCATION_PREVIEW, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, confirmed: true, reason: "Move payment to received installment", idempotencyKey: "allocation-eval-1" }, result: allocationExecuteFixture },
+            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: INTAKE, status: "posted", ...noRepostLineage, evidence: [], latestProposal: null } },
+        ],
+        run: async (mcp) => { await mcp.call("intake.get", { paymentIntakePublicId: INTAKE }); const preview = await mcp.call("payment.allocation-correction.preview", { paymentIntakePublicId: INTAKE, transactionPublicId: ALLOCATION_SOURCE_TRANSACTION, targetSchedulePublicId: ALLOCATION_TARGET_SCHEDULE, reason: "Move payment to received installment" }); if (preview.status !== "ready") return { outcome: "stopped", stopReason: "allocation-correction-not-ready" } as const; await mcp.call("payment.allocation-correction.execute", { correctionPreviewPublicId: preview.publicId, previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: "Move payment to received installment", idempotencyKey: "allocation-eval-1" }); await mcp.call("intake.get", { paymentIntakePublicId: INTAKE }); return { outcome: "completed" } as const; },
+    },
+    "scheduled-allocation-correction-blocker": {
+        script: [
+            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: INTAKE, status: "posted", ...noRepostLineage, evidence: [], latestProposal: null } },
+            { name: "payment.allocation-correction.preview", arguments: { paymentIntakePublicId: INTAKE, transactionPublicId: ALLOCATION_SOURCE_TRANSACTION, targetSchedulePublicId: ALLOCATION_TARGET_SCHEDULE, reason: "Blocked correction" }, result: allocationPreviewFixture("blocked") },
+        ],
+        run: async (mcp) => { await mcp.call("intake.get", { paymentIntakePublicId: INTAKE }); const preview = await mcp.call("payment.allocation-correction.preview", { paymentIntakePublicId: INTAKE, transactionPublicId: ALLOCATION_SOURCE_TRANSACTION, targetSchedulePublicId: ALLOCATION_TARGET_SCHEDULE, reason: "Blocked correction" }); return { outcome: "stopped", stopReason: preview.status === "blocked" ? "allocation-correction-blocked" : "allocation-correction-not-blocked" } as const; },
+    },
+    "scheduled-allocation-correction-stale": {
+        script: [
+            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: INTAKE, status: "posted", ...noRepostLineage, evidence: [], latestProposal: null } },
+            { name: "payment.allocation-correction.preview", arguments: { paymentIntakePublicId: INTAKE, transactionPublicId: ALLOCATION_SOURCE_TRANSACTION, targetSchedulePublicId: ALLOCATION_TARGET_SCHEDULE, reason: "Stale correction" }, result: allocationPreviewFixture() },
+            { name: "payment.allocation-correction.execute", arguments: { correctionPreviewPublicId: ALLOCATION_PREVIEW, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, confirmed: true, reason: "Stale correction", idempotencyKey: "allocation-stale-1" }, error: { code: "STALE_CORRECTION_PREVIEW", message: "Correction preview is stale", retryable: false, reviewRequired: true, details: {} } },
+            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: INTAKE, status: "posted", ...noRepostLineage, evidence: [], latestProposal: null } },
+            { name: "payment.allocation-correction.preview", arguments: { paymentIntakePublicId: INTAKE, transactionPublicId: ALLOCATION_SOURCE_TRANSACTION, targetSchedulePublicId: ALLOCATION_TARGET_SCHEDULE, reason: "Fresh correction" }, result: allocationPreviewFixture() },
+        ],
+        run: async (mcp) => { await mcp.call("intake.get", { paymentIntakePublicId: INTAKE }); const preview = await mcp.call("payment.allocation-correction.preview", { paymentIntakePublicId: INTAKE, transactionPublicId: ALLOCATION_SOURCE_TRANSACTION, targetSchedulePublicId: ALLOCATION_TARGET_SCHEDULE, reason: "Stale correction" }); try { await mcp.call("payment.allocation-correction.execute", { correctionPreviewPublicId: preview.publicId, previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: "Stale correction", idempotencyKey: "allocation-stale-1" }); } catch (error) { if (!(error instanceof ScriptedMcpError) || error.code !== "STALE_CORRECTION_PREVIEW") throw error; await mcp.call("intake.get", { paymentIntakePublicId: INTAKE }); await mcp.call("payment.allocation-correction.preview", { paymentIntakePublicId: INTAKE, transactionPublicId: ALLOCATION_SOURCE_TRANSACTION, targetSchedulePublicId: ALLOCATION_TARGET_SCHEDULE, reason: "Fresh correction" }); return { outcome: "stopped", stopReason: "allocation-correction-fresh-confirmation-required" } as const; } return { outcome: "completed" } as const; },
+    },
+    "scheduled-allocation-correction-idempotent-retry": {
+        script: [
+            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: INTAKE, status: "posted", ...noRepostLineage, evidence: [], latestProposal: null } },
+            { name: "payment.allocation-correction.preview", arguments: { paymentIntakePublicId: INTAKE, transactionPublicId: ALLOCATION_SOURCE_TRANSACTION, targetSchedulePublicId: ALLOCATION_TARGET_SCHEDULE, reason: "Retry correction" }, result: allocationPreviewFixture() },
+            { name: "payment.allocation-correction.execute", arguments: { correctionPreviewPublicId: ALLOCATION_PREVIEW, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, confirmed: true, reason: "Retry correction", idempotencyKey: "allocation-retry-1" }, result: allocationExecuteFixture },
+            { name: "payment.allocation-correction.execute", arguments: { correctionPreviewPublicId: ALLOCATION_PREVIEW, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, confirmed: true, reason: "Retry correction", idempotencyKey: "allocation-retry-1" }, result: allocationExecuteFixture },
+            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: INTAKE, status: "posted", ...noRepostLineage, evidence: [], latestProposal: null } },
+        ],
+        run: async (mcp) => { await mcp.call("intake.get", { paymentIntakePublicId: INTAKE }); const preview = await mcp.call("payment.allocation-correction.preview", { paymentIntakePublicId: INTAKE, transactionPublicId: ALLOCATION_SOURCE_TRANSACTION, targetSchedulePublicId: ALLOCATION_TARGET_SCHEDULE, reason: "Retry correction" }); await mcp.call("payment.allocation-correction.execute", { correctionPreviewPublicId: preview.publicId, previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: "Retry correction", idempotencyKey: "allocation-retry-1" }); await mcp.call("payment.allocation-correction.execute", { correctionPreviewPublicId: preview.publicId, previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: "Retry correction", idempotencyKey: "allocation-retry-1" }); await mcp.call("intake.get", { paymentIntakePublicId: INTAKE }); return { outcome: "completed" } as const; },
     },
     "renewal-reversal": {
         script: [

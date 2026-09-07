@@ -383,6 +383,18 @@ describe("CreditSync stateless MCP contract", () => {
             idempotentHint: true,
             openWorldHint: false,
         });
+        expect(listed.tools.find((tool) => tool.name === "payment.allocation-correction.preview")?.annotations).toMatchObject({
+            readOnlyHint: false,
+            destructiveHint: false,
+            idempotentHint: false,
+            openWorldHint: false,
+        });
+        expect(listed.tools.find((tool) => tool.name === "payment.allocation-correction.execute")?.annotations).toMatchObject({
+            readOnlyHint: false,
+            destructiveHint: true,
+            idempotentHint: true,
+            openWorldHint: false,
+        });
 
         const previewed = await client.callTool({
             name: "loan.settlement.preview",

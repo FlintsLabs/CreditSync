@@ -278,7 +278,12 @@ export function createDefaultMcpToolHandlers(
         paymentIntakePublicId: asString(input, "paymentIntakePublicId"), transactionPublicId: asString(input, "transactionPublicId"), targetSchedulePublicId: asString(input, "targetSchedulePublicId"), reason: asString(input, "reason"),
     }),
     "payment.allocation-correction.execute": (ctx, input) => {
-        const key = ctx.idempotencyKey ?? asString(input, "idempotencyKey");
+        const argumentKey = typeof input.idempotencyKey === "string" ? input.idempotencyKey.trim() : undefined;
+        const contextKey = ctx.idempotencyKey?.trim();
+        if (contextKey && argumentKey && contextKey !== argumentKey.trim()) {
+            throw new DomainError("IDEMPOTENCY_CONFLICT", "Command and transport idempotency keys differ", 409);
+        }
+        const key = contextKey ?? argumentKey;
         if (!key) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Payment allocation correction requires an idempotency key", 400);
         return executePaymentAllocationCorrection({ ...ctx, idempotencyKey: key }, { correctionPreviewPublicId: asString(input, "correctionPreviewPublicId"), previewHash: asString(input, "previewHash"), expectedBalanceVersion: asString(input, "expectedBalanceVersion"), confirmed: true, reason: asString(input, "reason"), idempotencyKey: key });
     },

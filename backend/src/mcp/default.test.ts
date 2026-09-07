@@ -53,6 +53,18 @@ test("mark-review rejects disagreement between command and transport idempotency
     })).toThrow(expect.objectContaining({ code: "IDEMPOTENCY_CONFLICT" }));
 });
 
+test("allocation-correction rejects disagreement between command and transport idempotency keys", () => {
+    const handler = createDefaultMcpToolHandlers()["payment.allocation-correction.execute"];
+    expect(() => handler({
+        tenantId: "tenant-test", actorUserId: null, actorSource: "mcp",
+        requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: "transport-key",
+    }, {
+        correctionPreviewPublicId: crypto.randomUUID(), previewHash: `v1:${"a".repeat(64)}`,
+        expectedBalanceVersion: `v1:${"b".repeat(64)}`, confirmed: true,
+        reason: "Allocation correction", idempotencyKey: "argument-key",
+    })).toThrow(expect.objectContaining({ code: "IDEMPOTENCY_CONFLICT" }));
+});
+
 function isDisposableTestDatabase(value: string | undefined) {
     if (!value) return false;
     try {
