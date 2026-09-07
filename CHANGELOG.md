@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.83 - 2026-09-08
+
+### Added
+- Added the approved design for an MCP-only, append-only preview-confirm-execute workflow that corrects a posted scheduled payment to another installment in the same loan while preserving exact financial components and audit provenance.
+
 ## v0.3.82 - 2026-09-07
 
 ### Changed
