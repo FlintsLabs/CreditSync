@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.94 - 2026-09-08
+
+### Fixed
+- Moved the unapplied scheduled-payment allocation-correction migration after the production journal tail so Drizzle executes it on deployment.
+
 ## v0.3.93 - 2026-09-08
 
 ### Fixed
