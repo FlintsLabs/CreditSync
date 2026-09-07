@@ -1804,6 +1804,21 @@ describe("default MCP adapter integration", () => {
         }))).rejects.toMatchObject({ code: "PAYMENT_RECONCILIATION_REVIEW_STATE_CONFLICT" });
         called.push("payment.reconcile.mark-review");
 
+        await expect(call("payment.allocation-correction.preview", {
+            paymentIntakePublicId: intakePublicId,
+            transactionPublicId: paymentPublicId,
+            targetSchedulePublicId: batchSchedule.publicId,
+            reason: "MCP all-tools correction guard",
+        })).rejects.toBeDefined();
+        await expect(call("payment.allocation-correction.execute", {
+            correctionPreviewPublicId: "11111111-1111-4111-8111-111111111111",
+            previewHash: `v1:${"a".repeat(64)}`,
+            expectedBalanceVersion: `v1:${"b".repeat(64)}`,
+            confirmed: true,
+            reason: "MCP all-tools correction guard",
+            idempotencyKey: "mcp-all-tools-correction",
+        })).rejects.toBeDefined();
+
         expect([...new Set(called)].sort()).toEqual([...MCP_TOOL_NAMES].sort());
         expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length);
         expect(called.filter((name) => name === "intermediary.disbursement.event.create")).toHaveLength(2);

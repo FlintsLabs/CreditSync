@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { APPLICATION_VERSION, MCP_SCHEMA_VERSION, PLUGIN_VERSION } from "./release";
 
 describe("release metadata", () => {

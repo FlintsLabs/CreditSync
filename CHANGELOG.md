@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.3.90 - 2026-09-08
+
+### Fixed
+- Replaced shallow allocation-correction coverage with disposable-PostgreSQL lifecycle tests and corrected canonical schedule projection, dependency guards, locking, stale validation, append-only rebuild, and typed executor handling.
+
+## v0.3.89 - 2026-09-08
+
+### Changed
+- Documented the operator boundary for same-loan scheduled payment allocation correction, exact conservation, mandatory confirmation, hard-stop blockers, and separate production authorization.
+
 ## v0.3.88 - 2026-09-08
 
 ### Changed

@@ -61,11 +61,13 @@ CREATE INDEX IF NOT EXISTS "payment_allocation_correction_entries_tenant_group_i
 
 CREATE OR REPLACE FUNCTION reject_immutable_payment_allocation_correction_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+  IF TG_OP = 'DELETE' THEN
+    RAISE EXCEPTION 'payment allocation correction records are immutable; DELETE is not allowed';
+  END IF;
   IF TG_TABLE_NAME IN ('payment_allocation_correction_groups','payment_allocation_correction_entries')
      OR (TG_TABLE_NAME = 'payment_allocation_correction_previews' AND OLD.status IN ('blocked','executed','expired')) THEN
     RAISE EXCEPTION 'payment allocation correction records are immutable; % is not allowed', TG_OP;
   END IF;
-  IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
   IF TG_TABLE_NAME = 'payment_allocation_correction_previews' AND OLD.status <> 'ready' THEN
     RAISE EXCEPTION 'payment allocation correction preview is immutable';
   END IF;
