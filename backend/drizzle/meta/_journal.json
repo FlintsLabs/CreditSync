@@ -428,6 +428,13 @@
       "when": 1788471120000,
       "tag": "0060_payment_start_date_schedule_amendments",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1788471121000,
+      "tag": "0061_scheduled_payment_allocation_corrections",
+      "breakpoints": true
     }
   ]
 }

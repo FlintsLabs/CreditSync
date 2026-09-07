@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.85 - 2026-09-08
+
+### Added
+- Added the immutable scheduled-payment allocation correction preview, execution-group, and append-only entry ledger migration.
+
 ## v0.3.84 - 2026-09-08
 
 ### Changed
