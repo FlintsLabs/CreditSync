@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.95 - 2026-09-08
+
+### Added
+- Documented the append-only integration design that reconciles the deployed ChatGPT evidence lineage with scheduled payment allocation corrections on `main`.
+
 ## v0.3.94 - 2026-09-08
 
 ### Fixed
