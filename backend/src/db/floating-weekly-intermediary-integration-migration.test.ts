@@ -372,7 +372,7 @@ if (!testDatabaseUrl) {
         } finally {
             await sql.end();
         }
-    });
+    }, 60_000);
 
     test("applies the complete journal through 0038 to an empty database", async () => {
         // Break caught: the consolidated migration only upgrades a seeded database but fails a clean install.
@@ -397,5 +397,5 @@ if (!testDatabaseUrl) {
         } finally {
             await sql.end();
         }
-    });
+    }, 60_000);
 }

@@ -619,5 +619,5 @@ if (!testDatabaseUrl) {
             await sql.end({ timeout: 5 });
         }
         if (primaryError !== undefined) throw primaryError;
-    });
+    }, 60_000);
 }

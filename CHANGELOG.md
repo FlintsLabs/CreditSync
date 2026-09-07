@@ -5,6 +5,7 @@
 ### Fixed
 - Counted expected allocation-correction domain rejections as exercised routes in the full MCP tool-catalog integration test.
 - Allowed the production mixed-lineage reconciliation guard to recognize the new migration journal tail.
+- Extended database-migration test timeouts so complete-journal verification remains deterministic as the migration history grows.
 
 ## v0.3.92 - 2026-09-08
 
