@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.84 - 2026-09-08
+
+### Changed
+- Added the detailed test-first implementation plan for immutable scheduled-payment allocation correction, guarded MCP/plugin integration, exact schedule rebuilding, and full financial verification.
+
 ## v0.3.83 - 2026-09-08
 
 ### Added
