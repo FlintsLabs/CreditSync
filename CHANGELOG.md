@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.93 - 2026-09-08
+
+### Fixed
+- Counted expected allocation-correction domain rejections as exercised routes in the full MCP tool-catalog integration test.
+
 ## v0.3.92 - 2026-09-08
 
 ### Fixed

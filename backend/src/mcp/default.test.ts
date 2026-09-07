@@ -1822,6 +1822,7 @@ describe("default MCP adapter integration", () => {
             targetSchedulePublicId: batchSchedule.publicId,
             reason: "MCP all-tools correction guard",
         })).rejects.toBeDefined();
+        called.push("payment.allocation-correction.preview");
         await expect(call("payment.allocation-correction.execute", {
             correctionPreviewPublicId: "11111111-1111-4111-8111-111111111111",
             previewHash: `v1:${"a".repeat(64)}`,
@@ -1830,6 +1831,7 @@ describe("default MCP adapter integration", () => {
             reason: "MCP all-tools correction guard",
             idempotencyKey: "mcp-all-tools-correction",
         })).rejects.toBeDefined();
+        called.push("payment.allocation-correction.execute");
 
         expect([...new Set(called)].sort()).toEqual([...MCP_TOOL_NAMES].sort());
         expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length);
