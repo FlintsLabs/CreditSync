@@ -150,6 +150,13 @@ const date = z.iso.date();
 const dateTime = z.iso.datetime({ offset: true });
 const shortText = z.string().trim().min(1).max(500);
 const optionalNullableText = z.string().trim().max(2_000).nullable().optional();
+const correctionScheduleProjectionOutput = z.object({
+    schedulePublicId: uuid,
+    dueDate: date,
+    before: z.object({ paidTotal: money, paidPenalty: money, remainingDue: money, status: z.string() }).strict(),
+    after: z.object({ paidTotal: money, paidPenalty: money, remainingDue: money, status: z.string() }).strict(),
+}).strict();
+const correctionWarningOutput = z.object({ code: z.string().trim().min(1), blockerPublicIds: z.array(uuid).max(100).optional() }).strict();
 
 const borrowerFields = {
     name: z.string().trim().min(1).max(300),
@@ -1144,7 +1151,7 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "payment.batch.preview": batchPreviewOutput,
     "payment.batch.execute": batchExecutionOutput,
     "payment.reconcile.preview": reconciliationPreviewOutput,
-    "payment.allocation-correction.preview": z.object({ publicId: uuid, status: z.enum(["ready", "blocked"]), paymentIntakePublicId: uuid, transactionPublicId: uuid, loanPublicId: uuid, source: z.unknown(), target: z.unknown(), amount: money, components: z.object({ principal: money, interest: money, fee: money, penalty: money }).strict(), netLoanVariance: z.object({ amount: signedMoney, principal: signedMoney, interest: signedMoney, fee: signedMoney, penalty: signedMoney }).strict(), warnings: z.array(z.unknown()), previewHash: z.string().regex(/^v1:[0-9a-f]{64}$/i), expectedBalanceVersion: z.string().regex(/^v1:[0-9a-f]{64}$/i), expiresAt: isoDateTime }).strict(),
+    "payment.allocation-correction.preview": z.object({ publicId: uuid, status: z.enum(["ready", "blocked"]), paymentIntakePublicId: uuid, transactionPublicId: uuid, loanPublicId: uuid, source: correctionScheduleProjectionOutput, target: correctionScheduleProjectionOutput, amount: money, components: z.object({ principal: money, interest: money, fee: money, penalty: money }).strict(), netLoanVariance: z.object({ amount: signedMoney, principal: signedMoney, interest: signedMoney, fee: signedMoney, penalty: signedMoney }).strict(), warnings: z.array(correctionWarningOutput), previewHash: z.string().regex(/^v1:[0-9a-f]{64}$/i), expectedBalanceVersion: z.string().regex(/^v1:[0-9a-f]{64}$/i), expiresAt: isoDateTime }).strict(),
     "payment.allocation-correction.execute": z.object({ correctionPublicId: uuid, paymentIntakePublicId: uuid, sourceTransactionPublicId: uuid, compensatingTransactionPublicId: uuid, replacementTransactionPublicId: uuid, sourceSchedulePublicId: uuid, targetSchedulePublicId: uuid, amount: money, components: z.object({ principal: money, interest: money, fee: money, penalty: money }).strict(), auditPublicId: uuid, correlationId: uuid }).strict(),
     "payment.reconcile.preflight": paymentExecutionPreflightOutput,
     "payment.reconcile.mark-review": paymentReconciliationReviewOutput,

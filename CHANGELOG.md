@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.91 - 2026-09-08
+
+### Fixed
+- Closed the scheduled allocation-correction MCP projection and warning output schemas and regenerated the frozen plugin contract from the advertised backend tools.
+
 ## v0.3.90 - 2026-09-08
 
 ### Fixed
