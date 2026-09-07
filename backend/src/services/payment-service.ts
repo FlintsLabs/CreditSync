@@ -993,7 +993,7 @@ function schedulePenaltyDue(
     return Decimal.max(0, accrued.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).minus(schedule.paidPenalty));
 }
 
-function scheduleLifecycle(
+export function scheduleLifecycle(
     loan: typeof loans.$inferSelect,
     schedule: typeof loanSchedules.$inferSelect,
     state: { remainingDue: Decimal; paidTotal: Decimal; paidPenalty: Decimal },
@@ -1520,7 +1520,7 @@ async function postedResult(executor: Executor, intake: IntakeRow) {
     return { ...presentIntake(intake), transactions: rows.map(presentTransaction) };
 }
 
-async function refreshLoanRollups(tx: Executor, tenantId: string, loanIds: number[]) {
+export async function refreshLoanRollups(tx: Executor, tenantId: string, loanIds: number[]) {
     for (const loanId of [...new Set(loanIds)]) {
         const loan = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, tenantId), eq(loans.id, loanId)) });
         if (loan?.repaymentType === "floating") continue;

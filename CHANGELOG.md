@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.86 - 2026-09-08
+
+### Added
+- Added exact preview and append-only execution services for same-loan scheduled payment allocation correction, including stale guards, compensation/replacement lineage, idempotency, and loan rollup refresh.
+
 ## v0.3.85 - 2026-09-08
 
 ### Added
