@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.80 - 2026-09-07
+
+### Added
+- Added the approved design for append-only temporal reflow of later floating-interest allocations after a backdated reconciliation, an audited repair workflow for existing reconciliation groups, and single-count daily payment-health projection.
+
 ## v0.3.79 - 2026-09-07
 
 ### Fixed
