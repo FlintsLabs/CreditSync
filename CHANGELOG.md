@@ -4,6 +4,7 @@
 
 ### Added
 - Documented the append-only integration design that reconciles the deployed ChatGPT evidence lineage with scheduled payment allocation corrections on `main`.
+- Added the detailed implementation and verification plan for integrating the deployed ChatGPT evidence feature into the current migration lineage.
 
 ## v0.3.94 - 2026-09-08
 
