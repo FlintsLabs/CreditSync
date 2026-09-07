@@ -1,5 +1,5 @@
 {
-  "compatibility": "Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 9.0.0; breaking changes require plugin 10.0.0.",
+  "compatibility": "Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 9.1.0; breaking changes require plugin 10.0.0.",
   "schemaVersion": "1.0",
   "sourceOfTruth": "Local MCP SDK Client tools/list response from backend/src/mcp/server.ts",
   "tools": [
@@ -5930,6 +5930,209 @@
     {
       "annotations": {
         "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Payment Allocation Correction Preview"
+      },
+      "description": "Preview moving one posted scheduled repayment to another installment of the same active loan with exact component conservation.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "paymentIntakePublicId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "targetSchedulePublicId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "transactionPublicId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "paymentIntakePublicId",
+          "transactionPublicId",
+          "targetSchedulePublicId",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "name": "payment.allocation-correction.preview",
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "amount": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "components": {
+                "additionalProperties": false,
+                "properties": {
+                  "fee": {
+                    "maxLength": 32,
+                    "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "interest": {
+                    "maxLength": 32,
+                    "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "penalty": {
+                    "maxLength": 32,
+                    "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "principal": {
+                    "maxLength": 32,
+                    "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "principal",
+                  "interest",
+                  "fee",
+                  "penalty"
+                ],
+                "type": "object"
+              },
+              "expectedBalanceVersion": {
+                "pattern": "^v1:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "expiresAt": {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "type": "string"
+              },
+              "loanPublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "netLoanVariance": {
+                "additionalProperties": false,
+                "properties": {
+                  "amount": {
+                    "maxLength": 33,
+                    "pattern": "^-?(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "fee": {
+                    "maxLength": 33,
+                    "pattern": "^-?(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "interest": {
+                    "maxLength": 33,
+                    "pattern": "^-?(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "penalty": {
+                    "maxLength": 33,
+                    "pattern": "^-?(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "principal": {
+                    "maxLength": 33,
+                    "pattern": "^-?(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "amount",
+                  "principal",
+                  "interest",
+                  "fee",
+                  "penalty"
+                ],
+                "type": "object"
+              },
+              "paymentIntakePublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "previewHash": {
+                "pattern": "^v1:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "publicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "source": {},
+              "status": {
+                "enum": [
+                  "ready",
+                  "blocked"
+                ],
+                "type": "string"
+              },
+              "target": {},
+              "transactionPublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "warnings": {
+                "items": {},
+                "type": "array"
+              }
+            },
+            "required": [
+              "publicId",
+              "status",
+              "paymentIntakePublicId",
+              "transactionPublicId",
+              "loanPublicId",
+              "source",
+              "target",
+              "amount",
+              "components",
+              "netLoanVariance",
+              "warnings",
+              "previewHash",
+              "expectedBalanceVersion",
+              "expiresAt"
+            ],
+            "type": "object"
+          },
+          "schemaVersion": {
+            "const": "1.0",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "data"
+        ],
+        "type": "object"
+      },
+      "title": "Payment Allocation Correction Preview"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false,
         "readOnlyHint": true,
@@ -6467,6 +6670,176 @@
         "type": "object"
       },
       "title": "Payment Reconcile Execute"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Payment Allocation Correction Execute"
+      },
+      "description": "Execute a confirmed, idempotent append-only scheduled payment allocation correction.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "confirmed": {
+            "const": true,
+            "type": "boolean"
+          },
+          "correctionPreviewPublicId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "expectedBalanceVersion": {
+            "pattern": "^v1:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "idempotencyKey": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "previewHash": {
+            "pattern": "^v1:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "correctionPreviewPublicId",
+          "previewHash",
+          "expectedBalanceVersion",
+          "confirmed",
+          "reason",
+          "idempotencyKey"
+        ],
+        "type": "object"
+      },
+      "name": "payment.allocation-correction.execute",
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "amount": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "auditPublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "compensatingTransactionPublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "components": {
+                "additionalProperties": false,
+                "properties": {
+                  "fee": {
+                    "maxLength": 32,
+                    "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "interest": {
+                    "maxLength": 32,
+                    "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "penalty": {
+                    "maxLength": 32,
+                    "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  },
+                  "principal": {
+                    "maxLength": 32,
+                    "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "principal",
+                  "interest",
+                  "fee",
+                  "penalty"
+                ],
+                "type": "object"
+              },
+              "correctionPublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "correlationId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "paymentIntakePublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "replacementTransactionPublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "sourceSchedulePublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "sourceTransactionPublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "targetSchedulePublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "correctionPublicId",
+              "paymentIntakePublicId",
+              "sourceTransactionPublicId",
+              "compensatingTransactionPublicId",
+              "replacementTransactionPublicId",
+              "sourceSchedulePublicId",
+              "targetSchedulePublicId",
+              "amount",
+              "components",
+              "auditPublicId",
+              "correlationId"
+            ],
+            "type": "object"
+          },
+          "schemaVersion": {
+            "const": "1.0",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "data"
+        ],
+        "type": "object"
+      },
+      "title": "Payment Allocation Correction Execute"
     },
     {
       "annotations": {

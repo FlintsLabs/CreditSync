@@ -52,6 +52,12 @@ To correct attribution, re-list, select the exact existing entry, obtain a non-b
 
 ## Reverse
 
+## Correct a scheduled allocation
+
+For a posted scheduled repayment allocated to the wrong installment, first inspect the exact intake, source transaction, both schedules, loan contract, and downstream dependencies. Call `payment.allocation-correction.preview` with the source transaction, target schedule, and a non-blank reason. Show the exact source/target before-and-after aggregates, unchanged amount and components, and zero loan variance. A blocked, stale, expired, dependent, overpayment, floating, cross-loan, or same-schedule result is a hard stop.
+
+After explicit human confirmation, call `payment.allocation-correction.execute` with the unchanged preview hash, balance version, exact normalized reason, `confirmed: true`, and a stable idempotency key. The operation is same-loan only and append-only: it preserves the posted intake/source transaction and adds one exact compensation plus one replacement. Re-inspect the intake history, both schedules, loan rollup, correction public ID, audit public ID, and correlation ID. Deployment and any real production repair require separate authorization and a fresh preview.
+
 Inspect the posted intake and show the entries that will be compensated. Obtain a non-blank reason, then call `payment.reverse` with both `{ paymentIntakePublicId, reason }`. The frozen 1.0 tool has no client idempotency-key field; the backend makes repeat reversal of that intake idempotent. Report the resulting audit/correlation identifiers. A reversal does not delete the original transaction.
 
 For a floating-loan correction where the original payment must be reversed and any missing interest through the original payment date must be restored as payable accruals, use `payment.reverse-with-accrual.preview` first. Show the exact source payment, affected floating loans, Bangkok through-date, projected missing accrual count/amount, and preview hash. Only after explicit confirmation call `payment.reverse-with-accrual.execute` with the unchanged hash, literal `confirmed: true`, a non-blank reason, the fixed `ensure_due_through_payment_date` mode, and a stable idempotency key. The operation is atomic: if rate coverage or provenance is unavailable, both reversal and accrual materialization fail together. It never posts a new payment; after success, use the returned accruals and run the normal interest-only reconciliation workflow for the supplied payment.

@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.88 - 2026-09-08
+
+### Changed
+- Synchronized the private plugin, frozen 109-tool MCP contract, operator recovery guidance, and frontend release metadata at plugin `9.1.0` for scheduled payment allocation correction.
+
 ## v0.3.87 - 2026-09-08
 
 ### Added

@@ -1,5 +1,11 @@
 # CreditSync Plugin Changelog
 
+## 9.1.0 - 2026-09-08
+
+- Added the guarded `payment.allocation-correction.preview` → explicit confirmation → `payment.allocation-correction.execute` workflow for same-loan scheduled repayment corrections.
+- Added `payment.reconcile.mark-review` for the narrow, audited transition of an eligible backdated floating payment from `ready` to `needs_review`.
+- Made ordinary payment preflight use a rollback-only execution probe and documented separate confirmations for review transition and reconciliation execution.
+
 ## 9.0.0 - 2026-09-07
 
 - Added `payment.reconcile.mark-review` for the narrow, audited transition of an eligible backdated floating payment from `ready` to `needs_review`.

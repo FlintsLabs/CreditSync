@@ -1,10 +1,10 @@
-# CreditSync Plugin 7.5.0
+# CreditSync Plugin 9.1.0
 
 This private Codex plugin orchestrates the CreditSync MCP app for borrower and intermediary identity, payments, intermediary remittances and multi-leg disbursements, generalized floating-interest origination and settlement, effective-dated rate changes, direct loan disbursements, renewals, and append-only reversal.
 
 ## Package contract
 
-- Plugin version: `7.5.0`
+- Plugin version: `9.1.0`
 - MCP schema version: `1.0`
 - 11 orchestration skills: `creditsync`, `manage-borrowers`, `reconcile-payments`, `reconcile-intermediary-remittances`, `manage-loans`, `manage-floating-interest-rates`, `settle-floating-loans`, `manage-disbursements`, `manage-intermediated-disbursements`, `renew-daily-loan`, `restructure-loan`
 - App manifest: `.app.json`
@@ -15,6 +15,8 @@ The package does not contain an MCP URL, bearer token, `.mcp.json`, OAuth config
 For two or more slips belonging to one resolved borrower, use `payment.batch.capture` once, then prepare/finalize the complete evidence set with `payment.batch.evidence.prepare-many` and `payment.batch.evidence.finalize-many`. Preview the complete allocation set once, stop on ambiguity or duplicates, obtain one explicit confirmation, execute with stable idempotency, and verify every posted item. Never continue a partial batch.
 
 For settlement/restructure, resolve and inspect the borrower, call `loan.restructure.preview`, display every gross/waived/external-credit/net component plus replacement terms and cash, and execute only the exact hash/balance version after confirmation. The workflow supports both single-payment and floating-to-floating replacement contracts; floating previews snapshot projected interest and penalties through the settlement date. Additional principal is not a posted payout; any returned disbursement draft follows the separate disbursement lifecycle. Later interest/fee/penalty waivers use their own preview/confirmation flow and reason. Principal cannot be waived.
+
+For a posted scheduled repayment assigned to the wrong installment, inspect the exact intake, transaction, same-loan schedules, contract, and downstream dependencies; call `payment.allocation-correction.preview`; show exact before/after schedule effects and zero variance; obtain explicit confirmation; then call `payment.allocation-correction.execute` with unchanged guards and a stable idempotency key. Re-inspect history, schedules, rollup, audit, and correlation IDs. Never use this workflow for floating loans, cross-loan moves, split/merge, or production repair without separate authorization.
 
 For an atomic scheduled-loan replacement, resolve and inspect the borrower, then call `loan.replacement.preview` for the active old-loan UUID and an existing funded replacement-draft UUID. Display its exact no-cash movement, correction components, old/replacement lineage, the nested named funding source, dates, expiry, hash, both versions, and every structured warning with its exact amount and correction semantics. Only an explicit human confirmation permits `loan.replacement.execute` with literal confirmation, the exact returned values, a reason, and a stable idempotency key. Never activate the draft or mutate statuses directly. Stale state or downstream activity stops the workflow; reversal is compensating-only and blocked by downstream activity.
 
