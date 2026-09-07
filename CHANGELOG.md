@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.81 - 2026-09-07
+
+### Infra
+- Routed tmux implementation workers through GPT-5.6 Luna with explicit medium reasoning effort while retaining the task-model fallback and reporting requirements.
+
 ## v0.3.80 - 2026-09-07
 
 ### Added

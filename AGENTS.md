@@ -14,7 +14,7 @@ This project is optimized for **Bun**. Agents should prefer using Bun for all de
 - The current task agent owns discovery, clarification, design, specification, and the detailed implementation plan using the model selected by the user for the current task.
 - If the user explicitly requests tmux, delegate implementation through tmux whenever Codex CLI and tmux are available. Without an explicit request, use tmux automatically only for substantial implementation work such as multi-subsystem or multi-file changes, migrations, long verification suites, repeated implementation/review cycles, or work that should survive client disconnection. Keep short read-only checks, explanations, reviews, status requests, and narrow edits in the current task.
 - Before delegation, obtain approval for the spec and detailed implementation plan. Start the worker from an appropriate isolated worktree and pass the repository/worktree path, branch and integration target, spec/plan paths, acceptance criteria, ordered steps, required verification gates, relevant financial/data-safety rules, dirty-file ownership, and explicit scope exclusions.
-- Start implementation workers with Codex CLI model `gpt-5.3-codex-spark` using `--model`/`-m`. If Spark is unavailable, rejected, or exhausted, fall back to the model selected for the current task and report the fallback and reason to the user; do not silently choose an unrelated model.
+- Start implementation workers with Codex CLI model `gpt-5.6-luna` using `--model`/`-m` and explicitly set `model_reasoning_effort="medium"` with `--config`/`-c`. If Luna is unavailable, rejected, or exhausted, fall back to the model selected for the current task and report the fallback and reason to the user; do not silently choose an unrelated model.
 - Name tmux sessions descriptively as `<project>-<short-task-name>`. Reuse a session only when its repository, worktree, branch, and objective match exactly. Report the session name, worktree, branch, active implementation model, fallback state, and whether it is safe for the client to disconnect.
 - Delegation does not broaden authority. Production, destructive, external-write, credential, approval-gated, and other sensitive actions retain their existing authorization requirements. Never embed secrets in tmux commands, prompts, logs, specs, or plans.
 - Supervise tmux work instead of treating it as fire-and-forget: inspect session output, Git state, commits, tests, and approval prompts; relay blockers with context; diagnose repeated unchanged waits; and forward additive scope updates or interrupt superseded objectives.
@@ -27,12 +27,12 @@ When the user says `ใช้ tmux implement`, `implement ด้วย tmux`, or
 
 - Treat the latest user-approved specification and implementation plan as the authorized implementation scope.
 - Create an appropriate isolated Git worktree and a branch prefixed with `codex/`.
-- Start a descriptively named tmux session and delegate implementation to Codex CLI using model `gpt-5.3-codex-spark`.
+- Start a descriptively named tmux session and delegate implementation to Codex CLI using model `gpt-5.6-luna` with `model_reasoning_effort="medium"`.
 - Pass the worker the repository/worktree path, branch, integration target, approved spec and plan paths, acceptance criteria, ordered implementation steps, verification gates, financial/data-safety requirements, dirty-file ownership, and explicit scope exclusions.
 - Supervise the worker continuously. Inspect tmux output, approval prompts, Git state, commits, tests, and repeated unchanged waits.
 - Require test-driven implementation where applicable and run all verification gates defined by the approved plan.
 - Treat worker completion as untrusted until independently verifying the final diff, commit contents, expected tests, lint/typecheck/build, changelog discipline, and preservation of unrelated user changes.
-- If `gpt-5.3-codex-spark` is unavailable, rejected, or exhausted, fall back to the model selected for the current task and report the fallback and reason.
+- If `gpt-5.6-luna` is unavailable, rejected, or exhausted, fall back to the model selected for the current task and report the fallback and reason.
 - Do not push, deploy, perform production actions, or broaden scope unless the user explicitly authorizes them.
 - By default, complete and verify the work on the isolated feature branch but do not merge it.
 - Merge into the stated integration target only when the user explicitly includes `merge`, `รวมกลับ`, or equivalent authorization. After merging, verify with `git merge-base --is-ancestor <feature-branch> <target-branch>`.
