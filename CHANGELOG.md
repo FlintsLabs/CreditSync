@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.1 - 2026-09-08
+
+### Fixed
+- Synchronized floating-loan payment-health projections across the Loans list, REST detail, and MCP contract reads without changing persisted ledger balances.
+
 ## v0.4.0 - 2026-09-08
 
 ### Changed

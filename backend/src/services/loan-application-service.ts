@@ -23,6 +23,7 @@ import {
     type FloatingInterestPolicy,
 } from "../lib/floating-interest-policy";
 import type { CommandContext } from "./command-context";
+import { getLoanReadPaymentHealth } from "./loan-payment-health-service";
 import { DomainError } from "./domain-error";
 import {
     calculateDailyInterest,
@@ -576,6 +577,7 @@ export async function getLoanContract(ctx: CommandContext, publicId: string) {
     const { replacementLineage: _replacementLineage, restructureLineage: _restructureLineage, openingBalanceComponents: _openingBalanceComponents, restructureWaivers: _restructureWaivers, ...contract } = application;
     return {
         ...contract,
+        paymentHealth: await getLoanReadPaymentHealth(db, loan, { asOf: new Date(), context: ctx }),
         schedule: scheduleRows.map((row) => ({
             id: row.publicId,
             publicId: row.publicId,

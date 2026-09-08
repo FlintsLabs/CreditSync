@@ -14,7 +14,9 @@ import {
     users,
 } from "../db/schema";
 import { loansRoute } from "../modules/loans";
+import type { LoanPaymentHealth } from "../lib/loan-payment-health";
 import type { CommandContext } from "./command-context";
+import { getLoanContract } from "./loan-application-service";
 import { getLoanListLegacyPaymentHealth, getLoanPaymentHealth } from "./loan-payment-health-service";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
@@ -141,6 +143,47 @@ describe("loan payment-health service", () => {
         const body = await response.json() as Array<{ publicId: string; paymentHealth: unknown }>;
         expect(response.status).toBe(200);
         expect(body.find((row) => row.publicId === loan!.publicId)?.paymentHealth).toEqual(expectedHealth);
+    });
+
+    // Break caught: detail and contract reads expose stale persisted outstandingInterest
+    // while the Loan List exposes the current floating accrual obligation.
+    integrationTest("synchronizes list and detail payment obligations without changing the ledger", async () => {
+        setSystemTime(new Date("2026-08-11T12:00:00+07:00"));
+        const { actor, borrower } = await seedActorAndBorrower("tenant-synchronized-read-model");
+        const loan = await db.insert(loans).values({
+            tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id,
+            principalAmount: "1000.00", interestRate: "0.00", repaymentType: "floating",
+            dailyInterestMode: "per_thousand", dailyInterestRate: "15.0000",
+            floatingAccrualCycle: "daily", firstDayTreatment: "start_next_day", interestStartDate: "2026-08-09",
+            outstandingPrincipal: "1000.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        const period = await db.insert(loanInterestRatePeriods).values({
+            tenantId: actor.tenantId, loanId: loan.id, effectiveDate: "2026-08-09", expiryDate: null,
+            rateType: "per_thousand", rate: "15.0000", createdByUserId: actor.id,
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanInterestAccruals).values({
+            tenantId: actor.tenantId, loanId: loan.id, interestRatePeriodId: period.id, accrualDate: "2026-08-10",
+            openingPrincipal: "1000.00", rateMode: "per_thousand", rate: "15.0000",
+            interestAmount: "15.00", paidAmount: "0.00", status: "accrued", createdByUserId: actor.id,
+        });
+
+        const before = await db.select({ outstandingInterest: loans.outstandingInterest }).from(loans).where(eq(loans.id, loan.id));
+        const token = await authToken(actor);
+        const listResponse = await new Elysia().use(loansRoute).handle(new Request("http://localhost/loans", {
+            headers: { authorization: `Bearer ${token}` },
+        }));
+        const detailResponse = await new Elysia().use(loansRoute).handle(new Request(`http://localhost/loans/${loan.publicId}`, {
+            headers: { authorization: `Bearer ${token}` },
+        }));
+        const contract = await getLoanContract(context(actor), loan.publicId);
+        const list = (await listResponse.json() as Array<{ publicId: string; paymentHealth: LoanPaymentHealth }>).find((row) => row.publicId === loan.publicId)!;
+        const detail = await detailResponse.json() as { outstandingInterest: string; paymentHealth: LoanPaymentHealth };
+
+        expect(list.paymentHealth).toMatchObject({ overdueAmount: "15.00", overdueItemCount: 1, maxOverdueDays: 1 });
+        expect(detail.paymentHealth).toEqual(list.paymentHealth);
+        expect(contract.paymentHealth).toEqual(list.paymentHealth);
+        expect(detail.outstandingInterest).toBe("0.00");
+        expect(await db.select({ outstandingInterest: loans.outstandingInterest }).from(loans).where(eq(loans.id, loan.id))).toEqual(before);
     });
 
     // Break caught: today's floating interest is overdue immediately, partial history uses gross,
