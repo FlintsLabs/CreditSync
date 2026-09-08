@@ -2,6 +2,9 @@
 
 ## v0.4.5 - 2026-09-09
 
+### Fixed
+- Added regression coverage reproducing renewal-origin opening adjustments being misclassified as downstream blockers during scheduled payment allocation correction.
+
 ### Changed
 - Documented the causal-lineage design for safely correcting scheduled payment allocations on renewal-created loans without treating immutable opening adjustments as downstream blockers.
 - Added the implementation and verification plan for renewal-origin allocation correction and the separately confirmed production repair.
