@@ -7,6 +7,7 @@ import { authPlugin } from "../middleware/auth";
 import { getAccessScopeCacheKey, transactionAccessFilters } from "../lib/access";
 import { withTenantCache } from "../lib/cache";
 import { DomainError, presentDomainError } from "../services/domain-error";
+import { paymentEvidenceSummariesByIntake } from "../services/payment-evidence-read-service";
 
 export const transactionsRoute = new Elysia({ prefix: "/transactions" })
     .use(authPlugin)
@@ -28,6 +29,7 @@ export const transactionsRoute = new Elysia({ prefix: "/transactions" })
                     loanId: transactions.loanId,
                     loanPublicId: loans.publicId,
                     scheduleId: transactions.scheduleId,
+                    paymentIntakeId: transactions.paymentIntakeId,
                     borrowerName: borrowers.name,
                     amount: transactions.amount,
                     principalComponent: transactions.principalComponent,
@@ -44,8 +46,10 @@ export const transactionsRoute = new Elysia({ prefix: "/transactions" })
                     .where(and(...transactionAccessFilters(user)))
                     .orderBy(desc(transactions.transactionDate));
 
-                return await Promise.all(rows.map(async (row) => ({
+                const evidenceByIntake = await paymentEvidenceSummariesByIntake(user.tenantId, [...new Set(rows.flatMap((row) => row.paymentIntakeId ? [row.paymentIntakeId] : []))]);
+                return await Promise.all(rows.map(async ({ paymentIntakeId, ...row }) => ({
                     ...row,
+                    evidence: paymentIntakeId ? evidenceByIntake.get(paymentIntakeId) ?? [] : [],
                     slipRef: row.slipUrl,
                     slipUrl: await resolveStoredFileUrl(row.slipUrl),
                 })));
