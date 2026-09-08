@@ -1,5 +1,10 @@
 # CreditSync Plugin Changelog
 
+## 9.1.4 - 2026-09-09
+
+- Documented the narrow executed-renewal opening-ancestor boundary for scheduled payment allocation correction, including stale-state lineage checks and fail-closed handling of unknown or unrelated adjustments.
+- Added executable coverage for explicit confirmation and re-inspection of renewal-origin allocation correction.
+
 ## 9.1.3 - 2026-09-08
 
 - Documented the legacy floating-cycle fallback used by the Web UI when older contracts omit an explicit cycle.
