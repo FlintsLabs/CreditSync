@@ -96,23 +96,26 @@ async function dependencies(ctx: CommandContext, source: TransactionRow, sourceL
     const adjustmentBlockers: string[] = [];
     const allowedOpeningTypes = new Set(["principal_transfer", "cash_payout"]);
     for (const adjustment of adjustments) {
+        const renewalPublicId = adjustment.renewalPublicId;
+        const renewalStatus = adjustment.renewalStatus;
+        const newLoanPublicId = adjustment.newLoanPublicId;
         const isOpeningAncestor = adjustment.renewalId !== null
-            && adjustment.renewalStatus === "executed"
+            && renewalStatus === "executed"
             && adjustment.renewalNewLoanId === source.loanId
             && adjustment.loanId === source.loanId
-            && adjustment.newLoanPublicId !== null
-            && adjustment.newLoanPublicId === sourceLoanPublicId
-            && adjustment.renewalPublicId !== null
+            && newLoanPublicId !== null
+            && newLoanPublicId === sourceLoanPublicId
+            && renewalPublicId !== null
             && allowedOpeningTypes.has(adjustment.adjustmentType);
-        if (isOpeningAncestor) {
+        if (isOpeningAncestor && renewalPublicId !== null && renewalStatus !== null && newLoanPublicId !== null) {
             openingAncestors.push({
                 adjustmentPublicId: adjustment.adjustmentPublicId,
                 adjustmentType: adjustment.adjustmentType as "principal_transfer" | "cash_payout",
                 amount: money(adjustment.amount),
                 status: adjustment.status,
-                renewalPublicId: adjustment.renewalPublicId,
-                renewalStatus: adjustment.renewalStatus,
-                newLoanPublicId: adjustment.newLoanPublicId,
+                renewalPublicId,
+                renewalStatus,
+                newLoanPublicId,
             });
         } else {
             adjustmentBlockers.push(adjustment.adjustmentPublicId);
