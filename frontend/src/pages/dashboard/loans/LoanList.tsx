@@ -9,7 +9,7 @@ import { useTranslation } from "react-i18next";
 import { formatMoneyExact } from "../../../lib/workflow-model";
 import { LoanPaymentHealthBadge, type LoanPaymentHealth } from "./LoanPaymentHealthBadge";
 import { Badge } from "../../../components/ui/badge";
-import { getFloatingAccrualCycle, getUniqueBorrowerTags, getVisibleBorrowerLabels, isDoneLoanStatus, loanMatchesSearch, type BorrowerLabelLoan } from "./loan-list-model";
+import { getFloatingAccrualCycle, getLoanStatusesForTab, getUniqueBorrowerTags, getVisibleBorrowerLabels, isDoneLoanStatus, loanMatchesSearch, type BorrowerLabelLoan } from "./loan-list-model";
 import { loanListHeaderActionsClassName, loanListHeaderClassName } from "./loan-list-layout";
 import { LoanCardFinancialSummary } from "./LoanCardFinancialSummary";
 import { fetchLoanList, loanListQueryKey, useLoanQueryRevision } from "../../../lib/loan-query-invalidation";
@@ -202,7 +202,7 @@ export default function LoanList() {
                         <label className="text-sm font-medium">{t("common.status", "Status")}</label>
                         <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
                             <option value="all">{t("loans.filters.allStatuses", "All statuses")}</option>
-                            {(loanTab === "all" ? ["active", "draft", "paid", "closed", "replaced", "restructured", "defaulted", "pending", "problem"] : loanTab === "done" ? ["paid", "closed", "replaced", "restructured"] : ["active", "draft", "defaulted"]).map((status) => (
+                            {getLoanStatusesForTab(loanTab).map((status) => (
                                 <option key={status} value={status}>{t(`loans.status.${status}`, status)}</option>
                             ))}
                         </select>

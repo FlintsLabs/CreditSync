@@ -9,9 +9,15 @@ export interface BorrowerLabelLoan {
     currentAgentAliases?: (string | null)[] | null;
 }
 
-/** Replaced/restructured are terminal lifecycle states; they remain visible as history, not active collection targets. */
+/** Renewed/replaced/restructured are terminal lifecycle states; they remain visible as history, not active collection targets. */
 export function isDoneLoanStatus(status: string): boolean {
-    return status === "paid" || status === "closed" || status === "replaced" || status === "restructured";
+    return status === "paid" || status === "closed" || status === "renewed" || status === "replaced" || status === "restructured";
+}
+
+export function getLoanStatusesForTab(tab: "active" | "done" | "all"): string[] {
+    if (tab === "all") return ["active", "draft", "paid", "closed", "renewed", "replaced", "restructured", "defaulted", "pending", "problem"];
+    if (tab === "done") return ["paid", "closed", "renewed", "replaced", "restructured"];
+    return ["active", "draft", "defaulted"];
 }
 
 export function getFloatingAccrualCycle(loan: { repaymentType: string; floatingAccrualCycle?: "daily" | "weekly" | "monthly" | null; interestPeriodUnit?: "day" | "week" | "month" | null }) {

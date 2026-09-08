@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { getBorrowerLabels, getFloatingAccrualCycle, getVisibleBorrowerLabels, isDoneLoanStatus, loanMatchesSearch } from "../src/pages/dashboard/loans/loan-list-model";
+import { getBorrowerLabels, getFloatingAccrualCycle, getLoanStatusesForTab, getVisibleBorrowerLabels, isDoneLoanStatus, loanMatchesSearch } from "../src/pages/dashboard/loans/loan-list-model";
 
 describe("loan list label model", () => {
     test("falls back legacy floating loans to the backend-compatible accrual cycle", () => {
@@ -13,6 +13,13 @@ describe("loan list label model", () => {
         expect(isDoneLoanStatus("replaced")).toBe(true);
         expect(isDoneLoanStatus("active")).toBe(false);
         expect(isDoneLoanStatus("paid")).toBe(true);
+    });
+
+    test("classifies renewed loans as done history and exposes the status filter", () => {
+        expect(isDoneLoanStatus("renewed")).toBe(true);
+        expect(getLoanStatusesForTab("done")).toContain("renewed");
+        expect(getLoanStatusesForTab("all")).toContain("renewed");
+        expect(getLoanStatusesForTab("active")).not.toContain("renewed");
     });
 
     test("normalizes aliases before tags and deduplicates with Unicode-insensitive matching", () => {

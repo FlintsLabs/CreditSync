@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.0 - 2026-09-08
+
+### Changed
+- Moved renewed loans into Done history and added a localized Renewed status filter for the loan list.
+
 ## v0.3.99 - 2026-09-08
 
 ### Fixed

@@ -610,6 +610,7 @@
             "draft": "Draft",
             "paid": "Paid",
             "closed": "Closed",
+            "renewed": "Renewed",
             "replaced": "Closed — Replaced",
             "restructured": "Historical — Restructured",
             "defaulted": "Defaulted"
