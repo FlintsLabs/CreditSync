@@ -1283,7 +1283,19 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
         summary: disbursementSummaryOutput,
         events: z.array(disbursementEventOutput),
     }).strict(),
-    "loan.contract.get": loanOutput.extend({ schedule: z.array(loanContractScheduleOutput) }).strict(),
+    "loan.contract.get": loanOutput.extend({
+        paymentHealth: z.object({
+            status: z.enum(["current", "due_today", "overdue", "settled"]),
+            dueTodayAmount: money,
+            overdueAmount: money,
+            overdueItemCount: z.number().int().nonnegative(),
+            overdueObligationUnit: z.enum(["day", "week", "installment"]),
+            overdueObligationCount: z.number().int().nonnegative(),
+            maxOverdueDays: z.number().int().nonnegative(),
+            accruingInterestAmount: money.optional(),
+        }).strict().optional(),
+        schedule: z.array(loanContractScheduleOutput),
+    }).strict(),
     "loan.payment-start-date.update": loanOutput.extend(writeAuditMetadata).strict(),
     "loan.payment-history.list": z.object({
         loanPublicId: uuid,

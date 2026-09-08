@@ -66,6 +66,17 @@ export async function getLoanListLegacyPaymentHealth(
     });
 }
 
+export async function getLoanReadPaymentHealth(
+    executor: typeof db,
+    loan: typeof loans.$inferSelect,
+    input: { asOf: Date; context: CommandContext },
+): Promise<LoanPaymentHealth> {
+    if (loan.repaymentType === "floating" && !(loan.firstDayTreatment && loan.interestStartDate && loan.dailyInterestMode && loan.dailyInterestRate)) {
+        return getLoanListLegacyPaymentHealth(executor, loan, input);
+    }
+    return getLoanPaymentHealth(executor, loan, input);
+}
+
 export async function getLoanPaymentHealth(
     executor: typeof db,
     loan: typeof loans.$inferSelect,
