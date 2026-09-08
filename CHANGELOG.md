@@ -5,6 +5,7 @@
 ### Added
 - Documented the append-only integration design that reconciles the deployed ChatGPT evidence lineage with scheduled payment allocation corrections on `main`.
 - Added the detailed implementation and verification plan for integrating the deployed ChatGPT evidence feature into the current migration lineage.
+- Added explicit payment evidence requirements and an append-only supplemental evidence ledger for late proof without mutating posted financial records.
 
 ### Fixed
 - Made scheduled allocation-correction integration fixtures independent of the current calendar date.

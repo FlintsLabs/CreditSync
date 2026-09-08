@@ -1362,6 +1362,7 @@ export const paymentIntakes = pgTable("payment_intakes", {
     duplicateOfIntakeId: integer("duplicate_of_intake_id"),
     repostOfIntakeId: integer("repost_of_intake_id"),
     warnings: jsonb("warnings").$type<Array<Record<string, unknown>>>(),
+    evidenceRequired: boolean("evidence_required").default(false).notNull(),
     notes: text("notes"),
     postedAt: timestamp("posted_at"),
     createdByUserId: integer("created_by_user_id"),
@@ -1467,6 +1468,59 @@ export const paymentEvidence = pgTable("payment_evidence", {
     foreignKey({
         name: "payment_evidence_tenant_updated_by_fk",
         columns: [table.tenantId, table.updatedByUserId],
+        foreignColumns: [users.tenantId, users.id],
+    }),
+]);
+
+export const paymentEvidenceSupplements = pgTable("payment_evidence_supplements", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    paymentIntakeId: integer("payment_intake_id").notNull(),
+    fileId: integer("file_id").notNull(),
+    status: text("status").default("draft").notNull(),
+    evidenceHash: text("evidence_hash"),
+    mimeType: text("mime_type"),
+    declaredSize: integer("declared_size"),
+    reason: text("reason"),
+    note: text("note"),
+    importIdempotencyKey: text("import_idempotency_key").notNull(),
+    recordIdempotencyKey: text("record_idempotency_key"),
+    auditPublicId: uuid("audit_public_id"),
+    correlationId: text("correlation_id").notNull(),
+    createdByUserId: integer("created_by_user_id").notNull(),
+    recordedByUserId: integer("recorded_by_user_id"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    readyAt: timestamp("ready_at"),
+    recordedAt: timestamp("recorded_at"),
+}, (table) => [
+    uniqueIndex("payment_evidence_supplements_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("payment_evidence_supplements_tenant_import_idempotency_unique").on(table.tenantId, table.importIdempotencyKey),
+    uniqueIndex("payment_evidence_supplements_tenant_idempotency_unique")
+        .on(table.tenantId, table.recordIdempotencyKey)
+        .where(sql`${table.recordIdempotencyKey} IS NOT NULL`),
+    index("payment_evidence_supplements_tenant_intake_status_idx").on(table.tenantId, table.paymentIntakeId, table.status),
+    check("payment_evidence_supplements_status_check", sql`${table.status} IN ('draft', 'ready', 'recorded')`),
+    check("payment_evidence_supplements_reason_check", sql`${table.reason} IS NULL OR ${table.reason} IN ('upload_channel_unavailable', 'operator_omission', 'evidence_recovered', 'other')`),
+    check("payment_evidence_supplements_other_note_check", sql`${table.reason} <> 'other' OR length(btrim(${table.note})) > 0`),
+    foreignKey({
+        name: "payment_evidence_supplements_tenant_intake_fk",
+        columns: [table.tenantId, table.paymentIntakeId],
+        foreignColumns: [paymentIntakes.tenantId, paymentIntakes.id],
+    }),
+    foreignKey({
+        name: "payment_evidence_supplements_tenant_file_fk",
+        columns: [table.tenantId, table.fileId],
+        foreignColumns: [files.tenantId, files.id],
+    }),
+    foreignKey({
+        name: "payment_evidence_supplements_tenant_created_by_fk",
+        columns: [table.tenantId, table.createdByUserId],
+        foreignColumns: [users.tenantId, users.id],
+    }),
+    foreignKey({
+        name: "payment_evidence_supplements_tenant_recorded_by_fk",
+        columns: [table.tenantId, table.recordedByUserId],
         foreignColumns: [users.tenantId, users.id],
     }),
 ]);
