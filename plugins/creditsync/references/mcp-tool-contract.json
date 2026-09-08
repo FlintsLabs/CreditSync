@@ -8103,7 +8103,8 @@
               "accrualCycle": {
                 "enum": [
                   "daily",
-                  "weekly"
+                  "weekly",
+                  "monthly"
                 ],
                 "type": "string"
               },
@@ -8159,7 +8160,8 @@
               "periodUnit": {
                 "enum": [
                   "day",
-                  "week"
+                  "week",
+                  "month"
                 ],
                 "type": "string"
               },
@@ -8582,7 +8584,8 @@
                           "accrualCycle": {
                             "enum": [
                               "daily",
-                              "weekly"
+                              "weekly",
+                              "monthly"
                             ],
                             "type": "string"
                           },
@@ -8638,7 +8641,8 @@
                           "periodUnit": {
                             "enum": [
                               "day",
-                              "week"
+                              "week",
+                              "month"
                             ],
                             "type": "string"
                           },
@@ -9074,7 +9078,8 @@
                           "accrualCycle": {
                             "enum": [
                               "daily",
-                              "weekly"
+                              "weekly",
+                              "monthly"
                             ],
                             "type": "string"
                           },
@@ -9130,7 +9135,8 @@
                           "periodUnit": {
                             "enum": [
                               "day",
-                              "week"
+                              "week",
+                              "month"
                             ],
                             "type": "string"
                           },
@@ -9446,7 +9452,8 @@
                       "accrualCycle": {
                         "enum": [
                           "daily",
-                          "weekly"
+                          "weekly",
+                          "monthly"
                         ],
                         "type": "string"
                       },
@@ -9502,7 +9509,8 @@
                       "periodUnit": {
                         "enum": [
                           "day",
-                          "week"
+                          "week",
+                          "month"
                         ],
                         "type": "string"
                       },
@@ -9674,7 +9682,8 @@
                           "accrualCycle": {
                             "enum": [
                               "daily",
-                              "weekly"
+                              "weekly",
+                              "monthly"
                             ],
                             "type": "string"
                           },
@@ -9730,7 +9739,8 @@
                           "periodUnit": {
                             "enum": [
                               "day",
-                              "week"
+                              "week",
+                              "month"
                             ],
                             "type": "string"
                           },
@@ -10297,7 +10307,8 @@
               "accrualCycle": {
                 "enum": [
                   "daily",
-                  "weekly"
+                  "weekly",
+                  "monthly"
                 ],
                 "type": "string"
               },
@@ -10353,7 +10364,8 @@
               "periodUnit": {
                 "enum": [
                   "day",
-                  "week"
+                  "week",
+                  "month"
                 ],
                 "type": "string"
               },
@@ -10864,7 +10876,8 @@
                       "periodUnit": {
                         "enum": [
                           "day",
-                          "week"
+                          "week",
+                          "month"
                         ],
                         "type": "string"
                       },
@@ -11698,7 +11711,8 @@
                       "periodUnit": {
                         "enum": [
                           "day",
-                          "week"
+                          "week",
+                          "month"
                         ],
                         "type": "string"
                       },
@@ -13969,7 +13983,8 @@
                       "periodUnit": {
                         "enum": [
                           "day",
-                          "week"
+                          "week",
+                          "month"
                         ],
                         "type": "string"
                       },
@@ -15667,7 +15682,8 @@
                       "periodUnit": {
                         "enum": [
                           "day",
-                          "week"
+                          "week",
+                          "month"
                         ],
                         "type": "string"
                       },
@@ -16545,7 +16561,8 @@
                       "periodUnit": {
                         "enum": [
                           "day",
-                          "week"
+                          "week",
+                          "month"
                         ],
                         "type": "string"
                       },
@@ -26438,7 +26455,8 @@
                       "accrualCycle": {
                         "enum": [
                           "daily",
-                          "weekly"
+                          "weekly",
+                          "monthly"
                         ],
                         "type": "string"
                       },
@@ -26494,7 +26512,8 @@
                       "periodUnit": {
                         "enum": [
                           "day",
-                          "week"
+                          "week",
+                          "month"
                         ],
                         "type": "string"
                       },
@@ -27330,7 +27349,8 @@
                           "accrualCycle": {
                             "enum": [
                               "daily",
-                              "weekly"
+                              "weekly",
+                              "monthly"
                             ],
                             "type": "string"
                           },

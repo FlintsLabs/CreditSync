@@ -1,5 +1,9 @@
 # CreditSync Plugin Changelog
 
+## 9.1.2 - 2026-09-08
+
+- Corrected the committed MCP contract reference to include monthly floating-accrual enum values.
+
 ## 9.1.1 - 2026-09-08
 
 - Synchronized the frozen 112-tool contract and loan-management guidance for daily, weekly, and calendar-monthly floating accrual cycles.

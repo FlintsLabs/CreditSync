@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.98 - 2026-09-08
+
+### Fixed
+- Synchronized the committed MCP contract reference with the deployed monthly floating-accrual schema.
+
 ## v0.3.97 - 2026-09-08
 
 ### Added
