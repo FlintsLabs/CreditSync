@@ -9,6 +9,9 @@
 ### Fixed
 - Made scheduled allocation-correction integration fixtures independent of the current calendar date.
 
+### Changed
+- Added a failing regression contract for the combined production migration lineage.
+
 ## v0.3.94 - 2026-09-08
 
 ### Fixed
