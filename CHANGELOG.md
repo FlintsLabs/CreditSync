@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.2 - 2026-09-08
+
+### Fixed
+- Made floating-loan overdue labels follow the explicit accrual cycle before legacy interest-period metadata.
+
 ## v0.4.1 - 2026-09-08
 
 ### Fixed
