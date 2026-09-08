@@ -38,7 +38,7 @@ test("schema maps the evidence gate and tenant-safe append-only supplement ledge
         "payment_evidence_supplements_reason_check",
         "payment_evidence_supplements_other_note_check",
     ]));
-    expect(supplement.foreignKeys).toHaveLength(4);
+    expect(supplement.foreignKeys).toHaveLength(5);
 });
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;

@@ -1472,4 +1472,20 @@ describe("payment application service", () => {
         expect(await listPaymentIntakes(context(actor), {})).toEqual([expect.objectContaining({ publicId: own.publicId, amount: "10.00" })]);
         expect(JSON.stringify(await listPaymentIntakes(context(actor), {}))).not.toContain('"id":1');
     });
+
+    integrationTest("requires finalized primary evidence only when the intake explicitly requires it", async () => {
+        const actor = await seedUser();
+        const seeded = await seedLoan({ actor, borrowerName: "Evidence required", schedules: [{ total: "10.00" }] });
+        const intake = await createPaymentIntake(context(actor), { amount: "10.00", receivedAt: "2026-09-07T01:00:00.000Z" });
+        await db.update(paymentIntakes).set({ evidenceRequired: true }).where(eq(paymentIntakes.id, intake.id));
+        const allocations = [{ borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "10.00" }];
+        await expect(previewPaymentMatch(context(actor), intake.publicId, { allocations })).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+
+        await db.insert(paymentEvidence).values({ tenantId: actor.tenantId, paymentIntakeId: intake.id, evidenceType: "slip", status: "ready", finalizedAt: new Date(), createdByUserId: actor.id, updatedByUserId: actor.id });
+        const proposal = await previewPaymentMatch(context(actor), intake.publicId, { allocations });
+        expect(proposal.status).toBe("ready");
+
+        const dataOnly = await createPaymentIntake(context(actor), { amount: "10.00", receivedAt: "2026-09-07T02:00:00.000Z" });
+        await expect(previewPaymentMatch(context(actor), dataOnly.publicId, { allocations })).resolves.toMatchObject({ status: "ready" });
+    });
 });

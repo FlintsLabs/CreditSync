@@ -98,6 +98,7 @@
 
 ### Added
 - Added bounded, allowlisted server-side ChatGPT evidence ingestion with content verification, MinIO metadata checks, safe idempotent retries, and cleanup on failure.
+- Added authoritative evidence-required gates plus closed MCP import and explicitly confirmed supplemental-evidence commands using official top-level ChatGPT file metadata.
 
 ## v0.3.78 - 2026-09-07
 

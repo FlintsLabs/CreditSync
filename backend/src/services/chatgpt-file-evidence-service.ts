@@ -201,3 +201,39 @@ export function importChatGptPaymentEvidence(ctx: CommandContext, intakePublicId
 export function importChatGptSupplementEvidence(ctx: CommandContext, intakePublicId: string, file: ChatGptFileParam, idempotencyKey: string, dependencies: ChatGptEvidenceDependencies = {}) {
     return importEvidence(ctx, intakePublicId, file, idempotencyKey, true, dependencies);
 }
+
+export type PaymentEvidenceSupplementReason = "upload_channel_unavailable" | "operator_omission" | "evidence_recovered" | "other";
+
+export async function recordPaymentEvidenceSupplement(ctx: CommandContext, input: {
+    paymentIntakePublicId: string; supplementPublicId: string; confirmed: true;
+    reason: PaymentEvidenceSupplementReason; note?: string | null; idempotencyKey: string;
+}) {
+    if (input.confirmed !== true) throw new DomainError("EVIDENCE_SUPPLEMENT_CONFIRMATION_REQUIRED", "Explicit supplemental evidence confirmation is required", 409);
+    const key = input.idempotencyKey.trim();
+    const note = input.note?.trim() || null;
+    if (!key) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "A stable idempotency key is required", 400);
+    if (input.reason === "other" && !note) throw new DomainError("EVIDENCE_SUPPLEMENT_NOTE_REQUIRED", "Reason other requires a note", 400);
+    if (!uuidPattern.test(input.supplementPublicId)) throw new DomainError("INVALID_PUBLIC_ID", "supplementPublicId must be a UUID", 400);
+    const intake = await accessibleIntake(ctx, input.paymentIntakePublicId);
+    if (intake.status !== "posted") throw new DomainError("PAYMENT_INTAKE_NOT_POSTED", "Supplemental evidence requires an exact posted intake", 409);
+    if (ctx.actorUserId === null) throw new DomainError("ACTOR_REQUIRED", "A tenant actor is required", 403);
+    return db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id = ${intake.id} FOR UPDATE`);
+        const replay = await tx.query.paymentEvidenceSupplements.findFirst({ where: and(eq(paymentEvidenceSupplements.tenantId, ctx.tenantId), eq(paymentEvidenceSupplements.recordIdempotencyKey, key)) });
+        if (replay) {
+            if (replay.publicId !== input.supplementPublicId || replay.reason !== input.reason || replay.note !== note) throw new DomainError("EVIDENCE_IDEMPOTENCY_CONFLICT", "Supplement record idempotency payload does not match", 409);
+            const storedFile = await tx.query.files.findFirst({ where: and(eq(files.tenantId, ctx.tenantId), eq(files.id, replay.fileId)) });
+            if (!storedFile) throw new DomainError("PAYMENT_EVIDENCE_NOT_FOUND", "Evidence file record not found", 404);
+            return safeResult(replay, storedFile.publicId, replay.auditPublicId, replay.correlationId);
+        }
+        await tx.execute(sql`SELECT id FROM payment_evidence_supplements WHERE tenant_id = ${ctx.tenantId} AND public_id = ${input.supplementPublicId} FOR UPDATE`);
+        const current = await tx.query.paymentEvidenceSupplements.findFirst({ where: and(eq(paymentEvidenceSupplements.tenantId, ctx.tenantId), eq(paymentEvidenceSupplements.publicId, input.supplementPublicId), eq(paymentEvidenceSupplements.paymentIntakeId, intake.id)) });
+        if (!current || current.status !== "ready") throw new DomainError("EVIDENCE_SUPPLEMENT_NOT_READY", "Supplemental evidence is not ready", 409);
+        const audit = await createAuditLog(tx, { tenantId: ctx.tenantId, actorUserId: ctx.actorUserId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, entityType: "payment_evidence_supplement", entityId: current.publicId, action: "recorded", payload: { paymentIntakePublicId: intake.publicId, supplementPublicId: current.publicId, reason: input.reason, notePresent: note !== null, mimeType: current.mimeType, size: current.declaredSize, sha256: current.evidenceHash } });
+        const recorded = await tx.update(paymentEvidenceSupplements).set({ status: "recorded", reason: input.reason, note, recordIdempotencyKey: key, auditPublicId: audit.publicId, correlationId: ctx.correlationId, recordedByUserId: ctx.actorUserId, recordedAt: new Date() }).where(and(eq(paymentEvidenceSupplements.id, current.id), eq(paymentEvidenceSupplements.status, "ready"))).returning().then((rows) => rows[0]);
+        if (!recorded) throw new DomainError("EVIDENCE_SUPPLEMENT_NOT_READY", "Supplemental evidence is not ready", 409);
+        const storedFile = await tx.query.files.findFirst({ where: and(eq(files.tenantId, ctx.tenantId), eq(files.id, recorded.fileId)) });
+        if (!storedFile) throw new DomainError("PAYMENT_EVIDENCE_NOT_FOUND", "Evidence file record not found", 404);
+        return safeResult(recorded, storedFile.publicId, audit.publicId, ctx.correlationId);
+    });
+}

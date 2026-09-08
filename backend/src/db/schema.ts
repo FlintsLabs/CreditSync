@@ -1529,6 +1529,11 @@ export const paymentEvidenceSupplements = pgTable("payment_evidence_supplements"
         columns: [table.tenantId, table.recordedByUserId],
         foreignColumns: [users.tenantId, users.id],
     }),
+    foreignKey({
+        name: "payment_evidence_supplements_tenant_audit_fk",
+        columns: [table.tenantId, table.auditPublicId],
+        foreignColumns: [auditLogs.tenantId, auditLogs.publicId],
+    }),
 ]);
 
 export const paymentMatchProposals = pgTable("payment_match_proposals", {

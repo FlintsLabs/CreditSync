@@ -9,7 +9,7 @@ import { previewLoan } from "../services/loan-application-service";
 import { parseMoney, serializeMoney } from "../lib/money";
 import { loansRoute } from "../modules/loans";
 import { normalizeMoney as normalizeFrontendMoney } from "../../../frontend/src/lib/workflow-api";
-import { createMcpHttpPlugin, MCP_TOOL_NAMES, type CreateMcpHttpPluginInput, type McpToolHandler } from "./server";
+import { advertisedMcpToolMetadata, createMcpHttpPlugin, MCP_TOOL_NAMES, type CreateMcpHttpPluginInput, type McpToolHandler } from "./server";
 import { paymentPostCommandContext } from "./default";
 import type { McpRuntimeConfig } from "./security";
 
@@ -1589,5 +1589,23 @@ describe("CreditSync stateless MCP contract", () => {
 
         expect(response.status).toBe(200);
         expect(await response.json()).toEqual({ status: "ok", service: "creditsync-mcp", schemaVersion: "1.0" });
+    });
+
+    test("advertises strict top-level ChatGPT file parameters without unsafe output fields", () => {
+        const tools = advertisedMcpToolMetadata();
+        for (const name of ["evidence.import-chatgpt-file", "payment.evidence-supplement.import-chatgpt-file"] as const) {
+            const tool = tools.find((candidate) => candidate.name === name);
+            expect(tool?._meta).toEqual({ "openai/fileParams": ["chatgptFile"] });
+            expect(tool?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false });
+            const input = tool?.inputSchema as any;
+            expect(input.required).toContain("chatgptFile");
+            expect(input.properties.chatgptFile.required.sort()).toEqual(["download_url", "file_id"]);
+            expect(input.properties.chatgptFile.additionalProperties).toBe(false);
+            const serializedOutput = JSON.stringify(tool?.outputSchema);
+            expect(serializedOutput).not.toContain("download_url");
+            expect(serializedOutput).not.toContain("file_id");
+        }
+        const record = tools.find((candidate) => candidate.name === "payment.evidence-supplement.record");
+        expect(record?.annotations).toMatchObject({ destructiveHint: true, idempotentHint: true });
     });
 });
