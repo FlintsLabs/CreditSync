@@ -58,6 +58,8 @@ ALTER TABLE "payment_evidence_supplements" ADD CONSTRAINT "payment_evidence_supp
 --> statement-breakpoint
 ALTER TABLE "payment_evidence_supplements" ADD CONSTRAINT "payment_evidence_supplements_tenant_recorded_by_fk" FOREIGN KEY ("tenant_id","recorded_by_user_id") REFERENCES "public"."users"("tenant_id","id") ON DELETE no action ON UPDATE no action;
 --> statement-breakpoint
+ALTER TABLE "payment_evidence_supplements" ADD CONSTRAINT "payment_evidence_supplements_tenant_audit_fk" FOREIGN KEY ("tenant_id","audit_public_id") REFERENCES "public"."audit_logs"("tenant_id","public_id") ON DELETE no action ON UPDATE no action;
+--> statement-breakpoint
 CREATE OR REPLACE FUNCTION reject_recorded_payment_evidence_supplement_mutation() RETURNS trigger
 LANGUAGE plpgsql
 AS $$
