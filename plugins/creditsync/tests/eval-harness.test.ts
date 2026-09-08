@@ -449,6 +449,21 @@ describe("CreditSync executable orchestration evals", () => {
         }]);
     });
 
+    test("ChatGPT file import, retry, unavailable, and late evidence flows preserve write boundaries", async () => {
+        expect((await runEvalScenario("payment-chatgpt-file-import")).calls.map((call) => call.name)).toEqual([
+            "intake.create", "evidence.import-chatgpt-file", "payment.preview", "payment.reconcile.preflight", "payment.post",
+        ]);
+        expect((await runEvalScenario("payment-chatgpt-file-retry")).calls.map((call) => call.name)).toEqual([
+            "intake.create", "evidence.import-chatgpt-file", "evidence.import-chatgpt-file", "payment.preview",
+        ]);
+        expect(await runEvalScenario("payment-chatgpt-file-unavailable")).toMatchObject({
+            outcome: "stopped", stopReason: "chatgpt-file-unavailable",
+        });
+        expect((await runEvalScenario("payment-late-evidence-confirmation")).calls.map((call) => call.name)).toEqual([
+            "payment.evidence-supplement.import-chatgpt-file", "payment.evidence-supplement.record",
+        ]);
+    });
+
     test("duplicate evidence stops before finalize, preview, and financial posting", async () => {
         const result = await runEvalScenario("duplicate-evidence-hash");
         expect(result.outcome).toBe("stopped");

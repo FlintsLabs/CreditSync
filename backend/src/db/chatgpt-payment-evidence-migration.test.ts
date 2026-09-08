@@ -50,19 +50,25 @@ integrationTest("recorded supplement cannot update or delete", async () => {
         const [user] = await postgres<{ id: number }[]>`INSERT INTO users (tenant_id, email, role) VALUES (${tenantId}, ${`${tenantId}@test.invalid`}, 'owner') RETURNING id`;
         const [intake] = await postgres<{ id: number }[]>`INSERT INTO payment_intakes (tenant_id, owner_user_id, source, status, amount, created_by_user_id, updated_by_user_id) VALUES (${tenantId}, ${user!.id}, 'mcp', 'posted', 100, ${user!.id}, ${user!.id}) RETURNING id`;
         const [file] = await postgres<{ id: number }[]>`INSERT INTO files (tenant_id, owner_user_id, bucket, key, original_name, mime_type, size) VALUES (${tenantId}, ${user!.id}, 'test', ${`evidence/${crypto.randomUUID()}`}, 'safe-name.png', 'image/png', 4) RETURNING id`;
+        const [audit] = await postgres<{ public_id: string }[]>`INSERT INTO audit_logs (tenant_id, entity_type, entity_id, action, actor_user_id, actor_source, correlation_id) VALUES (${tenantId}, 'payment_evidence_supplement', ${intake!.id}, 'record', ${user!.id}, 'mcp', 'safe-correlation') RETURNING public_id`;
         const [row] = await postgres<{ id: number }[]>`
             INSERT INTO payment_evidence_supplements (
                 tenant_id, payment_intake_id, file_id, status, evidence_hash, mime_type,
                 declared_size, reason, import_idempotency_key, source_file_fingerprint, record_idempotency_key,
-                audit_public_id, correlation_id, created_by_user_id, recorded_by_user_id, recorded_at
+                audit_public_id, correlation_id, created_by_user_id, recorded_by_user_id, ready_at, recorded_at
             ) VALUES (
                 ${tenantId}, ${intake!.id}, ${file!.id}, 'recorded', ${"a".repeat(64)}, 'image/png',
-                4, 'upload_channel_unavailable', 'import-key', ${"f".repeat(64)}, 'record-key', ${crypto.randomUUID()},
-                'safe-correlation', ${user!.id}, ${user!.id}, now()
+                4, 'upload_channel_unavailable', 'import-key', ${"f".repeat(64)}, 'record-key', ${audit!.public_id},
+                'safe-correlation', ${user!.id}, ${user!.id}, now(), now()
             ) RETURNING id`;
-
-        await expect(postgres`UPDATE payment_evidence_supplements SET note = 'changed' WHERE id = ${row!.id}`).rejects.toThrow(/immutable/i);
-        await expect(postgres`DELETE FROM payment_evidence_supplements WHERE id = ${row!.id}`).rejects.toThrow(/immutable/i);
+        const updateRecorded = async () => {
+            await postgres`UPDATE payment_evidence_supplements SET note = 'changed' WHERE id = ${row!.id}`;
+        };
+        const deleteRecorded = async () => {
+            await postgres`DELETE FROM payment_evidence_supplements WHERE id = ${row!.id}`;
+        };
+        await expect(updateRecorded()).rejects.toThrow(/immutable/i);
+        await expect(deleteRecorded()).rejects.toThrow(/immutable/i);
     } finally {
         await postgres.end({ timeout: 1 });
     }
@@ -75,11 +81,13 @@ integrationTest("reason other requires a non-blank note while standard reasons d
         const [user] = await postgres<{ id: number }[]>`INSERT INTO users (tenant_id, email, role) VALUES (${tenantId}, ${`${tenantId}@test.invalid`}, 'owner') RETURNING id`;
         const [intake] = await postgres<{ id: number }[]>`INSERT INTO payment_intakes (tenant_id, source, status, amount) VALUES (${tenantId}, 'mcp', 'posted', 100) RETURNING id`;
         const [file] = await postgres<{ id: number }[]>`INSERT INTO files (tenant_id, owner_user_id, bucket, key, original_name, mime_type, size) VALUES (${tenantId}, ${user!.id}, 'test', ${`evidence/${crypto.randomUUID()}`}, 'safe-name.png', 'image/png', 4) RETURNING id`;
-        const insert = (reason: string, note: string | null, key: string) => postgres`
-            INSERT INTO payment_evidence_supplements (
-                tenant_id, payment_intake_id, file_id, status, evidence_hash, mime_type,
-                declared_size, reason, note, import_idempotency_key, source_file_fingerprint, correlation_id, created_by_user_id, ready_at
-            ) VALUES (${tenantId}, ${intake!.id}, ${file!.id}, 'ready', ${"b".repeat(64)}, 'image/png', 4, ${reason}, ${note}, ${key}, ${"e".repeat(64)}, 'safe-correlation', ${user!.id}, now())`;
+        const insert = async (reason: string, note: string | null, key: string) => {
+            return await postgres`
+                INSERT INTO payment_evidence_supplements (
+                    tenant_id, payment_intake_id, file_id, status, evidence_hash, mime_type,
+                    declared_size, reason, note, import_idempotency_key, source_file_fingerprint, correlation_id, created_by_user_id, ready_at
+                ) VALUES (${tenantId}, ${intake!.id}, ${file!.id}, 'ready', ${"b".repeat(64)}, 'image/png', 4, ${reason}, ${note}, ${key}, ${"e".repeat(64)}, 'safe-correlation', ${user!.id}, now())`;
+        };
 
         await expect(insert("other", "   ", "other-blank")).rejects.toThrow();
         await expect(insert("upload_channel_unavailable", null, "standard")).resolves.toBeDefined();

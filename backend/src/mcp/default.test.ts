@@ -1806,6 +1806,41 @@ describe("default MCP adapter integration", () => {
             idempotencyKey: "mcp-all-tools-replacement-reverse",
         });
 
+        const invokeGuardedEvidenceHandler = async (name: Extract<McpToolName,
+            "evidence.import-chatgpt-file" | "payment.evidence-supplement.import-chatgpt-file" | "payment.evidence-supplement.record">,
+        args: Record<string, unknown>) => {
+            const idempotencyKey = String(args.idempotencyKey);
+            const handler = createDefaultMcpToolHandlers()[name];
+            await expect(Promise.resolve().then(() => handler({
+                tenantId: TENANT_ID, actorUserId: actor.id, actorSource: "mcp",
+                requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey,
+            }, args))).rejects.toBeDefined();
+            called.push(name);
+        };
+        const unavailableChatGptFile = {
+            download_url: "https://files.example.test/unavailable",
+            file_id: "file-unavailable",
+            mime_type: "image/png",
+            file_name: "evidence.png",
+        };
+        await invokeGuardedEvidenceHandler("evidence.import-chatgpt-file", {
+            paymentIntakePublicId: intakePublicId,
+            idempotencyKey: "mcp-all-tools-chatgpt-primary",
+            chatgptFile: unavailableChatGptFile,
+        });
+        await invokeGuardedEvidenceHandler("payment.evidence-supplement.import-chatgpt-file", {
+            paymentIntakePublicId: intakePublicId,
+            idempotencyKey: "mcp-all-tools-chatgpt-supplement",
+            chatgptFile: unavailableChatGptFile,
+        });
+        await invokeGuardedEvidenceHandler("payment.evidence-supplement.record", {
+            paymentIntakePublicId: intakePublicId,
+            supplementPublicId: crypto.randomUUID(),
+            confirmed: true,
+            reason: "operator_omission",
+            idempotencyKey: "mcp-all-tools-chatgpt-supplement-record",
+        });
+
         const markReviewHandler = createDefaultMcpToolHandlers()["payment.reconcile.mark-review"];
         await expect(Promise.resolve().then(() => markReviewHandler({
             tenantId: TENANT_ID, actorUserId: actor.id, actorSource: "mcp",

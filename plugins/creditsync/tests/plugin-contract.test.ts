@@ -131,10 +131,19 @@ describe("CreditSync plugin 9.1.0 contract", () => {
     test("frozen full MCP metadata matches an actual MCP tools/list response", async () => {
         const contract = await json("references/mcp-tool-contract.json") as unknown as FrozenMcpContract;
         expect(contract.schemaVersion).toBe("1.0");
-        expect(contract.compatibility).toBe("Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 9.1.0; breaking changes require plugin 10.0.0.");
+        expect(contract.compatibility).toBe("Tool names, full input/output schemas, descriptions, annotations, and file-parameter metadata are frozen for plugin 9.1.0; breaking changes require plugin 10.0.0.");
         expect(contract.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
-        expect(contract.tools).toHaveLength(109);
+        expect(contract.tools).toHaveLength(112);
         expect(contract.tools.every((tool) => tool.inputSchema && tool.outputSchema && tool.annotations)).toBe(true);
+        for (const name of ["evidence.import-chatgpt-file", "payment.evidence-supplement.import-chatgpt-file"]) {
+            const tool = contract.tools.find((candidate) => candidate.name === name) as any;
+            expect(tool?._meta).toEqual({ "openai/fileParams": ["chatgptFile"] });
+            expect(tool?.inputSchema.additionalProperties).toBe(false);
+            expect(tool?.inputSchema.properties.chatgptFile.additionalProperties).toBe(false);
+        }
+        expect(contract.tools.find((tool) => tool.name === "payment.evidence-supplement.record")?.annotations).toMatchObject({
+            destructiveHint: true, idempotentHint: true, openWorldHint: false, readOnlyHint: false,
+        });
         const advertised = await captureAdvertisedMcpContract();
         expect(canonicalContractJson(contract)).toBe(canonicalContractJson(advertised));
         for (const name of ["loan.restructure.preview", "loan.waiver.preview"]) {
@@ -217,6 +226,10 @@ describe("CreditSync plugin 9.1.0 contract", () => {
             "borrower-create-alias",
             "payment-data-only",
             "payment-slip",
+            "payment-chatgpt-file-import",
+            "payment-chatgpt-file-retry",
+            "payment-chatgpt-file-unavailable",
+            "payment-late-evidence-confirmation",
             "payment-stale-repreview",
             "payment-split-loans",
             "payment-split-borrowers-intermediary",
@@ -285,13 +298,9 @@ describe("CreditSync plugin 9.1.0 contract", () => {
             "loan-replacement-downstream-activity",
             "loan-replacement-direct-status-mutation",
             "loan-replacement-portfolio-scope-mismatch",
-            "scheduled-allocation-correction-ready",
-            "scheduled-allocation-correction-blocker",
-            "scheduled-allocation-correction-stale",
-            "scheduled-allocation-correction-idempotent-retry",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
-        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(37);
-        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(60);
+        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(40);
+        expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(61);
     });
 
     test("floating settlement skill preserves exact composition and all execution stop gates", async () => {

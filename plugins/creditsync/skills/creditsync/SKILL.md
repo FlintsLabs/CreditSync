@@ -18,7 +18,8 @@ Use CreditSync as an orchestration surface over its private MCP app. The backend
 3. Use `payment.preview`, `loan.preview`, `loan.interest-rate.preview`, `loan.settlement.preview`, `loan.replacement.preview`, `renewal.preview`, `loan.contract.get`, `loan.payment-history.list`, `loan.disbursement.list`, or `intermediary.disbursement.preview` for accounting outcomes. Never replace backend results with agent arithmetic.
 4. Present exact money strings, targets, warnings, expiry, cash direction, and proposal/preview identity before a financial write.
 5. Re-read or re-preview after state changes. After a disbursement draft update, re-list it and obtain fresh confirmation because any earlier confirmation is invalid. Post only the latest inspected backend result.
-6. For a supplied payment-slip image, require verified evidence to be `ready` before `payment.preview` or `payment.post`; if no image is supplied, data-only payment capture may skip evidence.
+6. For a supplied payment-slip image, call `evidence.import-chatgpt-file` first with the top-level ChatGPT file parameter and a stable idempotency key. Require its verified result to be `ready` before `payment.preview` or `payment.post`; if the parameter or import is unavailable, stop rather than silently falling back to data-only capture. If no image was supplied, data-only capture may skip evidence.
+7. For an exact already-posted payment, late evidence is append-only: call `payment.evidence-supplement.import-chatgpt-file`, show the exact target and ready supplement, obtain explicit confirmation and a reason, then call `payment.evidence-supplement.record`. Never mutate or repost the payment.
 
 ## Commission participants and payment attribution
 
@@ -64,7 +65,7 @@ Use the plugin references for the frozen tool contract, matching policy, financi
 ## Common mistakes
 
 - Treating preview tools as harmless reads: they can persist workflow state, so avoid speculative calls.
-- Posting a payment after a supplied image was not uploaded/finalized: stop when evidence is missing, unavailable, duplicate, mismatched, or not ready. Data-only requests without a supplied image remain valid.
+- Posting a payment after a supplied image was not imported: stop when the ChatGPT file parameter is missing, unavailable, duplicate, mismatched, or not ready. Never expose file bytes, file IDs, or download URLs. Data-only requests without a supplied image remain valid.
 - Creating a borrower to escape an ambiguous nickname: resolve candidates first.
 - Editing posted transactions or active terms: use a supported reversal, renewal, or new draft flow.
 - Directly changing a loan to `replaced` or a draft to `active`: stop; only `loan.replacement.execute` may make the coordinated append-only replacement transition after a fresh explicit confirmation.

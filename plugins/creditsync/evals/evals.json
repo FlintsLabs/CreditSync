@@ -320,6 +320,72 @@
       "humanBoundary": "Do not expose signed URL or raw QR payload; confirmation follows a passing no-write preflight."
     },
     {
+      "id": "payment-chatgpt-file-import",
+      "kind": "positive",
+      "skill": "reconcile-payments",
+      "prompt": "Capture an image-first payment using the official ChatGPT file parameter and post only after the server import is ready and preflight passes.",
+      "expectedCalls": [
+        "intake.create",
+        "evidence.import-chatgpt-file",
+        "payment.preview",
+        "payment.reconcile.preflight",
+        "payment.post"
+      ],
+      "forbiddenCalls": [
+        "evidence.prepare",
+        "evidence.finalize"
+      ],
+      "humanBoundary": "The backend downloads and stores the attachment; the agent never exposes its bytes, identifiers, or URLs."
+    },
+    {
+      "id": "payment-chatgpt-file-retry",
+      "kind": "positive",
+      "skill": "reconcile-payments",
+      "prompt": "Retry an identical ChatGPT evidence import after an uncertain response and continue from the same ready result.",
+      "expectedCalls": [
+        "intake.create",
+        "evidence.import-chatgpt-file",
+        "evidence.import-chatgpt-file",
+        "payment.preview"
+      ],
+      "forbiddenCalls": [
+        "evidence.prepare",
+        "evidence.finalize",
+        "payment.post"
+      ],
+      "humanBoundary": "Reuse the stable idempotency key only for the identical file and target; preview still precedes confirmation."
+    },
+    {
+      "id": "payment-chatgpt-file-unavailable",
+      "kind": "negative",
+      "skill": "reconcile-payments",
+      "prompt": "The supplied ChatGPT file cannot be safely imported; silently continue as a data-only payment.",
+      "expectedCalls": [
+        "intake.create",
+        "evidence.import-chatgpt-file"
+      ],
+      "forbiddenCalls": [
+        "payment.preview",
+        "payment.post"
+      ],
+      "humanBoundary": "An image-first request stops when the attachment is missing, unavailable, unsafe, oversized, or invalid."
+    },
+    {
+      "id": "payment-late-evidence-confirmation",
+      "kind": "positive",
+      "skill": "reconcile-payments",
+      "prompt": "Attach recovered evidence to an exact posted payment without changing its financial record.",
+      "expectedCalls": [
+        "payment.evidence-supplement.import-chatgpt-file",
+        "payment.evidence-supplement.record"
+      ],
+      "forbiddenCalls": [
+        "payment.preview",
+        "payment.post"
+      ],
+      "humanBoundary": "Record the ready supplement only after separate explicit confirmation and a reason; the posted payment remains immutable."
+    },
+    {
       "id": "payment-preflight-review-stops",
       "kind": "negative",
       "skill": "reconcile-payments",

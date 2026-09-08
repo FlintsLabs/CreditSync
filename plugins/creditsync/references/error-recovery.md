@@ -7,6 +7,8 @@ Tool errors have `{ code, message, retryable, reviewRequired, repreviewRequired,
 | unauthorized/forbidden | Stop. Verify private app connection and server-configured actor; never switch tenant or identity in tool input. |
 | rate limited / retryable transport | Retry after the indicated delay with the same intent and idempotency key. Inspect the record before retrying a write. |
 | duplicate | Retrieve the public ID in the response and report the original. Do not create another intake. |
+| ChatGPT file unavailable / disallowed host / unsafe address / MIME, magic, size, or checksum mismatch | Stop before payment preview or post. Retry only an identical transient failure with the same idempotency key; never reveal the file parameter, URL, ID, bytes, or storage details. |
+| supplemental evidence not ready / wrong payment state | Stop. Re-inspect the exact posted payment; import again only as an identical retry, and record only after explicit confirmation with a reason. |
 | ambiguous / mismatch / `reviewRequired` | Show safe candidate context, obligations, warnings, and difference. Wait for a human selection. |
 | stale / expired / not latest | Re-read the intake, loan, renewal, or settlement target, then request a new preview. Previous approval does not carry over. |
 | scheduled allocation correction stale/dependent/overpayment | Re-inspect the exact posted intake, source/target schedules, loan, and dependencies; preview again and stop on any blocker. Execute only a fresh ready preview after explicit confirmation; reuse the key only for identical guards, reason, and preview. |

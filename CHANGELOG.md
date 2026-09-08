@@ -101,6 +101,11 @@
 - Added bounded, allowlisted server-side ChatGPT evidence ingestion with content verification, MinIO metadata checks, safe idempotent retries, and cleanup on failure.
 - Added authoritative evidence-required gates plus closed MCP import and explicitly confirmed supplemental-evidence commands using official top-level ChatGPT file metadata.
 - Added safe primary and supplemental slip summaries to payment history with click-time authenticated previews and synchronized Thai/English labels.
+- Synchronized CreditSync Plugin `9.1.0`, the 110-tool frozen MCP contract, official file-parameter metadata, skills, executable evals, validators, environment templates, and operator documentation.
+
+### Fixed
+- Corrected the recorded-supplement database invariant fixture to preserve its required prior ready transition before testing terminal immutability.
+- Kept the strict mixed-lineage reconciliation catalog synchronized with the new additive migration count and all-tools MCP verification synchronized with the three new evidence commands.
 
 ## v0.3.78 - 2026-09-07
 
