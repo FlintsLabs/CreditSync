@@ -2,6 +2,14 @@
 
 ## v0.4.5 - 2026-09-09
 
+### Fixed
+- Updated plugin contract coverage for the added renewal-origin allocation-correction eval case.
+- Hardened the renewal-origin dependency snapshot construction without changing its fail-closed eligibility boundary.
+- Synchronized MCP and operator guidance so verified executed-renewal opening ancestors are accepted while unknown and unrelated adjustments remain blocked.
+- Added execution-preservation and stale-lineage regression coverage for renewal-origin scheduled payment allocation correction.
+- Allowed scheduled allocation correction to ignore only executed-renewal `principal_transfer` and `cash_payout` opening ancestors on the renewal-created loan while retaining fail-closed blockers for all other adjustments.
+- Added regression coverage reproducing renewal-origin opening adjustments being misclassified as downstream blockers during scheduled payment allocation correction.
+
 ### Changed
 - Documented the causal-lineage design for safely correcting scheduled payment allocations on renewal-created loans without treating immutable opening adjustments as downstream blockers.
 - Added the implementation and verification plan for renewal-origin allocation correction and the separately confirmed production repair.

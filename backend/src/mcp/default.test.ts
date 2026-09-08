@@ -65,6 +65,12 @@ test("allocation-correction rejects disagreement between command and transport i
     })).toThrow(expect.objectContaining({ code: "IDEMPOTENCY_CONFLICT" }));
 });
 
+test("allocation-correction keeps the existing preview and execute handler pair", () => {
+    const handlers = createDefaultMcpToolHandlers();
+    expect(typeof handlers["payment.allocation-correction.preview"]).toBe("function");
+    expect(typeof handlers["payment.allocation-correction.execute"]).toBe("function");
+});
+
 function isDisposableTestDatabase(value: string | undefined) {
     if (!value) return false;
     try {

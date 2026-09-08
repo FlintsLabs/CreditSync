@@ -83,4 +83,11 @@ describe("CreditSync MCP operational safety documentation", () => {
         expect(paymentSkill).toContain("payment.allocation-correction.execute");
         expect(recovery).toContain("scheduled allocation correction");
     });
+
+    test("renewal-origin allocation correction keeps a narrow fail-closed boundary", async () => {
+        const paymentSkill = await readFile(resolve(repositoryRoot, "plugins/creditsync/skills/reconcile-payments/SKILL.md"), "utf8");
+        for (const concept of ["executed renewal", "principal_transfer", "cash_payout", "opening ancestor", "unknown adjustment remains blocked"]) {
+            expect(paymentSkill).toContain(concept);
+        }
+    });
 });
