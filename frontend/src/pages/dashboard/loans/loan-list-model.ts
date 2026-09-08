@@ -14,6 +14,14 @@ export function isDoneLoanStatus(status: string): boolean {
     return status === "paid" || status === "closed" || status === "replaced" || status === "restructured";
 }
 
+export function getFloatingAccrualCycle(loan: { repaymentType: string; floatingAccrualCycle?: "daily" | "weekly" | "monthly" | null; interestPeriodUnit?: "day" | "week" | "month" | null }) {
+    if (loan.repaymentType !== "floating") return null;
+    if (loan.floatingAccrualCycle) return loan.floatingAccrualCycle;
+    if (loan.interestPeriodUnit === "week") return "weekly";
+    if (loan.interestPeriodUnit === "month") return "monthly";
+    return "daily";
+}
+
 function normalizeLabel(value: string) {
     return value
         .trim()

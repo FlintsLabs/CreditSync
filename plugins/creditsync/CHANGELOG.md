@@ -1,5 +1,9 @@
 # CreditSync Plugin Changelog
 
+## 9.1.3 - 2026-09-08
+
+- Documented the legacy floating-cycle fallback used by the Web UI when older contracts omit an explicit cycle.
+
 ## 9.1.2 - 2026-09-08
 
 - Corrected the committed MCP contract reference to include monthly floating-accrual enum values.

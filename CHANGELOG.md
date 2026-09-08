@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.99 - 2026-09-08
+
+### Fixed
+- Displayed the backend-compatible floating accrual cycle for legacy loans whose explicit cycle is null.
+
 ## v0.3.98 - 2026-09-08
 
 ### Fixed

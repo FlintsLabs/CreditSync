@@ -1,7 +1,13 @@
 import { describe, expect, test } from "vitest";
-import { getBorrowerLabels, getVisibleBorrowerLabels, isDoneLoanStatus, loanMatchesSearch } from "../src/pages/dashboard/loans/loan-list-model";
+import { getBorrowerLabels, getFloatingAccrualCycle, getVisibleBorrowerLabels, isDoneLoanStatus, loanMatchesSearch } from "../src/pages/dashboard/loans/loan-list-model";
 
 describe("loan list label model", () => {
+    test("falls back legacy floating loans to the backend-compatible accrual cycle", () => {
+        expect(getFloatingAccrualCycle({ repaymentType: "floating", floatingAccrualCycle: null, interestPeriodUnit: "week" })).toBe("weekly");
+        expect(getFloatingAccrualCycle({ repaymentType: "floating", floatingAccrualCycle: null, interestPeriodUnit: "month" })).toBe("monthly");
+        expect(getFloatingAccrualCycle({ repaymentType: "floating", floatingAccrualCycle: null, interestPeriodUnit: null })).toBe("daily");
+    });
+
     // Break caught: a replaced loan remains in Active or is accidentally treated as a paid contract.
     test("classifies replaced loans as done without rendering the paid lifecycle", () => {
         expect(isDoneLoanStatus("replaced")).toBe(true);
