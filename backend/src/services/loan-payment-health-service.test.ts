@@ -186,7 +186,7 @@ describe("loan payment-health service", () => {
         expect(await db.select({ outstandingInterest: loans.outstandingInterest }).from(loans).where(eq(loans.id, loan.id))).toEqual(before);
     });
 
-    integrationTest("uses the explicit floating accrual cycle for overdue labels when legacy period metadata conflicts", async () => {
+    integrationTest("uses the contractual period for overdue labels when accrual metadata conflicts", async () => {
         setSystemTime(new Date("2026-08-11T12:00:00+07:00"));
         const { actor, borrower } = await seedActorAndBorrower("tenant-floating-cycle-label");
         const loan = await db.insert(loans).values({
@@ -213,7 +213,7 @@ describe("loan payment-health service", () => {
         }));
         const detail = await response.json() as { paymentHealth: LoanPaymentHealth };
 
-        expect(detail.paymentHealth).toMatchObject({ overdueObligationUnit: "day", overdueObligationCount: 1 });
+        expect(detail.paymentHealth).toMatchObject({ overdueObligationUnit: "week", overdueObligationCount: 1 });
     });
 
     // Break caught: today's floating interest is overdue immediately, partial history uses gross,

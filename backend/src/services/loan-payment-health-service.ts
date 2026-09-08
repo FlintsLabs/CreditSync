@@ -9,12 +9,9 @@ import { floatingInterestBalances } from "./floating-interest-service";
 
 function overdueObligationUnitForLoan(loan: typeof loans.$inferSelect) {
     if (loan.repaymentType !== "floating") return "installment" as const;
-    if (loan.floatingAccrualCycle === "daily") return "day" as const;
-    if (loan.floatingAccrualCycle === "weekly") return "week" as const;
-    if (loan.floatingAccrualCycle === "monthly") return "day" as const;
-    return loan.interestPeriodUnit === "week"
-        ? "week" as const
-        : "day" as const;
+    if (loan.interestPeriodUnit === "week") return "week" as const;
+    if (loan.interestPeriodUnit === "day" || loan.interestPeriodUnit === "month") return "day" as const;
+    return loan.floatingAccrualCycle === "weekly" ? "week" as const : "day" as const;
 }
 
 export const loanListLegacyAccrualProjection = {
