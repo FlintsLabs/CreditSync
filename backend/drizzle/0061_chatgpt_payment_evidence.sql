@@ -1,5 +1,11 @@
 ALTER TABLE "payment_intakes" ADD COLUMN "evidence_required" boolean DEFAULT false NOT NULL;
 --> statement-breakpoint
+ALTER TABLE "payment_evidence" ADD COLUMN "import_idempotency_key" text;
+--> statement-breakpoint
+ALTER TABLE "payment_evidence" ADD COLUMN "source_file_fingerprint" text;
+--> statement-breakpoint
+CREATE UNIQUE INDEX "payment_evidence_tenant_import_idempotency_unique" ON "payment_evidence" USING btree ("tenant_id","import_idempotency_key") WHERE "import_idempotency_key" IS NOT NULL;
+--> statement-breakpoint
 CREATE TABLE "payment_evidence_supplements" (
 	"id" serial PRIMARY KEY NOT NULL,
 	"public_id" uuid DEFAULT uuidv7() NOT NULL,
@@ -13,6 +19,7 @@ CREATE TABLE "payment_evidence_supplements" (
 	"reason" text,
 	"note" text,
 	"import_idempotency_key" text NOT NULL,
+	"source_file_fingerprint" text NOT NULL,
 	"record_idempotency_key" text,
 	"audit_public_id" uuid,
 	"correlation_id" text NOT NULL,

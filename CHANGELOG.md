@@ -95,6 +95,9 @@
 ### Fixed
 - Preserved the `payment.reconcile.mark-review` idempotency key across the MCP transport boundary so eligible backdated payments enter audited reconciliation review instead of failing with `INTERNAL_ERROR`.
 
+### Added
+- Added bounded, allowlisted server-side ChatGPT evidence ingestion with content verification, MinIO metadata checks, safe idempotent retries, and cleanup on failure.
+
 ## v0.3.78 - 2026-09-07
 
 ### Added

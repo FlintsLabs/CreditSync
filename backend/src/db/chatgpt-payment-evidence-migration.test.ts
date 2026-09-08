@@ -49,15 +49,15 @@ integrationTest("recorded supplement cannot update or delete", async () => {
     try {
         const [user] = await postgres<{ id: number }[]>`INSERT INTO users (tenant_id, email, role) VALUES (${tenantId}, ${`${tenantId}@test.invalid`}, 'owner') RETURNING id`;
         const [intake] = await postgres<{ id: number }[]>`INSERT INTO payment_intakes (tenant_id, owner_user_id, source, status, amount, created_by_user_id, updated_by_user_id) VALUES (${tenantId}, ${user!.id}, 'mcp', 'posted', 100, ${user!.id}, ${user!.id}) RETURNING id`;
-        const [file] = await postgres<{ id: number }[]>`INSERT INTO files (tenant_id, owner_user_id, filename, mime_type, size, storage_key, created_by_user_id) VALUES (${tenantId}, ${user!.id}, 'safe-name.png', 'image/png', 4, ${`evidence/${crypto.randomUUID()}`}, ${user!.id}) RETURNING id`;
+        const [file] = await postgres<{ id: number }[]>`INSERT INTO files (tenant_id, owner_user_id, bucket, key, original_name, mime_type, size) VALUES (${tenantId}, ${user!.id}, 'test', ${`evidence/${crypto.randomUUID()}`}, 'safe-name.png', 'image/png', 4) RETURNING id`;
         const [row] = await postgres<{ id: number }[]>`
             INSERT INTO payment_evidence_supplements (
                 tenant_id, payment_intake_id, file_id, status, evidence_hash, mime_type,
-                declared_size, reason, import_idempotency_key, record_idempotency_key,
+                declared_size, reason, import_idempotency_key, source_file_fingerprint, record_idempotency_key,
                 audit_public_id, correlation_id, created_by_user_id, recorded_by_user_id, recorded_at
             ) VALUES (
                 ${tenantId}, ${intake!.id}, ${file!.id}, 'recorded', ${"a".repeat(64)}, 'image/png',
-                4, 'upload_channel_unavailable', 'import-key', 'record-key', ${crypto.randomUUID()},
+                4, 'upload_channel_unavailable', 'import-key', ${"f".repeat(64)}, 'record-key', ${crypto.randomUUID()},
                 'safe-correlation', ${user!.id}, ${user!.id}, now()
             ) RETURNING id`;
 
@@ -74,12 +74,12 @@ integrationTest("reason other requires a non-blank note while standard reasons d
     try {
         const [user] = await postgres<{ id: number }[]>`INSERT INTO users (tenant_id, email, role) VALUES (${tenantId}, ${`${tenantId}@test.invalid`}, 'owner') RETURNING id`;
         const [intake] = await postgres<{ id: number }[]>`INSERT INTO payment_intakes (tenant_id, source, status, amount) VALUES (${tenantId}, 'mcp', 'posted', 100) RETURNING id`;
-        const [file] = await postgres<{ id: number }[]>`INSERT INTO files (tenant_id, owner_user_id, filename, mime_type, size, storage_key, created_by_user_id) VALUES (${tenantId}, ${user!.id}, 'safe-name.png', 'image/png', 4, ${`evidence/${crypto.randomUUID()}`}, ${user!.id}) RETURNING id`;
+        const [file] = await postgres<{ id: number }[]>`INSERT INTO files (tenant_id, owner_user_id, bucket, key, original_name, mime_type, size) VALUES (${tenantId}, ${user!.id}, 'test', ${`evidence/${crypto.randomUUID()}`}, 'safe-name.png', 'image/png', 4) RETURNING id`;
         const insert = (reason: string, note: string | null, key: string) => postgres`
             INSERT INTO payment_evidence_supplements (
                 tenant_id, payment_intake_id, file_id, status, evidence_hash, mime_type,
-                declared_size, reason, note, import_idempotency_key, created_by_user_id
-            ) VALUES (${tenantId}, ${intake!.id}, ${file!.id}, 'ready', ${"b".repeat(64)}, 'image/png', 4, ${reason}, ${note}, ${key}, ${user!.id})`;
+                declared_size, reason, note, import_idempotency_key, source_file_fingerprint, correlation_id, created_by_user_id, ready_at
+            ) VALUES (${tenantId}, ${intake!.id}, ${file!.id}, 'ready', ${"b".repeat(64)}, 'image/png', 4, ${reason}, ${note}, ${key}, ${"e".repeat(64)}, 'safe-correlation', ${user!.id}, now())`;
 
         await expect(insert("other", "   ", "other-blank")).rejects.toThrow();
         await expect(insert("upload_channel_unavailable", null, "standard")).resolves.toBeDefined();

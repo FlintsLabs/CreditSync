@@ -1440,6 +1440,8 @@ export const paymentEvidence = pgTable("payment_evidence", {
     declaredSize: integer("declared_size"),
     legacyReference: text("legacy_reference"),
     uploadExpiresAt: timestamp("upload_expires_at"),
+    importIdempotencyKey: text("import_idempotency_key"),
+    sourceFileFingerprint: text("source_file_fingerprint"),
     finalizedAt: timestamp("finalized_at"),
     createdByUserId: integer("created_by_user_id"),
     updatedByUserId: integer("updated_by_user_id"),
@@ -1449,6 +1451,9 @@ export const paymentEvidence = pgTable("payment_evidence", {
     uniqueIndex("payment_evidence_tenant_evidence_hash_unique")
         .on(table.tenantId, table.evidenceHash)
         .where(sql`${table.evidenceHash} IS NOT NULL`),
+    uniqueIndex("payment_evidence_tenant_import_idempotency_unique")
+        .on(table.tenantId, table.importIdempotencyKey)
+        .where(sql`${table.importIdempotencyKey} IS NOT NULL`),
     check("payment_evidence_status_check", sql`${table.status} IN ('pending', 'ready', 'rejected')`),
     foreignKey({
         name: "payment_evidence_tenant_intake_fk",
@@ -1485,6 +1490,7 @@ export const paymentEvidenceSupplements = pgTable("payment_evidence_supplements"
     reason: text("reason"),
     note: text("note"),
     importIdempotencyKey: text("import_idempotency_key").notNull(),
+    sourceFileFingerprint: text("source_file_fingerprint").notNull(),
     recordIdempotencyKey: text("record_idempotency_key"),
     auditPublicId: uuid("audit_public_id"),
     correlationId: text("correlation_id").notNull(),
