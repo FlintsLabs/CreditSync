@@ -4,6 +4,7 @@
 
 ### Changed
 - Documented the causal-lineage design for safely correcting scheduled payment allocations on renewal-created loans without treating immutable opening adjustments as downstream blockers.
+- Added the implementation and verification plan for renewal-origin allocation correction and the separately confirmed production repair.
 
 ## v0.4.4 - 2026-09-08
 
