@@ -3,6 +3,7 @@
 ## v0.4.5 - 2026-09-09
 
 ### Fixed
+- Updated plugin contract coverage for the added renewal-origin allocation-correction eval case.
 - Hardened the renewal-origin dependency snapshot construction without changing its fail-closed eligibility boundary.
 - Synchronized MCP and operator guidance so verified executed-renewal opening ancestors are accepted while unknown and unrelated adjustments remain blocked.
 - Added execution-preservation and stale-lineage regression coverage for renewal-origin scheduled payment allocation correction.

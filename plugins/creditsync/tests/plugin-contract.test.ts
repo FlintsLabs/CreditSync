@@ -299,7 +299,7 @@ describe("CreditSync plugin 9.1.0 contract", () => {
             "loan-replacement-direct-status-mutation",
             "loan-replacement-portfolio-scope-mismatch",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
-        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(40);
+        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(41);
         expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(61);
     });
 
