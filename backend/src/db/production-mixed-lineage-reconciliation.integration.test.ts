@@ -109,6 +109,9 @@ integration("applies the exact mixed lineage, preserves legacy rows/FK, and reru
   const stockRerun = Bun.spawnSync(["bun", "run", "scripts/reconcile-production-mixed-lineage.ts"], { cwd: root, env: { ...process.env, DATABASE_URL: databaseUrl! }, stdout: "pipe", stderr: "pipe" });
   expect(stockRerun.exitCode, new TextDecoder().decode(stockRerun.stderr)).toBe(0);
   expect(new TextDecoder().decode(stockRerun.stdout)).toContain("already-complete");
+  const deployedLineage = Bun.spawnSync(["bun", "run", "scripts/reconcile-production-mixed-lineage.ts"], { cwd: root, env: { ...process.env, DATABASE_URL: databaseUrl! }, stdout: "pipe", stderr: "pipe" });
+  expect(deployedLineage.exitCode, new TextDecoder().decode(deployedLineage.stderr)).toBe(0);
+  expect(new TextDecoder().decode(deployedLineage.stdout)).toContain("already-complete");
   await sql`DROP TRIGGER borrower_id_card_upload_intents_lifecycle_guard ON borrower_id_card_upload_intents`;
   const mutated42 = Bun.spawnSync(["bun", "run", "scripts/reconcile-production-mixed-lineage.ts"], { cwd: root, env: { ...process.env, DATABASE_URL: databaseUrl! }, stdout: "pipe", stderr: "pipe" });
   expect(mutated42.exitCode).not.toBe(0);

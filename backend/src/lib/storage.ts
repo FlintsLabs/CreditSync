@@ -1,5 +1,5 @@
 import { BlobSASPermissions, BlobServiceClient, StorageSharedKeyCredential, generateBlobSASQueryParameters } from "@azure/storage-blob";
-import { CreateBucketCommand, GetObjectCommand, HeadBucketCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { CreateBucketCommand, DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 export type StorageProvider = "s3" | "azure-blob";
@@ -177,6 +177,31 @@ export async function headStoredObject(key: string, bucket = BUCKET_NAME): Promi
         }
         throw error;
     }
+}
+
+export async function putStoredObject(request: SignedPutRequest, body: Uint8Array): Promise<StoredObjectLocation> {
+    if (storageProvider !== "s3") {
+        throw new Error("ChatGPT evidence import requires S3-compatible storage");
+    }
+    const bucket = request.bucket ?? BUCKET_NAME;
+    await ensureS3Bucket(bucket);
+    await s3.send(new PutObjectCommand({
+        Bucket: bucket,
+        Key: request.key,
+        Body: body,
+        ContentType: request.contentType,
+        ContentLength: request.contentLength,
+        ChecksumSHA256: hexChecksumToBase64(request.checksumSha256),
+        Metadata: request.metadata,
+    }));
+    return { provider: "s3", bucket, key: request.key };
+}
+
+export async function deleteStoredObject(key: string, bucket = BUCKET_NAME): Promise<void> {
+    if (storageProvider !== "s3") {
+        throw new Error("ChatGPT evidence import requires S3-compatible storage");
+    }
+    await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
 }
 
 async function ensureAzureContainer(bucket: string) {

@@ -1,7 +1,9 @@
 # CreditSync Plugin Changelog
 
-## 9.1.0 - 2026-09-08
+## 9.1.0 - 2026-09-07
 
+- Added official ChatGPT file-parameter payment evidence import and append-only confirmed supplemental evidence for posted payments.
+- Synchronized the 112-tool frozen contract, orchestration skills, executable evals, validator, and private-app refresh guidance.
 - Added the guarded `payment.allocation-correction.preview` → explicit confirmation → `payment.allocation-correction.execute` workflow for same-loan scheduled repayment corrections.
 - Added `payment.reconcile.mark-review` for the narrow, audited transition of an eligible backdated floating payment from `ready` to `needs_review`.
 - Made ordinary payment preflight use a rollback-only execution probe and documented separate confirmations for review transition and reconciliation execution.

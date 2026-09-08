@@ -16,6 +16,7 @@ export type FrozenMcpTool = {
     inputSchema: Record<string, unknown>;
     outputSchema?: Record<string, unknown>;
     annotations?: Record<string, unknown>;
+    _meta?: Record<string, unknown>;
 };
 
 export type FrozenMcpContract = {
@@ -81,7 +82,7 @@ export async function captureAdvertisedMcpContract(): Promise<FrozenMcpContract>
         return {
             schemaVersion: "1.0",
             sourceOfTruth: "Local MCP SDK Client tools/list response from backend/src/mcp/server.ts",
-            compatibility: "Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 9.1.0; breaking changes require plugin 10.0.0.",
+            compatibility: "Tool names, full input/output schemas, descriptions, annotations, and file-parameter metadata are frozen for plugin 9.1.0; breaking changes require plugin 10.0.0.",
             tools: response.tools.map((tool) => ({
                 name: tool.name,
                 ...(tool.title ? { title: tool.title } : {}),
@@ -89,6 +90,7 @@ export async function captureAdvertisedMcpContract(): Promise<FrozenMcpContract>
                 inputSchema: tool.inputSchema as Record<string, unknown>,
                 ...(tool.outputSchema ? { outputSchema: tool.outputSchema as Record<string, unknown> } : {}),
                 ...(tool.annotations ? { annotations: tool.annotations as Record<string, unknown> } : {}),
+                ...(tool._meta ? { _meta: tool._meta as Record<string, unknown> } : {}),
             })),
         };
     } finally {

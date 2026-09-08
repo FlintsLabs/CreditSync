@@ -126,7 +126,7 @@ Renewal previews derive principal from posted, non-reversed transaction componen
 - upload repayment slips
 - link payment to a loan
 - show repayment history
-- create data-only payment intakes or prepare signed S3/MinIO evidence PUTs
+- create data-only payment intakes, preserve existing Web UI signed S3/MinIO evidence PUTs, or securely import official ChatGPT top-level file parameters through an exact HTTPS host allowlist
 - detect tenant-scoped operation, bank-reference, QR-payload, and evidence-hash duplicates without treating semantic similarity as a duplicate
 - preview deterministic matches, review ambiguous matches, and split one intake across borrowers, loans, and schedules
 - post schedule, loan, and fund effects atomically, then correct posted payments with append-only compensating reversals
@@ -193,7 +193,7 @@ The web app exposes `/payments` as the human review inbox. It persists and shows
 │   ├── src/lib/          # api client, auth helpers, i18n
 │   └── src/pages/        # landing, login, dashboard screens
 ├── docs/                 # ADRs and planning docs
-├── plugins/creditsync/   # Private Codex plugin 7.0.0, skills, evals, and validation
+├── plugins/creditsync/   # Private Codex plugin 9.1.0, skills, evals, and validation
 ├── k8s/                  # Kubernetes manifests
 ├── docker-compose.yml    # local development infra
 ├── docker-compose.infra.yml  # production-style infra including dragonfly cache
@@ -284,7 +284,7 @@ Important variables include:
 - `LINE_TENANT_ID`
 - `VITE_GOOGLE_CLIENT_ID`
 
-For file access, CreditSync stores an internal file reference and resolves it to a time-limited signed URL when the API returns borrower images, uploaded files, and repayment slips. With the default S3-compatible setup, keep `S3_ENDPOINT` for server-side uploads and `S3_PUBLIC_URL` for the browser-reachable hostname used in presigned download links. In the bundled production setup, `S3_PUBLIC_URL` should point to the frontend domain with a `/files` prefix because Nginx proxies `/files/*` to MinIO. Payment evidence uses signed S3-compatible PUTs with signed MIME, size, SHA-256 checksum, tenant, and intake metadata; the signer-returned expiry is persisted exactly, and finalization checks that timestamp plus stored-object metadata under row locks. It never accepts a caller-provided fetch URL. `EVIDENCE_UPLOAD_TTL_SECONDS` defaults to `300`, `EVIDENCE_MAX_BYTES` to `20971520` (20 MiB), and both `PAYMENT_PREVIEW_TTL_SECONDS` and `RENEWAL_PREVIEW_TTL_SECONDS` default to `900`. The evidence-intent workflow requires `STORAGE_PROVIDER=s3`; existing Azure Blob file reads/uploads remain available outside this workflow.
+For file access, CreditSync stores an internal file reference and resolves it to a time-limited signed URL only when requested. Existing Web UI payment evidence continues to use direct signed S3-compatible PUTs with signed MIME, size, SHA-256 checksum, tenant, and intake metadata. ChatGPT attachment ingestion is a separate server-side path: configure `CHATGPT_FILE_DOWNLOAD_HOSTS` as an exact comma-separated HTTPS hostname allowlist, leaving it empty to disable imports. The backend rejects redirects, credentials, custom ports, unsafe DNS/IP results, unsupported MIME or magic bytes, and oversized responses; it stores verified JPEG, PNG, or PDF evidence in MinIO without returning attachment or storage URLs. `EVIDENCE_UPLOAD_TTL_SECONDS` defaults to `300`, `EVIDENCE_MAX_BYTES` to `20971520` (20 MiB), and both `PAYMENT_PREVIEW_TTL_SECONDS` and `RENEWAL_PREVIEW_TTL_SECONDS` default to `900`. Both evidence paths require `STORAGE_PROVIDER=s3`; existing Azure Blob reads/uploads remain available outside these workflows.
 
 ### 3. Install dependencies
 
@@ -366,13 +366,16 @@ CreditSync serves a private stateless Streamable HTTP MCP endpoint at `/mcp` in 
 
 All MCP requests are bound to the server-side `MCP_TENANT_ID` and `MCP_ACTOR_EMAIL`. A client cannot submit or override tenant or actor identity. The configured actor must already exist in that tenant, and its normal CreditSync role/portfolio permissions still apply. Funding sources are list-only; the MCP surface has no generic SQL, arbitrary fetch, or funding mutation tool.
 
-The backend schema-version `1.0` exposes 75 frozen tools, including:
+The backend schema-version `1.0` exposes 112 frozen tools, including:
 
 ```text
 borrower.search       borrower.portfolio    borrower.create
 borrower.update       borrower.alias        intake.get
 intake.list           intake.create         evidence.prepare
 evidence.finalize     payment.preview       payment.post
+evidence.import-chatgpt-file
+payment.evidence-supplement.import-chatgpt-file
+payment.evidence-supplement.record
 payment.reverse       loan.preview          loan.draft
 loan.activate         loan.interest-rate.list
 loan.interest-rate.preview  loan.interest-rate.execute
@@ -433,7 +436,7 @@ For rotation, put the old and new hashes in `MCP_API_TOKEN_HASHES` separated by 
 
 ## Private CreditSync Plugin
 
-The repository includes CreditSync Plugin `7.1.0` under [`plugins/creditsync`](./plugins/creditsync). It combines 11 orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
+The repository includes CreditSync Plugin `9.1.0` under [`plugins/creditsync`](./plugins/creditsync). It combines 11 orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
 
 Before installation, register the deployed MCP endpoint as a private Codex app and replace the conspicuous `plugin_asdk_app_REPLACE_AFTER_PRIVATE_REGISTRATION` value in `plugins/creditsync/.app.json` with the returned `plugin_asdk_app...` technical ID. Then validate the package, add this Git repository as the marketplace that tracks `main`, and install the plugin:
 

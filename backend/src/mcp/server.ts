@@ -18,6 +18,9 @@ export const MCP_TOOL_NAMES = [
     "intake.create",
     "evidence.prepare",
     "evidence.finalize",
+    "evidence.import-chatgpt-file",
+    "payment.evidence-supplement.import-chatgpt-file",
+    "payment.evidence-supplement.record",
     "payment.preview",
     "payment.post",
     "payment.reverse",
@@ -1112,6 +1115,9 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     ]),
     "evidence.prepare": evidenceIntentOutput,
     "evidence.finalize": evidenceFinalOutput,
+    "evidence.import-chatgpt-file": evidenceFinalOutput.extend(writeAuditMetadata).strict(),
+    "payment.evidence-supplement.import-chatgpt-file": evidenceFinalOutput.extend(writeAuditMetadata).strict(),
+    "payment.evidence-supplement.record": evidenceFinalOutput.extend(writeAuditMetadata).strict(),
     "payment.preview": proposalOutput,
     "payment.post": intakeOutput.extend({ transactions: z.array(transactionOutput) }),
     "payment.reverse": intakeOutput.extend({ transactions: z.array(transactionOutput) }),
@@ -1397,6 +1403,31 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
         evidenceType: z.enum(["slip", "qr"]).optional(),
     }).strict(),
     "evidence.finalize": z.object({ paymentIntakePublicId: uuid, evidencePublicId: uuid }).strict(),
+    "evidence.import-chatgpt-file": z.object({
+        paymentIntakePublicId: uuid,
+        idempotencyKey: z.string().trim().min(1).max(200),
+        chatgptFile: z.object({
+            download_url: z.string().url(), file_id: z.string().min(1),
+            mime_type: z.enum(["image/jpeg", "image/png", "application/pdf"]).optional(),
+            file_name: z.string().max(500).optional(),
+        }).strict(),
+    }).strict(),
+    "payment.evidence-supplement.import-chatgpt-file": z.object({
+        paymentIntakePublicId: uuid,
+        idempotencyKey: z.string().trim().min(1).max(200),
+        chatgptFile: z.object({
+            download_url: z.string().url(), file_id: z.string().min(1),
+            mime_type: z.enum(["image/jpeg", "image/png", "application/pdf"]).optional(),
+            file_name: z.string().max(500).optional(),
+        }).strict(),
+    }).strict(),
+    "payment.evidence-supplement.record": z.object({
+        paymentIntakePublicId: uuid, supplementPublicId: uuid, confirmed: z.literal(true),
+        reason: z.enum(["upload_channel_unavailable", "operator_omission", "evidence_recovered", "other"]),
+        note: optionalNullableText, idempotencyKey: z.string().trim().min(1).max(200),
+    }).strict().superRefine((value, ctx) => {
+        if (value.reason === "other" && !value.note?.trim()) ctx.addIssue({ code: "custom", message: "reason other requires note" });
+    }),
     "payment.preview": z.object({
         paymentIntakePublicId: uuid,
         allocations: z.array(explicitAllocation).max(1_000).optional(),
@@ -1866,6 +1897,9 @@ const destructiveTools = new Set<McpToolName>([
     "borrower.alias",
     "evidence.prepare",
     "evidence.finalize",
+    "evidence.import-chatgpt-file",
+    "payment.evidence-supplement.import-chatgpt-file",
+    "payment.evidence-supplement.record",
     "payment.preview",
     "payment.post",
     "payment.reverse",
@@ -1958,6 +1992,9 @@ const financialTools = new Set<McpToolName>([
 const idempotentTools = new Set<McpToolName>([
     ...[...readOnlyTools].filter((toolName) => toolName !== "loan.commission.reverse"),
     "intake.create",
+    "evidence.import-chatgpt-file",
+    "payment.evidence-supplement.import-chatgpt-file",
+    "payment.evidence-supplement.record",
     "payment.post",
     "payment.reverse",
     "payment.reconcile.execute",
@@ -2013,6 +2050,9 @@ const toolDescriptions: Record<McpToolName, string> = {
     "intake.create": "Create an idempotent payment intake from supplied payment data.",
     "evidence.prepare": "Prepare a signed upload for payment evidence.",
     "evidence.finalize": "Verify and finalize uploaded payment evidence.",
+    "evidence.import-chatgpt-file": "Import one attached ChatGPT file as verified payment evidence.",
+    "payment.evidence-supplement.import-chatgpt-file": "Import one attached ChatGPT file as ready supplemental evidence for an exact posted payment.",
+    "payment.evidence-supplement.record": "Record ready supplemental evidence after explicit operator confirmation.",
     "payment.preview": "Preview and persist a versioned payment match proposal.",
     "payment.post": "Post a ready payment proposal atomically.",
     "payment.reverse": "Reverse a posted payment with compensating entries.",
@@ -2138,6 +2178,9 @@ export function advertisedMcpToolMetadata() {
             idempotentHint: idempotentTools.has(name),
             openWorldHint: false,
         },
+        ...(name === "evidence.import-chatgpt-file" || name === "payment.evidence-supplement.import-chatgpt-file"
+            ? { _meta: { "openai/fileParams": ["chatgptFile"] } }
+            : {}),
     }));
 }
 
@@ -2293,6 +2336,9 @@ export function createMcpProtocolServer(input: CreateMcpHttpPluginInput, ctx: Co
                 idempotentHint: idempotentTools.has(toolName),
                 openWorldHint: false,
             },
+            ...(toolName === "evidence.import-chatgpt-file" || toolName === "payment.evidence-supplement.import-chatgpt-file"
+                ? { _meta: { "openai/fileParams": ["chatgptFile"] } }
+                : {}),
         }, async (rawInput) => {
             const parsed = rawInput as Record<string, unknown>;
             const idempotencyKey = typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey : undefined;

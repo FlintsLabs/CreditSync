@@ -1,5 +1,5 @@
 {
-  "compatibility": "Tool names, full input/output schemas, descriptions, and annotations are frozen for plugin 9.1.0; breaking changes require plugin 10.0.0.",
+  "compatibility": "Tool names, full input/output schemas, descriptions, annotations, and file-parameter metadata are frozen for plugin 9.1.0; breaking changes require plugin 10.0.0.",
   "schemaVersion": "1.0",
   "sourceOfTruth": "Local MCP SDK Client tools/list response from backend/src/mcp/server.ts",
   "tools": [
@@ -2726,6 +2726,434 @@
         "type": "object"
       },
       "title": "Evidence Finalize"
+    },
+    {
+      "_meta": {
+        "openai/fileParams": [
+          "chatgptFile"
+        ]
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Evidence Import Chatgpt File"
+      },
+      "description": "Import one attached ChatGPT file as verified payment evidence.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "chatgptFile": {
+            "additionalProperties": false,
+            "properties": {
+              "download_url": {
+                "format": "uri",
+                "type": "string"
+              },
+              "file_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "file_name": {
+                "maxLength": 500,
+                "type": "string"
+              },
+              "mime_type": {
+                "enum": [
+                  "image/jpeg",
+                  "image/png",
+                  "application/pdf"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "download_url",
+              "file_id"
+            ],
+            "type": "object"
+          },
+          "idempotencyKey": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "paymentIntakePublicId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "paymentIntakePublicId",
+          "idempotencyKey",
+          "chatgptFile"
+        ],
+        "type": "object"
+      },
+      "name": "evidence.import-chatgpt-file",
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "auditPublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "correlationId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "filePublicId": {
+                "anyOf": [
+                  {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "publicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "sha256": {
+                "anyOf": [
+                  {
+                    "pattern": "^[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "publicId",
+              "status",
+              "sha256",
+              "filePublicId",
+              "auditPublicId",
+              "correlationId"
+            ],
+            "type": "object"
+          },
+          "schemaVersion": {
+            "const": "1.0",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "data"
+        ],
+        "type": "object"
+      },
+      "title": "Evidence Import Chatgpt File"
+    },
+    {
+      "_meta": {
+        "openai/fileParams": [
+          "chatgptFile"
+        ]
+      },
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Payment Evidence Supplement Import Chatgpt File"
+      },
+      "description": "Import one attached ChatGPT file as ready supplemental evidence for an exact posted payment.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "chatgptFile": {
+            "additionalProperties": false,
+            "properties": {
+              "download_url": {
+                "format": "uri",
+                "type": "string"
+              },
+              "file_id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "file_name": {
+                "maxLength": 500,
+                "type": "string"
+              },
+              "mime_type": {
+                "enum": [
+                  "image/jpeg",
+                  "image/png",
+                  "application/pdf"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "download_url",
+              "file_id"
+            ],
+            "type": "object"
+          },
+          "idempotencyKey": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "paymentIntakePublicId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "paymentIntakePublicId",
+          "idempotencyKey",
+          "chatgptFile"
+        ],
+        "type": "object"
+      },
+      "name": "payment.evidence-supplement.import-chatgpt-file",
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "auditPublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "correlationId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "filePublicId": {
+                "anyOf": [
+                  {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "publicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "sha256": {
+                "anyOf": [
+                  {
+                    "pattern": "^[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "publicId",
+              "status",
+              "sha256",
+              "filePublicId",
+              "auditPublicId",
+              "correlationId"
+            ],
+            "type": "object"
+          },
+          "schemaVersion": {
+            "const": "1.0",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "data"
+        ],
+        "type": "object"
+      },
+      "title": "Payment Evidence Supplement Import Chatgpt File"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Payment Evidence Supplement Record"
+      },
+      "description": "Record ready supplemental evidence after explicit operator confirmation.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "confirmed": {
+            "const": true,
+            "type": "boolean"
+          },
+          "idempotencyKey": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "paymentIntakePublicId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "upload_channel_unavailable",
+              "operator_omission",
+              "evidence_recovered",
+              "other"
+            ],
+            "type": "string"
+          },
+          "supplementPublicId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "paymentIntakePublicId",
+          "supplementPublicId",
+          "confirmed",
+          "reason",
+          "idempotencyKey"
+        ],
+        "type": "object"
+      },
+      "name": "payment.evidence-supplement.record",
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "auditPublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "correlationId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "filePublicId": {
+                "anyOf": [
+                  {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "id": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "publicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "sha256": {
+                "anyOf": [
+                  {
+                    "pattern": "^[0-9a-f]{64}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "publicId",
+              "status",
+              "sha256",
+              "filePublicId",
+              "auditPublicId",
+              "correlationId"
+            ],
+            "type": "object"
+          },
+          "schemaVersion": {
+            "const": "1.0",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "data"
+        ],
+        "type": "object"
+      },
+      "title": "Payment Evidence Supplement Record"
     },
     {
       "annotations": {

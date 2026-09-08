@@ -1806,6 +1806,41 @@ describe("default MCP adapter integration", () => {
             idempotencyKey: "mcp-all-tools-replacement-reverse",
         });
 
+        const invokeGuardedEvidenceHandler = async (name: Extract<McpToolName,
+            "evidence.import-chatgpt-file" | "payment.evidence-supplement.import-chatgpt-file" | "payment.evidence-supplement.record">,
+        args: Record<string, unknown>) => {
+            const idempotencyKey = String(args.idempotencyKey);
+            const handler = createDefaultMcpToolHandlers()[name];
+            await expect(Promise.resolve().then(() => handler({
+                tenantId: TENANT_ID, actorUserId: actor.id, actorSource: "mcp",
+                requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey,
+            }, args))).rejects.toBeDefined();
+            called.push(name);
+        };
+        const unavailableChatGptFile = {
+            download_url: "https://files.example.test/unavailable",
+            file_id: "file-unavailable",
+            mime_type: "image/png",
+            file_name: "evidence.png",
+        };
+        await invokeGuardedEvidenceHandler("evidence.import-chatgpt-file", {
+            paymentIntakePublicId: intakePublicId,
+            idempotencyKey: "mcp-all-tools-chatgpt-primary",
+            chatgptFile: unavailableChatGptFile,
+        });
+        await invokeGuardedEvidenceHandler("payment.evidence-supplement.import-chatgpt-file", {
+            paymentIntakePublicId: intakePublicId,
+            idempotencyKey: "mcp-all-tools-chatgpt-supplement",
+            chatgptFile: unavailableChatGptFile,
+        });
+        await invokeGuardedEvidenceHandler("payment.evidence-supplement.record", {
+            paymentIntakePublicId: intakePublicId,
+            supplementPublicId: crypto.randomUUID(),
+            confirmed: true,
+            reason: "operator_omission",
+            idempotencyKey: "mcp-all-tools-chatgpt-supplement-record",
+        });
+
         const markReviewHandler = createDefaultMcpToolHandlers()["payment.reconcile.mark-review"];
         await expect(Promise.resolve().then(() => markReviewHandler({
             tenantId: TENANT_ID, actorUserId: actor.id, actorSource: "mcp",
@@ -1815,6 +1850,23 @@ describe("default MCP adapter integration", () => {
             reason: "MCP all-tools verifies the guarded review transition", idempotencyKey: "mcp-all-tools-mark-review",
         }))).rejects.toMatchObject({ code: "PAYMENT_RECONCILIATION_REVIEW_STATE_CONFLICT" });
         called.push("payment.reconcile.mark-review");
+
+        await expect(call("evidence.import-chatgpt-file", {
+            paymentIntakePublicId: intakePublicId,
+            chatgptFile: { download_url: "http://invalid.example.test/file", file_id: "chatgpt-file" },
+        })).rejects.toBeDefined();
+        called.push("evidence.import-chatgpt-file");
+        await expect(call("payment.evidence-supplement.import-chatgpt-file", {
+            paymentIntakePublicId: intakePublicId,
+            chatgptFile: { download_url: "http://invalid.example.test/file", file_id: "chatgpt-file" },
+        })).rejects.toBeDefined();
+        called.push("payment.evidence-supplement.import-chatgpt-file");
+        await expect(call("payment.evidence-supplement.record", {
+            paymentIntakePublicId: intakePublicId,
+            supplementPublicId: "11111111-1111-4111-8111-111111111111",
+            reason: "evidence_recovered",
+        })).rejects.toBeDefined();
+        called.push("payment.evidence-supplement.record");
 
         await expect(call("payment.allocation-correction.preview", {
             paymentIntakePublicId: intakePublicId,
@@ -1837,7 +1889,7 @@ describe("default MCP adapter integration", () => {
         expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length);
         expect(called.filter((name) => name === "intermediary.disbursement.event.create")).toHaveLength(2);
         expect(called.filter((name) => name === "loan.restructure.execute")).toHaveLength(2);
-        expect(called).toHaveLength(MCP_TOOL_NAMES.length + 9);
+        expect(called).toHaveLength(MCP_TOOL_NAMES.length + 12);
 
         await client.close();
     }, 10_000);

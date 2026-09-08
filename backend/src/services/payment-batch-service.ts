@@ -11,7 +11,7 @@ import { DomainError } from "./domain-error";
 import { normalizeBorrowerText } from "./borrower-service";
 import { solvePaymentBatch } from "./payment-batch-solver";
 import type { BatchObligation, BatchSlip, ExplicitBatchAllocation } from "./payment-batch-types";
-import { finalizePaymentEvidence, normalizeBankReference, postPaymentAllocationInTransaction, preparePaymentEvidence, previewPaymentMatch, type EvidenceStorageGateway } from "./payment-service";
+import { assertPaymentEvidenceReady, finalizePaymentEvidence, normalizeBankReference, postPaymentAllocationInTransaction, preparePaymentEvidence, previewPaymentMatch, type EvidenceStorageGateway } from "./payment-service";
 
 type BatchRow = typeof paymentBatches.$inferSelect;
 type ItemRow = typeof paymentBatchItems.$inferSelect;
@@ -201,7 +201,8 @@ export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: st
     if (!items.length) throw new DomainError("BATCH_ITEMS_REQUIRED", "Payment batch must contain at least one item", 409);
     const intakes = await db.select().from(paymentIntakes).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.id, items.map((item) => item.paymentIntakeId))));
     const evidence = await db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, ctx.tenantId), inArray(paymentEvidence.paymentIntakeId, items.map((item) => item.paymentIntakeId))));
-    const evidenceReady = items.every((item) => evidence.some((entry) => entry.paymentIntakeId === item.paymentIntakeId && entry.status === "ready"));
+    const evidenceReady = intakes.every((intake) => !intake.evidenceRequired || evidence.some((entry) => entry.paymentIntakeId === intake.id && entry.status === "ready" && entry.finalizedAt !== null));
+    if (!evidenceReady) throw new DomainError("EVIDENCE_REQUIRED_NOT_READY", "Required payment evidence is not ready", 409);
     const loansForBorrower = (await db.select().from(loans).where(and(eq(loans.tenantId, ctx.tenantId), eq(loans.borrowerId, borrower.id), eq(loans.status, "active")))).filter((loan) => loan.repaymentType !== "floating");
     const schedules = loansForBorrower.length ? await db.select().from(loanSchedules).where(and(eq(loanSchedules.tenantId, ctx.tenantId), inArray(loanSchedules.loanId, loansForBorrower.map((loan) => loan.id)))) : [];
     const obligations: BatchObligation[] = schedules.filter((schedule) => schedule.status !== "paid" && schedule.remainingDue !== "0").map((schedule) => {
@@ -257,9 +258,10 @@ export async function executePaymentBatch(ctx: CommandContext, batchPublicId: st
         const lockedItems = await tx.select({ id: paymentBatchItems.id, paymentIntakeId: paymentBatchItems.paymentIntakeId }).from(paymentBatchItems).where(and(eq(paymentBatchItems.tenantId, ctx.tenantId), eq(paymentBatchItems.batchId, locked.id))).orderBy(asc(paymentBatchItems.id));
         const lockedIntakeIds = lockedItems.map((item) => item.paymentIntakeId).sort((a, b) => a - b);
         if (lockedIntakeIds.length) await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(lockedIntakeIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
-        const lockedIntakes = lockedIntakeIds.length ? await tx.select({ id: paymentIntakes.id, status: paymentIntakes.status }).from(paymentIntakes).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.id, lockedIntakeIds))) : [];
+        const lockedIntakes = lockedIntakeIds.length ? await tx.select({ id: paymentIntakes.id, status: paymentIntakes.status, evidenceRequired: paymentIntakes.evidenceRequired }).from(paymentIntakes).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.id, lockedIntakeIds))) : [];
         if (lockedIntakes.length === lockedIntakeIds.length && lockedIntakes.every((intake) => intake.status === "posted")) return { batchPublicId: locked.publicId, status: "posted", auditPublicIds: [], correlationId: ctx.correlationId };
         if (lockedIntakes.some((intake) => intake.status === "posted")) throw new DomainError("BATCH_EXECUTION_CONFLICT", "Some batch items were posted but the batch is not complete", 409);
+        for (const intake of lockedIntakes) await assertPaymentEvidenceReady(tx, ctx.tenantId, intake);
         if (preview.status !== "ready" || preview.previewHash !== input.previewHash || preview.confirmationHash !== input.confirmationHash) throw new DomainError("BATCH_CONFIRMATION_STALE", "The batch preview no longer matches the confirmed semantics", 409);
         if (allocationRows.length) await tx.execute(sql`SELECT id FROM payment_batch_allocations WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(allocationRows.map((row) => sql`${row.id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
         const loanIds = [...new Set(allocationRows.map((row) => row.loanId))].sort((a, b) => a - b);

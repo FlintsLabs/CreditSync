@@ -5,6 +5,16 @@
 ### Added
 - Documented the append-only integration design that reconciles the deployed ChatGPT evidence lineage with scheduled payment allocation corrections on `main`.
 - Added the detailed implementation and verification plan for integrating the deployed ChatGPT evidence feature into the current migration lineage.
+- Added explicit payment evidence requirements and an append-only supplemental evidence ledger for late proof without mutating posted financial records.
+
+### Fixed
+- Made scheduled allocation-correction integration fixtures independent of the current calendar date.
+- Preserved the deployed ChatGPT evidence migration's audit foreign key and exact production hash during integration.
+- Completed the combined MCP catalog integration coverage for ChatGPT evidence commands.
+- Updated migration assertions and production reconciliation coverage for the combined 63-row local journal and 66-row deployed lineage.
+
+### Changed
+- Added a failing regression contract for the combined production migration lineage.
 
 ## v0.3.94 - 2026-09-08
 
@@ -87,6 +97,16 @@
 
 ### Fixed
 - Preserved the `payment.reconcile.mark-review` idempotency key across the MCP transport boundary so eligible backdated payments enter audited reconciliation review instead of failing with `INTERNAL_ERROR`.
+
+### Added
+- Added bounded, allowlisted server-side ChatGPT evidence ingestion with content verification, MinIO metadata checks, safe idempotent retries, and cleanup on failure.
+- Added authoritative evidence-required gates plus closed MCP import and explicitly confirmed supplemental-evidence commands using official top-level ChatGPT file metadata.
+- Added safe primary and supplemental slip summaries to payment history with click-time authenticated previews and synchronized Thai/English labels.
+- Synchronized CreditSync Plugin `9.1.0`, the 110-tool frozen MCP contract, official file-parameter metadata, skills, executable evals, validators, environment templates, and operator documentation.
+
+### Fixed
+- Corrected the recorded-supplement database invariant fixture to preserve its required prior ready transition before testing terminal immutability.
+- Kept the strict mixed-lineage reconciliation catalog synchronized with the new additive migration count and all-tools MCP verification synchronized with the three new evidence commands.
 
 ## v0.3.78 - 2026-09-07
 

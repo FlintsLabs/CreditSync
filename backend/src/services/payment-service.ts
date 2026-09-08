@@ -74,6 +74,15 @@ const sha256Pattern = /^[0-9a-f]{64}$/i;
 const allowedEvidenceTypes = new Set(["image/jpeg", "image/png", "application/pdf"]);
 const semanticDuplicateWindowMs = 5 * 60 * 1000;
 
+export async function assertPaymentEvidenceReady(executor: Executor, tenantId: string, intake: Pick<IntakeRow, "id" | "evidenceRequired">) {
+    if (!intake.evidenceRequired) return;
+    const ready = await executor.query.paymentEvidence.findFirst({ where: and(
+        eq(paymentEvidence.tenantId, tenantId), eq(paymentEvidence.paymentIntakeId, intake.id),
+        eq(paymentEvidence.status, "ready"), sql`${paymentEvidence.finalizedAt} IS NOT NULL`,
+    ) });
+    if (!ready) throw new DomainError("EVIDENCE_REQUIRED_NOT_READY", "Required payment evidence is not ready", 409);
+}
+
 function hash(value: string) {
     return createHash("sha256").update(value).digest("hex");
 }
@@ -1157,6 +1166,7 @@ export async function previewPaymentMatch(
             throw new DomainError("PAYMENT_INTAKE_IMMUTABLE", "This intake cannot be matched", 409);
         }
         if (intake.repostOfIntakeId !== null) throw new DomainError("PAYMENT_RESTORE_DRAFT_REQUIRES_RESTORE_WORKFLOW", "Restore drafts must use payment.restore workflow", 409);
+        await assertPaymentEvidenceReady(tx, ctx.tenantId, intake);
         const actor = await actorFor(ctx, tx);
         const requested = input.allocations;
         const match = requested
@@ -1565,6 +1575,7 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
         if (intake.status !== "ready") {
             throw new DomainError("PAYMENT_NOT_READY", "Payment intake must be ready before posting", 409);
         }
+        await assertPaymentEvidenceReady(tx, ctx.tenantId, intake);
         const proposal = await tx.query.paymentMatchProposals.findFirst({ where: and(
             eq(paymentMatchProposals.publicId, input.proposalPublicId),
             eq(paymentMatchProposals.paymentIntakeId, intake.id),

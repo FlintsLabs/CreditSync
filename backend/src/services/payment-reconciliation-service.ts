@@ -12,7 +12,7 @@ import { parseMoney, serializeMoney } from "../lib/money";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import { accrueFloatingInterestThrough, resolveFloatingInterestAllocationPlan, type FloatingInterestAllocationPlan } from "./floating-interest-service";
-import { postPayment } from "./payment-service";
+import { assertPaymentEvidenceReady, postPayment } from "./payment-service";
 
 export type ReconciliationComponent = "interest" | "principal" | "fee" | "penalty";
 export interface ReconciliationAllocation {
@@ -684,6 +684,7 @@ export async function preflightPaymentExecution(ctx: CommandContext, input: { pa
         // reconciliation inputs continue through the provenance-aware path.
         if (input.proposalPublicId !== undefined) {
             const intake = await accessibleIntake(ctx, input.paymentIntakePublicId, db);
+            await assertPaymentEvidenceReady(db, ctx.tenantId, intake);
             const proposal = await db.query.paymentMatchProposals.findFirst({ where: and(
                 eq(paymentMatchProposals.tenantId, ctx.tenantId),
                 eq(paymentMatchProposals.publicId, input.proposalPublicId),

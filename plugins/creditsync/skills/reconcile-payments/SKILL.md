@@ -5,6 +5,10 @@ description: Use when capturing, reviewing, matching, posting, or reversing Cred
 
 # Reconcile CreditSync Payments
 
+When ChatGPT supplies a payment-slip file parameter, create the intake and immediately call `evidence.import-chatgpt-file` with that opaque top-level parameter and a stable idempotency key. The backend performs the bounded allowlisted download and storage; never retrieve, echo, log, or place file bytes, file IDs, download URLs, signed URLs, account details, QR payloads, or full references in summaries. Continue only from a `ready` result. An identical retry reuses the same idempotency key. If the parameter or import is unavailable, stop before preview/post; do not reinterpret an image-first request as data-only.
+
+For evidence received after an exact payment is already `posted`, do not alter or repost it. Call `payment.evidence-supplement.import-chatgpt-file`, inspect the ready supplement and exact payment target, then obtain a separate explicit confirmation and reason before `payment.evidence-supplement.record`. This is append-only supplemental history.
+
 ## Overview
 
 Treat intake, evidence, matching, posting, and reversal as separate stages. A slip is optional; only a current `ready` proposal can become a posted payment.

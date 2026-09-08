@@ -146,6 +146,7 @@ import { backfillPostedRestoreSchedule, createPaymentRestoreDraft, executePaymen
 import { addPaymentBatchItem, capturePaymentBatch, createPaymentBatch, executePaymentBatch, finalizePaymentBatchEvidenceMany, getPaymentBatch, preparePaymentBatchEvidenceMany, previewPaymentBatch } from "../services/payment-batch-service";
 import { executeUnfundedLoanCancellation, previewUnfundedLoanCancellation } from "../services/loan-cancellation-service";
 import { executePaymentAllocationCorrection, previewPaymentAllocationCorrection } from "../services/payment-allocation-correction-service";
+import { importChatGptPaymentEvidence, importChatGptSupplementEvidence, recordPaymentEvidenceSupplement } from "../services/chatgpt-file-evidence-service";
 
 type ToolInput = Record<string, unknown>;
 
@@ -228,6 +229,15 @@ export function createDefaultMcpToolHandlers(
         asString(input, "evidencePublicId"),
         dependencies.evidenceGateway,
     ),
+    "evidence.import-chatgpt-file": (ctx, input) => {
+        const file = input.chatgptFile as Record<string, unknown>;
+        return importChatGptPaymentEvidence(ctx, asString(input, "paymentIntakePublicId"), { downloadUrl: String(file.download_url), fileId: String(file.file_id), mimeType: file.mime_type as string | undefined, fileName: file.file_name as string | undefined }, ctx.idempotencyKey!);
+    },
+    "payment.evidence-supplement.import-chatgpt-file": (ctx, input) => {
+        const file = input.chatgptFile as Record<string, unknown>;
+        return importChatGptSupplementEvidence(ctx, asString(input, "paymentIntakePublicId"), { downloadUrl: String(file.download_url), fileId: String(file.file_id), mimeType: file.mime_type as string | undefined, fileName: file.file_name as string | undefined }, ctx.idempotencyKey!);
+    },
+    "payment.evidence-supplement.record": (ctx, input) => recordPaymentEvidenceSupplement(ctx, { paymentIntakePublicId: asString(input, "paymentIntakePublicId"), supplementPublicId: asString(input, "supplementPublicId"), confirmed: true, reason: input.reason as any, note: input.note as string | null | undefined, idempotencyKey: ctx.idempotencyKey! }),
     "payment.preview": (ctx, input) => previewPaymentMatch(
         ctx,
         asString(input, "paymentIntakePublicId"),

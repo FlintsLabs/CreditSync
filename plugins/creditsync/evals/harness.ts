@@ -31,6 +31,8 @@ const SETTLEMENT = "0198c481-3e2b-7000-8000-000000000071";
 const PAYMENT_EVIDENCE_BYTES = new TextEncoder().encode("payment-slip-fixture-bytes");
 const DISBURSEMENT_EVIDENCE_BYTES = new TextEncoder().encode("disbursement-slip-fixture-bytes");
 const FILE_HASH = createHash("sha256").update(PAYMENT_EVIDENCE_BYTES).digest("hex");
+const CHATGPT_FILE = { download_url: "https://files.oaiusercontent.com/file-fixture", file_id: "file-fixture", mime_type: "image/jpeg", file_name: "slip.jpg" };
+const SUPPLEMENT = "0198c481-3e2b-7000-8000-000000000026";
 const DISBURSEMENT_FILE_HASH = createHash("sha256").update(DISBURSEMENT_EVIDENCE_BYTES).digest("hex");
 const SETTLEMENT_BALANCE_VERSION = `v1:${"c".repeat(64)}`;
 const SETTLEMENT_PREVIEW_HASH = `v1:${"d".repeat(64)}`;
@@ -535,6 +537,22 @@ async function paymentFlow(mcp: ScriptedMcp, options: {
         return { outcome: "completed" } as const;
     }
     return { outcome: "stopped", stopReason: "stale" } as const;
+}
+
+async function chatGptPaymentFlow(mcp: ScriptedMcp, retry = false) {
+    await mcp.call("intake.create", intakeArgs);
+    try {
+        await mcp.call("evidence.import-chatgpt-file", { paymentIntakePublicId: INTAKE, idempotencyKey: "chatgpt-import-1", chatgptFile: CHATGPT_FILE });
+        if (retry) await mcp.call("evidence.import-chatgpt-file", { paymentIntakePublicId: INTAKE, idempotencyKey: "chatgpt-import-1", chatgptFile: CHATGPT_FILE });
+    } catch (error) {
+        if (error instanceof ScriptedMcpError) return { outcome: "stopped", stopReason: "chatgpt-file-unavailable" } as const;
+        throw error;
+    }
+    const proposal = await mcp.call("payment.preview", { paymentIntakePublicId: INTAKE });
+    if (retry) return { outcome: "completed" } as const;
+    await mcp.call("payment.reconcile.preflight", { paymentIntakePublicId: INTAKE, proposalPublicId: proposal.publicId, reason: "Normal payment execution preflight" });
+    await mcp.call("payment.post", { paymentIntakePublicId: INTAKE, proposalPublicId: proposal.publicId });
+    return { outcome: "completed" } as const;
 }
 
 async function createBorrowerAlias(mcp: ScriptedMcp) {
@@ -1620,6 +1638,34 @@ const SCENARIOS: Record<string, Scenario> = {
             { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, result: { publicId: "0198c481-3e2b-7000-8000-000000000205", status: "fixture", ...noRepostLineage, transactions: [] } },
         ],
         run: (mcp) => paymentFlow(mcp, { evidence: true, preflight: true }),
+    },
+    "payment-chatgpt-file-import": {
+        script: [
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null, ...noRepostLineage } },
+            { name: "evidence.import-chatgpt-file", arguments: { paymentIntakePublicId: INTAKE, idempotencyKey: "chatgpt-import-1", chatgptFile: CHATGPT_FILE }, result: { publicId: EVIDENCE, status: "ready", sha256: FILE_HASH, filePublicId: EVIDENCE_FILE, auditPublicId: COMMISSION_AUDIT, correlationId: COMMISSION_CORRELATION } },
+            { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: PROPOSAL, status: "ready", version: -9007199254740991, warnings: [], totalAllocated: "0.00", allocations: [] } },
+            { name: "payment.reconcile.preflight", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL, reason: "Normal payment execution preflight" }, result: { status: "ready_to_execute", wouldWrite: false, sourcePaymentPublicId: INTAKE, affectedLoanPublicIds: [LOAN_A], exactAmount: "300.00", proposedComponents: { principal: "0.00", interest: "0.00", fee: "0.00", penalty: "0.00" }, allocationPlan: [{ loanPublicId: LOAN_A, component: "principal", amount: "300.00" }], checks: [{ name: "source", status: "pass" }], previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, reviewRequired: false } },
+            { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, result: { publicId: INTAKE, status: "posted", ...noRepostLineage, transactions: [] } },
+        ], run: (mcp) => chatGptPaymentFlow(mcp),
+    },
+    "payment-chatgpt-file-retry": {
+        script: [
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null, ...noRepostLineage } },
+            ...[0, 1].map(() => ({ name: "evidence.import-chatgpt-file" as const, arguments: { paymentIntakePublicId: INTAKE, idempotencyKey: "chatgpt-import-1", chatgptFile: CHATGPT_FILE }, result: { publicId: EVIDENCE, status: "ready", sha256: FILE_HASH, filePublicId: EVIDENCE_FILE, auditPublicId: COMMISSION_AUDIT, correlationId: COMMISSION_CORRELATION } })),
+            { name: "payment.preview", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: PROPOSAL, status: "ready", version: -9007199254740991, warnings: [], totalAllocated: "0.00", allocations: [] } },
+        ], run: (mcp) => chatGptPaymentFlow(mcp, true),
+    },
+    "payment-chatgpt-file-unavailable": {
+        script: [
+            { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null, ...noRepostLineage } },
+            { name: "evidence.import-chatgpt-file", arguments: { paymentIntakePublicId: INTAKE, idempotencyKey: "chatgpt-import-1", chatgptFile: CHATGPT_FILE }, error: { code: "CHATGPT_FILE_UNAVAILABLE", message: "Attached file is unavailable", retryable: true, reviewRequired: true, details: {} } },
+        ], run: (mcp) => chatGptPaymentFlow(mcp),
+    },
+    "payment-late-evidence-confirmation": {
+        script: [
+            { name: "payment.evidence-supplement.import-chatgpt-file", arguments: { paymentIntakePublicId: INTAKE, idempotencyKey: "chatgpt-supplement-import-1", chatgptFile: CHATGPT_FILE }, result: { publicId: SUPPLEMENT, status: "ready", sha256: FILE_HASH, filePublicId: EVIDENCE_FILE, auditPublicId: COMMISSION_AUDIT, correlationId: COMMISSION_CORRELATION } },
+            { name: "payment.evidence-supplement.record", arguments: { paymentIntakePublicId: INTAKE, supplementPublicId: SUPPLEMENT, confirmed: true, reason: "evidence_recovered", note: "Recovered after payment review", idempotencyKey: "chatgpt-supplement-record-1" }, result: { publicId: SUPPLEMENT, status: "recorded", sha256: FILE_HASH, filePublicId: EVIDENCE_FILE, auditPublicId: COMMISSION_AUDIT, correlationId: COMMISSION_CORRELATION } },
+        ], run: async (mcp) => { await mcp.call("payment.evidence-supplement.import-chatgpt-file", { paymentIntakePublicId: INTAKE, idempotencyKey: "chatgpt-supplement-import-1", chatgptFile: CHATGPT_FILE }); await mcp.call("payment.evidence-supplement.record", { paymentIntakePublicId: INTAKE, supplementPublicId: SUPPLEMENT, confirmed: true, reason: "evidence_recovered", note: "Recovered after payment review", idempotencyKey: "chatgpt-supplement-record-1" }); return { outcome: "completed" } as const; },
     },
     "payment-preflight-review-stops": {
         script: [
