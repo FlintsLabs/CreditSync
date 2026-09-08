@@ -239,7 +239,7 @@ function normalizeReplacement(input: ReplacementLoanTerms, replacementPrincipal:
             const legacy = input.floatingDailyInterest ? normalizeFloatingDailyInterest(input.floatingDailyInterest) : null;
             const generalized = input.floatingInterestPolicy ? normalizeFloatingInterestPolicy(input.floatingInterestPolicy) : null;
             const legacyAsGeneralized = legacy ? normalizeFloatingInterestPolicy({
-                periodUnit: legacy.accrualCycle === "weekly" ? "week" : "day",
+                periodUnit: legacy.accrualCycle === "weekly" ? "week" : legacy.accrualCycle === "monthly" ? "month" : "day",
                 periodLength: 1,
                 rateMode: legacy.mode,
                 rate: legacy.rate,
@@ -255,7 +255,7 @@ function normalizeReplacement(input: ReplacementLoanTerms, replacementPrincipal:
                 mode: floatingPolicy.rateMode,
                 rate: floatingPolicy.rate,
                 firstDayTreatment: floatingPolicy.advanceInterestPeriods === 1 ? "deduct" : "start_next_day",
-                accrualCycle: floatingPolicy.periodUnit === "week" ? "weekly" : "daily",
+                accrualCycle: floatingPolicy.periodUnit === "week" ? "weekly" : floatingPolicy.periodUnit === "month" ? "monthly" : "daily",
             };
         }
         catch (error) { throw new DomainError("INVALID_REPLACEMENT_TERMS", error instanceof Error ? error.message : "Floating replacement terms are invalid", 400); }

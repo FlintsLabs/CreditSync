@@ -175,7 +175,7 @@ const borrowerFields = {
 
 const floatingInterestRate = z.string().regex(/^\d+(?:\.\d{1,4})?$/).max(32);
 const floatingInterestPolicy = z.object({
-    periodUnit: z.enum(["day", "week"]),
+    periodUnit: z.enum(["day", "week", "month"]),
     periodLength: z.literal(1),
     rateMode: z.enum(["percent", "per_thousand"]),
     rate: floatingInterestRate,
@@ -186,7 +186,7 @@ const floatingDailyInterest = z.object({
     mode: z.enum(["per_thousand", "percent"]),
     rate: z.string().regex(/^\d+(?:\.\d{1,4})?$/),
     firstDayTreatment: z.enum(["deduct", "start_next_day"]),
-    accrualCycle: z.enum(["daily", "weekly"]).optional(),
+    accrualCycle: z.enum(["daily", "weekly", "monthly"]).optional(),
 }).strict();
 const singlePayment = z.union([
     z.object({

@@ -14,7 +14,7 @@ export const repaymentType = t.Union([
 export const scheduledInstallmentMode = t.Union([t.Literal("rate_derived"), t.Literal("fixed_total")]);
 
 export const floatingInterestPolicy = t.Object({
-    periodUnit: t.Union([t.Literal("day"), t.Literal("week")]),
+    periodUnit: t.Union([t.Literal("day"), t.Literal("week"), t.Literal("month")]),
     periodLength: t.Literal(1),
     rateMode: t.Union([t.Literal("per_thousand"), t.Literal("percent")]),
     rate: t.String(),
@@ -26,7 +26,7 @@ export const floatingDailyInterest = t.Object({
     mode: t.Union([t.Literal("per_thousand"), t.Literal("percent")]),
     rate: t.String(),
     firstDayTreatment: t.Union([t.Literal("deduct"), t.Literal("start_next_day")]),
-    accrualCycle: t.Optional(t.Union([t.Literal("daily"), t.Literal("weekly")])),
+    accrualCycle: t.Optional(t.Union([t.Literal("daily"), t.Literal("weekly"), t.Literal("monthly")])),
 }, preserveUnknown);
 
 export const dailyEntry = t.Object({

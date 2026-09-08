@@ -16,7 +16,7 @@ export const loansRoute = new Elysia({ prefix: "/loans" })
             ? (body as { floatingDailyInterest?: { accrualCycle?: unknown } }).floatingDailyInterest
             : undefined;
         if (code === "VALIDATION" && floating?.accrualCycle !== undefined
-            && !["daily", "weekly"].includes(String(floating.accrualCycle))) {
+            && !["daily", "weekly", "monthly"].includes(String(floating.accrualCycle))) {
             set.status = 400;
             return { error: "Floating interest policy is invalid", code: "INVALID_LOAN_TERMS" };
         }

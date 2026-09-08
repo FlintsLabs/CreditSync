@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.3.97 - 2026-09-08
+
+### Added
+- Added daily, weekly, and calendar-monthly floating-loan accrual cycles, with localized labels in the loan list and configuration forms.
+
+### Changed
+- Extended floating-interest API/MCP contracts, database constraints, immutable accrual snapshots, and migration support for monthly periods.
+
 ## v0.3.96 - 2026-09-08
 
 ### Fixed

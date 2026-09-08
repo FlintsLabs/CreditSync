@@ -90,7 +90,7 @@ export default function LoanWizard() {
         interestRate: "15",
         termMonths: "12",
         repaymentType: "monthly",
-        floatingPeriodUnit: "day" as "day" | "week",
+        floatingPeriodUnit: "day" as "day" | "week" | "month",
         floatingRateMode: "per_thousand" as "per_thousand" | "percent",
         floatingRate: "15",
         advanceInterestPeriods: 0 as 0 | 1,
@@ -103,7 +103,7 @@ export default function LoanWizard() {
         dailyPayment: "",
         dailyInterestInputMode: "percent" as "percent" | "fixed_amount" | "per_thousand",
         dailyInterestInputValue: "",
-        floatingAccrualCycle: "daily" as "daily" | "weekly",
+        floatingAccrualCycle: "daily" as "daily" | "weekly" | "monthly",
         singlePaymentDueDate: "",
         singlePaymentFixedAgreedInterest: "",
         singlePaymentInterestPolicy: "fixed_only" as "fixed_only" | "greater_of_fixed_or_retroactive",
@@ -417,7 +417,7 @@ export default function LoanWizard() {
                                     <div className="grid gap-2 md:col-span-2">
                                         <label>{t("loanWizard.floating.periodUnit")}</label>
                                         <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={t("loanWizard.floating.periodUnit")}>
-                                            {(["day", "week"] as const).map((unit) => <button key={unit} type="button" role="radio" aria-checked={formData.floatingPeriodUnit === unit} onClick={() => setFormData({ ...formData, floatingPeriodUnit: unit })} className={`rounded-full border px-3 py-2 text-sm ${formData.floatingPeriodUnit === unit ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}>{t(`loanWizard.floating.periodOptions.${unit}`)}</button>)}
+                                            {(["day", "week", "month"] as const).map((unit) => <button key={unit} type="button" role="radio" aria-checked={formData.floatingPeriodUnit === unit} onClick={() => setFormData({ ...formData, floatingPeriodUnit: unit })} className={`rounded-full border px-3 py-2 text-sm ${formData.floatingPeriodUnit === unit ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}>{t(`loanWizard.floating.periodOptions.${unit}`)}</button>)}
                                         </div>
                                     </div>
                                     <div className="grid gap-2 md:col-span-2">
@@ -437,7 +437,7 @@ export default function LoanWizard() {
                                         </div>
                                         {formData.advanceInterestPeriods === 1 && <p className="text-xs text-amber-700 dark:text-amber-300">{t("loanWizard.floating.nonRefundableWarning")}</p>}
                                     </div>
-                                    <div className="grid gap-2 md:col-span-2"><label>{t("loanWizard.floatingAccrualCycle")}</label><div className="flex gap-2">{(["daily", "weekly"] as const).map(cycle => <button key={cycle} type="button" onClick={() => setFormData({ ...formData, floatingAccrualCycle: cycle })} className={`rounded-full border px-3 py-2 text-sm ${formData.floatingAccrualCycle === cycle ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}>{t(`loanWizard.floatingAccrualOptions.${cycle}`)}</button>)}</div></div>
+                                    <div className="grid gap-2 md:col-span-2"><label>{t("loanWizard.floatingAccrualCycle")}</label><div className="flex gap-2">{(["daily", "weekly", "monthly"] as const).map(cycle => <button key={cycle} type="button" onClick={() => setFormData({ ...formData, floatingAccrualCycle: cycle })} className={`rounded-full border px-3 py-2 text-sm ${formData.floatingAccrualCycle === cycle ? "border-primary bg-primary text-primary-foreground" : "border-input"}`}>{t(`loanWizard.floatingAccrualOptions.${cycle}`)}</button>)}</div></div>
                                 </>
                             )}
                         </div>

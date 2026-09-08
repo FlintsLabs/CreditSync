@@ -19,7 +19,7 @@ describe("loans route composition", () => {
         const schema = floatingDailyInterest as unknown as {
             properties: { accrualCycle: { anyOf?: Array<{ const?: string }> } };
         };
-        expect(schema.properties.accrualCycle.anyOf?.map((entry) => entry.const)).toEqual(["daily", "weekly"]);
+        expect(schema.properties.accrualCycle.anyOf?.map((entry) => entry.const)).toEqual(["daily", "weekly", "monthly"]);
     });
     test("mounts the existing public contract, funding, and disbursement endpoints", () => {
         const endpoints = loansRoute.routes
@@ -239,7 +239,7 @@ describe("loans route composition", () => {
             { mode: "percent", rate: "0", firstDayTreatment: "start_next_day", accrualCycle: "daily" },
             { mode: "percent", rate: "not-a-rate", firstDayTreatment: "start_next_day", accrualCycle: "daily" },
             { mode: "percent", rate: "1.00000", firstDayTreatment: "start_next_day", accrualCycle: "daily" },
-            { mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "monthly" },
+            { mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "quarterly" },
         ];
         for (const floatingDailyInterest of policies) {
             const result = await postPreview({ ...base, floatingDailyInterest });

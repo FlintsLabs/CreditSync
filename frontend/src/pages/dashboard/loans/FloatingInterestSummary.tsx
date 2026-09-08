@@ -6,7 +6,7 @@ import { formatMoneyExact } from "../../../lib/workflow-model";
 import { normalizeMoney } from "../../../lib/workflow-api";
 
 export interface FloatingInterestPolicyView {
-    periodUnit: "day" | "week";
+    periodUnit: "day" | "week" | "month";
     periodLength: 1;
     rateMode: "per_thousand" | "percent";
     rate: string;

@@ -442,6 +442,13 @@
       "when": 1788811800000,
       "tag": "0062_scheduled_payment_allocation_corrections",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1788825600000,
+      "tag": "0063_floating_monthly_cycle",
+      "breakpoints": true
     }
   ]
 }

@@ -196,7 +196,7 @@ export const loans = pgTable("loans", {
     dailyInterestRate: numeric("daily_interest_rate"),
     firstDayTreatment: text("first_day_treatment"), // deduct, start_next_day
     interestStartDate: date("interest_start_date"),
-    interestPeriodUnit: text("interest_period_unit"), // day, week; floating loans only
+    interestPeriodUnit: text("interest_period_unit"), // day, week, month; floating loans only
     interestPeriodLength: integer("interest_period_length"),
     advanceInterestPeriods: integer("advance_interest_periods"),
     advanceInterestRefundPolicy: text("advance_interest_refund_policy"),
@@ -281,7 +281,7 @@ export const loans = pgTable("loans", {
             ))
     `),
     check("loans_floating_accrual_cycle_check", sql`
-        (${table.repaymentType} = 'floating' AND ${table.floatingAccrualCycle} IN ('daily', 'weekly'))
+        (${table.repaymentType} = 'floating' AND ${table.floatingAccrualCycle} IN ('daily', 'weekly', 'monthly'))
         OR (${table.repaymentType} <> 'floating' AND ${table.floatingAccrualCycle} IS NULL)
     `),
     check("loans_single_payment_money_check", sql`
@@ -292,7 +292,7 @@ export const loans = pgTable("loans", {
         (${table.singlePaymentLatePenaltyAmountPerDay} IS NULL OR
             (${table.singlePaymentLatePenaltyAmountPerDay} >= 0 AND scale(${table.singlePaymentLatePenaltyAmountPerDay}) <= 2))
     `),
-    check("loans_interest_period_unit_check", sql`${table.interestPeriodUnit} IS NULL OR ${table.interestPeriodUnit} IN ('day', 'week')`),
+    check("loans_interest_period_unit_check", sql`${table.interestPeriodUnit} IS NULL OR ${table.interestPeriodUnit} IN ('day', 'week', 'month')`),
     check("loans_interest_period_length_check", sql`${table.interestPeriodLength} IS NULL OR ${table.interestPeriodLength} = 1`),
     check("loans_advance_interest_periods_check", sql`${table.advanceInterestPeriods} IS NULL OR ${table.advanceInterestPeriods} IN (0, 1)`),
     check("loans_advance_interest_refund_policy_check", sql`${table.advanceInterestRefundPolicy} IS NULL OR ${table.advanceInterestRefundPolicy} = 'non_refundable'`),
@@ -399,7 +399,7 @@ export const loanInterestRatePeriods = pgTable("loan_interest_rate_periods", {
     check("loan_interest_rate_periods_rate_positive_check", sql`${table.rate} > 0`),
     check("loan_interest_rate_periods_rate_scale_check", sql`scale(${table.rate}) <= 4`),
     check("loan_interest_rate_periods_rate_type_check", sql`${table.rateType} IN ('percent', 'per_thousand')`),
-    check("loan_interest_rate_periods_period_unit_check", sql`${table.periodUnit} IN ('day', 'week')`),
+    check("loan_interest_rate_periods_period_unit_check", sql`${table.periodUnit} IN ('day', 'week', 'month')`),
     check("loan_interest_rate_periods_period_length_check", sql`${table.periodLength} = 1`),
     check("loan_interest_rate_periods_date_order_check", sql`${table.expiryDate} IS NULL OR ${table.expiryDate} >= ${table.effectiveDate}`),
 ]);
@@ -503,21 +503,23 @@ export const loanInterestAccruals = pgTable("loan_interest_accruals", {
         (${table.periodStartDate} IS NOT NULL AND ${table.periodEndDate} > ${table.periodStartDate}
             AND ${table.periodDayIndex} BETWEEN 1 AND COALESCE(
                 ${table.periodDays},
-                CASE ${table.periodUnit} WHEN 'week' THEN 7 ELSE 1 END
+                CASE ${table.periodUnit} WHEN 'week' THEN 7 ELSE COALESCE(${table.periodDays}, 1) END
             )
             AND (${table.periodDays} IS NULL
                 OR (${table.periodUnit} = 'day' AND ${table.periodDays} = 1)
-                OR (${table.periodUnit} = 'week' AND ${table.periodDays} = 7))
+                OR (${table.periodUnit} = 'week' AND ${table.periodDays} = 7)
+                OR (${table.periodUnit} = 'month' AND ${table.periodDays} BETWEEN 28 AND 31))
             AND ${table.cumulativeInterestAmount} >= 0)
     `),
-    check("loan_interest_accruals_period_unit_check", sql`${table.periodUnit} IS NULL OR ${table.periodUnit} IN ('day', 'week')`),
+    check("loan_interest_accruals_period_unit_check", sql`${table.periodUnit} IS NULL OR ${table.periodUnit} IN ('day', 'week', 'month')`),
     check("loan_interest_accruals_period_length_check", sql`${table.periodLength} IS NULL OR ${table.periodLength} = 1`),
     check("loan_interest_accruals_period_date_order_check", sql`${table.periodStartDate} IS NULL OR ${table.periodEndDate} IS NULL OR ${table.periodEndDate} > ${table.periodStartDate}`),
     check("loan_interest_accruals_period_day_index_check", sql`
         ${table.periodDayIndex} IS NULL OR (
             ${table.periodDayIndex} >= 1
             AND (${table.periodUnit} = 'day' AND ${table.periodDayIndex} <= 1
-                OR ${table.periodUnit} = 'week' AND ${table.periodDayIndex} <= 7)
+                OR ${table.periodUnit} = 'week' AND ${table.periodDayIndex} <= 7
+                OR ${table.periodUnit} = 'month' AND ${table.periodDayIndex} <= 31)
         )
     `),
     check("loan_interest_accruals_period_snapshot_completeness_check", sql`

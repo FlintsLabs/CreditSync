@@ -36,6 +36,7 @@ interface LoanRow {
     status: string;
     createdAt: string;
     repaymentType: string;
+    floatingAccrualCycle?: "daily" | "weekly" | "monthly" | null;
     installmentAmount: string | null;
     totalInstallments: number | null;
     startDate: string | null;
@@ -350,7 +351,7 @@ export default function LoanList() {
                                                 </div>
                                                 <div className="min-w-0 flex-1">
                                                     <div className="text-muted-foreground text-[11px] font-medium">{t("loans.repaymentType", "Repayment type")}</div>
-                                                    <div className="font-semibold text-foreground truncate">{t(`loanWizard.repaymentOptions.${loan.repaymentType}`)}</div>
+                                                    <div className="font-semibold text-foreground truncate">{loan.repaymentType === "floating" && loan.floatingAccrualCycle ? t(`loanWizard.floatingAccrualLabels.${loan.floatingAccrualCycle}`) : t(`loanWizard.repaymentOptions.${loan.repaymentType}`)}</div>
                                                 </div>
                                             </div>
                                             <div className="flex items-start gap-2 min-w-0">

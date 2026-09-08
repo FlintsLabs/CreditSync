@@ -192,7 +192,8 @@
             "periodUnit": "รอบดอกเบี้ย",
             "periodOptions": {
                 "day": "รายวัน",
-                "week": "รายสัปดาห์"
+                "week": "รายสัปดาห์",
+                "month": "รายเดือน"
             },
             "rateMode": "รูปแบบอัตรา",
             "rateOptions": {
@@ -217,7 +218,8 @@
         "automatic": "คำนวณอัตโนมัติ",
         "repaymentType": "รูปแบบการผ่อน",
         "floatingAccrualCycle": "รอบสะสมดอกเบี้ยลอยตัว",
-        "floatingAccrualOptions": { "daily": "รายวัน", "weekly": "รายสัปดาห์" },
+        "floatingAccrualOptions": { "daily": "รายวัน", "weekly": "รายสัปดาห์", "monthly": "รายเดือน" },
+        "floatingAccrualLabels": { "daily": "ลอยตัวรายวัน", "weekly": "ลอยตัวรายสัปดาห์", "monthly": "ลอยตัวรายเดือน" },
         "startDate": "วันที่เริ่มต้น",
         "fundingSetup": "การตั้งค่าเงินทุน",
         "schedulePreview": "ตัวอย่างตารางผ่อน",
@@ -1259,11 +1261,13 @@
             "periodLabel": "รอบดอกเบี้ย",
             "periodName": {
                 "day": "รายวัน",
-                "week": "รายสัปดาห์"
+                "week": "รายสัปดาห์",
+                "month": "รายเดือน"
             },
             "period": {
                 "day": "วัน",
-                "week": "สัปดาห์"
+                "week": "สัปดาห์",
+                "month": "เดือน"
             },
             "contractRate": "อัตราตามสัญญา",
             "percentRate": "{{rate}}% ต่อ{{period}}",

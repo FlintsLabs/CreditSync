@@ -36,7 +36,7 @@ test("accepts PostgreSQL canonical constraint and partial-index definitions", as
             { table: "loans", name: "activation_result", type: "jsonb", nullable: true },
         ],
         constraints: [
-            { table: "loans", name: "loans_interest_period_unit_check", definition: `CHECK ((interest_period_unit IS NULL) OR (interest_period_unit = ANY (ARRAY['day'::text, 'week'::text])))` },
+            { table: "loans", name: "loans_interest_period_unit_check", definition: `CHECK ((interest_period_unit IS NULL) OR (interest_period_unit = ANY (ARRAY['day'::text, 'week'::text, 'month'::text])))` },
         ],
         indexes: [
             { table: "loans", name: "loans_tenant_activation_idempotency_unique", definition: "CREATE UNIQUE INDEX loans_tenant_activation_idempotency_unique ON public.loans USING btree (tenant_id, activation_idempotency_key) WHERE (activation_idempotency_key IS NOT NULL)", predicate: "(activation_idempotency_key IS NOT NULL)" },

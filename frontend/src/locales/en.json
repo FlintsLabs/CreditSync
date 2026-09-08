@@ -192,7 +192,8 @@
             "periodUnit": "Interest period",
             "periodOptions": {
                 "day": "Daily",
-                "week": "Weekly"
+                "week": "Weekly",
+                "month": "Monthly"
             },
             "rateMode": "Rate expression",
             "rateOptions": {
@@ -217,7 +218,8 @@
         "automatic": "Calculated automatically",
         "repaymentType": "Repayment Type",
         "floatingAccrualCycle": "Floating interest accrual cycle",
-        "floatingAccrualOptions": { "daily": "Daily", "weekly": "Weekly" },
+        "floatingAccrualOptions": { "daily": "Daily", "weekly": "Weekly", "monthly": "Monthly" },
+        "floatingAccrualLabels": { "daily": "Floating daily", "weekly": "Floating weekly", "monthly": "Floating monthly" },
         "startDate": "Start Date",
         "fundingSetup": "Funding setup",
         "schedulePreview": "Installment Schedule Preview",
@@ -1333,11 +1335,13 @@
             "periodLabel": "Interest period",
             "periodName": {
                 "day": "Daily",
-                "week": "Weekly"
+                "week": "Weekly",
+                "month": "Monthly"
             },
             "period": {
                 "day": "day",
-                "week": "week"
+                "week": "week",
+                "month": "month"
             },
             "contractRate": "Contract rate",
             "percentRate": "{{rate}}% per {{period}}",

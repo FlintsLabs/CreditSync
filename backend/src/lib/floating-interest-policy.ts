@@ -3,7 +3,7 @@ import { FinancialDecimal } from "./financial-decimal";
 import { parseMoney, serializeMoney } from "./money";
 
 export type FloatingInterestPolicy = {
-    periodUnit: "day" | "week";
+    periodUnit: "day" | "week" | "month";
     periodLength: 1;
     rateMode: "percent" | "per_thousand";
     rate: string;
@@ -49,8 +49,18 @@ function addBusinessDays(date: string, days: number) {
     return value.toISOString().slice(0, 10);
 }
 
-function periodDaysFor(policy: FloatingInterestPolicy) {
-    return policy.periodUnit === "day" ? 1 : 7;
+function periodDaysFor(policy: FloatingInterestPolicy, periodDaysOverride?: number) {
+    return periodDaysOverride ?? (policy.periodUnit === "day" ? 1 : policy.periodUnit === "week" ? 7 : 30);
+}
+
+function addCalendarMonths(date: string, months: number) {
+    const value = dateValue(date, "Business date");
+    const day = value.getUTCDate();
+    value.setUTCDate(1);
+    value.setUTCMonth(value.getUTCMonth() + months);
+    const lastDay = new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth() + 1, 0)).getUTCDate();
+    value.setUTCDate(Math.min(day, lastDay));
+    return value.toISOString().slice(0, 10);
 }
 
 function decimalPrincipal(principal: string) {
@@ -76,7 +86,7 @@ function periodInterestAmount(principal: string, policy: FloatingInterestPolicy)
 }
 
 export function normalizeFloatingInterestPolicy(input: FloatingInterestPolicy): FloatingInterestPolicy {
-    if (input.periodUnit !== "day" && input.periodUnit !== "week") {
+    if (input.periodUnit !== "day" && input.periodUnit !== "week" && input.periodUnit !== "month") {
         throw new Error("Floating interest period unit is invalid");
     }
     if (!Number.isInteger(input.periodLength) || input.periodLength !== 1) {
@@ -105,8 +115,21 @@ export function interestPeriodFor(anchorDate: string, businessDate: string, poli
     const normalized = normalizeFloatingInterestPolicy(policy);
     const anchor = dateValue(anchorDate, "Anchor date");
     const business = dateValue(businessDate, "Business date");
-    const periodDays = periodDaysFor(normalized);
     const elapsedCalendarDays = Math.round((business.valueOf() - anchor.valueOf()) / 86_400_000);
+    if (elapsedCalendarDays < 0) throw new Error("Business date cannot precede anchor date");
+    if (normalized.periodUnit === "month") {
+        let periodIndex = Math.max(0, (business.getUTCFullYear() - anchor.getUTCFullYear()) * 12 + business.getUTCMonth() - anchor.getUTCMonth());
+        let periodStart = addCalendarMonths(anchorDate, periodIndex);
+        if (periodStart > businessDate) {
+            periodIndex -= 1;
+            periodStart = addCalendarMonths(anchorDate, periodIndex);
+        }
+        const nextPeriodStart = addCalendarMonths(anchorDate, periodIndex + 1);
+        const periodDays = Math.round((dateValue(nextPeriodStart, "Business date").valueOf() - dateValue(periodStart, "Business date").valueOf()) / 86_400_000);
+        const dayIndex = Math.round((business.valueOf() - dateValue(periodStart, "Business date").valueOf()) / 86_400_000);
+        return { periodStart, nextPeriodStart, dayIndex, periodDays };
+    }
+    const periodDays = periodDaysFor(normalized);
     const periodIndex = Math.floor(elapsedCalendarDays / periodDays);
     const dayIndex = elapsedCalendarDays - (periodIndex * periodDays);
     const periodStart = addBusinessDays(anchorDate, periodIndex * periodDays);
@@ -124,9 +147,9 @@ export function calculatePeriodInterest(principal: string, policy: FloatingInter
     return roundMoney(periodInterestAmount(principal, normalized));
 }
 
-export function calculateAccruedInterest(principal: string, policy: FloatingInterestPolicy, elapsedDays: number) {
+export function calculateAccruedInterest(principal: string, policy: FloatingInterestPolicy, elapsedDays: number, periodDaysOverride?: number) {
     const normalized = normalizeFloatingInterestPolicy(policy);
-    const periodDays = periodDaysFor(normalized);
+    const periodDays = periodDaysFor(normalized, periodDaysOverride);
     if (!Number.isInteger(elapsedDays) || elapsedDays < 0 || elapsedDays > periodDays) {
         throw new Error("Elapsed days must be within the interest period");
     }

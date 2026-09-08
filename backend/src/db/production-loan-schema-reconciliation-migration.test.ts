@@ -6,6 +6,7 @@ import { inspectLoanOriginationSchema } from "./loan-origination-schema-contract
 
 const backendRoot = `${import.meta.dir}/../../`;
 const migrationTag = "0038_production_loan_schema_reconciliation";
+const monthlyCycleMigrationTag = "0063_floating_monthly_cycle";
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const integrationTest = databaseUrl ? test : test.skip;
 
@@ -198,6 +199,15 @@ async function expectRejectedWithoutCatalogChange(sql: ReturnType<typeof postgre
     expect(await snapshotTargetCatalog(sql)).toEqual(before);
 }
 
+async function applyCurrentLoanSchema(sql: ReturnType<typeof postgres>) {
+    await applySqlFile(sql, `${backendRoot}drizzle/${migrationTag}.sql`);
+    await applySqlFile(sql, `${backendRoot}drizzle/${monthlyCycleMigrationTag}.sql`);
+}
+
+async function applyMonthlyCycleSchema(sql: ReturnType<typeof postgres>) {
+    await applySqlFile(sql, `${backendRoot}drizzle/${monthlyCycleMigrationTag}.sql`);
+}
+
 integrationTest("reconciles the production-shaped 2026-08-16 drift repeatably without changing financial rows", async () => {
     const sql = postgres(databaseUrl!, { max: 1 });
     try {
@@ -222,7 +232,7 @@ integrationTest("reconciles the production-shaped 2026-08-16 drift repeatably wi
             FROM loan_interest_accruals WHERE public_id = ${seeded.accrual.public_id}
         `;
 
-        await applySqlFile(sql, `${backendRoot}drizzle/${migrationTag}.sql`);
+        await applyCurrentLoanSchema(sql);
         const after = await inspectLoanOriginationSchema(sql);
         expect(after.compatible).toBe(true);
         const financialAfterFirst = await sql`
@@ -238,7 +248,7 @@ integrationTest("reconciles the production-shaped 2026-08-16 drift repeatably wi
         expect(Array.from(financialAfterFirst)).toEqual(Array.from(financialBefore));
         expect(Array.from(accrualAfterFirst)).toEqual(Array.from(accrualBefore));
 
-        await applySqlFile(sql, `${backendRoot}drizzle/${migrationTag}.sql`);
+        await applyMonthlyCycleSchema(sql);
         expect(await inspectLoanOriginationSchema(sql)).toMatchObject({ compatible: true });
         const financialAfterSecond = await sql`
             SELECT public_id, principal_amount, outstanding_principal, outstanding_interest, status

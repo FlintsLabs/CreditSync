@@ -57,9 +57,26 @@ describe("floating interest period policy", () => {
         });
     });
 
+    test("uses calendar-month boundaries for monthly periods", () => {
+        const policy = normalizeFloatingInterestPolicy({ ...weeklyPolicy, periodUnit: "month" });
+
+        expect(interestPeriodFor("2026-01-31", "2026-02-15", policy)).toEqual({
+            periodStart: "2026-01-31",
+            nextPeriodStart: "2026-02-28",
+            dayIndex: 15,
+            periodDays: 28,
+        });
+        expect(interestPeriodFor("2026-01-31", "2026-02-28", policy)).toEqual({
+            periodStart: "2026-02-28",
+            nextPeriodStart: "2026-03-31",
+            dayIndex: 0,
+            periodDays: 31,
+        });
+    });
+
     test("validates the supported unit, one-period length, rate, and advance policy", () => {
         // Break caught: malformed policy values silently change a financial contract.
-        expect(() => normalizeFloatingInterestPolicy({ ...weeklyPolicy, periodUnit: "month" as "week" })).toThrow("unit");
+        expect(() => normalizeFloatingInterestPolicy({ ...weeklyPolicy, periodUnit: "quarter" as "week" })).toThrow("unit");
         expect(() => normalizeFloatingInterestPolicy({ ...weeklyPolicy, periodLength: 2 as unknown as 1 })).toThrow("length");
         expect(() => normalizeFloatingInterestPolicy({ ...weeklyPolicy, rate: "0" })).toThrow("positive");
         expect(() => normalizeFloatingInterestPolicy({ ...weeklyPolicy, rate: "1.00001" })).toThrow("four");

@@ -1,5 +1,9 @@
 # CreditSync Plugin Changelog
 
+## 9.1.1 - 2026-09-08
+
+- Synchronized the frozen 112-tool contract and loan-management guidance for daily, weekly, and calendar-monthly floating accrual cycles.
+
 ## 9.1.0 - 2026-09-07
 
 - Added official ChatGPT file-parameter payment evidence import and append-only confirmed supplemental evidence for posted payments.

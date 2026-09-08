@@ -328,7 +328,7 @@ async function accrueFloatingInterestThroughInTransaction(tx: Executor, loan: ty
             segmentElapsedDays = 0;
         }
         segmentElapsedDays += 1;
-        const accrued = calculateAccruedInterest(openingPrincipal, policy, segmentElapsedDays);
+        const accrued = calculateAccruedInterest(openingPrincipal, policy, segmentElapsedDays, interestPeriod.periodDays);
         periodCumulative = periodCumulative.plus(accrued.incrementAmount);
         inserts.push({
             tenantId: loan.tenantId,
@@ -687,7 +687,7 @@ async function expectedFloatingAccruals(
         const policy: FloatingInterestPolicy = generalizedPolicy
             ? periodPolicy(loan, storedPeriod)
             : {
-                periodUnit: accrualCycle === "weekly" ? "week" : "day",
+                periodUnit: accrualCycle === "weekly" ? "week" : accrualCycle === "monthly" ? "month" : "day",
                 periodLength: 1,
                 rateMode: resolved.rateType,
                 rate: resolved.rate,

@@ -31,7 +31,7 @@ function rateLabel(period: Pick<RatePeriod, "rate" | "rateType">, percent: strin
     return `${period.rate} ${period.rateType === "percent" ? percent : perThousand}`;
 }
 
-export function FloatingInterestRateCard({ loanPublicId, periodUnit = "day" }: { loanPublicId: string; periodUnit?: "day" | "week" }) {
+export function FloatingInterestRateCard({ loanPublicId, periodUnit = "day" }: { loanPublicId: string; periodUnit?: "day" | "week" | "month" }) {
     const { t, i18n } = useTranslation();
     const [timeline, setTimeline] = useState<Timeline | null>(null);
     const [loading, setLoading] = useState(true);

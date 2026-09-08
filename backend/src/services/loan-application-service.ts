@@ -201,14 +201,14 @@ function floatingDailyInterestForPolicy(policy: FloatingInterestPolicy): Floatin
         mode: policy.rateMode,
         rate: policy.rate,
         firstDayTreatment: policy.advanceInterestPeriods === 1 ? "deduct" : "start_next_day",
-        accrualCycle: policy.periodUnit === "week" ? "weekly" : "daily",
+        accrualCycle: policy.periodUnit === "week" ? "weekly" : policy.periodUnit === "month" ? "monthly" : "daily",
     };
 }
 
 function floatingPolicyFromDaily(input: FloatingDailyInterestInput): FloatingInterestPolicy {
     const daily = normalizeFloatingDailyInterest(input);
     return normalizeFloatingInterestPolicy({
-        periodUnit: daily.accrualCycle === "weekly" ? "week" : "day",
+        periodUnit: daily.accrualCycle === "weekly" ? "week" : daily.accrualCycle === "monthly" ? "month" : "day",
         periodLength: 1,
         rateMode: daily.mode,
         rate: daily.rate,
@@ -809,7 +809,7 @@ export async function createLoanDraft(ctx: CommandContext, input: LoanDraftInput
             advanceInterestPeriods: policy?.advanceInterestPeriods ?? null,
             advanceInterestRefundPolicy: policy?.advanceInterestRefundPolicy ?? null,
             interestPeriodAnchorDate: policy ? input.startDate : null,
-            floatingAccrualCycle: policy ? policy.periodUnit === "week" ? "weekly" : "daily" : null,
+            floatingAccrualCycle: policy ? policy.periodUnit === "week" ? "weekly" : policy.periodUnit === "month" ? "monthly" : "daily" : null,
             dailyTermUnit: dailyEntry?.durationUnit ?? null,
             dailyTermValue: dailyEntry?.durationValue ?? null,
             dailyEntryMode: dailyEntry?.entryMode ?? null,
@@ -943,7 +943,7 @@ export async function updateLoanDraft(ctx: CommandContext, publicId: string, inp
             advanceInterestPeriods: policy?.advanceInterestPeriods ?? null,
             advanceInterestRefundPolicy: policy?.advanceInterestRefundPolicy ?? null,
             interestPeriodAnchorDate: policy ? mergedInput.startDate : null,
-            floatingAccrualCycle: policy ? policy.periodUnit === "week" ? "weekly" : "daily" : null,
+            floatingAccrualCycle: policy ? policy.periodUnit === "week" ? "weekly" : policy.periodUnit === "month" ? "monthly" : "daily" : null,
             dailyTermUnit: dailyEntry?.durationUnit ?? null,
             dailyTermValue: dailyEntry?.durationValue ?? null,
             dailyEntryMode: dailyEntry?.entryMode ?? null,
