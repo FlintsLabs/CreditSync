@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.96 - 2026-09-08
+
+### Fixed
+- Allowed weekly floating-loan previews without advance-interest coverage dates to return `null` through the MCP contract, and added regression coverage.
+
 ## v0.3.95 - 2026-09-08
 
 ### Added

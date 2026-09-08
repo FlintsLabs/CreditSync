@@ -268,6 +268,41 @@ describe("CreditSync stateless MCP contract", () => {
         await client.close();
     });
 
+    test("accepts a weekly floating preview without advance-interest coverage dates", async () => {
+        const baseUrl = await startServer({ toolHandlers: { "loan.preview": async (_ctx, input) => previewLoan(input as unknown as Parameters<typeof previewLoan>[0]) } });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+
+        const result = await client.callTool({
+            name: "loan.preview",
+            arguments: {
+                principal: "2000.00",
+                interestRate: "0.00",
+                termMonths: 1,
+                repaymentType: "floating",
+                startDate: "2026-09-07",
+                floatingInterestPolicy: {
+                    periodUnit: "week",
+                    periodLength: 1,
+                    rateMode: "percent",
+                    rate: "12.0000",
+                    advanceInterestPeriods: 0,
+                    advanceInterestRefundPolicy: "non_refundable",
+                },
+            },
+        });
+
+        expect(result.isError).not.toBe(true);
+        expect(result.structuredContent).toMatchObject({
+            data: {
+                advanceInterest: "0.00",
+                coveredStartDate: null,
+                coveredEndDate: null,
+            },
+        });
+        await client.close();
+    });
+
     // Break caught: settlement tools are absent, accept refund overrides, or advertise execute as non-destructive/non-idempotent.
     test("advertises closed settlement preview and explicitly confirmed idempotent execute contracts", async () => {
         let observedContext: CommandContext | undefined;
