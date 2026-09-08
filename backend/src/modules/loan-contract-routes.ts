@@ -275,6 +275,8 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                         status: loan.status,
                         createdAt: loan.createdAt,
                         repaymentType: loan.repaymentType,
+                        interestPeriodUnit: loan.interestPeriodUnit,
+                        floatingAccrualCycle: loan.floatingAccrualCycle,
                         interestRate: serializeMoney(loan.interestRate),
                         installmentAmount: loan.installmentAmount === null ? null : serializeMoney(loan.installmentAmount),
                         totalInstallments: loan.totalInstallments,

@@ -214,6 +214,12 @@ describe("loan payment-health service", () => {
         const detail = await response.json() as { paymentHealth: LoanPaymentHealth };
 
         expect(detail.paymentHealth).toMatchObject({ overdueObligationUnit: "week", overdueObligationCount: 1 });
+
+        const listResponse = await new Elysia().use(loansRoute).handle(new Request("http://localhost/loans", {
+            headers: { authorization: `Bearer ${await authToken(actor)}` },
+        }));
+        const list = (await listResponse.json() as Array<{ publicId: string; interestPeriodUnit?: string; floatingAccrualCycle?: string }>).find((row) => row.publicId === loan.publicId);
+        expect(list).toMatchObject({ interestPeriodUnit: "week", floatingAccrualCycle: "daily" });
     });
 
     // Break caught: today's floating interest is overdue immediately, partial history uses gross,
