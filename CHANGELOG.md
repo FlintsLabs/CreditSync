@@ -10,6 +10,7 @@
 ### Fixed
 - Made scheduled allocation-correction integration fixtures independent of the current calendar date.
 - Preserved the deployed ChatGPT evidence migration's audit foreign key and exact production hash during integration.
+- Completed the combined MCP catalog integration coverage for ChatGPT evidence commands.
 
 ### Changed
 - Added a failing regression contract for the combined production migration lineage.

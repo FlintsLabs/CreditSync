@@ -1816,6 +1816,23 @@ describe("default MCP adapter integration", () => {
         }))).rejects.toMatchObject({ code: "PAYMENT_RECONCILIATION_REVIEW_STATE_CONFLICT" });
         called.push("payment.reconcile.mark-review");
 
+        await expect(call("evidence.import-chatgpt-file", {
+            paymentIntakePublicId: intakePublicId,
+            chatgptFile: { download_url: "http://invalid.example.test/file", file_id: "chatgpt-file" },
+        })).rejects.toBeDefined();
+        called.push("evidence.import-chatgpt-file");
+        await expect(call("payment.evidence-supplement.import-chatgpt-file", {
+            paymentIntakePublicId: intakePublicId,
+            chatgptFile: { download_url: "http://invalid.example.test/file", file_id: "chatgpt-file" },
+        })).rejects.toBeDefined();
+        called.push("payment.evidence-supplement.import-chatgpt-file");
+        await expect(call("payment.evidence-supplement.record", {
+            paymentIntakePublicId: intakePublicId,
+            supplementPublicId: "11111111-1111-4111-8111-111111111111",
+            reason: "evidence_recovered",
+        })).rejects.toBeDefined();
+        called.push("payment.evidence-supplement.record");
+
         await expect(call("payment.allocation-correction.preview", {
             paymentIntakePublicId: intakePublicId,
             transactionPublicId: paymentPublicId,
