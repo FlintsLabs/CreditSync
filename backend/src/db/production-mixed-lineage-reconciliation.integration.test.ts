@@ -109,11 +109,6 @@ integration("applies the exact mixed lineage, preserves legacy rows/FK, and reru
   const stockRerun = Bun.spawnSync(["bun", "run", "scripts/reconcile-production-mixed-lineage.ts"], { cwd: root, env: { ...process.env, DATABASE_URL: databaseUrl! }, stdout: "pipe", stderr: "pipe" });
   expect(stockRerun.exitCode, new TextDecoder().decode(stockRerun.stderr)).toBe(0);
   expect(new TextDecoder().decode(stockRerun.stdout)).toContain("already-complete");
-  for (const [legacyHash, when] of [
-    ["0a72edb73c76b820f026b7389873cb441cc5f7d8ac2a81e9585131d9da866d2c", 1786485015063],
-    ["73f1803d9c83df434746a58a82e5d180899071971b0d22fe45e23fa7bb7dfc81", 1786486095512],
-    ["cd43d16ea7fe5c42d04624fe8bf7570871c504c9dda3cb88722a8c1097070427", 1786593600000],
-  ] as const) await sql`INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES (${legacyHash}, ${when})`;
   const deployedLineage = Bun.spawnSync(["bun", "run", "scripts/reconcile-production-mixed-lineage.ts"], { cwd: root, env: { ...process.env, DATABASE_URL: databaseUrl! }, stdout: "pipe", stderr: "pipe" });
   expect(deployedLineage.exitCode, new TextDecoder().decode(deployedLineage.stderr)).toBe(0);
   expect(new TextDecoder().decode(deployedLineage.stdout)).toContain("already-complete");

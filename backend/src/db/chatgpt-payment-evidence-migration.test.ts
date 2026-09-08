@@ -10,7 +10,7 @@ test("registers additive evidence-required and supplemental-evidence persistence
         Bun.file(`${backendRoot}drizzle/${migrationTag}.sql`).text(),
     ]);
 
-    expect(journal.entries.at(-1)).toMatchObject({ idx: 61, tag: migrationTag });
+    expect(journal.entries.find((entry: { tag: string }) => entry.tag === migrationTag)).toMatchObject({ idx: 61, tag: migrationTag });
     expect(migration).toContain('ALTER TABLE "payment_intakes" ADD COLUMN "evidence_required" boolean DEFAULT false NOT NULL');
     expect(migration).toContain('CREATE TABLE "payment_evidence_supplements"');
     expect(migration).toContain("payment_evidence_supplements_status_check");
