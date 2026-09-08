@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.6 - 2026-09-09
+
+### Changed
+- Documented the append-only signed-upload design and implementation plan for adding supplemental evidence to an exact posted payment without changing payment or ledger state.
+
 ## v0.4.5 - 2026-09-09
 
 ### Fixed
