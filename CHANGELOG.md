@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.4 - 2026-09-08
+
+### Fixed
+- Included floating contract period metadata in the Loan List response so weekly floating contracts are not rendered as daily.
+
 ## v0.4.3 - 2026-09-08
 
 ### Fixed
