@@ -144,14 +144,19 @@ describe("scheduled payment allocation correction", () => {
     integrationTest("preserves renewal opening adjustments during correction execution", async () => {
         const seeded = await fixture();
         const opening = await seedRenewalOpeningAdjustments(seeded);
+        const beforeLoan = await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) });
         const preview = await previewPaymentAllocationCorrection(seeded.ctx, { paymentIntakePublicId: seeded.intake.publicId, transactionPublicId: seeded.source.publicId, targetSchedulePublicId: seeded.schedules[0]!.publicId, reason: "Move payment to the received installment" });
         const result = await executePaymentAllocationCorrection(seeded.ctx, { correctionPreviewPublicId: preview.publicId, previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: "Move payment to the received installment", idempotencyKey: "renewal-opening-correction" });
         expect(result).toMatchObject({ amount: "200.00", components: { principal: "173.92", interest: "26.08", fee: "0.00", penalty: "0.00" }, sourceSchedulePublicId: seeded.schedules[1]!.publicId, targetSchedulePublicId: seeded.schedules[0]!.publicId });
         expect(await db.select().from(loanAdjustments).where(eq(loanAdjustments.renewalId, opening.renewal.id))).toEqual(opening.adjustments);
-        expect(await db.select().from(transactions).where(eq(transactions.tenantId, seeded.tenantId))).toHaveLength(3);
+        const history = await db.select().from(transactions).where(eq(transactions.tenantId, seeded.tenantId)).orderBy(transactions.id);
+        expect(history).toHaveLength(3);
+        expect(history[1]).toMatchObject({ amount: "-200.00", principalComponent: "-173.92", interestComponent: "-26.08", feeComponent: "0.00", penaltyComponent: "0.00", transactionDate: seeded.source.transactionDate });
+        expect(history[2]).toMatchObject({ amount: "200.00", principalComponent: "173.92", interestComponent: "26.08", feeComponent: "0.00", penaltyComponent: "0.00", transactionDate: seeded.source.transactionDate });
         expect(await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.id, seeded.intake.id) })).toMatchObject({ status: "posted" });
         expect(await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.id, seeded.schedules[1]!.id) })).toMatchObject({ paidTotal: "0.00", remainingDue: "200.00" });
         expect(await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.id, seeded.schedules[0]!.id) })).toMatchObject({ paidTotal: "200.00", remainingDue: "0.00" });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({ outstandingPrincipal: beforeLoan!.outstandingPrincipal, outstandingInterest: beforeLoan!.outstandingInterest, outstandingFees: beforeLoan!.outstandingFees });
     });
 
     integrationTest("rejects execution when an opening adjustment status changes after preview", async () => {

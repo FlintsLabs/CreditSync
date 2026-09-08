@@ -3,6 +3,7 @@
 ## v0.4.5 - 2026-09-09
 
 ### Fixed
+- Added execution-preservation and stale-lineage regression coverage for renewal-origin scheduled payment allocation correction.
 - Allowed scheduled allocation correction to ignore only executed-renewal `principal_transfer` and `cash_payout` opening ancestors on the renewal-created loan while retaining fail-closed blockers for all other adjustments.
 - Added regression coverage reproducing renewal-origin opening adjustments being misclassified as downstream blockers during scheduled payment allocation correction.
 
