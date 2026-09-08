@@ -186,6 +186,36 @@ describe("loan payment-health service", () => {
         expect(await db.select({ outstandingInterest: loans.outstandingInterest }).from(loans).where(eq(loans.id, loan.id))).toEqual(before);
     });
 
+    integrationTest("uses the explicit floating accrual cycle for overdue labels when legacy period metadata conflicts", async () => {
+        setSystemTime(new Date("2026-08-11T12:00:00+07:00"));
+        const { actor, borrower } = await seedActorAndBorrower("tenant-floating-cycle-label");
+        const loan = await db.insert(loans).values({
+            tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id,
+            principalAmount: "1000.00", interestRate: "0.00", repaymentType: "floating",
+            dailyInterestMode: "per_thousand", dailyInterestRate: "15.0000", floatingAccrualCycle: "daily",
+            interestPeriodUnit: "week", interestPeriodLength: 1, advanceInterestPeriods: 0,
+            advanceInterestRefundPolicy: "non_refundable", interestPeriodAnchorDate: "2026-08-09",
+            firstDayTreatment: "start_next_day", interestStartDate: "2026-08-09",
+            outstandingPrincipal: "1000.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        const period = await db.insert(loanInterestRatePeriods).values({
+            tenantId: actor.tenantId, loanId: loan.id, effectiveDate: "2026-08-09", expiryDate: null,
+            rateType: "per_thousand", rate: "15.0000", createdByUserId: actor.id,
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanInterestAccruals).values({
+            tenantId: actor.tenantId, loanId: loan.id, interestRatePeriodId: period.id, accrualDate: "2026-08-10",
+            openingPrincipal: "1000.00", rateMode: "per_thousand", rate: "15.0000",
+            interestAmount: "15.00", paidAmount: "0.00", status: "accrued", createdByUserId: actor.id,
+        });
+
+        const response = await new Elysia().use(loansRoute).handle(new Request(`http://localhost/loans/${loan.publicId}`, {
+            headers: { authorization: `Bearer ${await authToken(actor)}` },
+        }));
+        const detail = await response.json() as { paymentHealth: LoanPaymentHealth };
+
+        expect(detail.paymentHealth).toMatchObject({ overdueObligationUnit: "day", overdueObligationCount: 1 });
+    });
+
     // Break caught: today's floating interest is overdue immediately, partial history uses gross,
     // or a health read writes missing financial snapshots.
     integrationTest("projects floating accruals without mutation and uses exact unpaid remainders", async () => {
