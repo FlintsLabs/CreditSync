@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.5 - 2026-09-09
+
+### Changed
+- Documented the causal-lineage design for safely correcting scheduled payment allocations on renewal-created loans without treating immutable opening adjustments as downstream blockers.
+
 ## v0.4.4 - 2026-09-08
 
 ### Fixed
