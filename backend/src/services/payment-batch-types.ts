@@ -14,6 +14,8 @@ export type BatchSlip = {
     itemPublicId: string;
     amount: string;
     receivedAt: string;
+    /** Human-reviewed borrower constraint; absent means unresolved for solver purposes. */
+    borrowerPublicId?: string;
     requestedDueDate?: string;
     allowAdvance?: boolean;
     allowBackdated?: boolean;

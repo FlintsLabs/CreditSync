@@ -31,6 +31,7 @@ function compareObligations(left: BatchObligation, right: BatchObligation) {
 }
 
 function eligibleForSlip(obligation: BatchObligation, slip: BatchSlip) {
+    if (slip.borrowerPublicId && obligation.borrowerPublicId !== slip.borrowerPublicId) return false;
     const requestedDate = slip.requestedDueDate;
     if (requestedDate && obligation.dueDate !== requestedDate) return false;
     const receivedDate = slip.receivedAt.slice(0, 10);

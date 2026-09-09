@@ -5,7 +5,7 @@ import { borrowers, loans, loanSchedules, paymentBatches, paymentBatchDependenci
 import type { CommandContext } from "./command-context";
 import type { EvidenceStorageGateway } from "./payment-service";
 import { assertNoOlderPendingPayment } from "./payment-chronology-service";
-import { stagePaymentBatchItems, preparePaymentBatchStagingEvidence, finalizePaymentBatchStagingEvidence, reviewPaymentBatchStagingItem, previewPaymentBatch, cancelPaymentBatch, capturePaymentBatch, getPaymentBatchWorkspace, editPaymentBatchStagingItem, splitPaymentBatch } from "./payment-batch-service";
+import { stagePaymentBatchItems, preparePaymentBatchStagingEvidence, finalizePaymentBatchStagingEvidence, reviewPaymentBatchStagingItem, previewPaymentBatch, executePaymentBatch, cancelPaymentBatch, capturePaymentBatch, getPaymentBatchWorkspace, editPaymentBatchStagingItem, splitPaymentBatch } from "./payment-batch-service";
 
 const integration = process.env.TEST_DATABASE_URL ? test : test.skip;
 async function fixture() {
@@ -281,4 +281,39 @@ integration("mapping null is a distinct clear mutation from an omitted mapping",
     await expect(editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[0]!.publicId, expectedRevision: 1, idempotencyKey: "mapping-omitted", reason: "synthetic", mapping: null })).rejects.toThrow("different");
     await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[0]!.publicId, expectedRevision: 2, idempotencyKey: "mapping-clear", reason: "synthetic clear", mapping: null });
     expect((await db.query.paymentBatchStagingItems.findFirst({ where: eq(paymentBatchStagingItems.publicId, f.staged.items[0]!.publicId) }))?.reviewedMapping).toBeNull();
+});
+
+integration("borrower-only staging mappings reject an explicit allocation to another borrower", async () => {
+    const f = await fixture();
+    const [secondBorrower] = await db.insert(borrowers).values({ tenantId: f.ctx.tenantId, ownerUserId: f.ctx.actorUserId, name: "Synthetic constraint borrower" }).returning();
+    const [firstLoan] = await db.insert(loans).values({ tenantId: f.ctx.tenantId, ownerUserId: f.ctx.actorUserId!, borrowerId: (await db.query.borrowers.findFirst({ where: eq(borrowers.publicId, f.input.borrowerPublicId!) }))!.id, principalAmount: "120.00", interestRate: "0.00", repaymentType: "monthly", outstandingPrincipal: "120.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" }).returning();
+    const [secondLoan] = await db.insert(loans).values({ tenantId: f.ctx.tenantId, ownerUserId: f.ctx.actorUserId!, borrowerId: secondBorrower!.id, principalAmount: "120.00", interestRate: "0.00", repaymentType: "monthly", outstandingPrincipal: "120.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" }).returning();
+    const [firstSchedule] = await db.insert(loanSchedules).values({ tenantId: f.ctx.tenantId, loanId: firstLoan!.id, installmentNo: 1, dueDate: "2026-09-07", scheduledPrincipal: "120.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "120.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "120.00", status: "pending" }).returning();
+    const [secondSchedule] = await db.insert(loanSchedules).values({ tenantId: f.ctx.tenantId, loanId: secondLoan!.id, installmentNo: 1, dueDate: "2026-09-08", scheduledPrincipal: "120.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "120.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "120.00", status: "pending" }).returning();
+    for (const item of f.staged.items) {
+        const evidence = await preparePaymentBatchStagingEvidence(f.ctx, { ...f.evidenceInput, stagingItemPublicId: item.publicId, sha256: item.publicId === f.staged.items[0]!.publicId ? "f".repeat(64) : "0".repeat(64) }, f.gateway);
+        await finalizePaymentBatchStagingEvidence(f.ctx, item.publicId, evidence.evidencePublicId, f.gateway);
+    }
+    await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[0]!.publicId, expectedRevision: 1, idempotencyKey: "borrower-only-first", reason: "synthetic borrower constraint", mapping: { borrowerPublicId: f.input.borrowerPublicId! } });
+    await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[1]!.publicId, expectedRevision: 1, idempotencyKey: "borrower-only-second", reason: "synthetic borrower constraint", mapping: { borrowerPublicId: secondBorrower!.publicId } });
+    const reviewedFirst = await reviewPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[0]!.publicId, amount: "120.00", receivedAt: "2026-09-07T10:00:00+07:00", intakeIdempotencyKey: "review-borrower-only-first" });
+    const reviewedSecond = await reviewPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[1]!.publicId, amount: "120.00", receivedAt: "2026-09-08T10:00:00+07:00", intakeIdempotencyKey: "review-borrower-only-second" });
+    await expect(previewPaymentBatch(f.ctx, f.staged.batchPublicId, {
+        borrowerPublicId: f.input.borrowerPublicId!,
+        allocations: [
+            { itemPublicId: reviewedFirst.batchItemPublicId as string, borrowerPublicId: secondBorrower!.publicId, loanPublicId: secondLoan!.publicId, schedulePublicId: secondSchedule!.publicId, amount: "120.00", targetDueDate: "2026-09-08", intent: "on_time" },
+            { itemPublicId: reviewedSecond.batchItemPublicId as string, borrowerPublicId: f.input.borrowerPublicId!, loanPublicId: firstLoan!.publicId, schedulePublicId: firstSchedule!.publicId, amount: "120.00", targetDueDate: "2026-09-07", intent: "on_time" },
+        ],
+    })).rejects.toThrow("mapping");
+    expect(await db.select().from(transactions).where(eq(transactions.tenantId, f.ctx.tenantId))).toHaveLength(0);
+    const validPreview = await previewPaymentBatch(f.ctx, f.staged.batchPublicId, {
+        borrowerPublicId: f.input.borrowerPublicId!,
+        allocations: [
+            { itemPublicId: reviewedFirst.batchItemPublicId as string, borrowerPublicId: f.input.borrowerPublicId!, loanPublicId: firstLoan!.publicId, schedulePublicId: firstSchedule!.publicId, amount: "120.00", targetDueDate: "2026-09-07", intent: "on_time" },
+            { itemPublicId: reviewedSecond.batchItemPublicId as string, borrowerPublicId: secondBorrower!.publicId, loanPublicId: secondLoan!.publicId, schedulePublicId: secondSchedule!.publicId, amount: "120.00", targetDueDate: "2026-09-08", intent: "on_time" },
+        ],
+    });
+    expect(validPreview.status).toBe("ready");
+    await executePaymentBatch(f.ctx, f.staged.batchPublicId, { previewPublicId: validPreview.publicId, previewHash: validPreview.previewHash, confirmationHash: validPreview.confirmationHash, confirmed: true, idempotencyKey: "execute-borrower-constraints" });
+    expect(await db.select().from(transactions).where(eq(transactions.tenantId, f.ctx.tenantId))).toHaveLength(2);
 });

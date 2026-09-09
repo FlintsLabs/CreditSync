@@ -764,6 +764,22 @@ export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: st
     });
     const slips: BatchSlip[] = items.map((item) => { const intake = intakes.find((candidate) => candidate.id === item.paymentIntakeId)!; return { itemPublicId: item.publicId, amount: intake.amount, receivedAt: intake.receivedAt.toISOString() }; });
     const stagingForItems = await db.select().from(paymentBatchStagingItems).where(and(eq(paymentBatchStagingItems.tenantId, ctx.tenantId), inArray(paymentBatchStagingItems.batchItemId, items.map((item) => item.id))));
+    const authoritativeBorrowerByItem = new Map<string, string>();
+    for (const item of items) {
+        const mapping = stagingForItems.find((staging) => staging.batchItemId === item.id)?.reviewedMapping;
+        if (mapping?.borrowerPublicId) {
+            const selected = targetBorrowers.find((candidate) => candidate.publicId === mapping.borrowerPublicId);
+            if (!selected) throw new DomainError("BATCH_ALLOCATION_MISMATCH", "Reviewed borrower is not accessible for this batch", 409);
+            authoritativeBorrowerByItem.set(item.publicId, selected.publicId);
+            const mappedLoan = mapping.loanPublicId ? loansForBorrower.find((candidate) => candidate.publicId === mapping.loanPublicId) : null;
+            if (mappedLoan && targetBorrowers.find((candidate) => candidate.id === mappedLoan.borrowerId)?.publicId !== selected.publicId) throw new DomainError("BATCH_ALLOCATION_MISMATCH", "Reviewed loan does not belong to the reviewed borrower", 409);
+        } else if (mapping?.loanPublicId) {
+            const mappedLoan = loansForBorrower.find((candidate) => candidate.publicId === mapping.loanPublicId);
+            if (!mappedLoan) throw new DomainError("BATCH_ALLOCATION_MISMATCH", "Mapped loan is not an eligible loan for this batch", 409);
+            authoritativeBorrowerByItem.set(item.publicId, targetBorrowers.find((candidate) => candidate.id === mappedLoan.borrowerId)!.publicId);
+        }
+    }
+    for (const slip of slips) slip.borrowerPublicId = authoritativeBorrowerByItem.get(slip.itemPublicId);
     const mappedAllocations = items.map((item) => {
         const mapping = stagingForItems.find((staging) => staging.batchItemId === item.id)?.reviewedMapping;
         if (!mapping?.loanPublicId) return null;
@@ -773,7 +789,7 @@ export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: st
         if (mapping.schedulePublicId && !schedule) throw new DomainError("BATCH_ALLOCATION_MISMATCH", "Mapped schedule is not an eligible schedule for this loan", 409);
         return { itemPublicId: item.publicId, borrowerPublicId: targetBorrowers.find((candidate) => candidate.id === loan.borrowerId)!.publicId, loanPublicId: loan.publicId, ...(schedule ? { schedulePublicId: schedule.publicId } : {}), amount: intakes.find((intake) => intake.id === item.paymentIntakeId)!.amount, targetDueDate: schedule?.dueDate ?? bangkokBusinessDate(new Date(slips.find((slip) => slip.itemPublicId === item.publicId)!.receivedAt)), intent: "on_time" as const };
     });
-    const hasReviewedMapping = mappedAllocations.some((allocation) => allocation !== null);
+    const hasReviewedMapping = mappedAllocations.some((allocation) => allocation !== null) || authoritativeBorrowerByItem.size > 0;
     if (!input.allocations && hasReviewedMapping && mappedAllocations.some((allocation) => allocation === null)) throw new DomainError("BATCH_MAPPING_REQUIRES_REVIEW", "Every item with a reviewed mapping must have a complete mapping before preview", 409);
     if (input.allocations && hasReviewedMapping) {
         for (const [index, mapped] of mappedAllocations.entries()) {
@@ -781,11 +797,20 @@ export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: st
             const explicit = input.allocations.filter((allocation) => allocation.itemPublicId === mapped.itemPublicId);
             if (!explicit.length || explicit.some((allocation) => allocation.loanPublicId !== mapped.loanPublicId || allocation.schedulePublicId !== mapped.schedulePublicId || (allocation.borrowerPublicId ?? mapped.borrowerPublicId) !== mapped.borrowerPublicId)) throw new DomainError("BATCH_MAPPING_CONFLICT", `Explicit allocation conflicts with reviewed mapping for item ${index + 1}`, 409);
         }
+        for (const [itemPublicId, borrowerPublicId] of authoritativeBorrowerByItem) {
+            const explicit = input.allocations.filter((allocation) => allocation.itemPublicId === itemPublicId);
+            if (!explicit.length || explicit.some((allocation) => allocation.borrowerPublicId && allocation.borrowerPublicId !== borrowerPublicId || loansForBorrower.find((loan) => loan.publicId === allocation.loanPublicId)?.borrowerId !== targetBorrowers.find((borrower) => borrower.publicId === borrowerPublicId)?.id)) throw new DomainError("BATCH_MAPPING_CONFLICT", "Explicit allocation conflicts with reviewed borrower mapping", 409);
+        }
     }
     const effectiveAllocations = input.allocations ?? (mappedAllocations.every((allocation) => allocation !== null) ? mappedAllocations as ExplicitBatchAllocation[] : undefined);
     const solved = effectiveAllocations ? { status: "ready" as const, allocations: effectiveAllocations.map((allocation) => ({ ...allocation, matchSource: "human_explicit" as const })), candidates: [], warnings: [] } : solvePaymentBatch({ obligations, slips });
     const chronologyResults = await Promise.all(targetBorrowers.map(async (target) => {
-        const targetItems = input.allocations ? items.filter((item) => solved.allocations.some((allocation) => allocation.itemPublicId === item.publicId && loansForBorrower.some((loan) => loan.publicId === allocation.loanPublicId && loan.borrowerId === target.id))) : items;
+        const targetItems = items.filter((item) => {
+            const resolved = solved.allocations.filter((allocation) => allocation.itemPublicId === item.publicId).some((allocation) => loansForBorrower.some((loan) => loan.publicId === allocation.loanPublicId && loan.borrowerId === target.id));
+            if (resolved) return true;
+            const reviewedBorrower = authoritativeBorrowerByItem.get(item.publicId);
+            return reviewedBorrower ? reviewedBorrower === target.publicId : input.borrowerPublicId === target.publicId;
+        });
         if (!targetItems.length) return null;
         return inspectBatchChronology(ctx, batch, target.publicId, targetItems, intakes.filter((intake) => targetItems.some((item) => item.paymentIntakeId === intake.id)), evidence, db);
     }));
