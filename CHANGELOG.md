@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.10 - 2026-09-09
+
+### Changed
+- Clarified MCP diagnostic design and implementation gates for operation-aware recovery, bounded persistence, pre-handler validation coverage, and frozen-contract generation.
+
 ## v0.4.9 - 2026-09-09
 
 ### Added

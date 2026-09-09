@@ -192,6 +192,8 @@ export function presentMcpError(error: unknown, correlationId: string): {
 
 Move the existing `safeToolError` policy from `server.ts` into this module. Use exact-code mappings first, then stable status/code-family fallbacks. Do not interpolate raw error messages into unknown/internal public messages.
 
+Pass an explicit operation recovery policy into error presentation. Test a truly read-only transient failure separately from mutating operations, including a successful financial commit followed by `AUDIT_METADATA_UNAVAILABLE` or `INVALID_TOOL_OUTPUT`. For uncertain writes, require authoritative inspection before any permitted same-key replay; never suggest blind retry or a new idempotency key. Preserve confirmation and stale-preview requirements. Do not infer replay safety solely from annotations or `retryable`.
+
 - [ ] **Step 6: Run unit tests and typecheck GREEN**
 
 Run: `cd backend && bun test src/mcp/diagnostic-context.test.ts src/mcp/error-presentation.test.ts && bun run typecheck`
@@ -255,13 +257,19 @@ export async function persistMcpDiagnosticBestEffort(input: {
 
 Set `occurredAt` once and `expiresAt` exactly 30 days later. Serialize through the typed breadcrumb projector. Catch insertion errors, emit only `{ event: "mcp_diagnostic_persist_failed", tool, requestId, correlationId, code }`, and never throw.
 
+Bound total persistence waiting (pool acquisition included) to 500 ms. Use a dedicated bounded diagnostic pool, query/lock timeouts, and cancellation; do not allow abandoned insertions to accumulate. Guard logger calls, observe late rejection, and clear deadline timers. Never automatically retry a timed-out insert because its commit outcome may be unknown.
+
 - [ ] **Step 4: Wrap each tool call in the diagnostic scope**
 
-Add `persistDiagnostic` to `CreateMcpHttpPluginInput`; `createDefaultMcpHttpPlugin` wires it to `persistMcpDiagnosticBestEffort`, while transport tests inject a deterministic implementation. In the MCP registration callback, add `validation`, `preflight`, and `handler` breadcrumbs. On catch, call `presentMcpError`, snapshot the scope, conditionally persist, then return the original classified public error. Await best-effort persistence so an immediate diagnostic follow-up can find the row.
+Add `persistDiagnostic` to `CreateMcpHttpPluginInput`; `createDefaultMcpHttpPlugin` wires it to `persistMcpDiagnosticBestEffort`, while transport tests inject a deterministic implementation. Establish the scope in an application-owned authenticated `tools/call` dispatch adapter before SDK input validation, using the same closed schemas. SDK validation runs before registered handlers, so the handler catch cannot cover it. Normalize invalid tool arguments into the public envelope without invoking preflight/services; preserve strict advertised schemas and avoid SDK-internal patches. Add `validation`, `preflight`, and `handler` breadcrumbs at their actual boundaries. Keep malformed JSON/JSON-RPC and unauthenticated failures as safe protocol/HTTP errors with correlation headers and no tenant diagnostic persistence.
+
+On catch, classify with the operation recovery policy, snapshot the scope, and await eligible persistence for at most 500 ms before returning the classified public error. Enforce this deadline at the response boundary even for an injected never-settling persistence function. Successful insertion permits immediate lookup; failure/timeout permits not-found and must not be presented as proof that the original command failed.
 
 - [ ] **Step 5: Prove logging failure cannot mask the original error**
 
 Inject a persistence function that rejects. Assert the MCP result still contains the original stable code/message/action/correlation ID and the logger receives `mcp_diagnostic_persist_failed` without raw error text.
+
+Also test a never-settling insertion, exhausted pool, blocked query, late rejection, and throwing logger with controlled timers. Assert the 500 ms persistence deadline, cancellation/resource bounds, no unhandled rejection or automatic retry, and unchanged public error. Through the real MCP transport, send malformed tool arguments and assert safe correlation/action fields, zero handler calls, and no persisted validation row; separately test malformed protocol and missing authentication without tenant diagnostics.
 
 - [ ] **Step 6: Run tests and typecheck GREEN**
 
@@ -484,7 +492,7 @@ Bump `.codex-plugin/plugin.json` from `9.1.0` to `9.2.0`. Add recovery instructi
 
 - [ ] **Step 4: Regenerate and inspect the frozen contract**
 
-Run: `cd plugins/creditsync && bun run scripts/mcp-contract.ts`
+Run: `cd plugins/creditsync && bun run scripts/mcp-contract.ts --write`
 
 Expected: contract contains 114 tools and the two additions. Inspect the generated diff and reject any unrelated tool removal or schema widening; verify the error-envelope change separately through backend transport and plugin eval tests because MCP `tools/list` advertises success output schemas.
 

@@ -50,6 +50,8 @@ The MCP tool boundary creates one request-local diagnostic scope containing:
 
 The scope is carried through asynchronous work with a small request-context abstraction backed by `AsyncLocalStorage`. Services and integration adapters call a narrow `recordMcpBreadcrumb` API without receiving raw logger or database dependencies. Code outside an MCP request receives a no-op recorder.
 
+Create the scope at authenticated `tools/call` dispatch, before SDK input validation. The SDK validates arguments before invoking the registered handler, so a handler-only catch is insufficient. Use an application-owned dispatch adapter with the same closed schemas to normalize validation failures into the public tool-error envelope without invoking preflight or services. Do not patch SDK internals or relax advertised schemas. Keep malformed JSON/JSON-RPC and unauthenticated transport failures as protocol/HTTP errors with safe messages and request/correlation headers; they have no trusted tenant and must not create tenant diagnostic rows. Verify both boundaries through actual MCP transport tests.
+
 Breadcrumbs are allowlisted typed events, not arbitrary objects. The buffer holds at most 20 entries. Each entry contains a stage, outcome, elapsed time, and a small safe metadata projection. When full, it retains the first breadcrumb, the most recent entries, and a `breadcrumbs_truncated` marker.
 
 ### Instrumentation Boundaries
@@ -106,6 +108,8 @@ Persist one terminal row when any of the following is true:
 Expected validation, authorization, ambiguity, stale-state, duplicate, and human-confirmation errors remain actionable public responses and structured stdout events but are not stored unless they also satisfy an integration/retryability rule.
 
 Persistence is best-effort and happens after the public error has been classified. If insertion fails, the system emits a safe `mcp_diagnostic_persist_failed` stdout event and returns the original public error unchanged. Diagnostic read tools do not recursively persist failures in the diagnostic subsystem.
+
+Limit total persistence waiting, including pool acquisition, to 500 ms per failed call. Use a dedicated bounded diagnostic connection pool with query/lock timeouts and cancellation; a deadline race alone must not leave an unbounded backlog. The response boundary must also stop waiting when an injected persistence implementation never settles. Observe late promise rejection, clear timers, and emit only a safe timeout fallback. A timed-out insert may have committed: never retry it automatically or promise immediate lookup availability. Logger failures must also preserve the classified result. Diagnostic lookup may return not-found after persistence failure or timeout even inside the retention window.
 
 ## Data Model
 
@@ -206,7 +210,7 @@ Create a central catalog keyed by stable error code. Each entry defines:
 - review requirement;
 - optional diagnostic persistence override.
 
-Existing `DomainError` semantics remain authoritative when stricter. Unknown exceptions map to `INTERNAL_ERROR`, advise retrying once and then inspecting the correlation ID, and always persist a diagnostic. Error catalog changes require tests proving that no sensitive source error text reaches the public response.
+Existing `DomainError` semantics remain authoritative when stricter. Unknown exceptions map to `INTERNAL_ERROR` and always qualify for best-effort diagnostic persistence. Recovery is selected using an explicit operation policy, not the error code or `readOnlyHint` alone. Truly read-only operations may suggest one bounded retry. For financial or other mutating operations, an error may occur after commit (including audit lookup or output validation failure): first inspect authoritative state and diagnostics by correlation ID. `retryable` describes a potentially transient cause, never permission to repeat a write. Retry a write only when its established workflow permits it, with the original idempotency key, unchanged request, applicable confirmation, and fresh state/preview checks; otherwise stop for human review. Never issue a new key to resolve an uncertain outcome. Error catalog changes require tests proving that no sensitive source error text reaches the public response.
 
 ## Retention and Operations
 
@@ -229,7 +233,7 @@ No production tool may expose arbitrary SQL or Docker logs.
 - Breadcrumb serialization rejection: drop the unsafe breadcrumb, add a safe rejection marker, and continue.
 - Diagnostic insert failure: emit safe stdout fallback and preserve the original MCP error.
 - Diagnostic read authorization failure: return forbidden without confirming whether a correlation ID exists.
-- Missing/expired correlation ID: return `DIAGNOSTIC_NOT_FOUND` with a safe explanation of 30-day retention.
+- Missing/expired correlation ID: return `DIAGNOSTIC_NOT_FOUND` with a safe explanation that the event may be excluded by policy, unavailable after persistence failure/timeout, or beyond 30-day retention; absence does not prove the original operation failed or permit retrying it.
 - Diagnostic read subsystem failure: return a generic diagnostic-unavailable response and do not recursively log into the same table.
 - Public error catalog miss: return `INTERNAL_ERROR` with correlation ID and persist the classified diagnostic.
 
@@ -255,6 +259,9 @@ Tests must prove:
 - classification and actionable public mapping for known and unknown errors;
 - persistence inclusion/exclusion policy and stdout fallback when persistence fails;
 - original errors remain unchanged when logging fails;
+- persistence rejection, never-settling insertion/pool acquisition, cancellation, late rejection, and throwing loggers preserve the original result within the 500 ms persistence deadline;
+- invalid authenticated tool arguments return safe correlation/action fields before any handler invocation; malformed protocol and unauthenticated requests retain transport semantics without tenant persistence;
+- post-commit audit/output failures never recommend blind write retries, and read-only retry guidance cannot bypass write confirmation or idempotency;
 - exact owner/manager access and collector/viewer/cross-tenant denial;
 - strict `get`/`list` input, pagination, bounded time windows, safe outputs, and read-only annotations;
 - no recursive diagnostic writes from diagnostic read failures;
