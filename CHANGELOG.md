@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.8 - 2026-09-09
+
+### Changed
+- Added the TDD implementation and verification plan for central MCP error diagnostics, actionable recovery messages, authorized diagnostic lookup, retention cleanup, and synchronized plugin contracts.
+
 ## v0.4.7 - 2026-09-09
 
 ### Changed

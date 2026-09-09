@@ -158,10 +158,10 @@ Behavior:
 
 - requires the configured MCP principal to be an active tenant `owner` or `manager`;
 - queries only the principal's tenant;
-- returns the exact diagnostic event or `DIAGNOSTIC_NOT_FOUND`;
+- returns the bounded diagnostic trace for that correlation ID, newest event first, or `DIAGNOSTIC_NOT_FOUND`;
 - never accepts tenant ID from the caller.
 
-Safe output:
+Safe output contains the correlation ID and up to 100 matching events. Each event contains:
 
 - diagnostic public ID;
 - tool name;
@@ -176,7 +176,7 @@ Safe output:
 
 Strict input:
 
-- optional tool name, error code, category, and outcome filters;
+- optional tool name, error code, and category filters;
 - optional ISO date-time range limited to the retained 30-day window;
 - optional correlation ID or request ID;
 - cursor pagination;
