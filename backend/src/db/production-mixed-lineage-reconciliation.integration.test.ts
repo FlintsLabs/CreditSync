@@ -1,6 +1,11 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import postgres from "postgres";
 import { createHash } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { drizzle } from "drizzle-orm/postgres-js";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const integration = databaseUrl ? test : test.skip;
@@ -13,6 +18,16 @@ const alternateFunding = ["cd43d16ea7fe5c42d04624fe8bf7570871c504c9dda3cb88722a8
 let sql: ReturnType<typeof postgres>;
 
 function hash(value: string) { return createHash("sha256").update(value).digest("hex"); }
+type Journal = { version: string; dialect: string; entries: Array<{ idx: number; tag: string; when: number; version: string; breakpoints: boolean }> };
+async function readJournalRows() {
+  return Array.from(await sql<{ hash: string; created_at: string }[]>`SELECT hash, created_at::text FROM drizzle.__drizzle_migrations ORDER BY id`);
+}
+async function canonicalTail(boundary: number, folder = `${root}drizzle`) {
+  const journal: Journal = await Bun.file(`${folder}/meta/_journal.json`).json();
+  return Promise.all(journal.entries.filter((entry) => entry.when > boundary).map(async (entry) => ({
+    hash: hash(await Bun.file(`${folder}/${entry.tag}.sql`).text()), created_at: String(entry.when),
+  })));
+}
 async function applyFile(path: string) {
   const content = await Bun.file(path).text();
   for (const statement of content.split("--> statement-breakpoint")) if (statement.trim()) await sql.unsafe(statement);
@@ -104,19 +119,80 @@ integration("applies the exact mixed lineage, preserves legacy rows/FK, and reru
   const rerun = Bun.spawnSync(["bun", "run", "scripts/reconcile-production-mixed-lineage.ts", "--apply"], { cwd: root, env: { ...process.env, DATABASE_URL: databaseUrl! }, stdout: "pipe", stderr: "pipe" });
   expect(rerun.exitCode, new TextDecoder().decode(rerun.stderr)).toBe(0);
   expect(new TextDecoder().decode(rerun.stdout)).toContain("already-complete");
-  const stock = Bun.spawnSync(["bun", "run", "migrate"], { cwd: root, env: { ...process.env, DATABASE_URL: databaseUrl! }, stdout: "pipe", stderr: "pipe" });
-  expect(stock.exitCode, new TextDecoder().decode(stock.stderr)).toBe(0);
+  // The historical checker pins catalog snapshots, not the evolving latest schema.
+  // Keep its 40 -> 42-row snapshot coverage at the original migration boundary.
+  const journal: Journal = await Bun.file(`${root}drizzle/meta/_journal.json`).json();
+  for (const entry of journal.entries.filter((entry) => entry.idx === 37 || entry.idx === 38)) {
+    await applyFile(`${root}drizzle/${entry.tag}.sql`);
+    await sql`INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES (${hash(await Bun.file(`${root}drizzle/${entry.tag}.sql`).text())}, ${entry.when})`;
+  }
   const stockRerun = Bun.spawnSync(["bun", "run", "scripts/reconcile-production-mixed-lineage.ts"], { cwd: root, env: { ...process.env, DATABASE_URL: databaseUrl! }, stdout: "pipe", stderr: "pipe" });
   expect(stockRerun.exitCode, new TextDecoder().decode(stockRerun.stderr)).toBe(0);
   expect(new TextDecoder().decode(stockRerun.stdout)).toContain("already-complete");
-  const deployedLineage = Bun.spawnSync(["bun", "run", "scripts/reconcile-production-mixed-lineage.ts"], { cwd: root, env: { ...process.env, DATABASE_URL: databaseUrl! }, stdout: "pipe", stderr: "pipe" });
-  expect(deployedLineage.exitCode, new TextDecoder().decode(deployedLineage.stderr)).toBe(0);
-  expect(new TextDecoder().decode(deployedLineage.stdout)).toContain("already-complete");
   await sql`DROP TRIGGER borrower_id_card_upload_intents_lifecycle_guard ON borrower_id_card_upload_intents`;
   const mutated42 = Bun.spawnSync(["bun", "run", "scripts/reconcile-production-mixed-lineage.ts"], { cwd: root, env: { ...process.env, DATABASE_URL: databaseUrl! }, stdout: "pipe", stderr: "pipe" });
   expect(mutated42.exitCode).not.toBe(0);
   expect(new TextDecoder().decode(mutated42.stderr)).toContain("authoritative catalog fingerprint mismatch");
 });
+
+integration("migrates the repaired lineage to the current journal and accepts two appended migrations without losing history", async () => {
+  await resetMixedLineage();
+  const applied = Bun.spawnSync(["bun", "run", "scripts/reconcile-production-mixed-lineage.ts", "--apply"], { cwd: root, env: { ...process.env, DATABASE_URL: databaseUrl! }, stdout: "pipe", stderr: "pipe" });
+  expect(applied.exitCode, new TextDecoder().decode(applied.stderr)).toBe(0);
+  const prefix = await readJournalRows();
+  const boundary = Math.max(...prefix.map((row) => Number(row.created_at)));
+  const expected = [...prefix, ...await canonicalTail(boundary)];
+  for (let run = 0; run < 2; run++) {
+    const stock = Bun.spawnSync(["bun", "run", "migrate"], { cwd: root, env: { ...process.env, DATABASE_URL: databaseUrl! }, stdout: "pipe", stderr: "pipe" });
+    expect(stock.exitCode, new TextDecoder().decode(stock.stderr)).toBe(0);
+    expect(await readJournalRows()).toEqual(expected);
+  }
+  const folder = await mkdtemp(join(tmpdir(), "creditsync-lineage-"));
+  try {
+    const journal: Journal = await Bun.file(`${root}drizzle/meta/_journal.json`).json();
+    // Only migration SQL and journal metadata belong in this runtime fixture.
+    for (const entry of journal.entries) {
+      await Bun.write(`${folder}/${entry.tag}.sql`, Bun.file(`${root}drizzle/${entry.tag}.sql`));
+    }
+    for (let append = 1; append <= 2; append++) {
+      const last = journal.entries.at(-1)!;
+      const entry = { ...last, idx: last.idx + 1, tag: `test_append_${append}`, when: Math.max(...journal.entries.map((e) => e.when)) + 1 };
+      const statement = `CREATE TABLE lineage_append_${append} (id integer PRIMARY KEY);`;
+      journal.entries.push(entry);
+      await Bun.write(`${folder}/${entry.tag}.sql`, statement);
+      await Bun.write(`${folder}/meta/_journal.json`, JSON.stringify(journal));
+      expected.push({ hash: hash(statement), created_at: String(entry.when) });
+      for (let run = 0; run < 2; run++) {
+        await migrate(drizzle(sql), { migrationsFolder: folder });
+        expect(await readJournalRows()).toEqual(expected);
+        expect((await sql`SELECT to_regclass(${`public.lineage_append_${append}`}) IS NOT NULL AS exists`)[0]!.exists).toBe(true);
+      }
+    }
+    expect((await sql`SELECT confrelid::regclass::text AS relation FROM pg_constraint WHERE conname='intermediary_compensation_settlements_tenant_destination_fk'`)[0]!.relation).toBe("creditsync_quarantine.intermediary_bank_accounts");
+  } finally {
+    await rm(folder, { recursive: true, force: true });
+  }
+}, 30_000);
+
+integration("rejects missing, reordered, checksum-mismatched, timestamp-mismatched, and foreign historical journal rows", async () => {
+  const mutations = [
+    `DELETE FROM drizzle.__drizzle_migrations WHERE id=1`,
+    // Swap through a spare ID because the primary key is not deferrable.
+    `UPDATE drizzle.__drizzle_migrations SET id=-1 WHERE id=1; UPDATE drizzle.__drizzle_migrations SET id=1 WHERE id=2; UPDATE drizzle.__drizzle_migrations SET id=2 WHERE id=-1`,
+    `UPDATE drizzle.__drizzle_migrations SET hash='wrong-checksum' WHERE id=1`,
+    `UPDATE drizzle.__drizzle_migrations SET created_at=created_at+1 WHERE id=1`,
+    `INSERT INTO drizzle.__drizzle_migrations (hash,created_at) VALUES ('foreign-migration',1)`,
+  ];
+  for (const mutation of mutations) {
+    await resetMixedLineage();
+    await sql.unsafe(mutation);
+    const before = await readJournalRows();
+    const result = Bun.spawnSync(["bun", "run", "scripts/reconcile-production-mixed-lineage.ts", "--apply"], { cwd: root, env: { ...process.env, DATABASE_URL: databaseUrl! }, stdout: "pipe", stderr: "pipe" });
+    expect(result.exitCode).not.toBe(0);
+    expect(new TextDecoder().decode(result.stderr)).toMatch(/mixed-lineage (state|journal tuple array) is not exact/);
+    expect(await readJournalRows()).toEqual(before);
+  }
+}, 30_000);
 
 integration("rejects legacy and completed catalog mutations", async () => {
   await resetMixedLineage();

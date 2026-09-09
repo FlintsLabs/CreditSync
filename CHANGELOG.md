@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.12 - 2026-09-09
+
+### Fixed
+- Separated pinned historical reconciliation checks from current-journal migration assertions; verify exact ordered hashes/timestamps, repeat migrations without changes, two temporary appended migrations, and rejection of corrupted historical journals without changing production reconciliation or MCP diagnostics.
+
 ## v0.4.11 - 2026-09-09
 
 ### Fixed
