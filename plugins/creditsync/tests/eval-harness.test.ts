@@ -449,6 +449,17 @@ describe("CreditSync executable orchestration evals", () => {
         }]);
     });
 
+    test("payment restore evidence stays bound to the linked restore draft", async () => {
+        const result = await runEvalScenario("payment-restore-evidence");
+        expect(result.calls.map((call) => call.name)).toEqual([
+            "payment.restore.create",
+            "payment.restore.evidence.prepare",
+            "payment.restore.evidence.finalize",
+        ]);
+        expect(result.effects).toHaveLength(1);
+        expect(result.outcome).toBe("completed");
+    });
+
     test("ChatGPT file import, retry, unavailable, and late evidence flows preserve write boundaries", async () => {
         expect((await runEvalScenario("payment-chatgpt-file-import")).calls.map((call) => call.name)).toEqual([
             "intake.create", "evidence.import-chatgpt-file", "payment.preview", "payment.reconcile.preflight", "payment.post",

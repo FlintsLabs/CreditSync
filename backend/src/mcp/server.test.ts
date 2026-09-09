@@ -891,6 +891,23 @@ describe("CreditSync stateless MCP contract", () => {
             destructiveHint: false,
             openWorldHint: false,
         });
+        expect(listed.tools.find((tool) => tool.name === "payment.restore.evidence.prepare")?.inputSchema.properties)
+            .toMatchObject({
+                restoreDraftPublicId: { type: "string", format: "uuid" },
+                mimeType: { enum: ["image/jpeg", "image/png", "application/pdf"] },
+                sha256: { type: "string" },
+                size: { type: "integer", exclusiveMinimum: 0 },
+                originalName: { anyOf: [{ type: "string" }, { type: "null" }] },
+            });
+        expect((listed.tools.find((tool) => tool.name === "payment.restore.evidence.prepare")?.outputSchema?.properties?.data as { properties?: Record<string, unknown> })?.properties)
+            .toHaveProperty("evidencePublicId");
+        expect((listed.tools.find((tool) => tool.name === "payment.restore.evidence.finalize")?.outputSchema?.properties?.data as { properties?: Record<string, unknown> })?.properties)
+            .toHaveProperty("evidencePublicId");
+        expect(listed.tools.find((tool) => tool.name === "payment.restore.evidence.finalize")?.inputSchema.properties)
+            .toMatchObject({
+                restoreDraftPublicId: { type: "string", format: "uuid" },
+                evidencePublicId: { type: "string", format: "uuid" },
+            });
         const destructive = new Set([
             "borrower.update",
             "borrower.alias",
@@ -917,6 +934,8 @@ describe("CreditSync stateless MCP contract", () => {
             "payment.reconcile.mark-review",
             "payment.reconcile.execute",
             "payment.restore.create",
+            "payment.restore.evidence.prepare",
+            "payment.restore.evidence.finalize",
             "payment.restore.preview",
             "payment.restore.execute",
             "payment.restore.schedule-backfill",

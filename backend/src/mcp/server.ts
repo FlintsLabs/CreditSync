@@ -49,6 +49,8 @@ export const MCP_TOOL_NAMES = [
     "payment.reconcile.execute",
     "payment.allocation-correction.execute",
     "payment.restore.create",
+    "payment.restore.evidence.prepare",
+    "payment.restore.evidence.finalize",
     "payment.restore.preview",
     "payment.restore.execute",
     "payment.restore.schedule-backfill",
@@ -659,6 +661,11 @@ const evidenceFinalOutput = z.object({
     sha256: z.string().regex(/^[0-9a-f]{64}$/i).nullable(),
     filePublicId: uuid.nullable(),
 }).strict();
+const restoreEvidenceIntentOutput = evidenceIntentOutput.extend({
+    evidencePublicId: uuid,
+    status: z.string(),
+}).strict();
+const restoreEvidenceFinalOutput = evidenceFinalOutput.extend({ evidencePublicId: uuid }).strict();
 const fundingDrawdownOutput = z.object({
     publicId: uuid,
     amount: money,
@@ -1185,6 +1192,8 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "payment.reconcile.mark-review": paymentReconciliationReviewOutput,
     "payment.reconcile.execute": reconciliationExecuteOutput,
     "payment.restore.create": paymentRestoreDraftOutput,
+    "payment.restore.evidence.prepare": restoreEvidenceIntentOutput,
+    "payment.restore.evidence.finalize": restoreEvidenceFinalOutput,
     "payment.restore.preview": restorePreviewOutput,
     "payment.restore.execute": reconciliationExecuteOutput,
     "payment.restore.schedule-backfill": paymentRestoreScheduleBackfillOutput,
@@ -1509,6 +1518,14 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
         idempotencyKey: z.string().trim().min(1).max(200),
     }).strict(),
     "payment.restore.create": z.object({ paymentIntakePublicId: uuid, reason: shortText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
+    "payment.restore.evidence.prepare": z.object({
+        restoreDraftPublicId: uuid,
+        mimeType: z.enum(["image/jpeg", "image/png", "application/pdf"]),
+        sha256: z.string().regex(/^[0-9a-f]{64}$/i),
+        size: z.number().int().positive(),
+        originalName: z.string().trim().max(500).nullable().optional(),
+    }).strict(),
+    "payment.restore.evidence.finalize": z.object({ restoreDraftPublicId: uuid, evidencePublicId: uuid }).strict(),
     "payment.restore.preview": z.object({ paymentIntakePublicId: uuid, reason: shortText }).strict(),
     "payment.restore.execute": z.object({
         restorePreviewPublicId: uuid,
@@ -1991,6 +2008,8 @@ const destructiveTools = new Set<McpToolName>([
     "payment.reconcile.mark-review",
     "payment.reconcile.execute",
     "payment.restore.create",
+    "payment.restore.evidence.prepare",
+    "payment.restore.evidence.finalize",
     "payment.restore.preview",
     "payment.restore.execute",
     "payment.reverse-with-accrual.execute",
@@ -2153,6 +2172,8 @@ const toolDescriptions: Record<McpToolName, string> = {
     "payment.reconcile.execute": "Execute a confirmed, idempotent payment reconciliation with append-only provenance.",
     "payment.restore.preview": "Preview exact restoration of a fully reversed payment using its original principal and interest components.",
     "payment.restore.create": "Create one linked restore draft so new payment-slip evidence can be finalized before an exact restore preview.",
+    "payment.restore.evidence.prepare": "Prepare a signed slip upload for one linked payment restore draft.",
+    "payment.restore.evidence.finalize": "Verify and finalize uploaded slip evidence for one linked payment restore draft.",
     "payment.restore.execute": "Execute a confirmed, idempotent exact restoration of a reversed payment as a linked child intake.",
     "payment.restore.schedule-backfill": "Repair derived schedule aggregates for one verified posted exact-payment restore without creating a payment.",
     "loan.preview": "Preview an exact loan schedule without persistence.",

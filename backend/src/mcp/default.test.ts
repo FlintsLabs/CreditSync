@@ -16,6 +16,7 @@ import {
     loanInterestRatePeriods,
     loanSchedules,
     loans,
+    files,
     intermediaries,
     paymentIntakes,
     transactions,
@@ -1542,13 +1543,16 @@ describe("default MCP adapter integration", () => {
             reason: "MCP all-tools exact payment restore",
             idempotencyKey: "mcp-all-tools-restore-draft",
         })).data;
-        const restoreEvidence = (await call("evidence.prepare", {
-            paymentIntakePublicId: restoreDraft.restoreDraftPublicId,
-            mimeType: "image/png", size: 4, sha256: "9".repeat(64), evidenceType: "slip",
+        const restoreEvidence = (await call("payment.restore.evidence.prepare", {
+            restoreDraftPublicId: restoreDraft.restoreDraftPublicId,
+            mimeType: "image/png", size: 4, sha256: "9".repeat(64), originalName: "corrected-slip.png",
         })).data;
-        await call("evidence.finalize", {
-            paymentIntakePublicId: restoreDraft.restoreDraftPublicId,
-            evidencePublicId: restoreEvidence.publicId,
+        expect(restoreEvidence).toMatchObject({ evidencePublicId: restoreEvidence.publicId, status: "pending" });
+        expect(await db.query.files.findFirst({ where: eq(files.publicId, String(restoreEvidence.filePublicId)) }))
+            .toMatchObject({ originalName: "corrected-slip.png" });
+        await call("payment.restore.evidence.finalize", {
+            restoreDraftPublicId: restoreDraft.restoreDraftPublicId,
+            evidencePublicId: restoreEvidence.evidencePublicId,
         });
         const restorePreview = (await call("payment.restore.preview", {
             paymentIntakePublicId: intakePublicId,
@@ -1908,7 +1912,7 @@ describe("default MCP adapter integration", () => {
         expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length);
         expect(called.filter((name) => name === "intermediary.disbursement.event.create")).toHaveLength(2);
         expect(called.filter((name) => name === "loan.restructure.execute")).toHaveLength(2);
-        expect(called).toHaveLength(MCP_TOOL_NAMES.length + 12);
+        expect(called).toHaveLength(MCP_TOOL_NAMES.length + 10);
 
         await client.close();
     }, 10_000);

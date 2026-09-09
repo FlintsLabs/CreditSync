@@ -133,7 +133,7 @@ describe("CreditSync plugin 9.2.0 contract", () => {
         expect(contract.schemaVersion).toBe("1.0");
         expect(contract.compatibility).toBe("Tool names, full input/output schemas, descriptions, annotations, and file-parameter metadata are frozen for plugin 9.2.0; breaking changes require plugin 10.0.0.");
         expect(contract.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
-        expect(contract.tools).toHaveLength(114);
+        expect(contract.tools).toHaveLength(116);
         expect(contract.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(["system.error-diagnostic.get", "system.error-diagnostic.list"]));
         expect(contract.tools.every((tool) => tool.inputSchema && tool.outputSchema && tool.annotations)).toBe(true);
         for (const name of ["evidence.import-chatgpt-file", "payment.evidence-supplement.import-chatgpt-file"]) {
@@ -300,7 +300,7 @@ describe("CreditSync plugin 9.2.0 contract", () => {
             "loan-replacement-direct-status-mutation",
             "loan-replacement-portfolio-scope-mismatch",
         ]) expect(ids.has(id), `missing eval ${id}`).toBe(true);
-        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(42);
+        expect(catalog.cases?.filter((entry) => entry.kind === "positive")).toHaveLength(43);
         expect(catalog.cases?.filter((entry) => entry.kind === "negative")).toHaveLength(64);
     });
 

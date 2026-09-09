@@ -549,6 +549,37 @@ async function paymentFlow(mcp: ScriptedMcp, options: {
     return { outcome: "stopped", stopReason: "stale" } as const;
 }
 
+async function paymentRestoreEvidenceFlow(mcp: ScriptedMcp) {
+    const draft = await mcp.call("payment.restore.create", {
+        paymentIntakePublicId: INTAKE,
+        reason: "Restore corrected 08/09 payment after posting 07/09",
+        idempotencyKey: "restore-draft-20260908-1",
+    });
+    const prepared = await mcp.call("payment.restore.evidence.prepare", {
+        restoreDraftPublicId: draft.restoreDraftPublicId,
+        mimeType: "image/jpeg",
+        size: PAYMENT_EVIDENCE_BYTES.byteLength,
+        sha256: FILE_HASH,
+        originalName: "corrected-slip.jpg",
+    });
+    mcp.uploadEvidence({
+        name: "evidence.put",
+        uploadUrl: String(prepared.uploadUrl),
+        requiredHeaders: prepared.requiredHeaders as Record<string, string>,
+        bytes: PAYMENT_EVIDENCE_BYTES,
+        declaredSize: PAYMENT_EVIDENCE_BYTES.byteLength,
+        declaredSha256: FILE_HASH,
+    });
+    const finalized = await mcp.call("payment.restore.evidence.finalize", {
+        restoreDraftPublicId: draft.restoreDraftPublicId,
+        evidencePublicId: prepared.evidencePublicId,
+    });
+    if (finalized.status !== "ready" || finalized.evidencePublicId !== prepared.evidencePublicId || finalized.filePublicId !== prepared.filePublicId) {
+        return { outcome: "stopped", stopReason: "restore-evidence-binding-mismatch" } as const;
+    }
+    return { outcome: "completed" } as const;
+}
+
 async function chatGptPaymentFlow(mcp: ScriptedMcp, retry = false) {
     await mcp.call("intake.create", intakeArgs);
     try {
@@ -1648,6 +1679,14 @@ const SCENARIOS: Record<string, Scenario> = {
             { name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, result: { publicId: "0198c481-3e2b-7000-8000-000000000205", status: "fixture", ...noRepostLineage, transactions: [] } },
         ],
         run: (mcp) => paymentFlow(mcp, { evidence: true, preflight: true }),
+    },
+    "payment-restore-evidence": {
+        script: [
+            { name: "payment.restore.create", arguments: { paymentIntakePublicId: INTAKE, reason: "Restore corrected 08/09 payment after posting 07/09", idempotencyKey: "restore-draft-20260908-1" }, result: { sourcePaymentPublicId: INTAKE, restoreDraftPublicId: ORIGINAL_INTAKE, status: "draft", auditPublicId: COMMISSION_AUDIT, correlationId: COMMISSION_CORRELATION } },
+            { name: "payment.restore.evidence.prepare", arguments: { restoreDraftPublicId: ORIGINAL_INTAKE, mimeType: "image/jpeg", size: PAYMENT_EVIDENCE_BYTES.byteLength, sha256: FILE_HASH, originalName: "corrected-slip.jpg" }, result: { publicId: EVIDENCE, evidencePublicId: EVIDENCE, filePublicId: EVIDENCE_FILE, status: "pending", uploadUrl: "https://storage.example/restore-upload", requiredHeaders: {} } },
+            { name: "payment.restore.evidence.finalize", arguments: { restoreDraftPublicId: ORIGINAL_INTAKE, evidencePublicId: EVIDENCE }, result: { publicId: EVIDENCE, evidencePublicId: EVIDENCE, status: "ready", sha256: FILE_HASH, filePublicId: EVIDENCE_FILE } },
+        ],
+        run: paymentRestoreEvidenceFlow,
     },
     "payment-chatgpt-file-import": {
         script: [
