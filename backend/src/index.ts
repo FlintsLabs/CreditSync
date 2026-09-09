@@ -21,6 +21,7 @@ import { loanRenewalsRoute } from "./modules/loan-renewals";
 import { loanSettlementRoutes } from "./modules/loan-settlement-routes";
 import { intermediatedDisbursementsRoute } from "./modules/intermediated-disbursements";
 import { createDefaultMcpHttpPlugin } from "./mcp/default";
+import { assistantChatRoute } from "./modules/assistant-chat";
 
 const isProd = process.env.NODE_ENV === "production";
 const corsOrigins = (process.env.CORS_ORIGINS || "")
@@ -66,6 +67,7 @@ const app = new Elysia()
             .use(auditLogsRoute)
             .use(dashboardRoute)
             .use(reconciliationRoute)
+            .use(assistantChatRoute)
     )
     .listen({
         port: 3000,

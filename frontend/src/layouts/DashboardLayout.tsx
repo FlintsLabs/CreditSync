@@ -16,6 +16,7 @@ import {
     TooltipProvider,
     TooltipTrigger,
 } from "../components/ui/tooltip";
+import { AIAssistant } from "../components/AIAssistant";
 
 export default function DashboardLayout() {
     const location = useLocation();
@@ -187,6 +188,8 @@ export default function DashboardLayout() {
                     </div>
                 </footer>
             </div>
+
+            <AIAssistant />
         </div>
     );
 }
