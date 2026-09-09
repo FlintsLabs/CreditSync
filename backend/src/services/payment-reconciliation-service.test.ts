@@ -313,7 +313,11 @@ describe("payment reconciliation persistence", () => {
         const alternateSource = await db.insert(paymentIntakes).values({ tenantId, status: "reversed", amount: "100.00", receivedAt: source.receivedAt, createdByUserId: actor.id }).returning().then((rows) => rows[0]!);
         const alternateChild = await db.insert(paymentIntakes).values({ tenantId, status: "posted", amount: "100.00", receivedAt: source.receivedAt, repostOfIntakeId: alternateSource.id, createdByUserId: actor.id, postedByUserId: actor.id, postedAt: new Date() }).returning().then((rows) => rows[0]!);
         await expect(backfillPostedRestoreSchedule(ctx, { paymentIntakePublicId: alternateChild.publicId, reason: "Different target", idempotencyKey: ctx.idempotencyKey! })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
-        const noop = await backfillPostedRestoreSchedule({ ...ctx, idempotencyKey: "restore-backfill-noop" }, { paymentIntakePublicId: child.publicId, reason: "Independent projection check", idempotencyKey: "restore-backfill-noop" });
+        const [noop, concurrentNoop] = await Promise.all([
+            backfillPostedRestoreSchedule({ ...ctx, idempotencyKey: "restore-backfill-noop" }, { paymentIntakePublicId: child.publicId, reason: "Independent projection check", idempotencyKey: "restore-backfill-noop" }),
+            backfillPostedRestoreSchedule({ ...ctx, idempotencyKey: "restore-backfill-noop", correlationId: crypto.randomUUID() }, { paymentIntakePublicId: child.publicId, reason: "Independent projection check", idempotencyKey: "restore-backfill-noop" }),
+        ]);
+        expect(concurrentNoop).toEqual(noop);
         expect(noop).toMatchObject({ changed: false, paymentIntakePublicId: child.publicId, schedulePublicId: schedule.publicId, auditPublicId: expect.any(String) });
         const receipts = await db.select().from(commandReceipts).where(and(eq(commandReceipts.tenantId, tenantId), eq(commandReceipts.operationType, "restore_schedule_backfill")));
         expect(receipts).toHaveLength(2);
