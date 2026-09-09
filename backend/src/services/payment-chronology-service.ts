@@ -49,6 +49,20 @@ export async function assertNoOlderPendingPayment(tx: DbExecutor, tenantId: stri
                   AND b.status NOT IN ('posted', 'cancelled')
                   AND a.preview_id = (SELECT p.id FROM payment_batch_previews p WHERE p.tenant_id = bi.tenant_id AND p.batch_id = bi.batch_id ORDER BY p.version DESC LIMIT 1))
             OR EXISTS (SELECT 1 FROM payment_batch_items bi JOIN payment_batches b ON b.tenant_id = bi.tenant_id AND b.id = bi.batch_id WHERE bi.tenant_id = i.tenant_id AND bi.payment_intake_id = i.id AND b.borrower_id = ${borrowerId} AND b.status NOT IN ('posted', 'cancelled'))
+            OR EXISTS (SELECT 1 FROM payment_batch_staging_items si JOIN payment_batches b ON b.tenant_id = si.tenant_id AND b.id = si.batch_id
+                WHERE si.tenant_id = i.tenant_id AND si.payment_intake_id IS NULL AND si.status <> 'failed' AND b.status NOT IN ('posted', 'cancelled')
+                  AND si.received_at < ${receivedAt.toISOString()}
+                  AND ((si.reviewed_mapping->>'borrowerPublicId') IN (SELECT public_id::text FROM borrowers WHERE tenant_id = ${tenantId} AND id = ${borrowerId})
+                    OR (si.reviewed_mapping->>'loanPublicId') IN (SELECT public_id::text FROM loans WHERE tenant_id = ${tenantId} AND borrower_id = ${borrowerId}))
+            )
           ) LIMIT 1`);
-    if (pending.length) throw new DomainError("PAYMENT_CHRONOLOGY_CONFLICT", "An older pending payment blocks chronology; resolve that dependency first", 409);
+    const stagedPending = await tx.execute(sql`SELECT si.public_id FROM payment_batch_staging_items si
+        JOIN payment_batches b ON b.tenant_id = si.tenant_id AND b.id = si.batch_id
+        JOIN borrowers br ON br.tenant_id = si.tenant_id AND br.id = ${borrowerId}
+        WHERE si.tenant_id = ${tenantId} AND si.payment_intake_id IS NULL AND si.status <> 'failed'
+          AND b.status NOT IN ('posted', 'cancelled') AND si.received_at < ${receivedAt.toISOString()}
+          AND ((si.reviewed_mapping->>'borrowerPublicId') = br.public_id::text
+            OR (si.reviewed_mapping->>'loanPublicId') IN (SELECT public_id::text FROM loans WHERE tenant_id = ${tenantId} AND borrower_id = ${borrowerId}))
+        LIMIT 1`);
+    if (pending.length || stagedPending.length) throw new DomainError("PAYMENT_CHRONOLOGY_CONFLICT", "An older pending payment blocks chronology; resolve that dependency first", 409);
 }

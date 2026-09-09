@@ -4,6 +4,7 @@ import { db } from "../db";
 import { borrowers, loans, loanSchedules, paymentBatches, paymentBatchDependencies, paymentBatchItems, paymentBatchOperationReceipts, paymentBatchStagingEvidence, paymentBatchStagingItems, paymentIntakes, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import type { EvidenceStorageGateway } from "./payment-service";
+import { assertNoOlderPendingPayment } from "./payment-chronology-service";
 import { stagePaymentBatchItems, preparePaymentBatchStagingEvidence, finalizePaymentBatchStagingEvidence, reviewPaymentBatchStagingItem, previewPaymentBatch, cancelPaymentBatch, capturePaymentBatch, getPaymentBatchWorkspace, editPaymentBatchStagingItem, splitPaymentBatch } from "./payment-batch-service";
 
 const integration = process.env.TEST_DATABASE_URL ? test : test.skip;
@@ -217,9 +218,17 @@ integration("mapping edits require portfolio access and feed review into the pre
     await reviewPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.evidenceInput.stagingItemPublicId, amount: "120.00", receivedAt: "2026-09-07T10:00:00+07:00", intakeIdempotencyKey: "review-mapped" });
     const secondEvidence = await preparePaymentBatchStagingEvidence(f.ctx, { ...f.evidenceInput, stagingItemPublicId: f.staged.items[1]!.publicId, sha256: "b".repeat(64) }, f.gateway);
     await finalizePaymentBatchStagingEvidence(f.ctx, f.staged.items[1]!.publicId, secondEvidence.evidencePublicId, f.gateway);
-    await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[1]!.publicId, expectedRevision: 1, idempotencyKey: "map-b", reason: "synthetic mapping", amount: "120.00", receivedAt: "2026-09-07T11:00:00+07:00", mapping: { borrowerPublicId: f.input.borrowerPublicId!, loanPublicId: loan.publicId, schedulePublicId: schedule.publicId } });
-    await reviewPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[1]!.publicId, amount: "120.00", receivedAt: "2026-09-07T11:00:00+07:00", intakeIdempotencyKey: "review-mapped-b" });
+    await reviewPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[1]!.publicId, amount: "120.00", receivedAt: "2026-09-07T11:00:00+07:00", intakeIdempotencyKey: "review-unmapped-b" });
+    await expect(previewPaymentBatch(f.ctx, f.staged.batchPublicId, { borrowerPublicId: f.input.borrowerPublicId! })).rejects.toThrow("complete mapping");
+    await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[1]!.publicId, expectedRevision: 2, idempotencyKey: "map-b", reason: "synthetic mapping", mapping: { borrowerPublicId: f.input.borrowerPublicId!, loanPublicId: loan.publicId, schedulePublicId: schedule.publicId } });
     await expect(previewPaymentBatch(f.ctx, f.staged.batchPublicId, { borrowerPublicId: f.input.borrowerPublicId! })).resolves.toMatchObject({ status: "ready" });
+});
+
+integration("known mapped staging without an intake blocks a later payment for the same borrower", async () => {
+    const f = await fixture();
+    await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[0]!.publicId, expectedRevision: 1, idempotencyKey: "staged-known", reason: "synthetic known staged transfer", receivedAt: "2026-09-07T10:00:00+07:00", mapping: { borrowerPublicId: f.input.borrowerPublicId! } });
+    const borrower = await db.query.borrowers.findFirst({ where: eq(borrowers.publicId, f.input.borrowerPublicId!) });
+    await expect(assertNoOlderPendingPayment(db, f.ctx.tenantId, borrower!.id, new Date("2026-09-08T10:00:00+07:00"), [])).rejects.toThrow("older pending");
 });
 
 integration("mapping null is a distinct clear mutation from an omitted mapping", async () => {

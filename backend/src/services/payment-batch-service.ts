@@ -13,7 +13,8 @@ import { solvePaymentBatch } from "./payment-batch-solver";
 import type { BatchObligation, BatchSlip, ExplicitBatchAllocation } from "./payment-batch-types";
 import { evaluatePaymentChronology, type ChronologyItem, type PendingChronologyItem } from "./payment-chronology-guard";
 import { assertPaymentBatchPreviewFresh } from "./payment-batch-execution-guard";
-import { assertNoOlderPendingPayment, lockPaymentBorrowers } from "./payment-chronology-service";
+import { assertNoOlderPendingPayment, lockPaymentBorrowers, paymentIntakeBorrowerIds } from "./payment-chronology-service";
+import { bangkokBusinessDate } from "./payment-chronology-guard";
 import { planScheduledPayment } from "./payment-service";
 import { assertPaymentEvidenceReady, finalizePaymentEvidence, normalizeBankReference, postPaymentAllocationInTransaction, preparePaymentEvidence, previewPaymentMatch, type EvidenceStorageGateway } from "./payment-service";
 import { emptyFloatingBatchState, projectFloatingBatchPayment, type FloatingBatchState } from "./payment-batch-accounting-planner";
@@ -319,11 +320,15 @@ export async function reviewPaymentBatchStagingItem(ctx: CommandContext, input: 
     if (Number.isNaN(receivedAt.getTime())) throw new DomainError("INVALID_RECEIVED_AT", "receivedAt must be an ISO date-time", 400);
     if (!input.intakeIdempotencyKey.trim()) throw new DomainError("INVALID_IDEMPOTENCY_KEY", "intakeIdempotencyKey must not be blank", 400);
     return db.transaction(async (tx) => {
-        const accessible = await accessibleStagingItem(ctx, input.stagingItemPublicId, tx);
-        await tx.execute(sql`SELECT id FROM payment_batches WHERE tenant_id = ${ctx.tenantId} AND id = ${accessible.batch.id} FOR UPDATE`);
-        await tx.execute(sql`SELECT id FROM payment_batch_staging_items WHERE tenant_id = ${ctx.tenantId} AND id = ${accessible.staging.id} FOR UPDATE`);
-        const batch = await tx.query.paymentBatches.findFirst({ where: and(eq(paymentBatches.tenantId, ctx.tenantId), eq(paymentBatches.id, accessible.batch.id)) });
-        const staging = await tx.query.paymentBatchStagingItems.findFirst({ where: and(eq(paymentBatchStagingItems.tenantId, ctx.tenantId), eq(paymentBatchStagingItems.id, accessible.staging.id)) });
+        const preliminary = await accessibleStagingItem(ctx, input.stagingItemPublicId, tx);
+        const borrowerIds = [preliminary.batch.borrowerId].filter((id): id is number => id !== null);
+        const mapping = preliminary.staging.reviewedMapping;
+        const mappedLoan = mapping?.loanPublicId ? await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.publicId, mapping.loanPublicId)) }) : null;
+        const mappedBorrower = mapping?.borrowerPublicId ? await tx.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, ctx.tenantId), eq(borrowers.publicId, mapping.borrowerPublicId)) }) : mappedLoan ? await tx.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, ctx.tenantId), eq(borrowers.id, mappedLoan.borrowerId)) }) : null;
+        if (mappedBorrower) borrowerIds.push(mappedBorrower.id);
+        if (preliminary.staging.paymentIntakeId) borrowerIds.push(...await paymentIntakeBorrowerIds(tx, ctx.tenantId, preliminary.staging.paymentIntakeId));
+        await lockPaymentBorrowers(tx, ctx.tenantId, borrowerIds);
+        const { staging, batch } = await lockedStagingItem(ctx, input.stagingItemPublicId, tx);
         if (!batch || !staging) throw new DomainError("PAYMENT_BATCH_STAGING_NOT_FOUND", "Staging item not found", 404);
         const requestHash = digest({ stagingItemPublicId: staging.publicId, amount: serializeMoney(amount), receivedAt: receivedAt.toISOString(), intakeIdempotencyKey: input.intakeIdempotencyKey.trim(), reviewedReason: input.reviewedReason?.trim() || null, reviewedRangeFrom: input.reviewedRangeFrom || null, reviewedRangeTo: input.reviewedRangeTo || null });
         const existingReceipt = await tx.query.paymentBatchOperationReceipts.findFirst({ where: and(eq(paymentBatchOperationReceipts.tenantId, ctx.tenantId), eq(paymentBatchOperationReceipts.operationType, "staging.review"), eq(paymentBatchOperationReceipts.operationKey, input.intakeIdempotencyKey.trim())) });
@@ -335,8 +340,16 @@ export async function reviewPaymentBatchStagingItem(ctx: CommandContext, input: 
         if (staging.status === "validated" || staging.paymentIntakeId || staging.batchItemId) throw new DomainError("PAYMENT_BATCH_STAGING_REVIEW_CONFLICT", "Staging item was already reviewed without a matching receipt", 409);
         const evidence = await tx.query.paymentBatchStagingEvidence.findFirst({ where: and(eq(paymentBatchStagingEvidence.tenantId, ctx.tenantId), eq(paymentBatchStagingEvidence.stagingItemId, staging.id), eq(paymentBatchStagingEvidence.status, "ready")) });
         if (!evidence) throw new DomainError("EVIDENCE_REQUIRED_NOT_READY", "Finalize staging evidence before review", 409);
-        const mappedLoan = staging.reviewedMapping?.loanPublicId ? await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.publicId, staging.reviewedMapping.loanPublicId)) }) : null;
-        if (staging.reviewedMapping?.loanPublicId && !mappedLoan) throw new DomainError("BATCH_ALLOCATION_MISMATCH", "Mapped loan is unavailable", 409);
+        const reviewMappedLoan = staging.reviewedMapping?.loanPublicId ? await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.publicId, staging.reviewedMapping.loanPublicId)) }) : null;
+        if (staging.reviewedMapping?.loanPublicId && !reviewMappedLoan) throw new DomainError("BATCH_ALLOCATION_MISMATCH", "Mapped loan is unavailable", 409);
+        const reviewMappedBorrower = staging.reviewedMapping?.borrowerPublicId ? await tx.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, ctx.tenantId), eq(borrowers.publicId, staging.reviewedMapping.borrowerPublicId)) }) : reviewMappedLoan ? await tx.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, ctx.tenantId), eq(borrowers.id, reviewMappedLoan.borrowerId)) }) : null;
+        if (staging.reviewedMapping?.borrowerPublicId && !reviewMappedBorrower) throw new DomainError("BORROWER_NOT_FOUND", "Mapped borrower is unavailable", 404);
+        if (reviewMappedLoan) {
+            const mappedBorrower = await tx.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, ctx.tenantId), eq(borrowers.id, reviewMappedLoan.borrowerId)) });
+            if (!mappedBorrower) throw new DomainError("BORROWER_NOT_FOUND", "Mapped borrower is unavailable", 404);
+            await assertBorrowerPortfolio(ctx, [mappedBorrower], tx);
+        }
+        if (reviewMappedBorrower && batch.borrowerId !== null && batch.borrowerId !== reviewMappedBorrower.id) throw new DomainError("BATCH_ALLOCATION_MISMATCH", "Mapped borrower does not match the batch borrower", 409);
         const batchItems = await tx.select().from(paymentBatchItems).where(and(eq(paymentBatchItems.tenantId, ctx.tenantId), eq(paymentBatchItems.batchId, staging.batchId))).orderBy(desc(paymentBatchItems.itemOrder));
         const intake = await tx.insert(paymentIntakes).values({ tenantId: ctx.tenantId, ownerUserId: ctx.actorUserId, source: ctx.actorSource === "mcp" ? "mcp" : "web", status: "draft", amount: serializeMoney(amount), receivedAt, originLoanId: mappedLoan?.id ?? null, payerName: staging.payerName, bankReferenceHash: staging.bankReferenceHash, evidenceRequired: true, idempotencyKey: input.intakeIdempotencyKey.trim(), createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((values) => values[0]!);
         await tx.insert(paymentEvidence).values({ tenantId: ctx.tenantId, paymentIntakeId: intake.id, fileId: evidence.fileId, evidenceType: "slip", status: "ready", evidenceHash: evidence.evidenceHash, mimeType: evidence.mimeType, declaredSize: evidence.declaredSize, finalizedAt: evidence.finalizedAt, createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId });
@@ -344,7 +357,7 @@ export async function reviewPaymentBatchStagingItem(ctx: CommandContext, input: 
         const updated = await tx.update(paymentBatchStagingItems).set({ amount: serializeMoney(amount), receivedAt, status: "validated", revision: staging.revision + 1, paymentIntakeId: intake.id, batchItemId: batchItem.id, reviewedReason: input.reviewedReason?.trim() || null, reviewedRangeFrom: input.reviewedRangeFrom || null, reviewedRangeTo: input.reviewedRangeTo || null, updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(eq(paymentBatchStagingItems.tenantId, ctx.tenantId), eq(paymentBatchStagingItems.id, staging.id), eq(paymentBatchStagingItems.status, "staged"))).returning().then((values) => values[0]);
         if (!updated) throw new DomainError("PAYMENT_BATCH_STAGING_REVIEW_CONFLICT", "Staging item was reviewed concurrently", 409);
         await tx.update(paymentBatchPreviews).set({ status: "stale" }).where(and(eq(paymentBatchPreviews.tenantId, ctx.tenantId), eq(paymentBatchPreviews.batchId, batch.id), inArray(paymentBatchPreviews.status, ["ready", "needs_review"])));
-        await tx.update(paymentBatches).set({ status: "needs_review", version: batch.version + 1, stateHash: digest({ batchPublicId: batch.publicId, revision: staging.revision + 1 }), confirmationHash: null, updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(eq(paymentBatches.tenantId, ctx.tenantId), eq(paymentBatches.id, batch.id)));
+        await tx.update(paymentBatches).set({ borrowerId: batch.borrowerId ?? reviewMappedBorrower?.id ?? null, status: "needs_review", version: batch.version + 1, stateHash: digest({ batchPublicId: batch.publicId, revision: staging.revision + 1 }), confirmationHash: null, updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(eq(paymentBatches.tenantId, ctx.tenantId), eq(paymentBatches.id, batch.id)));
         const result = { stagingItemPublicId: staging.publicId, status: updated.status, paymentIntakePublicId: intake.publicId, batchItemPublicId: batchItem.publicId, receipt: { operationType: "staging.review", operationKey: input.intakeIdempotencyKey.trim() } };
         return recordOperation(tx, ctx, batch, staging.id, "staging.review", input.intakeIdempotencyKey.trim(), requestHash, result);
     });
@@ -370,16 +383,17 @@ export async function editPaymentBatchStagingItem(ctx: CommandContext, input: Ed
     for (const [field, value] of Object.entries(input.mapping ?? {})) if (value) requireId(value, field);
     const requestHash = digest({ stagingItemPublicId: input.stagingItemPublicId, expectedRevision: input.expectedRevision, amount: amount === undefined ? { omitted: true } : amount, receivedAt: receivedAt === undefined ? { omitted: true } : receivedAt.toISOString(), mapping: input.mapping === undefined ? { omitted: true } : { value: input.mapping }, reason: input.reason.trim() });
     return db.transaction(async (tx) => {
-        if (input.mapping?.borrowerPublicId || input.mapping?.loanPublicId) {
-            const lockBorrower = input.mapping.borrowerPublicId
-                ? await tx.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, ctx.tenantId), eq(borrowers.publicId, input.mapping.borrowerPublicId)) })
-                : await (async () => {
-                    const mappedLoan = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.publicId, input.mapping!.loanPublicId!)) });
-                    return mappedLoan ? tx.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, ctx.tenantId), eq(borrowers.id, mappedLoan.borrowerId)) }) : null;
-                })();
-            if (!lockBorrower) throw new DomainError("BORROWER_NOT_FOUND", "Mapped borrower is unavailable", 404);
-            await lockPaymentBorrowers(tx, ctx.tenantId, [lockBorrower.id]);
+        const preliminary = await accessibleStagingItem(ctx, input.stagingItemPublicId, tx);
+        const borrowerIds = [preliminary.batch.borrowerId].filter((id): id is number => id !== null);
+        if (preliminary.staging.paymentIntakeId) borrowerIds.push(...await paymentIntakeBorrowerIds(tx, ctx.tenantId, preliminary.staging.paymentIntakeId));
+        const currentMapping = preliminary.staging.reviewedMapping;
+        const mappingsToLock = [currentMapping, input.mapping === undefined ? currentMapping : input.mapping].filter((mapping): mapping is NonNullable<typeof mapping> => mapping !== null && mapping !== undefined);
+        for (const mapping of mappingsToLock) {
+            const mappingLoan = mapping.loanPublicId ? await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.publicId, mapping.loanPublicId)) }) : null;
+            const mappingBorrower = mapping.borrowerPublicId ? await tx.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, ctx.tenantId), eq(borrowers.publicId, mapping.borrowerPublicId)) }) : mappingLoan ? await tx.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, ctx.tenantId), eq(borrowers.id, mappingLoan.borrowerId)) }) : null;
+            if (mappingBorrower) borrowerIds.push(mappingBorrower.id);
         }
+        await lockPaymentBorrowers(tx, ctx.tenantId, borrowerIds);
         const { staging, batch } = await lockedStagingItem(ctx, input.stagingItemPublicId, tx);
         const prior = await operationReceipt<{ stagingItemPublicId: string; status: string; revision: number }>(tx, ctx, "staging.edit", input.idempotencyKey.trim(), requestHash);
         if (prior) return prior;
@@ -443,7 +457,7 @@ export async function splitPaymentBatch(ctx: CommandContext, sourceBatchPublicId
         const sourceStaging = await tx.select().from(paymentBatchStagingItems).where(and(eq(paymentBatchStagingItems.tenantId, ctx.tenantId), eq(paymentBatchStagingItems.batchId, currentSource.id)));
         const selectedItems: typeof sourceItems = [];
         const selectedStaging: typeof sourceStaging = [];
-        const seenMemberships = new Set<number>();
+        const seenMemberships = new Set<string>();
         for (const publicId of input.selectedItemPublicIds) {
             const item = sourceItems.find((candidate) => candidate.publicId === publicId);
             const staging = sourceStaging.find((candidate) => candidate.publicId === publicId);
@@ -451,7 +465,7 @@ export async function splitPaymentBatch(ctx: CommandContext, sourceBatchPublicId
             const linkedItem = item ?? (staging?.batchItemId ? sourceItems.find((candidate) => candidate.id === staging.batchItemId) : undefined);
             const linkedStaging = staging ?? (item ? sourceStaging.find((candidate) => candidate.batchItemId === item.id) : undefined);
             if (!linkedItem && !linkedStaging) throw new DomainError("BATCH_SPLIT_SELECTION_INVALID", "Every selected item must belong to the source batch", 409);
-            const membershipKey = linkedItem?.id ?? linkedStaging!.id;
+            const membershipKey = linkedItem ? `item:${linkedItem.id}` : `staging:${linkedStaging!.id}`;
             if (seenMemberships.has(membershipKey)) throw new DomainError("BATCH_SPLIT_AMBIGUOUS_SELECTION", "The same batch membership was selected more than once", 409);
             seenMemberships.add(membershipKey);
             if (linkedItem) selectedItems.push(linkedItem);
@@ -709,9 +723,16 @@ export type PreviewPaymentBatchInput = { borrowerPublicId: string; allocations?:
 export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: string, input: PreviewPaymentBatchInput) {
     return db.transaction(async (db) => {
     requireId(input.borrowerPublicId, "borrowerPublicId");
+    const batchForResolution = await accessibleBatch(ctx, batchPublicId, db);
+    const stagedForResolution = await db.select().from(paymentBatchStagingItems).where(and(eq(paymentBatchStagingItems.tenantId, ctx.tenantId), eq(paymentBatchStagingItems.batchId, batchForResolution.id)));
+    const mappedLoanPublicIds = stagedForResolution.flatMap((item) => item.reviewedMapping?.loanPublicId ? [item.reviewedMapping.loanPublicId] : []);
+    const mappedLoans = mappedLoanPublicIds.length ? await db.select().from(loans).where(and(eq(loans.tenantId, ctx.tenantId), inArray(loans.publicId, mappedLoanPublicIds))) : [];
+    const mappedBorrowerIds = [...new Set(mappedLoans.map((loan) => loan.borrowerId))];
+    const mappedBorrowers = mappedBorrowerIds.length ? await db.select().from(borrowers).where(and(eq(borrowers.tenantId, ctx.tenantId), inArray(borrowers.id, mappedBorrowerIds))) : [];
+    const mappedBorrowerPublicIds = [...stagedForResolution.flatMap((item) => item.reviewedMapping?.borrowerPublicId ? [item.reviewedMapping.borrowerPublicId] : []), ...mappedBorrowers.map((row) => row.publicId)];
     const borrower = await db.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, ctx.tenantId), eq(borrowers.publicId, input.borrowerPublicId)) });
     if (!borrower) throw new DomainError("BORROWER_NOT_FOUND", "Borrower not found", 404);
-    const requestedBorrowers = [...new Set([input.borrowerPublicId, ...(input.allocations ?? []).flatMap((allocation) => allocation.borrowerPublicId ? [allocation.borrowerPublicId] : [])])];
+    const requestedBorrowers = [...new Set([input.borrowerPublicId, ...mappedBorrowerPublicIds, ...(input.allocations ?? []).flatMap((allocation) => allocation.borrowerPublicId ? [allocation.borrowerPublicId] : [])])];
     requestedBorrowers.forEach((id) => requireId(id, "borrowerPublicId"));
     const targetBorrowers = await db.select().from(borrowers).where(and(eq(borrowers.tenantId, ctx.tenantId), inArray(borrowers.publicId, requestedBorrowers))).orderBy(asc(borrowers.id));
     if (targetBorrowers.length !== requestedBorrowers.length) throw new DomainError("BORROWER_NOT_FOUND", "A selected borrower is unavailable", 404);
@@ -745,8 +766,17 @@ export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: st
         if (!loan) throw new DomainError("BATCH_ALLOCATION_MISMATCH", "Mapped loan is not an eligible loan for this batch", 409);
         const schedule = mapping.schedulePublicId ? schedules.find((candidate) => candidate.publicId === mapping.schedulePublicId && candidate.loanId === loan.id) : undefined;
         if (mapping.schedulePublicId && !schedule) throw new DomainError("BATCH_ALLOCATION_MISMATCH", "Mapped schedule is not an eligible schedule for this loan", 409);
-        return { itemPublicId: item.publicId, borrowerPublicId: targetBorrowers.find((candidate) => candidate.id === loan.borrowerId)!.publicId, loanPublicId: loan.publicId, ...(schedule ? { schedulePublicId: schedule.publicId } : {}), amount: intakes.find((intake) => intake.id === item.paymentIntakeId)!.amount, targetDueDate: schedule?.dueDate ?? slips.find((slip) => slip.itemPublicId === item.publicId)!.receivedAt.slice(0, 10), intent: "on_time" as const };
+        return { itemPublicId: item.publicId, borrowerPublicId: targetBorrowers.find((candidate) => candidate.id === loan.borrowerId)!.publicId, loanPublicId: loan.publicId, ...(schedule ? { schedulePublicId: schedule.publicId } : {}), amount: intakes.find((intake) => intake.id === item.paymentIntakeId)!.amount, targetDueDate: schedule?.dueDate ?? bangkokBusinessDate(new Date(slips.find((slip) => slip.itemPublicId === item.publicId)!.receivedAt)), intent: "on_time" as const };
     });
+    const hasReviewedMapping = mappedAllocations.some((allocation) => allocation !== null);
+    if (!input.allocations && hasReviewedMapping && mappedAllocations.some((allocation) => allocation === null)) throw new DomainError("BATCH_MAPPING_REQUIRES_REVIEW", "Every item with a reviewed mapping must have a complete mapping before preview", 409);
+    if (input.allocations && hasReviewedMapping) {
+        for (const [index, mapped] of mappedAllocations.entries()) {
+            if (!mapped) continue;
+            const explicit = input.allocations.find((allocation) => allocation.itemPublicId === mapped.itemPublicId);
+            if (!explicit || explicit.loanPublicId !== mapped.loanPublicId || explicit.schedulePublicId !== mapped.schedulePublicId || (explicit.borrowerPublicId ?? mapped.borrowerPublicId) !== mapped.borrowerPublicId) throw new DomainError("BATCH_MAPPING_CONFLICT", `Explicit allocation conflicts with reviewed mapping for item ${index + 1}`, 409);
+        }
+    }
     const effectiveAllocations = input.allocations ?? (mappedAllocations.every((allocation) => allocation !== null) ? mappedAllocations as ExplicitBatchAllocation[] : undefined);
     const solved = effectiveAllocations ? { status: "ready" as const, allocations: effectiveAllocations.map((allocation) => ({ ...allocation, matchSource: "human_explicit" as const })), candidates: [], warnings: [] } : solvePaymentBatch({ obligations, slips });
     const chronologyResults = await Promise.all(targetBorrowers.map(async (target) => {
