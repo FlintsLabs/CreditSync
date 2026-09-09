@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import Decimal from "decimal.js";
+import postgres from "postgres";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
@@ -10,6 +11,25 @@ import type { CommandContext } from "./command-context";
 import { executeLoanRestructure, previewLoanRestructure, reverseLoanRestructure } from "./loan-restructure-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
+
+async function waitForBorrowerWait(observer: ReturnType<typeof postgres>, blockerPid: number, operation: string) {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+        const rows = await observer`
+            SELECT activity.pid
+            FROM pg_locks waiting
+            JOIN pg_stat_activity activity ON activity.pid = waiting.pid
+            WHERE waiting.granted = false
+              AND activity.wait_event_type = 'Lock'
+              AND activity.query LIKE '%FROM borrowers%'
+              AND activity.query LIKE '%FOR UPDATE%'
+              AND EXISTS (SELECT 1 FROM pg_locks blocker WHERE blocker.pid = ${blockerPid} AND blocker.granted = true)
+            LIMIT 1
+        `;
+        if (rows.length) return Number(rows[0]!.pid);
+        await Promise.resolve();
+    }
+    throw new Error(`${operation} did not wait on the borrower row lock`);
+}
 
 async function reset() {
     await db.execute(sql`TRUNCATE TABLE audit_logs, loan_restructure_waivers,
@@ -122,6 +142,44 @@ describe("loan restructure service", () => {
         expect(preview.oldBalanceVersion).toMatch(/^v1:[0-9a-f]{64}$/);
         const afterAccruals = await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, loan.id));
         expect(afterAccruals).toEqual(beforeAccruals);
+    });
+
+    integrationTest("waits on the borrower lock before acquiring restructure loan locks", async () => {
+        const seeded = await seedFloating();
+        const preview = await previewLoanRestructure(seeded.ctx(), seeded.loan.publicId, {
+            settlementDate: "2026-08-15", replacementTerms, additionalPrincipal: "0.00", reason: "borrower lock ordering",
+        });
+        const locker = postgres(process.env.TEST_DATABASE_URL!);
+        const observer = postgres(process.env.TEST_DATABASE_URL!);
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => { release = resolve; });
+        let announce!: (pid: number) => void;
+        const announced = new Promise<number>((resolve) => { announce = resolve; });
+        const blocker = locker.begin(async (tx) => {
+            await tx`SELECT id FROM borrowers WHERE tenant_id = ${seeded.tenantId} AND id = ${seeded.borrower.id} FOR UPDATE`;
+            announce(Number((await tx`SELECT pg_backend_pid() AS pid`)[0]!.pid));
+            await released;
+        });
+        let executing: ReturnType<typeof executeLoanRestructure> | undefined;
+        try {
+            const blockerPid = await announced;
+            executing = executeLoanRestructure(seeded.ctx("restructure-lock-order"), preview.publicId, {
+                confirmed: true, previewHash: preview.previewHash, expectedBalanceVersion: preview.oldBalanceVersion, reason: "borrower lock ordering",
+            });
+            const waitingPid = await waitForBorrowerWait(observer, blockerPid, "restructure execution");
+            expect(waitingPid).not.toBe(blockerPid);
+            expect(await observer`SELECT id FROM loans WHERE tenant_id = ${seeded.tenantId} AND id = ${seeded.loan.id} FOR UPDATE NOWAIT`).toHaveLength(1);
+            expect(await observer`SELECT id FROM loan_restructures WHERE tenant_id = ${seeded.tenantId} AND public_id = ${preview.publicId} FOR UPDATE NOWAIT`).toHaveLength(1);
+            release();
+            await blocker;
+            await expect(executing).resolves.toMatchObject({ status: "executed" });
+        } finally {
+            release();
+            if (executing) await Promise.allSettled([executing]);
+            await Promise.allSettled([blocker]);
+            await locker.end({ timeout: 1000 });
+            await observer.end({ timeout: 1000 });
+        }
     });
 
     integrationTest("previews authoritative exposure, greater-of interest, concurrent penalty, waivers and additional cash", async () => {

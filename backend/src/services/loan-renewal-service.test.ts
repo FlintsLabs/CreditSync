@@ -19,6 +19,7 @@ import {
 } from "../db/schema";
 import { generateLoanSchedule } from "../lib/loan-schedule";
 import type { CommandContext } from "./command-context";
+import { createPaymentIntake, postPayment, previewPaymentMatch } from "./payment-service";
 import {
     allocateFundingByLargestRemainder,
     executeLoanRenewal,
@@ -858,6 +859,28 @@ describe("daily-loan renewal service", () => {
             await locker.end({ timeout: 1000 });
             await observer.end({ timeout: 1000 });
         }
+    });
+
+    integrationTest("rejects renewal execution after an ordinary payment changes its preview snapshot", async () => {
+        const seeded = await seedDailyLoan();
+        const renewal = await previewLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id), seeded.oldLoan.publicId, { requestedPrincipal: "2500.00" },
+        );
+        const paymentContext = context(seeded.tenantId, seeded.actor.id, "renewal-race-ordinary-payment");
+        const intake = await createPaymentIntake(paymentContext, {
+            amount: "190.00", receivedAt: "2026-08-20T03:00:00.000Z", payerName: seeded.borrower.name,
+        });
+        const paymentPreview = await previewPaymentMatch(paymentContext, intake.publicId, {
+            allocations: [{ borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.oldLoan.publicId, amount: "190.00" }],
+        });
+        await postPayment(paymentContext, intake.publicId, { proposalPublicId: paymentPreview.publicId });
+        const beforeReplacementCount = await db.select().from(loans).where(eq(loans.clonedFromLoanId, seeded.oldLoan.id));
+        await expect(executeLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "renewal-after-ordinary-payment"), renewal.publicId,
+            { previewHash: renewal.previewHash, confirmed: true, reason: "ordinary payment won the snapshot race" },
+        )).rejects.toMatchObject({ code: "STALE_RENEWAL_PREVIEW", status: 409 });
+        expect(await db.select().from(loans).where(eq(loans.clonedFromLoanId, seeded.oldLoan.id))).toEqual(beforeReplacementCount);
+        expect(await db.select().from(transactions).where(eq(transactions.tenantId, seeded.tenantId))).toHaveLength(11);
     });
 
     integrationTest("resolves concurrent same-key executions of different renewals as one success and one stable conflict", async () => {

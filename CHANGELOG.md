@@ -12,6 +12,7 @@
 - Kept the newly discovered renewal-panel regression portable under Vitest by replacing its Bun-only clock import with Vitest fake-timer controls.
 
 ### Fixed
+- Restructure and settlement preview/execute/reversal flows now acquire deterministic borrower locks before loan, proposal, intake, and schedule locks, re-read borrower state, and apply the shared older-pending chronology guard without changing financial formulas; added lock-barrier, stale ordinary-post, and exact replay regressions.
 - Renewal preview, execution, and reversal now acquire sorted borrower locks before loan/renewal locks, re-read borrower state after the boundary, and apply the shared older-pending chronology guard before renewal snapshots; added deterministic borrower-wait/NOWAIT and exact replay coverage without changing renewal accounting formulas.
 - Completed durable restore-backfill receipt and historical explicit reconciliation concurrency coverage: concurrent same-key backfills, including initial mutation and no-op replay, return one exact receipt; tenant/FK/immutability boundaries are enforced; non-restore execution waits for borrower locks before intake/loan locks, replays one exact result, and rejects a stale ordinary posting without compensation.
 - Added additive tenant-scoped command receipts for restore schedule backfill: identical retries return the original changed/audit/correlation result, conflicting payloads fail before mutation, and initial no-op repairs still create one audited durable receipt.
