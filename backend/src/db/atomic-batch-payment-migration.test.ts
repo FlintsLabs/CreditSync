@@ -162,9 +162,9 @@ describe("atomic payment batch migration", () => {
             try { await sql`UPDATE payment_batch_staging_items SET resolution_state = 'invalid' WHERE id = ${stagingUnknown!.id}`; } catch { invalidStateRejected = true; }
             expect(invalidStateRejected).toBe(true);
 
-            expect(await sql`SELECT loan_id, schedule_id, amount, principal_component, interest_component, fee_component, penalty_component, transaction_date, payment_intake_id, posted_at FROM transactions WHERE tenant_id = ${tenantId}`).toEqual(economicBefore);
-            expect(await sql`SELECT batch_id, payment_intake_id, staging_item_id, item_order FROM payment_batch_items WHERE tenant_id = ${tenantId}`).toEqual(membershipBefore);
-            expect(await sql`SELECT staging_item_id, file_id, evidence_hash, status, finalized_at FROM payment_batch_staging_evidence WHERE tenant_id = ${tenantId}`).toEqual(evidenceBefore);
+            expect(Array.from(await sql`SELECT loan_id, schedule_id, amount, principal_component, interest_component, fee_component, penalty_component, transaction_date, payment_intake_id, posted_at FROM transactions WHERE tenant_id = ${tenantId}`)).toEqual(Array.from(economicBefore));
+            expect(Array.from(await sql`SELECT batch_id, payment_intake_id, staging_item_id, item_order FROM payment_batch_items WHERE tenant_id = ${tenantId}`)).toEqual(Array.from(membershipBefore));
+            expect(Array.from(await sql`SELECT staging_item_id, file_id, evidence_hash, status, finalized_at FROM payment_batch_staging_evidence WHERE tenant_id = ${tenantId}`)).toEqual(Array.from(evidenceBefore));
 
             let postedBatchRejected = false;
             try { await sql`UPDATE payment_batches SET notes = 'tamper' WHERE id = ${batch!.id}`; } catch { postedBatchRejected = true; }
@@ -183,9 +183,9 @@ describe("atomic payment batch migration", () => {
             const { drizzle } = await import("drizzle-orm/postgres-js");
             await migrate(drizzle(sql), { migrationsFolder: resolve(root, "drizzle") });
             expect((await sql`SELECT count(*)::int AS count FROM payment_batch_staging_items WHERE tenant_id = ${tenantId}`)[0]!.count).toBe(rowCountBeforeRerun);
-            expect(await sql`SELECT public_id, resolution_state FROM payment_batch_staging_items WHERE tenant_id = ${tenantId} ORDER BY id`).toEqual(resolutionBeforeRerun);
-            expect(await sql`SELECT id, hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id`).toEqual(journalBeforeRerun);
-            expect(journalBefore).toEqual(journalBeforeRerun);
+            expect(Array.from(await sql`SELECT public_id, resolution_state FROM payment_batch_staging_items WHERE tenant_id = ${tenantId} ORDER BY id`)).toEqual(Array.from(resolutionBeforeRerun));
+            expect(Array.from(await sql`SELECT id, hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id`)).toEqual(Array.from(journalBeforeRerun));
+            expect(Array.from(journalBefore)).toEqual(Array.from(journalBeforeRerun));
         } finally {
             await sql.end();
         }
