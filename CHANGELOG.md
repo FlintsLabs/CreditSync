@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.10 - 2026-09-09
+
+### Added
+- Added dedicated prepare/finalize MCP tools for attaching checksum-verified signed-upload evidence directly to a linked payment restore draft before preview and execution.
+
 ## v0.4.9 - 2026-09-09
 
 ### Added

@@ -59,11 +59,13 @@ import {
 import {
     createPaymentIntake,
     finalizePaymentEvidence,
+    finalizePaymentRestoreEvidence,
     getPaymentIntake,
     listLoanPaymentIntakes,
     listPaymentIntakes,
     postPayment,
     preparePaymentEvidence,
+    preparePaymentRestoreEvidence,
     previewPaymentMatch,
     reversePayment,
     type CreatePaymentIntakeInput,
@@ -349,6 +351,21 @@ export function createDefaultMcpToolHandlers(
             idempotencyKey,
         });
     },
+    "payment.restore.evidence.prepare": (ctx, input) => {
+        const { restoreDraftPublicId, ...evidence } = input;
+        return preparePaymentRestoreEvidence(
+            ctx,
+            String(restoreDraftPublicId),
+            evidence as unknown as PrepareEvidenceInput,
+            dependencies.evidenceGateway,
+        );
+    },
+    "payment.restore.evidence.finalize": (ctx, input) => finalizePaymentRestoreEvidence(
+        ctx,
+        asString(input, "restoreDraftPublicId"),
+        asString(input, "evidencePublicId"),
+        dependencies.evidenceGateway,
+    ),
     "payment.restore.execute": (ctx, input) => {
         const idempotencyKey = ctx.idempotencyKey ?? asString(input, "idempotencyKey");
         if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Payment restore requires an idempotency key", 400);

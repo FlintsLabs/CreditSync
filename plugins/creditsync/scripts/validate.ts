@@ -125,6 +125,7 @@ export async function validatePlugin() {
             "payment.intermediary-attribution.create", "payment.intermediary-attribution.list",
             "payment.intermediary-attribution.reverse",
             "payment.restore.create", "payment.restore.preview", "payment.restore.execute",
+            "payment.restore.evidence.prepare", "payment.restore.evidence.finalize",
             "payment.reconcile.preflight",
             "payment.allocation-correction.preview", "payment.allocation-correction.execute",
         ],

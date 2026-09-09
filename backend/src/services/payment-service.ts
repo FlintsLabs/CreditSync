@@ -607,7 +607,7 @@ export async function reviewPaymentIntake(
     });
 }
 
-export interface PrepareEvidenceInput { mimeType: string; size: number; sha256: string; evidenceType?: "slip" | "qr"; url?: string }
+export interface PrepareEvidenceInput { mimeType: string; size: number; sha256: string; evidenceType?: "slip" | "qr"; originalName?: string | null; url?: string }
 
 function validateEvidenceInput(input: PrepareEvidenceInput) {
     const maxBytes = Math.max(1, Number(process.env.EVIDENCE_MAX_BYTES ?? 20 * 1024 * 1024));
@@ -754,6 +754,7 @@ export async function preparePaymentEvidence(
             ownerUserId: ctx.actorUserId,
             bucket: BUCKET_NAME,
             key,
+            originalName: input.originalName?.trim() || null,
             mimeType: input.mimeType,
             size: input.size,
             url: toStorageReference({ provider: "s3", bucket: BUCKET_NAME, key }),
@@ -822,6 +823,39 @@ export async function preparePaymentEvidence(
             "x-amz-meta-intake": intake.publicId,
         },
     };
+}
+
+async function assertPaymentRestoreDraft(ctx: CommandContext, restoreDraftPublicId: string) {
+    const draft = await accessibleIntake(ctx, restoreDraftPublicId);
+    if (draft.repostOfIntakeId === null) {
+        throw new DomainError("PAYMENT_RESTORE_DRAFT_REQUIRED", "Restore evidence requires a linked payment restore draft", 409);
+    }
+    return draft;
+}
+
+export async function preparePaymentRestoreEvidence(
+    ctx: CommandContext,
+    restoreDraftPublicId: string,
+    input: PrepareEvidenceInput,
+    gateway: EvidenceStorageGateway = defaultEvidenceGateway,
+) {
+    await assertPaymentRestoreDraft(ctx, restoreDraftPublicId);
+    const result = await preparePaymentEvidence(ctx, restoreDraftPublicId, { ...input, evidenceType: "slip" }, gateway);
+    if (result.duplicate === true) {
+        throw new DomainError("PAYMENT_RESTORE_EVIDENCE_DUPLICATE", "Restore evidence already belongs to another payment and requires review", 409);
+    }
+    return { ...result, evidencePublicId: result.publicId, status: result.status ?? "pending" };
+}
+
+export async function finalizePaymentRestoreEvidence(
+    ctx: CommandContext,
+    restoreDraftPublicId: string,
+    evidencePublicId: string,
+    gateway: EvidenceStorageGateway = defaultEvidenceGateway,
+) {
+    await assertPaymentRestoreDraft(ctx, restoreDraftPublicId);
+    const result = await finalizePaymentEvidence(ctx, restoreDraftPublicId, evidencePublicId, gateway);
+    return { ...result, evidencePublicId: result.publicId };
 }
 
 export async function finalizePaymentEvidence(
