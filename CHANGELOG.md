@@ -12,6 +12,7 @@
 - Kept the newly discovered renewal-panel regression portable under Vitest by replacing its Bun-only clock import with Vitest fake-timer controls.
 
 ### Fixed
+- Added a populated 0067-compatible disposable upgrade gate for staging resolution state: applying the committed 0068 SQL preserves mapped/unresolved legacy semantics, posted batch membership, ready evidence, transaction components, and migration journal rows while retaining database constraints and posted immutability.
 - Cleared staging resolutions now fail closed for an unmapped preview until explicit allocations reselect the target; the prior preview is stale, explicit reselection becomes the current authority, and shared chronology blocks later payments for that borrower without creating financial writes.
 - Added additive staging resolution state (`unresolved`, `mapped`, `cleared`) so shared chronology treats current ready batch allocations and explicit mappings as authoritative, preserves captured-header semantics only for never-resolved rows, and prevents cleared rows from inheriting stale dependencies. Current batch preview locks now require the ready preview at the current revision.
 - Added direct shared-guard and standalone-post regressions proving a current explicit batch allocation blocks the mapped borrower without relying on the batch preview service's extra lookup, with no financial writes.
