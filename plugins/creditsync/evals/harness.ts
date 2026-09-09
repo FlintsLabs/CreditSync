@@ -118,7 +118,8 @@ export type HarnessEvent =
     | { type: "presentation"; name: "floating-settlement-preview"; data: Record<string, unknown> }
     | { type: "presentation"; name: "intermediated-disbursement-preview"; data: Record<string, unknown> }
     | { type: "presentation"; name: "loan-replacement-preview"; data: Record<string, unknown> }
-    | { type: "confirmation"; name: "floating-settlement" | "intermediated-disbursement" | "loan-replacement"; confirmed: boolean };
+    | { type: "presentation"; name: "scheduled-allocation-correction-preview"; data: Record<string, unknown> }
+    | { type: "confirmation"; name: "floating-settlement" | "intermediated-disbursement" | "loan-replacement" | "scheduled-allocation-correction"; confirmed: boolean };
 
 export type SameTaskRenewalExecutionContext = {
     provenance: "same_task_renewal_execute_result";
@@ -218,6 +219,14 @@ class ScriptedMcp {
 
     recordIntermediatedDisbursementConfirmation(confirmed: boolean) {
         this.events.push({ type: "confirmation", name: "intermediated-disbursement", confirmed });
+    }
+
+    presentScheduledAllocationCorrection(data: Record<string, unknown>) {
+        this.events.push({ type: "presentation", name: "scheduled-allocation-correction-preview", data });
+    }
+
+    recordScheduledAllocationCorrectionConfirmation(confirmed: boolean) {
+        this.events.push({ type: "confirmation", name: "scheduled-allocation-correction", confirmed });
     }
 
     async call(name: McpToolName, args: Record<string, unknown>) {
@@ -1868,6 +1877,24 @@ const SCENARIOS: Record<string, Scenario> = {
             { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: INTAKE, status: "posted", ...noRepostLineage, evidence: [], latestProposal: null } },
         ],
         run: async (mcp) => { await mcp.call("intake.get", { paymentIntakePublicId: INTAKE }); const preview = await mcp.call("payment.allocation-correction.preview", { paymentIntakePublicId: INTAKE, transactionPublicId: ALLOCATION_SOURCE_TRANSACTION, targetSchedulePublicId: ALLOCATION_TARGET_SCHEDULE, reason: "Move payment to received installment" }); if (preview.status !== "ready") return { outcome: "stopped", stopReason: "allocation-correction-not-ready" } as const; await mcp.call("payment.allocation-correction.execute", { correctionPreviewPublicId: preview.publicId, previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: "Move payment to received installment", idempotencyKey: "allocation-eval-1" }); await mcp.call("intake.get", { paymentIntakePublicId: INTAKE }); return { outcome: "completed" } as const; },
+    },
+    "scheduled-allocation-correction-renewal-origin": {
+        script: [
+            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: INTAKE, status: "posted", ...noRepostLineage, evidence: [], latestProposal: null } },
+            { name: "payment.allocation-correction.preview", arguments: { paymentIntakePublicId: INTAKE, transactionPublicId: ALLOCATION_SOURCE_TRANSACTION, targetSchedulePublicId: ALLOCATION_TARGET_SCHEDULE, reason: "Move payment from renewal-created opening state" }, result: allocationPreviewFixture() },
+            { name: "payment.allocation-correction.execute", arguments: { correctionPreviewPublicId: ALLOCATION_PREVIEW, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, confirmed: true, reason: "Move payment from renewal-created opening state", idempotencyKey: "allocation-renewal-origin-1" }, result: allocationExecuteFixture },
+            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: INTAKE, status: "posted", ...noRepostLineage, evidence: [], latestProposal: null } },
+        ],
+        run: async (mcp) => {
+            await mcp.call("intake.get", { paymentIntakePublicId: INTAKE });
+            const preview = await mcp.call("payment.allocation-correction.preview", { paymentIntakePublicId: INTAKE, transactionPublicId: ALLOCATION_SOURCE_TRANSACTION, targetSchedulePublicId: ALLOCATION_TARGET_SCHEDULE, reason: "Move payment from renewal-created opening state" });
+            if (preview.status !== "ready" || preview.warnings?.length) return { outcome: "stopped", stopReason: "renewal-origin-correction-not-ready" } as const;
+            mcp.presentScheduledAllocationCorrection(preview);
+            mcp.recordScheduledAllocationCorrectionConfirmation(true);
+            await mcp.call("payment.allocation-correction.execute", { correctionPreviewPublicId: preview.publicId, previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: "Move payment from renewal-created opening state", idempotencyKey: "allocation-renewal-origin-1" });
+            await mcp.call("intake.get", { paymentIntakePublicId: INTAKE });
+            return { outcome: "completed" } as const;
+        },
     },
     "scheduled-allocation-correction-blocker": {
         script: [

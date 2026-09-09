@@ -1646,4 +1646,15 @@ describe("CreditSync stateless MCP contract", () => {
         const record = tools.find((candidate) => candidate.name === "payment.evidence-supplement.record");
         expect(record?.annotations).toMatchObject({ destructiveHint: true, idempotentHint: true });
     });
+
+    test("keeps scheduled allocation correction schemas closed and unchanged", () => {
+        const tools = advertisedMcpToolMetadata();
+        const preview = tools.find((tool) => tool.name === "payment.allocation-correction.preview")!;
+        const execute = tools.find((tool) => tool.name === "payment.allocation-correction.execute")!;
+        expect(preview.inputSchema).toMatchObject({ additionalProperties: false, required: ["paymentIntakePublicId", "transactionPublicId", "targetSchedulePublicId", "reason"] });
+        expect(execute.inputSchema).toMatchObject({ additionalProperties: false, required: ["correctionPreviewPublicId", "previewHash", "expectedBalanceVersion", "confirmed", "reason", "idempotencyKey"] });
+        expect(preview.outputSchema.additionalProperties).toBe(false);
+        expect(execute.outputSchema.additionalProperties).toBe(false);
+        expect(JSON.stringify(preview.outputSchema)).not.toContain("openingAncestors");
+    });
 });

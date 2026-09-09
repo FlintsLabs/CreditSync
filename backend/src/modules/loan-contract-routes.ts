@@ -13,7 +13,7 @@ import { serializeMoney } from "../lib/money";
 import { invalidateTenantCache, withTenantCache } from "../lib/cache";
 import { findAccessibleBorrowerByPublicId, findAccessibleLoanByPublicId } from "../lib/public-id";
 import { activateLoan, createLoanDraft, deleteLoanDraft, getLoanApplication, getLoanReplacementLineages, presentLoan, previewLoan, updateLoanDraft, updateLoanPaymentStartDate } from "../services/loan-application-service";
-import { bangkokBusinessDate, getLoanListLegacyPaymentHealth, getLoanPaymentHealth } from "../services/loan-payment-health-service";
+import { bangkokBusinessDate, getLoanReadPaymentHealth } from "../services/loan-payment-health-service";
 import { getLoanReceiptSummaries } from "../services/loan-receipt-summary-service";
 import { floatingInterestBalances } from "../services/floating-interest-service";
 import { DomainError } from "../services/domain-error";
@@ -275,6 +275,8 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                         status: loan.status,
                         createdAt: loan.createdAt,
                         repaymentType: loan.repaymentType,
+                        interestPeriodUnit: loan.interestPeriodUnit,
+                        floatingAccrualCycle: loan.floatingAccrualCycle,
                         interestRate: serializeMoney(loan.interestRate),
                         installmentAmount: loan.installmentAmount === null ? null : serializeMoney(loan.installmentAmount),
                         totalInstallments: loan.totalInstallments,
@@ -283,11 +285,7 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                             name: currentAgents.map((agent) => agent.name).join(", "),
                             aliases: [...new Set(currentAgents.flatMap((agent) => agent.aliases))],
                         },
-                        paymentHealth: loan.repaymentType === "floating"
-                            ? (loan.firstDayTreatment && loan.interestStartDate && loan.dailyInterestMode && loan.dailyInterestRate
-                                ? await getLoanPaymentHealth(db, loan as typeof loans.$inferSelect, { asOf, context: ctx })
-                                : await getLoanListLegacyPaymentHealth(db, loan as typeof loans.$inferSelect, { asOf }))
-                            : await getLoanPaymentHealth(db, loan as typeof loans.$inferSelect, { asOf, context: ctx }),
+                        paymentHealth: await getLoanReadPaymentHealth(db, loan as typeof loans.$inferSelect, { asOf, context: ctx }),
                     };
                 }));
             },
@@ -398,7 +396,8 @@ export const loanContractRoutes = new Elysia({ normalize: false }).use(authPlugi
                     const commissionSummary = paymentRows.length > 0
                         ? await previewLoanCommission(ctx, { loanPublicId: params.id, paymentPublicIds: paymentRows.map((row) => row.publicId) })
                         : { loanPublicId: params.id, paymentPublicIds: [], interestAmount: "0.00", totalCommission: "0.00", participants: [] };
-                    return { ...loan, commissionParticipantCount: commissionParticipants.length, commissionParticipants, commissionSummary };
+                    const paymentHealth = await getLoanReadPaymentHealth(db, accessibleLoan, { asOf: new Date(), context: ctx });
+                    return { ...loan, paymentHealth, commissionParticipantCount: commissionParticipants.length, commissionParticipants, commissionSummary };
                 },
             });
         } catch (error) {

@@ -49,6 +49,11 @@ interface LoanDetailData {
     outstandingPrincipal: string | null;
     outstandingInterest: string | null;
     outstandingFees: string | null;
+    paymentHealth?: {
+        overdueAmount: string;
+        overdueItemCount: number;
+        maxOverdueDays: number;
+    };
     status: string;
     bankProfilePublicId?: string | null;
     bankLoanPublicId?: string | null;
@@ -692,7 +697,7 @@ export default function LoanDetail() {
                                 </div>
                                 <div className="flex justify-between">
                                     <span>{t("loanDetail.outstandingInterest", "Outstanding interest")}</span>
-                                    <span className="font-medium">{money(loan.outstandingInterest)}</span>
+                                    <span className="font-medium">{money(loan.repaymentType === "floating" ? loan.paymentHealth?.overdueAmount ?? loan.outstandingInterest : loan.outstandingInterest)}</span>
                                 </div>
                                 <div className="flex justify-between">
                                     <span>{t("common.status", "Status")}</span>

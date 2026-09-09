@@ -683,6 +683,23 @@
       "humanBoundary": "Execute only after explicit confirmation of the fresh ready preview; production repair requires separate authorization."
     },
     {
+      "id": "scheduled-allocation-correction-renewal-origin",
+      "kind": "positive",
+      "skill": "reconcile-payments",
+      "prompt": "Inspect the exact posted scheduled payment and renewal-created contract, accept only verified executed-renewal principal_transfer and cash_payout opening ancestors, show the ready zero-variance preview, obtain explicit confirmation, execute with unchanged guards, and re-inspect the posted intake.",
+      "expectedCalls": [
+        "intake.get",
+        "payment.allocation-correction.preview",
+        "payment.allocation-correction.execute",
+        "intake.get"
+      ],
+      "forbiddenCalls": [
+        "payment.reverse",
+        "payment.post"
+      ],
+      "humanBoundary": "Opening ancestors are accepted only through verified executed-renewal lineage; unknown or unrelated adjustments remain blockers, and execute requires explicit confirmation of the fresh preview."
+    },
+    {
       "id": "scheduled-allocation-correction-blocker",
       "kind": "negative",
       "skill": "reconcile-payments",

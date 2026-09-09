@@ -1,5 +1,59 @@
 # Changelog
 
+## v0.4.9 - 2026-09-09
+
+### Added
+- Added the weekly floating-interest regression plan and pure-policy coverage for a 12% weekly contract with one advance-interest period, exact seven-day interest, and anchored subsequent collection periods.
+
+## v0.4.8 - 2026-09-09
+
+### Changed
+- Added the TDD implementation and verification plan for central MCP error diagnostics, actionable recovery messages, authorized diagnostic lookup, retention cleanup, and synchronized plugin contracts.
+
+## v0.4.7 - 2026-09-09
+
+### Changed
+- Documented the approved central MCP error-diagnostics design with actionable public errors, safe persisted failure breadcrumbs, 30-day retention, and authorized read-only investigation tools, and added implementation tracking to the project TODO.
+
+## v0.4.6 - 2026-09-09
+
+### Changed
+- Documented the append-only signed-upload design and implementation plan for adding supplemental evidence to an exact posted payment without changing payment or ledger state.
+
+## v0.4.5 - 2026-09-09
+
+### Fixed
+- Updated plugin contract coverage for the added renewal-origin allocation-correction eval case.
+- Hardened the renewal-origin dependency snapshot construction without changing its fail-closed eligibility boundary.
+- Synchronized MCP and operator guidance so verified executed-renewal opening ancestors are accepted while unknown and unrelated adjustments remain blocked.
+- Added execution-preservation and stale-lineage regression coverage for renewal-origin scheduled payment allocation correction.
+- Allowed scheduled allocation correction to ignore only executed-renewal `principal_transfer` and `cash_payout` opening ancestors on the renewal-created loan while retaining fail-closed blockers for all other adjustments.
+- Added regression coverage reproducing renewal-origin opening adjustments being misclassified as downstream blockers during scheduled payment allocation correction.
+
+### Changed
+- Documented the causal-lineage design for safely correcting scheduled payment allocations on renewal-created loans without treating immutable opening adjustments as downstream blockers.
+- Added the implementation and verification plan for renewal-origin allocation correction and the separately confirmed production repair.
+
+## v0.4.4 - 2026-09-08
+
+### Fixed
+- Included floating contract period metadata in the Loan List response so weekly floating contracts are not rendered as daily.
+
+## v0.4.3 - 2026-09-08
+
+### Fixed
+- Made floating-loan contract labels and overdue units follow the contractual interest period before internal accrual metadata.
+
+## v0.4.2 - 2026-09-08
+
+### Fixed
+- Made floating-loan overdue labels follow the explicit accrual cycle before legacy interest-period metadata.
+
+## v0.4.1 - 2026-09-08
+
+### Fixed
+- Synchronized floating-loan payment-health projections across the Loans list, REST detail, and MCP contract reads without changing persisted ledger balances.
+
 ## v0.4.0 - 2026-09-08
 
 ### Changed

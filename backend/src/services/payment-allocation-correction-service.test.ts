@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { describe, expect, test } from "bun:test";
 import { db } from "../db";
-import { borrowers, loanSchedules, loans, paymentAllocationCorrectionEntries, paymentAllocationCorrectionGroups, paymentAllocationCorrectionPreviews, paymentIntakes, transactions, users } from "../db/schema";
+import { borrowers, loanAdjustments, loanRenewals, loanSchedules, loans, paymentAllocationCorrectionEntries, paymentAllocationCorrectionGroups, paymentAllocationCorrectionPreviews, paymentIntakes, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import { executePaymentAllocationCorrection, previewPaymentAllocationCorrection } from "./payment-allocation-correction-service";
 
@@ -22,6 +22,40 @@ async function fixture(targetScheduledTotal = "200.00") {
     return { tenantId, loan, schedules, intake, source, ctx };
 }
 
+async function seedRenewalOpeningAdjustments(seeded: Awaited<ReturnType<typeof fixture>>) {
+    const oldLoan = (await db.insert(loans).values({
+        tenantId: seeded.tenantId,
+        ownerUserId: seeded.ctx.actorUserId,
+        borrowerId: seeded.loan.borrowerId,
+        principalAmount: "4000.00",
+        interestRate: "0.00",
+        repaymentType: "daily",
+        termMonths: 1,
+        status: "renewed",
+    }).returning())[0]!;
+    const renewal = (await db.insert(loanRenewals).values({
+        tenantId: seeded.tenantId,
+        oldLoanId: oldLoan.id,
+        newLoanId: seeded.loan.id,
+        requestedPrincipal: "4000.00",
+        outstandingPrincipal: "1913.08",
+        dueCharges: "0.00",
+        waivedCharges: "0.00",
+        settlementPolicy: "full_contract_interest",
+        cashDirection: "payout",
+        cashAmount: "1800.00",
+        renewalDate: "2026-09-05",
+        previewHash: `v1:${"1".repeat(64)}`,
+        expiresAt: new Date("2099-09-05T00:00:00.000Z"),
+        status: "executed",
+    }).returning())[0]!;
+    const adjustments = await db.insert(loanAdjustments).values([
+        { tenantId: seeded.tenantId, loanId: seeded.loan.id, renewalId: renewal.id, adjustmentType: "principal_transfer", amount: "1913.08", status: "posted", reason: "renewal" },
+        { tenantId: seeded.tenantId, loanId: seeded.loan.id, renewalId: renewal.id, adjustmentType: "cash_payout", amount: "1800.00", status: "posted", reason: "renewal" },
+    ]).returning();
+    return { oldLoan, renewal, adjustments };
+}
+
 describe("scheduled payment allocation correction", () => {
     test("requires explicit confirmation before any database work", async () => {
         await expect(executePaymentAllocationCorrection({ tenantId: "tenant", actorUserId: null, actorSource: "mcp", requestId: "request", correlationId: "correlation" }, { correctionPreviewPublicId: "11111111-1111-4111-8111-111111111111", previewHash: `v1:${"a".repeat(64)}`, expectedBalanceVersion: `v1:${"b".repeat(64)}`, confirmed: false as never, reason: "test", idempotencyKey: "test" })).rejects.toMatchObject({ code: "CONFIRMATION_REQUIRED" });
@@ -33,6 +67,57 @@ describe("scheduled payment allocation correction", () => {
         expect(preview).toMatchObject({ status: "ready", amount: "200.00", components: { principal: "173.92", interest: "26.08", fee: "0.00", penalty: "0.00" }, netLoanVariance: { amount: "0.00", principal: "0.00", interest: "0.00", fee: "0.00", penalty: "0.00" }, warnings: [] });
         expect(preview.source.after).toMatchObject({ paidTotal: "0.00", remainingDue: "200.00", status: "pending" });
         expect(preview.target.after).toMatchObject({ paidTotal: "200.00", remainingDue: "0.00", status: "paid" });
+    });
+
+    integrationTest("allows executed-renewal opening adjustments on the renewal-created loan", async () => {
+        const seeded = await fixture();
+        const opening = await seedRenewalOpeningAdjustments(seeded);
+        const preview = await previewPaymentAllocationCorrection(seeded.ctx, {
+            paymentIntakePublicId: seeded.intake.publicId,
+            transactionPublicId: seeded.source.publicId,
+            targetSchedulePublicId: seeded.schedules[0]!.publicId,
+            reason: "Move payment to the received installment",
+        });
+        expect(preview.status).toBe("ready");
+        expect(preview.warnings).toEqual([]);
+        expect(await db.select().from(loanAdjustments).where(eq(loanAdjustments.renewalId, opening.renewal.id)))
+            .toEqual(expect.arrayContaining(opening.adjustments.map((row) => expect.objectContaining({ publicId: row.publicId, status: "posted" }))));
+    });
+
+    integrationTest("blocks an unrelated posted adjustment on the source loan", async () => {
+        const seeded = await fixture();
+        const blocker = (await db.insert(loanAdjustments).values({ tenantId: seeded.tenantId, loanId: seeded.loan.id, adjustmentType: "manual_fee", amount: "1.00", status: "posted", reason: "downstream" }).returning())[0]!;
+        const preview = await previewPaymentAllocationCorrection(seeded.ctx, { paymentIntakePublicId: seeded.intake.publicId, transactionPublicId: seeded.source.publicId, targetSchedulePublicId: seeded.schedules[0]!.publicId, reason: "Move payment" });
+        expect(preview).toMatchObject({ status: "blocked", warnings: [{ code: "PAYMENT_ALLOCATION_CORRECTION_DEPENDENCY", blockerPublicIds: [blocker.publicId] }] });
+    });
+
+    integrationTest("blocks an unknown adjustment type linked to the creating renewal", async () => {
+        const seeded = await fixture();
+        const opening = await seedRenewalOpeningAdjustments(seeded);
+        const blocker = (await db.update(loanAdjustments).set({ adjustmentType: "future_unknown_type" }).where(eq(loanAdjustments.id, opening.adjustments[0]!.id)).returning())[0]!;
+        await db.update(loanAdjustments).set({ status: "reversed" }).where(eq(loanAdjustments.id, opening.adjustments[1]!.id));
+        const preview = await previewPaymentAllocationCorrection(seeded.ctx, { paymentIntakePublicId: seeded.intake.publicId, transactionPublicId: seeded.source.publicId, targetSchedulePublicId: seeded.schedules[0]!.publicId, reason: "Move payment" });
+        expect(preview).toMatchObject({ status: "blocked", warnings: [{ code: "PAYMENT_ALLOCATION_CORRECTION_DEPENDENCY", blockerPublicIds: [blocker.publicId] }] });
+    });
+
+    integrationTest("blocks an allowed adjustment linked to a different renewal", async () => {
+        const seeded = await fixture();
+        const opening = await seedRenewalOpeningAdjustments(seeded);
+        await db.update(loanAdjustments).set({ status: "reversed" }).where(eq(loanAdjustments.renewalId, opening.renewal.id));
+        const otherLoan = (await db.insert(loans).values({ tenantId: seeded.tenantId, ownerUserId: seeded.ctx.actorUserId, borrowerId: seeded.loan.borrowerId, principalAmount: "4000.00", interestRate: "0.00", repaymentType: "daily", termMonths: 1, status: "active" }).returning())[0]!;
+        const otherRenewal = (await db.insert(loanRenewals).values({ tenantId: seeded.tenantId, oldLoanId: opening.oldLoan.id, newLoanId: otherLoan.id, requestedPrincipal: "4000.00", outstandingPrincipal: "1913.08", dueCharges: "0.00", waivedCharges: "0.00", settlementPolicy: "full_contract_interest", cashDirection: "payout", cashAmount: "1800.00", renewalDate: "2026-09-05", previewHash: `v1:${"2".repeat(64)}`, expiresAt: new Date("2099-09-05T00:00:00.000Z"), status: "executed" }).returning())[0]!;
+        const blocker = (await db.insert(loanAdjustments).values({ tenantId: seeded.tenantId, loanId: seeded.loan.id, renewalId: otherRenewal.id, adjustmentType: "principal_transfer", amount: "1.00", status: "posted", reason: "mislinked" }).returning())[0]!;
+        const preview = await previewPaymentAllocationCorrection(seeded.ctx, { paymentIntakePublicId: seeded.intake.publicId, transactionPublicId: seeded.source.publicId, targetSchedulePublicId: seeded.schedules[0]!.publicId, reason: "Move payment" });
+        expect(preview).toMatchObject({ status: "blocked", warnings: [{ code: "PAYMENT_ALLOCATION_CORRECTION_DEPENDENCY", blockerPublicIds: [blocker.publicId] }] });
+    });
+
+    integrationTest("blocks an allowed adjustment linked to a non-executed renewal", async () => {
+        const seeded = await fixture();
+        const opening = await seedRenewalOpeningAdjustments(seeded);
+        await db.update(loanRenewals).set({ status: "preview" }).where(eq(loanRenewals.id, opening.renewal.id));
+        const blocker = opening.adjustments[0]!;
+        const preview = await previewPaymentAllocationCorrection(seeded.ctx, { paymentIntakePublicId: seeded.intake.publicId, transactionPublicId: seeded.source.publicId, targetSchedulePublicId: seeded.schedules[0]!.publicId, reason: "Move payment" });
+        expect(preview).toMatchObject({ status: "blocked", warnings: [{ code: "PAYMENT_ALLOCATION_CORRECTION_DEPENDENCY", blockerPublicIds: [blocker.publicId, opening.adjustments[1]!.publicId] }] });
     });
 
     integrationTest("executes append-only compensation/replacement and supports idempotent replay", async () => {
@@ -54,6 +139,44 @@ describe("scheduled payment allocation correction", () => {
         expect(replay.correctionPublicId).toBe(result.correctionPublicId);
         expect(await db.select().from(paymentAllocationCorrectionGroups).where(eq(paymentAllocationCorrectionGroups.tenantId, seeded.tenantId))).toHaveLength(1);
         expect(await db.select().from(paymentAllocationCorrectionEntries).where(eq(paymentAllocationCorrectionEntries.tenantId, seeded.tenantId))).toHaveLength(2);
+    });
+
+    integrationTest("preserves renewal opening adjustments during correction execution", async () => {
+        const seeded = await fixture();
+        const opening = await seedRenewalOpeningAdjustments(seeded);
+        const beforeLoan = await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) });
+        const preview = await previewPaymentAllocationCorrection(seeded.ctx, { paymentIntakePublicId: seeded.intake.publicId, transactionPublicId: seeded.source.publicId, targetSchedulePublicId: seeded.schedules[0]!.publicId, reason: "Move payment to the received installment" });
+        const result = await executePaymentAllocationCorrection(seeded.ctx, { correctionPreviewPublicId: preview.publicId, previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: "Move payment to the received installment", idempotencyKey: "renewal-opening-correction" });
+        expect(result).toMatchObject({ amount: "200.00", components: { principal: "173.92", interest: "26.08", fee: "0.00", penalty: "0.00" }, sourceSchedulePublicId: seeded.schedules[1]!.publicId, targetSchedulePublicId: seeded.schedules[0]!.publicId });
+        expect(await db.select().from(loanAdjustments).where(eq(loanAdjustments.renewalId, opening.renewal.id))).toEqual(opening.adjustments);
+        const history = await db.select().from(transactions).where(eq(transactions.tenantId, seeded.tenantId)).orderBy(transactions.id);
+        expect(history).toHaveLength(3);
+        expect(history[1]).toMatchObject({ amount: "-200.00", principalComponent: "-173.92", interestComponent: "-26.08", feeComponent: "0.00", penaltyComponent: "0.00", transactionDate: seeded.source.transactionDate });
+        expect(history[2]).toMatchObject({ amount: "200.00", principalComponent: "173.92", interestComponent: "26.08", feeComponent: "0.00", penaltyComponent: "0.00", transactionDate: seeded.source.transactionDate });
+        expect(await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.id, seeded.intake.id) })).toMatchObject({ status: "posted" });
+        expect(await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.id, seeded.schedules[1]!.id) })).toMatchObject({ paidTotal: "0.00", remainingDue: "200.00" });
+        expect(await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.id, seeded.schedules[0]!.id) })).toMatchObject({ paidTotal: "200.00", remainingDue: "0.00" });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({ outstandingPrincipal: beforeLoan!.outstandingPrincipal, outstandingInterest: beforeLoan!.outstandingInterest, outstandingFees: beforeLoan!.outstandingFees });
+    });
+
+    integrationTest("rejects execution when an opening adjustment status changes after preview", async () => {
+        const seeded = await fixture();
+        const opening = await seedRenewalOpeningAdjustments(seeded);
+        const preview = await previewPaymentAllocationCorrection(seeded.ctx, { paymentIntakePublicId: seeded.intake.publicId, transactionPublicId: seeded.source.publicId, targetSchedulePublicId: seeded.schedules[0]!.publicId, reason: "Move payment" });
+        await db.update(loanAdjustments).set({ status: "reversed" }).where(eq(loanAdjustments.id, opening.adjustments[0]!.id));
+        await expect(executePaymentAllocationCorrection(seeded.ctx, { correctionPreviewPublicId: preview.publicId, previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: "Move payment", idempotencyKey: "renewal-opening-status-stale" })).rejects.toMatchObject({ code: "STALE_CORRECTION_PREVIEW" });
+        expect(await db.select().from(transactions).where(eq(transactions.tenantId, seeded.tenantId))).toHaveLength(1);
+        expect(await db.select().from(paymentAllocationCorrectionGroups).where(eq(paymentAllocationCorrectionGroups.tenantId, seeded.tenantId))).toHaveLength(0);
+    });
+
+    integrationTest("rejects execution when opening renewal lineage changes after preview", async () => {
+        const seeded = await fixture();
+        const opening = await seedRenewalOpeningAdjustments(seeded);
+        const preview = await previewPaymentAllocationCorrection(seeded.ctx, { paymentIntakePublicId: seeded.intake.publicId, transactionPublicId: seeded.source.publicId, targetSchedulePublicId: seeded.schedules[0]!.publicId, reason: "Move payment" });
+        await db.update(loanRenewals).set({ status: "preview" }).where(eq(loanRenewals.id, opening.renewal.id));
+        await expect(executePaymentAllocationCorrection(seeded.ctx, { correctionPreviewPublicId: preview.publicId, previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: "Move payment", idempotencyKey: "renewal-lineage-stale" })).rejects.toMatchObject({ code: "STALE_CORRECTION_PREVIEW" });
+        expect(await db.select().from(transactions).where(eq(transactions.tenantId, seeded.tenantId))).toHaveLength(1);
+        expect(await db.select().from(paymentAllocationCorrectionGroups).where(eq(paymentAllocationCorrectionGroups.tenantId, seeded.tenantId))).toHaveLength(0);
     });
 
     integrationTest("rejects stale guards without writing financial rows", async () => {
