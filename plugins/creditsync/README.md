@@ -1,10 +1,10 @@
-# CreditSync Plugin 9.3.0
+# CreditSync Plugin 9.4.0
 
 This private Codex plugin orchestrates the CreditSync MCP app for borrower and intermediary identity, payments, intermediary remittances and multi-leg disbursements, generalized floating-interest origination and settlement, effective-dated rate changes, direct loan disbursements, renewals, and append-only reversal.
 
 ## Package contract
 
-- Plugin version: `9.3.0`
+- Plugin version: `9.4.0`
 - MCP schema version: `1.0`
 - 11 orchestration skills: `creditsync`, `manage-borrowers`, `reconcile-payments`, `reconcile-intermediary-remittances`, `manage-loans`, `manage-floating-interest-rates`, `settle-floating-loans`, `manage-disbursements`, `manage-intermediated-disbursements`, `renew-daily-loan`, `restructure-loan`
 - App manifest: `.app.json`
@@ -87,7 +87,7 @@ Publishing to Git does not hot-reload an installed copy. Start a new Codex task 
 - Floating-loan corrections that need missing interest restored use `payment.reverse-with-accrual.preview` → explicit confirmation → `payment.reverse-with-accrual.execute`; this atomically compensates the payment and materializes payable accruals through the original payment date without posting a replacement payment.
 - Before any payment reconciliation or posting confirmation, run `payment.reconcile.preflight`. It is explicitly no-write (`wouldWrite: false`) and uses the real allocator inside a rollback-only transaction. If an ordinary ready proposal returns `FLOATING_BACKDATED_ALLOCATION_REQUIRES_RECONCILIATION`, inspect the exact intake and obtain explicit confirmation before `payment.reconcile.mark-review`; then create a fresh reconciliation preview/preflight and obtain a separate confirmation before execute.
 
-See `references/` for matching, accounting invariants, error recovery, and the frozen 125-tool metadata snapshot. Unexpected, retryable, and integration failures include a correlation ID and suggested action; owner/manager agents may inspect them with `system.error-diagnostic.get` and bounded `system.error-diagnostic.list`. These tools never bypass confirmation, idempotency, duplicate, stale-state, mismatch, or review gates. The snapshot is generated through an authenticated local MCP SDK Client `tools/list` call. `evals/evals.json` and `evals/harness.ts` execute exact ordered/repeated tool calls, supported arguments, injected workflow states, external upload effects, and forbidden-write boundaries while remaining honest that no live private app was used.
+See `references/` for matching, accounting invariants, error recovery, and the frozen 126-tool metadata snapshot. Unexpected, retryable, and integration failures include a correlation ID and suggested action; owner/manager agents may inspect them with `system.error-diagnostic.get` and bounded `system.error-diagnostic.list`. These tools never bypass confirmation, idempotency, duplicate, stale-state, mismatch, or review gates. The snapshot is generated through an authenticated local MCP SDK Client `tools/list` call. `evals/evals.json` and `evals/harness.ts` execute exact ordered/repeated tool calls, supported arguments, injected workflow states, external upload effects, and forbidden-write boundaries while remaining honest that no live private app was used.
 
 Deployment, credential rotation, MinIO evidence, and recovery procedures are maintained in the root repository documentation:
 

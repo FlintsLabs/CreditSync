@@ -1,5 +1,5 @@
 {
-  "compatibility": "Tool names, full input/output schemas, descriptions, annotations, and file-parameter metadata are frozen for plugin 9.3.0; breaking changes require plugin 10.0.0.",
+  "compatibility": "Tool names, full input/output schemas, descriptions, annotations, and file-parameter metadata are frozen for plugin 9.4.0; breaking changes require plugin 10.0.0.",
   "schemaVersion": "1.0",
   "sourceOfTruth": "Local MCP SDK Client tools/list response from backend/src/mcp/server.ts",
   "tools": [
@@ -3248,6 +3248,438 @@
         "type": "object"
       },
       "title": "Payment Batch Workspace"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
+        "title": "Payment Batch Candidates"
+      },
+      "description": "Discover accessible named borrowers and backend-calculated contract candidates for one reviewed staging slip.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "maxLength": 32,
+            "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+            "type": "string"
+          },
+          "borrowerQuery": {
+            "maxLength": 500,
+            "minLength": 1,
+            "type": "string"
+          },
+          "receivedAt": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "stagingItemPublicId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stagingItemPublicId"
+        ],
+        "type": "object"
+      },
+      "name": "payment.batch.candidates",
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "amount": {
+                "maxLength": 32,
+                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                "type": "string"
+              },
+              "batchItemPublicId": {
+                "anyOf": [
+                  {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "batchRevision": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              },
+              "borrowerCandidates": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "matchType": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "canonical",
+                            "confirmed_alias",
+                            "fuzzy"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "publicId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "publicId",
+                    "name",
+                    "matchType"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "borrowerResolution": {
+                "enum": [
+                  "none",
+                  "unique",
+                  "ambiguous",
+                  "candidates"
+                ],
+                "type": "string"
+              },
+              "businessDate": {
+                "format": "date",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
+                "type": "string"
+              },
+              "candidateLimitReached": {
+                "type": "boolean"
+              },
+              "contractCandidates": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "borrowerName": {
+                      "type": "string"
+                    },
+                    "borrowerPublicId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "dueComponents": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "fee": {
+                              "maxLength": 32,
+                              "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                              "type": "string"
+                            },
+                            "interest": {
+                              "maxLength": 32,
+                              "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                              "type": "string"
+                            },
+                            "penalty": {
+                              "maxLength": 32,
+                              "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                              "type": "string"
+                            },
+                            "principal": {
+                              "maxLength": 32,
+                              "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "principal",
+                            "interest",
+                            "fee",
+                            "penalty"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "eligibilityCode": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "eligible": {
+                      "type": "boolean"
+                    },
+                    "interestRate": {
+                      "maxLength": 32,
+                      "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                      "type": "string"
+                    },
+                    "loanPublicId": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "nextDueDate": {
+                      "anyOf": [
+                        {
+                          "format": "date",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "outstandingPrincipal": {
+                      "maxLength": 32,
+                      "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                      "type": "string"
+                    },
+                    "principalAmount": {
+                      "maxLength": 32,
+                      "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                      "type": "string"
+                    },
+                    "proposalComponents": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "fee": {
+                              "maxLength": 32,
+                              "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                              "type": "string"
+                            },
+                            "interest": {
+                              "maxLength": 32,
+                              "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                              "type": "string"
+                            },
+                            "penalty": {
+                              "maxLength": 32,
+                              "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                              "type": "string"
+                            },
+                            "principal": {
+                              "maxLength": 32,
+                              "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "principal",
+                            "interest",
+                            "fee",
+                            "penalty"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "repaymentType": {
+                      "type": "string"
+                    },
+                    "schedules": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "components": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "fee": {
+                                "maxLength": 32,
+                                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                "type": "string"
+                              },
+                              "interest": {
+                                "maxLength": 32,
+                                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                "type": "string"
+                              },
+                              "penalty": {
+                                "maxLength": 32,
+                                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                "type": "string"
+                              },
+                              "principal": {
+                                "maxLength": 32,
+                                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "principal",
+                              "interest",
+                              "fee",
+                              "penalty"
+                            ],
+                            "type": "object"
+                          },
+                          "dueDate": {
+                            "format": "date",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
+                            "type": "string"
+                          },
+                          "publicId": {
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                            "type": "string"
+                          },
+                          "remainingDue": {
+                            "maxLength": 32,
+                            "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "publicId",
+                          "dueDate",
+                          "status",
+                          "remainingDue",
+                          "components"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "startDate": {
+                      "anyOf": [
+                        {
+                          "format": "date",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "borrowerPublicId",
+                    "borrowerName",
+                    "loanPublicId",
+                    "repaymentType",
+                    "status",
+                    "eligible",
+                    "eligibilityCode",
+                    "principalAmount",
+                    "outstandingPrincipal",
+                    "interestRate",
+                    "startDate",
+                    "nextDueDate",
+                    "dueComponents",
+                    "proposalComponents",
+                    "schedules"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "inputFingerprint": {
+                "type": "string"
+              },
+              "matchType": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "canonical",
+                      "confirmed_alias",
+                      "fuzzy"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "receivedAt": {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "type": "string"
+              },
+              "reviewRequired": {
+                "type": "boolean"
+              },
+              "stagingItemPublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "stagingRevision": {
+                "maximum": 9007199254740991,
+                "minimum": -9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "stagingItemPublicId",
+              "batchItemPublicId",
+              "stagingRevision",
+              "batchRevision",
+              "amount",
+              "receivedAt",
+              "businessDate",
+              "inputFingerprint",
+              "borrowerResolution",
+              "matchType",
+              "borrowerCandidates",
+              "contractCandidates",
+              "candidateLimitReached",
+              "reviewRequired"
+            ],
+            "type": "object"
+          },
+          "schemaVersion": {
+            "const": "1.0",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "data"
+        ],
+        "type": "object"
+      },
+      "title": "Payment Batch Candidates"
     },
     {
       "annotations": {

@@ -1158,6 +1158,9 @@ describe("default MCP adapter integration", () => {
         await call("payment.batch.staging.evidence.finalize", { stagingItemPublicId: stagingPublicId, evidencePublicId: evidence.data.evidencePublicId });
         const reviewed = await call("payment.batch.staging.review", { stagingItemPublicId: stagingPublicId, amount: "75.00", receivedAt: "2026-08-10T00:00:00.000Z", intakeIdempotencyKey: `mcp-stage-intake-${crypto.randomUUID()}` });
         expectWriteAuditMetadata(reviewed.data);
+        const discovered = await call("payment.batch.candidates", { stagingItemPublicId: stagingPublicId, borrowerQuery: borrower.name });
+        expect(discovered.data.borrowerCandidates).toEqual(expect.arrayContaining([expect.objectContaining({ publicId: borrower.publicId, name: borrower.name })]));
+        expect(discovered.data.contractCandidates).toEqual(expect.arrayContaining([expect.objectContaining({ borrowerPublicId: borrower.publicId, loanPublicId: activated.publicId, eligible: true })]));
         const reviewedSchedule = await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.loanId, activated.id) });
         expect(reviewedSchedule).not.toBeNull();
         const allocation = { itemPublicId: reviewed.data.batchItemPublicId, borrowerPublicId: borrower.publicId, loanPublicId: activated.publicId, schedulePublicId: reviewedSchedule!.publicId, amount: "75.00", targetDueDate: reviewedSchedule!.dueDate, intent: "on_time" };
@@ -1173,6 +1176,69 @@ describe("default MCP adapter integration", () => {
         expect(executed.auditPublicIds).toEqual(expect.arrayContaining([expect.stringMatching(UUID_PATTERN)]));
         const replay = await call("payment.batch.execute", { batchPublicId: staged.data.batchPublicId, previewPublicId: finalPreview.data.publicId, previewHash: finalPreview.data.previewHash, confirmationHash: finalPreview.data.confirmationHash, confirmed: true, idempotencyKey: executeKey });
         expect(replay.data).toEqual(executed.data);
+        await client.close();
+    });
+
+    integrationTest("runs shuffled floating two-contract 75+45 payments through candidates, missing-day decision, execute, and exact replay", async () => {
+        const actor = await db.insert(users).values({ tenantId: TENANT_ID, email: ACTOR_EMAIL, role: "owner" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId: TENANT_ID, ownerUserId: actor.id, name: "MCP floating candidate borrower" }).returning().then((rows) => rows[0]!);
+        const [loanA, loanB] = await db.insert(loans).values([
+            { tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "1000.00", interestRate: "0.00", repaymentType: "floating", floatingAccrualCycle: "daily", firstDayTreatment: "start_next_day", interestStartDate: "2026-09-01", outstandingPrincipal: "1000.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" },
+            { tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "1000.00", interestRate: "0.00", repaymentType: "floating", floatingAccrualCycle: "daily", firstDayTreatment: "start_next_day", interestStartDate: "2026-09-01", outstandingPrincipal: "1000.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" },
+        ]).returning();
+        const preparedHeads = new Map<string, Awaited<ReturnType<EvidenceStorageGateway["head"]>>>();
+        const gateway: EvidenceStorageGateway = {
+            preparePut: async (request) => {
+                preparedHeads.set(request.key, { exists: true, contentType: request.contentType, contentLength: request.contentLength, checksumSha256: request.checksumSha256, metadata: request.metadata });
+                return { uploadUrl: `https://upload.example.test/${encodeURIComponent(request.key)}`, expiresAt: new Date(Date.now() + 5 * 60_000), requiredHeaders: {} };
+            },
+            head: async (key) => preparedHeads.get(key) ?? { exists: false, contentType: null, contentLength: null, checksumSha256: null, metadata: {} },
+        };
+        const { client } = await startDefaultServer({ evidenceGateway: gateway });
+        const call = async (name: McpToolName, args: Record<string, unknown>) => resultData(await client.callTool({ name, arguments: args }));
+        const staged = await call("payment.batch.stage", { idempotencyKey: "mcp-floating-stage", borrowerPublicId: borrower.publicId, items: [
+            { clientItemKey: "slip-09", payerName: borrower.name, bankReference: "synthetic-09" },
+            { clientItemKey: "slip-07", payerName: borrower.name, bankReference: "synthetic-07" },
+        ] });
+        const stagedItems = staged.data.items as Array<{ publicId: string; clientItemKey: string }>;
+        const byKey = new Map(stagedItems.map((item) => [item.clientItemKey, item.publicId]));
+        const reviewed: Record<string, string> = {};
+        for (const [key, date] of [["slip-09", "2026-09-09T02:00:00.000Z"], ["slip-07", "2026-09-07T02:00:00.000Z"]] as const) {
+            const stagingItemPublicId = byKey.get(key)!;
+            const evidence = await call("payment.batch.staging.evidence.prepare", { stagingItemPublicId, mimeType: "image/png", size: 4, sha256: `${key === "slip-09" ? "9" : "7"}`.repeat(64) });
+            await call("payment.batch.staging.evidence.finalize", { stagingItemPublicId, evidencePublicId: evidence.data.evidencePublicId });
+            const row = await call("payment.batch.staging.review", { stagingItemPublicId, amount: "120.00", receivedAt: date, intakeIdempotencyKey: `mcp-floating-intake-${key}` });
+            reviewed[key] = String(row.data.batchItemPublicId);
+        }
+        const discovered = await call("payment.batch.candidates", { stagingItemPublicId: byKey.get("slip-07")!, borrowerQuery: borrower.name, amount: "120.00", receivedAt: "2026-09-07T02:00:00.000Z" });
+        expect(discovered.data.contractCandidates).toEqual(expect.arrayContaining([
+            expect.objectContaining({ loanPublicId: loanA!.publicId, repaymentType: "floating", eligible: true, dueComponents: expect.objectContaining({ principal: expect.any(String), interest: expect.any(String) }) }),
+            expect.objectContaining({ loanPublicId: loanB!.publicId, repaymentType: "floating", eligible: true }),
+        ]));
+        const allocations = [
+            { itemPublicId: reviewed["slip-09"], borrowerPublicId: borrower.publicId, loanPublicId: loanB!.publicId, amount: "45.00", targetDueDate: "2026-09-09", intent: "on_time" },
+            { itemPublicId: reviewed["slip-09"], borrowerPublicId: borrower.publicId, loanPublicId: loanA!.publicId, amount: "75.00", targetDueDate: "2026-09-09", intent: "on_time" },
+            { itemPublicId: reviewed["slip-07"], borrowerPublicId: borrower.publicId, loanPublicId: loanB!.publicId, amount: "45.00", targetDueDate: "2026-09-07", intent: "on_time" },
+            { itemPublicId: reviewed["slip-07"], borrowerPublicId: borrower.publicId, loanPublicId: loanA!.publicId, amount: "75.00", targetDueDate: "2026-09-07", intent: "on_time" },
+        ];
+        const preview = await call("payment.batch.preview", { batchPublicId: staged.data.batchPublicId, borrowerPublicId: borrower.publicId, allocations });
+        expect(preview.data.allocations).toHaveLength(4);
+        expect(preview.data.allocations).toEqual(expect.arrayContaining([
+            expect.objectContaining({ itemPublicId: reviewed["slip-07"], amount: "75.00", loanPublicId: loanA!.publicId }),
+            expect.objectContaining({ itemPublicId: reviewed["slip-07"], amount: "45.00", loanPublicId: loanB!.publicId }),
+            expect.objectContaining({ itemPublicId: reviewed["slip-09"], amount: "75.00", loanPublicId: loanA!.publicId }),
+            expect.objectContaining({ itemPublicId: reviewed["slip-09"], amount: "45.00", loanPublicId: loanB!.publicId }),
+        ]));
+        expect(preview.data.status).toBe("needs_review");
+        const decision = await call("payment.batch.decision", { batchPublicId: staged.data.batchPublicId, previewPublicId: preview.data.publicId, previewHash: preview.data.previewHash, revision: preview.data.version, action: "confirm_no_older_pending", reason: "Synthetic missing-day chronology review", fromDate: "2026-09-07", toDate: "2026-09-09", idempotencyKey: "mcp-floating-gap-decision" });
+        const confirmed = await call("payment.batch.preview", { batchPublicId: staged.data.batchPublicId, borrowerPublicId: borrower.publicId, decisionPublicId: decision.data.decisionPublicId, allocations });
+        expect(confirmed.data.status).toBe("ready");
+        const executeArgs = { batchPublicId: staged.data.batchPublicId, previewPublicId: confirmed.data.publicId, previewHash: confirmed.data.previewHash, confirmationHash: confirmed.data.confirmationHash, confirmed: true, idempotencyKey: "mcp-floating-execute" };
+        const executed = await call("payment.batch.execute", executeArgs);
+        const replay = await call("payment.batch.execute", executeArgs);
+        expect(replay.data).toEqual(executed.data);
+        expect(executed.auditPublicIds).toEqual(expect.arrayContaining([expect.stringMatching(UUID_PATTERN)]));
+        expect(await db.select().from(transactions).where(eq(transactions.tenantId, TENANT_ID))).toHaveLength(4);
         await client.close();
     });
 
@@ -1956,7 +2022,7 @@ describe("default MCP adapter integration", () => {
 
         const resumableBatchTools = new Set<McpToolName>([
             "payment.batch.stage", "payment.batch.staging.evidence.prepare", "payment.batch.staging.evidence.finalize",
-            "payment.batch.workspace", "payment.batch.staging.review", "payment.batch.staging.edit",
+            "payment.batch.workspace", "payment.batch.candidates", "payment.batch.staging.review", "payment.batch.staging.edit",
             "payment.batch.split", "payment.batch.decision", "payment.batch.cancel",
         ]);
         expect([...new Set(called)].sort()).toEqual(MCP_TOOL_NAMES.filter((name) => !resumableBatchTools.has(name)).sort());

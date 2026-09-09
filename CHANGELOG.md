@@ -3,6 +3,8 @@
 ## v0.4.14 - 2026-09-09
 
 ### Added
+- Candidate discovery now returns revision-bound input fingerprints, portfolio-filtered contracts, and separate authoritative due versus input proposal components for scheduled and floating loans.
+- Added tenant-safe named borrower and backend-calculated contract candidate discovery for reviewed batch staging through the shared REST/MCP services.
 - Added the complete resumable payment-batch REST/MCP contract, including staging creation and evidence prepare/finalize, borrower-aware floating allocations, decision binding, strict public outputs, and plugin 9.3.0 contract synchronization at 125 tools.
 - Added revision-bound REST and direct-MCP contracts for resumable payment-batch workspace, staging review/edit, split, chronology decision, and cancellation workflows; the frozen plugin contract now advertises 122 tools while reusing the existing tenant-safe batch services.
 - Added revision-bound staging edits and atomic split/dependency APIs for unposted payment batches; edits synchronize draft intake fields, invalidate previews, and split moves existing staging/intake/evidence membership without duplicating financial records.

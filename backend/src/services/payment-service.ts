@@ -1021,7 +1021,7 @@ function utcDay(value: Date | string) {
     return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
 }
 
-function schedulePenaltyDue(
+export function schedulePenaltyDue(
     loan: typeof loans.$inferSelect,
     schedule: typeof loanSchedules.$inferSelect,
     asOf: Date,

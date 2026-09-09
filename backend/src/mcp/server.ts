@@ -26,6 +26,7 @@ export const MCP_TOOL_NAMES = [
     "payment.batch.staging.evidence.prepare",
     "payment.batch.staging.evidence.finalize",
     "payment.batch.workspace",
+    "payment.batch.candidates",
     "payment.batch.staging.review",
     "payment.batch.staging.edit",
     "payment.batch.split",
@@ -1102,6 +1103,10 @@ const batchWorkspaceItemOutput = z.object({
     evidenceStatus: z.string().nullable(),
 }).strict();
 const batchWorkspaceOutput = z.object({ batchPublicId: uuid, batch: batchOutput, items: z.array(batchWorkspaceItemOutput) }).strict();
+const candidateComponentsOutput = z.object({ principal: money, interest: money, fee: money, penalty: money }).strict();
+const candidateScheduleOutput = z.object({ publicId: uuid, dueDate: date, status: z.string(), remainingDue: money, components: candidateComponentsOutput }).strict();
+const candidateContractOutput = z.object({ borrowerPublicId: uuid, borrowerName: z.string(), loanPublicId: uuid, repaymentType: z.string(), status: z.string(), eligible: z.boolean(), eligibilityCode: z.string().nullable(), principalAmount: money, outstandingPrincipal: money, interestRate: money, startDate: date.nullable(), nextDueDate: date.nullable(), dueComponents: candidateComponentsOutput.nullable(), proposalComponents: candidateComponentsOutput.nullable(), schedules: z.array(candidateScheduleOutput) }).strict();
+const batchCandidatesOutput = z.object({ stagingItemPublicId: uuid, batchItemPublicId: uuid.nullable(), stagingRevision: z.number().int(), batchRevision: z.number().int(), amount: money, receivedAt: isoDateTime, businessDate: date, inputFingerprint: z.string(), borrowerResolution: z.enum(["none", "unique", "ambiguous", "candidates"]), matchType: z.enum(["canonical", "confirmed_alias", "fuzzy"]).nullable(), borrowerCandidates: z.array(z.object({ publicId: uuid, name: z.string(), matchType: z.enum(["canonical", "confirmed_alias", "fuzzy"]).nullable() }).strict()), contractCandidates: z.array(candidateContractOutput), candidateLimitReached: z.boolean(), reviewRequired: z.boolean() }).strict();
 const batchExecutionOutput = z.object({ batchPublicId: uuid, status: z.literal("posted"), posted: z.array(z.object({ intakePublicId: uuid, transactionPublicIds: z.array(uuid) }).strict()).optional(), auditPublicIds: z.array(uuid), correlationId: uuid }).strict();
 const fundingAllocationOutput = z.object({
     id: uuid, publicId: uuid, loanPublicId: uuid,
@@ -1213,6 +1218,7 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "payment.batch.staging.evidence.prepare": stagingEvidencePrepareOutput,
     "payment.batch.staging.evidence.finalize": stagingEvidenceFinalizeOutput,
     "payment.batch.workspace": batchWorkspaceOutput,
+    "payment.batch.candidates": batchCandidatesOutput,
     "payment.batch.staging.review": stagingReviewOutput,
     "payment.batch.staging.edit": stagingEditOutput,
     "payment.batch.split": z.object({ sourceBatchPublicId: uuid, destinationBatchPublicId: uuid, dependencyPublicId: uuid, movedItemPublicIds: z.array(uuid) }).strict(),
@@ -1538,6 +1544,7 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
     "payment.batch.staging.evidence.prepare": z.object({ stagingItemPublicId: uuid, mimeType: z.enum(["image/jpeg", "image/png", "application/pdf"]), size: z.number().int().positive(), sha256: z.string().regex(/^[0-9a-f]{64}$/i), originalName: optionalNullableText }).strict(),
     "payment.batch.staging.evidence.finalize": z.object({ stagingItemPublicId: uuid, evidencePublicId: uuid }).strict(),
     "payment.batch.workspace": z.object({ batchPublicId: uuid }).strict(),
+    "payment.batch.candidates": z.object({ stagingItemPublicId: uuid, borrowerQuery: shortText.optional(), amount: money.optional(), receivedAt: isoDateTime.optional() }).strict(),
     "payment.batch.staging.review": z.object({ stagingItemPublicId: uuid, amount: money, receivedAt: isoDateTime, intakeIdempotencyKey: z.string().trim().min(1).max(200), reviewedReason: optionalNullableText, reviewedRangeFrom: date.optional(), reviewedRangeTo: date.optional() }).strict(),
     "payment.batch.staging.edit": z.object({ stagingItemPublicId: uuid, expectedRevision: z.number().int().min(1), idempotencyKey: z.string().trim().min(1).max(200), reason: shortText, amount: money.optional(), receivedAt: isoDateTime.optional(), mapping: z.object({ borrowerPublicId: uuid.optional(), loanPublicId: uuid.optional(), schedulePublicId: uuid.optional() }).strict().nullable().optional() }).strict(),
     "payment.batch.split": z.object({ batchPublicId: uuid, selectedItemPublicIds: z.array(uuid).min(1).max(50), expectedSourceRevision: z.number().int().min(1), idempotencyKey: z.string().trim().min(1).max(200), reason: shortText }).strict(),
@@ -2002,6 +2009,7 @@ const readOnlyTools = new Set<McpToolName>([
     "borrower.portfolio",
     "intake.get",
     "intake.list",
+    "payment.batch.candidates",
     "loan.preview",
     "loan.cancel.preview",
     "loan.interest-rate.list",
@@ -2218,6 +2226,7 @@ const toolDescriptions: Record<McpToolName, string> = {
     "payment.batch.staging.evidence.prepare": "Prepare upload-first evidence for one resumable staging item.",
     "payment.batch.staging.evidence.finalize": "Finalize upload-first evidence for one resumable staging item.",
     "payment.batch.workspace": "Inspect resumable batch staging metadata and public evidence status.",
+    "payment.batch.candidates": "Discover accessible named borrowers and backend-calculated contract candidates for one reviewed staging slip.",
     "payment.batch.staging.review": "Review one staged payment item and create its linked intake.",
     "payment.batch.staging.edit": "Edit one unposted staged payment item with revision and reason guards.",
     "payment.batch.split": "Move selected unposted batch membership atomically into a new batch.",

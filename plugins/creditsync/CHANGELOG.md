@@ -1,5 +1,13 @@
 # CreditSync Plugin Changelog
 
+## v9.4.0 - 2026-09-10
+
+### Added
+- Added tenant-safe named borrower and backend-calculated contract candidate discovery for reviewed staging slips across REST and direct MCP.
+
+### Changed
+- Synchronized the frozen private contract to 126 tools and plugin version 9.4.0.
+
 ## v9.3.0 - 2026-09-10
 
 ### Added

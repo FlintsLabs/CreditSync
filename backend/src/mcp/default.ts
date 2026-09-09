@@ -147,6 +147,7 @@ import {
 } from "../services/payment-attribution-service";
 import { backfillPostedRestoreSchedule, createPaymentRestoreDraft, executePaymentReconciliation, markPaymentReconciliationReview, preflightPaymentExecution, previewPaymentReconciliation, previewPaymentRestore, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
 import { addPaymentBatchItem, cancelPaymentBatch, capturePaymentBatch, createPaymentBatch, decidePaymentBatch, editPaymentBatchStagingItem, executePaymentBatch, finalizePaymentBatchEvidenceMany, finalizePaymentBatchStagingEvidence, getPaymentBatch, getPaymentBatchWorkspace, preparePaymentBatchEvidenceMany, preparePaymentBatchStagingEvidence, previewPaymentBatch, reviewPaymentBatchStagingItem, splitPaymentBatch, stagePaymentBatchItems } from "../services/payment-batch-service";
+import { discoverPaymentBatchCandidates } from "../services/payment-batch-candidate-service";
 import { executeUnfundedLoanCancellation, previewUnfundedLoanCancellation } from "../services/loan-cancellation-service";
 import { executePaymentAllocationCorrection, previewPaymentAllocationCorrection } from "../services/payment-allocation-correction-service";
 import { importChatGptPaymentEvidence, importChatGptSupplementEvidence, recordPaymentEvidenceSupplement } from "../services/chatgpt-file-evidence-service";
@@ -286,6 +287,7 @@ export function createDefaultMcpToolHandlers(
     "payment.batch.staging.evidence.prepare": (ctx, input) => preparePaymentBatchStagingEvidence(ctx, input as any, dependencies.evidenceGateway),
     "payment.batch.staging.evidence.finalize": (ctx, input) => finalizePaymentBatchStagingEvidence(ctx, asString(input, "stagingItemPublicId"), asString(input, "evidencePublicId"), dependencies.evidenceGateway),
     "payment.batch.workspace": (ctx, input) => getPaymentBatchWorkspace(ctx, asString(input, "batchPublicId")),
+    "payment.batch.candidates": (ctx, input) => discoverPaymentBatchCandidates(ctx, input as any),
     "payment.batch.staging.review": (ctx, input) => reviewPaymentBatchStagingItem(ctx, input as any),
     "payment.batch.staging.edit": (ctx, input) => editPaymentBatchStagingItem(ctx, { ...input as any, idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey") }),
     "payment.batch.split": (ctx, input) => splitPaymentBatch(ctx, asString(input, "batchPublicId"), { ...input as any, idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey") }),

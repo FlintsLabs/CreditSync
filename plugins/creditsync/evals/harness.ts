@@ -1505,6 +1505,13 @@ const stagingWorkflowPreview = {
         schedulePublicId: null, amount: "120.00", targetDueDate: "2026-08-23", intent: "on_time", matchSource: "human_explicit" }],
     candidates: [], warnings: [],
 };
+const stagingWorkflowCandidates = {
+    stagingItemPublicId: stagingWorkflowItem, batchItemPublicId: stagingWorkflowBatchItem, stagingRevision: 1, batchRevision: 1, inputFingerprint: `v1:${"e".repeat(64)}`, amount: "120.00",
+    receivedAt: "2026-08-23T04:00:00.000Z", businessDate: "2026-08-23", borrowerResolution: "unique", matchType: "canonical",
+    borrowerCandidates: [{ publicId: BORROWER_A, name: "Synthetic borrower", matchType: "canonical" }],
+    contractCandidates: [{ borrowerPublicId: BORROWER_A, borrowerName: "Synthetic borrower", loanPublicId: LOAN_A, repaymentType: "daily", status: "active", eligible: true, eligibilityCode: null, principalAmount: "500.00", outstandingPrincipal: "500.00", interestRate: "0.00", startDate: "2026-08-01", nextDueDate: "2026-08-23", dueComponents: { principal: "120.00", interest: "0.00", fee: "0.00", penalty: "0.00" }, proposalComponents: { principal: "120.00", interest: "0.00", fee: "0.00", penalty: "0.00" }, schedules: [] }],
+    candidateLimitReached: false, reviewRequired: false,
+};
 
 async function unfundedCancellationFlow(mcp: ScriptedMcp, execute = true) {
     const search = await mcp.call("borrower.search", { query: "Unfunded Borrower" });
@@ -1706,6 +1713,7 @@ const SCENARIOS: Record<string, Scenario> = {
         script: [
             { name: "payment.batch.stage", arguments: { idempotencyKey: "staging-workflow-1", items: [{ clientItemKey: "slip-1", payerName: "Synthetic payer", bankReference: null }] }, result: { batchPublicId: stagingWorkflowBatch, status: "draft", items: [{ publicId: stagingWorkflowItem, clientItemKey: "slip-1", status: "staged" }], auditPublicId: stagingWorkflowAudit, correlationId: stagingWorkflowCorrelation } },
             { name: "payment.batch.workspace", arguments: { batchPublicId: stagingWorkflowBatch }, result: stagingWorkflowWorkspace },
+            { name: "payment.batch.candidates", arguments: { stagingItemPublicId: stagingWorkflowItem, borrowerQuery: "Synthetic borrower" }, result: stagingWorkflowCandidates },
             { name: "payment.batch.staging.evidence.prepare", arguments: { stagingItemPublicId: stagingWorkflowItem, mimeType: "image/jpeg", size: PAYMENT_EVIDENCE_BYTES.byteLength, sha256: FILE_HASH }, result: { evidencePublicId: stagingWorkflowEvidence, stagingItemPublicId: stagingWorkflowItem, status: "pending", uploadUrl: "https://storage.example/staging-upload", expiresAt: "2026-08-23T05:00:00.000Z", requiredHeaders: {}, immutable: false, auditPublicId: stagingWorkflowAudit, correlationId: stagingWorkflowCorrelation } },
             { name: "payment.batch.staging.evidence.finalize", arguments: { stagingItemPublicId: stagingWorkflowItem, evidencePublicId: stagingWorkflowEvidence }, result: { evidencePublicId: stagingWorkflowEvidence, status: "ready", sha256: FILE_HASH, auditPublicId: stagingWorkflowAudit, correlationId: stagingWorkflowCorrelation } },
             { name: "payment.batch.staging.review", arguments: { stagingItemPublicId: stagingWorkflowItem, amount: "120.00", receivedAt: "2026-08-23T04:00:00.000Z", reviewedReason: "Human reviewed synthetic slip", intakeIdempotencyKey: "staging-intake-1" }, result: { stagingItemPublicId: stagingWorkflowItem, status: "reviewed", paymentIntakePublicId: INTAKE, batchItemPublicId: stagingWorkflowBatchItem, receipt: { operationType: "staging.review", operationKey: "staging-intake-1" }, auditPublicId: stagingWorkflowAudit, correlationId: stagingWorkflowCorrelation } },
@@ -1718,6 +1726,7 @@ const SCENARIOS: Record<string, Scenario> = {
             for (const step of [
                 ["payment.batch.stage", { idempotencyKey: "staging-workflow-1", items: [{ clientItemKey: "slip-1", payerName: "Synthetic payer", bankReference: null }] }],
                 ["payment.batch.workspace", { batchPublicId: stagingWorkflowBatch }],
+                ["payment.batch.candidates", { stagingItemPublicId: stagingWorkflowItem, borrowerQuery: "Synthetic borrower" }],
                 ["payment.batch.staging.evidence.prepare", { stagingItemPublicId: stagingWorkflowItem, mimeType: "image/jpeg", size: PAYMENT_EVIDENCE_BYTES.byteLength, sha256: FILE_HASH }],
                 ["payment.batch.staging.evidence.finalize", { stagingItemPublicId: stagingWorkflowItem, evidencePublicId: stagingWorkflowEvidence }],
                 ["payment.batch.staging.review", { stagingItemPublicId: stagingWorkflowItem, amount: "120.00", receivedAt: "2026-08-23T04:00:00.000Z", reviewedReason: "Human reviewed synthetic slip", intakeIdempotencyKey: "staging-intake-1" }],

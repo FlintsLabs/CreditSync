@@ -1776,6 +1776,7 @@
       "expectedCalls": [
         "payment.batch.stage",
         "payment.batch.workspace",
+        "payment.batch.candidates",
         "payment.batch.staging.evidence.prepare",
         "payment.batch.staging.evidence.finalize",
         "payment.batch.staging.review",
