@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.9 - 2026-09-09
+
+### Added
+- Added the weekly floating-interest regression plan and pure-policy coverage for a 12% weekly contract with one advance-interest period, exact seven-day interest, and anchored subsequent collection periods.
+
 ## v0.4.8 - 2026-09-09
 
 ### Changed

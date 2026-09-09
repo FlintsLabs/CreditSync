@@ -57,6 +57,46 @@ describe("floating interest period policy", () => {
         });
     });
 
+    test("models the reported weekly contract with advance interest and the next collection period", () => {
+        const advanceWeeklyPolicy = normalizeFloatingInterestPolicy({
+            periodUnit: "week",
+            periodLength: 1,
+            rateMode: "percent",
+            rate: "12",
+            advanceInterestPeriods: 1,
+            advanceInterestRefundPolicy: "non_refundable",
+        });
+
+        // The first weekly period is anchored at origination and its interest is collected in advance.
+        expect(interestPeriodFor("2026-08-13", "2026-08-13", advanceWeeklyPolicy)).toEqual({
+            periodStart: "2026-08-13",
+            nextPeriodStart: "2026-08-20",
+            dayIndex: 0,
+            periodDays: 7,
+        });
+        expect(calculatePeriodInterest("5000.00", advanceWeeklyPolicy)).toBe("600.00");
+        expect(calculateAccruedInterest("5000.00", advanceWeeklyPolicy, 7)).toEqual({
+            cumulativeAmount: "600.00",
+            incrementAmount: "85.71",
+            elapsedDays: 7,
+            periodDays: 7,
+        });
+
+        // After the advance-covered period, the next call belongs to 20–27 August.
+        expect(interestPeriodFor("2026-08-13", "2026-08-20", advanceWeeklyPolicy)).toEqual({
+            periodStart: "2026-08-20",
+            nextPeriodStart: "2026-08-27",
+            dayIndex: 0,
+            periodDays: 7,
+        });
+        expect(interestPeriodFor("2026-08-13", "2026-08-27", advanceWeeklyPolicy)).toEqual({
+            periodStart: "2026-08-27",
+            nextPeriodStart: "2026-09-03",
+            dayIndex: 0,
+            periodDays: 7,
+        });
+    });
+
     test("uses calendar-month boundaries for monthly periods", () => {
         const policy = normalizeFloatingInterestPolicy({ ...weeklyPolicy, periodUnit: "month" });
 
