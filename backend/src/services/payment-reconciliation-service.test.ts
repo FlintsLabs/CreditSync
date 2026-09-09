@@ -384,8 +384,8 @@ describe("payment reconciliation persistence", () => {
         let announcePid!: (pid: number) => void;
         const pidReady = new Promise<number>((resolve) => { announcePid = resolve; });
         const blocker = locker.begin(async (tx) => {
-            announcePid(Number((await tx`SELECT pg_backend_pid() AS pid`)[0]!.pid));
             await tx`SELECT id FROM borrowers WHERE tenant_id = ${tenantId} AND id = ${loanRow!.borrowerId} FOR UPDATE`;
+            announcePid(Number((await tx`SELECT pg_backend_pid() AS pid`)[0]!.pid));
             await released;
         });
         let executing: ReturnType<typeof executePaymentReconciliation> | undefined;
