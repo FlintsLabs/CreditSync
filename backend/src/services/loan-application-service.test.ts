@@ -1334,6 +1334,33 @@ describe("loan application service", () => {
         expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, legacy.id))).toHaveLength(0);
     });
 
+    // Break caught: the supported monthly cycle is rejected or lost when persisted through REST.
+    integrationTest("preserves monthly floating terms through REST create and update", async () => {
+        const owner = await seedUser("tenant-a", "rest-monthly@example.test", "owner");
+        const borrower = await createBorrower(context("tenant-a", owner.id), { name: "Monthly Borrower" });
+        const headers = { authorization: `Bearer ${await authToken(owner)}`, "content-type": "application/json" };
+        const app = new Elysia().use(loansRoute);
+        const floatingDailyInterest = { mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "monthly" };
+        const created = await jsonRequest(app, "/loans", {
+            method: "POST", headers,
+            body: JSON.stringify({
+                principal: "5000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1,
+                startDate: "2026-08-10", borrowerPublicId: borrower.publicId, floatingDailyInterest,
+            }),
+        });
+        expect(created.response.status, created.text).toBe(200);
+        expect(created.body).toMatchObject({ floatingDailyInterest, floatingInterestPolicy: { periodUnit: "month", rate: "1.0000" } });
+        const updatedPolicy = { ...floatingDailyInterest, rate: "2.0000" };
+        const updated = await jsonRequest(app, `/loans/${created.body.publicId}`, {
+            method: "PUT", headers: { ...headers, "x-request-id": "monthly-update" },
+            body: JSON.stringify({ floatingDailyInterest: updatedPolicy }),
+        });
+        expect(updated.response.status, updated.text).toBe(200);
+        expect(updated.body).toMatchObject({ floatingDailyInterest: updatedPolicy, floatingInterestPolicy: { periodUnit: "month", rate: "2.0000" } });
+        const stored = await db.query.loans.findFirst({ where: eq(loans.publicId, created.body.publicId) });
+        expect(stored).toMatchObject({ floatingAccrualCycle: "monthly", interestPeriodUnit: "month", dailyInterestRate: "2.0000" });
+    });
+
     // Break caught: create/update route variants leak raw floating normalization
     // exceptions or silently accept incompatible financial term objects.
     integrationTest("returns stable REST errors for invalid floating create/update and closed updates", async () => {
@@ -1352,7 +1379,7 @@ describe("loan application service", () => {
             { mode: "percent", rate: "0", firstDayTreatment: "start_next_day", accrualCycle: "daily" },
             { mode: "percent", rate: "not-a-rate", firstDayTreatment: "start_next_day", accrualCycle: "daily" },
             { mode: "percent", rate: "1.00000", firstDayTreatment: "start_next_day", accrualCycle: "daily" },
-            { mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "monthly" },
+            { mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day", accrualCycle: "quarterly" },
         ];
         for (const [index, floatingDailyInterest] of policies.entries()) {
             const created = await jsonRequest(app, "/loans", {

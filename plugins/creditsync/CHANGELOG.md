@@ -1,12 +1,18 @@
 # CreditSync Plugin Changelog
 
-## 9.2.0 - 2026-09-09
+## v9.2.0 - 2026-09-09
 
-- Hardened the synchronized diagnostic contract for bounded breadcrumb enums, redacted typed error details, and safe retry/terminal-stage guidance.
+### Added
 - Added owner/manager-only `system.error-diagnostic.get` and `system.error-diagnostic.list` tools.
 - Added correlation IDs and suggested actions to the common MCP error envelope with operation-aware retry guidance.
-- Synchronized the frozen 114-tool contract and diagnostic recovery guidance.
 - Added executable diagnostic follow-up, bounded-list, authorization-denial, and no-bypass eval scenarios.
+
+### Changed
+- Hardened the synchronized diagnostic contract for bounded breadcrumb enums, redacted typed error details, and safe retry/terminal-stage guidance.
+- Synchronized the frozen 114-tool contract and diagnostic recovery guidance.
+
+### Fixed
+- Synchronized the frozen `loan.contract.get` payment-health output with the backend, restoring plugin contract validation.
 
 ## 9.1.4 - 2026-09-09
 

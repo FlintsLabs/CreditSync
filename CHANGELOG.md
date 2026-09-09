@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.13 - 2026-09-09
+
+### Fixed
+- Corrected the REST invalid-floating fixture to reject unsupported quarterly cycles and added persisted create/update regression coverage for supported monthly cycles, without changing production financial logic.
+- Reconciled the pending frozen-contract payment-health changelog notes with the merged plugin release.
+
+### Changed
+- Marked MCP diagnostics implementation complete in the task list while keeping deployment and operational verification explicitly pending; recorded separately observed frontend test-runner/fixture failures for follow-up.
+
 ## v0.4.12 - 2026-09-09
 
 ### Fixed
