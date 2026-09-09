@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -206,7 +207,10 @@ describe("atomic payment batch migration", () => {
         const baseUrl = process.env.TEST_DATABASE_URL!;
         const admin = postgres(baseUrl, { max: 1 });
         const databaseName = `creditsync_upgrade_${crypto.randomUUID().replaceAll("-", "")}`;
-        const prefixDir = await makeMigrationFixture("/tmp/creditsync-migrations-0067", 67);
+        const migrationJournal = await Bun.file(`${root}drizzle/meta/_journal.json`).json() as { entries: Array<{ idx: number; when: number; tag: string }> };
+        const resolutionEntry = migrationJournal.entries.find((entry) => entry.tag === "0068_staging_resolution_state");
+        if (!resolutionEntry) throw new Error("0068 migration journal entry is missing");
+        const prefixDir = await makeMigrationFixture("/tmp/creditsync-migrations-0067", resolutionEntry.idx - 1);
         const fullDir = await makeMigrationFixture("/tmp/creditsync-migrations-full");
         let scratch: ReturnType<typeof postgres> | undefined;
         try {
@@ -219,17 +223,17 @@ describe("atomic payment batch migration", () => {
             await migrate(drizzle(scratch), { migrationsFolder: prefixDir });
             expect(Array.from(await scratch`SELECT to_regclass('public.payment_batch_staging_items')`)).toEqual([{ to_regclass: "payment_batch_staging_items" }]);
             expect(Array.from(await scratch`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'payment_batch_staging_items' AND column_name = 'resolution_state')`)).toEqual([{ exists: false }]);
-            expect(Array.from(await scratch`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations WHERE created_at = 1788912000003`)).toEqual([{ count: 0 }]);
+            expect(Array.from(await scratch`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations WHERE created_at = ${resolutionEntry.when}`)).toEqual([{ count: 0 }]);
 
             const tenantId = `migration-real-${crypto.randomUUID()}`;
             const [actor] = await scratch<{ id: number }[]>`INSERT INTO users (tenant_id, email, role) VALUES (${tenantId}, ${crypto.randomUUID()} || '@example.test', 'owner') RETURNING id`;
-            const [borrower] = await scratch<{ id: number }[]>`INSERT INTO borrowers (tenant_id, owner_user_id, name) VALUES (${tenantId}, ${actor!.id}, 'Real upgrade borrower') RETURNING id`;
-            const [loan] = await scratch<{ id: number }[]>`INSERT INTO loans (tenant_id, owner_user_id, borrower_id, principal_amount, interest_rate, repayment_type, status, start_date, outstanding_principal, outstanding_interest, outstanding_fees) VALUES (${tenantId}, ${actor!.id}, ${borrower!.id}, 2000, 0, 'daily', 'active', DATE '2026-08-01', 2000, 0, 0) RETURNING id`;
+            const [borrower] = await scratch<{ id: number; public_id: string }[]>`INSERT INTO borrowers (tenant_id, owner_user_id, name) VALUES (${tenantId}, ${actor!.id}, 'Real upgrade borrower') RETURNING id, public_id`;
+            const [loan] = await scratch<{ id: number; public_id: string }[]>`INSERT INTO loans (tenant_id, owner_user_id, borrower_id, principal_amount, interest_rate, repayment_type, status, start_date, outstanding_principal, outstanding_interest, outstanding_fees) VALUES (${tenantId}, ${actor!.id}, ${borrower!.id}, 2000, 0, 'daily', 'active', DATE '2026-08-01', 2000, 0, 0) RETURNING id, public_id`;
             const [schedule] = await scratch<{ id: number }[]>`INSERT INTO loan_schedules (tenant_id, loan_id, installment_no, due_date, scheduled_total, remaining_due) VALUES (${tenantId}, ${loan!.id}, 1, DATE '2026-08-10', 100, 100) RETURNING id`;
             const [draft] = await scratch<{ id: number }[]>`INSERT INTO payment_batches (tenant_id, borrower_id, status, version, state_hash, create_idempotency_key, created_by_user_id, updated_by_user_id) VALUES (${tenantId}, ${borrower!.id}, 'needs_review', 1, 'draft-state', ${crypto.randomUUID()}, ${actor!.id}, ${actor!.id}) RETURNING id`;
             const [posted] = await scratch<{ id: number }[]>`INSERT INTO payment_batches (tenant_id, borrower_id, status, version, state_hash, confirmation_hash, create_idempotency_key, created_by_user_id, updated_by_user_id) VALUES (${tenantId}, ${borrower!.id}, 'needs_review', 2, 'posted-state', 'posted-confirmation', ${crypto.randomUUID()}, ${actor!.id}, ${actor!.id}) RETURNING id`;
             const [intake] = await scratch<{ id: number }[]>`INSERT INTO payment_intakes (tenant_id, owner_user_id, source, status, amount, received_at, idempotency_key, created_by_user_id, updated_by_user_id) VALUES (${tenantId}, ${actor!.id}, 'web', 'posted', 100, TIMESTAMPTZ '2026-08-11 03:00:00+00', ${crypto.randomUUID()}, ${actor!.id}, ${actor!.id}) RETURNING id`;
-            const [mapped] = await scratch<{ id: number; public_id: string }[]>`INSERT INTO payment_batch_staging_items (tenant_id, batch_id, client_item_key, payload_fingerprint, amount, received_at, status, reviewed_mapping, created_by_user_id, updated_by_user_id) VALUES (${tenantId}, ${posted!.id}, 'posted-mapped', 'posted-mapped-fp', 100, TIMESTAMPTZ '2026-08-11 03:00:00+00', 'validated', ${JSON.stringify({ borrowerPublicId: crypto.randomUUID(), loanPublicId: crypto.randomUUID() })}, ${actor!.id}, ${actor!.id}) RETURNING id, public_id`;
+            const [mapped] = await scratch<{ id: number; public_id: string }[]>`INSERT INTO payment_batch_staging_items (tenant_id, batch_id, client_item_key, payload_fingerprint, amount, received_at, status, reviewed_mapping, created_by_user_id, updated_by_user_id) VALUES (${tenantId}, ${posted!.id}, 'posted-mapped', 'posted-mapped-fp', 100, TIMESTAMPTZ '2026-08-11 03:00:00+00', 'validated', ${JSON.stringify({ borrowerPublicId: borrower!.public_id, loanPublicId: loan!.public_id })}, ${actor!.id}, ${actor!.id}) RETURNING id, public_id`;
             const [unknown] = await scratch<{ id: number; public_id: string }[]>`INSERT INTO payment_batch_staging_items (tenant_id, batch_id, client_item_key, payload_fingerprint, amount, received_at, status, created_by_user_id, updated_by_user_id) VALUES (${tenantId}, ${draft!.id}, 'draft-unknown', 'draft-unknown-fp', 25, TIMESTAMPTZ '2026-08-11 04:00:00+00', 'staged', ${actor!.id}, ${actor!.id}) RETURNING id, public_id`;
             const [member] = await scratch<{ id: number }[]>`INSERT INTO payment_batch_items (tenant_id, batch_id, payment_intake_id, staging_item_id, item_order) VALUES (${tenantId}, ${posted!.id}, ${intake!.id}, ${mapped!.id}, 1) RETURNING id`;
             await scratch`UPDATE payment_batch_staging_items SET payment_intake_id = ${intake!.id}, batch_item_id = ${member!.id} WHERE id = ${mapped!.id}`;
@@ -250,7 +254,9 @@ describe("atomic payment batch migration", () => {
             const before = await postedSnapshot();
             const oldJournal = Array.from(await scratch`SELECT id, hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id`);
             await migrate(drizzle(scratch), { migrationsFolder: fullDir });
-            expect(Array.from(await scratch`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations WHERE created_at = 1788912000003`)).toEqual([{ count: 1 }]);
+            const migrationSql = await Bun.file(`${root}drizzle/${resolutionEntry.tag}.sql`).text();
+            const canonicalHash = createHash("sha256").update(migrationSql).digest("hex");
+            expect(Array.from(await scratch`SELECT hash FROM drizzle.__drizzle_migrations WHERE created_at = ${resolutionEntry.when}`)).toEqual([{ hash: canonicalHash }]);
             expect(Array.from(await scratch`SELECT reviewed_mapping IS NOT NULL AS mapped, resolution_state FROM payment_batch_staging_items WHERE id = ${mapped!.id}`)).toEqual([{ mapped: true, resolution_state: "mapped" }]);
             expect(Array.from(await scratch`SELECT reviewed_mapping IS NULL AS unmapped, resolution_state FROM payment_batch_staging_items WHERE id = ${unknown!.id}`)).toEqual([{ unmapped: true, resolution_state: "unresolved" }]);
             const after = await postedSnapshot();

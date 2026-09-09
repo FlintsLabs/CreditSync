@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import postgres from "postgres";
 import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { borrowers, loanInterestAccruals, loanInterestRatePeriods, loans, paymentEvidence, paymentIntakes, transactions, users } from "../db/schema";
@@ -7,6 +8,20 @@ import { createPaymentRestoreDraft, executePaymentReconciliation, previewPayment
 import type { CommandContext } from "./command-context";
 
 const integration = process.env.TEST_DATABASE_URL ? test : test.skip;
+
+async function waitForBorrowerLockWait(observer: ReturnType<typeof postgres>) {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+        const waiting = await observer`
+            SELECT 1 FROM pg_stat_activity
+            WHERE wait_event_type = 'Lock' AND state = 'active'
+              AND query LIKE '%FROM borrowers%' AND query LIKE '%FOR UPDATE%'
+            LIMIT 1
+        `;
+        if (waiting.length) return;
+        await Promise.resolve();
+    }
+    throw new Error("restore execution did not wait on the borrower row lock");
+}
 async function fixture(withPrincipal = false, withPenalty = false) {
     const tenantId = `restore-floating-${crypto.randomUUID()}`;
     const [actor] = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning();
@@ -81,4 +96,52 @@ integration("restore preview rejects inactive targets consistently with execute"
 integration("restore blocks floating penalties until exact penalty provenance replay is supported", async () => {
     const f = await fixture(false, true);
     await expect(previewPaymentRestore(f.ctx, { paymentIntakePublicId: f.intake.publicId, reason: "Restore synthetic payment" })).rejects.toMatchObject({ code: "RECONCILIATION_RESTORE_PROVENANCE_UNSUPPORTED" });
+});
+
+integration("restore execute waits on the borrower lock before intake or loan locks", async () => {
+    const f = await fixture();
+    const preview = await previewPaymentRestore(f.ctx, { paymentIntakePublicId: f.intake.publicId, reason: "Restore while borrower is locked" });
+    const locker = postgres(process.env.TEST_DATABASE_URL!, { max: 1 });
+    const observer = postgres(process.env.TEST_DATABASE_URL!, { max: 1 });
+    let release!: () => void;
+    const releaseSignal = new Promise<void>((resolve) => { release = resolve; });
+    let acquired!: () => void;
+    const acquiredSignal = new Promise<void>((resolve) => { acquired = resolve; });
+    const lock = locker.begin(async (tx) => {
+        await tx`SELECT id FROM borrowers WHERE tenant_id = ${f.ctx.tenantId} AND id = ${f.borrower.id} FOR UPDATE`;
+        acquired();
+        await releaseSignal;
+    });
+    try {
+        await acquiredSignal;
+        const executing = executePaymentReconciliation(f.ctx, preview.publicId, { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "restore-borrower-lock" });
+        await waitForBorrowerLockWait(observer);
+        const childBeforeRelease = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, f.draft.restoreDraftPublicId) });
+        expect(childBeforeRelease?.status).toBe("draft");
+        expect(await db.select().from(transactions).where(eq(transactions.paymentIntakeId, childBeforeRelease!.id))).toHaveLength(0);
+        release();
+        await expect(executing).resolves.toMatchObject({ postedPaymentPublicId: f.draft.restoreDraftPublicId });
+        await lock;
+    } finally {
+        release();
+        await Promise.allSettled([lock]);
+        await observer.end();
+        await locker.end();
+    }
+});
+
+integration("restore execute rejects after an ordinary posting changes the preview balance", async () => {
+    const f = await fixture();
+    const preview = await previewPaymentRestore(f.ctx, { paymentIntakePublicId: f.intake.publicId, reason: "Restore after ordinary posting race" });
+    const ordinaryCtx = { ...f.ctx, idempotencyKey: crypto.randomUUID(), requestId: crypto.randomUUID(), correlationId: crypto.randomUUID() };
+    const ordinary = await createPaymentIntake(ordinaryCtx, { amount: "10.00", receivedAt: "2026-09-09T03:00:00Z" });
+    const ordinaryProposal = await previewPaymentMatch(ordinaryCtx, ordinary.publicId, { allocations: [{ borrowerPublicId: f.borrower.publicId, loanPublicId: f.loan.publicId, amount: "10.00" }] });
+    await postPayment(ordinaryCtx, ordinary.publicId, { proposalPublicId: ordinaryProposal.publicId });
+    const child = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, f.draft.restoreDraftPublicId) });
+    const ordinaryRow = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, ordinary.publicId) });
+    expect(ordinaryRow).not.toBeNull();
+    await expect(executePaymentReconciliation(f.ctx, preview.publicId, { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "restore-balance-race" })).rejects.toMatchObject({ code: "STALE_RECONCILIATION_PREVIEW" });
+    expect((await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, f.draft.restoreDraftPublicId) }))?.status).toBe("draft");
+    expect(await db.select().from(transactions).where(eq(transactions.paymentIntakeId, child!.id))).toHaveLength(0);
+    expect(await db.select().from(transactions).where(eq(transactions.paymentIntakeId, ordinaryRow!.id))).toHaveLength(1);
 });

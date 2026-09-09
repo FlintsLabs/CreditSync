@@ -12,6 +12,7 @@
 - Kept the newly discovered renewal-panel regression portable under Vitest by replacing its Bun-only clock import with Vitest fake-timer controls.
 
 ### Fixed
+- Added deterministic borrower-lock and ordinary-post race coverage for restore/reconciliation execution: restore waits before intake/loan locks, rejects a changed balance preview without child compensation, and preserves idempotent append-only results.
 - Added a real prefix/full migrator gate for populated 0067→0068 staging resolution upgrades in an owned scratch database; mapped/unresolved legacy semantics, posted batch membership, ready evidence, transaction components, migration journal history, constraints, and posted immutability are preserved across apply and idempotent rerun.
 - Cleared staging resolutions now fail closed for an unmapped preview until explicit allocations reselect the target; the prior preview is stale, explicit reselection becomes the current authority, and shared chronology blocks later payments for that borrower without creating financial writes.
 - Added additive staging resolution state (`unresolved`, `mapped`, `cleared`) so shared chronology treats current ready batch allocations and explicit mappings as authoritative, preserves captured-header semantics only for never-resolved rows, and prevents cleared rows from inheriting stale dependencies. Current batch preview locks now require the ready preview at the current revision.
