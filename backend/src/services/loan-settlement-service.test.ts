@@ -1,0 +1,1047 @@
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { db } from "../db";
+import {
+    auditLogs,
+    bankProfiles,
+    borrowers,
+    floatingTransactionAllocations,
+    fundLedgerEntries,
+    loanDisbursements,
+    loanFundingAllocations,
+    loanInterestAccruals,
+    loanInterestRatePeriods,
+    loanInterestRatePreviews,
+    loans,
+    loanSettlementPreviews,
+    transactions,
+    users,
+} from "../db/schema";
+import type { CommandContext } from "./command-context";
+import {
+    createPaymentIntake,
+    postPayment,
+    previewPaymentMatch,
+    reversePayment,
+} from "./payment-service";
+import {
+    executeLoanSettlement,
+    previewLoanSettlement,
+    reverseLoanSettlement,
+} from "./loan-settlement-service";
+import { accrueFloatingInterestThrough } from "./floating-interest-service";
+
+const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
+const integrationTest = integrationEnabled ? test : test.skip;
+
+async function resetApplicationTables() {
+    await db.execute(sql`SET client_min_messages TO WARNING`);
+    await db.execute(sql`TRUNCATE TABLE
+        audit_logs, fund_ledger_entries, payment_match_allocations,
+        payment_match_proposals, payment_evidence, transactions,
+        payment_intakes, loan_settlement_previews, loan_disbursements,
+        loan_interest_accruals, loan_interest_rate_periods,
+        loan_funding_allocations, loan_schedules, loans,
+        borrower_aliases, borrowers, bank_profiles, users
+        RESTART IDENTITY CASCADE`);
+}
+
+async function seedUser(tenantId: string) {
+    return db.insert(users).values({
+        tenantId,
+        email: `${crypto.randomUUID()}@example.test`,
+        role: "owner",
+    }).returning().then((rows) => rows[0]!);
+}
+
+function context(actor: { id: number; tenantId: string }, idempotencyKey: string = crypto.randomUUID()): CommandContext {
+    return {
+        tenantId: actor.tenantId,
+        actorUserId: actor.id,
+        actorSource: "web",
+        requestId: `req-${idempotencyKey}`,
+        correlationId: `corr-${idempotencyKey}`,
+        idempotencyKey,
+    };
+}
+
+async function waitForBlockedAdvisoryLock() {
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline) {
+        const rows = await db.execute(sql`SELECT EXISTS (
+            SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND granted = false
+        ) AS waiting`);
+        if (rows[0]?.waiting === true) return;
+        await Bun.sleep(10);
+    }
+    throw new Error("Settlement did not reach the test advisory-lock barrier");
+}
+
+const paidAdvanceIncrements = ["85.71", "85.72", "85.71", "85.72", "85.71", "85.72", "85.71"];
+const paidAdvanceCumulative = ["85.71", "171.43", "257.14", "342.86", "428.57", "514.29", "600.00"];
+
+async function seedWeeklyLoan(input: {
+    tenantId: string;
+    advancePeriods?: 0 | 1;
+    principal?: string;
+    rate?: string;
+    lateFeeMode?: "fixed" | "daily_percent";
+    lateFeeAmount?: string;
+}) {
+    const actor = await seedUser(input.tenantId);
+    const borrower = await db.insert(borrowers).values({
+        tenantId: input.tenantId,
+        ownerUserId: actor.id,
+        name: "Settlement borrower",
+    }).returning().then((rows) => rows[0]!);
+    const advancePeriods = input.advancePeriods ?? 0;
+    const principal = input.principal ?? "5000.00";
+    const rate = input.rate ?? "12.0000";
+    const loan = await db.insert(loans).values({
+        tenantId: input.tenantId,
+        ownerUserId: actor.id,
+        borrowerId: borrower.id,
+        principalAmount: principal,
+        interestRate: "0.00",
+        repaymentType: "floating",
+        dailyInterestMode: "percent",
+        dailyInterestRate: rate,
+        firstDayTreatment: advancePeriods === 1 ? "deduct" : "start_next_day",
+        interestStartDate: "2026-08-13",
+        floatingAccrualCycle: "weekly",
+        interestPeriodUnit: "week",
+        interestPeriodLength: 1,
+        advanceInterestPeriods: advancePeriods,
+        advanceInterestRefundPolicy: "non_refundable",
+        interestPeriodAnchorDate: "2026-08-13",
+        outstandingPrincipal: principal,
+        outstandingInterest: "0.00",
+        outstandingFees: "0.00",
+        lateFeeMode: input.lateFeeMode ?? "none",
+        lateFeeAmount: input.lateFeeAmount ?? "0.00",
+        gracePeriodDays: 0,
+        status: "active",
+    }).returning().then((rows) => rows[0]!);
+    const ratePeriod = await db.insert(loanInterestRatePeriods).values({
+        tenantId: input.tenantId,
+        loanId: loan.id,
+        effectiveDate: "2026-08-13",
+        rateType: "percent",
+        rate,
+        periodUnit: "week",
+        periodLength: 1,
+        createdByUserId: actor.id,
+    }).returning().then((rows) => rows[0]!);
+    if (advancePeriods === 1) {
+        await db.insert(loanDisbursements).values({
+            tenantId: input.tenantId,
+            loanId: loan.id,
+            grossPrincipal: "5000.00",
+            firstDayInterestDeducted: "600.00",
+            netDisbursement: "4400.00",
+            disbursedAt: new Date("2026-08-13T12:00:00+07:00"),
+            createdByUserId: actor.id,
+        });
+        await db.insert(loanInterestAccruals).values(paidAdvanceIncrements.map((interestAmount, index) => ({
+            tenantId: input.tenantId,
+            loanId: loan.id,
+            interestRatePeriodId: ratePeriod.id,
+            accrualDate: `2026-08-${String(13 + index).padStart(2, "0")}`,
+            openingPrincipal: "5000.00",
+            rateMode: "percent",
+            rate: "12.0000",
+            interestAmount,
+            periodStartDate: "2026-08-13",
+            periodEndDate: "2026-08-20",
+            periodDayIndex: index + 1,
+            periodUnit: "week",
+            periodLength: 1,
+            contractualInterestAmount: "600.00",
+            cumulativeInterestAmount: paidAdvanceCumulative[index]!,
+            dailyIncrementAmount: interestAmount,
+            paidAmount: interestAmount,
+            status: "paid",
+            createdByUserId: actor.id,
+        })));
+    }
+    return { actor, borrower, loan, ratePeriod };
+}
+
+async function postFloatingPrincipalPayment(
+    seeded: Awaited<ReturnType<typeof seedWeeklyLoan>>,
+    amount: string,
+    receivedAt: string,
+    key: string,
+) {
+    const intake = await createPaymentIntake(context(seeded.actor, `${key}-intake`), { amount, receivedAt });
+    const preview = await previewPaymentMatch(context(seeded.actor, `${key}-preview`), intake.publicId, {
+        allocations: [{
+            borrowerPublicId: seeded.borrower.publicId,
+            loanPublicId: seeded.loan.publicId,
+            amount,
+        }],
+    });
+    const posted = await postPayment(context(seeded.actor, `${key}-post`), intake.publicId, {
+        proposalPublicId: preview.publicId,
+    });
+    return { intake, posted };
+}
+
+describe("loan settlement service", () => {
+    if (integrationEnabled) beforeEach(resetApplicationTables);
+    afterEach(() => setSystemTime());
+
+    integrationTest("settles an overdue weekly fixed penalty with immutable allocation provenance", async () => {
+        setSystemTime(new Date("2026-08-21T12:00:00+07:00"));
+        const seeded = await seedWeeklyLoan({
+            tenantId: "tenant-settlement-fixed-penalty",
+            lateFeeMode: "fixed",
+            lateFeeAmount: "50.00",
+        });
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-21");
+        expect(preview).toMatchObject({
+            dueInterest: "600.00",
+            accruedNotDueInterest: "171.43",
+            outstandingPenalties: "50.00",
+            settlementTotal: "5821.43",
+        });
+
+        const executed = await executeLoanSettlement(context(seeded.actor, "settle-fixed-penalty"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "Collect the exact overdue fixed penalty settlement",
+        });
+        expect(executed.transaction).toMatchObject({
+            amount: "5821.43",
+            penaltyComponent: "50.00",
+        });
+        const settlementTransaction = await db.query.transactions.findFirst({
+            where: eq(transactions.publicId, executed.transaction.publicId),
+        });
+        expect(settlementTransaction).toBeDefined();
+        expect(await db.select().from(floatingTransactionAllocations).where(and(
+            eq(floatingTransactionAllocations.transactionId, settlementTransaction!.id),
+            eq(floatingTransactionAllocations.component, "penalty"),
+        ))).toEqual([expect.objectContaining({
+            amount: "50.00",
+            dueDate: "2026-08-20",
+            entryType: "payment",
+        })]);
+    });
+
+    integrationTest("settles daily-percent penalty as of the preview date and rejects a stale penalty balance", async () => {
+        setSystemTime(new Date("2026-08-22T12:00:00+07:00"));
+        const seeded = await seedWeeklyLoan({
+            tenantId: "tenant-settlement-daily-penalty",
+            lateFeeMode: "daily_percent",
+            lateFeeAmount: "1.00",
+        });
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-22");
+        expect(preview).toMatchObject({ outstandingPenalties: "12.00", settlementTotal: "5869.14" });
+
+        await postFloatingPrincipalPayment(seeded, "12.00", "2026-08-22T05:00:00.000Z", "pay-previewed-penalty");
+        await expect(executeLoanSettlement(context(seeded.actor, "stale-daily-penalty"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "This reviewed penalty was paid after preview",
+        })).rejects.toMatchObject({ code: "STALE_SETTLEMENT_PREVIEW", status: 409 });
+
+        const fresh = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-22");
+        expect(fresh.outstandingPenalties).toBe("0.00");
+    });
+
+    integrationTest("reverses a settlement through exact append-only transaction, allocation, and fund provenance", async () => {
+        setSystemTime(new Date("2026-08-21T12:00:00+07:00"));
+        const seeded = await seedWeeklyLoan({
+            tenantId: "tenant-settlement-reversal",
+            lateFeeMode: "fixed",
+            lateFeeAmount: "50.00",
+        });
+        const profile = await db.insert(bankProfiles).values({
+            tenantId: seeded.actor.tenantId,
+            name: "Settlement reversal fund",
+            type: "personal_savings",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanFundingAllocations).values({
+            tenantId: seeded.actor.tenantId,
+            loanId: seeded.loan.id,
+            bankProfileId: profile.id,
+            allocatedAmount: "5000.00",
+            allocationDate: "2026-08-13",
+            createdByUserId: seeded.actor.id,
+        });
+        await db.update(loans).set({ outstandingInterest: "123.45", nextDueDate: "2026-08-20" })
+            .where(eq(loans.id, seeded.loan.id));
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-21");
+        const executed = await executeLoanSettlement(context(seeded.actor, "execute-before-reversal"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "Execute before testing exact compensation",
+        });
+        const original = await db.query.transactions.findFirst({
+            where: eq(transactions.publicId, executed.transaction.publicId),
+        });
+        expect(original).toBeDefined();
+        const originalAllocations = await db.select().from(floatingTransactionAllocations)
+            .where(eq(floatingTransactionAllocations.transactionId, original!.id))
+            .orderBy(floatingTransactionAllocations.allocationOrder);
+        const originalFundEffects = await db.select().from(fundLedgerEntries)
+            .where(eq(fundLedgerEntries.transactionId, original!.id))
+            .orderBy(fundLedgerEntries.id);
+        const reallocatedProfile = await db.insert(bankProfiles).values({
+            tenantId: seeded.actor.tenantId,
+            name: "Later reallocated fund",
+            type: "personal_savings",
+        }).returning().then((rows) => rows[0]!);
+        await db.update(loanFundingAllocations).set({ bankProfileId: reallocatedProfile.id })
+            .where(eq(loanFundingAllocations.loanId, seeded.loan.id));
+
+        setSystemTime(new Date("2026-08-23T12:00:00+07:00"));
+
+        const reversal = await reverseLoanSettlement(context(seeded.actor, "reverse-settlement-exact"), {
+            settlementPublicId: preview.publicId,
+            reason: "Bank returned the settlement transfer",
+        });
+        expect(reversal).toMatchObject({
+            settlementPublicId: preview.publicId,
+            status: "reversed",
+            transaction: {
+                amount: "-5821.43",
+                principalComponent: "-5000.00",
+                interestComponent: "-771.43",
+                penaltyComponent: "-50.00",
+                entryType: "reversal",
+            },
+        });
+        const reversalRow = await db.query.transactions.findFirst({
+            where: eq(transactions.publicId, reversal.transaction.publicId),
+        });
+        expect(reversalRow).toMatchObject({ reversedTransactionId: original!.id });
+        expect(await db.select().from(floatingTransactionAllocations)
+            .where(eq(floatingTransactionAllocations.transactionId, reversalRow!.id))
+            .orderBy(floatingTransactionAllocations.allocationOrder)).toEqual(
+            originalAllocations.map((row, index) => expect.objectContaining({
+                component: row.component,
+                dueDate: row.dueDate,
+                interestAccrualId: row.interestAccrualId,
+                amount: `-${row.amount}`,
+                reversedAllocationId: row.id,
+                allocationOrder: index + 1,
+                entryType: "reversal",
+                effectiveDate: "2026-08-23",
+            })),
+        );
+        expect(await db.select().from(fundLedgerEntries)
+            .where(eq(fundLedgerEntries.transactionId, reversalRow!.id))
+            .orderBy(fundLedgerEntries.id)).toEqual(originalFundEffects.map((row) => expect.objectContaining({
+            bankProfileId: row.bankProfileId,
+            entryType: row.entryType,
+            amount: `-${row.amount}`,
+        })));
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({
+            status: "active",
+            outstandingPrincipal: "5000.00",
+            outstandingInterest: "123.45",
+            nextDueDate: "2026-08-20",
+        });
+        expect(await db.query.transactions.findFirst({ where: eq(transactions.id, original!.id) })).toEqual(original);
+
+        const replay = await reverseLoanSettlement(context(seeded.actor, "reverse-settlement-exact"), {
+            settlementPublicId: preview.publicId,
+            reason: "Bank returned the settlement transfer",
+        });
+        expect(replay.transaction.publicId).toBe(reversal.transaction.publicId);
+    });
+
+    integrationTest("blocks settlement reversal after downstream loan activity", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-reversal-blocker" });
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-19");
+        const executed = await executeLoanSettlement(context(seeded.actor, "execute-before-blocker"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "Execute before downstream blocker",
+        });
+        const original = await db.query.transactions.findFirst({ where: eq(transactions.publicId, executed.transaction.publicId) });
+        await db.insert(transactions).values({
+            tenantId: seeded.actor.tenantId,
+            ownerUserId: seeded.actor.id,
+            loanId: seeded.loan.id,
+            amount: "1.00",
+            principalComponent: "1.00",
+            entryType: "repayment",
+            idempotencyKey: "downstream-after-settlement",
+            transactionDate: new Date("2026-08-20T12:00:00+07:00"),
+            postedAt: new Date("2026-08-20T12:00:00+07:00"),
+        });
+        await expect(reverseLoanSettlement(context(seeded.actor, "blocked-settlement-reversal"), {
+            settlementPublicId: preview.publicId,
+            reason: "Must not bypass later activity",
+        })).rejects.toMatchObject({
+            code: "SETTLEMENT_REVERSAL_BLOCKED",
+            status: 409,
+            details: { transactionPublicId: original!.publicId },
+        });
+    });
+
+    integrationTest("blocks settlement reversal after a durable post-settlement rate-timeline execution", async () => {
+        setSystemTime(new Date("2026-08-19T12:00:00+07:00"));
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-rate-blocker" });
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-19");
+        await executeLoanSettlement(context(seeded.actor, "execute-before-rate-blocker"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "Execute before durable rate blocker",
+        });
+        const ratePreview = await db.insert(loanInterestRatePreviews).values({
+            tenantId: seeded.actor.tenantId,
+            loanId: seeded.loan.id,
+            createdByUserId: seeded.actor.id,
+            request: { effectiveDate: "2026-09-01", expiryDate: null, rateType: "percent", rate: "1.0000" },
+            requestHash: "rate-request-after-settlement",
+            previewHash: `v1:${"a".repeat(64)}`,
+            beforeTimeline: [],
+            afterTimeline: [],
+            timelineVersion: `v1:${"b".repeat(64)}`,
+            status: "executed",
+            executeIdempotencyKey: "rate-after-settlement",
+            expiresAt: new Date("2026-08-19T13:00:00+07:00"),
+            executedAt: new Date("2026-08-19T12:05:00+07:00"),
+        }).returning().then((rows) => rows[0]!);
+
+        await expect(reverseLoanSettlement(context(seeded.actor, "blocked-by-rate-change"), {
+            settlementPublicId: preview.publicId,
+            reason: "Must not erase later rate authority",
+        })).rejects.toMatchObject({
+            code: "SETTLEMENT_REVERSAL_BLOCKED",
+            details: { interestRatePreviewPublicId: ratePreview.publicId },
+        });
+    });
+
+    // Break caught: settlement arithmetic or stale/zero comparisons use Decimal's default
+    // 20-digit precision and erase low-order cents from a valid 29-digit public balance.
+    integrationTest("settles a 29-digit balance exactly and detects a one-cent stale change", async () => {
+        const principal = "98765432109876543210987654321.09";
+        const seeded = await seedWeeklyLoan({
+            tenantId: "tenant-settlement-precision-boundary",
+            principal,
+            rate: "0.0007",
+        });
+        const profile = await db.insert(bankProfiles).values({
+            tenantId: seeded.actor.tenantId,
+            name: "Precision settlement fund",
+            type: "personal_savings",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanFundingAllocations).values({
+            tenantId: seeded.actor.tenantId,
+            loanId: seeded.loan.id,
+            bankProfileId: profile.id,
+            allocatedAmount: principal,
+            allocationDate: "2026-08-13",
+            createdByUserId: seeded.actor.id,
+        });
+
+        const preview = await previewLoanSettlement(
+            context(seeded.actor),
+            seeded.loan.publicId,
+            "2026-08-19",
+        );
+        expect(preview).toMatchObject({
+            outstandingPrincipal: principal,
+            dueInterest: "0.00",
+            accruedNotDueInterest: "691358024769135802476913.58",
+            settlementTotal: "98766123467901312346790131234.67",
+        });
+
+        await db.update(loans).set({ outstandingPrincipal: "98765432109876543210987654321.08" })
+            .where(eq(loans.id, seeded.loan.id));
+        await expect(executeLoanSettlement(context(seeded.actor, "precision-stale-cent"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "A one-cent principal change must invalidate the reviewed total",
+        })).rejects.toMatchObject({ code: "STALE_SETTLEMENT_PREVIEW", status: 409 });
+
+        const fresh = await previewLoanSettlement(
+            context(seeded.actor),
+            seeded.loan.publicId,
+            "2026-08-19",
+        );
+        expect(fresh.settlementTotal).toBe("98766123467901312346790131234.66");
+        const executed = await executeLoanSettlement(context(seeded.actor, "precision-settle-exact"), {
+            settlementPublicId: fresh.publicId,
+            previewHash: fresh.previewHash,
+            confirmed: true,
+            reason: "Collect the exact reviewed high-value balance",
+        });
+        expect(executed.transaction).toMatchObject({
+            amount: "98766123467901312346790131234.66",
+            principalComponent: "98765432109876543210987654321.08",
+            interestComponent: "691358024769135802476913.58",
+        });
+        expect(await db.select().from(fundLedgerEntries)
+            .where(eq(fundLedgerEntries.loanId, seeded.loan.id))
+            .orderBy(fundLedgerEntries.id)).toEqual([
+            expect.objectContaining({
+                bankProfileId: profile.id,
+                entryType: "principal_return_in",
+                amount: "98765432109876543210987654321.08",
+            }),
+            expect.objectContaining({
+                bankProfileId: profile.id,
+                entryType: "interest_income_in",
+                amount: "691358024769135802476913.58",
+            }),
+        ]);
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) }))
+            .toMatchObject({ status: "paid", outstandingPrincipal: "0.00", outstandingInterest: "0.00" });
+    });
+
+    // Break caught: writeFundEffects sums multi-source allocations with Decimal's default
+    // 20-digit context, changing each source's exact cents even though the remainder masks
+    // the error in the aggregate ledger total.
+    integrationTest("conserves a 29-digit settlement principal across two exact funding sources", async () => {
+        const principal = "88888888888888888888888888888.09";
+        const firstShare = "44444444444444444444444444443.54";
+        const secondShare = "44444444444444444444444444444.55";
+        const seeded = await seedWeeklyLoan({
+            tenantId: "tenant-settlement-multi-source-precision",
+            principal,
+            rate: "0.0001",
+        });
+        const profiles = await db.insert(bankProfiles).values([
+            { tenantId: seeded.actor.tenantId, name: "Precision source one", type: "personal_savings" },
+            { tenantId: seeded.actor.tenantId, name: "Precision source two", type: "personal_savings" },
+        ]).returning();
+        await db.insert(loanFundingAllocations).values([
+            {
+                tenantId: seeded.actor.tenantId,
+                loanId: seeded.loan.id,
+                bankProfileId: profiles[0]!.id,
+                allocatedAmount: firstShare,
+                allocationDate: "2026-08-13",
+                createdByUserId: seeded.actor.id,
+            },
+            {
+                tenantId: seeded.actor.tenantId,
+                loanId: seeded.loan.id,
+                bankProfileId: profiles[1]!.id,
+                allocatedAmount: secondShare,
+                allocationDate: "2026-08-13",
+                createdByUserId: seeded.actor.id,
+            },
+        ]);
+        const preview = await previewLoanSettlement(
+            context(seeded.actor),
+            seeded.loan.publicId,
+            "2026-08-13",
+        );
+
+        const executed = await executeLoanSettlement(context(seeded.actor, "multi-source-precision-settlement"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "Return the exact principal to both funding sources",
+        });
+
+        expect(executed.transaction.principalComponent).toBe(principal);
+        const principalEntries = await db.select().from(fundLedgerEntries).where(and(
+            eq(fundLedgerEntries.loanId, seeded.loan.id),
+            eq(fundLedgerEntries.entryType, "principal_return_in"),
+        )).orderBy(fundLedgerEntries.id);
+        expect(principalEntries).toEqual([
+            expect.objectContaining({ bankProfileId: profiles[0]!.id, amount: firstShare }),
+            expect.objectContaining({ bankProfileId: profiles[1]!.id, amount: secondShare }),
+        ]);
+        const conservation = await db.execute(sql`
+            SELECT
+                SUM(amount) = ${principal}::numeric AS exact_sum,
+                BOOL_AND(amount >= 0) AS all_non_negative
+            FROM fund_ledger_entries
+            WHERE tenant_id = ${seeded.actor.tenantId}
+                AND loan_id = ${seeded.loan.id}
+                AND entry_type = 'principal_return_in'
+        `);
+        expect(conservation[0]).toMatchObject({ exact_sum: true, all_non_negative: true });
+    });
+
+    // Break caught: settlement reuses normal-payment allocation and omits current-period accruing interest.
+    integrationTest("previews THB 5,257.14 after three weekly accrual dates without advance interest", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-no-advance" });
+
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-15");
+
+        expect(preview).toMatchObject({
+            id: preview.publicId,
+            loanPublicId: seeded.loan.publicId,
+            status: "ready",
+            asOfDate: "2026-08-15",
+            outstandingPrincipal: "5000.00",
+            dueInterest: "0.00",
+            accruedNotDueInterest: "257.14",
+            outstandingFees: "0.00",
+            outstandingPenalties: "0.00",
+            nonRefundableAdvanceInterest: "0.00",
+            settlementTotal: "5257.14",
+            hashVersion: "v1",
+        });
+        expect(preview.previewHash).toMatch(/^v1:[0-9a-f]{64}$/);
+        expect(preview.balanceVersion).toMatch(/^v1:[0-9a-f]{64}$/);
+        expect((await db.select().from(loanInterestAccruals).where(eq(loanInterestAccruals.loanId, seeded.loan.id)))
+            .map((row) => ({ amount: row.interestAmount, status: row.status }))).toEqual([
+            { amount: "85.71", status: "accruing" },
+            { amount: "85.72", status: "accruing" },
+            { amount: "85.71", status: "accruing" },
+        ]);
+    });
+
+    // Break caught: a future read promotes the period and makes a backdated close-out omit not-yet-due interest.
+    integrationTest("classifies a backdated preview by its as-of date after the period was promoted later", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-backdated-preview" });
+        await accrueFloatingInterestThrough(
+            db,
+            seeded.loan,
+            new Date("2026-08-20T12:00:00+07:00"),
+            context(seeded.actor),
+        );
+
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-15");
+
+        expect(preview).toMatchObject({
+            dueInterest: "0.00",
+            accruedNotDueInterest: "257.14",
+            settlementTotal: "5257.14",
+        });
+    });
+
+    // Break caught: a backdated execute closes the loan while active later accruals remain unpaid.
+    integrationTest("rejects a backdated execute when later active accruals already exist", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-backdated-execute" });
+        await accrueFloatingInterestThrough(
+            db,
+            seeded.loan,
+            new Date("2026-08-20T12:00:00+07:00"),
+            context(seeded.actor),
+        );
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-15");
+        const accrualsBefore = await db.select().from(loanInterestAccruals)
+            .where(eq(loanInterestAccruals.loanId, seeded.loan.id)).orderBy(loanInterestAccruals.id);
+
+        await expect(executeLoanSettlement(context(seeded.actor, "settlement-backdated-execute"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "Attempt a historical close after later accruals exist",
+        })).rejects.toMatchObject({ code: "STALE_SETTLEMENT_PREVIEW", status: 409 });
+
+        expect(await db.query.loanSettlementPreviews.findFirst({
+            where: eq(loanSettlementPreviews.publicId, preview.publicId),
+        })).toMatchObject({ status: "ready", executedAt: null });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({
+            status: "active",
+            outstandingPrincipal: "5000.00",
+        });
+        expect(await db.select().from(transactions).where(eq(transactions.loanId, seeded.loan.id))).toHaveLength(0);
+        expect(await db.select().from(fundLedgerEntries).where(eq(fundLedgerEntries.loanId, seeded.loan.id))).toHaveLength(0);
+        expect(await db.select().from(loanInterestAccruals)
+            .where(eq(loanInterestAccruals.loanId, seeded.loan.id)).orderBy(loanInterestAccruals.id)).toEqual(accrualsBefore);
+    });
+
+    // Break caught: standalone materialization inserts future active accruals after a concurrent settlement has committed paid.
+    integrationTest("serializes settlement with a concurrent future accrual materializer", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-accrual-race" });
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-15");
+        const advisoryKey = 81_305_201;
+        await db.execute(sql`CREATE OR REPLACE FUNCTION block_close_account_for_accrual_race()
+            RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.type = 'close_account' THEN
+                    PERFORM pg_advisory_xact_lock(81305201);
+                END IF;
+                RETURN NEW;
+            END $$`);
+        await db.execute(sql`CREATE TRIGGER block_close_account_for_accrual_race
+            BEFORE INSERT ON transactions
+            FOR EACH ROW EXECUTE FUNCTION block_close_account_for_accrual_race()`);
+
+        let markBarrierHeld!: () => void;
+        let releaseBarrier!: () => void;
+        const barrierHeld = new Promise<void>((resolve) => { markBarrierHeld = resolve; });
+        const barrierRelease = new Promise<void>((resolve) => { releaseBarrier = resolve; });
+        const blocker = db.transaction(async (tx) => {
+            await tx.execute(sql`SELECT pg_advisory_xact_lock(${advisoryKey})`);
+            markBarrierHeld();
+            await barrierRelease;
+        });
+        let settling: ReturnType<typeof executeLoanSettlement> | undefined;
+        let materializing: ReturnType<typeof accrueFloatingInterestThrough> | undefined;
+        try {
+            await barrierHeld;
+            settling = executeLoanSettlement(context(seeded.actor, "settlement-accrual-race"), {
+                settlementPublicId: preview.publicId,
+                previewHash: preview.previewHash,
+                confirmed: true,
+                reason: "Close while a future health read races",
+            });
+            settling.catch(() => undefined);
+            await waitForBlockedAdvisoryLock();
+
+            materializing = accrueFloatingInterestThrough(
+                db,
+                seeded.loan,
+                new Date("2026-08-20T12:00:00+07:00"),
+                context(seeded.actor, "materialize-after-settlement-check"),
+            );
+            materializing.catch(() => undefined);
+            releaseBarrier();
+            const [settlementResult, materializationResult] = await Promise.allSettled([settling, materializing]);
+
+            expect(settlementResult).toMatchObject({
+                status: "fulfilled",
+                value: { status: "executed", settlementTotal: "5257.14" },
+            });
+            expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({
+                status: "paid",
+                outstandingPrincipal: "0.00",
+            });
+            expect(await db.select().from(loanInterestAccruals).where(and(
+                eq(loanInterestAccruals.loanId, seeded.loan.id),
+                inArray(loanInterestAccruals.status, ["accrued", "accruing", "due", "partially_paid"]),
+                sql`${loanInterestAccruals.accrualDate} > '2026-08-15'`,
+            ))).toHaveLength(0);
+            expect(materializationResult).toMatchObject({
+                status: "rejected",
+                reason: { code: "FLOATING_LOAN_NOT_ACTIVE", status: 409 },
+            });
+        } finally {
+            releaseBarrier();
+            await Promise.allSettled([blocker, settling, materializing].filter(
+                (item): item is Promise<unknown> => item !== undefined,
+            ));
+            await db.execute(sql`DROP TRIGGER IF EXISTS block_close_account_for_accrual_race ON transactions`);
+            await db.execute(sql`DROP FUNCTION IF EXISTS block_close_account_for_accrual_race()`);
+        }
+    });
+
+    // Break caught: close-out refunds an unused part of the already-paid advance period or charges it twice.
+    integrationTest("previews only THB 5,000.00 during an advance-covered period and preserves THB 600.00 as non-refundable history", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-advance", advancePeriods: 1 });
+        const before = await db.select().from(loanInterestAccruals)
+            .where(eq(loanInterestAccruals.loanId, seeded.loan.id)).orderBy(loanInterestAccruals.id);
+
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-15");
+
+        expect(preview).toMatchObject({
+            outstandingPrincipal: "5000.00",
+            dueInterest: "0.00",
+            accruedNotDueInterest: "0.00",
+            nonRefundableAdvanceInterest: "600.00",
+            settlementTotal: "5000.00",
+        });
+        expect(await db.select().from(loanInterestAccruals)
+            .where(eq(loanInterestAccruals.loanId, seeded.loan.id)).orderBy(loanInterestAccruals.id)).toEqual(before);
+    });
+
+    // Break caught: advance coverage leaks into period two or settlement charges a complete second week early.
+    integrationTest("previews THB 5,257.14 on accrual date three of period two after one advance period", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-period-two", advancePeriods: 1 });
+
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-22");
+
+        expect(preview).toMatchObject({
+            outstandingPrincipal: "5000.00",
+            dueInterest: "0.00",
+            accruedNotDueInterest: "257.14",
+            nonRefundableAdvanceInterest: "600.00",
+            settlementTotal: "5257.14",
+        });
+    });
+
+    // Break caught: execute duplicates close-out money, omits command audit context, or closes a non-zero loan.
+    integrationTest("executes one exact close-account entry idempotently and closes only zero balances", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-execute" });
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-15");
+        const ctx = context(seeded.actor, "settlement-execute-once");
+        const input = {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true as const,
+            reason: "Borrower confirmed exact close-out",
+        };
+
+        const [first, retry] = await Promise.all([
+            executeLoanSettlement(ctx, input),
+            executeLoanSettlement(ctx, input),
+        ]);
+        const laterRetry = await executeLoanSettlement({
+            ...ctx,
+            requestId: "req-settlement-execute-retry",
+            correlationId: "corr-settlement-execute-retry",
+        }, input);
+
+        expect(retry).toEqual(first);
+        expect(laterRetry).toEqual(first);
+        expect(first).toMatchObject({
+            status: "executed",
+            loanPublicId: seeded.loan.publicId,
+            settlementTotal: "5257.14",
+            transaction: {
+                amount: "5257.14",
+                principalComponent: "5000.00",
+                interestComponent: "257.14",
+                feeComponent: "0.00",
+                penaltyComponent: "0.00",
+                type: "close_account",
+                entryType: "repayment",
+            },
+            auditPublicId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+            correlationId: "corr-settlement-execute-once",
+        });
+        expect(await db.select().from(transactions).where(eq(transactions.loanId, seeded.loan.id))).toHaveLength(1);
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({
+            status: "paid",
+            outstandingPrincipal: "0.00",
+            outstandingInterest: "0.00",
+            outstandingFees: "0.00",
+        });
+        expect(await db.select().from(loanInterestAccruals).where(and(
+            eq(loanInterestAccruals.loanId, seeded.loan.id),
+            sql`${loanInterestAccruals.status} <> 'reversed'`,
+        ))).toEqual(expect.arrayContaining([
+            expect.objectContaining({ accrualDate: "2026-08-13", paidAmount: "85.71", status: "paid" }),
+            expect.objectContaining({ accrualDate: "2026-08-14", paidAmount: "85.72", status: "paid" }),
+            expect.objectContaining({ accrualDate: "2026-08-15", paidAmount: "85.71", status: "paid" }),
+        ]));
+        const settlementTransaction = await db.query.transactions.findFirst({
+            where: eq(transactions.publicId, first.transaction.publicId),
+        });
+        expect(await db.select().from(floatingTransactionAllocations).where(and(
+            eq(floatingTransactionAllocations.tenantId, seeded.actor.tenantId),
+            eq(floatingTransactionAllocations.transactionId, settlementTransaction!.id),
+            eq(floatingTransactionAllocations.component, "interest"),
+        )).orderBy(floatingTransactionAllocations.allocationOrder)).toEqual([
+            expect.objectContaining({ allocationOrder: 1, amount: "85.71", dueDate: "2026-08-20" }),
+            expect.objectContaining({ allocationOrder: 2, amount: "85.72", dueDate: "2026-08-20" }),
+            expect.objectContaining({ allocationOrder: 3, amount: "85.71", dueDate: "2026-08-20" }),
+        ]);
+        expect(await db.select().from(auditLogs).where(and(
+            eq(auditLogs.entityId, preview.publicId),
+            eq(auditLogs.action, "executed"),
+        ))).toEqual([expect.objectContaining({
+            actorUserId: seeded.actor.id,
+            actorSource: "web",
+            requestId: "req-settlement-execute-once",
+            correlationId: "corr-settlement-execute-once",
+        })]);
+    });
+
+    // Break caught: close-account posting bypasses the funded principal return and income ledger effects.
+    integrationTest("posts exact principal, interest, and fee fund effects for a funded settlement", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-funded" });
+        const profile = await db.insert(bankProfiles).values({
+            tenantId: seeded.actor.tenantId,
+            name: "Settlement fund",
+            type: "personal_savings",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanFundingAllocations).values({
+            tenantId: seeded.actor.tenantId,
+            loanId: seeded.loan.id,
+            bankProfileId: profile.id,
+            allocatedAmount: "5000.00",
+            allocationDate: "2026-08-13",
+            createdByUserId: seeded.actor.id,
+        });
+        await db.update(loans).set({ outstandingFees: "12.34", updatedAt: new Date() })
+            .where(eq(loans.id, seeded.loan.id));
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-15");
+
+        const executed = await executeLoanSettlement(context(seeded.actor, "settlement-funded-execute"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "Return funded principal and recognize exact income",
+        });
+
+        expect(executed).toMatchObject({
+            settlementTotal: "5269.48",
+            transaction: {
+                principalComponent: "5000.00",
+                interestComponent: "257.14",
+                feeComponent: "12.34",
+            },
+        });
+        const transaction = await db.query.transactions.findFirst({
+            where: eq(transactions.publicId, executed.transaction.publicId),
+        });
+        const ledger = await db.select().from(fundLedgerEntries)
+            .where(eq(fundLedgerEntries.loanId, seeded.loan.id)).orderBy(fundLedgerEntries.id);
+        expect(ledger).toHaveLength(3);
+        expect(ledger).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                bankProfileId: profile.id,
+                transactionId: transaction!.id,
+                entryType: "principal_return_in",
+                amount: "5000.00",
+            }),
+            expect.objectContaining({
+                bankProfileId: profile.id,
+                transactionId: transaction!.id,
+                entryType: "interest_income_in",
+                amount: "257.14",
+            }),
+            expect.objectContaining({
+                bankProfileId: profile.id,
+                transactionId: transaction!.id,
+                entryType: "fee_income_in",
+                amount: "12.34",
+            }),
+        ]));
+    });
+
+    // Break caught: caller-supplied hash is trusted instead of the persisted versioned settlement proposal.
+    integrationTest("rejects a stale preview hash without posting money", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-stale-hash" });
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-15");
+
+        await expect(executeLoanSettlement(context(seeded.actor, "settlement-stale-hash"), {
+            settlementPublicId: preview.publicId,
+            previewHash: `v1:${"0".repeat(64)}`,
+            confirmed: true,
+            reason: "This hash is stale",
+        })).rejects.toMatchObject({ code: "STALE_SETTLEMENT_PREVIEW", status: 409 });
+
+        expect(await db.select().from(transactions).where(eq(transactions.loanId, seeded.loan.id))).toHaveLength(0);
+        expect(await db.query.loanSettlementPreviews.findFirst({ where: eq(loanSettlementPreviews.publicId, preview.publicId) }))
+            .toMatchObject({ status: "expired" });
+    });
+
+    // Break caught: an expired amount can still settle a loan after its review window.
+    integrationTest("rejects an expired preview without posting money", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-expired" });
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-15");
+        setSystemTime(new Date(preview.expiresAt.getTime() + 1));
+
+        await expect(executeLoanSettlement(context(seeded.actor, "settlement-expired"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "Expired amount must stop",
+        })).rejects.toMatchObject({ code: "STALE_SETTLEMENT_PREVIEW", status: 409 });
+
+        expect(await db.select().from(transactions).where(eq(transactions.loanId, seeded.loan.id))).toHaveLength(0);
+    });
+
+    // Break caught: a normal payment between preview and execute is ignored by a balance-version-only-in-name check.
+    integrationTest("rejects execution after a concurrent normal payment changes the balance version", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-concurrent-payment" });
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-15");
+        await postFloatingPrincipalPayment(seeded, "100.00", "2026-08-15T12:00:00+07:00", "concurrent-payment");
+        const refreshed = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-15");
+        expect(refreshed.balanceVersion).not.toBe(preview.balanceVersion);
+
+        await expect(executeLoanSettlement(context(seeded.actor, "settlement-after-payment"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "Must use latest borrower balance",
+        })).rejects.toMatchObject({ code: "STALE_SETTLEMENT_PREVIEW", status: 409 });
+
+        expect((await db.select().from(transactions).where(eq(transactions.loanId, seeded.loan.id)))
+            .filter((row) => row.type === "close_account")).toHaveLength(0);
+    });
+
+    // Break caught: execute reads stale balances before acquiring the loan row lock.
+    integrationTest("waits for the loan row lock and rejects the preview after the locked balance changes", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-row-lock" });
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-15");
+        let markLocked!: () => void;
+        let releaseBlocker!: () => void;
+        const locked = new Promise<void>((resolve) => { markLocked = resolve; });
+        const release = new Promise<void>((resolve) => { releaseBlocker = resolve; });
+        const blocker = db.transaction(async (tx) => {
+            await tx.execute(sql`SELECT id FROM loans WHERE id = ${seeded.loan.id} FOR UPDATE`);
+            markLocked();
+            await release;
+            await tx.update(loans).set({ outstandingPrincipal: "4999.00", updatedAt: new Date() })
+                .where(eq(loans.id, seeded.loan.id));
+        });
+        await locked;
+        let completed = false;
+        const pending = executeLoanSettlement(context(seeded.actor, "settlement-row-lock"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "Lock before balance verification",
+        }).finally(() => { completed = true; });
+        pending.catch(() => undefined);
+        await Bun.sleep(75);
+        expect(completed).toBe(false);
+        expect((await db.select().from(transactions).where(eq(transactions.loanId, seeded.loan.id)))
+            .filter((row) => row.type === "close_account")).toHaveLength(0);
+
+        releaseBlocker();
+        await blocker;
+        await expect(pending).rejects.toMatchObject({ code: "STALE_SETTLEMENT_PREVIEW", status: 409 });
+    });
+
+    // Break caught: settling an advance-covered loan mutates or refunds its historical THB 600 charge.
+    integrationTest("executes the additional THB 5,000.00 without changing paid advance history", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-advance-execute", advancePeriods: 1 });
+        const before = await db.select().from(loanInterestAccruals)
+            .where(eq(loanInterestAccruals.loanId, seeded.loan.id)).orderBy(loanInterestAccruals.id);
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-15");
+
+        const executed = await executeLoanSettlement(context(seeded.actor, "settlement-advance-execute"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "Close during paid advance period",
+        });
+
+        expect(executed).toMatchObject({
+            settlementTotal: "5000.00",
+            nonRefundableAdvanceInterest: "600.00",
+            transaction: { amount: "5000.00", principalComponent: "5000.00", interestComponent: "0.00" },
+        });
+        expect(await db.select().from(loanInterestAccruals)
+            .where(eq(loanInterestAccruals.loanId, seeded.loan.id)).orderBy(loanInterestAccruals.id)).toEqual(before);
+        expect((await db.select().from(transactions).where(eq(transactions.loanId, seeded.loan.id)))
+            .some((row) => row.amount.startsWith("-"))).toBe(false);
+    });
+
+    // Break caught: reversing an earlier payment after close-out restores principal underneath a posted settlement.
+    integrationTest("blocks reversal of an earlier payment while its downstream settlement remains posted", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-reversal-boundary" });
+        const earlier = await postFloatingPrincipalPayment(
+            seeded,
+            "100.00",
+            "2026-08-14T12:00:00+07:00",
+            "earlier-payment",
+        );
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-15");
+        await executeLoanSettlement(context(seeded.actor, "settlement-after-earlier-payment"), {
+            settlementPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            confirmed: true,
+            reason: "Close after an ordinary principal payment",
+        });
+
+        await expect(reversePayment(context(seeded.actor, "reverse-before-settlement"), earlier.intake.publicId, {
+            reason: "Attempt unsafe historical reversal",
+        })).rejects.toMatchObject({ code: "REVERSAL_NOT_LATEST", status: 409 });
+
+        const rows = await db.select().from(transactions).where(eq(transactions.loanId, seeded.loan.id)).orderBy(transactions.id);
+        expect(rows.map((row) => ({ type: row.type, entryType: row.entryType, amount: row.amount }))).toEqual([
+            { type: "repayment", entryType: "repayment", amount: "100.00" },
+            { type: "close_account", entryType: "repayment", amount: preview.settlementTotal },
+        ]);
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, seeded.loan.id) })).toMatchObject({
+            status: "paid",
+            outstandingPrincipal: "0.00",
+        });
+    });
+});

@@ -1,0 +1,2 @@
+ALTER TABLE "loans" ADD COLUMN "term_months" integer;--> statement-breakpoint
+ALTER TABLE "loans" ADD CONSTRAINT "loans_term_months_check" CHECK ("loans"."term_months" IS NULL OR "loans"."term_months" > 0);

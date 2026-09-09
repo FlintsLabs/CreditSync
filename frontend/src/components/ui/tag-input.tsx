@@ -1,8 +1,8 @@
 import React, { useState } from "react";
 import { X } from "lucide-react";
 import { Badge } from "./badge";
-import { Input } from "./input";
-import { Button } from "./button";
+import { Input } from "./Input";
+import { Button } from "./Button";
 
 interface TagInputProps {
     tags: string[];

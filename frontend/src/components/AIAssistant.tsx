@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { MessageSquare, X, Send, Bot, Loader2 } from "lucide-react";
-import { Button } from "./ui/button";
-import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "./ui/card";
-import { Input } from "./ui/input";
+import { Button } from "./ui/Button";
+import { Card, CardHeader, CardTitle, CardContent, CardFooter } from "./ui/Card";
+import { Input } from "./ui/Input";
 import { cn } from "../lib/utils";
 import { api } from "../lib/api";
 
@@ -67,7 +67,7 @@ export function AIAssistant() {
                             <Bot className="h-5 w-5 text-primary" />
                             <CardTitle className="text-base font-semibold">AI Assistant</CardTitle>
                         </div>
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setIsOpen(false)}>
+                        <Button aria-label="Close AI Assistant" variant="ghost" size="icon" className="h-8 w-8" onClick={() => setIsOpen(false)}>
                             <X className="h-4 w-4" />
                         </Button>
                     </CardHeader>
@@ -103,13 +103,14 @@ export function AIAssistant() {
                             }}
                         >
                             <Input
+                                aria-label="Message"
                                 placeholder="Type a message..."
                                 value={input}
                                 onChange={(e) => setInput(e.target.value)}
                                 disabled={isLoading}
                                 className="flex-1"
                             />
-                            <Button type="submit" size="icon" disabled={!input.trim() || isLoading}>
+                            <Button aria-label="Send message" type="submit" size="icon" disabled={!input.trim() || isLoading}>
                                 <Send className="h-4 w-4" />
                             </Button>
                         </form>
@@ -119,6 +120,7 @@ export function AIAssistant() {
 
             {/* Toggle Button */}
             <Button
+                aria-label={isOpen ? "Close AI Assistant" : "Open AI Assistant"}
                 onClick={() => setIsOpen(!isOpen)}
                 size="icon"
                 className="h-14 w-14 rounded-full shadow-xl transition-transform hover:scale-105 active:scale-95"

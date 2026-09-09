@@ -1,60 +1,70 @@
-import { Elysia, t } from "elysia";
+import { Elysia } from "elysia";
+import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db";
-import { transactions, loans, borrowers } from "../db/schema";
-import { eq, desc } from "drizzle-orm";
-import { uploadFile } from "../lib/storage";
+import { borrowers, loans, transactions } from "../db/schema";
+import { resolveStoredFileUrl } from "../lib/storage";
+import { authPlugin } from "../middleware/auth";
+import { getAccessScopeCacheKey, transactionAccessFilters } from "../lib/access";
+import { withTenantCache } from "../lib/cache";
+import { DomainError, presentDomainError } from "../services/domain-error";
+import { paymentEvidenceSummariesByIntake } from "../services/payment-evidence-read-service";
 
 export const transactionsRoute = new Elysia({ prefix: "/transactions" })
-    .get("/", async () => {
-        // TODO: Context Tenant
-        return await db.select({
-            id: transactions.id,
-            loanId: transactions.loanId,
-            borrowerName: borrowers.name,
-            amount: transactions.amount,
-            type: transactions.type,
-            date: transactions.transactionDate,
-            slipUrl: transactions.slipUrl
-        })
-            .from(transactions)
-            .leftJoin(loans, eq(transactions.loanId, loans.id))
-            .leftJoin(borrowers, eq(loans.borrowerId, borrowers.id))
-            .where(eq(transactions.tenantId, "default_tenant"))
-            .orderBy(desc(transactions.transactionDate));
-    })
-    .post("/", async ({ body }) => {
-        let slipUrl = null;
-
-        // Handle File Upload if present
-        if (body.slip) {
-            const file = body.slip;
-            const key = `slips/${Date.now()}_${file.name}`;
-            try {
-                const buffer = await file.arrayBuffer();
-                slipUrl = await uploadFile(key, Buffer.from(buffer), file.type);
-            } catch (e) {
-                console.error("Slip upload failed", e);
-            }
+    .use(authPlugin)
+    .get("/", async ({ user, set }) => {
+        if (!user) {
+            set.status = 401;
+            return { error: "Unauthorized" };
         }
+        const scopeKey = getAccessScopeCacheKey(user);
+        return await withTenantCache({
+            tenantId: user.tenantId,
+            namespace: "transactions",
+            key: `list:${scopeKey}`,
+            ttlSeconds: 20,
+            loader: async () => {
+                const rows = await db.select({
+                    id: transactions.id,
+                    publicId: transactions.publicId,
+                    loanId: transactions.loanId,
+                    loanPublicId: loans.publicId,
+                    scheduleId: transactions.scheduleId,
+                    paymentIntakeId: transactions.paymentIntakeId,
+                    borrowerName: borrowers.name,
+                    amount: transactions.amount,
+                    principalComponent: transactions.principalComponent,
+                    interestComponent: transactions.interestComponent,
+                    feeComponent: transactions.feeComponent,
+                    penaltyComponent: transactions.penaltyComponent,
+                    type: transactions.type,
+                    date: transactions.transactionDate,
+                    slipUrl: transactions.slipUrl,
+                })
+                    .from(transactions)
+                    .leftJoin(loans, eq(transactions.loanId, loans.id))
+                    .leftJoin(borrowers, eq(loans.borrowerId, borrowers.id))
+                    .where(and(...transactionAccessFilters(user)))
+                    .orderBy(desc(transactions.transactionDate));
 
-        const result = await db.insert(transactions).values({
-            tenantId: "default_tenant",
-            loanId: Number(body.loanId),
-            amount: body.amount.toString(),
-            type: body.type || "repayment",
-            slipUrl: slipUrl,
-            transactionDate: new Date(body.date),
-            notes: body.notes
-        }).returning();
-
-        return result[0];
-    }, {
-        body: t.Object({
-            loanId: t.String(), // FormData often sends numbers as strings
-            amount: t.String(),
-            type: t.Optional(t.String()),
-            date: t.String(),
-            notes: t.Optional(t.String()),
-            slip: t.Optional(t.File())
-        })
+                const evidenceByIntake = await paymentEvidenceSummariesByIntake(user.tenantId, [...new Set(rows.flatMap((row) => row.paymentIntakeId ? [row.paymentIntakeId] : []))]);
+                return await Promise.all(rows.map(async ({ paymentIntakeId, ...row }) => ({
+                    ...row,
+                    evidence: paymentIntakeId ? evidenceByIntake.get(paymentIntakeId) ?? [] : [],
+                    slipRef: row.slipUrl,
+                    slipUrl: await resolveStoredFileUrl(row.slipUrl),
+                })));
+            },
+        });
+    })
+    .post("/", ({ user, set }) => {
+        const failure = !user
+            ? new DomainError("UNAUTHORIZED", "Unauthorized", 401)
+            : new DomainError(
+                "LEGACY_REPAYMENT_WRITE_DISABLED",
+                "Repayment writes must use the payment-intake workflow",
+                405,
+            );
+        const presented = presentDomainError(failure);
+        set.status = presented.status;
+        return presented.body;
     });

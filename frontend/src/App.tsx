@@ -11,10 +11,19 @@ import BorrowerForm from "./pages/dashboard/borrowers/BorrowerForm";
 import BorrowerDetail from "./pages/dashboard/borrowers/BorrowerDetail";
 import LoanWizard from "./pages/dashboard/loans/LoanWizard";
 import LoanList from "./pages/dashboard/loans/LoanList";
+import LoanDetail from "./pages/dashboard/loans/LoanDetail";
+import MatchingWorkspace from "./pages/dashboard/loans/MatchingWorkspace";
 import TransactionList from "./pages/dashboard/transactions/TransactionList";
 import TransactionForm from "./pages/dashboard/transactions/TransactionForm";
+import ReconciliationPage from "./pages/dashboard/reconciliation/ReconciliationPage";
+import PaymentInbox from "./pages/dashboard/payments/PaymentInbox";
+import IntermediaryRemittances from "./pages/dashboard/intermediaries/IntermediaryRemittances";
+import IntermediaryList from "./pages/dashboard/intermediaries/IntermediaryList";
+import IntermediaryDetail from "./pages/dashboard/intermediaries/IntermediaryDetail";
+import AccountPreferencesPage from "./pages/dashboard/settings/AccountPreferencesPage";
 import LandingPage from "./pages/LandingPage";
 import ProtectedRoute from "./components/ProtectedRoute";
+import { SETTINGS_PATH } from "./lib/account";
 import './index.css'
 
 function App() {
@@ -40,17 +49,26 @@ function App() {
           <Route path="/login" element={<Login />} />
 
           <Route element={<ProtectedRoute />}>
-            <Route path="/dashboard" element={<DashboardLayout />}>
-              <Route index element={<Dashboard />} />
+            <Route path="/" element={<DashboardLayout />}>
+              <Route path="dashboard" element={<Dashboard />} />
               <Route path="funds" element={<FundList />} />
               <Route path="funds/:id" element={<FundDetail />} />
               <Route path="borrowers" element={<BorrowerList />} />
               <Route path="borrowers/new" element={<BorrowerForm />} />
               <Route path="borrowers/:id" element={<BorrowerDetail />} />
               <Route path="loans" element={<LoanList />} />
+              <Route path="loans/:id" element={<LoanDetail />} />
               <Route path="loans/new" element={<LoanWizard />} />
+              <Route path="matching" element={<MatchingWorkspace />} />
               <Route path="transactions" element={<TransactionList />} />
               <Route path="transactions/new" element={<TransactionForm />} />
+              <Route path="payments" element={<PaymentInbox />} />
+              <Route path="intermediaries" element={<IntermediaryList />} />
+              <Route path="intermediaries/remittances" element={<IntermediaryRemittances />} />
+              <Route path="intermediaries/:id" element={<IntermediaryDetail />} />
+              <Route path="reconciliation" element={<ReconciliationPage />} />
+              <Route path="settings" element={<AccountPreferencesPage />} />
+              <Route path="dashboard/settings" element={<Navigate to={SETTINGS_PATH} replace />} />
             </Route>
           </Route>
 

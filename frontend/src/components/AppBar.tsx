@@ -1,8 +1,18 @@
 
 import { Settings, LogOut, User } from "lucide-react";
-import { ModeToggle } from "./theme-toggle";
+import { PanelLeftClose, PanelRightOpen } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
+} from "./ui/tooltip";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
-import { Button } from "./ui/button";
+import { Button } from "./ui/Button";
+import { getStoredUser } from "../lib/session";
+import { PREFERENCES_SETTINGS_PATH, PROFILE_SETTINGS_PATH, signOut } from "../lib/account";
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -13,75 +23,114 @@ import {
     DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 
-interface User {
-    id: number;
-    name: string;
-    email: string;
-    picture?: string;
-    role: string;
+export type AppBarProps = {
+    compact?: boolean;
+    sidebarToggle?: {
+        collapsed: boolean;
+        onToggle: () => void;
+        label: string;
+    };
+};
+
+export type UserAccountMenuProps = {
+    buttonClassName?: string;
+    dropdownAlign?: "start" | "end";
+};
+
+export function UserAccountMenu({ buttonClassName, dropdownAlign = "end" }: UserAccountMenuProps = {}) {
+    const { t } = useTranslation();
+    const navigate = useNavigate();
+    const user = getStoredUser();
+    const accountLabel = user?.name
+        ? t("appbar.accountFor", { name: user.name })
+        : t("appbar.account", "Open account menu");
+
+    return <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+            <Button
+                aria-label={accountLabel}
+                variant="ghost"
+                className={`relative h-9 w-9 rounded-full ${buttonClassName ?? ""}`}
+            >
+                <Avatar className="h-8 w-8">
+                    <AvatarImage src={user?.picture} alt={user?.name} />
+                    <AvatarFallback>{user?.name?.charAt(0) || "U"}</AvatarFallback>
+                </Avatar>
+            </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent className="w-56" align={dropdownAlign} forceMount>
+            <DropdownMenuLabel className="font-normal">
+                <div className="flex flex-col space-y-1">
+                    <p className="text-sm font-medium leading-none">{user?.name}</p>
+                    <p className="text-xs leading-none text-muted-foreground">{user?.email}</p>
+                </div>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+                <DropdownMenuItem onSelect={() => navigate(PROFILE_SETTINGS_PATH)}>
+                    <User className="mr-2 h-4 w-4" />
+                    <span>{t("appbar.profile", "Profile")}</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => navigate(PREFERENCES_SETTINGS_PATH)}>
+                    <Settings className="mr-2 h-4 w-4" />
+                    <span>{t("appbar.settings", "Settings")}</span>
+                </DropdownMenuItem>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => signOut(navigate)} className="text-destructive focus:text-destructive">
+                <LogOut className="mr-2 h-4 w-4" />
+                <span>{t("appbar.logout", "Log out")}</span>
+            </DropdownMenuItem>
+        </DropdownMenuContent>
+    </DropdownMenu>;
 }
 
-export default function AppBar() {
-    // Get user from local storage safely
-    let user: User | null = null;
-    try {
-        const storedUser = localStorage.getItem("user");
-        if (storedUser) {
-            user = JSON.parse(storedUser) as User;
-        }
-    } catch (e) {
-        console.error("Failed to parse user from local storage", e);
-    }
+export default function AppBar({
+    compact = false,
+    sidebarToggle,
+}: AppBarProps) {
+    const compactControlClass = compact ? "h-8 w-8" : "h-10 w-10";
+    const brand = (
+        <img
+            data-testid="sidebar-brand-mark"
+            aria-hidden="true"
+            className={compact ? "h-6 w-6 shrink-0 rounded-md" : "h-8 w-8 shrink-0 rounded-md"}
+            src="/favicon.svg"
+            alt=""
+        />
+    );
 
-    const handleLogout = () => {
-        localStorage.removeItem("token");
-        localStorage.removeItem("user");
-        window.location.href = "/login";
-    };
+    const sidebarToggleButton = sidebarToggle && (
+        <TooltipProvider>
+            <Tooltip>
+                <TooltipTrigger asChild>
+                    <Button
+                        aria-label={sidebarToggle.label}
+                        aria-expanded={!sidebarToggle.collapsed}
+                        variant="ghost"
+                        size="icon"
+                        onClick={sidebarToggle.onToggle}
+                        className={compactControlClass}
+                    >
+                        {sidebarToggle.collapsed ? (
+                            <PanelRightOpen className="h-4 w-4" />
+                        ) : (
+                            <PanelLeftClose className="h-4 w-4" />
+                        )}
+                    </Button>
+                </TooltipTrigger>
+                <TooltipContent side="right">{sidebarToggle.label}</TooltipContent>
+            </Tooltip>
+        </TooltipProvider>
+    );
 
     return (
-        <div className="flex h-16 items-center justify-between border-b px-4">
-            <h1 className="text-xl font-bold ml-2">CreditSync</h1>
-
-            <div className="flex items-center gap-2">
-                <ModeToggle />
-                <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" className="relative h-8 w-8 rounded-full">
-                            <Avatar className="h-8 w-8">
-                                <AvatarImage src={user?.picture} alt={user?.name} />
-                                <AvatarFallback>{user?.name?.charAt(0) || "U"}</AvatarFallback>
-                            </Avatar>
-                        </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent className="w-56" align="end" forceMount>
-                        <DropdownMenuLabel className="font-normal">
-                            <div className="flex flex-col space-y-1">
-                                <p className="text-sm font-medium leading-none">{user?.name}</p>
-                                <p className="text-xs leading-none text-muted-foreground">
-                                    {user?.email}
-                                </p>
-                            </div>
-                        </DropdownMenuLabel>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuGroup>
-                            <DropdownMenuItem>
-                                <User className="mr-2 h-4 w-4" />
-                                <span>Profile</span>
-                            </DropdownMenuItem>
-                            <DropdownMenuItem>
-                                <Settings className="mr-2 h-4 w-4" />
-                                <span>Settings</span>
-                            </DropdownMenuItem>
-                        </DropdownMenuGroup>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
-                            <LogOut className="mr-2 h-4 w-4" />
-                            <span>Log out</span>
-                        </DropdownMenuItem>
-                    </DropdownMenuContent>
-                </DropdownMenu>
-            </div>
+        <div
+            data-testid="sidebar-header"
+            className={`flex h-16 items-center justify-between border-b ${compact ? "px-1" : "px-4"}`}
+        >
+            <div className="flex items-center justify-center">{brand}</div>
+            <div className="flex items-center justify-center">{sidebarToggleButton}</div>
         </div>
     );
 }

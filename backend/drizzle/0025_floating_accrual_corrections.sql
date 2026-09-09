@@ -1,0 +1,2 @@
+DROP INDEX "loan_interest_accruals_tenant_loan_date_unique";--> statement-breakpoint
+CREATE UNIQUE INDEX "loan_interest_accruals_tenant_loan_date_unique" ON "loan_interest_accruals" USING btree ("tenant_id","loan_id","accrual_date") WHERE "loan_interest_accruals"."status" <> 'reversed';

@@ -6,6 +6,7 @@ import {
     DialogDescription
 } from "../../../components/ui/dialog";
 import BorrowerForm from "./BorrowerForm";
+import { useTranslation } from "react-i18next";
 
 interface BorrowerEditModalProps {
     open: boolean;
@@ -15,13 +16,14 @@ interface BorrowerEditModalProps {
 }
 
 export default function BorrowerEditModal({ open, onOpenChange, borrower, onSuccess }: BorrowerEditModalProps) {
+    const { t } = useTranslation();
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
-                    <DialogTitle>Edit Borrower Profile</DialogTitle>
+                    <DialogTitle>{t("borrowerEdit.title", "Edit Borrower Profile")}</DialogTitle>
                     <DialogDescription>
-                        Update information for {borrower?.name}. Click save when you're done.
+                        {t("borrowerEdit.description", { defaultValue: "Update information for {{name}}. Click save when you're done.", name: borrower?.name ?? "" })}
                     </DialogDescription>
                 </DialogHeader>
 

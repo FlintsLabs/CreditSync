@@ -1,25 +1,28 @@
 import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../../components/ui/dialog";
-import { Button } from "../../../components/ui/button";
+import { Button } from "../../../components/ui/Button";
 import { api } from "../../../lib/api";
 import { Loader2, Copy } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { formatDecimalExact, formatMoneyExact } from "../../../lib/workflow-model";
 
 interface LoanClosingModalProps {
-    loanId: number;
+    loanId: string;
     open: boolean;
     onOpenChange: (open: boolean) => void;
 }
 
 interface ClosingSummary {
-    principal: number;
-    totalInterest: number;
-    totalPaid: number;
-    totalDue: number;
-    balance: number;
+    principal: string;
+    totalInterest: string;
+    totalPaid: string;
+    totalDue: string;
+    balance: string;
     daysSinceStart: number;
 }
 
 export function LoanClosingModal({ loanId, open, onOpenChange }: LoanClosingModalProps) {
+    const { t, i18n } = useTranslation();
     const [summary, setSummary] = useState<ClosingSummary | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -39,7 +42,7 @@ export function LoanClosingModal({ loanId, open, onOpenChange }: LoanClosingModa
             const res = await api.get(`/loans/${loanId}/closing-summary`);
             setSummary(res.data);
         } catch (err) {
-            setError("Failed to calculate closing summary.");
+            setError(t("loanClosing.errors.calculate", "Failed to calculate closing summary."));
             console.error(err);
         } finally {
             setLoading(false);
@@ -47,8 +50,13 @@ export function LoanClosingModal({ loanId, open, onOpenChange }: LoanClosingModa
     };
 
     const handleCopyToClipboard = () => {
-        if (summary?.balance) {
-            navigator.clipboard.writeText(summary.balance.toFixed(2));
+        if (summary) {
+            const amount = formatDecimalExact(summary.balance, i18n.language);
+            const message = t("loanClosing.copyMessage", {
+                defaultValue: "Closing balance as of today is ฿{{amount}}.",
+                amount,
+            });
+            navigator.clipboard.writeText(message);
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
         }
@@ -58,9 +66,9 @@ export function LoanClosingModal({ loanId, open, onOpenChange }: LoanClosingModa
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent>
                 <DialogHeader>
-                    <DialogTitle>Loan #{loanId} Closing Summary</DialogTitle>
+                    <DialogTitle>{t("loanClosing.title", { defaultValue: "Loan #{{id}} Closing Summary", id: loanId })}</DialogTitle>
                     <DialogDescription>
-                        This is the calculated balance to close the loan as of today.
+                        {t("loanClosing.description", "This is the calculated balance to close the loan as of today.")}
                     </DialogDescription>
                 </DialogHeader>
                 
@@ -75,24 +83,24 @@ export function LoanClosingModal({ loanId, open, onOpenChange }: LoanClosingModa
                 {summary && (
                     <div className="space-y-4 py-4">
                         <div className="flex justify-between items-center">
-                            <span className="text-muted-foreground">Principal</span>
-                            <span className="font-mono">฿{summary.principal.toLocaleString()}</span>
+                            <span className="text-muted-foreground">{t("loanWizard.columns.principal", "Principal")}</span>
+                            <span className="font-mono">{formatMoneyExact(summary.principal, i18n.language)}</span>
                         </div>
                         <div className="flex justify-between items-center">
-                            <span className="text-muted-foreground">Total Interest Accrued ({summary.daysSinceStart} days)</span>
-                            <span className="font-mono text-blue-500">+ ฿{summary.totalInterest.toLocaleString()}</span>
+                            <span className="text-muted-foreground">{t("loanClosing.totalInterestAccrued", { defaultValue: "Total Interest Accrued ({{days}} days)", days: summary.daysSinceStart })}</span>
+                            <span className="font-mono text-blue-500">+ {formatMoneyExact(summary.totalInterest, i18n.language)}</span>
                         </div>
                          <div className="flex justify-between items-center border-t pt-4">
-                            <span className="text-muted-foreground">Total Amount Due</span>
-                            <span className="font-mono">฿{summary.totalDue.toLocaleString()}</span>
+                            <span className="text-muted-foreground">{t("loanClosing.totalAmountDue", "Total Amount Due")}</span>
+                            <span className="font-mono">{formatMoneyExact(summary.totalDue, i18n.language)}</span>
                         </div>
                         <div className="flex justify-between items-center">
-                            <span className="text-muted-foreground">Total Repaid</span>
-                            <span className="font-mono text-green-500">- ฿{summary.totalPaid.toLocaleString()}</span>
+                            <span className="text-muted-foreground">{t("loanClosing.totalRepaid", "Total Repaid")}</span>
+                            <span className="font-mono text-green-500">- {formatMoneyExact(summary.totalPaid, i18n.language)}</span>
                         </div>
                         <div className="flex justify-between items-center text-xl font-bold border-t pt-4">
-                            <span>Final Closing Balance</span>
-                            <span className="font-mono text-primary">฿{summary.balance.toLocaleString()}</span>
+                            <span>{t("loanClosing.finalBalance", "Final Closing Balance")}</span>
+                            <span className="font-mono text-primary">{formatMoneyExact(summary.balance, i18n.language)}</span>
                         </div>
                     </div>
                 )}
@@ -102,12 +110,12 @@ export function LoanClosingModal({ loanId, open, onOpenChange }: LoanClosingModa
                         variant="outline"
                         onClick={() => onOpenChange(false)}
                     >
-                        Close
+                        {t("common.close", "Close")}
                     </Button>
                      {summary && (
                         <Button onClick={handleCopyToClipboard}>
                             <Copy className="mr-2 h-4 w-4" />
-                            {copied ? "Copied!" : "Copy Balance"}
+                            {copied ? t("loanClosing.copied", "Copied!") : t("loanClosing.copyMessageButton", "Copy Message")}
                         </Button>
                     )}
                 </DialogFooter>

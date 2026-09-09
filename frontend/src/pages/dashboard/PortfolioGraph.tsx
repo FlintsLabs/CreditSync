@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
 import type { ForceGraphMethods } from 'react-force-graph-2d';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/Card';
 import { Badge } from '../../components/ui/badge';
 import { useTheme } from '../../components/theme-provider';
 import { Focus, ListFilter } from 'lucide-react';
@@ -58,7 +58,7 @@ const generateGraphData = () => {
 };
 
 // --- Minimap Component ---
-const GraphMinimap = ({ graphRef, data, width = 120, height = 120, className }: { graphRef: React.RefObject<ForceGraphMethods | undefined>, data: { nodes: any[], links: any[] }, width?: number, height?: number, className?: string }) => {
+const GraphMinimap = ({ graphRef, data, width = 120, height = 120, className }: { graphRef: React.MutableRefObject<ForceGraphMethods | undefined>, data: { nodes: any[], links: any[] }, width?: number, height?: number, className?: string }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const { theme } = useTheme();
 
@@ -290,7 +290,7 @@ export default function PortfolioGraph() {
     const filteredData = useMemo(() => {
         if (!allData.nodes.length) return { nodes: [], links: [] };
 
-        const activeNodes = allData.nodes.filter(node => {
+        let activeNodes = allData.nodes.filter(node => {
             if (node.type === 'bank') {
                 if (filterSource !== 'all' && node.id !== filterSource) return false;
                 return true;
@@ -329,7 +329,7 @@ export default function PortfolioGraph() {
                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
                             <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
                         </span>
-                        <span className="text-zinc-500 text-sm animate-pulse">Initializing Visualization Engine...</span>
+                        <span className="text-zinc-500 text-sm animate-pulse">Initializing visualization engine...</span>
                     </div>
                 </CardContent>
             </Card>
@@ -341,16 +341,16 @@ export default function PortfolioGraph() {
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 z-10 relative pointer-events-none">
                 <div>
                     <CardTitle className="text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-400 dark:via-indigo-400 dark:to-purple-500 bg-clip-text text-transparent">
-                        Portfolio Network
+                        Portfolio network
                     </CardTitle>
                     <p className="text-xs text-muted-foreground">Real-time force-directed graph</p>
                 </div>
                 <div className="flex gap-2 pointer-events-auto">
                     <Badge variant="outline" className="text-foreground border-border bg-background/40 backdrop-blur">
-                        {filteredData.nodes.filter(n => n.type === 'borrower').length} Borrowers
+                        {filteredData.nodes.filter(n => n.type === 'borrower').length} borrowers
                     </Badge>
                     <Badge variant="outline" className="text-foreground border-border bg-background/40 backdrop-blur">
-                        {filteredData.links.length} Connections
+                        {filteredData.links.length} connections
                     </Badge>
                 </div>
             </CardHeader>
@@ -377,14 +377,14 @@ export default function PortfolioGraph() {
                         {/* Source Filter */}
                         <div className="space-y-1.5">
                             <label className="text-xs text-muted-foreground flex items-center gap-1">
-                                🏦 Source Fund
+                                Source fund
                             </label>
                             <select
                                 value={filterSource}
                                 onChange={(e) => setFilterSource(e.target.value)}
                                 className="w-full bg-background border border-input rounded-md px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
                             >
-                                <option value="all">All Sources</option>
+                                <option value="all">All sources</option>
                                 {BANKS.map(b => (
                                     <option key={b.id} value={b.id}>{b.name}</option>
                                 ))}
@@ -394,7 +394,7 @@ export default function PortfolioGraph() {
                         {/* Status Filter */}
                         <div className="space-y-1.5">
                             <label className="text-xs text-muted-foreground flex items-center gap-1">
-                                ⚡ Borrower Status
+                                Borrower status
                             </label>
                             <div className="grid grid-cols-3 gap-1">
                                 {['all', 'Healthy', 'Watch'].map((status) => (
@@ -555,7 +555,7 @@ export default function PortfolioGraph() {
 
                 {/* Simple Legend */}
                 <div className="absolute bottom-4 left-4 flex flex-col gap-2 p-3 bg-white/80 dark:bg-zinc-900/60 backdrop-blur rounded-lg border border-zinc-200 dark:border-white/5 shadow-xl transition-all hover:bg-white/90 dark:hover:bg-zinc-900/80">
-                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-1">Source Nodes</div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-1">Source nodes</div>
                     {BANKS.map(b => (
                         <div key={b.id} className="flex items-center gap-2 text-xs text-foreground">
                             <span className="w-2 h-2 rounded-full shadow-[0_0_8px]" style={{ backgroundColor: b.color, boxShadow: `0 0 8px ${b.color}` }}></span>
@@ -568,7 +568,7 @@ export default function PortfolioGraph() {
                         <span className="w-2 h-2 rounded-full bg-blue-500"></span> Healthy
                     </div>
                     <div className="flex items-center gap-2 text-xs text-foreground">
-                        <span className="w-2 h-2 rounded-full bg-amber-500"></span> Watch List
+                        <span className="w-2 h-2 rounded-full bg-amber-500"></span> Watch list
                     </div>
                 </div>
 

@@ -1,0 +1,1896 @@
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { and, eq, sql } from "drizzle-orm";
+import { Elysia } from "elysia";
+import { db } from "../db";
+import {
+    bankLoans,
+    bankProfiles,
+    auditLogs,
+    borrowers,
+    loanFundingAllocations,
+    loanDisbursementEvents,
+    loanDisbursements,
+    loanInterestRatePeriods,
+    loanSchedules,
+    loans,
+    intermediaries,
+    paymentIntakes,
+    transactions,
+    users,
+} from "../db/schema";
+import type { EvidenceStorageGateway } from "../services/payment-service";
+import { createPaymentIntake, postPayment, previewPaymentMatch } from "../services/payment-service";
+import { createBorrower } from "../services/borrower-service";
+import { activateLoan, createLoanDraft } from "../services/loan-application-service";
+import type { CommandContext } from "../services/command-context";
+import type { DisbursementEvidenceStorageGateway } from "../services/loan-disbursement-service";
+import type { IntermediaryRemittanceEvidenceGateway } from "../services/intermediary-service";
+import type { TransferEvidenceStorageGateway } from "../services/transfer-evidence-service";
+import { seedReplacementFixture } from "../services/loan-replacement-test-fixture";
+import { createDefaultMcpHttpPlugin, createDefaultMcpToolHandlers, paymentReverseCommandContext } from "./default";
+import { MCP_TOOL_NAMES, type McpToolName } from "./server";
+
+const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
+const integrationTest = integrationEnabled ? test : test.skip;
+const TOKEN = "default-adapter-contract-token";
+const TENANT_ID = "tenant-mcp-default-contract";
+const ACTOR_EMAIL = "mcp-default@example.test";
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const runningApps: Array<{ stop(): Promise<unknown> | unknown }> = [];
+
+test("mark-review rejects disagreement between command and transport idempotency keys", async () => {
+    const handler = createDefaultMcpToolHandlers()["payment.reconcile.mark-review"];
+    expect(() => handler({
+        tenantId: "tenant-test", actorUserId: null, actorSource: "mcp",
+        requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: "transport-key",
+    }, {
+        paymentIntakePublicId: crypto.randomUUID(), expectedStatus: "ready",
+        reason: "Backdated floating payment", idempotencyKey: "argument-key",
+    })).toThrow(expect.objectContaining({ code: "IDEMPOTENCY_CONFLICT" }));
+});
+
+test("allocation-correction rejects disagreement between command and transport idempotency keys", () => {
+    const handler = createDefaultMcpToolHandlers()["payment.allocation-correction.execute"];
+    expect(() => handler({
+        tenantId: "tenant-test", actorUserId: null, actorSource: "mcp",
+        requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: "transport-key",
+    }, {
+        correctionPreviewPublicId: crypto.randomUUID(), previewHash: `v1:${"a".repeat(64)}`,
+        expectedBalanceVersion: `v1:${"b".repeat(64)}`, confirmed: true,
+        reason: "Allocation correction", idempotencyKey: "argument-key",
+    })).toThrow(expect.objectContaining({ code: "IDEMPOTENCY_CONFLICT" }));
+});
+
+function isDisposableTestDatabase(value: string | undefined) {
+    if (!value) return false;
+    try {
+        const databaseName = decodeURIComponent(new URL(value).pathname.replace(/^\//u, ""));
+        return /(?:^|[_-])test(?:$|[_-])/iu.test(databaseName);
+    } catch {
+        return false;
+    }
+}
+
+afterEach(async () => {
+    for (const app of runningApps.splice(0)) await app.stop();
+});
+
+if (integrationEnabled) beforeEach(async () => {
+    if (!isDisposableTestDatabase(process.env.DATABASE_URL)) {
+        throw new Error("MCP integration tests require DATABASE_URL to name an explicit disposable test database");
+    }
+    await db.execute(sql`TRUNCATE TABLE
+        audit_logs, fund_ledger_entries, loan_adjustments, loan_renewals,
+        payment_match_allocations, payment_match_proposals, payment_evidence,
+        transactions, payment_intakes, loan_funding_allocations, loan_schedules,
+        loans, borrower_aliases, borrowers, bank_loan_schedules, bank_loans,
+        bank_profiles, files, users
+        RESTART IDENTITY CASCADE`);
+});
+
+function runtimeEnv() {
+    return {
+        MCP_API_TOKEN_HASHES: createHash("sha256").update(TOKEN).digest("hex"),
+        MCP_ALLOWED_HOSTS: "127.0.0.1",
+        MCP_TENANT_ID: TENANT_ID,
+        MCP_ACTOR_EMAIL: ACTOR_EMAIL,
+        MCP_RATE_LIMIT_MAX: "200",
+        MCP_RATE_LIMIT_WINDOW_SECONDS: "60",
+    };
+}
+
+async function startDefaultServer(options?: { evidenceGateway?: EvidenceStorageGateway; disbursementEvidenceGateway?: DisbursementEvidenceStorageGateway; intermediaryRemittanceEvidenceGateway?: IntermediaryRemittanceEvidenceGateway; transferEvidenceGateway?: TransferEvidenceStorageGateway }) {
+    const app = new Elysia().use(createDefaultMcpHttpPlugin(runtimeEnv(), options)).listen({ hostname: "127.0.0.1", port: 0 });
+    runningApps.push(app);
+    const client = new Client({ name: "creditsync-default-adapter-test", version: "1.0.0" });
+    const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${app.server!.port}/mcp`), {
+        requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+    });
+    await client.connect(transport);
+    return { client, transport };
+}
+
+function resultData(result: Awaited<ReturnType<Client["callTool"]>>) {
+    expect(result.isError).not.toBe(true);
+    const structured = result.structuredContent as {
+        schemaVersion: string;
+        data: Record<string, unknown>;
+        auditPublicIds?: string[];
+        correlationId?: string;
+    };
+    expect(structured.schemaVersion).toBe("1.0");
+    return structured;
+}
+
+function expectWriteAuditMetadata(data: Record<string, unknown>) {
+    expect(data).toMatchObject({
+        auditPublicId: expect.stringMatching(UUID_PATTERN),
+        correlationId: expect.stringMatching(UUID_PATTERN),
+    });
+}
+
+describe("default MCP adapter integration", () => {
+    test("derives a stable idempotency key for payment reversals when callers omit one", () => {
+        const context = paymentReverseCommandContext({
+            tenantId: TENANT_ID,
+            actorUserId: 1,
+            requestId: "request-1",
+            actorSource: "mcp",
+            correlationId: "correlation-1",
+        }, {
+            paymentIntakePublicId: "01a020da-0767-74c0-b31a-29787378c937",
+        });
+
+        expect(context.idempotencyKey).toBe("mcp:payment-reverse:01a020da-0767-74c0-b31a-29787378c937");
+    });
+
+    // Break caught: the MCP transport removes idempotencyKey from handler input
+    // after promoting it into CommandContext, but mark-review still tries to
+    // read the removed argument and reports INTERNAL_ERROR before validation.
+    integrationTest("preserves the mark-review idempotency key across the MCP transport boundary", async () => {
+        const actor = await db.insert(users).values({ tenantId: TENANT_ID, email: ACTOR_EMAIL, role: "owner" }).returning().then((rows) => rows[0]!);
+        const ctx: CommandContext = {
+            tenantId: TENANT_ID,
+            actorUserId: actor.id,
+            actorSource: "mcp",
+            requestId: crypto.randomUUID(),
+            correlationId: crypto.randomUUID(),
+        };
+        const borrower = await createBorrower(ctx, { name: "MCP mark-review transport borrower" });
+        const loan = await createLoanDraft(ctx, {
+            borrowerPublicId: borrower.publicId,
+            principal: "1000.00",
+            interestRate: "0.00",
+            repaymentType: "floating",
+            termMonths: 1,
+            startDate: "2026-08-06",
+            floatingDailyInterest: { mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day" },
+        });
+        await activateLoan({ ...ctx, idempotencyKey: "mcp-mark-review-activate" }, loan.publicId);
+        const later = await createPaymentIntake({ ...ctx, idempotencyKey: "mcp-mark-review-later" }, {
+            amount: "10.00", receivedAt: "2026-08-20T05:00:00.000Z", payerName: borrower.name,
+        });
+        const laterProposal = await previewPaymentMatch(ctx, later.publicId, {
+            allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: loan.publicId, amount: "10.00" }],
+        });
+        await postPayment(
+            { ...ctx, idempotencyKey: "mcp-mark-review-post-later" },
+            later.publicId,
+            { proposalPublicId: laterProposal.publicId },
+        );
+        const backdated = await createPaymentIntake({ ...ctx, idempotencyKey: "mcp-mark-review-backdated" }, {
+            amount: "10.00", receivedAt: "2026-08-18T05:00:00.000Z", payerName: borrower.name,
+        });
+        await previewPaymentMatch(ctx, backdated.publicId, {
+            allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: loan.publicId, amount: "10.00" }],
+        });
+        const { client } = await startDefaultServer();
+        const args = {
+            paymentIntakePublicId: backdated.publicId,
+            expectedStatus: "ready" as const,
+            reason: "Verify transport idempotency propagation",
+            idempotencyKey: "mcp-mark-review-transport",
+        };
+
+        const first = resultData(await client.callTool({
+            name: "payment.reconcile.mark-review",
+            arguments: args,
+        }));
+        const replay = resultData(await client.callTool({ name: "payment.reconcile.mark-review", arguments: args }));
+        expect(first.data).toEqual(replay.data);
+        expect(first.data).toMatchObject({
+            paymentIntakePublicId: backdated.publicId,
+            beforeStatus: "ready",
+            afterStatus: "needs_review",
+            invalidatedProposalCount: 1,
+        });
+        const audits = await db.select().from(auditLogs).where(and(
+            eq(auditLogs.tenantId, TENANT_ID),
+            eq(auditLogs.entityId, backdated.publicId),
+            eq(auditLogs.action, "reconciliation_review_marked"),
+        ));
+        expect(audits).toHaveLength(1);
+        expect(audits[0]!.payload).toMatchObject({ idempotencyKey: "mcp-mark-review-transport" });
+
+        await client.close();
+    });
+
+    // Break caught: borrower.portfolio must carry the public-only replacement
+    // lineage emitted by the real portfolio projection, both before and after
+    // an executed/reversed replacement. A strict MCP output schema must never
+    // discard that state or leak internal database identifiers.
+    integrationTest("projects active/draft and executed/reversed replacement lineage through borrower.portfolio", async () => {
+        const fixture = await seedReplacementFixture({ tenantId: TENANT_ID });
+        await db.update(users).set({ email: ACTOR_EMAIL }).where(eq(users.id, fixture.actor.id));
+        const { client } = await startDefaultServer();
+
+        const before = resultData(await client.callTool({
+            name: "borrower.portfolio",
+            arguments: { borrowerPublicId: fixture.borrower.publicId },
+        })).data;
+        expect(before.borrower).toMatchObject({ publicId: fixture.borrower.publicId });
+        expect(before.loans).toEqual(expect.arrayContaining([
+            expect.objectContaining({ publicId: fixture.oldLoan.publicId, status: "active", replacementLineage: null }),
+            expect.objectContaining({ publicId: fixture.replacementDraft.publicId, status: "draft", replacementLineage: null }),
+        ]));
+
+        const preview = resultData(await client.callTool({
+            name: "loan.replacement.preview",
+            arguments: {
+                oldLoanPublicId: fixture.oldLoan.publicId,
+                replacementDraftPublicId: fixture.replacementDraft.publicId,
+                reason: "Correct contract start date while preserving the first due date",
+            },
+        })).data;
+        const executed = resultData(await client.callTool({
+            name: "loan.replacement.execute",
+            arguments: {
+                replacementPublicId: String(preview.publicId),
+                previewHash: String(preview.previewHash),
+                expectedOldBalanceVersion: String(preview.oldBalanceVersion),
+                expectedReplacementDraftVersion: String(preview.replacementDraftVersion),
+                confirmed: true,
+                reason: "Correct contract start date while preserving the first due date",
+                idempotencyKey: "mcp-portfolio-replacement-execute-1",
+            },
+        })).data;
+        const executedPortfolio = resultData(await client.callTool({
+            name: "borrower.portfolio",
+            arguments: { borrowerPublicId: fixture.borrower.publicId },
+        })).data;
+        expect(executedPortfolio.loans).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                publicId: fixture.oldLoan.publicId,
+                status: "replaced",
+                replacementLineage: {
+                    replacementPublicId: executed.replacementPublicId,
+                    status: "executed",
+                    replacedFromPublicId: null,
+                    replacedToPublicId: fixture.replacementDraft.publicId,
+                    inbound: null,
+                    outbound: {
+                        replacementPublicId: executed.replacementPublicId,
+                        loanPublicId: fixture.replacementDraft.publicId,
+                        status: "executed",
+                    },
+                },
+            }),
+            expect.objectContaining({
+                publicId: fixture.replacementDraft.publicId,
+                status: "active",
+                replacementLineage: {
+                    replacementPublicId: executed.replacementPublicId,
+                    status: "executed",
+                    replacedFromPublicId: fixture.oldLoan.publicId,
+                    replacedToPublicId: null,
+                    inbound: {
+                        replacementPublicId: executed.replacementPublicId,
+                        loanPublicId: fixture.oldLoan.publicId,
+                        status: "executed",
+                    },
+                    outbound: null,
+                },
+            }),
+        ]));
+
+        const reversed = resultData(await client.callTool({
+            name: "loan.replacement.reverse",
+            arguments: {
+                replacementPublicId: String(executed.replacementPublicId),
+                confirmed: true,
+                reason: "Undo the replacement after correcting the source terms",
+                idempotencyKey: "mcp-portfolio-replacement-reverse-1",
+            },
+        })).data;
+        const reversedPortfolio = resultData(await client.callTool({
+            name: "borrower.portfolio",
+            arguments: { borrowerPublicId: fixture.borrower.publicId },
+        })).data;
+        expect(reversedPortfolio.loans).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    publicId: fixture.oldLoan.publicId,
+                    status: "active",
+                    replacementLineage: expect.objectContaining({
+                        replacementPublicId: reversed.replacementPublicId,
+                        status: "reversed",
+                        replacedToPublicId: fixture.replacementDraft.publicId,
+                    }),
+                }),
+                expect.objectContaining({
+                    publicId: fixture.replacementDraft.publicId,
+                    status: "cancelled",
+                    replacementLineage: expect.objectContaining({
+                        replacementPublicId: reversed.replacementPublicId,
+                        status: "reversed",
+                        replacedFromPublicId: fixture.oldLoan.publicId,
+                    }),
+                }),
+            ]));
+
+        for (const portfolio of [before, executedPortfolio, reversedPortfolio]) {
+            expect(JSON.stringify(portfolio)).not.toMatch(/(?:"loanId"|"replacementId"|"ownerUserId"|"borrowerId")\s*:/u);
+        }
+        await client.close();
+    });
+
+    // Break caught: the default MCP adapters bypass the replacement service or lose
+    // exact preview versions, stable idempotency, and audit/correlation lineage.
+    integrationTest("previews and executes a confirmed atomic loan replacement through direct service handlers", async () => {
+        const fixture = await seedReplacementFixture({ tenantId: TENANT_ID });
+        await db.update(users).set({ email: ACTOR_EMAIL }).where(eq(users.id, fixture.actor.id));
+        const { client } = await startDefaultServer();
+
+        const preview = resultData(await client.callTool({
+            name: "loan.replacement.preview",
+            arguments: {
+                oldLoanPublicId: fixture.oldLoan.publicId,
+                replacementDraftPublicId: fixture.replacementDraft.publicId,
+                reason: "Correct contract start date while preserving the first due date",
+            },
+        })).data;
+        expect(preview).toMatchObject({
+            schemaVersion: 1,
+            cash: { direction: "none", amount: "0.00" },
+            correction: { principal: "36000.00", interest: "4200.00", fee: "0.00", penalty: "0.00" },
+            oldLoan: { loanPublicId: fixture.oldLoan.publicId, statusAfter: "replaced" },
+            replacement: {
+                loanPublicId: fixture.replacementDraft.publicId,
+                statusAfter: "active",
+                firstDueDate: "2026-07-12",
+                fundingSourceKind: "drawdown",
+                fundingSourcePublicId: fixture.source.drawdown!.publicId,
+                fundingSourceName: "TTB",
+            },
+            warnings: [{
+                code: "OUTSTANDING_INTEREST_CORRECTED_TO_ZERO",
+                details: {
+                    amount: "4200.00",
+                    correctedAmount: "0.00",
+                    collected: false,
+                    carriedForward: false,
+                },
+            }],
+            auditPublicId: expect.stringMatching(UUID_PATTERN),
+            correlationId: expect.stringMatching(UUID_PATTERN),
+        });
+        expect(preview).not.toHaveProperty("id");
+        expect(preview).not.toHaveProperty("fundingSourceName");
+
+        const executeArgs = {
+            replacementPublicId: String(preview.publicId),
+            previewHash: String(preview.previewHash),
+            expectedOldBalanceVersion: String(preview.oldBalanceVersion),
+            expectedReplacementDraftVersion: String(preview.replacementDraftVersion),
+            confirmed: true,
+            reason: "Correct contract start date while preserving the first due date",
+            idempotencyKey: "mcp-replacement-execute-1",
+        };
+        const executed = resultData(await client.callTool({ name: "loan.replacement.execute", arguments: executeArgs }));
+        const replayed = resultData(await client.callTool({ name: "loan.replacement.execute", arguments: executeArgs }));
+        expect(executed.data).toEqual(replayed.data);
+        expect(executed).toMatchObject({
+            data: {
+                replacementPublicId: preview.publicId,
+                oldLoanPublicId: fixture.oldLoan.publicId,
+                replacementLoanPublicId: fixture.replacementDraft.publicId,
+                status: "executed",
+                auditPublicId: expect.stringMatching(UUID_PATTERN),
+                correlationId: expect.stringMatching(UUID_PATTERN),
+            },
+            auditPublicIds: [expect.stringMatching(UUID_PATTERN)],
+            correlationId: expect.stringMatching(UUID_PATTERN),
+        });
+
+        await client.close();
+    });
+
+    // Break caught: the real MCP adapter cannot complete the inspect-first borrower/intermediary
+    // assignment -> exact group/events -> three finalized slips -> zero-variance preview ->
+    // explicitly confirmed atomic post workflow through direct application-service calls.
+    integrationTest("posts an exact three-slip intermediated disbursement through direct service handlers", async () => {
+        const actor = await db.insert(users).values({
+            tenantId: TENANT_ID,
+            email: ACTOR_EMAIL,
+            role: "owner",
+        }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({
+            tenantId: TENANT_ID,
+            ownerUserId: actor.id,
+            name: "MCP exact borrower",
+        }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({
+            tenantId: TENANT_ID,
+            ownerUserId: actor.id,
+            borrowerId: borrower.id,
+            principalAmount: "5000.00",
+            outstandingPrincipal: "5000.00",
+            outstandingInterest: "0.00",
+            outstandingFees: "0.00",
+            interestRate: "0.00",
+            repaymentType: "floating",
+            activationIdempotencyKey: "mcp-intermediated-activation",
+            activationResult: {
+                publicId: "00000000-0000-7000-8000-000000000001",
+                principal: "5000.00",
+                principalAmount: "5000.00",
+                interestRate: "0.00",
+                repaymentType: "floating",
+                floatingInterestPolicy: {
+                    periodUnit: "week",
+                    periodLength: 1,
+                    rateMode: "percent",
+                    rate: "12.0000",
+                    advanceInterestPeriods: 1,
+                    advanceInterestRefundPolicy: "non_refundable",
+                },
+                status: "active",
+            },
+            status: "active",
+        }).returning().then((rows) => rows[0]!);
+        const intermediary = await db.insert(intermediaries).values({
+            tenantId: TENANT_ID,
+            ownerUserId: actor.id,
+            name: "MCP exact intermediary",
+            normalizedName: "mcp exact intermediary",
+            aliases: ["MCP transfer agent"],
+            createdByUserId: actor.id,
+            updatedByUserId: actor.id,
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanDisbursements).values({
+            tenantId: TENANT_ID,
+            loanId: loan.id,
+            grossPrincipal: "5000.00",
+            firstDayInterestDeducted: "600.00",
+            netDisbursement: "4400.00",
+            disbursedAt: new Date("2026-08-13T02:00:00.000Z"),
+            createdByUserId: actor.id,
+        });
+        const preparedHeads = new Map<string, Awaited<ReturnType<TransferEvidenceStorageGateway["head"]>>>();
+        const transferEvidenceGateway: TransferEvidenceStorageGateway = {
+            preparePut: async (request) => {
+                preparedHeads.set(request.key, {
+                    exists: true,
+                    contentType: request.contentType,
+                    contentLength: request.contentLength,
+                    checksumSha256: request.checksumSha256,
+                    metadata: request.metadata,
+                });
+                return {
+                    uploadUrl: `https://upload.example.test/${encodeURIComponent(request.key)}`,
+                    expiresAt: new Date(Date.now() + 5 * 60_000),
+                    requiredHeaders: { "content-type": request.contentType },
+                };
+            },
+            head: async (key) => preparedHeads.get(key) ?? {
+                exists: false,
+                contentType: null,
+                contentLength: null,
+                checksumSha256: null,
+                metadata: {},
+            },
+            createAccess: async () => ({
+                url: "https://access.example.test/not-used-by-mcp",
+                expiresAt: new Date(Date.now() + 5 * 60_000),
+            }),
+        };
+        const { client } = await startDefaultServer({ transferEvidenceGateway });
+
+        const borrowerSearch = resultData(await client.callTool({
+            name: "borrower.search",
+            arguments: { query: "MCP exact borrower" },
+        })).data;
+        expect(borrowerSearch).toMatchObject({
+            resolution: "unique",
+            matchType: "canonical",
+            candidates: [{ publicId: borrower.publicId }],
+        });
+        const intermediarySearch = resultData(await client.callTool({
+            name: "intermediary.search",
+            arguments: { query: "MCP exact intermediary" },
+        })).data;
+        expect(intermediarySearch).toMatchObject({ items: [{ publicId: intermediary.publicId }] });
+
+        const assignment = resultData(await client.callTool({
+            name: "intermediary.assignment.create",
+            arguments: {
+                loanPublicId: loan.publicId,
+                intermediaryPublicId: intermediary.publicId,
+                role: "disbursement",
+                effectiveFrom: "2026-08-01T00:00:00.000Z",
+                idempotencyKey: "mcp-intermediated-assignment",
+            },
+        })).data;
+        expectWriteAuditMetadata(assignment);
+        const profile = resultData(await client.callTool({
+            name: "intermediary.profile.get",
+            arguments: { intermediaryPublicId: intermediary.publicId },
+        })).data;
+        expect(profile).toMatchObject({
+            publicId: intermediary.publicId,
+            assignments: [{ publicId: assignment.publicId, loanPublicId: loan.publicId, status: "active" }],
+        });
+
+        const group = resultData(await client.callTool({
+            name: "intermediary.disbursement.create",
+            arguments: {
+                loanPublicId: loan.publicId,
+                intermediaryPublicId: intermediary.publicId,
+                retainedBalance: "0.00",
+                idempotencyKey: "mcp-intermediated-group",
+            },
+        })).data;
+        const eventSpecs = [
+            ["funding_to_intermediary", "5000.00"],
+            ["borrower_net_payout", "4400.00"],
+            ["advance_interest_return", "600.00"],
+        ] as const;
+        const evidenceSpecs: Array<{ publicId: string; filePublicId: string }> = [];
+        for (const [index, [role, amount]] of eventSpecs.entries()) {
+            const event = resultData(await client.callTool({
+                name: "intermediary.disbursement.event.create",
+                arguments: {
+                    groupPublicId: group.publicId,
+                    role,
+                    channel: "bank_transfer",
+                    amount,
+                    transferredAt: `2026-08-13T0${index + 2}:00:00.000Z`,
+                    senderHint: index === 0 ? "Owner funding account" : "MCP exact intermediary",
+                    payeeHint: index === 1 ? "MCP exact borrower" : "MCP exact intermediary",
+                    bankReference: `MCP-INTERMEDIATED-${index + 1}`,
+                    idempotencyKey: `mcp-intermediated-event-${index + 1}`,
+                },
+            })).data;
+            const prepared = resultData(await client.callTool({
+                name: "intermediary.disbursement.evidence.prepare",
+                arguments: {
+                    groupPublicId: group.publicId,
+                    eventPublicId: event.publicId,
+                    mimeType: "image/png",
+                    size: 4,
+                    sha256: String(index + 1).repeat(64),
+                    originalName: `slip-${index + 1}.png`,
+                },
+            })).data;
+            expectWriteAuditMetadata(prepared);
+            expect(prepared.uploadUrl).toMatch(/^https:\/\/upload\.example\.test\//);
+            evidenceSpecs.push({
+                publicId: String(prepared.publicId),
+                filePublicId: String(prepared.filePublicId),
+            });
+            const finalized = resultData(await client.callTool({
+                name: "intermediary.disbursement.evidence.finalize",
+                arguments: {
+                    groupPublicId: group.publicId,
+                    eventPublicId: event.publicId,
+                    evidencePublicId: prepared.publicId,
+                },
+            })).data;
+            expectWriteAuditMetadata(finalized);
+            expect(finalized).toMatchObject({ publicId: prepared.publicId, status: "ready" });
+        }
+
+        const listed = resultData(await client.callTool({
+            name: "intermediary.disbursement.list",
+            arguments: { loanPublicId: loan.publicId, intermediaryPublicId: intermediary.publicId },
+        })).data;
+        const inspected = resultData(await client.callTool({
+            name: "intermediary.disbursement.get",
+            arguments: { groupPublicId: group.publicId },
+        })).data;
+        expect(inspected.events).toHaveLength(3);
+        const expectedEvents = eventSpecs.map(([role, amount], index) => ({
+            role,
+            amount,
+            payeeHint: index === 1 ? "MCP exact borrower" : "MCP exact intermediary",
+            bankReference: `MCP-INTERMEDIATED-${index + 1}`,
+            evidence: {
+                status: "ready",
+                count: 1,
+                items: [{
+                    ...evidenceSpecs[index]!,
+                    status: "ready",
+                    mimeType: "image/png",
+                }],
+            },
+        }));
+        expect(inspected.events).toEqual(expectedEvents.map((expected) => expect.objectContaining(expected)));
+        expect(listed.items).toEqual([
+            expect.objectContaining({
+                publicId: group.publicId,
+                events: expectedEvents.map((expected) => expect.objectContaining(expected)),
+            }),
+        ]);
+        expect(JSON.stringify(inspected)).not.toMatch(/uploadUrl|signedUrl|objectKey|bucket/u);
+        expect(JSON.stringify(inspected)).not.toMatch(/sha256|checksum|storage/u);
+        const preview = resultData(await client.callTool({
+            name: "intermediary.disbursement.preview",
+            arguments: { groupPublicId: group.publicId },
+        })).data;
+        expect(preview).toMatchObject({
+            status: "ready",
+            actualFunding: "5000.00",
+            actualBorrowerPayout: "4400.00",
+            actualAdvanceInterestReturn: "600.00",
+            retainedBalance: "0.00",
+            variance: "0.00",
+            evidenceReady: true,
+            warnings: [],
+        });
+        expect((await client.callTool({
+            name: "intermediary.disbursement.post",
+            arguments: {
+                groupPublicId: group.publicId,
+                proposalPublicId: preview.publicId,
+                confirmed: false,
+                idempotencyKey: "mcp-intermediated-post",
+            },
+        })).isError).toBe(true);
+        const posted = resultData(await client.callTool({
+            name: "intermediary.disbursement.post",
+            arguments: {
+                groupPublicId: group.publicId,
+                proposalPublicId: preview.publicId,
+                confirmed: true,
+                idempotencyKey: "mcp-intermediated-post",
+            },
+        }));
+        expect(posted).toMatchObject({
+            data: {
+                publicId: group.publicId,
+                status: "posted",
+                fundingAmount: "5000.00",
+                borrowerPayoutAmount: "4400.00",
+                advanceInterestAmount: "600.00",
+                intermediaryHeldBalance: "0.00",
+            },
+            auditPublicIds: [expect.stringMatching(UUID_PATTERN)],
+            correlationId: expect.stringMatching(UUID_PATTERN),
+        });
+
+        await client.close();
+    });
+
+    // Break caught: the default adapter cannot originate a generalized weekly policy or close it through the settlement service.
+    integrationTest("previews and executes an exact non-refundable weekly floating settlement idempotently", async () => {
+        const actor = await db.insert(users).values({
+            tenantId: TENANT_ID,
+            email: ACTOR_EMAIL,
+            role: "owner",
+        }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({
+            tenantId: TENANT_ID,
+            ownerUserId: actor.id,
+            name: "MCP weekly settlement borrower",
+        }).returning().then((rows) => rows[0]!);
+        const { client } = await startDefaultServer();
+        const terms = {
+            principal: "5000.00",
+            interestRate: "0.00",
+            termMonths: 1,
+            repaymentType: "floating",
+            startDate: "2026-08-13",
+            floatingInterestPolicy: {
+                periodUnit: "week",
+                periodLength: 1,
+                rateMode: "percent",
+                rate: "12",
+                advanceInterestPeriods: 1,
+                advanceInterestRefundPolicy: "non_refundable",
+            },
+        };
+
+        const previewedLoan = resultData(await client.callTool({ name: "loan.preview", arguments: terms }));
+        expect(previewedLoan.data).toMatchObject({
+            floatingInterestPolicy: { periodUnit: "week", rate: "12.0000", advanceInterestPeriods: 1 },
+            fullPeriodInterest: "600.00",
+            advanceInterest: "600.00",
+            netBorrowerPayout: "4400.00",
+            periodDays: 7,
+        });
+        const draft = resultData(await client.callTool({
+            name: "loan.draft",
+            arguments: { borrowerPublicId: borrower.publicId, ...terms },
+        })).data;
+        expect(draft.publicId).toMatch(UUID_PATTERN);
+        expect(draft).toMatchObject({
+            status: "draft",
+            floatingInterestPolicy: { periodUnit: "week", rate: "12.0000", advanceInterestRefundPolicy: "non_refundable" },
+        });
+        expect(draft).not.toHaveProperty("floatingPayoutSummary");
+        const loanPublicId = String(draft.publicId);
+        const activationArgs = { loanPublicId, idempotencyKey: "mcp-weekly-activation-1" };
+        const activated = resultData(await client.callTool({ name: "loan.activate", arguments: activationArgs }));
+        const activationRetry = resultData(await client.callTool({ name: "loan.activate", arguments: activationArgs }));
+        expect(activationRetry.data).toEqual(activated.data);
+
+        const settlement = resultData(await client.callTool({
+            name: "loan.settlement.preview",
+            arguments: { loanPublicId, asOfDate: "2026-08-15" },
+        })).data;
+        expect(settlement).toMatchObject({
+            status: "ready",
+            asOfDate: "2026-08-15",
+            outstandingPrincipal: "5000.00",
+            dueInterest: "0.00",
+            accruedNotDueInterest: "0.00",
+            nonRefundableAdvanceInterest: "600.00",
+            settlementTotal: "5000.00",
+        });
+        const executeArgs = {
+            settlementPublicId: settlement.publicId,
+            previewHash: settlement.previewHash,
+            confirmed: true,
+            reason: "Borrower confirmed exact weekly close-out",
+            idempotencyKey: "mcp-weekly-settlement-1",
+        };
+        const executed = resultData(await client.callTool({ name: "loan.settlement.execute", arguments: executeArgs }));
+        const executeRetry = resultData(await client.callTool({ name: "loan.settlement.execute", arguments: executeArgs }));
+        expect(executeRetry.data).toEqual(executed.data);
+        expect(executed).toMatchObject({
+            data: {
+                status: "executed",
+                settlementTotal: "5000.00",
+                nonRefundableAdvanceInterest: "600.00",
+                transaction: { amount: "5000.00", principalComponent: "5000.00", interestComponent: "0.00" },
+            },
+            auditPublicIds: [expect.stringMatching(UUID_PATTERN)],
+            correlationId: expect.stringMatching(UUID_PATTERN),
+        });
+        expect(await db.query.loans.findFirst({ where: eq(loans.publicId, loanPublicId) })).toMatchObject({
+            status: "paid",
+            outstandingPrincipal: "0.00",
+        });
+        expect((await db.select().from(transactions)).filter((row) => row.type === "close_account")).toHaveLength(1);
+        await client.close();
+    });
+
+    integrationTest("lists, previews, and executes a confirmed floating interest-rate change", async () => {
+        setSystemTime(new Date("2026-08-31T12:00:00.000Z"));
+        try {
+        const actor = await db.insert(users).values({ tenantId: TENANT_ID, email: ACTOR_EMAIL, role: "owner" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId: TENANT_ID, ownerUserId: actor.id, name: "MCP rate borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({
+            tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id,
+            principalAmount: "1000.00", outstandingPrincipal: "1000.00", interestRate: "0.00",
+            repaymentType: "floating", floatingAccrualCycle: "daily", firstDayTreatment: "start_next_day", interestStartDate: "2026-08-01", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanInterestRatePeriods).values({
+            tenantId: TENANT_ID, loanId: loan.id, effectiveDate: "2026-08-01", expiryDate: null,
+            rateType: "per_thousand", rate: "15.0000", createdByUserId: actor.id,
+        });
+        const { client } = await startDefaultServer();
+
+        const listed = resultData(await client.callTool({
+            name: "loan.interest-rate.list",
+            arguments: { loanPublicId: loan.publicId },
+        }));
+        expect(listed.data).toMatchObject({ loanPublicId: loan.publicId, currentPeriod: { rate: "15.0000" }, dailyInterestAtCurrentPrincipal: "15.00" });
+
+        const previewed = resultData(await client.callTool({
+            name: "loan.interest-rate.preview",
+            arguments: { loanPublicId: loan.publicId, effectiveDate: "2026-09-01", expiryDate: null, rateType: "percent", rate: "1" },
+        }));
+        const preview = previewed.data as { publicId: string; previewHash: string };
+        const executed = resultData(await client.callTool({
+            name: "loan.interest-rate.execute",
+            arguments: {
+                loanPublicId: loan.publicId, previewPublicId: preview.publicId, previewHash: preview.previewHash,
+                confirmed: true, reason: "Owner approved future rate", idempotencyKey: "mcp-rate-change-1",
+            },
+        }));
+        expect(executed.data).toMatchObject({ loanPublicId: loan.publicId, nextChange: { effectiveDate: "2026-09-01", rate: "1.0000" } });
+        expect(executed.auditPublicIds).toHaveLength(1);
+        expect(executed.correlationId).toMatch(UUID_PATTERN);
+        await client.close();
+        } finally {
+            setSystemTime();
+        }
+    });
+
+    integrationTest("rejects evidence IDs on disbursement draft so callers use prepare then finalize", async () => {
+        const actor = await db.insert(users).values({ tenantId: TENANT_ID, email: ACTOR_EMAIL, role: "owner" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId: TENANT_ID, ownerUserId: actor.id, name: "MCP evidence boundary borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({ tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "100.00", interestRate: "0.00", repaymentType: "floating", floatingAccrualCycle: "daily", outstandingPrincipal: "100.00", status: "active" }).returning().then((rows) => rows[0]!);
+        const { client } = await startDefaultServer();
+        const result = await client.callTool({
+            name: "loan.disbursement.draft",
+            arguments: {
+                loanPublicId: loan.publicId, grossAmount: "100.00", loanAttributedAmount: "100.00",
+                channel: "cash", disbursedAt: "2026-08-10T00:00:00.000Z",
+                evidenceFilePublicIds: ["0198c481-3e2b-7000-8000-000000000098"],
+            },
+        });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({ schemaVersion: "1.0", error: { code: "EVIDENCE_ATTACH_AFTER_DRAFT" } });
+        await client.close();
+    });
+
+    // Break caught: an already-overallocated source turns loan activation into INTERNAL_ERROR instead of a stable capacity rejection.
+    integrationTest("returns stable zero remaining capacity and rolls back MCP activation on an overallocated drawdown", async () => {
+        const actor = await db.insert(users).values({
+            tenantId: TENANT_ID,
+            email: ACTOR_EMAIL,
+            role: "owner",
+        }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({
+            tenantId: TENANT_ID,
+            ownerUserId: actor.id,
+            name: "MCP overallocated borrower",
+        }).returning().then((rows) => rows[0]!);
+        const profile = await db.insert(bankProfiles).values({
+            tenantId: TENANT_ID,
+            name: "MCP overallocated source",
+            type: "bank",
+        }).returning().then((rows) => rows[0]!);
+        const drawdown = await db.insert(bankLoans).values({
+            tenantId: TENANT_ID,
+            bankProfileId: profile.id,
+            amount: "100.00",
+        }).returning().then((rows) => rows[0]!);
+        const [existingLoan, draft] = await db.insert(loans).values([
+            {
+                tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id,
+                principalAmount: "120.00", interestRate: "0.00", repaymentType: "floating", floatingAccrualCycle: "daily",
+                outstandingPrincipal: "120.00", status: "active",
+            },
+            {
+                tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id, bankLoanId: drawdown.id,
+                principalAmount: "10.00", interestRate: "0.00", repaymentType: "daily", termMonths: 1,
+                totalInstallments: 1, installmentAmount: "10.00", startDate: "2026-08-10",
+                outstandingPrincipal: "0.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "draft",
+            },
+        ]).returning();
+        await db.insert(loanFundingAllocations).values({
+            tenantId: TENANT_ID,
+            bankProfileId: profile.id,
+            bankLoanId: drawdown.id,
+            loanId: existingLoan!.id,
+            allocatedAmount: "120.00",
+            allocationDate: "2026-08-10",
+            allocationType: "initial",
+            createdByUserId: actor.id,
+        });
+        const { client } = await startDefaultServer();
+
+        const result = await client.callTool({
+            name: "loan.activate",
+            arguments: { loanPublicId: draft!.publicId, idempotencyKey: "mcp-overallocated-activation" },
+        });
+
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toEqual({
+            schemaVersion: "1.0",
+            error: {
+                code: "ALLOCATION_EXCEEDS_DRAWDOWN",
+                message: "Allocation exceeds remaining drawdown balance",
+                retryable: false,
+                reviewRequired: false,
+                details: { sourceRemaining: "0.00" },
+            },
+        });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, draft!.id) })).toMatchObject({
+            status: "draft",
+            outstandingPrincipal: "0.00",
+            outstandingInterest: "0.00",
+            nextDueDate: null,
+        });
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, draft!.id))).toHaveLength(0);
+        expect(await db.select().from(loanFundingAllocations).where(eq(loanFundingAllocations.loanId, draft!.id))).toHaveLength(0);
+        expect(await db.select().from(auditLogs).where(and(
+            eq(auditLogs.entityId, draft!.publicId),
+            eq(auditLogs.action, "activated"),
+        ))).toHaveLength(0);
+
+        await client.close();
+    });
+
+    integrationTest("activates a single-payment draft through the synchronized MCP contract", async () => {
+        const actor = await db.insert(users).values({
+            tenantId: TENANT_ID,
+            email: ACTOR_EMAIL,
+            role: "owner",
+        }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({
+            tenantId: TENANT_ID,
+            ownerUserId: actor.id,
+            name: "MCP single-payment borrower",
+        }).returning().then((rows) => rows[0]!);
+        const draft = await db.insert(loans).values({
+            tenantId: TENANT_ID,
+            ownerUserId: actor.id,
+            borrowerId: borrower.id,
+            principalAmount: "5000.00",
+            interestRate: "0.00",
+            repaymentType: "single_payment",
+            termMonths: 1,
+            startDate: "2026-08-10",
+            singlePaymentDueDate: "2026-08-19",
+            singlePaymentFixedAgreedInterest: "500.00",
+            singlePaymentInterestPolicy: "fixed_only",
+            singlePaymentLatePenaltyMode: "none",
+            outstandingPrincipal: "0.00",
+            outstandingInterest: "0.00",
+            outstandingFees: "0.00",
+            status: "draft",
+        }).returning().then((rows) => rows[0]!);
+        const { client } = await startDefaultServer();
+
+        const result = await client.callTool({
+            name: "loan.activate",
+            arguments: { loanPublicId: draft.publicId },
+        });
+
+        expect(result.isError).not.toBe(true);
+        expect(result.structuredContent).toMatchObject({ schemaVersion: "1.0", data: { publicId: draft.publicId, repaymentType: "single_payment", status: "active", singlePayment: { dueDate: "2026-08-19", fixedAgreedInterest: "500.00" } } });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, draft.id) })).toMatchObject({
+            status: "active",
+            outstandingPrincipal: "5000.00",
+            outstandingInterest: "500.00",
+            nextDueDate: "2026-08-19",
+        });
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, draft.id))).toHaveLength(1);
+        expect(await db.select().from(auditLogs).where(and(
+            eq(auditLogs.entityId, draft.publicId),
+            eq(auditLogs.action, "activated"),
+        ))).toHaveLength(1);
+
+        await client.close();
+    });
+
+    // Break caught: the adapter's unlocked preflight sees a monthly draft,
+    // then a winning REST transition changes it to single-payment before the
+    // financial activation lock and the MCP write still commits.
+    integrationTest("rechecks and activates a newly committed single-payment type after the row lock", async () => {
+        const actor = await db.insert(users).values({ tenantId: TENANT_ID, email: ACTOR_EMAIL, role: "owner" })
+            .returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({
+            tenantId: TENANT_ID, ownerUserId: actor.id, name: "MCP activation race borrower",
+        }).returning().then((rows) => rows[0]!);
+        const draft = await db.insert(loans).values({
+            tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower.id,
+            principalAmount: "5000.00", interestRate: "0.00", repaymentType: "monthly", termMonths: 1,
+            totalInstallments: 1, installmentAmount: "5000.00", startDate: "2026-08-10",
+            outstandingPrincipal: "0.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "draft",
+        }).returning().then((rows) => rows[0]!);
+        let releaseTransition!: () => void;
+        const transitionMayCommit = new Promise<void>((resolve) => { releaseTransition = resolve; });
+        let transitionLocked!: () => void;
+        const transitionHasLock = new Promise<void>((resolve) => { transitionLocked = resolve; });
+        const transition = db.transaction(async (tx) => {
+            await tx.execute(sql`SELECT id FROM loans WHERE id = ${draft.id} FOR UPDATE`);
+            await tx.update(loans).set({
+                repaymentType: "single_payment", termMonths: 1, totalInstallments: null, installmentAmount: null,
+                singlePaymentDueDate: "2026-08-19", singlePaymentFixedAgreedInterest: "500.00",
+                singlePaymentInterestPolicy: "fixed_only", singlePaymentLatePenaltyMode: "none",
+            }).where(eq(loans.id, draft.id));
+            transitionLocked();
+            await transitionMayCommit;
+        });
+        await transitionHasLock;
+        const { client } = await startDefaultServer();
+        const activation = client.callTool({ name: "loan.activate", arguments: { loanPublicId: draft.publicId } });
+
+        let activationWaitingOnLock = false;
+        for (let attempt = 0; attempt < 100 && !activationWaitingOnLock; attempt += 1) {
+            const waiting = await db.execute(sql<{ waiting: boolean }>`SELECT EXISTS (
+                SELECT 1 FROM pg_stat_activity
+                WHERE pid <> pg_backend_pid()
+                  AND wait_event_type = 'Lock'
+                  AND query LIKE 'SELECT id FROM loans WHERE id = %FOR UPDATE%'
+            ) AS waiting`);
+            activationWaitingOnLock = waiting[0]?.waiting === true;
+            if (!activationWaitingOnLock) await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(activationWaitingOnLock).toBe(true);
+        releaseTransition();
+        await transition;
+        const result = await activation;
+
+        expect(result.isError).not.toBe(true);
+        expect(result.structuredContent).toMatchObject({ data: { publicId: draft.publicId, repaymentType: "single_payment", status: "active" } });
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, draft.id) })).toMatchObject({
+            repaymentType: "single_payment", status: "active", outstandingPrincipal: "5000.00", outstandingInterest: "500.00",
+        });
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, draft.id))).toHaveLength(1);
+        expect(await db.select().from(auditLogs).where(and(
+            eq(auditLogs.entityId, draft.publicId), eq(auditLogs.action, "activated"),
+        ))).toHaveLength(1);
+        await client.close();
+    });
+
+    // Break caught: signed compensating ledger values are rejected after the reversal has already committed.
+    integrationTest("returns a successful audited payment reversal and the same public result on retry", async () => {
+        const actor = await db.insert(users).values({
+            tenantId: TENANT_ID,
+            email: ACTOR_EMAIL,
+            role: "owner",
+        }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({
+            tenantId: TENANT_ID,
+            ownerUserId: actor.id,
+            name: "MCP reversal borrower",
+        }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({
+            tenantId: TENANT_ID,
+            ownerUserId: actor.id,
+            borrowerId: borrower.id,
+            principalAmount: "100.00",
+            interestRate: "0.00",
+            repaymentType: "daily",
+            termMonths: 1,
+            installmentAmount: "100.00",
+            totalInstallments: 1,
+            startDate: "2026-08-09",
+            outstandingPrincipal: "100.00",
+            outstandingInterest: "0.00",
+            outstandingFees: "0.00",
+            status: "active",
+        }).returning().then((rows) => rows[0]!);
+        const schedule = await db.insert(loanSchedules).values({
+            tenantId: TENANT_ID,
+            loanId: loan.id,
+            installmentNo: 1,
+            dueDate: "2026-08-10",
+            scheduledPrincipal: "100.00",
+            scheduledInterest: "0.00",
+            scheduledFee: "0.00",
+            scheduledTotal: "100.00",
+            remainingDue: "100.00",
+            status: "pending",
+        }).returning().then((rows) => rows[0]!);
+        const { client } = await startDefaultServer();
+
+        const created = resultData(await client.callTool({
+            name: "intake.create",
+            arguments: {
+                amount: "40.00",
+                receivedAt: "2026-08-10T00:00:00.000Z",
+                idempotencyKey: "mcp-real-reversal-intake",
+            },
+        })).data;
+        const intakePublicId = String(created.publicId);
+        const preview = resultData(await client.callTool({
+            name: "payment.preview",
+            arguments: {
+                paymentIntakePublicId: intakePublicId,
+                allocations: [{
+                    borrowerPublicId: borrower.publicId,
+                    loanPublicId: loan.publicId,
+                    schedulePublicId: schedule.publicId,
+                    amount: "40.00",
+                }],
+            },
+        })).data;
+        resultData(await client.callTool({
+            name: "payment.post",
+            arguments: { paymentIntakePublicId: intakePublicId, proposalPublicId: preview.publicId },
+        }));
+
+        const first = resultData(await client.callTool({
+            name: "payment.reverse",
+            arguments: { paymentIntakePublicId: intakePublicId },
+        }));
+        const retry = resultData(await client.callTool({
+            name: "payment.reverse",
+            arguments: { paymentIntakePublicId: intakePublicId, reason: "Correct duplicate transfer" },
+        }));
+
+        expect(first.data).toEqual(retry.data);
+        expect(first.data).toMatchObject({ publicId: intakePublicId, status: "reversed" });
+        expect(first.data.transactions).toEqual(expect.arrayContaining([
+            expect.objectContaining({ entryType: "reversal", amount: "-40.00", principalComponent: "-40.00" }),
+        ]));
+        expect(first.auditPublicIds).toHaveLength(1);
+        expect(retry.auditPublicIds).toEqual(first.auditPublicIds);
+        expect(first.auditPublicIds?.[0]).toMatch(UUID_PATTERN);
+        expect(first.correlationId).toMatch(UUID_PATTERN);
+        expect(retry.correlationId).toMatch(UUID_PATTERN);
+        expect(await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, intakePublicId) }))
+            .toMatchObject({ status: "reversed" });
+        expect(await db.select().from(transactions).where(eq(transactions.paymentIntakeId,
+            (await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, intakePublicId) }))!.id)))
+            .toHaveLength(2);
+        expect((await db.select().from(auditLogs)).find((entry) =>
+            entry.entityId === intakePublicId && entry.action === "reversed")?.payload)
+            .toMatchObject({ reason: "MCP 1.0 compatibility reversal" });
+
+        await client.close();
+    });
+
+    // Break caught: a frozen tool delegates to the wrong shared service or its real presenter violates the advertised schema.
+    integrationTest("successfully calls every frozen tool through the real default service adapter", async () => {
+        const actor = await db.insert(users).values({
+            tenantId: TENANT_ID,
+            email: ACTOR_EMAIL,
+            role: "owner",
+        }).returning().then((rows) => rows[0]!);
+        const profile = await db.insert(bankProfiles).values({
+            tenantId: TENANT_ID,
+            name: "MCP contract source",
+            type: "bank",
+            providerName: "Contract Bank",
+            creditLimit: "1000.00",
+        }).returning().then((rows) => rows[0]!);
+        const drawdown = await db.insert(bankLoans).values({
+            tenantId: TENANT_ID,
+            bankProfileId: profile.id,
+            amount: "1000.00",
+            outstandingPrincipal: "1000.00",
+            outstandingInterest: "0.00",
+            outstandingFees: "0.00",
+            outstandingPenalties: "0.00",
+            interestRate: "0.00",
+            startDate: "2026-08-01",
+            termMonths: 12,
+            status: "active",
+        }).returning().then((rows) => rows[0]!);
+        const preparedHeads = new Map<string, Awaited<ReturnType<EvidenceStorageGateway["head"]>>>();
+        const evidenceGateway: EvidenceStorageGateway & TransferEvidenceStorageGateway = {
+            preparePut: async (request) => {
+                preparedHeads.set(request.key, {
+                    exists: true,
+                    contentType: request.contentType,
+                    contentLength: request.contentLength,
+                    checksumSha256: request.checksumSha256,
+                    metadata: request.metadata,
+                });
+                return {
+                    uploadUrl: `https://upload.example.test/${encodeURIComponent(request.key)}`,
+                    expiresAt: new Date(Date.now() + 5 * 60_000),
+                };
+            },
+            head: async (key) => preparedHeads.get(key) ?? {
+                exists: false,
+                contentType: null,
+                contentLength: null,
+                checksumSha256: null,
+                metadata: {},
+            },
+            createAccess: async () => ({
+                url: "https://access.example.test/not-used-by-mcp",
+                expiresAt: new Date(Date.now() + 5 * 60_000),
+            }),
+        };
+        const { client, transport } = await startDefaultServer({
+            evidenceGateway,
+            disbursementEvidenceGateway: evidenceGateway,
+            intermediaryRemittanceEvidenceGateway: evidenceGateway,
+            transferEvidenceGateway: evidenceGateway,
+        });
+        const listed = await client.listTools();
+        expect(listed.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
+        const called: McpToolName[] = [];
+        const call = async (name: McpToolName, args: Record<string, unknown>) => {
+            const result = resultData(await client.callTool({ name, arguments: args }));
+            called.push(name);
+            expect(result.data).toBeObject();
+            return result;
+        };
+
+        expect(transport.sessionId).toBeUndefined();
+        const createdBorrower = (await call("borrower.create", { name: "MCP all-tools borrower" })).data;
+        const borrowerPublicId = String(createdBorrower.publicId);
+        await call("borrower.search", { query: "MCP all-tools borrower" });
+        await call("borrower.update", { borrowerPublicId, changes: { notes: "updated by MCP contract" } });
+        await call("borrower.alias", {
+            action: "add",
+            borrowerPublicId,
+            alias: "MCP contract alias",
+            source: "manual",
+        });
+        await call("borrower.portfolio", { borrowerPublicId });
+        const borrower = await db.query.borrowers.findFirst({ where: eq(borrowers.publicId, borrowerPublicId) });
+        const floatingLoan = await db.insert(loans).values({
+            tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower!.id,
+            principalAmount: "1000.00", outstandingPrincipal: "1000.00", interestRate: "0.00",
+            repaymentType: "floating", firstDayTreatment: "start_next_day", interestStartDate: "2026-08-01",
+            interestPeriodUnit: "day", interestPeriodLength: 1, advanceInterestPeriods: 0,
+            advanceInterestRefundPolicy: "non_refundable", interestPeriodAnchorDate: "2026-08-01",
+            dailyInterestMode: "per_thousand", dailyInterestRate: "15.0000", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanInterestRatePeriods).values({
+            tenantId: TENANT_ID, loanId: floatingLoan.id, effectiveDate: "2026-08-01", expiryDate: null,
+            rateType: "per_thousand", rate: "15.0000", createdByUserId: actor.id,
+        });
+        await call("loan.interest-rate.list", { loanPublicId: floatingLoan.publicId });
+        const ratePreview = (await call("loan.interest-rate.preview", {
+            loanPublicId: floatingLoan.publicId, effectiveDate: "2026-09-01", expiryDate: null,
+            rateType: "percent", rate: "1",
+        })).data;
+        await call("loan.interest-rate.execute", {
+            loanPublicId: floatingLoan.publicId, previewPublicId: ratePreview.publicId,
+            previewHash: ratePreview.previewHash, confirmed: true, reason: "MCP all-tools rate change",
+            idempotencyKey: "mcp-all-tools-rate-execute",
+        });
+        const settlementPreview = (await call("loan.settlement.preview", {
+            loanPublicId: floatingLoan.publicId,
+            asOfDate: "2026-08-10",
+        })).data;
+        await call("loan.settlement.execute", {
+            settlementPublicId: settlementPreview.publicId,
+            previewHash: settlementPreview.previewHash,
+            confirmed: true,
+            reason: "MCP all-tools floating settlement",
+            idempotencyKey: "mcp-all-tools-settlement-execute",
+        });
+        await call("loan.settlement.reverse", {
+            settlementPublicId: settlementPreview.publicId,
+            reason: "MCP all-tools settlement reversal",
+            idempotencyKey: "mcp-all-tools-settlement-reverse",
+        });
+        const reconciliationIntake = await db.insert(paymentIntakes).values({
+            tenantId: TENANT_ID,
+            status: "needs_review",
+            amount: "10.00",
+            receivedAt: new Date("2026-08-15T09:28:00.000Z"),
+            payerName: "MCP reconciliation payer",
+            createdByUserId: actor.id,
+        }).returning().then((rows) => rows[0]!);
+        const reconciliationPreview = (await call("payment.reconcile.preview", {
+            paymentIntakePublicId: reconciliationIntake.publicId,
+            allocations: [{
+                borrowerPublicId,
+                loanPublicId: floatingLoan.publicId,
+                amount: "10.00",
+                component: "interest",
+            }],
+            reason: "MCP all-tools historical interest reconciliation",
+        })).data;
+        await call("payment.reconcile.execute", {
+            reconciliationPreviewPublicId: reconciliationPreview.publicId,
+            previewHash: reconciliationPreview.previewHash,
+            expectedBalanceVersion: reconciliationPreview.expectedBalanceVersion,
+            confirmed: true,
+            reason: "MCP all-tools historical interest reconciliation",
+            idempotencyKey: "mcp-all-tools-reconciliation-execute",
+        });
+        const accrualReversalPreview = (await call("payment.reverse-with-accrual.preview", {
+            paymentIntakePublicId: reconciliationIntake.publicId,
+        })).data;
+        await call("payment.reverse-with-accrual.execute", {
+            paymentIntakePublicId: reconciliationIntake.publicId,
+            previewHash: accrualReversalPreview.previewHash,
+            interestAccrualMode: "ensure_due_through_payment_date",
+            confirmed: true,
+            reason: "MCP all-tools floating payment reversal",
+            idempotencyKey: "mcp-all-tools-floating-reversal",
+        });
+
+        const loanTerms = {
+            principal: "100.00",
+            interestRate: "0.00",
+            termMonths: 1,
+            repaymentType: "daily",
+            startDate: "2026-08-09",
+            totalInstallments: 1,
+            installmentAmount: "100.00",
+        };
+        await call("loan.preview", loanTerms);
+        const drafted = (await call("loan.draft", {
+            borrowerPublicId,
+            bankLoanPublicId: drawdown.publicId,
+            ...loanTerms,
+        })).data;
+        const loanPublicId = String(drafted.publicId);
+        const removableDraft = await db.insert(loans).values({
+            tenantId: TENANT_ID,
+            ownerUserId: actor.id,
+            borrowerId: borrower!.id,
+            principalAmount: "50.00",
+            outstandingPrincipal: "50.00",
+            interestRate: "0.00",
+            repaymentType: "daily",
+            startDate: "2026-08-09",
+            termMonths: 1,
+            totalInstallments: 1,
+            installmentAmount: "50.00",
+            status: "draft",
+        }).returning().then((rows) => rows[0]!);
+        await call("loan.draft.delete", {
+            loanPublicId: removableDraft.publicId,
+            confirmed: true,
+            reason: "MCP all-tools removable draft",
+            idempotencyKey: "mcp-all-tools-draft-delete",
+        });
+        await call("loan.activate", { loanPublicId, idempotencyKey: "mcp-all-tools-loan-activate" });
+        await call("loan.contract.get", { loanPublicId });
+        await call("loan.payment-start-date.update", {
+            loanPublicId,
+            paymentStartDate: "2026-08-10",
+            reason: "MCP all-tools payment start correction",
+            idempotencyKey: "mcp-all-tools-payment-start-date",
+        });
+        const activatedLoan = (await db.query.loans.findFirst({ where: eq(loans.publicId, loanPublicId) }))!;
+        await db.insert(loanDisbursements).values({
+            tenantId: TENANT_ID,
+            loanId: activatedLoan.id,
+            grossPrincipal: "100.00",
+            firstDayInterestDeducted: "0.00",
+            netDisbursement: "100.00",
+            createdByUserId: actor.id,
+        });
+        const disbursement = (await call("loan.disbursement.draft", {
+            loanPublicId,
+            grossAmount: "100.00",
+            loanAttributedAmount: "100.00",
+            channel: "cash",
+            disbursedAt: "2026-08-10T00:00:00.000Z",
+        })).data;
+        const disbursementPublicId = String(disbursement.publicId);
+        const disbursementEvidence = (await call("loan.disbursement.evidence.prepare", {
+            disbursementPublicId,
+            mimeType: "image/png",
+            size: 4,
+            sha256: "b".repeat(64),
+        })).data;
+        await call("loan.disbursement.evidence.finalize", {
+            disbursementPublicId,
+            evidencePublicId: disbursementEvidence.publicId,
+        });
+        const updatedDisbursement = (await call("loan.disbursement.update", {
+            disbursementPublicId,
+            changes: { loanAttributedAmount: "95.00", note: "Corrected attributed amount" },
+        })).data;
+        expect(updatedDisbursement).toMatchObject({
+            publicId: disbursementPublicId,
+            grossAmount: "100.00",
+            loanAttributedAmount: "95.00",
+            channel: "cash",
+            note: "Corrected attributed amount",
+            evidenceFilePublicIds: [disbursementEvidence.filePublicId],
+        });
+        const updateAudit = (await db.select().from(auditLogs)).find((entry) =>
+            entry.entityId === disbursementPublicId && entry.action === "draft_updated");
+        expect(updateAudit?.payload).toMatchObject({
+            before: { grossAmount: "100.00", loanAttributedAmount: "100.00", channel: "cash" },
+            after: { grossAmount: "100.00", loanAttributedAmount: "95.00", channel: "cash", note: "Corrected attributed amount" },
+        });
+        const refreshedDisbursements = (await call("loan.disbursement.list", { loanPublicId })).data;
+        expect(refreshedDisbursements.events).toEqual(expect.arrayContaining([
+            expect.objectContaining({ publicId: disbursementPublicId, loanAttributedAmount: "95.00", evidenceFilePublicIds: [disbursementEvidence.filePublicId] }),
+        ]));
+        await call("loan.disbursement.post", {
+            disbursementPublicId,
+            idempotencyKey: "mcp-all-tools-disbursement-post",
+        });
+        await expect(client.callTool({
+            name: "loan.disbursement.update",
+            arguments: { disbursementPublicId, changes: { note: "Must remain immutable" } },
+        })).rejects.toThrow();
+        expect(await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, disbursementPublicId) }))
+            .toMatchObject({ status: "posted", note: "Corrected attributed amount" });
+        await call("loan.disbursement.reverse", {
+            disbursementPublicId,
+            reason: "MCP all-tools disbursement reversal",
+            idempotencyKey: "mcp-all-tools-disbursement-reverse",
+        });
+
+        const intake = (await call("intake.create", {
+            amount: "40.00",
+            receivedAt: "2026-08-10T00:00:00.000Z",
+            payerName: "MCP payer",
+            idempotencyKey: "mcp-all-tools-intake",
+        })).data;
+        const intakePublicId = String(intake.publicId);
+        await call("intake.list", { status: "draft" });
+        const evidence = (await call("evidence.prepare", {
+            paymentIntakePublicId: intakePublicId,
+            mimeType: "image/png",
+            size: 4,
+            sha256: "a".repeat(64),
+            evidenceType: "slip",
+        })).data;
+        const finalized = (await call("evidence.finalize", {
+            paymentIntakePublicId: intakePublicId,
+            evidencePublicId: evidence.publicId,
+        })).data;
+
+        const batchIntake = (await call("intake.create", {
+            amount: "1.00",
+            receivedAt: "2026-08-10T00:00:00.000Z",
+            payerName: "MCP batch payer",
+            idempotencyKey: "mcp-all-tools-batch-intake",
+        })).data;
+        const batchIntakePublicId = String(batchIntake.publicId);
+        const batch = (await call("payment.batch.create", {
+            borrowerPublicId,
+            idempotencyKey: "mcp-all-tools-batch-create",
+        })).data;
+        const batchPublicId = String(batch.publicId);
+        const batchItem = (await call("payment.batch.item.add", {
+            batchPublicId,
+            paymentIntakePublicId: batchIntakePublicId,
+            itemOrder: 1,
+        })).data;
+        const batchItemPublicId = String((batchItem.items as Array<{ publicId: string }>)[0]!.publicId);
+        await call("payment.batch.capture", {
+            borrowerPublicId,
+            idempotencyKey: "mcp-all-tools-batch-capture",
+            items: [{
+                clientItemKey: "capture-1", amount: "2.00", receivedAt: "2026-08-10T00:00:00.000Z",
+                payerName: "MCP captured payer", bankReference: "MCP-CAPTURE-1",
+                intakeIdempotencyKey: "mcp-all-tools-capture-intake-1",
+            }],
+        });
+        const manyIntake = (await call("intake.create", {
+            amount: "1.00", receivedAt: "2026-08-10T00:00:00.000Z", payerName: "MCP many payer",
+            idempotencyKey: "mcp-all-tools-many-intake",
+        })).data;
+        const manyBatch = (await call("payment.batch.create", {
+            borrowerPublicId, idempotencyKey: "mcp-all-tools-many-batch",
+        })).data;
+        const manyBatchItem = (await call("payment.batch.item.add", {
+            batchPublicId: manyBatch.publicId, paymentIntakePublicId: manyIntake.publicId, itemOrder: 1,
+        })).data;
+        const manyBatchItemPublicId = String((manyBatchItem.items as Array<{ publicId: string }>).at(-1)!.publicId);
+        const manyEvidence = (await call("payment.batch.evidence.prepare-many", {
+            batchPublicId: manyBatch.publicId,
+            items: [{ batchItemPublicId: manyBatchItemPublicId, paymentIntakePublicId: manyIntake.publicId, mimeType: "image/png", size: 4, sha256: "f".repeat(64), evidenceType: "slip" }],
+        })).data;
+        await call("payment.batch.evidence.finalize-many", {
+            batchPublicId: manyBatch.publicId,
+            items: [{ batchItemPublicId: manyBatchItemPublicId, paymentIntakePublicId: manyIntake.publicId, evidencePublicId: (manyEvidence.items as Array<{ publicId: string }>)[0]!.publicId }],
+        });
+        const batchEvidence = (await call("payment.batch.evidence.prepare", {
+            batchItemPublicId,
+            paymentIntakePublicId: batchIntakePublicId,
+            mimeType: "image/png",
+            size: 4,
+            sha256: "c".repeat(64),
+            evidenceType: "slip",
+        })).data;
+        await call("payment.batch.evidence.finalize", {
+            batchItemPublicId,
+            paymentIntakePublicId: batchIntakePublicId,
+            evidencePublicId: batchEvidence.publicId,
+        });
+        await call("payment.batch.get", { batchPublicId });
+        const batchSchedule = (await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.loanId, activatedLoan.id) }))!;
+        const batchPreview = (await call("payment.batch.preview", {
+            batchPublicId,
+            borrowerPublicId,
+            allocations: [{ itemPublicId: batchItemPublicId, loanPublicId, schedulePublicId: batchSchedule.publicId, amount: "1.00", targetDueDate: batchSchedule.dueDate, intent: "on_time" }],
+        })).data;
+        await call("payment.batch.execute", {
+            batchPublicId,
+            previewPublicId: batchPreview.publicId,
+            previewHash: batchPreview.previewHash,
+            confirmationHash: batchPreview.confirmationHash,
+            confirmed: true,
+            idempotencyKey: "mcp-all-tools-batch-execute",
+        });
+        const inspected = (await call("intake.get", { paymentIntakePublicId: intakePublicId })).data;
+        expect(inspected.evidence).toEqual([
+            expect.objectContaining({
+                publicId: evidence.publicId,
+                status: "ready",
+                filePublicId: finalized.filePublicId,
+            }),
+        ]);
+
+        const proposal = (await call("payment.preview", {
+            paymentIntakePublicId: intakePublicId,
+            allocations: [{ borrowerPublicId, loanPublicId, amount: "40.00" }],
+        })).data;
+        const preflight = (await call("payment.reconcile.preflight", {
+            paymentIntakePublicId: intakePublicId,
+            proposalPublicId: proposal.publicId,
+            reason: "MCP all-tools ordinary payment preflight",
+        })).data;
+        expect(preflight).toMatchObject({ status: "ready_to_execute", wouldWrite: false, reviewRequired: false });
+        const postedPayment = (await call("payment.post", {
+            paymentIntakePublicId: intakePublicId,
+            proposalPublicId: proposal.publicId,
+        })).data;
+        const paymentPublicId = String((postedPayment.transactions as Array<{ publicId: string }>)[0]!.publicId);
+        const paymentHistory = (await call("loan.payment-history.list", { loanPublicId })).data;
+        expect(paymentHistory).toMatchObject({
+            loanPublicId,
+            items: expect.arrayContaining([expect.objectContaining({ publicId: intakePublicId, status: "posted" })]),
+        });
+        await call("intermediary.search", { query: "MCP all-tools collector" });
+        const intermediary = (await call("intermediary.create", { name: "MCP all-tools collector" })).data;
+        const attribution = (await call("payment.intermediary-attribution.create", {
+            paymentPublicId, sourceKind: "direct", amount: "20.00", confirmed: true,
+            idempotencyKey: "mcp-all-tools-attribution-create",
+        })).data;
+        await call("payment.intermediary-attribution.list", { paymentPublicId });
+        await call("payment.intermediary-attribution.reverse", {
+            attributionPublicId: attribution.publicId, reason: "MCP all-tools attribution reversal",
+            confirmed: true, idempotencyKey: "mcp-all-tools-attribution-reverse",
+        });
+        const reversedPayment = (await call("payment.reverse", {
+            paymentIntakePublicId: intakePublicId,
+            reason: "Correct duplicate transfer",
+        })).data;
+        const reversalPaymentPublicId = String((reversedPayment.transactions as Array<{ publicId: string }>).at(-1)!.publicId);
+        const restoreDraft = (await call("payment.restore.create", {
+            paymentIntakePublicId: intakePublicId,
+            reason: "MCP all-tools exact payment restore",
+            idempotencyKey: "mcp-all-tools-restore-draft",
+        })).data;
+        const restoreEvidence = (await call("evidence.prepare", {
+            paymentIntakePublicId: restoreDraft.restoreDraftPublicId,
+            mimeType: "image/png", size: 4, sha256: "9".repeat(64), evidenceType: "slip",
+        })).data;
+        await call("evidence.finalize", {
+            paymentIntakePublicId: restoreDraft.restoreDraftPublicId,
+            evidencePublicId: restoreEvidence.publicId,
+        });
+        const restorePreview = (await call("payment.restore.preview", {
+            paymentIntakePublicId: intakePublicId,
+            reason: "MCP all-tools exact payment restore",
+        })).data;
+        const restoredPayment = (await call("payment.restore.execute", {
+            restorePreviewPublicId: restorePreview.publicId,
+            previewHash: restorePreview.previewHash,
+            expectedBalanceVersion: restorePreview.expectedBalanceVersion,
+            confirmed: true,
+            reason: "MCP all-tools exact payment restore",
+            idempotencyKey: "mcp-all-tools-restore-execute",
+        })).data;
+        await call("payment.restore.schedule-backfill", {
+            paymentIntakePublicId: restoredPayment.postedPaymentPublicId,
+            reason: "MCP all-tools restore schedule verification",
+            idempotencyKey: "mcp-all-tools-restore-backfill",
+        });
+
+        await call("loan.commission-participant.list", { loanPublicId });
+        const participant = (await call("loan.commission-participant.add", {
+            loanPublicId, intermediaryPublicId: intermediary.publicId, commissionRate: "30.00", role: "collector",
+            effectiveFrom: "2026-08-01T00:00:00.000Z", confirmed: true, idempotencyKey: "mcp-all-tools-participant-add",
+        })).data;
+        const updatedParticipant = (await call("loan.commission-participant.update", {
+            participantPublicId: participant.publicId, commissionRate: "25.00", role: "collector",
+            effectiveFrom: "2026-08-11T00:00:00.000Z", confirmed: true, idempotencyKey: "mcp-all-tools-participant-update",
+        })).data;
+        await call("loan.commission-participant.end", {
+            participantPublicId: updatedParticipant.publicId, effectiveTo: "2026-08-12T00:00:00.000Z",
+            reason: "MCP all-tools participant end", confirmed: true, idempotencyKey: "mcp-all-tools-participant-end",
+        });
+        const commissionArgs = { loanPublicId, paymentPublicIds: [paymentPublicId] };
+        await call("loan.commission.preview", commissionArgs);
+        await call("loan.commission.list", commissionArgs);
+        await call("loan.commission.calculate", commissionArgs);
+        await call("loan.commission.reverse", {
+            loanPublicId, paymentPublicIds: [reversalPaymentPublicId],
+        });
+        const bankAccount = (await call("intermediary.bank-account.save", {
+            intermediaryPublicId: intermediary.publicId,
+            bankCode: "BBL",
+            bankName: "Bangkok Bank",
+            accountName: "MCP all-tools collector",
+            accountNumber: "1234567890",
+            idempotencyKey: "mcp-all-tools-intermediary-account",
+        })).data;
+        expectWriteAuditMetadata(bankAccount);
+        const assignment = (await call("intermediary.assignment.create", {
+            loanPublicId,
+            intermediaryPublicId: intermediary.publicId,
+            role: "disbursement",
+            effectiveFrom: "2026-08-01T00:00:00.000Z",
+            idempotencyKey: "mcp-all-tools-intermediary-assignment",
+        })).data;
+        expectWriteAuditMetadata(assignment);
+        await call("intermediary.profile.get", { intermediaryPublicId: intermediary.publicId });
+        await call("intermediary.managed-loan.list", { intermediaryPublicId: intermediary.publicId, role: "disbursement" });
+        const group = (await call("intermediary.disbursement.create", {
+            loanPublicId,
+            intermediaryPublicId: intermediary.publicId,
+            retainedBalance: "0.00",
+            idempotencyKey: "mcp-all-tools-intermediated-group",
+        })).data;
+        expect(group).toMatchObject({
+            expectedFunding: "100.00",
+            expectedBorrowerPayout: "100.00",
+            expectedAdvanceInterestReturn: "0.00",
+        });
+        expect(await db.query.loanDisbursements.findFirst({ where: eq(loanDisbursements.loanId, activatedLoan.id) }))
+            .toMatchObject({ grossPrincipal: "100.00", firstDayInterestDeducted: "0.00", netDisbursement: "100.00" });
+        const groupEvents: Array<Record<string, unknown>> = [];
+        for (const [index, [role, amount]] of ([
+            ["funding_to_intermediary", "100.00"],
+            ["borrower_net_payout", "100.00"],
+        ] as const).entries()) {
+            groupEvents.push((await call("intermediary.disbursement.event.create", {
+                groupPublicId: group.publicId,
+                role,
+                channel: "bank_transfer",
+                amount,
+                transferredAt: `2026-08-10T0${index + 3}:00:00.000Z`,
+                bankReference: `MCP-ALL-TOOLS-GROUP-${index + 1}`,
+                idempotencyKey: `mcp-all-tools-intermediated-event-${index + 1}`,
+            })).data);
+        }
+        const transferEvidence = (await call("intermediary.disbursement.evidence.prepare", {
+            groupPublicId: group.publicId,
+            eventPublicId: groupEvents[0]!.publicId,
+            mimeType: "image/png",
+            size: 4,
+            sha256: "e".repeat(64),
+            originalName: "intermediated-funding.png",
+        })).data;
+        expectWriteAuditMetadata(transferEvidence);
+        const finalizedTransferEvidence = (await call("intermediary.disbursement.evidence.finalize", {
+            groupPublicId: group.publicId,
+            eventPublicId: groupEvents[0]!.publicId,
+            evidencePublicId: transferEvidence.publicId,
+        })).data;
+        expectWriteAuditMetadata(finalizedTransferEvidence);
+        await call("intermediary.disbursement.list", { loanPublicId, intermediaryPublicId: intermediary.publicId });
+        await call("intermediary.disbursement.get", { groupPublicId: group.publicId });
+        const groupPreview = (await call("intermediary.disbursement.preview", { groupPublicId: group.publicId })).data;
+        await call("intermediary.disbursement.post", {
+            groupPublicId: group.publicId,
+            proposalPublicId: groupPreview.publicId,
+            confirmed: true,
+            idempotencyKey: "mcp-all-tools-intermediated-post",
+        });
+        await call("intermediary.disbursement.reverse", {
+            groupPublicId: group.publicId,
+            reason: "MCP all-tools compensating group reversal",
+            confirmed: true,
+            idempotencyKey: "mcp-all-tools-intermediated-reverse",
+        });
+        const endedAssignment = (await call("intermediary.assignment.end", {
+            assignmentPublicId: assignment.publicId,
+            effectiveTo: "2026-08-11T00:00:00.000Z",
+            reason: "MCP all-tools assignment complete",
+            idempotencyKey: "mcp-all-tools-intermediary-assignment-end",
+        })).data;
+        expectWriteAuditMetadata(endedAssignment);
+        const collection = (await call("intermediary.collection.create", {
+            intermediaryPublicId: intermediary.publicId, borrowerPublicId, loanPublicId, amount: "40.00",
+            borrowerPaidAt: "2026-08-10T01:00:00.000Z", bankReference: "MCP-COLLECTION-1",
+            idempotencyKey: "mcp-all-tools-collection",
+        })).data;
+        await call("intermediary.collection.list", { intermediaryPublicId: intermediary.publicId, status: "pending_remittance" });
+        const remittance = (await call("intermediary.remittance.create", {
+            intermediaryPublicId: intermediary.publicId, grossAmount: "40.00", receivedAt: "2026-08-10T02:00:00.000Z",
+            bankReference: "MCP-REMITTANCE-1", idempotencyKey: "mcp-all-tools-remittance",
+        })).data;
+        await call("intermediary.remittance.get", { remittancePublicId: remittance.publicId });
+        const remittanceEvidence = (await call("intermediary.remittance.evidence.prepare", {
+            remittancePublicId: remittance.publicId, mimeType: "image/png", size: 4, sha256: "d".repeat(64),
+        })).data;
+        await call("intermediary.remittance.evidence.finalize", { remittancePublicId: remittance.publicId, evidencePublicId: remittanceEvidence.publicId });
+        await call("intermediary.remittance.allocations.save", { remittancePublicId: remittance.publicId, collectionPublicIds: [collection.publicId] });
+        const remittancePreview = (await call("intermediary.remittance.preview", { remittancePublicId: remittance.publicId })).data;
+        await call("intermediary.remittance.post", { remittancePublicId: remittance.publicId, proposalPublicId: remittancePreview.publicId, confirmed: true, idempotencyKey: "mcp-all-tools-remittance-post" });
+
+        const renewal = (await call("renewal.preview", {
+            oldLoanPublicId: loanPublicId,
+            requestedPrincipal: "100.00",
+        })).data;
+        await call("renewal.execute", {
+            renewalPublicId: renewal.publicId,
+            previewHash: renewal.previewHash,
+            confirmed: true,
+            reason: "MCP all-tools contract",
+            ...(renewal.cashDirection === "collection" ? { confirmedCashDirection: "collection" } : {}),
+            idempotencyKey: "mcp-all-tools-renewal-execute",
+        });
+        await call("renewal.reverse", {
+            renewalPublicId: renewal.publicId,
+            reason: "MCP all-tools contract reversal",
+            idempotencyKey: "mcp-all-tools-renewal-reverse",
+        });
+
+        const seedSinglePayment = async (suffix: string) => {
+            const oldLoan = await db.insert(loans).values({
+                tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower!.id,
+                principalAmount: "1000.00", interestRate: "0.00", repaymentType: "single_payment", termMonths: 1,
+                startDate: "2026-08-01", singlePaymentDueDate: "2026-08-19",
+                singlePaymentFixedAgreedInterest: "100.00", singlePaymentInterestPolicy: "fixed_only",
+                singlePaymentLatePenaltyMode: "none", outstandingPrincipal: "1000.00",
+                outstandingInterest: "100.00", outstandingFees: "0.00", status: "active",
+            }).returning().then((rows) => rows[0]!);
+            await db.insert(loanDisbursementEvents).values({
+                tenantId: TENANT_ID, loanId: oldLoan.id, grossAmount: "1000.00", loanAttributedAmount: "1000.00",
+                channel: "cash", status: "posted", disbursedAt: new Date("2026-08-01T03:00:00Z"),
+                postedAt: new Date("2026-08-01T03:01:00Z"), postIdempotencyKey: `mcp-restructure-seed-${suffix}`,
+                createdByUserId: actor.id,
+            });
+            return oldLoan;
+        };
+        const previewRestructure = async (oldLoanPublicId: string, suffix: string) => (await call("loan.restructure.preview", {
+            oldLoanPublicId, settlementDate: "2026-08-19",
+            replacementTerms: { interestRate: "0.00", termMonths: 1, repaymentType: "monthly", startDate: "2026-08-19", totalInstallments: 1, installmentAmount: "1000.00" },
+            additionalPrincipal: "0.00", reason: `MCP restructure ${suffix}`,
+        })).data;
+
+        const reversibleOld = await seedSinglePayment("reverse");
+        const reversible = await previewRestructure(reversibleOld.publicId, "reverse");
+        await call("loan.restructure.execute", {
+            restructurePublicId: reversible.publicId, previewHash: reversible.previewHash,
+            expectedBalanceVersion: reversible.oldBalanceVersion, confirmed: true,
+            reason: "MCP restructure reverse", idempotencyKey: "mcp-restructure-execute-reverse",
+        });
+        await call("loan.restructure.reverse", {
+            restructurePublicId: reversible.publicId, reason: "MCP safe restructure reversal",
+            idempotencyKey: "mcp-restructure-reverse",
+        });
+
+        const waiverOld = await seedSinglePayment("waiver");
+        const waiverRestructure = await previewRestructure(waiverOld.publicId, "waiver");
+        const waiverExecution = (await call("loan.restructure.execute", {
+            restructurePublicId: waiverRestructure.publicId, previewHash: waiverRestructure.previewHash,
+            expectedBalanceVersion: waiverRestructure.oldBalanceVersion, confirmed: true,
+            reason: "MCP restructure waiver", idempotencyKey: "mcp-restructure-execute-waiver",
+        })).data;
+        const waiverPreview = (await call("loan.waiver.preview", {
+            loanPublicId: waiverExecution.newLoanPublicId, component: "interest", amount: "50.00", reason: "MCP hardship relief",
+        })).data;
+        const waiverExecutionResult = (await call("loan.waiver.execute", {
+            previewPublicId: waiverPreview.publicId, previewHash: waiverPreview.previewHash,
+            expectedBalanceVersion: waiverPreview.balanceVersion, confirmed: true, reason: "MCP hardship relief",
+            idempotencyKey: "mcp-waiver-execute",
+        })).data;
+        await call("loan.waiver.reverse", {
+            waiverPublicId: waiverExecutionResult.publicId, reason: "MCP waiver reversal",
+            idempotencyKey: "mcp-waiver-reverse",
+        });
+        await call("funding-source.list", { status: "active" });
+        await call("funding-allocation.preview", {
+            allocatedAmount: "10.00", allocationDate: "2026-08-10", loanPublicId: floatingLoan.publicId,
+            bankLoanPublicId: drawdown.publicId, allocationType: "manual_adjustment",
+        });
+        await call("funding-allocation.create", {
+            allocatedAmount: "10.00", allocationDate: "2026-08-10", loanPublicId: floatingLoan.publicId,
+            bankLoanPublicId: drawdown.publicId, allocationType: "manual_adjustment",
+        });
+        await call("funding-allocation.list", { loanPublicId: floatingLoan.publicId });
+
+        const unfundedCancellationLoan = await db.insert(loans).values({
+            tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower!.id,
+            principalAmount: "30.00", outstandingPrincipal: "30.00", outstandingInterest: "0.00",
+            outstandingFees: "0.00", interestRate: "0.00", repaymentType: "floating",
+            startDate: "2026-08-20", status: "active",
+        }).returning().then((rows) => rows[0]!);
+        const cancellationPreview = (await call("loan.cancel.preview", {
+            loanPublicId: unfundedCancellationLoan.publicId,
+            reason: "MCP all-tools unfunded cancellation",
+        })).data;
+        await call("loan.cancel.execute", {
+            previewPublicId: cancellationPreview.publicId,
+            previewHash: cancellationPreview.previewHash,
+            expectedBalanceVersion: cancellationPreview.balanceVersion,
+            confirmed: true,
+            reason: "MCP all-tools unfunded cancellation",
+            idempotencyKey: "mcp-all-tools-unfunded-cancellation",
+        });
+
+        const replacementFixture = await seedReplacementFixture({ tenantId: TENANT_ID });
+        const replacementPreview = (await call("loan.replacement.preview", {
+            oldLoanPublicId: replacementFixture.oldLoan.publicId,
+            replacementDraftPublicId: replacementFixture.replacementDraft.publicId,
+            reason: "MCP all-tools atomic replacement",
+        })).data;
+        const replacementExecution = (await call("loan.replacement.execute", {
+            replacementPublicId: String(replacementPreview.publicId),
+            previewHash: String(replacementPreview.previewHash),
+            expectedOldBalanceVersion: String(replacementPreview.oldBalanceVersion),
+            expectedReplacementDraftVersion: String(replacementPreview.replacementDraftVersion),
+            confirmed: true,
+            reason: "MCP all-tools atomic replacement",
+            idempotencyKey: "mcp-all-tools-replacement-execute",
+        })).data;
+        await call("loan.replacement.reverse", {
+            replacementPublicId: String(replacementExecution.replacementPublicId),
+            confirmed: true,
+            reason: "MCP all-tools atomic replacement reversal",
+            idempotencyKey: "mcp-all-tools-replacement-reverse",
+        });
+
+        const invokeGuardedEvidenceHandler = async (name: Extract<McpToolName,
+            "evidence.import-chatgpt-file" | "payment.evidence-supplement.import-chatgpt-file" | "payment.evidence-supplement.record">,
+        args: Record<string, unknown>) => {
+            const idempotencyKey = String(args.idempotencyKey);
+            const handler = createDefaultMcpToolHandlers()[name];
+            await expect(Promise.resolve().then(() => handler({
+                tenantId: TENANT_ID, actorUserId: actor.id, actorSource: "mcp",
+                requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey,
+            }, args))).rejects.toBeDefined();
+            called.push(name);
+        };
+        const unavailableChatGptFile = {
+            download_url: "https://files.example.test/unavailable",
+            file_id: "file-unavailable",
+            mime_type: "image/png",
+            file_name: "evidence.png",
+        };
+        await invokeGuardedEvidenceHandler("evidence.import-chatgpt-file", {
+            paymentIntakePublicId: intakePublicId,
+            idempotencyKey: "mcp-all-tools-chatgpt-primary",
+            chatgptFile: unavailableChatGptFile,
+        });
+        await invokeGuardedEvidenceHandler("payment.evidence-supplement.import-chatgpt-file", {
+            paymentIntakePublicId: intakePublicId,
+            idempotencyKey: "mcp-all-tools-chatgpt-supplement",
+            chatgptFile: unavailableChatGptFile,
+        });
+        await invokeGuardedEvidenceHandler("payment.evidence-supplement.record", {
+            paymentIntakePublicId: intakePublicId,
+            supplementPublicId: crypto.randomUUID(),
+            confirmed: true,
+            reason: "operator_omission",
+            idempotencyKey: "mcp-all-tools-chatgpt-supplement-record",
+        });
+
+        const markReviewHandler = createDefaultMcpToolHandlers()["payment.reconcile.mark-review"];
+        await expect(Promise.resolve().then(() => markReviewHandler({
+            tenantId: TENANT_ID, actorUserId: actor.id, actorSource: "mcp",
+            requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: "mcp-all-tools-mark-review",
+        }, {
+            paymentIntakePublicId: reconciliationIntake.publicId, expectedStatus: "ready",
+            reason: "MCP all-tools verifies the guarded review transition", idempotencyKey: "mcp-all-tools-mark-review",
+        }))).rejects.toMatchObject({ code: "PAYMENT_RECONCILIATION_REVIEW_STATE_CONFLICT" });
+        called.push("payment.reconcile.mark-review");
+
+        await expect(call("evidence.import-chatgpt-file", {
+            paymentIntakePublicId: intakePublicId,
+            chatgptFile: { download_url: "http://invalid.example.test/file", file_id: "chatgpt-file" },
+        })).rejects.toBeDefined();
+        called.push("evidence.import-chatgpt-file");
+        await expect(call("payment.evidence-supplement.import-chatgpt-file", {
+            paymentIntakePublicId: intakePublicId,
+            chatgptFile: { download_url: "http://invalid.example.test/file", file_id: "chatgpt-file" },
+        })).rejects.toBeDefined();
+        called.push("payment.evidence-supplement.import-chatgpt-file");
+        await expect(call("payment.evidence-supplement.record", {
+            paymentIntakePublicId: intakePublicId,
+            supplementPublicId: "11111111-1111-4111-8111-111111111111",
+            reason: "evidence_recovered",
+        })).rejects.toBeDefined();
+        called.push("payment.evidence-supplement.record");
+
+        await expect(call("payment.allocation-correction.preview", {
+            paymentIntakePublicId: intakePublicId,
+            transactionPublicId: paymentPublicId,
+            targetSchedulePublicId: batchSchedule.publicId,
+            reason: "MCP all-tools correction guard",
+        })).rejects.toBeDefined();
+        called.push("payment.allocation-correction.preview");
+        await expect(call("payment.allocation-correction.execute", {
+            correctionPreviewPublicId: "11111111-1111-4111-8111-111111111111",
+            previewHash: `v1:${"a".repeat(64)}`,
+            expectedBalanceVersion: `v1:${"b".repeat(64)}`,
+            confirmed: true,
+            reason: "MCP all-tools correction guard",
+            idempotencyKey: "mcp-all-tools-correction",
+        })).rejects.toBeDefined();
+        called.push("payment.allocation-correction.execute");
+
+        expect([...new Set(called)].sort()).toEqual([...MCP_TOOL_NAMES].sort());
+        expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length);
+        expect(called.filter((name) => name === "intermediary.disbursement.event.create")).toHaveLength(2);
+        expect(called.filter((name) => name === "loan.restructure.execute")).toHaveLength(2);
+        expect(called).toHaveLength(MCP_TOOL_NAMES.length + 12);
+
+        await client.close();
+    }, 10_000);
+});

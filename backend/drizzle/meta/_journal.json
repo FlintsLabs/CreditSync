@@ -15,6 +15,440 @@
       "when": 1765119637307,
       "tag": "0001_omniscient_veda",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1775492067353,
+      "tag": "0002_dizzy_retro_girl",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1775492510074,
+      "tag": "0003_bouncy_mephistopheles",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1775494676418,
+      "tag": "0004_shocking_starbolt",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1775567000000,
+      "tag": "0005_steady_reconciliation",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1775567967994,
+      "tag": "0006_previous_vision",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1775600000000,
+      "tag": "0007_user_record_visibility",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786240000000,
+      "tag": "0008_agent_workflow_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786294151294,
+      "tag": "0009_loan_draft_terms",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786299738393,
+      "tag": "0010_payment_evidence_expiry",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1786302008286,
+      "tag": "0011_loan_renewal_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1786305000000,
+      "tag": "0012_payment_review_warnings",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1786310000000,
+      "tag": "0013_own_capital_direct_funding",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1786310500000,
+      "tag": "0014_loan_direct_capital_source",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1786311000000,
+      "tag": "0015_floating_daily_interest",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1786311500000,
+      "tag": "0016_floating_interest_partial_payments",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1786312000000,
+      "tag": "0017_floating_loan_disbursements",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1786312500000,
+      "tag": "0018_daily_loan_entry_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786313000000,
+      "tag": "0019_loan_disbursement_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1786313500000,
+      "tag": "0020_loan_disbursement_service_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1786314000000,
+      "tag": "0021_loan_disbursement_reversal_immutability",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1786383600000,
+      "tag": "0022_payment_intake_origin_loan",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1786396099000,
+      "tag": "0023_intermediary_collection_remittance",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1786451052158,
+      "tag": "0024_floating_interest_rate_periods",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1786479944796,
+      "tag": "0025_floating_accrual_corrections",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1786540800000,
+      "tag": "0026_intermediary_remittance_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1786698000000,
+      "tag": "0027_single_payment_restructure",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1786698060000,
+      "tag": "0028_floating_weekly_period_snapshots",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1786698120000,
+      "tag": "0029_floating_penalty_snapshots",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1786698180000,
+      "tag": "0030_floating_penalty_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1786666687343,
+      "tag": "0031_loan_waiver_previews",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1786667618275,
+      "tag": "0032_restructure_external_credit_allocation",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1786667764416,
+      "tag": "0033_early_settlement_waiver_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1786698900000,
+      "tag": "0034_waiver_schedule_provenance",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1786701600000,
+      "tag": "0035_disbursement_restructure_relation",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1786701660000,
+      "tag": "0036_floating_weekly_intermediary_integration",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1786713592281,
+      "tag": "0037_borrower_id_card_upload_intents",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1786713600000,
+      "tag": "0038_production_loan_schema_reconciliation",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1786870800000,
+      "tag": "0039_loan_agents_commission_attribution",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1786874400000,
+      "tag": "0040_bank_drawdown_command_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1786880000000,
+      "tag": "0041_funding_allocation_idempotency",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1786963200000,
+      "tag": "0042_atomic_loan_replacement",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1786966800000,
+      "tag": "0043_loan_interest_rate_period_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1786970400000,
+      "tag": "0044_atomic_loan_replacement_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1786974000000,
+      "tag": "0045_atomic_loan_replacement_proposal",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1787057684998,
+      "tag": "0046_payment_start_date",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1787061284998,
+      "tag": "0047_floating_restructure_allocations",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1787270303436,
+      "tag": "0048_payment_reconciliation",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1787356800000,
+      "tag": "0049_repost_reversed_payment",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1787443200000,
+      "tag": "0050_zero_commission_participants",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1787481003374,
+      "tag": "0051_atomic_batch_payments",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1787484600000,
+      "tag": "0052_fix_atomic_batch_immutability_trigger",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1787488200000,
+      "tag": "0053_fix_atomic_batch_trigger_record_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1787491800000,
+      "tag": "0054_daily_renewal_full_contract_interest",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1787529600000,
+      "tag": "0055_renewal_effective_payment_dates",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1787607099950,
+      "tag": "0056_lame_tigra",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1787607129517,
+      "tag": "0057_loan_schedule_deferrals",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1788235200000,
+      "tag": "0058_reverse_interest_accrual_lineage",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1788242400000,
+      "tag": "0059_scheduled_installment_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1788471120000,
+      "tag": "0060_payment_start_date_schedule_amendments",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1788739200000,
+      "tag": "0061_chatgpt_payment_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1788811800000,
+      "tag": "0062_scheduled_payment_allocation_corrections",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1788825600000,
+      "tag": "0063_floating_monthly_cycle",
+      "breakpoints": true
     }
   ]
 }

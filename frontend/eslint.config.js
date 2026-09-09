@@ -19,17 +19,61 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+  },
+  {
+    files: [
+      'src/pages/auth/Login.tsx',
+      'src/pages/dashboard/PortfolioGraph.tsx',
+      'src/pages/dashboard/borrowers/BorrowerEditModal.tsx',
+      'src/pages/dashboard/borrowers/BorrowerForm.tsx',
+      'src/pages/dashboard/borrowers/BorrowerList.tsx',
+      'src/pages/dashboard/funds/FundDetail.tsx',
+      'src/pages/dashboard/loans/MatchingWorkspace.tsx',
+      'src/pages/dashboard/reconciliation/ReconciliationPage.tsx',
+      'src/pages/dashboard/transactions/TransactionList.tsx',
+    ],
+    rules: { '@typescript-eslint/no-explicit-any': 'off' },
+  },
+  {
+    files: [
+      'src/pages/dashboard/PortfolioGraph.tsx',
+      'src/pages/dashboard/loans/LoanList.tsx',
+      'src/pages/dashboard/transactions/TransactionList.tsx',
+    ],
+    rules: { '@typescript-eslint/no-unused-vars': 'off' },
+  },
+  {
+    files: [
+      'src/pages/dashboard/PortfolioGraph.tsx',
+      'src/pages/dashboard/borrowers/BorrowerForm.tsx',
+      'src/pages/dashboard/borrowers/BorrowerList.tsx',
+      'src/pages/dashboard/funds/FundDetail.tsx',
+      'src/pages/dashboard/funds/FundList.tsx',
+      'src/pages/dashboard/loans/LoanClosingModal.tsx',
+      'src/pages/dashboard/loans/MatchingWorkspace.tsx',
+      'src/pages/dashboard/reconciliation/ReconciliationPage.tsx',
+    ],
     rules: {
-      '@typescript-eslint/no-explicit-any': 'off',
-      '@typescript-eslint/no-empty-object-type': 'off',
-      '@typescript-eslint/no-unused-vars': ['error', {
-        argsIgnorePattern: '^_',
-        caughtErrors: 'none',
-      }],
-      'no-empty': ['error', { allowEmptyCatch: true }],
-      'react-hooks/immutability': 'off',
       'react-hooks/set-state-in-effect': 'off',
-      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+      'react-hooks/immutability': 'off',
     },
+  },
+  {
+    files: [
+      'src/pages/dashboard/funds/FundDetail.tsx',
+      'src/pages/dashboard/funds/FundList.tsx',
+      'src/pages/dashboard/loans/LoanClosingModal.tsx',
+      'src/pages/dashboard/loans/MatchingWorkspace.tsx',
+      'src/pages/dashboard/reconciliation/ReconciliationPage.tsx',
+    ],
+    rules: { 'react-hooks/exhaustive-deps': 'off' },
+  },
+  {
+    files: ['src/components/theme-provider.tsx', 'src/components/ui/badge.tsx'],
+    rules: { 'react-refresh/only-export-components': 'off' },
+  },
+  {
+    files: ['src/pages/dashboard/PortfolioGraph.tsx'],
+    rules: { 'prefer-const': 'off', 'no-empty': 'off' },
   },
 ])

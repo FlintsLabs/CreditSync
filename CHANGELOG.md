@@ -1,0 +1,1228 @@
+# Changelog
+
+## v0.4.0 - 2026-09-08
+
+### Changed
+- Moved renewed loans into Done history and added a localized Renewed status filter for the loan list.
+
+## v0.3.99 - 2026-09-08
+
+### Fixed
+- Displayed the backend-compatible floating accrual cycle for legacy loans whose explicit cycle is null.
+
+## v0.3.98 - 2026-09-08
+
+### Fixed
+- Synchronized the committed MCP contract reference with the deployed monthly floating-accrual schema.
+
+## v0.3.97 - 2026-09-08
+
+### Added
+- Added daily, weekly, and calendar-monthly floating-loan accrual cycles, with localized labels in the loan list and configuration forms.
+
+### Changed
+- Extended floating-interest API/MCP contracts, database constraints, immutable accrual snapshots, and migration support for monthly periods.
+
+## v0.3.96 - 2026-09-08
+
+### Fixed
+- Allowed weekly floating-loan previews without advance-interest coverage dates to return `null` through the MCP contract, and added regression coverage.
+
+## v0.3.95 - 2026-09-08
+
+### Added
+- Documented the append-only integration design that reconciles the deployed ChatGPT evidence lineage with scheduled payment allocation corrections on `main`.
+- Added the detailed implementation and verification plan for integrating the deployed ChatGPT evidence feature into the current migration lineage.
+- Added explicit payment evidence requirements and an append-only supplemental evidence ledger for late proof without mutating posted financial records.
+
+### Fixed
+- Made scheduled allocation-correction integration fixtures independent of the current calendar date.
+- Preserved the deployed ChatGPT evidence migration's audit foreign key and exact production hash during integration.
+- Completed the combined MCP catalog integration coverage for ChatGPT evidence commands.
+- Updated migration assertions and production reconciliation coverage for the combined 63-row local journal and 66-row deployed lineage.
+
+### Changed
+- Added a failing regression contract for the combined production migration lineage.
+
+## v0.3.94 - 2026-09-08
+
+### Fixed
+- Moved the unapplied scheduled-payment allocation-correction migration after the production journal tail so Drizzle executes it on deployment.
+
+## v0.3.93 - 2026-09-08
+
+### Fixed
+- Counted expected allocation-correction domain rejections as exercised routes in the full MCP tool-catalog integration test.
+- Allowed the production mixed-lineage reconciliation guard to recognize the new migration journal tail.
+- Extended database-migration test timeouts so complete-journal verification remains deterministic as the migration history grows.
+
+## v0.3.92 - 2026-09-08
+
+### Fixed
+- Serialized scheduled payment allocation correction execution by tenant/idempotency key, persisted complete request identity, blocked later repayment dependencies, froze ready preview content, and enforced signed component conservation at the database boundary.
+
+## v0.3.91 - 2026-09-08
+
+### Fixed
+- Closed the scheduled allocation-correction MCP projection and warning output schemas and regenerated the frozen plugin contract from the advertised backend tools.
+
+## v0.3.90 - 2026-09-08
+
+### Fixed
+- Replaced shallow allocation-correction coverage with disposable-PostgreSQL lifecycle tests and corrected canonical schedule projection, dependency guards, locking, stale validation, append-only rebuild, and typed executor handling.
+
+## v0.3.89 - 2026-09-08
+
+### Changed
+- Documented the operator boundary for same-loan scheduled payment allocation correction, exact conservation, mandatory confirmation, hard-stop blockers, and separate production authorization.
+
+## v0.3.88 - 2026-09-08
+
+### Changed
+- Synchronized the private plugin, frozen 109-tool MCP contract, operator recovery guidance, and frontend release metadata at plugin `9.1.0` for scheduled payment allocation correction.
+
+## v0.3.87 - 2026-09-08
+
+### Added
+- Exposed strict MCP preview and confirmed execute tools for scheduled payment allocation correction with safe public outputs and audit mapping.
+
+## v0.3.86 - 2026-09-08
+
+### Added
+- Added exact preview and append-only execution services for same-loan scheduled payment allocation correction, including stale guards, compensation/replacement lineage, idempotency, and loan rollup refresh.
+
+## v0.3.85 - 2026-09-08
+
+### Added
+- Added the immutable scheduled-payment allocation correction preview, execution-group, and append-only entry ledger migration.
+
+## v0.3.84 - 2026-09-08
+
+### Changed
+- Added the detailed test-first implementation plan for immutable scheduled-payment allocation correction, guarded MCP/plugin integration, exact schedule rebuilding, and full financial verification.
+
+## v0.3.83 - 2026-09-08
+
+### Added
+- Added the approved design for an MCP-only, append-only preview-confirm-execute workflow that corrects a posted scheduled payment to another installment in the same loan while preserving exact financial components and audit provenance.
+
+## v0.3.82 - 2026-09-07
+
+### Changed
+- Added the detailed test-first implementation plan for deterministic floating-allocation reflow, append-only reconciliation repair, daily payment-health correction, MCP/plugin synchronization, and full financial verification.
+
+## v0.3.81 - 2026-09-07
+
+### Infra
+- Routed tmux implementation workers through GPT-5.6 Luna with explicit medium reasoning effort while retaining the task-model fallback and reporting requirements.
+
+## v0.3.80 - 2026-09-07
+
+### Added
+- Added the approved design for append-only temporal reflow of later floating-interest allocations after a backdated reconciliation, an audited repair workflow for existing reconciliation groups, and single-count daily payment-health projection.
+
+## v0.3.79 - 2026-09-07
+
+### Fixed
+- Preserved the `payment.reconcile.mark-review` idempotency key across the MCP transport boundary so eligible backdated payments enter audited reconciliation review instead of failing with `INTERNAL_ERROR`.
+
+### Added
+- Added bounded, allowlisted server-side ChatGPT evidence ingestion with content verification, MinIO metadata checks, safe idempotent retries, and cleanup on failure.
+- Added authoritative evidence-required gates plus closed MCP import and explicitly confirmed supplemental-evidence commands using official top-level ChatGPT file metadata.
+- Added safe primary and supplemental slip summaries to payment history with click-time authenticated previews and synchronized Thai/English labels.
+- Synchronized CreditSync Plugin `9.1.0`, the 110-tool frozen MCP contract, official file-parameter metadata, skills, executable evals, validators, environment templates, and operator documentation.
+
+### Fixed
+- Corrected the recorded-supplement database invariant fixture to preserve its required prior ready transition before testing terminal immutability.
+- Kept the strict mixed-lineage reconciliation catalog synchronized with the new additive migration count and all-tools MCP verification synchronized with the three new evidence commands.
+
+## v0.3.78 - 2026-09-07
+
+### Added
+- Added the audited, idempotent `payment.reconcile.mark-review` MCP transition for eligible backdated floating payments, with a separate operator confirmation boundary before reconciliation execution.
+
+### Fixed
+- Made ordinary payment preflight run the real posting allocator inside a rollback-only transaction so later immutable floating allocations are detected without financial writes.
+
+## v0.3.77 - 2026-09-07
+
+### Changed
+- Added the test-first implementation plan for the audited backdated-payment review transition, rollback-only posting feasibility probe, synchronized MCP/plugin contract, and full financial verification gates.
+
+## v0.3.76 - 2026-09-07
+
+### Added
+- Added the approved design for a narrow, audited, idempotent MCP transition from a backdated payment's `ready` state into historical reconciliation review.
+
+## v0.3.75 - 2026-09-06
+
+### Fixed
+- Synchronized the dashboard footer's displayed CreditSync plugin version with the validated `8.0.0` plugin manifest and refreshed the release-metadata regression test.
+
+## v0.3.74 - 2026-09-06
+
+### Changed
+- Recorded the remaining backend own-capital allocation-capacity guard as explicit follow-up work.
+
+### Fixed
+- Added stable per-allocation idempotency keys to funding matching writes and preserved each key across retries, preventing rejected saves and duplicate records after partial failures.
+
+## v0.3.73 - 2026-09-06
+
+### Changed
+- Added active own-capital pools to the funding matching workspace with authoritative available-balance display, distinct source labels, exact pre-review validation, and direct profile allocation payloads.
+
+### Fixed
+- Kept activated loan schedules immutable at the database boundary while allowing an audited, idempotent payment-start-date amendment to move only unpaid due dates and refresh the loan's next due date.
+
+## v0.3.72 - 2026-09-06
+
+### Changed
+- Redesigned the funding matching workspace with searchable contract selection, live exact-money allocation summaries, an explicit review step, and pre-review contract-gap and source-capacity safeguards.
+
+## v0.3.71 - 2026-09-06
+
+### Added
+- Added the proposed design for ChatGPT-native payment-slip ingestion, append-only late evidence, and signed slip previews from contract payment history.
+
+### Changed
+- Added the test-first implementation plan for verified ChatGPT file ingestion, payment-history slip previews, and append-only late evidence.
+
+## v0.3.70 - 2026-09-04
+
+### Added
+- Added the optional OpenAI Secure MCP Tunnel client Compose service, setup handoff documentation, and the CreditSync plugin icon asset.
+
+### Changed
+- Expanded agent guidance for evidence-backed payment matching and documented the MCP preflight and tunnel configuration workflows.
+- Recorded the floating-interest provenance repair and weekly-overdue display implementation plans.
+
+## v0.3.69 - 2026-09-03
+
+### Fixed
+- Fixed loan-list overdue cards to distinguish daily, weekly, and installment obligations using backend-authoritative counts while preserving exact overdue amounts and calendar overdue age.
+
+## v0.3.68 - 2026-09-03
+
+### Fixed
+- Fixed weekly floating loans with one period of deducted advance interest so the next anchored period is shown and posted as interest due, with immutable per-accrual allocation provenance, rather than silently reducing principal.
+- Added a no-write reconciliation preflight that proves execute feasibility, binds exact floating-accrual provenance to the preview hash/version, and fails closed before confirmation on stale, duplicate, mismatch, or unavailable-provenance states.
+- Extended the no-write preflight contract to gate ordinary payment posting proposals and added executable plugin coverage for review-required stop behavior.
+
+## v0.3.67 - 2026-09-01
+
+### Added
+- Added an explicit MCP preview/execute workflow to reverse floating-loan payments atomically while materializing missing interest accruals through the original payment business date, with reversal lineage, audit metadata, stale-preview protection, and idempotent retry handling.
+- Added the closed, audited `payment.restore.schedule-backfill` MCP command to repair only derived installment aggregates for one verified posted exact-payment restore.
+
+### Changed
+- Documented the implementation plans for exact-payment restore schedule repair, schedule-deferral visibility, and derived scheduled installments alongside their completed code paths.
+
+### Fixed
+- Exact scheduled-payment restores now update the linked installment aggregate from the immutable restored components.
+- Fixed fixed-installment schedule rounding so small interest remainders cannot create a negative final component.
+- Added deferral-reason visibility for both sides of a deferred schedule entry, plus responsive loan-list layout refinements.
+- Fixed weekly/monthly count-only loan terms to derive their nominal installment from the existing annual-rate calculation instead of rejecting the request, and persist their rate-derived versus fixed-total mode so activation preserves exact rounding.
+
+## v0.3.66 - 2026-08-31
+
+### Added
+- Added custom fixed-total weekly and monthly loan schedules, preserving exact borrower-agreed installment counts and amounts while deriving scheduled interest from the total repayment.
+
+## v0.3.65 - 2026-08-28
+
+### Added
+- Added a dashboard summary of today’s expected borrower collections by floating-interest and repayment cadence, with exact per-borrower amounts and no overdue balances or penalties.
+- Added today’s expected collections by active collection intermediary, including each intermediary’s assigned borrowers and amounts.
+
+## v0.3.64 - 2026-08-26
+
+### Added
+- Added an auditable deferral-count summary card to the loan repayment schedule, sourced from the deferral ledger.
+
+### Fixed
+- Fixed scheduled-loan payment deferral rollback caused by updating immutable contract installment counts.
+- Displayed deferral request errors inside the confirmation dialog.
+
+## v0.3.63 - 2026-08-26
+
+### Added
+- Added the approved design for append-only scheduled-loan payment-start amendments, preserving active contractual schedule rows while supporting preview, confirmation, execution, and compensating reversal.
+- Added a test-first implementation plan for the payment-start amendment workflow, including persistence, projections, REST/MCP, UI, plugin synchronization, and deployment verification.
+
+## v0.3.62 - 2026-08-25
+
+### Added
+- Added `payment.restore.create`, creating one auditable linked draft so operators can finalize a newly supplied original slip before previewing and exactly restoring a mistakenly reversed payment.
+
+### Changed
+- Updated exact payment restoration to require finalized evidence on the linked draft and post that evidence-bearing child, while retaining the reversed source and normal duplicate safeguards.
+
+## v0.3.61 - 2026-08-25
+
+### Added
+- Added `payment.restore.preview` and `payment.restore.execute` for exact, audited restoration of a mistakenly reversed payment as a linked child intake, preserving original principal/interest/fee/penalty components and source evidence lineage.
+
+## v0.3.60 - 2026-08-25
+
+### Added
+- Added an auditable REST and MCP preview/execute workflow for cancelling active loans as `unfunded` only when actual disbursement and effective posted payment history are both zero, with stale-preview protection, idempotency, schedule cleanup, and append-only audit metadata.
+
+## v0.3.59 - 2026-08-25
+
+### Added
+- Added daily installment deferral with append-only source/replacement schedule history, idempotent audited execution, and schedule UI support for fully unpaid installments while showing partial payments explicitly.
+- Added closed MCP preview/create/list tools for attaching an active funding profile or drawdown to an active non-terminal loan after activation, with strict public schemas, idempotency, audit metadata, and a synchronized plugin contract.
+
+## v0.3.58 - 2026-08-25
+
+### Added
+- Added the approved design for batch payment capture and multi-item evidence MCP operations, reducing multi-slip orchestration while retaining atomic preview and explicit execution.
+- Added a test-first implementation plan for compact batch capture and multi-item evidence MCP operations.
+- Added compact multi-slip batch capture and batch evidence MCP tools, preserving one atomic preview and explicit execution.
+
+### Changed
+- Updated the dashboard footer to display the current CreditSync and plugin versions.
+
+### Fixed
+- Kept captured payment bank-reference hashes compatible with existing duplicate detection.
+
+## v0.3.57 - 2026-08-24
+
+### Fixed
+- Applied renewal settlement to the old loan schedule and economic rollup so renewed contracts close at ฿0.00.
+
+## v0.3.56 - 2026-08-24
+
+### Fixed
+- Restored MCP loan previews for daily floating-interest contracts, including first-day interest deduction and exact net borrower payout fields.
+- Added a guarded, idempotent backfill script for renewal-funded final-installment settlement records.
+
+## v0.3.55 - 2026-08-24
+
+### Fixed
+- Recorded renewal-funded final-installment settlement in the immutable payment ledger and history, prevented renewed loans from appearing overdue, and added reversal support.
+
+## v0.3.54 - 2026-08-24
+
+### Changed
+- Increased renewal watermark contrast with multiply blending so the finance illustration remains visible over the light summary card background.
+
+## v0.3.53 - 2026-08-24
+
+### Changed
+- Increased finance watermark opacity in renewal summaries so the background illustration is visibly present in both preview and exported/copied images without obscuring financial text.
+
+## v0.3.52 - 2026-08-24
+
+### Fixed
+- Embedded the renewal finance watermark into exported and copied PNG summaries so it remains visible after rasterization.
+
+## v0.3.51 - 2026-08-24
+
+### Changed
+- Increased the renewal summary finance watermark visibility while keeping the financial text readable.
+
+## v0.3.50 - 2026-08-24
+
+### Changed
+- Added vertical padding and spacing around the renewal summary net-cash highlight for clearer separation from adjacent rows.
+
+## v0.3.49 - 2026-08-24
+
+### Changed
+- Softened the net-cash summary highlight to a lighter blue-gray frame while preserving the prominent amount and separator.
+
+## v0.3.48 - 2026-08-24
+
+### Added
+- Added a subtle finance watermark and emphasized net cash in customer renewal summary images, with direct image-copy support alongside PNG download.
+
+### Fixed
+- Updated the daily-renewal panel regression assertion for the current independent renewal and first-payment date request contract.
+
+## v0.3.47 - 2026-08-24
+
+### Added
+- Added a test-first implementation plan for anchored floating advance-interest collection, including exact period provenance, separate zero-default penalties, settlement behavior, MCP/plugin synchronization, and correction of the reversed THB 600 receipt.
+
+## v0.3.46 - 2026-08-24
+
+### Added
+- Added the approved design for anchored floating advance-interest collection, distinguishing prepaid period coverage from arrears interest, explicit zero-default penalties, settlement treatment, and append-only payment correction.
+
+## v0.3.45 - 2026-08-24
+
+### Added
+- Added explicit daily-renewal effective dates and independent first-payment dates across the database, service, REST/MCP contracts, frontend, and CreditSync plugin guidance.
+
+## v0.3.44 - 2026-08-24
+
+### Added
+- Added localized editing for intermediary aliases while preserving the rest of the loaded profile after a partial update response.
+
+## v0.3.43 - 2026-08-24
+
+### Changed
+- Updated the loan list to a maximum three-column card grid with floating responsive borrower navigation showing real names, contract counts, borrower tags, and overdue-payment indicators with smooth section scrolling.
+
+## v0.3.42 - 2026-08-24
+
+### Added
+- Added the approved design for explicit daily-renewal effective dates and independent payment-start dates, including backdated safety validation, frozen preview/execute semantics, MCP/plugin contract changes, and verification coverage.
+
+## v0.3.41 - 2026-08-24
+
+### Added
+- Added a localized intermediary-profile name editor with audited backend update integration and regression coverage.
+
+## v0.3.40 - 2026-08-23
+
+### Added
+- Added an authenticated application footer with a Changelog link and visible CreditSync, MCP schema, and Plugin release versions.
+
+### Fixed
+- Defaulted loan-agent effective dates to the loan start and prevented selecting an earlier date in the agreement dialog.
+
+## v0.3.39 - 2026-08-23
+
+### Added
+- Added closed MCP payment-batch tools, recovery flags, plugin guidance, and six batch eval scenarios for inspect, preview, one-time confirmation, atomic execution, and stop-all review boundaries.
+
+### Changed
+- Synchronized the CreditSync plugin contract and validator at version 7.4.0 for the atomic scheduled-loan payment batch workflow.
+- Added a localized frontend atomic-batch editor/model with exact decimal totals and explicit preview/execute confirmation controls.
+- Documented operator recovery flags, stop-all batch semantics, and post-execution verification in the README and plugin skills.
+- Updated the plugin README and approved implementation plan to reflect the completed 7.4.0 batch workflow.
+- Ignored local agent workspace metadata and the transient `note.txt` secret file.
+
+### Fixed
+- Narrowed the latest batch preview locally before checking warning and allocation readiness, keeping the frontend TypeScript build safe under strict null checks.
+
+## v0.3.38 - 2026-08-23
+
+### Added
+- Persisted each renewal's explicit settlement policy and frozen composition, with tenant-safe immutable adjustment lines for reasoned charges and waivers.
+- Added one exact Decimal renewal-composition kernel that defaults daily renewals to the old contract's full interest, preserves stored payment allocation, supports structured charges/waivers, and returns backend-authoritative payout or collection results.
+- Added configurable renewal previews with a closed REST contract, explicit accrued-interest alternative, ordered structured adjustments, one-release legacy waiver adaptation, and stale-state hashing over payments, reversals, funding, due charges, policy, composition, Bangkok date, and expiry.
+- Added atomic full-interest renewal execution with component-level accounting entries, immutable manual-line provenance, explicit collection confirmation, exact retry behavior, and append-only compensating reversal of both accounting and manual adjustment rows.
+- Added a tenant- and portfolio-scoped renewal summary read model and REST endpoint that returns persisted composition, complete payment detail, safe borrower/contract/replacement fields, and preview/executed/reversed watermark state without financial writes.
+- Exposed configurable daily-renewal settlement policies, structured adjustments, exact frozen composition, and explicit collection confirmation through the closed MCP contract and synchronized CreditSync plugin 7.4.0 workflow and evals.
+- Added a localized manual renewal UI that defaults to full-contract interest, accepts reasoned adjustment rows, invalidates approval after edits, renders backend-owned payment/composition values, and requires a separate collection acknowledgment.
+- Added deterministic 1080×1350 preview/executed renewal summary images with safe typed data, explicit watermarks, bounded payment history, localized display, and presentation-only PNG download.
+- Added all-or-nothing batch execution that reuses the existing payment posting kernel inside one transaction, carries confirmation/idempotency context, and records batch audit lineage.
+- Added authenticated REST endpoints for creating, reading, editing, previewing, cancelling, and executing payment batches with closed request schemas.
+- Added versioned batch previews with stable state/preview/confirmation hashes, explicit whole-batch allocations, evidence readiness gating, and stale prior previews.
+- Added tenant-scoped payment batch creation, item membership, safe reads/cancellation, and versioned preview persistence over existing payment intakes.
+- Added a bounded deterministic joint exact-combination solver for multi-slip payment batches, including ambiguity, exact decimal, advance, and solver-limit safety handling.
+- Added tenant-scoped atomic payment batch tables with versioned previews, exact allocation records, command idempotency, and database immutability guards for posted batches.
+- Added the task-by-task implementation plan for atomic multi-slip and multi-loan payment batches, covering schema immutability, deterministic exact allocation, one-time semantic confirmation, all-or-nothing posting, MCP/plugin synchronization, localized editing, and full financial verification.
+- Added the approved atomic batch-payment design for multi-slip and multi-loan exact allocation, whole-batch prompt editing, one-time semantic confirmation, and all-or-nothing posting with finalized evidence and append-only audit history.
+- Added the approved design for an operator-selectable daily-loan renewal policy that defaults to full-contract interest, supports reasoned manual charge/waiver lines, exposes one backend-authoritative preview through Web UI and MCP, and produces deterministic customer summary images.
+- Added the task-by-task implementation plan covering exact renewal composition, immutable ledger records, REST/MCP contracts, manual UI controls, deterministic PNG export, and full financial verification gates.
+
+### Changed
+- Updated loan agent agreements with localized role selection, a right-aligned datetime picker action, and numeric-only commission input that supports zero-commission collection agents.
+- Replaced the loan-agent role dropdown with accessible selectable cards, including a direct-collection option that locks commission at 0%.
+
+### Fixed
+- Updated production mixed-lineage verification and migration test timing for the combined migration journal tail while retaining exact historical 53-row validation.
+- Corrected the forward atomic-batch immutability trigger migration so posted allocation updates inspect their preview relationship instead of a nonexistent batch column.
+- Corrected the shared trigger implementation to resolve row-specific OLD fields safely across batch, item, preview, and allocation tables.
+- Returned batch-post audit metadata through MCP and kept the all-tools adapter and migration reconciliation tests aligned with the added batch migrations.
+- Allowed audited commission-participant agreements at 0% through the service and PostgreSQL constraint, with migration and regression coverage.
+
+## v0.3.37 - 2026-08-21
+
+### Added
+- Added tenant-safe lineage, fail-closed preview eligibility, and atomic idempotent execution for reposting a fully compensated, finalized-evidence-backed reversed payment into one append-only posted child while retaining the reversed source and its evidence unchanged.
+- Exposed repost source/child UUID lineage across payment intake reads and loan payment history, and synchronized the closed MCP contract and CreditSync plugin 7.3.0 guidance.
+- Added localized source/child repost badges and navigation in Payment Inbox and loan repayment history without duplicating evidence or recalculating allocations in the browser.
+- Added audited, idempotent `payment.reconcile.preview` and `payment.reconcile.execute` MCP workflow for reviewed historical `needs_review` intakes, restricted to interest-only allocation with append-only provenance and no principal reduction.
+- Added closed MCP schemas and synchronized the private CreditSync plugin contract and payment-reconciliation skill for preview hash, balance-version, expiry, confirmation, and reason safety boundaries.
+- Added authoritative affected-loan state hashing after deterministic locks, active-source compensation guards, floating accrual provenance, and database immutability triggers for executed reconciliation records.
+
+### Fixed
+- Fixed the bank-drawdown migration integration test hanging while a rejected Postgres.js query was owned by Bun's promise matcher, preserving the database rejection assertion and bounding connection shutdown.
+- Aligned weekly floating-interest correction regression coverage with append-only compensating reversal semantics so fully compensated repayments no longer reduce any corrected principal snapshot.
+- Fixed commission-participant MCP writes and lists to project service-only intermediary display fields out of the strict frozen public contract.
+- Kept the real-adapter MCP all-tools scenario within posted-payment attribution boundaries by reversing its attribution before reversing the source payment.
+- Extended the real-adapter MCP regression to execute the previously uncovered contract, draft deletion, payment-start amendment, and interest-only reconciliation tools through valid lifecycles.
+- Fixed MCP reconciliation execution to consume the idempotency key from command context after the protocol boundary strips command metadata from handler input.
+- Included reconciliation public IDs in MCP audit lookup so successful executions can return their required verified audit metadata.
+- Kept historical production-schema, mixed-lineage reconciliation, and settlement verification compatible with the exact current commission, replacement, payment-start, reconciliation/repost journal tail and settled payment-health projections, restoring the shared disposable database after destructive lineage fixtures.
+
+## v0.3.36 - 2026-08-21
+
+### Fixed
+- Fixed MCP loan payment-history inspection to return its documented `{ loanPublicId, items }` response and added real-adapter regression coverage.
+- Fixed MCP payment reversals for floating-loan penalty reconciliation by supplying the stable internal command idempotency key required by the ledger.
+- Fixed floating accrual correction to ignore interest allocations whose repayments have already been reversed, preserving immutable reversal history while allowing audited reprojection.
+- Allowed floating accrual correction to retain zero-value legacy penalty snapshots, which do not represent mutable penalty assessments.
+- Fixed floating principal snapshots to exclude repayments that already have compensating reversals.
+
+## v0.3.35 - 2026-08-21
+
+### Changed
+- Added contextual icons to each daily repayment term on Loan Detail for faster visual scanning.
+
+## v0.3.34 - 2026-08-21
+
+### Changed
+- Updated Loan List contract cards to show shortened contract IDs with a copy action for the full ID.
+
+## v0.3.33 - 2026-08-20
+
+### Added
+- Added the approved design and implementation plan for auditable MCP payment reconciliation.
+
+## v0.3.32 - 2026-08-20
+
+### Fixed
+- Fixed backdated floating-payment reconciliation after a later payment was reversed by ignoring compensated payment allocations while preserving immutable reversal history.
+
+## v0.3.31 - 2026-08-19
+
+### Added
+- Added preview/execute/reverse support for floating-to-floating loan restructures, including projected settlement balances, carried opening components, replacement rate periods, and separate additional-principal disbursement drafts.
+
+### Changed
+- Updated floating payment allocation to apply carried penalty, fee, and interest before current floating obligations, and synchronized restructure guidance with the MCP contract.
+- Floating restructure top-ups now deduct advance interest only from the additional principal and start the increased daily collection on the following day.
+
+### Fixed
+- Fixed restructured loans appearing in the active collection list; they now remain visible under loan history with their replacement lineage while the replacement loan remains the collection target.
+- Fixed the Loan List payment-health projection for configured floating loans so due-today and overdue daily interest appears without requiring a posted payment or mutating accrual history.
+
+## v0.3.30 - 2026-08-19
+
+### Changed
+- Grouped Loan List cards by canonical borrower while preserving the existing card layout, filters, sorting, navigation, and localized count labels.
+
+## v0.3.29 - 2026-08-19
+
+### Changed
+- Polished Loan List contract cards with responsive composition, stronger overdue/action hierarchy, lighter balance treatment, grouped icon metadata, and clearer agent assignment states.
+
+## v0.3.28 - 2026-08-19
+
+### Fixed
+- Fixed MCP floating-payment posting by deriving and forwarding a stable idempotency key into payment commands, with regression coverage for retry stability.
+
+## v0.3.27 - 2026-08-18
+
+### Changed
+- Redesigned the Loan List contract cards to prioritize collection-critical overdue status, exact arrears, grouped contract terms, consistent localized dates/currency, and actionable unassigned-agent state.
+
+## v0.3.26 - 2026-08-18
+
+### Added
+- Added a localized Loan Detail action and confirmation dialog for deleting abandoned draft loan contracts with a required reason.
+
+## v0.3.25 - 2026-08-18
+
+### Added
+- Added Dashboard analytics for today's actual-versus-expected collection rate, 30-day cash and interest trends, monthly interest performance, deployed principal, and outstanding principal.
+
+## v0.3.24 - 2026-08-18
+
+### Added
+- Added audited, idempotent deletion for unactivated draft loan contracts through REST and MCP, with dependency checks that protect schedules and financial records.
+- Added synchronized frozen 82-tool MCP/plugin metadata and draft-deletion operating guidance.
+
+## v0.3.23 - 2026-08-18
+
+### Added
+- Added the Thai Tesseract training asset and OCR crop-bound clamping for variable-aspect-ratio payment-slip images.
+- Added the tracked TTB So fast funding-source follow-up item to `TODO.md`.
+
+### Changed
+- Refined Thai reversal and compensating-entry terminology across payment, renewal, disbursement, settlement, and audit labels.
+
+## v0.3.22 - 2026-08-18
+
+### Added
+- Added read-only MCP inspection for complete loan contracts, repayment schedules, and payment history.
+- Added independent `paymentStartDate` support for scheduled loans and an audited, idempotent workflow to amend unpaid repayment dates without deleting contracts or posted payments.
+- Added migration 0046 for the loan payment start date and synchronized the frozen 81-tool CreditSync plugin contract.
+
+## v0.3.21 - 2026-08-18
+
+### Added
+- Added backend-calculated repayment schedule summaries for paid, overdue, due-today, and pending installment counts with the exact due-today amount.
+- Added a distinct `ถึงกำหนดชำระ` / `Due` status for unpaid installments on their Bangkok business due date.
+
+## v0.3.20 - 2026-08-18
+
+### Changed
+- Removed the redundant Loan Detail subtitle and restored red destructive styling for overdue repayment statuses while retaining the warning icon.
+
+## v0.3.19 - 2026-08-18
+
+### Added
+- Added localized No. columns, total-record counts, configurable page sizes, and status icons for Loan Detail repayment and payment-history tables.
+
+### Changed
+- Updated repayment status badges so paid installments use a green check state and due-related installments use a yellow warning state.
+
+## v0.3.18 - 2026-08-18
+
+### Added
+- Added localized page-size controls to Loan Detail repayment and payment-history tables with 10, 20, 50, 100, and All options.
+
+## v0.3.17 - 2026-08-17
+
+### Added
+- Extended replacement preview presentation with safe funding labels and complete localized review components for post-refresh reversal.
+- Added owner/manager-only localized Web replacement controls with an exact backend preview, explicit confirmation, stale/blocked errors, separate reasoned compensating reversal, public lineage links, and `Closed — Replaced` list lifecycle treatment.
+- Added frozen 78-tool MCP/plugin support for atomic scheduled-loan replacement preview, explicitly confirmed idempotent execution, and safe compensating reversal with public-only lineage, exact decimal proposal outputs, audit/correlation propagation, and executable stop-boundary evals.
+- Added authenticated, tenant-scoped loan replacement preview, execute, and reversal REST commands with closed public schemas, idempotency/correlation/audit responses, and replacement lineage across loan, list, and borrower-history projections.
+- Added forward migration 0045 for canonical Bangkok-dated loan-replacement proposals, fail-closed legacy backfill, strict database proposal validation, and tenant-scoped execution/reversal audit references.
+- Added forward migration 0044 to harden the loan-replacement ledger with durable execution/reversal request hashes, actor/request/correlation/audit metadata, lifecycle checks, correction reversal provenance, and immutable database guards.
+- Added authoritative atomic scheduled-loan replacement preview, execution, and safe compensating reversal services with tenant-admin authorization, Decimal-safe correction entries, exact preview fingerprints, audit/correlation context, and fail-closed downstream/funding checks.
+- Added transaction-scoped loan activation so composite financial workflows reuse the authoritative schedule and funding calculation without opening a second transaction or duplicating a pre-funded allocation.
+- Added the TDD implementation plan for atomic scheduled-loan replacement, covering append-only corrections, existing-draft activation, `replaced` lineage, reversible execution, synchronized REST/MCP/plugin/frontend delivery, full verification, and controlled production execution.
+- Added the approved design for an atomic, reversible scheduled-loan replacement workflow with a `replaced` terminal status, exact correction records, existing-draft activation, funding linkage, lineage, synchronized MCP/REST interfaces, and fail-closed downstream checks.
+
+### Fixed
+- Preserved exact execution idempotency replay after a later safe reversal and rejected replacement drafts that already contain schedule rows before activation can append duplicate immutable installments.
+- Required explicit `confirmed: true` at every REST, MCP, and service boundary before compensating replacement reversal, and corrected MCP preview annotations to reflect its durable preview/audit writes.
+- Blocked commission participants, intermediary assignments, intermediary collections, and payment attributions from being appended to the cancelled replacement child after a safe reversal.
+- Kept historical schema and migration-lineage regressions forward-compatible with immutable correction rows and additive migrations after their originally pinned catalog tails.
+- Made the legacy-close versus replacement concurrency regression accept either row-lock winner while proving the losing command fails closed and cannot overwrite the committed terminal state.
+- Aligned scheduled-loan replacement presentation across REST, MCP, plugin, and Web by nesting the canonical bank-profile name in the replacement contract, preserving structured correction-warning semantics, honoring nested review-required blockers, formatting Bangkok dates/expiry with Gregorian dates, durably invalidating the list plus both loan-detail queries after execute/reverse, and allowing a fresh preview after reversed lineage reloads.
+- Fixed the frozen MCP `borrower.portfolio` loan schema to expose strict public-only nullable replacement lineage, with real database coverage for active/draft, executed, and reversed replacement history plus fail-closed orchestration scope checks.
+- Normalized closed-schema loan replacement REST validation failures to the stable public DomainError envelope and added exact preview, owner, and cross-tenant access regressions.
+- Made replacement reversal audits capture canonical proposal/reason/request hashes, exact public loan and schedule before/after state, funding provenance, and public correction/allocation compensation IDs; idempotent execution and reversal replays now validate the aggregate's exact persisted audit reference and fail closed on missing or mismatched evidence, while the Drizzle schema preserves migration 0044's terminal audit-evidence constraint.
+- Completed atomic replacement hardening with persisted replay correlations, public-only audits, parent-writer serialization (including legacy close), chained-lineage reversal protection, post-lock preview freshness checks, replacement-draft downstream fingerprints, compensation-aware payment-attribution guards, active-only payout posting, standalone activation isolation, and fail-closed funding/disbursement reversal dependencies.
+- Moved terminal-loan disbursement and funding checks behind transaction row locks so a concurrent replacement cannot race a new payout or allocation write.
+- Hardened loan replacement preview/execution/reversal with authoritative draft schedule calculation, own-capital source validation, source-mismatch checks, deterministic schedule/funding/payment/disbursement locks with post-lock reads, replay-hash conflicts, and terminal-loan write guards.
+- Aligned the append-only replacement-correction Drizzle schema with migration 0042 by removing an undeployed `updated_at` column that prevented correction inserts on a fresh database.
+- Added forward migration 0043 to repair the missing `loan_interest_rate_periods.status` column required by the current schema and floating-loan workflows.
+- Preserved the legacy `canceled` loan status used by renewal workflows alongside the replacement lifecycle statuses.
+
+## v0.3.16 - 2026-08-16
+
+### Added
+- Added the tenant-authorized append-only loan funding allocation service with Decimal-safe previews, source/loan capacity checks, stable locking, audit context, and REST delegation.
+- Added DB-gated bank drawdown service and migration execution coverage for authorization, Decimal credit limits, idempotent lifecycle commands, schedules, notes, and audit context.
+- Added the tenant-scoped bank drawdown draft/activate command service with Decimal schedules, lifecycle metadata, idempotent retries, credit-limit checks, and audit context.
+- Added the implementation plan for Decimal-safe bank funding drawdowns, funding allocation, REST/MCP lifecycle commands, and atomic drawdown-and-allocate workflows.
+- Added the approved design for Decimal-safe bank funding drawdowns, funding allocation, REST/MCP lifecycle commands, and atomic drawdown-and-allocate workflows.
+- Added the approved design for append-only payment unallocated balances, later allocation previews, and compensating reversals.
+- Added the `creditsync-slip-ocr` ZCode agent skill: a Bun/Tesseract.js workflow that OCRs Thai payment slip images (full image plus zoomed date/sender/receiver crops), parses candidate fields, and cross-checks them against borrower payment history and loan schedules before any human-confirmed MCP payment write.
+- Added tabbed Loan Detail views for information, agent commission agreements, payment-source attribution history, and repayment schedule, plus localized agent badges/search on Loan List.
+- Added tenant-scoped REST and a frozen 75-tool MCP/plugin contract for effective-dated loan commission participants, read-only exact commission and reversal previews, and confirmed idempotent append-only payment source attributions with audit/correlation metadata.
+- Added tenant-scoped append-only loan commission participant versions and exact payment source-attribution ledgers, including Decimal-only commission previews, payload-safe idempotency, compensating reversals, and audit-linked immutable database records.
+- Added tabbed Loan Detail views for information, agent commission agreements, payment-source attribution history, and repayment schedule, plus localized agent badges/search on Loan List.
+- Added tenant-scoped REST and a frozen 75-tool MCP/plugin contract for effective-dated loan commission participants, read-only exact commission and reversal previews, and confirmed idempotent append-only payment source attributions with audit/correlation metadata.
+- Added tenant-scoped append-only loan commission participant versions and exact payment source-attribution ledgers, including Decimal-only commission previews, payload-safe idempotency, compensating reversals, and audit-linked immutable database records.
+- Added Active, Done, and All tabs to Loan List with English/Thai labels and client-side status filtering that reuses the existing loan query.
+- Added the approved design for optional loan commission participants, post-payment source attribution, MCP commands, and Information/Agents/Payment History/Repayment Schedule tabs.
+- Added the implementation plan for loan agent commission participants, post-payment attribution, MCP contracts, and tabbed Loan Detail delivery.
+
+### Changed
+- Localized the Loan List empty state to match the selected Active, Done, or All tab scope.
+
+### Fixed
+- Fixed invalid Drizzle migration journal JSON by restoring the separator between funding migrations 0040 and 0041, with a regression check for their ordered metadata.
+- Rejected non-finite bank drawdown decimals and blank idempotency keys, and persisted installment amounts in canonical two-decimal form.
+- Fixed bank drawdown draft credit-limit enforcement to validate and use the bank profile row after acquiring its transaction lock.
+- Fixed bank drawdown activation idempotency hashing, draft status defaults, profile-locked credit-limit rechecks, and explicit fixed-installment repayment mode persistence.
+- Hardened bank drawdown lifecycle commands with tenant-admin authorization, Decimal aggregate credit-limit enforcement, strict input validation, payload-safe draft/activation idempotency, note preservation, and repeatable lifecycle constraints.
+- Aggregated bank-loan schedule interest, fees, and VAT with Decimal-safe rollups when creating or regenerating loans.
+- Calculated bank-loan schedules with Decimal string arithmetic and exact final-principal reconciliation.
+- Enforced canonical posted-payment and owner-scope authorization across payment attribution and commission reads, interpreted agent agreement times in Asia/Bangkok, added backend-authoritative exact commission amounts to repayment-schedule rows, and ordered the commission-participant self-reference after its supporting unique index so fresh database migrations bootstrap successfully.
+- Made confirmed agent and payment-attribution retries reuse command-scoped idempotency keys, removed unsupported per-installment commission placeholders, projected effective current agents in the tenant-scoped Loan List query without frontend fan-out, and preserved inactive intermediary display data for participant history.
+- Hardened commission and payment-attribution ledgers by authorizing idempotent replays before disclosure, returning persisted linked transaction IDs, restricting previews to canonical posted payments, validating strict ISO timestamps, and covering audit context and append-only database guards.
+- Required direct loan commission participant updates and endings to authorize both the loan and linked intermediary within the caller's tenant and owner scope.
+
+## v0.3.15 - 2026-08-16
+
+### Changed
+- Updated `AGENTS.md` to state the current private CreditSync plugin version `7.0.0` with eleven skills, replacing the outdated `2.1.0`/six-skills reference to match the plugin manifest and validator output.
+
+### Fixed
+- Prevented REST-only loan payout and disbursement summary fields from breaking the frozen MCP output contracts, with regression coverage for weekly floating drafts and the full default adapter suite.
+
+## v0.3.14 - 2026-08-16
+
+### Added
+- Added localized Fund Detail helper text clarifying that available own capital includes cash collected from linked loans and excludes cash from unlinked loans.
+- Corrected Task 1 recovered-cash regression expectations for Decimal cent rounding and added coverage that negative-only source allocations do not contribute usage or linked cash.
+- Added RED integration regressions for source-linked borrower cash recovery, partial source-share attribution, unlinked-loan exclusion, and external-liability capacity behavior.
+- Added the TDD implementation plan for recycling all borrower cash collected from source-linked loans into available own-capital capacity while excluding unlinked loans and keeping ROI semantics separate.
+- Added the approved design for recycling all borrower cash collected from source-linked loans into available own-capital capacity while excluding unlinked loans and keeping ROI principal/revenue semantics separate.
+- Added backend-owned exact Loan List receipt summaries using tenant-scoped grouped reads, combining advance-interest deductions with signed repayment and reversal components for interest received and paid-to-date totals.
+- Added the TDD implementation plan for status-aware Loan List receipt summaries, covering tenant-bound grouped Decimal aggregation, advance-interest deductions, signed payment reversals, responsive active cards, checked paid cards, locale parity, and full backend/frontend verification.
+- Added the approved status-aware Loan List card received-totals design: non-paid cards keep outstanding and original principal on one responsive row with exact interest-received and paid-to-date summaries, while paid cards replace the zero balance with a checked `PAID` state and show only original principal and interest received; receipt totals include advance-interest deductions and signed posted-payment reversals.
+- Added the approved Loan Detail borrower-tags, repayment-schedule-table, and repayment-history-table designs and implementation plans for the corresponding frontend presentation work.
+- Added the approved CreditSync Plugin design for conditional payment-slip evidence: supplied images must be checksum-verified, uploaded, finalized, and ready before payment preview/post, while data-only payments remain supported without evidence.
+- Added localized floating-loan detail fields for advance interest and net payout, plus a non-mutating warning when the backend-owned effective posted gross payout differs from the contract net payout.
+- Added a backend-owned floating-loan payout summary with exact first-period interest, advance deduction, net borrower payout, and contract dates for loan-detail consumers.
+- Added the TDD implementation plan for floating advance-interest loan details, covering a backend-owned payout summary, posted-payout mismatch presentation, locale parity, and full backend/frontend verification.
+- Added the approved floating advance-interest loan-detail design, keeping contract calculations in the backend and presenting advance interest, net borrower payout, first-period dates, and non-mutating payout mismatch warnings in the Web UI.
+- Added the fail-closed production mixed-lineage reconciliation tool with dry-run default, explicit `--apply`, one outer PostgreSQL transaction, top-level migration statement boundaries, legacy table quarantine/OID preservation, exact journal state machine, and idx30 Bangkok due-group capture.
+- Added hardened prerequisite 0037 as a fail-closed, pending-only borrower ID-card upload-intent lifecycle with tenant foreign keys, tenant-scoped apply idempotency, immutable post-finalization records, and PostgreSQL migration/transition tests; no borrower ID-card service behavior is implemented here.
+- Added the reviewed Task 4 runbook correction with executable checker exit comparison, bounded credential-safe restore, migration hash verification, exact production fingerprints, Compose artifact selection/rollback, full catalog verification, and strict MCP payload/confirmation boundaries.
+- Added the production loan-schema reconciliation runbook with fail-safe backup/restore rehearsal, exact drift gates, migration/deployment checks, rollback guidance, and inspect-first post-deploy financial workflow.
+- Added a read-only loan-origination schema contract and Bun checker that classifies required columns, constraints, and the activation idempotency index without reading loan data.
+- Added the TDD implementation plan for production loan-schema reconciliation, covering a read-only schema contract checker, guarded `0038` repair migration, production-shaped rehearsal, zero-interest daily-loan lifecycle verification, deployment gates, and post-draft disbursement confirmation.
+- Added the approved production loan-schema reconciliation design, covering guarded forward-only drift repair, production-shaped rehearsal, lifecycle and idempotency verification, and separate 4,000.00 THB actual-disbursement tracking for a 7,500.00 THB zero-interest agreement.
+- Added the approved production loan-list schema-compatibility design and TDD implementation plan.
+
+### Changed
+- Implemented exact source-share attribution of linked borrower cash collected in capital-pool funding usage, while preserving external-liability capacity and settlement/ROI behavior.
+- Updated Loan List cards with a responsive non-paid principal row and backend-owned received totals, while paid loans now show a checked `PAID` summary without a zero outstanding balance or paid-to-date total.
+- Enforced conditional payment-slip evidence ordering in the CreditSync plugin guidance: supplied images must be uploaded and finalized before payment preview/post, while no-image data-only capture remains supported.
+- Added the implementation plan for conditional CreditSync payment-slip evidence ordering, including data-only compatibility, unchanged-byte upload checks, fail-closed evidence stops, and executable MCP eval coverage.
+- Documented the floating-loan detail contract summary and posted-payout mismatch behavior, including its non-mutating and posted-only boundaries.
+
+### Fixed
+- Preserved high-precision recovered-cash attribution and invalidated tenant funding caches after intermediary remittance posting, manual approval, and reversal.
+- Added a Loan List regression assertion that keeps zero interest-received and paid-to-date totals visible for non-paid loans.
+- Restricted loan receipt-summary map membership to tenant-owned requested loans and documented the immutable activation-disbursement predicate, with database regressions for foreign IDs and schema state.
+- Added regression coverage proving draft and compensating-reversed payouts are excluded from effective posted-gross summaries and superseded loan-route reads cannot leak a mismatch warning into the next loan.
+- Added Task 3 database-backed regression coverage for the authenticated loan-detail schema repair and the exact zero-interest 75-day daily-loan lifecycle, including loan/disbursement draft audits, activation and posting replay, the posted `4000.00` under-disbursement with exact `-3500.00` variance, and Decimal-checked ledger invariants.
+- Reconciled the production-shaped loan schema through guarded, repeatable migration 0038 with fail-closed exact type/nullable, constraint, and activation-index preflight, zero-violation validation, catalog-preservation fixtures, idempotency indexing, and byte-preserving financial-row tests.
+- Corrected the Task 4 round-3 reconciliation runbook to use exact historical app and PostgreSQL container names, a concrete verifiable writer freeze with recovery, a standalone protected deployment Compose file, production zero-violation and `convalidated` gates, unmasked app stop/remove and rollback recovery, bounded migration evidence, and exact JSON MCP health validation.
+- Corrected the Task 4 production reconciliation runbook to capture checker stderr safely, use executable stdin/heredoc journal verification with intact PostgreSQL literal substitution, deploy explicit reviewed/rollback image tags through a protected temporary Compose override, run the post-migration checker from the reviewed image, enumerate all `NOT VALID` constraint checks, protect logs, and document the frozen MCP draft/idempotency boundary.
+- Made loan-origination constraint compatibility fail closed when either definition is malformed, including when both malformed definitions share the same invalid normalization sentinel.
+- Hardened loan-origination constraint normalization with a full-consumption lexer, bounded PostgreSQL cast handling, and associative same-operator Boolean AST flattening while rejecting unsupported operators and characters.
+- Fixed the loan-origination schema checker to use valid PostgreSQL catalogs, tolerate canonical constraint/index rendering, and reject constrained numeric columns where unconstrained numeric is required.
+- Preserved Boolean grouping while canonicalizing PostgreSQL loan-constraint output, including redundant parser parentheses, casts, and `IN`/`ANY (ARRAY[...])` rendering.
+- Made the loan list use deployed-compatible explicit loan and legacy floating-accrual projections, deriving floating payment health from tenant-bound persisted daily accruals without generalized balance projection or financial writes, while preserving scheduled-loan health, borrower labels, exact money strings, and the localized retryable error state.
+
+## v0.3.13 - 2026-08-15
+
+### Added
+- Added the approved Compact Rail dashboard sidebar implementation and its implementation plan, with desktop-only collapse to a 72px icon rail, defensive local-storage persistence, localized accessible controls (`Collapse sidebar` / `Expand sidebar`), unchanged mobile drawer behavior, and preserved theme/account/language reachability.
+- Added the approved design and TDD implementation plan for Loan List borrower labels, combining confirmed aliases and borrower tags in compact cards with label-aware search, tenant/portfolio scope, and immediate cache freshness after alias changes.
+- Added the TDD implementation plan for the approved revolving funding ledger, covering additive immutable event schema, exact fee/VAT/interest previews, manual repayments and corrections, active-loan allocation, localized Web workflows, synchronized MCP/plugin delivery, dry-run setup, and full verification.
+- Added the approved design for an append-only revolving funding ledger covering credit-card and personal-loan drawdowns, fee-only VAT, manual provider charges and repayments, exact funding allocations, compensating corrections, and synchronized Web/MCP workflows.
+- Added the approved app-wide table pagination design, standardizing server-side pagination for persistent collections, client-side pagination for authoritative previews, localized shared controls, URL-restorable state, and exact financial-value preservation.
+- Added the TDD implementation plan for app-wide table pagination, covering shared controls, paged REST reads, URL and preview state, complete verification gates, supervised tmux execution, integration, and deployment.
+- Added confirmed borrower aliases and borrower tags to loan-list DTOs and a locale-aware model for label normalization, deduplication, overflow, and search matching.
+- Added loan card borrower-label rendering with up to three visible badges and a localized overflow count, with search matching across hidden labels.
+
+### Changed
+- Simplified desktop and mobile sidebar chrome to app mark plus navigation toggle, moved the account menu into the sidebar footer, and removed duplicate theme and language controls now available on the Settings page.
+
+### Fixed
+- Allowed the Loan List heading actions to wrap below the title when horizontal space is constrained and return inline when space is available.
+- Made confirmed borrower aliases deterministic in creation order and kept the new borrower-label regression files whitespace-clean.
+
+## v0.3.12 - 2026-08-14
+
+### Added
+- Added the detailed implementation plan for the approved supervised tmux and `gpt-5.3-codex-spark` delegation policy, including RED/GREEN policy checks, exact `AGENTS.md` copy, verification, and commit boundaries.
+- Added the approved design for supervised tmux delegation of substantial implementation work to `gpt-5.3-codex-spark`, retaining planning in the user-selected model with explicit fallback, worktree isolation, status, and completion-verification rules.
+- Added the v0.3.12 TDD implementation plan for tenant-bound borrower identity-card signed uploads, Codex-extracted identity application, synchronized Web/REST/MCP delivery, and CreditSync Plugin `8.0.0`'s 67-tool frozen contract.
+- Added the approved design for tenant-bound borrower identity-card uploads through MCP, using signed prepare/finalize storage verification followed by idempotent application of Codex-extracted identity fields with Thai checksum validation and masked audit provenance.
+- Added exact compensating floating-settlement reversal across REST, MCP Plugin `7.0.0`'s 64-tool frozen contract, and localized Web confirmation, preserving negative transaction/allocation/fund provenance and restoring loan/accrual state only when no downstream activity exists.
+- Added localized Loan Detail and intermediary-profile transfer ledgers for all three intermediary money paths, exact split payouts, sender/payee/date/reference/status inspection, every finalized slip, zero-variance/evidence-ready confirmation, and idempotent posting.
+- Added a localized responsive intermediary directory and profile workspace with canonical-name/alias search, profile creation, exact managed-loan portfolio totals, Loan Detail links, historical assignments, masked payment destinations, unreconciled-group warnings, and retained collection/remittance access.
+- Added 14 closed-schema intermediary profile, masked-bank-account, assignment, managed-loan, and multi-leg disbursement MCP tools plus CreditSync Plugin `6.0.0` orchestration for the complete 63-tool union contract: exact three-slip evidence, weekly settlement, main-authoritative restructure/waiver flows, zero-variance confirmation, stale-state stops, and compensating reversal.
+- Added localized Web controls and backend-owned previews for daily or weekly floating-interest policy origination, exact due-versus-accruing loan summaries, and explicitly confirmed settlement with automatic stale-preview refresh.
+- Added tenant-safe intermediary bank accounts and effective-dated loan assignments, plus exact intermediated disbursement groups, split transfer events, multi-evidence persistence, and expiring reconciliation previews with overlap, idempotency, uniqueness, and immutability protections.
+- Added audited intermediary profile APIs for confirmed-alias reuse, masked reusable bank accounts, effective-dated assignment history, and role-filtered active managed loans with strict tenant-safe command contracts.
+- Added strict authenticated APIs for audited intermediary disbursement groups and split transfer events, deriving exact contractual targets from immutable activation snapshots and persisting versioned reconciliation previews with role-level under/over warnings, explicit retained balances, evidence readiness, and automatic stale-proposal invalidation.
+- Added tenant-scoped multi-slip evidence for every intermediary transfer event with signed PUT preparation, exact MinIO ownership and checksum finalization, immutable finalized links, redacted audit provenance, and short-lived on-demand access descriptors.
+- Added explicitly confirmed atomic posting and compensating reversal for zero-variance intermediary disbursement groups, linking exact borrower payout and activation-time advance-interest projections by public provenance IDs while preserving optional evidence, collection/remittance ledgers, and Decimal-only held balances.
+
+### Changed
+- Routed substantial approved implementation work through supervised tmux Codex sessions using `gpt-5.3-codex-spark`, with current-model fallback, isolated worktree handoff, explicit authority boundaries, progress supervision, and independent completion/integration verification.
+- Replaced nested repayment-schedule cards on loan details with a compact responsive table and localized column headers.
+- Unified Loan Detail repayment history into the same compact responsive table style as the repayment schedule, with exact non-zero allocation summaries.
+- Surfaced up to three borrower tags with an overflow count in the Loan Detail borrower summary.
+
+### Fixed
+- Kept Payment Inbox filters within the narrow review panel at tablet widths and explained pending evidence uploads inline instead of presenting an unusable slip-preview action.
+- Synchronized the generated `0036` Drizzle snapshot with the settlement reversal's immutable original-interest and next-due-date columns, with a static lineage regression that prevents future add-column drift.
+- Preserved exact original settlement fund-ledger coordinates during compensating reversal after later funding reallocation, and normalized every executable plugin eval result and stable error fixture against the complete frozen MCP schemas without scenario exemptions.
+- Bound delayed floating-settlement reversals to the Bangkok reversal date, restored exact pre-execution loan rollups from immutable preview snapshots, blocked post-settlement rate-timeline authority and paid-loan rate mutations under the loan lock, and validated settlement-reversal eval fixtures against the complete frozen MCP output schema.
+- Included authoritative due floating penalties in settlement previews, stale balance versions, execution allocations, materialized penalty provenance, and exact close-zero checks.
+- Included authoritative due floating penalties in payment-preview availability so an exact penalty-plus-interest-plus-principal receipt previews and posts with full Decimal conservation without making accruing-not-due interest normally payable.
+- Made public schedule due dates follow normalized Bangkok business dates independently of the runtime timezone, aligned settled floating-loan REST coverage with its exact informational accruing-interest projection, restored real time after frozen-clock floating regressions, and restored the fully migrated disposable schema after isolated historical-migration tests without masking their original failures.
+- Made main-compatible MCP loan activation retries derive a stable per-loan fallback idempotency key across requests, restored all 18 weekly floating allocation/penalty/reversal/immutability regressions on current service projections while retaining the legacy-close rejection, and synchronized the private plugin catalogue and validator to all 11 shipped skills.
+- Reconciled authenticated MCP input/output schemas and direct service adapters across legacy single-payment activation/restructure and generalized floating policies, retained request-scoped compatibility for activation callers without an explicit idempotency key, and synchronized the frozen plugin contract and eval catalogue to the actual 63 advertised tools.
+- Accepted generalized floating-interest policies on loan-restructure REST previews while retaining strict nested-key rejection, and preserved legacy daily `start_next_day` boundaries across projected and materialized accruals without changing deducted-first-day or generalized weekly behavior.
+- Semantically composed main's single-payment and restructure contracts with the generalized weekly-floating lifecycle, preserving legacy floating-policy compatibility, immutable advance-period correction bases, exact audited settlement/accrual allocation provenance, pure payment-health reads, and carried-balance and compensating-reversal guards.
+- Corrected additive `0036` upgrade projection to derive each floating accrual's contractual period amount from its immutable principal/rate snapshots with exact two-decimal half-up rounding, covered for both percentage and per-thousand rates, and to retain weekly versus daily units on existing rate periods.
+- Preserved exact per-source multi-fund payment and settlement attribution at the 29-integer-digit public-money boundary by applying the shared high-precision Decimal context across allocation aggregation, ratio calculation, cent rounding, and final-source remainder conservation.
+- Preserved full 29-digit Decimal precision across floating-interest accrual, correction, settlement preview, stale checks, execution, and funding-ledger allocation; rejected floating loans from the legacy closing-summary and direct-close routes; and enforced append-only accrual facts at the PostgreSQL boundary while retaining service-owned payment lifecycle updates and compensating replacements.
+- Required public audit and correlation UUIDs on intermediary bank-account, assignment-create/end, and transfer-evidence prepare/finalize MCP results, including operation-specific idempotent replay metadata and fail-closed missing-audit handling, while preserving the existing REST response DTOs.
+- Made the literal Bun frontend test gate preload a Bun-compatible DOM and Testing Library matcher setup, and aborted/rejected superseded actual-disbursement ledger reads so a failed newer refresh cannot leave an intermediary post pending.
+- Made superseded actual-disbursement reads reject instead of falsely completing, generation-guarded stale read errors while clearing current errors on success, and invalidated deferred post-balance scope controllers on navigation or unmount.
+- Unified initial and imperative actual-disbursement reads behind scope/generation ordering, moved intermediary navigation scope updates before passive effects, and made profile transfer tests deterministic with real group-detail fixtures and scoped warning assertions.
+- Made intermediary post completion await installation of the refreshed Loan Detail disbursement ledger, guarded deferred profile-balance refreshes against navigation scope changes, cleared blocking refresh warnings only after complete same-key retry success, and aligned Web preview-warning types with backend objects.
+- Recomputed intermediary proposal expiry from the live clock on every proposal change, added explicit expired-proposal refresh/re-review, adopted authoritative group and parent financial projections after posting, and blocked stale presentation when that refresh fails.
+- Bound intermediary-transfer confirmation and command keys to the exact unexpired proposal ID/hash, refreshed stale proposals for mandatory re-review, cleared prior-profile transfer actions immediately on scope changes, and invalidated pending signed-slip resolution on component unmount.
+- Discarded signed transfer-evidence descriptors when their preview closes, including in-flight resolutions, so reopening always requests a fresh short-lived URL.
+- Included inactive exact canonical-name and confirmed-alias matches in intermediary search-before-create candidate review, with localized lifecycle status and automatic invalidation of reviewed candidates after any proposed identity edit.
+- Preserved 29-digit intermediary portfolio totals with the shared high-precision financial decimal path, replaced declared group-retained summaries with the authenticated authoritative held-balance projection, required exact canonical-name/alias candidate review before profile creation, localized directory statuses and retryable failures, and distinguished missing profiles from service outages.
+- Required literal confirmation in the intermediated-disbursement eval harness, validated retained-balance calls and every intermediary-flow input/output against the full frozen JSON schemas, bound each supplied slip's evidence/file UUID and immutable MIME/size/SHA-256 across prepare, ready retry, finalize, and safe inspection, verified signed-upload descriptors against unchanged fixture bytes, and stopped before preview/post on any event or evidence binding mismatch.
+- Prevented duplicate intermediary payouts across distinct groups for one active loan, rejected posting after loan closure, required group-level reversal for intermediary-linked payouts, reserved internal payout and compensating keys from public commands, aligned loan-before-event locking across disbursement flows to prevent cross-workflow deadlocks, and exposed source transfer public IDs on reversal results and detail reads.
+- Canonicalized reusable intermediary bank identity on required uppercase bank codes with safe legacy ambiguity stops, rejected fully exposed four-digit account masks, replayed original assignment-create audit snapshots after later ends, and grouped multi-role managed portfolios by loan to prevent double-counting.
+- Preserved exact loan-detail and settlement money strings beyond JavaScript's safe-integer range, labeled rate timelines by their locked daily/weekly contract, and attached stable idempotency keys to Web loan activation commands.
+- Removed native-number conversions from bank-loan allocation state, loan closing, funding matching, loan origination calculators, and the Fund detail allocation summary; aligned REST, MCP, backend, and frontend public money to the existing 32-character unsigned contract (29 integer digits plus two decimals), kept daily interest-rate input distinct from that money-length limit, retained isolated 100-digit Decimal contexts for intermediate calculations, rejected result carry beyond the public bound, and made malformed allocation input stop with localized validation instead of crashing the page.
+- Refreshed authoritative loan and profitability state after Web settlement, hid stale accounting when that refresh fails, kept the post-write refresh warning accessible inside the open confirmation dialog, surfaced initial preview errors beside the action, localized loan statuses, scoped non-refundable warnings to advance deductions, and preserved command keys across safe retries while requiring a new key after stale re-preview.
+- Hardened intermediary assignment and disbursement persistence against whitespace-only command, provenance, and identity values including tabs and newlines, nullable reversal evidence, and PostgreSQL special numeric money values while retaining exact two-decimal and non-negative invariants where applicable.
+- Rejected intermediated transfer events before write when cumulative role totals or signed variance exceed the public-money contract, closed the reconciliation-preview request body, and serialized assignment ends against existing transfer history so backdating cannot invalidate an accepted event.
+- Closed every intermediary transfer-evidence query contract, rejected expired or over-15-minute storage access descriptors at the service boundary, and verified finalized-evidence retries never inspect storage again.
+
+### Infra
+- Kept the frontend TypeScript 6 build gate operational while the configured `baseUrl` compatibility alias remains in use.
+- Consolidated weekly-floating and intermediary persistence into additive migration `0036` after main's immutable single-payment/restructure `0027`–`0035` lineage, preserving seeded financial rows while validating both clean installation and main-through-`0035` upgrade paths.
+
+## v0.3.11 - 2026-08-13
+
+### Added
+- Added closed-schema floating-loan settlement MCP tools and CreditSync Plugin `3.0.0` orchestration that displays exact close-out components, requires explicit confirmation and idempotency, re-previews stale state, and refuses to refund already-paid advance interest.
+- Added expiring, balance-versioned floating-loan settlement previews and explicitly confirmed idempotent close-out execution that collects exact due and accrued-not-due interest, preserves non-refundable advance history, serializes concurrent payments with row locks, and retains compensating reversal boundaries.
+- Added period-aware floating-interest accrual with exact weekly daily projections, immutable rate/principal segment snapshots, Bangkok boundary due promotion, due-only normal payment allocation, and period-grouped payment health.
+- Added strict generalized floating-interest origination with exact weekly previews, editable draft policy snapshots, idempotent activation, and atomic non-refundable advance-interest coverage across seven immutable paid daily snapshots.
+- Added additive floating period-policy persistence with legacy daily-policy backfill, immutable period/accrual snapshots, and tenant-safe expiring settlement previews.
+- Added a Decimal-only floating-interest period-policy kernel with normalized day/weekly contracts, Bangkok half-open boundaries, and cumulative-difference daily accrual rounding.
+- Added ordered TDD implementation plans for generalized floating weekly interest and exact settlement, followed by intermediary profiles, loan assignments, multi-leg disbursement reconciliation, and independently viewable transfer evidence.
+- Added the approved design for exact daily-prorated floating weekly interest, non-refundable one-period advance interest, intermediary profiles and loan assignments, and fully evidenced multi-leg disbursement reconciliation.
+- Added the approved design for borrower-scoped sequential daily-loan collection queues, independently priced follow-on advances, derived downstream collection dates, and previewed append-only payment holidays with optional charges.
+- Added a shared accessible Radix tooltip primitive with keyboard, pointer, and touch interaction support for concise contextual guidance.
+- Added the v0.3.11 TDD implementation plan for semantic fund-metric icons, accessible localized definition tooltips, clarified net-cash labels, and clean frontend deployment.
+- Added the approved design for semantic fund-metric icons and accessible localized definition tooltips across settlement, profitability, and reconciliation summaries.
+- Added a Decimal-only funding-attribution kernel that reduces signed allocation history into exact positive per-source shares before attributing borrower payment components.
+- Added the v0.3.11 TDD implementation plan for exact direct-capital fund profitability, historical payment attribution, contract-to-ledger reconciliation, localized presentation, and read-only production verification.
+- Added the v0.3.11 TDD implementation plan for post-activation append-only multi-source loan funding across database invariants, shared services, REST, MCP/plugin, localized Web controls, and guarded historical allocation.
+- Added the approved design for exact direct-capital and drawdown fund-source profitability, full historical payment attribution, and read-only contract-to-ledger revenue reconciliation without mutating financial history.
+- Added the approved design for post-activation, append-only multi-source loan funding allocation with compensating adjustments, exact preview/execute workflows, and synchronized Web and MCP visibility.
+- Added exact source-attributed collected interest to funding-usage rows, including proportional multi-source allocation and append-only reversal handling.
+- Added the v0.3.11 TDD implementation plan for a responsive flat funding-usage list with localized semantic statuses and exact source-attributed collected interest.
+- Added the approved responsive fund-usage flat-list design with localized semantic statuses and exact source-attributed collected interest that remains correct across multi-source funding and compensating reversals.
+- Added a strict `loan.disbursement.update` MCP PATCH tool for audited, non-empty partial edits to draft-only payout metadata while preserving finalized evidence, with synchronized CreditSync Plugin 2.4.0 skills, contract, and eval stop gates.
+- Added the v0.3.11 TDD implementation plan for the strict MCP disbursement-draft PATCH tool, plugin 2.4.0 synchronization, and production deployment.
+- Added the approved design for a strict, audited MCP PATCH tool that updates only editable loan-disbursement draft fields, preserves evidence, and requires re-inspection plus fresh post confirmation.
+- Added the v0.3.11 TDD implementation plan for repairing and deploying the strict `intake.get` evidence contract with synchronized plugin validation.
+- Added the approved design for repairing the strict `intake.get` evidence contract, regression coverage, synchronized plugin validation, and read-only production verification.
+- Added the approved design and TDD implementation plan for a flat, divider-separated mobile repayment-history list with concise exact allocation summaries.
+- Added the v0.3.11 implementation plan for flat mobile Dashboard repayment queues with divider rows and responsive desktop section containment.
+- Added the approved responsive Dashboard repayment-queue design, using flat divider-separated mobile lists and desktop section containment without nested item cards.
+- Added the approved design for a Git-backed CreditSync Codex marketplace that tracks `main`, resolves the in-repository plugin path, and documents explicit snapshot refresh and reinstall behavior.
+- Added the v0.3.11 implementation plan for marketplace identity validation, Git installation and update documentation, and full plugin-package verification.
+- Added the Git-backed `creditsync-marketplace` catalog with exact source-path and package validation plus consistent install, refresh, reinstall, and new-task instructions.
+
+### Fixed
+- Required literal confirmation in the floating-settlement eval harness, recorded every exact preview component before confirmation/execute, and corrected the breaking generalized MCP contract release to Plugin `3.0.0`.
+- Kept settled and otherwise inactive floating loans readable by deriving payment health from persisted accruals without materializing new interest, while active-loan reads retain serialized accrual locking.
+- Serialized floating-interest materialization with settlement and payment writes through the tenant-scoped loan row lock, reloading lifecycle state before accrual changes so paid loans cannot gain concurrent future accruals.
+- Prevented backdated floating-loan settlements from closing across later active accruals, and recorded exact funded principal-return, interest-income, fee-income, and penalty-income effects atomically through the shared payment ledger allocation path.
+- Fixed weekly floating-interest backdating and corrections to use append-only replacement snapshots with transaction-date provenance, through-date payable filtering, atomic contextual accrual audits, exact period metadata, legacy daily health dates, paid-allocation conflict stops, and cumulative-consistent sparse correction suffixes.
+- Rejected unknown top-level and nested floating-origination fields before Elysia normalization, and persisted tenant-scoped activation command keys/results so only exact same-key retries replay while conflicting keys stop without financial side effects.
+- Prorated floating-interest accruals from the exact unrounded contractual period amount before cumulative cent rounding, preventing fractional-cent weekly overcharges.
+
+## v0.3.10 - 2026-08-12
+
+### Added
+- Added an intermediary collection and remittance workflow with exact explicit allocation, historical posted-payment linking without duplicate financial entries, signed remittance-slip evidence, 11 closed-schema MCP tools, an operator dashboard, and the CreditSync Plugin 2.3.0 orchestration skill.
+- Added the v0.3.10 test-first implementation plan for semantic Payment Inbox status colors.
+- Added the approved Payment Inbox semantic status-color design for accessible green, gray, amber, blue, red, and orange state distinctions.
+- Added compact, localized, on-demand evidence preview dialogs across Payment Inbox, transaction and reconciliation slips, loan disbursement evidence, and borrower ID-card images, with tenant-safe file access descriptors and graceful image, PDF, fallback, retry, and open-original states.
+- Added the v0.3.10 test-first implementation plan for shared lazy evidence previews across financial and borrower identity-document surfaces.
+- Added the approved shared evidence-preview design for compact, lazy-loaded modal previews of payment slips, disbursement evidence, reconciliation uploads, and borrower ID-card images.
+- Added tenant- and owner-scoped Payment Inbox pagination with validated payer search, status filtering, and inclusive Asia/Bangkok business-date filters while preserving the existing MCP list contract.
+- Added the v0.3.10 test-first implementation plan for paginated Payment Inbox queries and a responsive flat inbox list.
+- Added the approved scalable Payment Inbox design for flat list rows, server-side search and filters, newest-first pagination, localization, and responsive review navigation.
+- Added the v0.3.10 test-first implementation plan for semantic positive, negative, and zero transaction-total colors.
+- Added the approved semantic transaction-total color design for green positive, red negative, and neutral zero amounts using exact decimal sign classification.
+- Added an idempotent, append-only floating-interest accrual correction operation that retains reversed source rows, recalculates exact daily amounts from effective rate periods, and records adjustment and audit context.
+- Added the approved app-wide authenticated mobile-spacing and Dashboard flat cash-metric design to reduce edge padding consistently and remove nested-card styling from the cash summary.
+- Added the implementation plan for shared authenticated mobile page edges and responsive flat Dashboard cash metrics.
+
+### Fixed
+- Serialized every fund-source settlement, profitability, opportunity-cost, and reconciliation amount as an exact two-decimal public string.
+- Calculated fund-source settlement and profitability from direct profile allocations as well as drawdowns, attributed historical borrower cash and revenue exactly, and exposed the read-only difference from append-only ledger revenue.
+- Prevented evidence-bearing `intake.get` calls from failing strict MCP output validation by exposing the tenant-safe public file UUID through the synchronized evidence contract.
+- Prevented the Dashboard command-center and repayment-queue grids from expanding past narrow mobile viewports and clipping trailing actions, amounts, and statuses.
+- Colored negative transaction totals red and zero totals neutrally while retaining green for positive totals and preserving the visible amount sign.
+- Prevented floating repayments from reducing principal when an active legacy accrual has an impossible zero-principal basis, requiring correction before allocation instead.
+- Restored floating principal and paid daily-interest state when reversing the latest posted repayment.
+- Excluded append-only reversed floating-interest accruals from Dashboard payable totals so corrected source rows are not counted alongside their active replacements.
+
+### Changed
+- Added semantic icons and accessible localized definition tooltips to Fund Detail settlement, profitability, and reconciliation metrics, and clarified cumulative net-cash labels so returned principal is not mistaken for borrower overpayment.
+- Displayed exact fund-source settlement and profitability values with a localized semantic contract-to-ledger reconciliation card that never mutates financial records.
+- Replaced nested funding-usage cards and the duplicate desktop table with one responsive divider list featuring borrower-first hierarchy, exact source interest, and localized semantic loan-status badges.
+- Replaced nested mobile repayment-history cards and full-width review buttons with compact divider-separated transaction rows, non-zero exact allocation summaries, and full-row review navigation while retaining the desktop table.
+- Flattened both Dashboard repayment queues on mobile into full-width divider-separated rows, retained clear keyboard focus and exact amount/status alignment, and restored section containment at desktop widths without nested item cards.
+- Applied distinct accessible semantic colors to Payment Inbox status badges: green ready, gray draft, amber review, blue posted, red reversed, and orange duplicate.
+- Replaced nested Payment Inbox item cards with responsive divider-separated rows, localized payer/status/date filters, result counts, and retained-filter pagination at 25 records per page.
+- Standardized authenticated page-edge padding at 16px on mobile while retaining the existing desktop spacing, removed the Dashboard's redundant inner inset, and flattened its cash metrics into responsive divided cells within one summary card.
+
+### Infra
+- Added a guarded operational correction command for reversing and reapplying a specifically identified misallocated floating repayment after repairing its accrual history.
+
+## v0.3.9 - 2026-08-11
+
+### Added
+- Added a localized floating-interest Loan Detail card showing the exact current daily interest and full timeline, with future effective/expiry dates and preview-before-confirm management available across loan statuses.
+- Added three closed-schema MCP tools and CreditSync plugin 2.2.0 orchestration for listing, previewing, and explicitly confirming audited floating-interest timeline changes.
+- Added closed-schema REST endpoints for listing, previewing, and idempotently executing floating-interest timeline changes with audit correlation and tenant-cache invalidation.
+- Created an initial open-ended rate period for every new floating draft, linked first-day deductions to their source period, and resolved each catch-up accrual date against its own immutable rate snapshot.
+- Added tenant-scoped floating-rate list, expiring preview, and idempotent execute services with exact current-interest summaries, automatic timeline splitting, accrued-date protection, concurrency locking, and append-only audit context.
+- Added tenant-safe effective-dated floating-interest period and preview storage, legacy-rate backfill, database overlap/precision constraints, and immutable accrual-to-period linkage.
+- Added a tested exact-decimal kernel for validating, resolving, splitting, merging, and versioning inclusive floating-interest rate periods.
+- Extended the approved floating-interest design and TDD plan with safe MCP list/preview/confirmed-execute tools and a synchronized CreditSync plugin 2.2.0 contract with 7 skills and 29 tools.
+- Added the v0.3.9 TDD implementation plan for effective-dated floating-interest periods, previewed range replacement, immutable per-date accruals, REST contracts, and localized Loan Detail management.
+- Added the approved effective-dated floating-interest timeline design with scheduled rate changes, previewed automatic range splitting, immutable accrual snapshots, and loan-detail management.
+- Added v0.3.9 implementation plans for the Thai-first landing/login redesign, localized loan-list contract summaries, and outstanding-versus-original principal visibility.
+- Self-hosted Sarabun in WOFF2 weights 400, 500, 600, and 700 with its SIL Open Font License for the Thai interface.
+- Added the v0.3.9 TDD implementation plan for self-hosted Sarabun typography and Thai/English root-language synchronization.
+- Added the approved v0.3.9 design for self-hosting Sarabun at weights 400, 500, 600, and 700 and applying it globally whenever the active interface language is Thai.
+- Added the v0.3.9 TDD implementation plan for the approved global dark-mode surface hierarchy and responsive visual verification.
+- Added the approved v0.3.9 global dark-mode surface-hierarchy design for distinct canvas, card, overlay, control, and nested-panel levels while preserving light mode and financial semantics.
+- Added a localized Loan Detail confirmation action for activating persisted drafts without automatically posting disbursements.
+- Added a TDD implementation plan for activating persisted loan drafts from Loan Detail and verifying the production workflow.
+- Added an approved design for safely activating existing loan drafts from Loan Detail with a localized confirmation summary and no automatic disbursement posting.
+- Added the approved Dashboard Daily Command Center design and selected visual reference, covering action-first hierarchy, exact dashboard money contracts, resilient section loading, responsive behavior, localization, accessibility, and design QA.
+- Added a task-by-task implementation plan for exact dashboard contracts, action-first responsive UI, scoped loading failures, and visual design QA.
+- Added production-preview desktop and mobile design-QA evidence with responsive interaction and console checks.
+- Added an approved design for surfacing floating daily-interest arrears as one Dashboard row per loan with exact totals, overdue-item counts, and maximum overdue age.
+- Added a TDD implementation plan for a shared borrower-health projection, exact Dashboard floating-arrears contracts, aggregate queue presentation, and production verification.
+- Added a tenant-scoped Dashboard borrower-health projection that reuses the scheduled and floating payment-health application service.
+- Added browser-QA evidence confirming one floating loan row, aggregate arrears metadata, and schedule-free repayment navigation.
+
+### Fixed
+- Prevented dark-mode cards and popovers from visually collapsing into the application canvas, with a focused surface-hierarchy regression test.
+- Allowed floating-loan previews to return their daily-interest policy, first-day deduction, exact net disbursement, and next interest date through the strict public MCP contract.
+- Preserved exact decimal-string money across dashboard totals, funding gaps, available drawdowns, comparisons, and sorting beyond the JavaScript safe-integer range.
+- Prevented the Dashboard from crashing after profitability data loads by serializing its public money contract as two-decimal strings.
+- Included floating daily-interest arrears in Dashboard borrower totals and queues as one exact aggregate row per overdue loan.
+
+### Changed
+- Extended the frozen loan-route composition test to include the floating-interest list, preview, and execute endpoints.
+- Clarified commit discipline so every commit stages its changelog entry with the related changes under an explicit version, date, and Added/Changed/Fixed/Infra group.
+- Applied Sarabun across Thai-language screens while preserving the existing system font stack for English and monospace data presentation.
+- Synchronized the root HTML language with initial and runtime Thai/English i18next selections so language-dependent typography and accessibility metadata update together.
+- Raised dark-mode cards, navigation, overlays, controls, and nested panels onto distinct semantic surface levels across the application.
+- Rebuilt the responsive operations dashboard as a Daily Command Center with a consolidated cash position, urgency-ranked actions, five-item repayment queues, localized statuses, independent loading and retry states, and collapsible mobile financial details.
+- Displayed floating daily-interest arrears as one localized borrower-queue row per loan with overdue-item count, maximum age, and schedule-free repayment navigation.
+
+### Infra
+- Reconciled the divergent remote main history while retaining the current audited financial architecture and rejecting obsolete Number-based analytics and legacy AI-tool routes.
+- Made disposable PostgreSQL verification wait through the PostgreSQL 18 initialization restart before running migrations and tests.
+
+## v0.3.8 - 2026-08-11
+
+### Added
+- Added a shared account navigation and safe local sign-out contract, plus the approved implementation plan for the unified Account and Preferences page.
+- Added the localized, read-only Account and Preferences page with explicit language and appearance choices, accessible feedback, session controls, and safe identity fallbacks.
+
+### Changed
+- Connected Profile, Settings, desktop/mobile navigation, and the legacy `/dashboard/settings` path to the canonical protected Account and Preferences destination.
+- Documented that account identity is read-only and display preferences remain device-local rather than backend-synchronized.
+
+### Fixed
+- Kept appearance changes active in memory when browser theme persistence is unavailable.
+
+## v0.3.7 - 2026-08-11
+
+### Added
+- Added accessible Thai/English due-now and overdue indicators on loan cards, with exact amounts, installment/day counts, overdue age, and localized detail-schedule badges.
+- Added tenant-safe loan-list payment-health summaries for fixed schedules and materialized floating daily-interest accruals without per-card API requests.
+- Added an exact Decimal payment-health kernel for scheduled arrears, grace periods, late fees, and next-day floating-interest overdue classification.
+- Added a task-by-task implementation plan for exact scheduled and floating loan payment-health summaries, localized card indicators, detail badges, and full verification.
+- Added an approved design for localized payment-health indicators on loan-list cards, including fixed-schedule arrears and next-day floating daily-interest overdue rules.
+- Added an approved unified Account and Preferences design with read-only Google/tenant identity, client-side language and theme controls, functional navigation, and safe logout behavior.
+- Added authenticated REST endpoints for manual intermediary setup, collection capture and approval, remittance draft selection, preview, posting, and reversal.
+- Added tenant-admin manual approval and reasoned compensating reversal for intermediary collections, preserving original borrower-paid dates and immutable repayment history.
+- Added atomic posting for exact intermediary remittance selections, creating one immutable loan payment per collection at the original borrower-to-intermediary payment timestamp.
+- Added idempotent intermediary remittance drafts with persisted explicit collection selection, exact Decimal balance summaries, exclusive active reservations, and versioned ready/needs-review previews.
+- Added manual intermediary creation/search/update and idempotent borrower-to-intermediary collection capture that preserves exact amounts and effective dates without posting a loan transaction.
+- Added the tenant-scoped intermediary, borrower-collection, grouped-remittance, explicit-allocation, and versioned-proposal ledger schema with exact-money checks, active reservation uniqueness, and immutable settled/post records.
+- Added a task-by-task implementation plan for the approved intermediary collection/remittance ledger, manual workspace, evidence viewer, MCP orchestration, controlled intake migration, and full verification.
+- Added an approved manual-first, AI-assisted design for two-leg intermediary collections and grouped remittances, including explicit balance allocation, exceptional manual approval, evidence viewing, immutable posting, and MCP safety boundaries.
+- Added an approved design for shared date/date-time inputs with right-aligned picker icons and expandable quick-repayment notes.
+- Added loan-list cards that show outstanding principal with a muted original-principal reference.
+- Added an approved design for loan-list cards to show outstanding and original principal together.
+- Added source-level funding-usage reads and a localized funding-source table showing the borrower contracts funded by each source, their net allocation, route, allocation date, outstanding principal, and status.
+- Added loan-scoped repayment-intake history with quick capture, tenant-safe origin-loan links, and legacy allocation/transaction discovery without altering posted financial records.
+- Added a borrower-first repayment flow: desktop quick capture opens a dialog, mobile opens the prefilled full form, and both continue to Payment Inbox for review before posting.
+
+### Changed
+- Documented the approved responsive layout for funding-source details at tablet and compact-desktop widths.
+
+### Fixed
+- Kept the payment-intake origin-loan migration test additive after later migrations are registered.
+- Signed every payment/disbursement evidence header returned to upload clients and added floating-loan compensating reversal support.
+- Ordered new intermediary composite-key indexes before their tenant-safe foreign keys so the additive migration applies cleanly to a fresh PostgreSQL database.
+- Made funding-source summaries and loan allocations readable in tablet and compact-desktop layouts without content collisions.
+- Preserved the frozen MCP `intake.create` output contract after repayment-history responses gained an origin-loan reference.
+- Made own-capital availability and utilization subtract net direct loan allocations instead of only bank drawdowns, while keeping external-source credit availability based on issued drawdowns.
+- Clarified that own-capital allocations are direct and do not create a bank drawdown record.
+- Isolated funding-usage integration tests from tenant-cache state between disposable database resets.
+- Moved the mobile account avatar into the top header, added the shared favicon mark beside the CreditSync title, and removed the duplicate account menu from the drawer.
+- Reduced borrower-card header and action-row vertical padding for a denser mobile list without changing the shared card component.
+
+## v0.3.6 - 2026-08-10
+
+### Added
+- Added the approved loan-list contract-summary design: localized repayment terms, clearly labelled start/creation dates, and removal of internal funding/profitability metrics from list cards.
+- Added the localized loan-detail disbursement ledger UI with draft, optional signed-upload evidence, posting, and compensating reversal controls.
+- Added fixed daily-repayment term summaries and clear own-capital versus bank-drawdown funding labels on loan details.
+- Added an approved Thai-first landing and login redesign specification focused on a trustworthy operations overview, clear Google sign-in entry, localization, accessibility, and verification boundaries.
+- Added an approved design for entering fixed daily loans from either a borrower-proposed daily payment or a flat daily-interest term.
+- Added a task-by-task implementation plan for daily loan entry modes, shared Decimal calculations, API/MCP parity, and wizard verification.
+- Added Decimal-based normalization for fixed daily loans entered from a proposed daily payment or from flat daily interest terms.
+- Added additive daily-loan entry metadata and service previews so the selected input method is auditable alongside derived schedule terms.
+- Added optional daily-loan entry contracts to REST and remote MCP loan preview and draft workflows.
+- Added the daily-loan wizard flow for day/month durations, borrower-proposed payments, flat-interest terms, and localized calculation summaries.
+- Added an approved design for an auditable multi-payout loan disbursement ledger with grouped-transfer attribution and optional evidence.
+- Added a task-by-task implementation plan for the loan disbursement ledger, evidence workflow, REST/MCP adapters, and loan-detail UI.
+- Added an additive immutable loan-disbursement event ledger schema with grouped-transfer attribution, source/payee metadata, reversal links, and optional evidence links.
+- Added a tenant-scoped loan-disbursement application service for draft lifecycle, posting, compensating reversals, Decimal-safe variance summaries, evidence attachment, and audit history.
+- Added durable idempotency and checksum-verified evidence-intent persistence for loan-disbursement posts and reversals.
+- Added reproducible disposable-PostgreSQL coverage for concurrent loan-disbursement posting and evidence-prepare retries.
+- Added authenticated REST and Remote MCP adapters for loan-disbursement drafts, evidence, posting, reversal, and variance reads with UUID-only identifiers and exact money strings.
+- Released CreditSync Plugin `2.0.0` with the regenerated frozen 26-tool MCP contract, preserving MCP payload schema version `1.0`.
+- Released CreditSync Plugin `2.1.0` with the additive disbursement orchestration skill and executable lifecycle safety evals for evidence ordering, variance, confirmation, idempotency, schedule immutability, and reasoned reversal.
+
+### Fixed
+- Clarified loan-list cards with localized repayment terms, start dates, Bangkok creation timestamps, and no per-card funding/profitability lookups.
+- Made v0.3.6 loan-disbursement history visibly identify grouped posted and reversed transfers with localized exact gross and loan-attributed amounts.
+- Made concurrent loan-disbursement reversal verification order-independent while requiring exactly one durable creation, one idempotent replay, and one reversal audit record; serialized the shared disposable PostgreSQL suite to prevent cross-test database interference.
+- Made compensating loan-disbursement reversal records immutable at the PostgreSQL boundary and preserved exact decimal-string disbursement values throughout the UI payload and grouped-transfer validation.
+- Executed the reversal immutability assertions against PostgreSQL instead of only constructing query builders.
+- Replaced the loan-wizard daily-calculation `any` with the exact response shape so the frontend lint gate is clean.
+- Open the evidence popup synchronously before resolving its signed URL, preventing normal browser popup blockers from discarding the evidence view.
+- Resolved evidence access URLs through the authenticated API client and made the protected file access route accept file public UUIDs.
+- Aligned the loan-detail disbursement UI with the ledger REST response, retained idempotency headers for post/reverse retries, refreshed compensating reversals, and exposed source, payee, and evidence details.
+- Enforced tenant-safe event/file evidence links and blocked update or deletion of posted loan-disbursement ledger records at the database layer.
+- Returned source-bank-profile public UUIDs on disbursement events and rejected nested REST event commands whose parent loan UUID does not match.
+- Rejected draft evidence-ID arrays consistently in REST and MCP instead of silently discarding them; evidence must follow the signed prepare/finalize lifecycle.
+- Updated the loan-wizard regression test to exercise the accessible daily repayment radio chip and current daily-entry payload.
+- Removed the duplicate custom calendar icon from the loan start-date field; the browser-native date control remains fully clickable.
+- Made the disposable PostgreSQL migration integration test self-isolate from an already-migrated suite database and restore the latest migration state afterwards.
+- Corrected the floating-loan precision activation regression to supply the required daily-interest policy before asserting exact Decimal persistence.
+
+### Changed
+- Documented durable lending, actual-disbursement, MCP/plugin, evidence, and verification rules for future agents in `AGENTS.md`.
+- Simplified the loan-detail title and moved the full public loan ID into a compact copyable secondary line.
+
+### Changed
+- Moved repayment-type selection to the start of the loan-terms form so the remaining inputs follow the selected repayment workflow.
+- Refactored the public loan REST adapter into focused contract, funding, and disbursement route modules while preserving paths, schemas, authorization, cache behavior, and financial write workflows.
+
+## v0.3.5 - 2026-08-10
+
+### Added
+- Added additive schema support for floating daily-interest loan policies and date-unique immutable interest accrual records.
+- Added Decimal-based daily-interest calculations for fixed-per-thousand and percent rate modes with explicit first-day rules.
+- Added floating daily-interest policy inputs to loan preview/draft REST and MCP contracts, plus localized wizard controls.
+- Added partial-payment tracking for floating-interest accruals and an immutable disbursement record for first-day deductions.
+
+### Fixed
+- Preserved floating-loan balances during payment posting instead of deriving them from an empty fixed-installment schedule.
+- Hid the irrelevant annual-interest input when the wizard uses floating daily interest.
+- Made the loan start-date control open its native picker from the full input area and aligned its calendar affordance to the right.
+- Removed fixed term length from floating loans and changed repayment/daily-interest choices to direct chip controls.
+- Added an approved borrower-card identity design specification covering responsive one/two-column layout, sensitive Thai-ID masking, full-value copy behavior, avatar hierarchy, localization, accessibility, and verification requirements.
+- Added a task-by-task implementation plan for the approved borrower-card identity design.
+- Added Thai national-ID formatting and masking utilities for privacy-aware borrower-list presentation.
+- Added a responsive borrower identity card with masked ID display, an accessible full-value copy action, and localized copy feedback.
+- Added an approved design specification for auditable floating daily-interest loans with per-thousand and percent rate modes, first-day treatment, accrual ledger, explicit payment allocation, and MCP/Web parity.
+- Added an approved design specification for direct own-capital funding, configurable 2.00% annual opportunity cost, capacity enforcement, and cash-versus-economic profitability reporting.
+- Added a task-by-task implementation plan for direct own-capital selection, capacity enforcement, and non-cash economic profitability.
+- Added the additive own-capital opportunity-cost policy migration with a non-negative annual rate defaulting to 2.00%.
+- Added Decimal-based annual opportunity-cost calculation for capital-pool reporting without creating a cash expense.
+- Added an additive direct-capital funding-profile reference on loan drafts and active loans, mutually exclusive with a bank drawdown.
+- Added direct own-capital selection to loan drafts, activation-time capacity enforcement, an initial profile allocation, and the same public contract through REST and MCP.
+- Added non-cash own-capital opportunity cost and economic spread to the funding-profile profitability response and detail view.
+
+### Fixed
+- Corrected the direct-own-capital plan's five-day 2% annual opportunity-cost example to ฿1.37 for a ฿5,000 allocation.
+- Corrected the direct-own-capital design and plan to persist a selected direct-capital profile on the loan draft before activation.
+
+### Changed
+- Changed new personal funding sources to default to an own-capital pool with a configurable 2.00% annual non-cash opportunity-cost rate, and added an explicit conversion action for existing personal sources.
+- Changed the loan wizard to group own capital, bank drawdowns, and unallocated funding choices.
+- Changed the Borrowers list to a one-column mobile and two-column desktop grid using the privacy-aware identity card.
+- Changed borrower-card sizing to use the available list width, keeping a single card full-width in a narrow content panel while fitting additional columns only when they have room.
+- Changed the borrower-detail profile avatar to 72px on small screens and 80px from `md` upward, reducing visual weight without losing profile hierarchy.
+
+### Fixed
+- Replaced customer national-ID examples in the borrower-card implementation plan with synthetic test data so sensitive identity data is not committed to source control.
+
+## v0.3.4 - 2026-08-10
+
+### Added
+- Added CreditSync Plugin `1.0.0` with a private app manifest, repository marketplace, five sequentially tested workflow skills, matching/financial/error references, and positive/negative eval contracts.
+- Added executable plugin validation for manifest discovery, frozen MCP tool names, marketplace paths, forbidden deferred capabilities, eval coverage, and common secret patterns.
+- Added deployment, Cloudflare HTTPS MCP, bearer rotation, MinIO evidence, private registration, backup/restore, reconciliation, and operational rollback documentation.
+
+### Changed
+- Documented application release `v0.3.4` as the truthful integration release while retaining the plugin's independent `1.0.0` contract and the existing frozen MCP schema version `1.0`.
+- Documented that the committed private-app technical ID is a non-runnable registration placeholder and that live installation/authentication remains an operator step.
+
+### Fixed
+- Normalized frontend container asset permissions so generated favicon, touch-icon, and web-manifest files remain readable by nginx under restrictive host umasks.
+- Preserved stable REST and MCP drawdown-capacity errors for already-overallocated legacy states by reporting zero allocatable remaining capacity without weakening atomic rejection or rollback.
+- Serialized draft-loan activation on its tenant funding drawdown and rejected exact Decimal principal allocations beyond the signed net remaining capacity, with atomic rollback for serial and concurrent conflicts.
+- Kept persisted payment-intake review warnings inside the frozen MCP 1.0 output schema so real default-adapter posting, retrieval, and reversal calls remain valid after the web review changes.
+- Hardened Plugin `1.0.0` with a deterministic full `tools/list` metadata snapshot and executable scripted-MCP evals covering exact call order/arguments, repeated alias operations, duplicate/stale/review/unauthorized stops, confirmation, reversal, idempotency, and forbidden upload/write effects.
+- Accepted real registered private-app technical IDs without weakening the documented non-live placeholder state, and corrected duplicate-evidence and renewal-reversal orchestration to match the frozen MCP surface.
+- Corrected operator guidance so bearer hashes exclude trailing newlines, MinIO recovery preserves and verifies evidence metadata/checksums, and disabling MCP does not take the shared REST backend offline.
+- Corrected Plugin `1.0.0` renewal reversal to retain borrower identity before execution, derive renewal/old/new loan IDs from the same-task execute result, inspect only portfolio-exposed loan states, and rely on the atomic backend reversal command to return downstream blockers safely.
+- Aligned Plugin `1.0.0` blocked-renewal behavior with the real sanitized backend error: `RENEWAL_REVERSE_BLOCKED`, its backend message, and aggregate `downstreamEntryCount` only, without invented transaction or adjustment identities.
+
+## v0.3.3 - 2026-08-10
+
+### Added
+- Added persisted semantic-duplicate review warnings and a required, audited reason for payment reversals across REST, MCP, and the web review flow.
+- Added Vitest/jsdom component coverage for payment splits, warning gates, intake-selection races, reversal confirmation, exact loan-term handoff, borrower alias/history states, and renewal retry idempotency.
+
+### Changed
+- Changed manual payment entry to create a review-first intake, allowing evidence and explicit multi-loan allocations to be reviewed before posting.
+- Restored recommended frontend lint severities globally and confined unavoidable legacy React/TypeScript exceptions to explicit existing files.
+- Recorded the independent-review fix matrix and final verification evidence in the Task 7 implementation report.
+
+### Fixed
+- Preserved identical user-entered daily-loan terms from preview through draft creation instead of deriving fixed terms from rounded preview rows.
+- Preserved exact public money strings in confirmation displays, retained payment preview baselines, ignored stale intake responses, and reused renewal execution/reversal keys for retries of the same intent.
+- Distinguished loading, empty, forbidden, and failed audit states; localized workflow domain errors and audit actions; and displayed renewal interest, fee, and penalty components separately.
+- Bound ready payment proposals to the exact allocation-editor revision, invalidating them on every edit/add/remove/selection change and discarding stale in-flight preview responses before Post can reappear.
+- Preserved the frozen MCP schema-version 1.0 `payment.reverse` input by keeping `reason` optional and supplying a stable audit reason for legacy clients, while REST/web reversals continue to require an operator reason.
+- Caught manual Payment Inbox refresh failures and announced the localized error without leaving the refresh control busy.
+
+## v0.3.2 - 2026-08-10
+
+### Added
+- Added localized Payment Inbox review surfaces for duplicate status, signed evidence, explicit allocation previews and differences, posting, reversal, and audit/correlation identifiers.
+- Added borrower alias confirmation/deactivation with revision history, explicit loan draft activation, and daily-renewal previews covering recovered principal, charges, waivers, cash movement, replacement schedules, confirmation, and reversal.
+- Added focused Bun tests for exact-money workflow DTOs, payment create-preview-post ordering, duplicate short-circuiting, and renewal idempotency headers.
+
+### Changed
+- Migrated the manual repayment form from the disabled legacy transaction write to the payment-intake create, explicit-preview, and post workflow.
+- Updated Thai and English workflow copy together and formatted workflow money and dates with the active application locale.
+- Aligned the frontend lint gate with the existing non-Compiler React codebase while retaining strict TypeScript production builds.
+
+## v0.3.1 - 2026-08-10
+
+### Added
+- Added the approved Connected Capital design specification for the CreditSync favicon and PWA app icon asset set.
+- Added the implementation plan and ignored local workflow directories for isolated favicon development.
+- Added the Connected Capital SVG favicon, browser PNG variants, Apple touch icon, and PWA manifest assets to the frontend.
+
+## v0.3.0 - 2026-08-09
+
+### Added
+- Added a Decimal-based money kernel, exact daily fixed-installment schedule generation, and oldest-first repayment allocation primitives.
+- Added a Bun-backed backend TypeScript typecheck gate and focused money-kernel tests.
+- Added the v0.3.0 agent-workflow data foundation for borrower aliases, payment intake/evidence matching, transaction reversals, loan renewals and adjustments, tenant-scoped idempotency, and append-only audit history.
+- Added shared borrower and loan-application services with normalized alias search, public-ID presenters, command-context audit metadata, borrower portfolios, editable loan drafts, previews, and idempotent activation.
+- Added the complete payment-intake workflow: data-only capture, signed S3/MinIO evidence PUTs and verified finalization, hard-duplicate idempotency, semantic warnings, deterministic/explicit grouped matching, review queues, atomic posting, and compensating reversal.
+- Added the daily-loan renewal workflow with versioned expiring previews, exact posted-principal recovery, charge settlement or reasoned waiver, confirmed idempotent execution, proportional funding carry-forward, fresh schedules, and append-only reversal.
+- Added the private stateless Remote MCP server with 20 versioned borrower, payment, evidence, loan, renewal, and read-only funding-source tools backed directly by shared application services.
+- Added SHA-256 bearer-token rotation, fixed tenant/actor principals, host allowlisting, Dragonfly-backed rate limiting with a safe local fallback, sanitized correlation logging, and an MCP health check.
+- Added PostgreSQL and Dragonfly regression coverage for exact schedules and activation rollups, concurrent activation, the authenticated draft lifecycle, public funding DTOs, mutation audits, duplicate aliases, and cache invalidation, including large-value monthly, weekly, and daily money cases.
+
+### Changed
+- Loan creation is now draft-first: `POST /loans` stores editable terms without a schedule, while `POST /loans/:id/activate` locks the terms and creates the schedule once. The current web wizard performs both steps to preserve its existing confirm-and-create flow.
+- Borrower and loan-application REST adapters now delegate to the shared services and use public UUID identifiers at their external command boundaries.
+- Payment REST adapters now delegate to the shared payment application service and use UUID command boundaries and exact money strings; legacy `GET /transactions` remains readable while legacy repayment writes return 405 so all balance mutations share one Decimal allocator and lock order.
+- Renewal REST adapters now expose preview, execute, and reverse commands under `/loan-renewals`, with UUID identifiers, exact money strings, explicit confirmation/reason fields, and required execution/reversal idempotency keys.
+- Production Nginx and backend Compose configuration now expose `/mcp` with streaming-safe proxy settings, preserved MCP/auth/correlation headers, and explicit private MCP environment configuration.
+- Loan schedule, closing, allocation-state, profitability, funding-allocation, and funding-reallocation REST payloads now expose public UUIDs and two-decimal money strings; funding mutations accept public funding UUIDs and money strings.
+- Updated the loan detail, matching, and closing frontend flows for the exact public loan DTOs.
+
+### Fixed
+- Hardened the v0.3.0 MCP contract with signed compensating-transaction outputs, PostgreSQL-backed actual-client coverage for all 20 default service mappings, and quota-preserving Dragonfly-to-memory fallback.
+- Hardened daily-loan renewals with exact integer-cent funding carry, shared loan-first funding locks, execution-time preview validation, tenant-safe funding provenance, stable concurrent idempotency, exact old-loan state restoration, and operation-scoped reversal replay protection.
+- Corrected backend source typing issues surfaced by the new typecheck gate without changing existing workflow behavior.
+- Restored bank-loan close timestamp persistence after repayment and hardened daily installment, public schedule-money, and allocation due-date validation.
+- Aligned the loan wizard and create API with the two-decimal public-money contract from schedule calculation through loan creation.
+- Enforced tenant-safe workflow relationships and reversal references in PostgreSQL, while hardening migration idempotency, uniqueness, and full financial-state preservation tests.
+- Conserved principal, interest, fees, row totals, and remaining due across daily, weekly, and monthly schedules, including non-even final installments and values above JavaScript's safe-integer range, by carrying canonical money strings through schedule generation and activation rollups.
+- Mapped routine borrower and loan authorization, visibility, state, and duplicate-alias failures to stable domain error codes and statuses.
+- Restored tenant cache invalidation after borrower updates so cached loan lists immediately reflect borrower-name changes.
+- Serialized payment preview/post/reversal state transitions with PostgreSQL row locks, rejected and marked stale proposals after concurrent balance changes, and kept schedule, loan, transaction, fund-ledger, and audit effects atomic and append-only.
+- Persisted exact signed-evidence expiry, hardened delayed signing/finalization races, attributed fund effects only to net economic funded shares, and restored exact schedule/loan lifecycle state on posting and reversal.
+- Derived renewal principal from posted non-reversed transaction components instead of cached balances, rejected stale or underfunded executions under PostgreSQL locks, and separated non-cash principal transfer from borrower cash adjustments.
+
+## v0.2.4 - 2026-08-09
+
+### Changed
+- Updated backend and frontend dependencies to their latest compatible releases, including the current major releases of Redis, LINE SDK, Google Auth, Vite, ESLint, and Tailwind CSS.
+- Migrated the frontend PostCSS, Tailwind, TypeScript, and Vite configuration for the updated toolchain.
+
+## v0.2.3 - 2026-05-11
+
+### Added
+- Added a personal lending control center roadmap focused on owner-only daily operations, bot inbox usage, reconciliation, documents, traceability, and export.
+- Loan closing now copies a ready-to-send payoff message instead of only copying the raw balance.
+
+### Fixed
+- New borrower loans now initialize outstanding principal, interest, fees, and next due date from the generated schedule immediately after creation.
+- Generated borrower loan schedules now explicitly start with `paid_total = 0.00`.
+
+## v0.2.2 - 2026-04-08
+
+### Changed
+- Borrowers, loans, transactions, and uploaded files now carry an owner user so non-admin accounts can be scoped to their own records.
+- Tenant admins (`owner`, `manager`) keep tenant-wide visibility while `collector` and `viewer` accounts are restricted to their own portfolio data.
+- Auto-created Google users now become `viewer` by default unless they are the first user in the tenant.
+
+### Fixed
+- Dashboard, fund, reconciliation, and audit APIs are now blocked for non-admin roles instead of exposing tenant-wide financial data.
+- Frontend navigation now hides admin-only sections for non-admin users and avoids loading admin-only loan metrics in personal views.
+
+## v0.2.1 - 2026-04-07
+
+### Changed
+- File uploads now persist internal storage references and resolve to time-limited signed URLs at read time instead of storing permanent public object links.
+- Backend storage access now supports S3-compatible presigned URLs by default and can be configured for Azure Blob SAS links through environment variables.
+- Frontend resource routes now use first-level paths such as `/funds/:id`, `/borrowers/:id`, and `/loans/:id` instead of nesting everything under `/dashboard`.
+- Core URL-facing entities now carry `public_id` UUIDv7 identifiers for cleaner external URLs while preserving internal numeric keys.
+
+### Fixed
+- Borrower ID-card images, reconciliation upload evidence, and repayment slip links no longer depend on indefinitely public object URLs.
+- Production-style Nginx and env defaults now route signed file URLs through `/files/*` to MinIO instead of the app root.
+- Docker tunnel services now join the application network instead of host networking, so Cloudflare ingress can target `frontend`, `backend`, and `minio` by service name.
+
+## v0.2.0 - 2026-04-07
+
+### Added
+- Funding source, drawdown, repayment schedule, and fund repayment workflows.
+- Matching workspace for allocating one loan across multiple drawdowns and reallocating later.
+- Operational dashboard with due queues, alerts, reconciliation status, and profitability widgets.
+- Loan detail, profitability, allocation-state, and related backend summary APIs.
+- Manual reconciliation workflow for borrower payments, fund repayments, and uploaded evidence.
+- Overdue and penalty calculation support for borrower and fund schedules.
+- Dragonfly cache integration for read-heavy backend endpoints with tenant-scoped invalidation.
+
+### Changed
+- Split Docker flow into production-style infra and app compose files, with Dragonfly added to infra.
+- Frontend and backend dashboards now rely on live APIs instead of mock-first summaries in key areas.
+- Repository docs now describe local dev, production-style Docker flows, and cache configuration.
+
+### Fixed
+- Reconciliation dashboard semantics aligned with actual bank repayment records.
+- Fund detail deep-link behavior no longer forces users back to the originally targeted drawdown.
+- Cache usage is fallback-safe when Dragonfly is unavailable.
+## v7.0.0 - 2026-08-16
+
+### Fixed
+
+- Made historical floating-allocation idempotency keys unique per replacement transaction so one interest-only intake can be split safely across multiple loans.
+- Isolated reconciliation regression fixtures with distinct command idempotency keys so posted-intake rejection coverage cannot replay and mutate the historical source intake.
+- Hardened funding allocation idempotency, exact money validation, source resolution, locking, and read ordering.
+# Changelog
+
+## v7.1.0 - 2026-08-17
+
+### Added
+
+- Add the append-only atomic loan replacement ledger and terminal `replaced` loan status.
+
+### Fixed
+
+- Create the tenant-scoped replacement parent unique key before child foreign keys and preserve all legacy loan statuses alongside `replaced`.
+- Preserve every loan lifecycle status used by application workflows, including `closed`, `renewed`, `restructured`, `cancelled`, `settled`, and `reversed`.

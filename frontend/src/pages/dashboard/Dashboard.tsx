@@ -1,520 +1,849 @@
-import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { Activity, CreditCard, DollarSign, Users, TrendingUp, ArrowUpRight, ChevronRight, MessageCircle, Users2, BarChart2 } from "lucide-react";
-import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useNavigate } from "react-router-dom";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
-import PortfolioGraph from "./PortfolioGraph";
-import { FundPerformanceChart } from "./funds/FundPerformanceChart";
+import {
+  AlertCircle,
+  ArrowRight,
+  BanknoteArrowDown,
+  BanknoteArrowUp,
+  CircleDollarSign,
+  RefreshCw,
+  ShieldAlert,
+  Sparkles,
+} from "lucide-react";
+import { useTranslation } from "react-i18next";
+import Decimal from "decimal.js";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import { api } from "../../lib/api";
+import { formatMoneyExact } from "../../lib/workflow-model";
+import { getStoredUser, isTenantAdminUser } from "../../lib/session";
+import DashboardCollectionSummary from "./DashboardCollectionSummary";
+import { Badge } from "../../components/ui/badge";
+import { Button } from "../../components/ui/Button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "../../components/ui/Card";
+import {
+    buildDashboardPriorities,
+    buildBorrowerRepaymentHref,
+    compareMoney,
+    getCollectionRatePercent,
+  type BorrowerDueItem,
+  type DashboardPriority,
+    type DashboardSummary,
+    type DashboardCollectionSummary as DashboardCollectionSummaryData,
+    type DashboardAnalytics,
+  type FundDueItem,
+  type FundingAlerts,
+  type ProfitabilitySummary,
+  type ReconciliationStatus,
+} from "./dashboard-model";
 
-const data = [
-    { name: "Jan", total: 12000 },
-    { name: "Feb", total: 18000 },
-    { name: "Mar", total: 22000 },
-    { name: "Apr", total: 28000 },
-    { name: "May", total: 32000 },
-    { name: "Jun", total: 45000 },
-];
+type Resource<T> = { data: T | null; loading: boolean; error: boolean };
 
-const resentSales = [
-    {
-        name: "Somchai Jai-dee",
-        contact: "081-234-5678",
-        amount: "+฿1,999.00",
-        status: "Repayment"
-    },
-    {
-        name: "Jackson Lee",
-        contact: "Line: @jackson",
-        amount: "+฿39.00",
-        status: "Repayment"
-    },
-    {
-        name: "Isabella Nguyen",
-        contact: "099-999-9999",
-        amount: "+฿299.00",
-        status: "Interest"
-    },
-    {
-        name: "William Kim",
-        contact: "Line: will_kim",
-        amount: "+฿99.00",
-        status: "Repayment"
-    },
-    {
-        name: "Sofia Davis",
-        contact: "089-876-5432",
-        amount: "+฿39.00",
-        status: "Interest"
+const QUEUE_SECTION_CLASS = "min-w-0 rounded-none border-0 bg-transparent shadow-none md:rounded-lg md:border md:bg-card md:text-card-foreground md:shadow-sm";
+const QUEUE_HEADER_CLASS = "px-0 pb-3 pt-0 md:p-6";
+const QUEUE_CONTENT_CLASS = "divide-y divide-border/70 p-0 md:px-6 md:pb-6";
+const QUEUE_ROW_CLASS = "group flex min-h-16 w-full items-center justify-between gap-3 py-4 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 md:px-3";
+
+function useDashboardResource<T>(path: string, fallback: T) {
+  const fallbackRef = useRef(fallback);
+  const [state, setState] = useState<Resource<T>>({
+    data: null,
+    loading: true,
+    error: false,
+  });
+  useEffect(() => {
+    let active = true;
+    void api
+      .get(path)
+      .then((response) => {
+        if (active)
+          setState({
+            data: response.data ?? fallbackRef.current,
+            loading: false,
+            error: false,
+          });
+      })
+      .catch((error) => {
+        console.error(`Failed to load dashboard resource ${path}`, error);
+        if (active) setState({ data: null, loading: false, error: true });
+      });
+    return () => {
+      active = false;
+    };
+  }, [path]);
+  const retry = useCallback(async () => {
+    setState((current) => ({ ...current, loading: true, error: false }));
+    try {
+      const response = await api.get(path);
+      setState({
+        data: response.data ?? fallbackRef.current,
+        loading: false,
+        error: false,
+      });
+    } catch (error) {
+      console.error(`Failed to load dashboard resource ${path}`, error);
+      setState((current) => ({ ...current, loading: false, error: true }));
     }
-]
+  }, [path]);
+  return { ...state, retry };
+}
 
-// Mock Data for Borrower Groups
-const borrowerGroups = [
-    {
-        id: "line-1",
-        name: "Office Gang (Rama 9)",
-        platform: "line",
-        members: 12,
-        totalDebt: 150000,
-        profitRate: 15, // ROI %
-        profitAmount: 22500,
-        status: "Healthy",
-        collectionRate: 98
-    },
-    {
-        id: "line-2",
-        name: "Uni Friends (KU)",
-        platform: "line",
-        members: 8,
-        totalDebt: 45000,
-        profitRate: 10,
-        profitAmount: 4500,
-        status: "Watch",
-        collectionRate: 85
-    },
-    {
-        id: "fb-1",
-        name: "Marketplace Leads",
-        platform: "facebook",
-        members: 24,
-        totalDebt: 320000,
-        profitRate: 22,
-        profitAmount: 70400,
-        status: "Healthy",
-        collectionRate: 92
-    }
-]
+function Skeleton({ className = "h-8 w-28" }: { className?: string }) {
+  return (
+    <div
+      className={`animate-pulse rounded-md bg-muted ${className}`}
+      aria-hidden="true"
+    />
+  );
+}
+
+function SectionError({ retry }: { retry: () => Promise<void> }) {
+  const { t } = useTranslation();
+  return (
+    <div
+      role="alert"
+      className="flex items-center justify-between gap-3 rounded-xl border border-destructive/25 bg-destructive/5 p-4 text-sm"
+    >
+      <span className="flex items-center gap-2">
+        <AlertCircle className="h-4 w-4 text-destructive" />
+        {t("dashboardPage.errors.section")}
+      </span>
+      <Button size="sm" variant="outline" onClick={() => void retry()}>
+        <RefreshCw className="mr-2 h-3.5 w-3.5" />
+        {t("dashboardPage.actions.retry")}
+      </Button>
+    </div>
+  );
+}
+
+function MoneyMetric({
+  label,
+  value,
+  icon,
+  tone = "default",
+}: {
+  label: string;
+  value: string;
+  icon: ReactNode;
+  tone?: "default" | "positive" | "negative";
+}) {
+  const { i18n } = useTranslation();
+  const color =
+    tone === "positive"
+      ? "text-emerald-500"
+      : tone === "negative"
+        ? "text-destructive"
+        : "text-foreground";
+  return (
+    <div className="min-w-0 border-b border-border/70 p-4 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
+      <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+        {icon}
+        {label}
+      </div>
+      <div
+        className={`mt-2 truncate text-xl font-semibold tabular-nums sm:text-2xl ${color}`}
+      >
+        {formatMoneyExact(value, i18n.language)}
+      </div>
+    </div>
+  );
+}
+
+function PriorityRow({
+  item,
+  onOpen,
+}: {
+  item: DashboardPriority;
+  onOpen: () => void;
+}) {
+  const { t } = useTranslation();
+  const tone =
+    item.tone === "danger"
+      ? "border-destructive/30 bg-destructive/5"
+      : item.tone === "warning"
+        ? "border-amber-500/30 bg-amber-500/5"
+        : "border-primary/20 bg-primary/5";
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className={`group flex w-full items-center gap-3 rounded-xl border p-3 text-left transition hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-sm ${tone}`}
+    >
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-background font-semibold tabular-nums shadow-sm">
+        {item.count}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block font-medium">
+          {t(`dashboardPage.priorities.${item.key}.title`)}
+        </span>
+        <span className="block truncate text-xs text-muted-foreground">
+          {t(`dashboardPage.priorities.${item.key}.description`)}
+        </span>
+      </span>
+      <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground transition group-hover:translate-x-0.5 group-hover:text-foreground" />
+    </button>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation();
+  const overdue = status === "overdue";
+  return (
+    <Badge variant={overdue ? "destructive" : "secondary"}>
+      {t(`dashboardPage.status.${status}`, {
+        defaultValue: t("dashboardPage.status.pending"),
+      })}
+    </Badge>
+  );
+}
+
+export function BorrowerQueueMeta({ item }: { item: BorrowerDueItem }) {
+  const { t, i18n } = useTranslation();
+  if (item.repaymentType === "floating") {
+    return (
+      <span className="flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
+        <span>{t("dashboardPage.floatingOverdueItems", { count: item.overdueItemCount ?? 0 })}</span>
+        <span>{t("dashboardPage.floatingMaxOverdueDays", { count: item.overdueDays ?? 0 })}</span>
+      </span>
+    );
+  }
+  if (!item.dueDate) return null;
+  const dueDate = new Intl.DateTimeFormat(i18n.language, { day: "numeric", month: "short", year: "numeric" }).format(new Date(`${item.dueDate}T00:00:00`));
+  return <span className="block text-xs text-muted-foreground">{t("dashboardPage.installment", { number: item.installmentNo })} · {dueDate}</span>;
+}
 
 export default function Dashboard() {
-    const navigate = useNavigate();
-    return (
-        <div className="flex-1 space-y-8 p-4 pt-6">
-            <div className="flex items-center justify-between space-y-2">
-                <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
-                <div className="flex items-center space-x-2">
-                    {/* DateRangePicker Placeholder */}
-                </div>
-            </div>
+  const { t, i18n } = useTranslation();
+  const navigate = useNavigate();
+  const currentUser = getStoredUser();
+  const isTenantAdmin = isTenantAdminUser(currentUser);
+  const [showAllBorrowers, setShowAllBorrowers] = useState(false);
+  const [showAllFunds, setShowAllFunds] = useState(false);
 
-            <Tabs defaultValue="overview" className="space-y-4">
-                <TabsList>
-                    <TabsTrigger value="overview">Overview</TabsTrigger>
-                    <TabsTrigger value="groups">Borrower Groups</TabsTrigger>
-                    <TabsTrigger value="graph">Portfolio Graph</TabsTrigger>
-                    <TabsTrigger value="analytics">Analytics</TabsTrigger>
-                </TabsList>
+  const summary = useDashboardResource<DashboardSummary>("/dashboard/summary", {
+    dueFromBorrowersToday: "0.00",
+    dueToFundsToday: "0.00",
+    netPositionToday: "0.00",
+    overdueBorrowerCount: 0,
+    overdueFundCount: 0,
+    underfundedLoanCount: 0,
+    unallocatedDrawdownCount: 0,
+  });
+  const borrowerQueue = useDashboardResource<BorrowerDueItem[]>(
+    "/dashboard/borrower-due-queue",
+    [],
+  );
+  const collectionSummary = useDashboardResource<DashboardCollectionSummaryData>(
+    "/dashboard/collection-summary",
+    {
+      totalDueToday: "0.00",
+      categories: [
+        { key: "floating_daily_interest", totalDueToday: "0.00", items: [] },
+        { key: "floating_weekly_interest", totalDueToday: "0.00", items: [] },
+        { key: "daily_installment", totalDueToday: "0.00", items: [] },
+        { key: "weekly_installment", totalDueToday: "0.00", items: [] },
+        { key: "monthly_installment", totalDueToday: "0.00", items: [] },
+        { key: "other", totalDueToday: "0.00", items: [] },
+      ],
+      intermediaries: [],
+    },
+  );
+  const fundQueue = useDashboardResource<FundDueItem[]>(
+    "/dashboard/fund-due-queue",
+    [],
+  );
+  const alerts = useDashboardResource<FundingAlerts>(
+    "/dashboard/funding-alerts",
+    { underfundedLoans: [], unallocatedDrawdowns: [] },
+  );
+  const reconciliation = useDashboardResource<ReconciliationStatus>(
+    "/dashboard/reconciliation-status",
+    {
+      unreconciledBorrowerPayments: 0,
+      recordedFundRepayments: 0,
+      fundRepaymentsMissingScheduleLink: 0,
+      pendingBankImports: 0,
+      pendingManualReviews: 0,
+      borrowerPaymentsMissingSlip: 0,
+    },
+  );
+    const profitability = useDashboardResource<ProfitabilitySummary>(
+    "/dashboard/profitability-summary",
+    {
+      borrowerRevenueCollected: "0.00",
+      fundCostPaid: "0.00",
+      realizedSpread: "0.00",
+      unrealizedSpread: "0.00",
+      deployedPrincipal: "0.00",
+      netCashPosition: "0.00",
+      realizedRoiPercent: "0.00",
+      carryForwardAvailable: "0.00",
+    },
+  );
+  const analytics = useDashboardResource<DashboardAnalytics>("/dashboard/analytics", {
+    collectionRate: { expected: "0.00", actual: "0.00" },
+    daily: [],
+    monthly: [],
+    deployedPrincipal: "0.00",
+    outstandingPrincipal: "0.00",
+  });
 
-                {/* TAB: OVERVIEW */}
-                <TabsContent value="overview" className="space-y-4">
-                    {/* Stats Cards */}
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                        <Card>
-                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                <CardTitle className="text-sm font-medium">
-                                    Total Revenue
-                                </CardTitle>
-                                <DollarSign className="h-4 w-4 text-muted-foreground" />
-                            </CardHeader>
-                            <CardContent>
-                                <div className="text-2xl font-bold">฿45,231.89</div>
-                                <p className="text-xs text-emerald-500 font-medium flex items-center">
-                                    +20.1% <TrendingUp className="h-3 w-3 ml-1" /> from last month
-                                </p>
-                                <div className="h-[40px] mt-3">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <AreaChart data={data}>
-                                            <defs>
-                                                <linearGradient id="colorTotalMini" x1="0" y1="0" x2="0" y2="1">
-                                                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
-                                                    <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
-                                                </linearGradient>
-                                            </defs>
-                                            <Area type="monotone" dataKey="total" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorTotalMini)" />
-                                        </AreaChart>
-                                    </ResponsiveContainer>
-                                </div>
-                            </CardContent>
-                        </Card>
-                        <Card>
-                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                <CardTitle className="text-sm font-medium">
-                                    Active Borrowers
-                                </CardTitle>
-                                <Users className="h-4 w-4 text-muted-foreground" />
-                            </CardHeader>
-                            <CardContent>
-                                <div className="text-2xl font-bold">+2350</div>
-                                <p className="text-xs text-emerald-500 font-medium flex items-center">
-                                    +180.1% <TrendingUp className="h-3 w-3 ml-1" /> from last month
-                                </p>
-                                <div className="h-[40px] mt-3">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <AreaChart data={[
-                                            { val: 100 }, { val: 120 }, { val: 150 }, { val: 200 }, { val: 300 }, { val: 350 }
-                                        ]}>
-                                            <Area type="monotone" dataKey="val" stroke="#10b981" strokeWidth={2} fill="none" />
-                                        </AreaChart>
-                                    </ResponsiveContainer>
-                                </div>
-                            </CardContent>
-                        </Card>
-                        <Card>
-                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                <CardTitle className="text-sm font-medium">Sales</CardTitle>
-                                <CreditCard className="h-4 w-4 text-muted-foreground" />
-                            </CardHeader>
-                            <CardContent>
-                                <div className="text-2xl font-bold">+12,234</div>
-                                <p className="text-xs text-rose-500 font-medium flex items-center">
-                                    -19% <TrendingUp className="h-3 w-3 ml-1 rotate-180" /> from last month
-                                </p>
-                                <div className="h-[40px] mt-3">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <AreaChart data={[
-                                            { val: 500 }, { val: 400 }, { val: 300 }, { val: 200 }, { val: 250 }, { val: 220 }
-                                        ]}>
-                                            <defs>
-                                                <linearGradient id="colorSalesMini" x1="0" y1="0" x2="0" y2="1">
-                                                    <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.3} />
-                                                    <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
-                                                </linearGradient>
-                                            </defs>
-                                            <Area type="monotone" dataKey="val" stroke="#f43f5e" strokeWidth={2} fillOpacity={1} fill="url(#colorSalesMini)" />
-                                        </AreaChart>
-                                    </ResponsiveContainer>
-                                </div>
-                            </CardContent>
-                        </Card>
-                        <Card>
-                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                <CardTitle className="text-sm font-medium">
-                                    Active Now
-                                </CardTitle>
-                                <Activity className="h-4 w-4 text-muted-foreground" />
-                            </CardHeader>
-                            <CardContent>
-                                <div className="text-2xl font-bold">+573</div>
-                                <p className="text-xs text-emerald-500 font-medium flex items-center">
-                                    +201 <ArrowUpRight className="h-3 w-3 ml-1" /> since last hour
-                                </p>
-                                <div className="h-[40px] mt-3">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <AreaChart data={[
-                                            { val: 10 }, { val: 25 }, { val: 15 }, { val: 40 }, { val: 30 }, { val: 60 }
-                                        ]}>
-                                            <Area type="monotone" dataKey="val" stroke="#10b981" strokeWidth={2} fill="none" />
-                                        </AreaChart>
-                                    </ResponsiveContainer>
-                                </div>
-                            </CardContent>
-                        </Card>
-                    </div>
+  useEffect(() => {
+    if (!isTenantAdmin) navigate("/loans", { replace: true });
+  }, [isTenantAdmin, navigate]);
+  const priorities = useMemo(
+    () =>
+      buildDashboardPriorities({
+        summary: summary.data,
+        reconciliation: reconciliation.data,
+      }),
+    [summary.data, reconciliation.data],
+  );
+  const netTone =
+    compareMoney(summary.data?.netPositionToday ?? "0.00", "0.00") < 0
+      ? "negative"
+      : "positive";
+  const formatDate = (value: string) =>
+    new Intl.DateTimeFormat(i18n.language, {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    }).format(new Date(`${value}T00:00:00`));
+  const openBorrower = (item: BorrowerDueItem) =>
+    navigate(buildBorrowerRepaymentHref(item));
+  const openFund = (item: FundDueItem) =>
+    item.bankProfilePublicId || item.bankProfileId
+      ? navigate(
+          `/funds/${item.bankProfilePublicId ?? item.bankProfileId}?bankLoanId=${item.bankLoanPublicId ?? item.bankLoanId}&scheduleId=${item.schedulePublicId ?? item.scheduleId}`,
+        )
+      : navigate("/funds");
 
-                    {/* Active Bank Loans Section */}
-                    <div>
-                        <h3 className="text-lg font-medium mb-4">Your Sources of Funds</h3>
-                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                            {/* Loan Card 1: TTB - Fixed Term */}
-                            <Card
-                                className="overflow-hidden border-l-4 border-l-blue-600 transition-all hover:shadow-md cursor-pointer hover:bg-muted/20"
-                                onClick={() => navigate("/dashboard/funds/1")}
-                            >
-                                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 bg-muted/40">
-                                    <div>
-                                        <CardTitle className="text-base font-bold text-blue-700">TTB Cash2Go</CardTitle>
-                                        <p className="text-xs text-muted-foreground">Fixed Term Loan</p>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <CreditCard className="h-5 w-5 text-blue-600" />
-                                        <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
-                                    </div>
-                                </CardHeader>
-                                <CardContent className="pt-4">
-                                    <div className="flex justify-between items-end mb-2">
-                                        <div>
-                                            <p className="text-xs text-muted-foreground">Remaining Balance</p>
-                                            <p className="text-2xl font-bold">฿145,000</p>
-                                        </div>
-                                        <div className="text-right">
-                                            <p className="text-xs text-muted-foreground">Limit</p>
-                                            <p className="text-sm font-medium">฿200,000</p>
-                                        </div>
-                                    </div>
-                                    {/* Progress Bar */}
-                                    <div className="h-2 w-full bg-secondary rounded-full mb-4">
-                                        <div className="h-2 bg-blue-600 rounded-full" style={{ width: "72.5%" }}></div>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-4 text-sm">
-                                        <div>
-                                            <p className="text-xs text-muted-foreground mb-1">Monthly Payment</p>
-                                            <p className="font-semibold">฿5,400</p>
-                                            <p className="text-[10px] text-muted-foreground">Fixed (24/36)</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-xs text-muted-foreground mb-1">Interest</p>
-                                            <p className="font-semibold text-rose-500">18.0%</p>
-                                            <p className="text-[10px] text-muted-foreground">Effective Rate</p>
-                                        </div>
-                                    </div>
-                                </CardContent>
-                            </Card>
-
-                            {/* Loan Card 2: KBank - Minimum Pay */}
-                            <Card className="overflow-hidden border-l-4 border-l-green-600 transition-all hover:shadow-md">
-                                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 bg-muted/40">
-                                    <div>
-                                        <CardTitle className="text-base font-bold text-green-700">K-Express Cash</CardTitle>
-                                        <p className="text-xs text-muted-foreground">Revolving Credit</p>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <CreditCard className="h-5 w-5 text-green-600" />
-                                        <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
-                                    </div>
-                                </CardHeader>
-                                <CardContent className="pt-4">
-                                    <div className="flex justify-between items-end mb-2">
-                                        <div>
-                                            <p className="text-xs text-muted-foreground">Current Usage</p>
-                                            <p className="text-2xl font-bold">฿28,500</p>
-                                        </div>
-                                        <div className="text-right">
-                                            <p className="text-xs text-muted-foreground">Limit</p>
-                                            <p className="text-sm font-medium">฿50,000</p>
-                                        </div>
-                                    </div>
-                                    {/* Progress Bar */}
-                                    <div className="h-2 w-full bg-secondary rounded-full mb-4">
-                                        <div className="h-2 bg-green-600 rounded-full" style={{ width: "57%" }}></div>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-4 text-sm">
-                                        <div>
-                                            <p className="text-xs text-muted-foreground mb-1">Min Payment</p>
-                                            <p className="font-semibold">฿1,425</p>
-                                            <p className="text-[10px] text-muted-foreground">5% of Balance</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-xs text-muted-foreground mb-1">Interest</p>
-                                            <p className="font-semibold text-rose-500">25.0%</p>
-                                            <p className="text-[10px] text-muted-foreground">Daily Calc</p>
-                                        </div>
-                                    </div>
-                                </CardContent>
-                            </Card>
-
-                            {/* Loan Card 3: SCB - Available */}
-                            <Card className="overflow-hidden border-l-4 border-l-purple-600 opacity-80 transition-all hover:shadow-md">
-                                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 bg-muted/40">
-                                    <div>
-                                        <CardTitle className="text-base font-bold text-purple-700">SCB Speedy Cash</CardTitle>
-                                        <p className="text-xs text-muted-foreground">Cash Card</p>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <CreditCard className="h-5 w-5 text-purple-600" />
-                                        <ChevronRight className="h-4 w-4 text-muted-foreground/50" />
-                                    </div>
-                                </CardHeader>
-                                <CardContent className="pt-4">
-                                    <div className="flex justify-between items-end mb-2">
-                                        <div>
-                                            <p className="text-xs text-muted-foreground">Available</p>
-                                            <p className="text-2xl font-bold text-emerald-600">฿100,000</p>
-                                        </div>
-                                        <div className="text-right">
-                                            <p className="text-xs text-muted-foreground">Limit</p>
-                                            <p className="text-sm font-medium">฿100,000</p>
-                                        </div>
-                                    </div>
-                                    {/* Progress Bar */}
-                                    <div className="h-2 w-full bg-secondary rounded-full mb-4">
-                                        <div className="h-2 bg-purple-600 rounded-full" style={{ width: "0%" }}></div>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-4 text-sm">
-                                        <div>
-                                            <p className="text-xs text-muted-foreground mb-1">Status</p>
-                                            <p className="font-semibold text-emerald-600">Standby</p>
-                                        </div>
-                                        <div>
-                                            <p className="text-xs text-muted-foreground mb-1">Interest</p>
-                                            <p className="font-semibold text-rose-500">22.0%</p>
-                                            <p className="text-[10px] text-muted-foreground">If withdrawn</p>
-                                        </div>
-                                    </div>
-                                </CardContent>
-                            </Card>
-                        </div>
-                    </div>
-
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-                        {/* Chart */}
-                        <Card className="col-span-4 transition-all hover:shadow-md">
-                            <CardHeader>
-                                <CardTitle>Overview</CardTitle>
-                            </CardHeader>
-                            <CardContent className="pl-2">
-                                <ResponsiveContainer width="100%" height={350}>
-                                    <AreaChart data={data}>
-                                        <defs>
-                                            <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="5%" stopColor="#8884d8" stopOpacity={0.8} />
-                                                <stop offset="95%" stopColor="#8884d8" stopOpacity={0} />
-                                            </linearGradient>
-                                        </defs>
-                                        <XAxis
-                                            dataKey="name"
-                                            stroke="#888888"
-                                            fontSize={12}
-                                            tickLine={false}
-                                            axisLine={false}
-                                        />
-                                        <YAxis
-                                            stroke="#888888"
-                                            fontSize={12}
-                                            tickLine={false}
-                                            axisLine={false}
-                                            tickFormatter={(value) => `฿${value}`}
-                                        />
-                                        <Tooltip
-                                            formatter={(value) => [`฿${value}`, "Revenue"]}
-                                            contentStyle={{ borderRadius: "8px", border: "none", boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)" }}
-                                        />
-                                        <Area
-                                            type="monotone"
-                                            dataKey="total"
-                                            stroke="#8884d8"
-                                            fillOpacity={1}
-                                            fill="url(#colorTotal)"
-                                        />
-                                    </AreaChart>
-                                </ResponsiveContainer>
-                            </CardContent>
-                        </Card>
-
-                        {/* Recent Sales/Activity */}
-                        <Card className="col-span-3 transition-all hover:shadow-md">
-                            <CardHeader>
-                                <CardTitle>Recent Activity</CardTitle>
-                                <p className="text-sm text-muted-foreground">
-                                    You made 265 sales this month.
-                                </p>
-                            </CardHeader>
-                            <CardContent>
-                                <div className="space-y-8">
-                                    {resentSales.map((sale, index) => (
-                                        <div className="flex items-center" key={index}>
-                                            <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center">
-                                                {/* Avatar Fallback */}
-                                                <span className="text-xs font-bold text-primary">
-                                                    {sale.name.charAt(0)}{sale.name.split(" ")[1]?.charAt(0)}
-                                                </span>
-                                            </div>
-                                            <div className="ml-4 space-y-1">
-                                                <p className="text-sm font-medium leading-none">{sale.name}</p>
-                                                <p className="text-sm text-muted-foreground">
-                                                    {sale.contact}
-                                                </p>
-                                            </div>
-                                            <div className="ml-auto font-medium">
-                                                {sale.amount}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </CardContent>
-                        </Card>
-                    </div>
-                </TabsContent>
-
-                {/* TAB: BORROWER GROUPS */}
-                <TabsContent value="groups" className="space-y-4">
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <h3 className="text-lg font-medium">Your Borrower Groups</h3>
-                            <p className="text-sm text-muted-foreground">Organize and track performance by platform.</p>
-                        </div>
-                        {/* Add New Group Button could go here */}
-                    </div>
-
-                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                        {borrowerGroups.map((group) => (
-                            <Card key={group.id} className="transition-all hover:shadow-lg border-t-4"
-                                style={{ borderTopColor: group.platform === 'line' ? '#06c755' : '#1877f2' }}
-                            >
-                                <CardHeader className="pb-2">
-                                    <div className="flex justify-between items-start">
-                                        <div>
-                                            <CardTitle className="text-lg flex items-center gap-2">
-                                                {group.platform === 'line' ? <MessageCircle className="h-5 w-5 text-[#06c755]" fill="#06c755" color="white" /> : <Users2 className="h-5 w-5 text-[#1877f2]" />}
-                                                {group.name}
-                                            </CardTitle>
-                                            <p className="text-xs text-muted-foreground mt-1 capitalize">{group.platform} Group</p>
-                                        </div>
-                                        <div className={`px-2 py-1 rounded-full text-xs font-bold ${group.status === 'Healthy' ? 'bg-emerald-100 text-emerald-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                                            {group.status}
-                                        </div>
-                                    </div>
-                                </CardHeader>
-                                <CardContent>
-                                    <div className="grid grid-cols-2 gap-4 mb-6">
-                                        <div className="space-y-1">
-                                            <p className="text-xs text-muted-foreground">Total Active Debt</p>
-                                            <p className="text-2xl font-bold">฿{group.totalDebt.toLocaleString()}</p>
-                                        </div>
-                                        <div className="space-y-1 text-right">
-                                            <p className="text-xs text-muted-foreground">Members</p>
-                                            <p className="text-xl font-medium flex justify-end items-center gap-1">
-                                                <Users2 className="h-4 w-4" /> {group.members}
-                                            </p>
-                                        </div>
-                                    </div>
-
-                                    <div className="bg-muted/50 p-4 rounded-lg space-y-4">
-                                        <div className="flex justify-between items-center">
-                                            <span className="text-sm font-medium flex items-center gap-2">
-                                                <BarChart2 className="h-4 w-4 text-primary" /> Profit / ROI
-                                            </span>
-                                            <span className="text-lg font-bold text-emerald-600">
-                                                +{group.profitRate}%
-                                            </span>
-                                        </div>
-                                        <div className="w-full bg-secondary h-2 rounded-full overflow-hidden">
-                                            <div className="h-full bg-emerald-500" style={{ width: `${group.profitRate * 2}%` }}></div>
-                                        </div>
-                                        <div className="flex justify-between text-xs text-muted-foreground">
-                                            <span>Est. Profit: ฿{group.profitAmount.toLocaleString()}</span>
-                                            <span>Collection: {group.collectionRate}%</span>
-                                        </div>
-                                    </div>
-
-                                    <div className="mt-4 flex -space-x-2 overflow-hidden">
-                                        {/* Mock Avatars */}
-                                        {[...Array(4)].map((_, i) => (
-                                            <div key={i} className="inline-block h-8 w-8 rounded-full ring-2 ring-background bg-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-500">
-                                                U{i + 1}
-                                            </div>
-                                        ))}
-                                        <div className="inline-block h-8 w-8 rounded-full ring-2 ring-background bg-slate-100 flex items-center justify-center text-xs text-muted-foreground">
-                                            +{group.members - 4}
-                                        </div>
-                                    </div>
-                                </CardContent>
-                            </Card>
-                        ))}
-                    </div>
-                </TabsContent>
-
-                {/* TAB: PORTFOLIO GRAPH */}
-                <TabsContent value="graph" className="space-y-4">
-                    <PortfolioGraph />
-                </TabsContent>
-
-                {/* TAB: ANALYTICS */}
-                <TabsContent value="analytics" className="space-y-4">
-                    <FundPerformanceChart />
-                </TabsContent>
-            </Tabs>
+  if (!isTenantAdmin) return null;
+  return (
+    <main
+      className="flex-1 space-y-6 pb-10"
+      aria-labelledby="dashboard-title"
+    >
+      <header className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+        <div className="max-w-2xl">
+          <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+            <Sparkles className="h-4 w-4" />
+            {t("dashboardPage.eyebrow")}
+          </div>
+          <h1
+            id="dashboard-title"
+            className="text-3xl font-bold tracking-tight sm:text-4xl"
+          >
+            {t("dashboardPage.title")}
+          </h1>
+          <p className="mt-2 text-sm text-muted-foreground sm:text-base">
+            {t("dashboardPage.description")}
+          </p>
         </div>
-    )
+        <div className="grid grid-cols-2 gap-2 sm:flex">
+          <Button
+            className="col-span-2"
+            onClick={() => navigate("/transactions/new")}
+          >
+            <CircleDollarSign className="mr-2 h-4 w-4" />
+            {t("dashboardPage.actions.recordBorrowerPayment")}
+          </Button>
+          <Button variant="outline" onClick={() => navigate("/matching")}>
+            {t("dashboardPage.actions.openMatching")}
+          </Button>
+          <Button variant="outline" onClick={() => navigate("/funds")}>
+            {t("dashboardPage.actions.openFunds")}
+          </Button>
+        </div>
+      </header>
+
+      <section
+        aria-labelledby="cash-heading"
+        className="overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-primary/5 shadow-sm"
+      >
+        <div className="flex items-center justify-between border-b border-border/70 px-5 py-4">
+          <div>
+            <h2 id="cash-heading" className="font-semibold">
+              {t("dashboardPage.sections.cashToday")}
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              {t("dashboardPage.sections.cashTodayDescription")}
+            </p>
+          </div>
+          <Badge variant="secondary">{t("dashboardPage.live")}</Badge>
+        </div>
+        <div
+          className="grid sm:grid-cols-3"
+          aria-busy={summary.loading}
+        >
+          {summary.error ? (
+            <div className="sm:col-span-3">
+              <SectionError retry={summary.retry} />
+            </div>
+          ) : summary.loading ? (
+            <>
+              <Skeleton className="h-24" />
+              <Skeleton className="h-24" />
+              <Skeleton className="h-24" />
+            </>
+          ) : (
+            <>
+              <MoneyMetric
+                label={t("dashboardPage.cards.dueFromBorrowers")}
+                value={summary.data?.dueFromBorrowersToday ?? "0.00"}
+                icon={
+                  <BanknoteArrowDown className="h-4 w-4 text-emerald-500" />
+                }
+              />
+              <MoneyMetric
+                label={t("dashboardPage.cards.dueToFunds")}
+                value={summary.data?.dueToFundsToday ?? "0.00"}
+                icon={<BanknoteArrowUp className="h-4 w-4 text-amber-500" />}
+              />
+              <MoneyMetric
+                label={t("dashboardPage.cards.netPosition")}
+                value={summary.data?.netPositionToday ?? "0.00"}
+                tone={netTone}
+                icon={<CircleDollarSign className="h-4 w-4" />}
+              />
+            </>
+          )}
+        </div>
+      </section>
+
+      {collectionSummary.error ? (
+        <SectionError retry={collectionSummary.retry} />
+      ) : collectionSummary.loading ? (
+        <div className="grid gap-6 xl:grid-cols-2">
+          <Skeleton className="h-80 w-full" />
+          <Skeleton className="h-80 w-full" />
+        </div>
+      ) : (
+        <DashboardCollectionSummary summary={collectionSummary.data ?? {
+          totalDueToday: "0.00",
+          categories: [],
+          intermediaries: [],
+        }} />
+      )}
+
+      <DashboardAnalyticsSection analytics={analytics} />
+
+      <div className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(0,0.88fr)_minmax(0,1.4fr)]">
+        <Card className="h-fit border-primary/20">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5 text-primary" />
+              {t("dashboardPage.sections.priorities")}
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              {t("dashboardPage.sections.prioritiesDescription")}
+            </p>
+          </CardHeader>
+          <CardContent
+            className="space-y-2"
+            aria-busy={summary.loading || reconciliation.loading}
+          >
+            {summary.error && reconciliation.error ? (
+              <SectionError
+                retry={async () => {
+                  await Promise.all([summary.retry(), reconciliation.retry()]);
+                }}
+              />
+            ) : priorities.length ? (
+              priorities.map((item) => (
+                <PriorityRow
+                  key={item.key}
+                  item={item}
+                  onOpen={() => navigate(item.href)}
+                />
+              ))
+            ) : summary.loading || reconciliation.loading ? (
+              <>
+                <Skeleton className="h-16 w-full" />
+                <Skeleton className="h-16 w-full" />
+              </>
+            ) : (
+              <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+                {t("dashboardPage.empty.noPriorities")}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <div className="grid min-w-0 grid-cols-1 gap-6 lg:grid-cols-2">
+          <Card className={QUEUE_SECTION_CLASS}>
+            <CardHeader className={`flex flex-row items-start justify-between gap-3 ${QUEUE_HEADER_CLASS}`}>
+              <div>
+                <CardTitle>
+                  {t("dashboardPage.sections.borrowerDueQueue")}
+                </CardTitle>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t("dashboardPage.sections.borrowerDueDescription")}
+                </p>
+              </div>
+              <Badge>{borrowerQueue.data?.length ?? 0}</Badge>
+            </CardHeader>
+            <CardContent
+              className={QUEUE_CONTENT_CLASS}
+              aria-busy={borrowerQueue.loading}
+            >
+              {borrowerQueue.error ? (
+                <SectionError retry={borrowerQueue.retry} />
+              ) : borrowerQueue.loading ? (
+                <>
+                  <Skeleton className="h-20 w-full" />
+                  <Skeleton className="h-20 w-full" />
+                </>
+              ) : borrowerQueue.data?.length ? (
+                <>
+                  {borrowerQueue.data
+                    .slice(0, showAllBorrowers ? undefined : 5)
+                    .map((item) => (
+                      <button
+                        key={`${item.repaymentType}-${item.schedulePublicId ?? item.scheduleId ?? item.loanPublicId ?? item.loanId}`}
+                        type="button"
+                        onClick={() => openBorrower(item)}
+                        className={QUEUE_ROW_CLASS}
+                      >
+                        <span className="min-w-0 flex-1 pr-2">
+                          <span className="block truncate font-medium">
+                            {item.borrowerName}
+                          </span>
+                          <BorrowerQueueMeta item={item} />
+                        </span>
+                        <span className="shrink-0 space-y-1 text-right">
+                          <span className="block font-semibold tabular-nums">
+                            {formatMoneyExact(
+                              item.totalDueNow ?? item.remainingDue,
+                              i18n.language,
+                            )}
+                          </span>
+                          <StatusBadge status={item.status} />
+                        </span>
+                      </button>
+                    ))}
+                  {borrowerQueue.data.length > 5 && (
+                    <Button
+                      className="w-full"
+                      variant="ghost"
+                      onClick={() => setShowAllBorrowers((value) => !value)}
+                    >
+                      {showAllBorrowers
+                        ? t("dashboardPage.actions.showLess")
+                        : t("dashboardPage.actions.viewAll", {
+                            count: borrowerQueue.data.length,
+                          })}
+                    </Button>
+                  )}
+                </>
+              ) : (
+                <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+                  {t("dashboardPage.empty.noBorrowerDue")}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className={QUEUE_SECTION_CLASS}>
+            <CardHeader className={`flex flex-row items-start justify-between gap-3 ${QUEUE_HEADER_CLASS}`}>
+              <div>
+                <CardTitle>
+                  {t("dashboardPage.sections.fundDueQueue")}
+                </CardTitle>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t("dashboardPage.sections.fundDueDescription")}
+                </p>
+              </div>
+              <Badge>{fundQueue.data?.length ?? 0}</Badge>
+            </CardHeader>
+            <CardContent className={QUEUE_CONTENT_CLASS} aria-busy={fundQueue.loading}>
+              {fundQueue.error ? (
+                <SectionError retry={fundQueue.retry} />
+              ) : fundQueue.loading ? (
+                <>
+                  <Skeleton className="h-20 w-full" />
+                  <Skeleton className="h-20 w-full" />
+                </>
+              ) : fundQueue.data?.length ? (
+                <>
+                  {fundQueue.data
+                    .slice(0, showAllFunds ? undefined : 5)
+                    .map((item) => (
+                      <button
+                        key={item.scheduleId}
+                        type="button"
+                        onClick={() => openFund(item)}
+                        className={QUEUE_ROW_CLASS}
+                      >
+                        <span className="min-w-0 flex-1 pr-2">
+                          <span className="block truncate font-medium">
+                            {t("dashboardPage.drawdownLabel", {
+                              id: item.bankLoanId,
+                            })}
+                          </span>
+                          <span className="block text-xs text-muted-foreground">
+                            {t("dashboardPage.installment", {
+                              number: item.installmentNo,
+                            })}{" "}
+                            · {formatDate(item.dueDate)}
+                          </span>
+                        </span>
+                        <span className="shrink-0 space-y-1 text-right">
+                          <span className="block font-semibold tabular-nums">
+                            {formatMoneyExact(
+                              item.totalDueNow ?? item.remainingDue,
+                              i18n.language,
+                            )}
+                          </span>
+                          <StatusBadge status={item.status} />
+                        </span>
+                      </button>
+                    ))}
+                  {fundQueue.data.length > 5 && (
+                    <Button
+                      className="w-full"
+                      variant="ghost"
+                      onClick={() => setShowAllFunds((value) => !value)}
+                    >
+                      {showAllFunds
+                        ? t("dashboardPage.actions.showLess")
+                        : t("dashboardPage.actions.viewAll", {
+                            count: fundQueue.data.length,
+                          })}
+                    </Button>
+                  )}
+                </>
+              ) : (
+                <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+                  {t("dashboardPage.empty.noFundDue")}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      <section aria-labelledby="details-heading">
+        <div className="mb-3">
+          <h2 id="details-heading" className="text-lg font-semibold">
+            {t("dashboardPage.sections.details")}
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            {t("dashboardPage.sections.detailsDescription")}
+          </p>
+        </div>
+        <div className="hidden gap-4 md:grid md:grid-cols-3">
+          <DetailCards
+            alerts={alerts}
+            reconciliation={reconciliation}
+            profitability={profitability}
+          />
+        </div>
+        <details className="rounded-xl border bg-card p-4 md:hidden">
+          <summary className="cursor-pointer font-medium">
+            {t("dashboardPage.actions.openDetails")}
+          </summary>
+          <div className="mt-4 space-y-4">
+            <DetailCards
+              alerts={alerts}
+              reconciliation={reconciliation}
+              profitability={profitability}
+            />
+          </div>
+        </details>
+      </section>
+    </main>
+  );
+}
+
+function DashboardAnalyticsSection({
+  analytics,
+}: {
+  analytics: ReturnType<typeof useDashboardResource<DashboardAnalytics>>;
+}) {
+  const { t, i18n } = useTranslation();
+  const rate = getCollectionRatePercent(
+    analytics.data?.collectionRate.actual ?? "0.00",
+    analytics.data?.collectionRate.expected ?? "0.00",
+  );
+  const rateNumber = Number(rate);
+  const rateTone = rateNumber >= 95 ? "text-emerald-600" : rateNumber >= 80 ? "text-amber-600" : "text-destructive";
+  const formatAxisDate = (value: string) => new Intl.DateTimeFormat(i18n.language, { day: "numeric", month: "short" }).format(new Date(`${value}T00:00:00`));
+  const formatMonth = (value: string) => new Intl.DateTimeFormat(i18n.language, { month: "short", year: "numeric" }).format(new Date(`${value}-01T00:00:00`));
+  const formatTooltip = (value: unknown) => formatMoneyExact(String(value ?? "0.00"), i18n.language);
+
+  return (
+    <section aria-labelledby="analytics-heading" className="space-y-4">
+      <div>
+        <h2 id="analytics-heading" className="text-lg font-semibold">{t("dashboardPage.sections.analytics")}</h2>
+        <p className="text-sm text-muted-foreground">{t("dashboardPage.sections.analyticsDescription")}</p>
+      </div>
+      {analytics.error ? <SectionError retry={analytics.retry} /> : analytics.loading ? (
+        <div className="grid gap-4 lg:grid-cols-3"><Skeleton className="h-56" /><Skeleton className="h-56" /><Skeleton className="h-56" /></div>
+      ) : (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm">{t("dashboardPage.analytics.collectionRate")}</CardTitle></CardHeader><CardContent><div className={`text-3xl font-bold tabular-nums ${rateTone}`}>{rate}%</div><p className="mt-1 text-xs text-muted-foreground">{t("dashboardPage.analytics.actualVsExpected", { actual: formatTooltip(analytics.data?.collectionRate.actual), expected: formatTooltip(analytics.data?.collectionRate.expected) })}</p></CardContent></Card>
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm">{t("dashboardPage.analytics.interestCollected")}</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold tabular-nums">{formatTooltip(analytics.data?.daily.reduce((sum, item) => addMoneyStrings(sum, item.interest), "0.00"))}</div><p className="mt-1 text-xs text-muted-foreground">{t("dashboardPage.analytics.last30Days")}</p></CardContent></Card>
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm">{t("dashboardPage.analytics.deployedPrincipal")}</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold tabular-nums">{formatTooltip(analytics.data?.deployedPrincipal)}</div><p className="mt-1 text-xs text-muted-foreground">{t("dashboardPage.analytics.totalAllocated")}</p></CardContent></Card>
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm">{t("dashboardPage.analytics.outstandingPrincipal")}</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold tabular-nums">{formatTooltip(analytics.data?.outstandingPrincipal)}</div><p className="mt-1 text-xs text-muted-foreground">{t("dashboardPage.analytics.activeLoans")}</p></CardContent></Card>
+          </div>
+          <div className="grid min-w-0 gap-4 xl:grid-cols-2">
+            <Card><CardHeader><CardTitle>{t("dashboardPage.analytics.cashCollection30Days")}</CardTitle><p className="text-sm text-muted-foreground">{t("dashboardPage.analytics.cashCollectionDescription")}</p></CardHeader><CardContent><div className="h-64 w-full"><ResponsiveContainer width="100%" height="100%"><LineChart data={analytics.data?.daily}><CartesianGrid strokeDasharray="3 3" className="stroke-border" /><XAxis dataKey="date" tickFormatter={formatAxisDate} minTickGap={24} /><YAxis tickFormatter={(value) => formatTooltip(value)} width={80} /><Tooltip labelFormatter={(value) => formatAxisDate(String(value))} formatter={(value, name) => [formatTooltip(value), name === "actual" ? t("dashboardPage.analytics.actual") : t("dashboardPage.analytics.expected")]} /><Line type="monotone" dataKey="expected" stroke="#f59e0b" strokeWidth={2} dot={false} /><Line type="monotone" dataKey="actual" stroke="#10b981" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div></CardContent></Card>
+            <Card><CardHeader><CardTitle>{t("dashboardPage.analytics.interestByDay")}</CardTitle><p className="text-sm text-muted-foreground">{t("dashboardPage.analytics.interestByDayDescription")}</p></CardHeader><CardContent><div className="h-64 w-full"><ResponsiveContainer width="100%" height="100%"><LineChart data={analytics.data?.daily}><CartesianGrid strokeDasharray="3 3" className="stroke-border" /><XAxis dataKey="date" tickFormatter={formatAxisDate} minTickGap={24} /><YAxis tickFormatter={(value) => formatTooltip(value)} width={80} /><Tooltip labelFormatter={(value) => formatAxisDate(String(value))} formatter={(value) => [formatTooltip(value), t("dashboardPage.analytics.interest")]} /><Line type="monotone" dataKey="interest" stroke="#8b5cf6" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></div></CardContent></Card>
+            <Card className="xl:col-span-2"><CardHeader><CardTitle>{t("dashboardPage.analytics.interestByMonth")}</CardTitle><p className="text-sm text-muted-foreground">{t("dashboardPage.analytics.interestByMonthDescription")}</p></CardHeader><CardContent><div className="h-64 w-full"><ResponsiveContainer width="100%" height="100%"><BarChart data={analytics.data?.monthly}><CartesianGrid strokeDasharray="3 3" className="stroke-border" /><XAxis dataKey="month" tickFormatter={formatMonth} /><YAxis tickFormatter={(value) => formatTooltip(value)} width={80} /><Tooltip labelFormatter={(value) => formatMonth(String(value))} formatter={(value, name) => [formatTooltip(value), name === "actualInterest" ? t("dashboardPage.analytics.actualInterest") : t("dashboardPage.analytics.expectedInterest")]} /><Bar dataKey="expectedInterest" fill="#f59e0b" radius={[4, 4, 0, 0]} /><Bar dataKey="actualInterest" fill="#8b5cf6" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></div></CardContent></Card>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function addMoneyStrings(left: string, right: string) {
+  return new Decimal(left).plus(right).toFixed(2);
+}
+
+function DetailCards({
+  alerts,
+  reconciliation,
+  profitability,
+}: {
+  alerts: ReturnType<typeof useDashboardResource<FundingAlerts>>;
+  reconciliation: ReturnType<typeof useDashboardResource<ReconciliationStatus>>;
+  profitability: ReturnType<typeof useDashboardResource<ProfitabilitySummary>>;
+}) {
+  const { t, i18n } = useTranslation();
+  const items = [
+    {
+      key: "underfunded",
+      label: t("dashboardPage.sections.underfundedLoans"),
+      value: alerts.data?.underfundedLoans.length ?? 0,
+    },
+    {
+      key: "unallocated",
+      label: t("dashboardPage.sections.unallocatedDrawdowns"),
+      value: alerts.data?.unallocatedDrawdowns.length ?? 0,
+    },
+    {
+      key: "unmatched",
+      label: t("dashboardPage.reconciliation.unmatchedBorrowerPayments"),
+      value: reconciliation.data?.unreconciledBorrowerPayments ?? 0,
+    },
+  ];
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">
+            {t("dashboardPage.sections.fundingAlerts")}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {alerts.error ? (
+            <SectionError retry={alerts.retry} />
+          ) : alerts.loading ? (
+            <Skeleton className="h-24 w-full" />
+          ) : (
+            items.slice(0, 2).map((item) => (
+              <div key={item.key} className="flex justify-between text-sm">
+                <span className="text-muted-foreground">{item.label}</span>
+                <strong>{item.value}</strong>
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">
+            {t("dashboardPage.sections.reconciliationStatus")}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {reconciliation.error ? (
+            <SectionError retry={reconciliation.retry} />
+          ) : reconciliation.loading ? (
+            <Skeleton className="h-24 w-full" />
+          ) : (
+            <>
+              {items.slice(2).map((item) => (
+                <div key={item.key} className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">{item.label}</span>
+                  <strong>{item.value}</strong>
+                </div>
+              ))}
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">
+                  {t("dashboardPage.reconciliation.pendingManualReviews")}
+                </span>
+                <strong>
+                  {reconciliation.data?.pendingManualReviews ?? 0}
+                </strong>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">
+            {t("dashboardPage.sections.profitability")}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {profitability.error ? (
+            <SectionError retry={profitability.retry} />
+          ) : profitability.loading ? (
+            <Skeleton className="h-24 w-full" />
+          ) : (
+            <>
+              <div className="flex justify-between gap-2 text-sm">
+                <span className="text-muted-foreground">
+                  {t("dashboardPage.cards.realizedSpread")}
+                </span>
+                <strong className="tabular-nums">
+                  {formatMoneyExact(
+                    profitability.data?.realizedSpread ?? "0.00",
+                    i18n.language,
+                  )}
+                </strong>
+              </div>
+              <div className="flex justify-between gap-2 text-sm">
+                <span className="text-muted-foreground">
+                  {t("dashboardPage.cards.unrealizedSpread")}
+                </span>
+                <strong className="tabular-nums">
+                  {formatMoneyExact(
+                    profitability.data?.unrealizedSpread ?? "0.00",
+                    i18n.language,
+                  )}
+                </strong>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </>
+  );
 }
