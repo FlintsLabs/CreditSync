@@ -12,6 +12,7 @@
 - Kept the newly discovered renewal-panel regression portable under Vitest by replacing its Bun-only clock import with Vitest fake-timer controls.
 
 ### Fixed
+- Corrected batch staging edit/split concurrency and membership lineage: split reloads the source after its row lock, normalizes staging and reviewed-item identifiers to one atomic membership, derives runtime chronology from actual borrower/date state, and resolves mapping access and clear-vs-omit fingerprints safely.
 - Recorded and isolated the remaining serialized-suite timeout: the intermediary remittance file passed in three clean disposable reproductions, and the full rerun passed without changing its five-second assertion timeout.
 - Restored frontend verification on Node 26 by disabling native webstorage only in compatible Vitest workers; aligned deferral tests with Vitest, sidebar assertions with release metadata, and repayment fixtures with the separate schedule-summary response. Production financial logic is unchanged.
 - Preserved the component-specific floating penalty compensation error when chronology checks also apply, while retaining the later-payment safety guard.
