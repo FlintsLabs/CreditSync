@@ -8,7 +8,7 @@ Scope: implement and verify all seven approved tasks; no merge, push, deploy, pr
 ## Progress
 
 - [x] Baseline verification and repository mapping
-- [ ] Task 1: durable batch staging and retry (service/API, resumable receipts/evidence checks, posted-membership DB gates, and read-only resumable workspace API now green; split/dependencies remain)
+- [ ] Task 1: durable batch staging and retry (service/API, resumable receipts/evidence checks, posted-membership DB gates, read-only workspace, revision-bound edits, and atomic split/dependency APIs are green; broader chronology/review acceptance remains)
 - [ ] Task 2: shared chronology guard (partial; all-writer locking and decision persistence remain)
 - [ ] Task 3: floating multi-contract planner (partial; projected sequential state and accounting parity remain)
 - [ ] Task 4: bound atomic execute (existing rollback/concurrency green; preview binding and all-borrower chronology recheck remain)
@@ -82,3 +82,10 @@ Red/green commands will be appended per task before implementation claims.
 - The full serialized suite at commit `310e088` remains the latest backend gate: 906 passed, 3 skipped, 0 failed, 5799 expectations. This continuation's workspace change requires a new full-suite run before final acceptance.
 - At commit `a39daa0`, the first post-workspace full suite exposed one 5-second timeout in the intermediary remittance selection test (`906 pass / 3 skip / 1 fail / 1 error`, 5801 expectations). The exact file then passed in three isolated disposable runs (6/6 each, 0.93–1.51s), without changing timeout or financial assertions. A clean serialized rerun at the same HEAD passed `907 / 3 skipped / 0 failed`, 5804 expectations, 910 tests in 210.46s; no owned container or volume remained.
 - Final non-DB gates at `a39daa0`: `cd backend && bun run typecheck` passed; `cd frontend && bun run test` passed 274 tests in 62 files, lint passed, and build passed with the existing chunk-size warning; `cd plugins/creditsync && bun test` passed 56 tests/1688 expectations and `bun run validate` passed (9.2.0, 11 skills, 116 tools).
+
+### 2026-09-10 — resumable staging edit and split continuation
+
+- TDD RED: `./scripts/test-disposable-postgres.sh src/services/payment-batch-staging.integration.test.ts` failed at module loading because `editPaymentBatchStagingItem` and `splitPaymentBatch` did not exist.
+- GREEN: the same serialized disposable suite passed 12/12 with 59 expectations. It covers revision/idempotency-bound draft edits, stale revision rejection, zero transactions, unresolved staging split, exact replay metadata, membership preservation, and no duplicated intake/evidence.
+- Regression GREEN: `./scripts/test-disposable-postgres.sh src/services/payment-batch-staging.integration.test.ts src/db/atomic-batch-payment-migration.test.ts src/services/payment-batch-service.test.ts` passed 23/23 with 102 expectations. `cd backend && bun run typecheck` passed.
+- Added additive migration `0067_batch_staging_edits_and_dependencies.sql`, tenant-composite source/destination FKs, immutable dependency metadata, REST edit/split schemas, and preview/execute dependency holds. This task commit is not full seven-task acceptance; chronology, accounting/reflow, UI/MCP synchronization, and final verification remain open.

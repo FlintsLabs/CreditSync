@@ -470,6 +470,13 @@
       "when": 1788912000001,
       "tag": "0066_batch_allocation_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1788912000002,
+      "tag": "0067_batch_staging_edits_and_dependencies",
+      "breakpoints": true
     }
   ]
 }

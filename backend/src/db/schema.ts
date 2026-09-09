@@ -1712,6 +1712,7 @@ export const paymentBatchStagingItems = pgTable("payment_batch_staging_items", {
     reviewedRangeFrom: date("reviewed_range_from"),
     reviewedRangeTo: date("reviewed_range_to"),
     reviewedReason: text("reviewed_reason"),
+    reviewedMapping: jsonb("reviewed_mapping").$type<{ borrowerPublicId?: string; loanPublicId?: string; schedulePublicId?: string } | null>(),
     operationKey: text("operation_key"),
     operationRequestHash: text("operation_request_hash"),
     operationResult: jsonb("operation_result").$type<Record<string, unknown> | null>(),
@@ -1728,6 +1729,28 @@ export const paymentBatchStagingItems = pgTable("payment_batch_staging_items", {
     foreignKey({ name: "payment_batch_staging_tenant_intake_fk", columns: [table.tenantId, table.paymentIntakeId], foreignColumns: [paymentIntakes.tenantId, paymentIntakes.id] }),
     foreignKey({ name: "payment_batch_staging_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
     foreignKey({ name: "payment_batch_staging_tenant_updated_by_fk", columns: [table.tenantId, table.updatedByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
+
+export const paymentBatchDependencies = pgTable("payment_batch_dependencies", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    sourceBatchId: integer("source_batch_id").notNull(),
+    destinationBatchId: integer("destination_batch_id").notNull(),
+    relation: text("relation").notNull(),
+    sourceRevision: integer("source_revision").notNull(),
+    destinationRevision: integer("destination_revision").notNull(),
+    reason: text("reason").notNull(),
+    provenance: jsonb("provenance").$type<Record<string, unknown>>().notNull(),
+    createdByUserId: integer("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_batch_dependencies_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("payment_batch_dependencies_tenant_source_destination_unique").on(table.tenantId, table.sourceBatchId, table.destinationBatchId),
+    check("payment_batch_dependencies_relation_check", sql`${table.relation} = 'split'`),
+    foreignKey({ name: "payment_batch_dependencies_tenant_source_fk", columns: [table.tenantId, table.sourceBatchId], foreignColumns: [paymentBatches.tenantId, paymentBatches.id] }),
+    foreignKey({ name: "payment_batch_dependencies_tenant_destination_fk", columns: [table.tenantId, table.destinationBatchId], foreignColumns: [paymentBatches.tenantId, paymentBatches.id] }),
+    foreignKey({ name: "payment_batch_dependencies_tenant_actor_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
 ]);
 
 export const paymentBatchStagingEvidence = pgTable("payment_batch_staging_evidence", {

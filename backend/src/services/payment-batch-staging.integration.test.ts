@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, paymentBatches, paymentBatchOperationReceipts, paymentBatchStagingEvidence, paymentBatchStagingItems, paymentIntakes, transactions, users } from "../db/schema";
+import { borrowers, paymentBatches, paymentBatchDependencies, paymentBatchOperationReceipts, paymentBatchStagingEvidence, paymentBatchStagingItems, paymentIntakes, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import type { EvidenceStorageGateway } from "./payment-service";
-import { stagePaymentBatchItems, preparePaymentBatchStagingEvidence, finalizePaymentBatchStagingEvidence, reviewPaymentBatchStagingItem, previewPaymentBatch, cancelPaymentBatch, capturePaymentBatch, getPaymentBatchWorkspace } from "./payment-batch-service";
+import { stagePaymentBatchItems, preparePaymentBatchStagingEvidence, finalizePaymentBatchStagingEvidence, reviewPaymentBatchStagingItem, previewPaymentBatch, cancelPaymentBatch, capturePaymentBatch, getPaymentBatchWorkspace, editPaymentBatchStagingItem, splitPaymentBatch } from "./payment-batch-service";
 
 const integration = process.env.TEST_DATABASE_URL ? test : test.skip;
 async function fixture() {
@@ -141,4 +141,42 @@ integration("expired and mismatched storage metadata cannot finalize; one failed
     await finalizePaymentBatchStagingEvidence(f.ctx, secondInput.stagingItemPublicId, second.evidencePublicId, f.gateway);
     expect(await db.query.paymentBatchStagingEvidence.findFirst({ where: eq(paymentBatchStagingEvidence.publicId, prepared.evidencePublicId) })).toMatchObject({ status: "pending" });
     expect(await db.select().from(transactions).where(eq(transactions.tenantId, f.ctx.tenantId))).toHaveLength(0);
+});
+
+integration("a draft staging edit is revision-bound, idempotent, and invalidates previews without financial writes", async () => {
+    const f = await fixture();
+    const item = f.staged.items[0]!;
+    const edited = await editPaymentBatchStagingItem(f.ctx, {
+        stagingItemPublicId: item.publicId,
+        expectedRevision: 1,
+        idempotencyKey: "edit-a",
+        reason: "synthetic reviewed correction",
+        amount: "120.00",
+        receivedAt: "2026-09-07T10:00:00+07:00",
+    });
+    expect(edited.status).toBe("staged");
+    expect(edited.revision).toBe(2);
+    expect(await editPaymentBatchStagingItem({ ...f.ctx, correlationId: crypto.randomUUID() }, {
+        stagingItemPublicId: item.publicId, expectedRevision: 1, idempotencyKey: "edit-a", reason: "synthetic reviewed correction", amount: "120.00", receivedAt: "2026-09-07T10:00:00+07:00",
+    })).toEqual(edited);
+    await expect(editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: item.publicId, expectedRevision: 1, idempotencyKey: "edit-b", reason: "stale", amount: "121.00", receivedAt: "2026-09-07T10:00:00+07:00" })).rejects.toThrow("revision");
+    expect(await db.select().from(transactions).where(eq(transactions.tenantId, f.ctx.tenantId))).toHaveLength(0);
+});
+
+integration("split moves selected unresolved staging members atomically with provenance and no duplicated intake or evidence", async () => {
+    const f = await fixture();
+    const selected = f.staged.items[0]!;
+    const result = await splitPaymentBatch(f.ctx, f.staged.batchPublicId, {
+        selectedItemPublicIds: [selected.publicId], expectedSourceRevision: 1, idempotencyKey: "split-a", reason: "synthetic chronology hold",
+    });
+    expect(result.movedItemPublicIds).toEqual([selected.publicId]);
+    expect(result.sourceBatchPublicId).toBe(f.staged.batchPublicId);
+    expect(result.destinationBatchPublicId).not.toBe(f.staged.batchPublicId);
+    expect(await db.query.paymentBatchDependencies.findFirst({ where: eq(paymentBatchDependencies.publicId, result.dependencyPublicId) })).toMatchObject({ relation: "split", reason: "synthetic chronology hold" });
+    expect((await getPaymentBatchWorkspace(f.ctx, f.staged.batchPublicId)).items.map((x) => x.publicId)).toEqual([f.staged.items[1]!.publicId]);
+    expect((await getPaymentBatchWorkspace(f.ctx, result.destinationBatchPublicId)).items.map((x) => x.publicId)).toEqual([selected.publicId]);
+    expect(await db.select().from(paymentIntakes).where(eq(paymentIntakes.tenantId, f.ctx.tenantId))).toHaveLength(0);
+    expect(await db.select().from(transactions).where(eq(transactions.tenantId, f.ctx.tenantId))).toHaveLength(0);
+    const replay = await splitPaymentBatch({ ...f.ctx, correlationId: crypto.randomUUID() }, f.staged.batchPublicId, { selectedItemPublicIds: [selected.publicId], expectedSourceRevision: 1, idempotencyKey: "split-a", reason: "synthetic chronology hold" });
+    expect(replay).toEqual(result);
 });
