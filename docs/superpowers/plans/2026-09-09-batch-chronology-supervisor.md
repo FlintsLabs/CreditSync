@@ -8,6 +8,7 @@ The user approved main-agent direct takeover after the stopped Luna worker. Rout
 
 - At clean HEAD `310e088`, the serialized full disposable backend suite passed 906 tests, skipped 3 cache-invalidation tests, failed 0, with 5799 expectations; the runner's exact owned container and anonymous volume were removed after completion.
 - Task 1 continuation used TDD: the workspace integration test first failed on the missing service export, then passed 10/10 with 46 expectations after adding `GET /payment-batches/:id/workspace` and tenant/actor-scoped read-only staging projection. It deliberately excludes raw evidence/storage/OCR fields. This is a partial Task 1 gate; split/dependency/edit APIs and all later tasks remain open.
+- The first full run after `a39daa0` had one intermittent 5-second timeout in intermediary remittance selection (`906/3/1`, 5801 expectations). Three isolated runs of that exact file passed, and the clean serialized rerun passed `907/3/0`, 5804 expectations across 910 tests in 210.46s. The timeout was not dismissed or hidden by increasing limits; no owned disposable resources remained.
 
 ### 2026-09-09 continuation evidence
 
