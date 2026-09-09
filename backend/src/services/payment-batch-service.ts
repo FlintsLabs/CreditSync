@@ -163,6 +163,11 @@ async function inspectBatchChronology(
     const otherBatchIds = otherBatches.map((candidate) => candidate.id);
     const otherItems = otherBatchIds.length ? await executor.select().from(paymentBatchItems).where(and(eq(paymentBatchItems.tenantId, ctx.tenantId), inArray(paymentBatchItems.batchId, otherBatchIds))) : [];
     const otherStaging = otherItems.length ? await executor.select().from(paymentBatchStagingItems).where(and(eq(paymentBatchStagingItems.tenantId, ctx.tenantId), inArray(paymentBatchStagingItems.batchItemId, otherItems.map((item) => item.id)))) : [];
+    const otherAllocations = otherBatchIds.length ? await executor.select({ itemId: paymentBatchItems.id, borrowerId: paymentBatchAllocations.borrowerId }).from(paymentBatchAllocations)
+        .innerJoin(paymentBatchItems, and(eq(paymentBatchItems.tenantId, paymentBatchAllocations.tenantId), eq(paymentBatchItems.id, paymentBatchAllocations.itemId)))
+        .innerJoin(paymentBatches, and(eq(paymentBatches.tenantId, paymentBatchItems.tenantId), eq(paymentBatches.id, paymentBatchItems.batchId)))
+        .innerJoin(paymentBatchPreviews, and(eq(paymentBatchPreviews.tenantId, paymentBatches.tenantId), eq(paymentBatchPreviews.id, paymentBatchAllocations.previewId), eq(paymentBatchPreviews.batchId, paymentBatches.id), eq(paymentBatchPreviews.version, paymentBatches.version), eq(paymentBatchPreviews.status, "ready")))
+        .where(and(eq(paymentBatchAllocations.tenantId, ctx.tenantId), inArray(paymentBatchItems.batchId, otherBatchIds))) : [];
     const otherMappedLoanIds = otherStaging.flatMap((item) => item.reviewedMapping?.loanPublicId ? [item.reviewedMapping.loanPublicId] : []);
     const otherMappedLoans = otherMappedLoanIds.length ? await executor.select().from(loans).where(and(eq(loans.tenantId, ctx.tenantId), inArray(loans.publicId, otherMappedLoanIds))) : [];
     const allIntakeIds = [...otherItems.map((item) => item.paymentIntakeId), ...currentIntakes.map((intake) => intake.id)];
@@ -178,8 +183,9 @@ async function inspectBatchChronology(
             ? borrower.id
             : otherMappedLoans.find((loan) => loan.publicId === staging?.reviewedMapping?.loanPublicId)?.borrowerId;
         const ownerBatch = otherBatches.find((candidate) => candidate.id === item.batchId);
+        const currentAllocation = otherAllocations.find((allocation) => allocation.itemId === item.id);
         const resolvedBorrowerId = staging
-            ? (staging.reviewedMapping ? mappedBorrowerId : staging.paymentIntakeId === null ? ownerBatch?.borrowerId : undefined)
+            ? (staging.reviewedMapping ? mappedBorrowerId : currentAllocation?.borrowerId ?? ownerBatch?.borrowerId)
             : ownerBatch?.borrowerId;
         return intake && resolvedBorrowerId === borrower.id ? [{ itemId: item.publicId, borrowerId: borrower.publicId, receivedAt: intake.receivedAt.toISOString(), status: intake.status }] : [];
     }), ...standalone.map(({ intake }) => ({ itemId: intake.publicId, borrowerId: borrower.publicId, receivedAt: intake.receivedAt?.toISOString() ?? null, status: intake.status }))];

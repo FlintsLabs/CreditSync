@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, loans, loanSchedules, paymentBatches, paymentBatchDependencies, paymentBatchItems, paymentBatchOperationReceipts, paymentBatchStagingEvidence, paymentBatchStagingItems, paymentIntakes, transactions, users } from "../db/schema";
+import { borrowers, loans, loanSchedules, paymentBatches, paymentBatchDependencies, paymentBatchItems, paymentBatchOperationReceipts, paymentBatchStagingEvidence, paymentBatchStagingItems, paymentIntakes, paymentMatchProposals, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import type { EvidenceStorageGateway } from "./payment-service";
 import { assertNoOlderPendingPayment } from "./payment-chronology-service";
+import { previewPaymentMatch } from "./payment-service";
 import { stagePaymentBatchItems, preparePaymentBatchStagingEvidence, finalizePaymentBatchStagingEvidence, reviewPaymentBatchStagingItem, previewPaymentBatch, executePaymentBatch, cancelPaymentBatch, capturePaymentBatch, getPaymentBatchWorkspace, editPaymentBatchStagingItem, splitPaymentBatch } from "./payment-batch-service";
 
 const integration = process.env.TEST_DATABASE_URL ? test : test.skip;
@@ -259,7 +260,13 @@ integration("mapping edits require portfolio access and feed review into the pre
     const evidence = await preparePaymentBatchStagingEvidence(f.ctx, f.evidenceInput, f.gateway);
     await finalizePaymentBatchStagingEvidence(f.ctx, f.evidenceInput.stagingItemPublicId, evidence.evidencePublicId, f.gateway);
     await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[0]!.publicId, expectedRevision: 1, idempotencyKey: "map-a", reason: "synthetic mapping", amount: "120.00", receivedAt: "2026-09-07T10:00:00+07:00", mapping: { borrowerPublicId: f.input.borrowerPublicId!, loanPublicId: loan.publicId, schedulePublicId: schedule.publicId } });
-    await reviewPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.evidenceInput.stagingItemPublicId, amount: "120.00", receivedAt: "2026-09-07T10:00:00+07:00", intakeIdempotencyKey: "review-mapped" });
+    const mappedReview = await reviewPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.evidenceInput.stagingItemPublicId, amount: "120.00", receivedAt: "2026-09-07T10:00:00+07:00", intakeIdempotencyKey: "review-mapped" });
+    const matchPreview = await previewPaymentMatch(f.ctx, mappedReview.paymentIntakePublicId as string, { allocations: [{ borrowerPublicId: f.input.borrowerPublicId!, loanPublicId: loan.publicId, amount: "120.00" }] });
+    const mappedRevision = (await db.query.paymentBatchStagingItems.findFirst({ where: eq(paymentBatchStagingItems.publicId, f.evidenceInput.stagingItemPublicId) }))!.revision;
+    await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.evidenceInput.stagingItemPublicId, expectedRevision: mappedRevision, idempotencyKey: "stale-match-after-edit", reason: "synthetic amount correction", amount: "121.00" });
+    expect(await db.query.paymentMatchProposals.findFirst({ where: eq(paymentMatchProposals.publicId, matchPreview.publicId) })).toMatchObject({ status: "stale" });
+    const correctedRevision = (await db.query.paymentBatchStagingItems.findFirst({ where: eq(paymentBatchStagingItems.publicId, f.evidenceInput.stagingItemPublicId) }))!.revision;
+    await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.evidenceInput.stagingItemPublicId, expectedRevision: correctedRevision, idempotencyKey: "restore-mapped-amount", reason: "synthetic correction", amount: "120.00" });
     const secondEvidence = await preparePaymentBatchStagingEvidence(f.ctx, { ...f.evidenceInput, stagingItemPublicId: f.staged.items[1]!.publicId, sha256: "b".repeat(64) }, f.gateway);
     await finalizePaymentBatchStagingEvidence(f.ctx, f.staged.items[1]!.publicId, secondEvidence.evidencePublicId, f.gateway);
     await reviewPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[1]!.publicId, amount: "120.00", receivedAt: "2026-09-07T11:00:00+07:00", intakeIdempotencyKey: "review-unmapped-b" });
@@ -334,7 +341,7 @@ integration("batch preview holds a unique amount sum spanning multiple contracts
     expect(preview.status).toBe("needs_review");
 });
 
-integration("public remapping overrides the old batch header for later borrower chronology", async () => {
+integration("never-mapped reviewed items retain the captured batch borrower chronology", async () => {
     const f = await fixture();
     const [secondary] = await db.insert(borrowers).values({ tenantId: f.ctx.tenantId, ownerUserId: f.ctx.actorUserId, name: "Synthetic remapped chronology borrower" }).returning();
     const item = f.staged.items[0]!;
@@ -346,4 +353,63 @@ integration("public remapping overrides the old batch header for later borrower 
     await expect(previewPaymentBatch(f.ctx, laterA.publicId, { borrowerPublicId: f.input.borrowerPublicId! })).resolves.toMatchObject({ status: "needs_review" });
     const laterB = await capturePaymentBatch(f.ctx, { idempotencyKey: "later-secondary-borrower", borrowerPublicId: secondary!.publicId, items: [{ clientItemKey: "later-b", intakeIdempotencyKey: "later-b-intake", amount: "1.00", receivedAt: "2026-09-08T10:00:00+07:00" }] });
     await expect(previewPaymentBatch(f.ctx, laterB.publicId, { borrowerPublicId: secondary!.publicId })).rejects.toThrow("chronology");
+});
+
+integration("public remapping after a batch preview replaces the prior borrower authority", async () => {
+    const f = await fixture();
+    const header = await db.query.borrowers.findFirst({ where: eq(borrowers.publicId, f.input.borrowerPublicId!) });
+    const [secondary] = await db.insert(borrowers).values({ tenantId: f.ctx.tenantId, ownerUserId: f.ctx.actorUserId, name: "Synthetic post-preview remap borrower" }).returning();
+    const [loan] = await db.insert(loans).values({ tenantId: f.ctx.tenantId, ownerUserId: f.ctx.actorUserId!, borrowerId: header!.id, principalAmount: "121.00", interestRate: "0.00", repaymentType: "monthly", outstandingPrincipal: "121.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" }).returning();
+    const schedules = await db.insert(loanSchedules).values([
+        { tenantId: f.ctx.tenantId, loanId: loan!.id, installmentNo: 1, dueDate: "2026-09-07", scheduledPrincipal: "120.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "120.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "120.00", status: "pending" },
+        { tenantId: f.ctx.tenantId, loanId: loan!.id, installmentNo: 2, dueDate: "2026-09-07", scheduledPrincipal: "1.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "1.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "1.00", status: "pending" },
+    ]).returning();
+    for (const [index, item] of f.staged.items.entries()) {
+        const evidence = await preparePaymentBatchStagingEvidence(f.ctx, { ...f.evidenceInput, stagingItemPublicId: item.publicId, sha256: `${index}`.repeat(64) }, f.gateway);
+        await finalizePaymentBatchStagingEvidence(f.ctx, item.publicId, evidence.evidencePublicId, f.gateway);
+    }
+    await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[0]!.publicId, expectedRevision: 1, idempotencyKey: "post-preview-map-a", reason: "synthetic initial mapping", mapping: { borrowerPublicId: header!.publicId, loanPublicId: loan!.publicId, schedulePublicId: schedules[0]!.publicId } });
+    const first = await reviewPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[0]!.publicId, amount: "120.00", receivedAt: "2026-09-07T10:00:00+07:00", intakeIdempotencyKey: "post-preview-review-a" });
+    const second = await reviewPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[1]!.publicId, amount: "1.00", receivedAt: "2026-09-07T10:01:00+07:00", intakeIdempotencyKey: "post-preview-review-b" });
+    const sourcePreview = await previewPaymentBatch(f.ctx, f.staged.batchPublicId, { borrowerPublicId: header!.publicId, allocations: [
+        { itemPublicId: first.batchItemPublicId as string, borrowerPublicId: header!.publicId, loanPublicId: loan!.publicId, schedulePublicId: schedules[0]!.publicId, amount: "120.00", targetDueDate: "2026-09-07", intent: "on_time" },
+        { itemPublicId: second.batchItemPublicId as string, borrowerPublicId: header!.publicId, loanPublicId: loan!.publicId, schedulePublicId: schedules[1]!.publicId, amount: "1.00", targetDueDate: "2026-09-07", intent: "on_time" },
+    ] });
+    expect(sourcePreview.status).toBe("ready");
+    const revision = (await db.query.paymentBatchStagingItems.findFirst({ where: eq(paymentBatchStagingItems.publicId, f.staged.items[0]!.publicId) }))!.revision;
+    await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[0]!.publicId, expectedRevision: revision, idempotencyKey: "post-preview-map-b", reason: "synthetic remap after preview", mapping: { borrowerPublicId: secondary!.publicId } });
+    const secondRevision = (await db.query.paymentBatchStagingItems.findFirst({ where: eq(paymentBatchStagingItems.publicId, f.staged.items[1]!.publicId) }))!.revision;
+    await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[1]!.publicId, expectedRevision: secondRevision, idempotencyKey: "post-preview-map-b-second", reason: "synthetic remap after preview", mapping: { borrowerPublicId: secondary!.publicId } });
+    const laterA = await capturePaymentBatch(f.ctx, { idempotencyKey: "post-preview-later-a", borrowerPublicId: header!.publicId, items: [{ clientItemKey: "later-a", intakeIdempotencyKey: "post-preview-later-a-intake", amount: "1.00", receivedAt: "2026-09-08T10:00:00+07:00" }] });
+    await expect(previewPaymentBatch(f.ctx, laterA.publicId, { borrowerPublicId: header!.publicId })).resolves.toMatchObject({ status: "ready" });
+    const laterB = await capturePaymentBatch(f.ctx, { idempotencyKey: "post-preview-later-b", borrowerPublicId: secondary!.publicId, items: [{ clientItemKey: "later-b", intakeIdempotencyKey: "post-preview-later-b-intake", amount: "1.00", receivedAt: "2026-09-08T10:00:00+07:00" }] });
+    await expect(previewPaymentBatch(f.ctx, laterB.publicId, { borrowerPublicId: secondary!.publicId })).rejects.toThrow("chronology");
+});
+
+integration("a current explicit batch preview resolves an unmapped reviewed intake for chronology", async () => {
+    const f = await fixture();
+    const [secondary] = await db.insert(borrowers).values({ tenantId: f.ctx.tenantId, ownerUserId: f.ctx.actorUserId, name: "Synthetic preview-resolved borrower" }).returning();
+    const [loan, headerLoan] = await db.insert(loans).values([
+        { tenantId: f.ctx.tenantId, ownerUserId: f.ctx.actorUserId!, borrowerId: secondary!.id, principalAmount: "120.00", interestRate: "0.00", repaymentType: "monthly", outstandingPrincipal: "120.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" },
+        { tenantId: f.ctx.tenantId, ownerUserId: f.ctx.actorUserId!, borrowerId: (await db.query.borrowers.findFirst({ where: eq(borrowers.publicId, f.input.borrowerPublicId!) }))!.id, principalAmount: "1.00", interestRate: "0.00", repaymentType: "monthly", outstandingPrincipal: "1.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" },
+    ]).returning();
+    const [schedule] = await db.insert(loanSchedules).values({ tenantId: f.ctx.tenantId, loanId: loan!.id, installmentNo: 1, dueDate: "2026-09-07", scheduledPrincipal: "120.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "120.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "120.00", status: "pending" }).returning();
+    const [headerSchedule] = await db.insert(loanSchedules).values({ tenantId: f.ctx.tenantId, loanId: headerLoan!.id, installmentNo: 1, dueDate: "2026-09-07", scheduledPrincipal: "1.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "1.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "1.00", status: "pending" }).returning();
+    const evidence = await preparePaymentBatchStagingEvidence(f.ctx, f.evidenceInput, f.gateway);
+    await finalizePaymentBatchStagingEvidence(f.ctx, f.evidenceInput.stagingItemPublicId, evidence.evidencePublicId, f.gateway);
+    const reviewed = await reviewPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.evidenceInput.stagingItemPublicId, amount: "120.00", receivedAt: "2026-09-07T10:00:00+07:00", intakeIdempotencyKey: "preview-resolved-review" });
+    const secondItem = f.staged.items[1]!;
+    const secondEvidence = await preparePaymentBatchStagingEvidence(f.ctx, { ...f.evidenceInput, stagingItemPublicId: secondItem.publicId, sha256: "b".repeat(64) }, f.gateway);
+    await finalizePaymentBatchStagingEvidence(f.ctx, secondItem.publicId, secondEvidence.evidencePublicId, f.gateway);
+    const reviewedHeader = await reviewPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: secondItem.publicId, amount: "1.00", receivedAt: "2026-09-07T10:01:00+07:00", intakeIdempotencyKey: "preview-resolved-header-review" });
+    const sourcePreview = await previewPaymentBatch(f.ctx, f.staged.batchPublicId, {
+        borrowerPublicId: f.input.borrowerPublicId!,
+        allocations: [
+            { itemPublicId: reviewed.batchItemPublicId as string, borrowerPublicId: secondary!.publicId, loanPublicId: loan!.publicId, schedulePublicId: schedule!.publicId, amount: "120.00", targetDueDate: "2026-09-07", intent: "on_time" },
+            { itemPublicId: reviewedHeader.batchItemPublicId as string, borrowerPublicId: f.input.borrowerPublicId!, loanPublicId: headerLoan!.publicId, schedulePublicId: headerSchedule!.publicId, amount: "1.00", targetDueDate: "2026-09-07", intent: "on_time" },
+        ],
+    });
+    expect(sourcePreview.status).toBe("ready");
+    const later = await capturePaymentBatch(f.ctx, { idempotencyKey: "preview-resolved-later", borrowerPublicId: secondary!.publicId, items: [{ clientItemKey: "later", intakeIdempotencyKey: "preview-resolved-later-intake", amount: "1.00", receivedAt: "2026-09-08T10:00:00+07:00" }] });
+    await expect(previewPaymentBatch(f.ctx, later.publicId, { borrowerPublicId: secondary!.publicId })).rejects.toThrow("chronology");
 });
