@@ -72,6 +72,7 @@ const PAYMENT_B = "0198c481-3e2b-7000-8000-000000000406";
 const ATTRIBUTION_A = "0198c481-3e2b-7000-8000-000000000407";
 const ATTRIBUTION_B = "0198c481-3e2b-7000-8000-000000000408";
 const ATTRIBUTION_REVERSAL = "0198c481-3e2b-7000-8000-000000000409";
+const DIAGNOSTIC_CORRELATION = "0198c481-3e2b-7000-8000-000000000501";
 
 function commissionParticipant(publicId: string, intermediaryPublicId: string, rate: string) {
     return {
@@ -2318,6 +2319,46 @@ const SCENARIOS: Record<string, Scenario> = {
                 if (error instanceof ScriptedMcpError && error.code === "RESTRUCTURE_REVERSAL_BLOCKED") return { outcome: "stopped", stopReason: "unsafe-restructure-reversal" } as const;
                 throw error;
             }
+        },
+    },
+    "diagnostics-unexpected-followup": {
+        script: [
+            { name: "borrower.search", arguments: { query: "diagnostic fixture" }, error: { code: "INTERNAL_ERROR", message: "opaque upstream detail", retryable: true, reviewRequired: true, details: {} } },
+            { name: "system.error-diagnostic.get", arguments: { correlationId: DIAGNOSTIC_CORRELATION }, result: { correlationId: DIAGNOSTIC_CORRELATION, items: [] } },
+        ],
+        run: async (mcp) => {
+            try { await mcp.call("borrower.search", { query: "diagnostic fixture" }); } catch (error) {
+                if (!(error instanceof ScriptedMcpError)) throw error;
+                await mcp.call("system.error-diagnostic.get", { correlationId: DIAGNOSTIC_CORRELATION });
+            }
+            return { outcome: "stopped", stopReason: "diagnostic-inspected" } as const;
+        },
+    },
+    "diagnostics-bounded-list": {
+        script: [{ name: "system.error-diagnostic.list", arguments: { from: "2026-09-08T00:00:00.000Z", to: "2026-09-09T00:00:00.000Z", limit: 20 }, result: { items: [], nextCursor: null } }],
+        run: async (mcp) => {
+            await mcp.call("system.error-diagnostic.list", { from: "2026-09-08T00:00:00.000Z", to: "2026-09-09T00:00:00.000Z", limit: 20 });
+            return { outcome: "completed" } as const;
+        },
+    },
+    "diagnostics-denial-stops": {
+        script: [{ name: "system.error-diagnostic.get", arguments: { correlationId: DIAGNOSTIC_CORRELATION }, error: { code: "DIAGNOSTIC_FORBIDDEN", message: "not allowed", retryable: false, reviewRequired: false, details: {} } }],
+        run: async (mcp) => {
+            try { await mcp.call("system.error-diagnostic.get", { correlationId: DIAGNOSTIC_CORRELATION }); } catch (error) {
+                if (error instanceof ScriptedMcpError && error.code === "DIAGNOSTIC_FORBIDDEN") return { outcome: "stopped", stopReason: "diagnostic-forbidden" } as const;
+                throw error;
+            }
+            return { outcome: "completed" } as const;
+        },
+    },
+    "diagnostics-never-bypass-confirmation": {
+        script: [{ name: "payment.post", arguments: { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }, error: { code: "CONFIRMATION_REQUIRED", message: "confirm first", retryable: false, reviewRequired: true, details: {} } }],
+        run: async (mcp) => {
+            try { await mcp.call("payment.post", { paymentIntakePublicId: INTAKE, proposalPublicId: PROPOSAL }); } catch (error) {
+                if (error instanceof ScriptedMcpError && error.code === "CONFIRMATION_REQUIRED") return { outcome: "stopped", stopReason: "confirmation-boundary" } as const;
+                throw error;
+            }
+            return { outcome: "completed" } as const;
         },
     },
 };

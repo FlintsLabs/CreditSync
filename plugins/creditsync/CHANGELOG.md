@@ -1,5 +1,12 @@
 # CreditSync Plugin Changelog
 
+## 9.2.0 - 2026-09-09
+
+- Added owner/manager-only `system.error-diagnostic.get` and `system.error-diagnostic.list` tools.
+- Added correlation IDs and suggested actions to the common MCP error envelope with operation-aware retry guidance.
+- Synchronized the frozen 114-tool contract and diagnostic recovery guidance.
+- Added executable diagnostic follow-up, bounded-list, authorization-denial, and no-bypass eval scenarios.
+
 ## 9.1.4 - 2026-09-09
 
 - Documented the narrow executed-renewal opening-ancestor boundary for scheduled payment allocation correction, including stale-state lineage checks and fail-closed handling of unknown or unrelated adjustments.

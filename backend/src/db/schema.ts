@@ -18,6 +18,7 @@ import {
 } from "drizzle-orm/pg-core";
 import type { PersistedLoanReplacementProposal } from "../lib/loan-replacement-proposal";
 import type { RenewalComposition } from "../lib/loan-renewal-composition";
+import type { McpDiagnosticBreadcrumb } from "../lib/mcp-diagnostic-types";
 
 export type RenewalSettlementPolicy = "full_contract_interest" | "accrued_to_date";
 
@@ -26,6 +27,34 @@ export const roleEnum = pgEnum("role", ["owner", "manager", "collector", "viewer
 
 // Common Columns helper
 const tenantId = text("tenant_id").notNull(); // All tables must have this
+
+export const mcpDiagnosticEvents = pgTable("mcp_diagnostic_events", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId,
+    toolName: text("tool_name").notNull(),
+    requestId: uuid("request_id").notNull(),
+    correlationId: uuid("correlation_id").notNull(),
+    category: text("category").notNull(),
+    failureClass: text("failure_class").notNull(),
+    errorCode: text("error_code").notNull(),
+    terminalStage: text("terminal_stage").notNull(),
+    retryable: boolean("retryable").notNull(),
+    reviewRequired: boolean("review_required").notNull(),
+    upstreamStatus: integer("upstream_status"),
+    durationMs: integer("duration_ms").notNull(),
+    breadcrumbs: jsonb("breadcrumbs").$type<McpDiagnosticBreadcrumb[]>().default([]).notNull(),
+    occurredAt: timestamp("occurred_at").defaultNow().notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+}, (table) => [
+    index("mcp_diagnostic_events_tenant_correlation_idx").on(table.tenantId, table.correlationId, table.occurredAt),
+    index("mcp_diagnostic_events_tenant_request_idx").on(table.tenantId, table.requestId, table.occurredAt),
+    index("mcp_diagnostic_events_tenant_occurred_idx").on(table.tenantId, table.occurredAt),
+    index("mcp_diagnostic_events_expires_idx").on(table.expiresAt),
+    check("mcp_diagnostic_events_duration_check", sql`${table.durationMs} >= 0`),
+    check("mcp_diagnostic_events_upstream_status_check", sql`${table.upstreamStatus} IS NULL OR ${table.upstreamStatus} BETWEEN 100 AND 599`),
+    check("mcp_diagnostic_events_expiry_check", sql`${table.expiresAt} > ${table.occurredAt}`),
+]);
 
 // Users (Admins/Lenders)
 export const users = pgTable("users", {

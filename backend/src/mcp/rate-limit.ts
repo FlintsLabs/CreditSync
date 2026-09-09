@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { createClient } from "redis";
+import { recordMcpBreadcrumb } from "./diagnostic-context";
 
 export interface McpRateLimitInput {
     key: string;
@@ -136,18 +137,21 @@ export function createMcpRateLimiter(input: CreateMcpRateLimiterInput = {}) {
 
     return {
         consume: async (request: McpRateLimitInput): Promise<McpRateLimitResult> => {
+            recordMcpBreadcrumb({ stage: "rate_limit.consume", outcome: "started" });
             const localResult = consumeMemory(request);
-            if (!redisConsume) return localResult;
+            if (!redisConsume) { recordMcpBreadcrumb({ stage: "rate_limit.consume", outcome: "succeeded" }); return localResult; }
             try {
                 const result = await redisConsume(request);
                 alignMemoryCount(request, result.count);
                 const allowed = result.count <= request.max;
+                recordMcpBreadcrumb({ stage: "rate_limit.consume", outcome: "succeeded" });
                 return {
                     allowed,
                     remaining: Math.max(0, request.max - result.count),
                     retryAfterSeconds: allowed ? 0 : result.ttlSeconds,
                 };
             } catch {
+                recordMcpBreadcrumb({ stage: "rate_limit.consume", outcome: "failed" });
                 if (!warned) {
                     warned = true;
                     input.onWarning?.("MCP_RATE_LIMIT_CACHE_UNAVAILABLE");

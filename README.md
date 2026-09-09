@@ -1,5 +1,7 @@
 # CreditSync
 
+Operational MCP failure diagnostics are available to tenant owners/managers through `system.error-diagnostic.get` and `system.error-diagnostic.list`. Records are bounded and retained for 30 days; see [the operations guide](docs/operations/mcp-error-diagnostics.md).
+
 ## Borrower identity privacy
 
 Borrower list cards mask Thai national IDs by default. The card's copy action intentionally copies the complete stored value for authorized owner workflows; use the borrower detail or edit flow when the full value must be viewed or updated. The list adapts its card columns to the available content width, so a narrow main panel keeps one full-width card rather than a cramped half-width column. Borrower detail headers use a compact profile avatar on small screens and expand modestly on larger layouts.

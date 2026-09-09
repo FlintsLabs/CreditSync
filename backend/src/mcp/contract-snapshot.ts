@@ -36,6 +36,17 @@ function canonicalValue(value: unknown): unknown {
     );
 }
 
+function frozenOutputSchema(schema: Record<string, unknown>) {
+    // The live transport also accepts the safe error envelope. The frozen
+    // plugin contract remains the success schema so eval fixtures can validate
+    // their operation data without coupling them to transport failures.
+    const branches = schema.anyOf;
+    if (Array.isArray(branches) && branches.length > 0 && branches[0] && typeof branches[0] === "object") {
+        return { $schema: "http://json-schema.org/draft-07/schema#", ...(branches[0] as Record<string, unknown>) };
+    }
+    return schema;
+}
+
 export function canonicalContractJson(contract: FrozenMcpContract) {
     return `${JSON.stringify(canonicalValue(contract), null, 2)}\n`;
 }
@@ -82,13 +93,13 @@ export async function captureAdvertisedMcpContract(): Promise<FrozenMcpContract>
         return {
             schemaVersion: "1.0",
             sourceOfTruth: "Local MCP SDK Client tools/list response from backend/src/mcp/server.ts",
-            compatibility: "Tool names, full input/output schemas, descriptions, annotations, and file-parameter metadata are frozen for plugin 9.1.0; breaking changes require plugin 10.0.0.",
+            compatibility: "Tool names, full input/output schemas, descriptions, annotations, and file-parameter metadata are frozen for plugin 9.2.0; breaking changes require plugin 10.0.0.",
             tools: response.tools.map((tool) => ({
                 name: tool.name,
                 ...(tool.title ? { title: tool.title } : {}),
                 ...(tool.description ? { description: tool.description } : {}),
                 inputSchema: tool.inputSchema as Record<string, unknown>,
-                ...(tool.outputSchema ? { outputSchema: tool.outputSchema as Record<string, unknown> } : {}),
+                ...(tool.outputSchema ? { outputSchema: frozenOutputSchema(tool.outputSchema as Record<string, unknown>) } : {}),
                 ...(tool.annotations ? { annotations: tool.annotations as Record<string, unknown> } : {}),
                 ...(tool._meta ? { _meta: tool._meta as Record<string, unknown> } : {}),
             })),

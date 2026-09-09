@@ -9,6 +9,7 @@
         "schema:reconcile:production-mixed-lineage": "bun run scripts/reconcile-production-mixed-lineage.ts",
         "generate": "drizzle-kit generate",
         "migrate": "drizzle-kit migrate"
+        ,"diagnostics:cleanup": "bun run scripts/cleanup-mcp-diagnostics.ts"
     },
     "dependencies": {
         "@aws-sdk/client-s3": "^3.1106.0",

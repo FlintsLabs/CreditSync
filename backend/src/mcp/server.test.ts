@@ -70,6 +70,8 @@ async function startServer(input: {
     runtimeConfig?: McpRuntimeConfig;
     logs?: Array<Record<string, unknown>>;
     auditPublicIds?: string[];
+    persistDiagnostic?: CreateMcpHttpPluginInput["persistDiagnostic"];
+    logger?: (entry: Record<string, unknown>) => void;
 }) {
     const pluginInput: CreateMcpHttpPluginInput = {
         config: input.runtimeConfig ?? config(),
@@ -82,7 +84,8 @@ async function startServer(input: {
         },
         consumeRateLimit: async () => ({ allowed: true, remaining: 99, retryAfterSeconds: 0 }),
         findAuditPublicIds: async () => input.auditPublicIds ?? [AUDIT_ID],
-        logger: (entry) => input.logs?.push(entry),
+        logger: input.logger ?? ((entry) => input.logs?.push(entry)),
+        persistDiagnostic: input.persistDiagnostic,
     };
     const app = new Elysia().use(createMcpHttpPlugin(pluginInput)).listen({ hostname: "127.0.0.1", port: 0 });
     runningApps.push(app);
@@ -98,6 +101,18 @@ function clientFor(baseUrl: string, token = TOKEN) {
 }
 
 describe("CreditSync stateless MCP contract", () => {
+    test("real MCP transport validates malformed tool arguments before handler invocation", async () => {
+        let handlerCalls = 0;
+        const baseUrl = await startServer({ toolHandlers: {
+            "borrower.search": async () => { handlerCalls += 1; return { resolution: "none", matchType: null, candidates: [] }; },
+        } });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const result = await client.callTool({ name: "borrower.search", arguments: { query: "valid", unexpected: "must reject" } });
+        expect(result.isError).toBe(true);
+        expect((result.structuredContent as any)?.error).toMatchObject({ code: "INVALID_TOOL_ARGUMENTS", correlationId: expect.any(String), suggestedAction: expect.any(String) });
+        expect(handlerCalls).toBe(0);
+    });
     // Break caught: frontend, backend parsing, REST, and MCP enforce different public-money lengths or round the shared maximum.
     test("keeps every public boundary on the 32-character unsigned money contract", async () => {
         const maximum = "99999999999999999999999999999.99";
@@ -1503,15 +1518,17 @@ describe("CreditSync stateless MCP contract", () => {
             error: {
                 code: "REVERSAL_NOT_LATEST",
                 message: "Reverse later payments first",
+                suggestedAction: "Inspect later payments and reverse them in dependency order",
                 retryable: false,
                 reviewRequired: true,
                 details: { paymentIntakePublicId: INTAKE_ID },
             },
         };
         expect(legacyReversed.isError).toBe(true);
-        expect(legacyReversed.structuredContent).toEqual(expectedReversalError);
+        expect(legacyReversed.structuredContent).toMatchObject(expectedReversalError);
+        expect((legacyReversed.structuredContent as { error: { correlationId: string } }).error.correlationId).toMatch(/^[0-9a-f-]{36}$/);
         expect(reasonedReversed.isError).toBe(true);
-        expect(reasonedReversed.structuredContent).toEqual(expectedReversalError);
+        expect(reasonedReversed.structuredContent).toMatchObject(expectedReversalError);
         expect(JSON.stringify(logs)).not.toContain(TOKEN);
         expect(JSON.stringify(logs)).not.toContain("paymentIntakePublicId");
 
@@ -1554,6 +1571,24 @@ describe("CreditSync stateless MCP contract", () => {
             error: { code: "AUDIT_METADATA_UNAVAILABLE", retryable: true },
         });
 
+        await client.close();
+    });
+
+    test("preserves the original safe error when persistence and logging both fail synchronously", async () => {
+        const baseUrl = await startServer({
+            toolHandlers: { "borrower.search": async () => { throw new Error("private upstream payload"); } },
+            persistDiagnostic: () => { throw new Error("diagnostic writer unavailable"); },
+            logger: () => { throw new Error("logger unavailable"); },
+        });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const result = await client.callTool({ name: "borrower.search", arguments: { query: "safe" } });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({ error: {
+            code: "INTERNAL_ERROR", message: "The MCP tool could not complete the request",
+            suggestedAction: expect.any(String), correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+        } });
+        expect(JSON.stringify(result)).not.toContain("private upstream payload");
         await client.close();
     });
 

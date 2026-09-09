@@ -1,10 +1,16 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { toJsonSchemaCompat } from "@modelcontextprotocol/sdk/server/zod-json-schema-compat.js";
+import { normalizeObjectSchema } from "@modelcontextprotocol/sdk/server/zod-compat.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { Elysia } from "elysia";
 import { z } from "zod";
 import type { CommandContext } from "../services/command-context";
 import { DomainError } from "../services/domain-error";
 import { authenticateBearer, hostIsAllowed, type McpRuntimeConfig } from "./security";
+import { currentMcpDiagnosticSnapshot, recordMcpBreadcrumb, withMcpDiagnosticScope } from "./diagnostic-context";
+import { presentMcpError, type OperationRecoveryPolicy } from "./error-presentation";
+import { persistMcpDiagnosticBestEffort } from "../services/mcp-diagnostic-service";
 
 export const MCP_TOOL_NAMES = [
     "borrower.search",
@@ -119,6 +125,8 @@ export const MCP_TOOL_NAMES = [
     "funding-allocation.preview",
     "funding-allocation.create",
     "funding-allocation.list",
+    "system.error-diagnostic.get",
+    "system.error-diagnostic.list",
 ] as const;
 
 export type McpToolName = (typeof MCP_TOOL_NAMES)[number];
@@ -140,6 +148,7 @@ export interface CreateMcpHttpPluginInput {
         result: unknown;
     }) => Promise<string[]>;
     logger: (entry: Record<string, unknown>) => void;
+    persistDiagnostic?: (input: Parameters<typeof persistMcpDiagnosticBestEffort>[0]) => Promise<void>;
 }
 
 const uuid = z.uuid();
@@ -1073,6 +1082,17 @@ const fundingAllocationPreviewOutput = z.object({
     resultingFunding: z.object({ netAllocatedPrincipal: money, remainingGap: money, state: z.enum(["unfunded", "partially_funded", "fully_funded"]) }).strict(),
     warnings: z.array(z.string()),
 }).strict();
+const diagnosticBreadcrumbOutput = z.object({
+    stage: z.string(), outcome: z.enum(["started", "succeeded", "failed", "rejected"]), elapsedMs: z.number().int().nonnegative(),
+    metadata: z.object({ runtimeCodeCategory: z.string().max(80).optional(), httpStatus: z.number().int().optional(), timeout: z.boolean().optional(), attempt: z.number().int().optional(), itemCount: z.number().int().optional() }).strict().optional(),
+}).strict();
+const diagnosticItemOutput = z.object({
+    diagnosticPublicId: uuid, toolName: z.string(), correlationId: uuid, requestId: uuid,
+    category: z.string(), failureClass: z.string(), errorCode: z.string(), terminalStage: z.string(),
+    retryable: z.boolean(), reviewRequired: z.boolean(), upstreamStatus: z.number().int().nullable(),
+    durationMs: z.number().int().nonnegative(), occurredAt: z.iso.datetime(), expiresAt: z.iso.datetime(),
+    breadcrumbs: z.array(diagnosticBreadcrumbOutput).max(20), summary: z.string(), recommendedNextCheck: z.string(),
+}).strict();
 
 const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
     "borrower.search": z.object({
@@ -1370,6 +1390,8 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "funding-allocation.preview": fundingAllocationPreviewOutput,
     "funding-allocation.create": fundingAllocationOutput.extend({ auditPublicId: uuid, correlationId: uuid }).strict(),
     "funding-allocation.list": z.object({ items: z.array(fundingAllocationOutput) }).strict(),
+    "system.error-diagnostic.get": z.object({ correlationId: uuid, items: z.array(diagnosticItemOutput).max(100) }).strict(),
+    "system.error-diagnostic.list": z.object({ items: z.array(diagnosticItemOutput).max(100), nextCursor: z.string().nullable() }).strict(),
 };
 
 const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
@@ -1837,20 +1859,50 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
         if (value.bankProfilePublicId && value.bankLoanPublicId) ctx.addIssue({ code: "custom", message: "Only one funding source may be selected" });
     }),
     "funding-allocation.list": z.object({ loanPublicId: uuid }).strict(),
+    "system.error-diagnostic.get": z.object({ correlationId: uuid }).strict(),
+    "system.error-diagnostic.list": z.object({
+        correlationId: uuid.optional(), requestId: uuid.optional(), toolName: z.string().trim().min(1).max(120).optional(),
+        errorCode: z.string().trim().min(1).max(160).optional(),
+        category: z.enum(["domain", "validation", "authorization", "database", "cache", "network", "storage", "external_service", "timeout", "internal"]).optional(),
+        from: z.iso.datetime({ offset: true }).optional(), to: z.iso.datetime({ offset: true }).optional(),
+        cursor: z.string().trim().min(1).max(300).optional(), limit: z.number().int().min(1).max(100).optional(),
+    }).strict(),
 };
 
 const safeErrorSchema = z.object({
     code: z.string(),
     message: z.string(),
+    suggestedAction: z.string(),
     retryable: z.boolean(),
     reviewRequired: z.boolean(),
     repreviewRequired: z.boolean().optional(),
     humanReviewRequired: z.boolean().optional(),
-    details: z.record(z.string(), z.unknown()),
+    details: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
+    correlationId: uuid,
 }).strict();
 
 function advertisedOutputSchema(toolName: McpToolName) {
     return successOutputSchema(toolName);
+}
+
+function transportOutputSchema(toolName: McpToolName) {
+    return z.union([successOutputSchema(toolName), errorOutputSchema]);
+}
+
+function transportOutputJsonSchema(toolName: McpToolName) {
+    const success = z.toJSONSchema(successOutputSchema(toolName)) as Record<string, unknown>;
+    const error = z.toJSONSchema(errorOutputSchema) as Record<string, unknown>;
+    delete success.$schema;
+    delete error.$schema;
+    return {
+        type: "object",
+        properties: {
+            ...((success.properties ?? {}) as Record<string, unknown>),
+            ...((error.properties ?? {}) as Record<string, unknown>),
+        },
+        additionalProperties: false,
+        anyOf: [success, error],
+    };
 }
 
 function successOutputSchema(toolName: McpToolName) {
@@ -1874,6 +1926,8 @@ const errorOutputSchema = z.object({
 }).strict();
 
 const readOnlyTools = new Set<McpToolName>([
+    "system.error-diagnostic.get",
+    "system.error-diagnostic.list",
     "borrower.search",
     "borrower.portfolio",
     "intake.get",
@@ -2002,6 +2056,8 @@ const financialTools = new Set<McpToolName>([
     "funding-allocation.create",
 ]);
 const idempotentTools = new Set<McpToolName>([
+    "system.error-diagnostic.get",
+    "system.error-diagnostic.list",
     ...[...readOnlyTools].filter((toolName) => toolName !== "loan.commission.reverse"),
     "intake.create",
     "evidence.import-chatgpt-file",
@@ -2164,6 +2220,8 @@ const toolDescriptions: Record<McpToolName, string> = {
     "funding-allocation.preview": "Preview attaching an active funding profile or drawdown to an active loan.",
     "funding-allocation.create": "Create an idempotent append-only funding allocation for an active loan, including after activation.",
     "funding-allocation.list": "List append-only funding allocations for one loan read-only.",
+    "system.error-diagnostic.get": "Inspect a safe tenant-scoped MCP diagnostic trace by correlation ID.",
+    "system.error-diagnostic.list": "List recent safe tenant-scoped MCP diagnostics with bounded filters.",
 };
 
 function titleFor(toolName: McpToolName) {
@@ -2331,86 +2389,69 @@ function frozenToolData(toolName: McpToolName, value: unknown): Record<string, u
 }
 
 export function createMcpProtocolServer(input: CreateMcpHttpPluginInput, ctx: CommandContext) {
-    const server = new McpServer({ name: "creditsync", version: "1.0.0" }, {
+    const server = new Server({ name: "creditsync", version: "1.0.0" }, {
         capabilities: { tools: {} },
         instructions: "CreditSync private tenant-scoped financial workflow tools. Preview before posting financial changes.",
     });
-    for (const toolName of MCP_TOOL_NAMES) {
-        server.registerTool(toolName, {
-            title: titleFor(toolName),
-            description: toolDescriptions[toolName],
-            inputSchema: toolInputSchemas[toolName],
-            outputSchema: advertisedOutputSchema(toolName),
-            annotations: {
-                title: titleFor(toolName),
-                readOnlyHint: readOnlyTools.has(toolName),
-                destructiveHint: destructiveTools.has(toolName),
-                idempotentHint: idempotentTools.has(toolName),
-                openWorldHint: false,
-            },
-            ...(toolName === "evidence.import-chatgpt-file" || toolName === "payment.evidence-supplement.import-chatgpt-file"
-                ? { _meta: { "openai/fileParams": ["chatgptFile"] } }
-                : {}),
-        }, async (rawInput) => {
-            const parsed = rawInput as Record<string, unknown>;
-            const idempotencyKey = typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey : undefined;
-            const { idempotencyKey: _removed, ...handlerInput } = parsed;
-            const toolContext: CommandContext = {
-                ...ctx,
-                idempotencyKey: idempotencyKey ?? (toolName === "loan.activate"
-                    ? `mcp:loan.activate:${String(handlerInput.loanPublicId)}`
-                    : undefined),
-            };
+    server.setRequestHandler(ListToolsRequestSchema, () => ({
+        tools: advertisedMcpToolMetadata().map((tool) => ({
+            name: tool.name,
+            title: tool.annotations.title,
+            description: tool.description,
+            inputSchema: toJsonSchemaCompat(normalizeObjectSchema(toolInputSchemas[tool.name as McpToolName])!, { strictUnions: true, pipeStrategy: "input" }),
+            outputSchema: transportOutputJsonSchema(tool.name as McpToolName),
+            annotations: tool.annotations,
+            ...((tool as { _meta?: Record<string, unknown> })._meta ? { _meta: (tool as { _meta?: Record<string, unknown> })._meta } : {}),
+        })),
+    }));
+    server.setRequestHandler(CallToolRequestSchema, async (request) => {
+        const toolName = request.params.name as McpToolName;
+        const toolContext = { ...ctx };
+        const policy: OperationRecoveryPolicy = financialTools.has(toolName) ? "financial" : readOnlyTools.has(toolName) ? "read_only" : "mutating";
+        return withMcpDiagnosticScope(toolContext, toolName, async () => {
+            const invalid = !MCP_TOOL_NAMES.includes(toolName) ? null : await toolInputSchemas[toolName].safeParseAsync(request.params.arguments ?? {});
             try {
+                if (!MCP_TOOL_NAMES.includes(toolName)) throw new DomainError("UNKNOWN_TOOL", "The requested MCP tool is not available", 400);
+                recordMcpBreadcrumb({ stage: "validation", outcome: "started" });
+                if (!invalid?.success) {
+                    recordMcpBreadcrumb({ stage: "validation", outcome: "failed" });
+                    throw new DomainError("INVALID_TOOL_ARGUMENTS", "The MCP tool arguments are invalid", 422);
+                }
+                recordMcpBreadcrumb({ stage: "validation", outcome: "succeeded" });
+                const parsed = invalid.data as Record<string, unknown>;
+                const idempotencyKey = typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey : undefined;
+                const { idempotencyKey: _removed, ...handlerInput } = parsed;
+                toolContext.idempotencyKey = idempotencyKey ?? (toolName === "loan.activate" ? `mcp:loan.activate:${String(handlerInput.loanPublicId)}` : undefined);
+                recordMcpBreadcrumb({ stage: "preflight", outcome: "started" });
                 await input.preflightHandlers?.[toolName]?.(toolContext, handlerInput);
+                recordMcpBreadcrumb({ stage: "preflight", outcome: "succeeded" });
+                recordMcpBreadcrumb({ stage: "handler", outcome: "started" });
                 const result = await input.handlers[toolName](toolContext, handlerInput);
-                const auditPublicIds = financialTools.has(toolName)
-                    ? await input.findAuditPublicIds({ ctx: toolContext, toolName, result })
-                    : undefined;
-                if (financialTools.has(toolName) && auditPublicIds?.length === 0) {
-                    throw new DomainError(
-                        "AUDIT_METADATA_UNAVAILABLE",
-                        "The financial command completed without retrievable public audit metadata",
-                        503,
-                    );
-                }
-                const structuredContent = successOutputSchema(toolName).safeParse({
-                    schemaVersion: "1.0",
-                    data: frozenToolData(toolName, result),
-                    ...(financialTools.has(toolName) ? {
-                        correlationId: toolContext.correlationId,
-                        auditPublicIds: auditPublicIds ?? [],
-                    } : {}),
-                });
-                if (!structuredContent.success) {
-                    throw new DomainError(
-                        "INVALID_TOOL_OUTPUT",
-                        "The application service returned data outside the public MCP contract",
-                        422,
-                    );
-                }
-                return {
-                    content: [{ type: "text" as const, text: completionText(toolName) }],
-                    structuredContent: structuredContent.data,
-                };
+                recordMcpBreadcrumb({ stage: "handler", outcome: "succeeded" });
+                const auditPublicIds = financialTools.has(toolName) ? await input.findAuditPublicIds({ ctx: toolContext, toolName, result }) : undefined;
+                if (financialTools.has(toolName) && auditPublicIds?.length === 0) throw new DomainError("AUDIT_METADATA_UNAVAILABLE", "The financial command completed without retrievable public audit metadata", 503);
+                const structuredContent = successOutputSchema(toolName).safeParse({ schemaVersion: "1.0", data: frozenToolData(toolName, result), ...(financialTools.has(toolName) ? { correlationId: toolContext.correlationId, auditPublicIds: auditPublicIds ?? [] } : {}) });
+                if (!structuredContent.success) throw new DomainError("INVALID_TOOL_OUTPUT", "The application service returned data outside the public MCP contract", 422);
+                return { content: [{ type: "text" as const, text: completionText(toolName) }], structuredContent: structuredContent.data };
             } catch (error) {
-                const safeError = safeToolError(error);
-                input.logger({
-                    event: "mcp_tool_error",
-                    tool: toolName,
-                    requestId: toolContext.requestId,
-                    correlationId: toolContext.correlationId,
-                    code: safeError.code,
-                });
-                const structuredContent = errorOutputSchema.parse({ schemaVersion: "1.0", error: safeError });
-                return {
-                    isError: true,
-                    content: [{ type: "text" as const, text: `${safeError.code}: ${safeError.message}` }],
-                    structuredContent,
-                };
+                const presented = presentMcpError(error, toolContext.correlationId, policy, currentMcpDiagnosticSnapshot()?.breadcrumbs.at(-1)?.stage === "validation" ? "validation" : "handler");
+                const snapshot = currentMcpDiagnosticSnapshot();
+                if (presented.persist && snapshot && !toolName.startsWith("system.error-diagnostic.")) {
+                    const persist = input.persistDiagnostic ?? ((value: Parameters<typeof persistMcpDiagnosticBestEffort>[0]) => persistMcpDiagnosticBestEffort(value));
+                    let pending: Promise<void>;
+                    try {
+                        pending = Promise.resolve(persist({ ctx: toolContext, toolName, publicError: presented.publicError, classification: presented.diagnostic, snapshot, logger: input.logger }));
+                    } catch {
+                        pending = Promise.resolve();
+                    }
+                    pending.catch(() => undefined);
+                    await Promise.race([pending, new Promise<void>((resolve) => setTimeout(resolve, 500))]).catch(() => undefined);
+                }
+                try { input.logger({ event: "mcp_tool_error", tool: toolName, requestId: toolContext.requestId, correlationId: toolContext.correlationId, code: presented.publicError.code }); } catch { /* preserve error response */ }
+                return { isError: true, content: [{ type: "text" as const, text: `${presented.publicError.code}: ${presented.publicError.message}` }], structuredContent: errorOutputSchema.parse({ schemaVersion: "1.0", error: presented.publicError }) };
             }
         });
-    }
+    });
     return server;
 }
 
@@ -2419,6 +2460,10 @@ function httpError(status: number, code: string, message: string, retryable = fa
         status,
         headers: { "cache-control": "no-store" },
     });
+}
+
+function safeMcpLogger(logger: (entry: Record<string, unknown>) => void, entry: Record<string, unknown>) {
+    try { logger(entry); } catch { /* observability must not change the MCP outcome */ }
 }
 
 const publicUuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -2491,7 +2536,7 @@ export function createMcpHttpPlugin(input: CreateMcpHttpPluginInput) {
                     sessionIdGenerator: undefined,
                     enableJsonResponse: true,
                 });
-                transport.onerror = () => input.logger({
+                transport.onerror = () => safeMcpLogger(input.logger, {
                     event: "mcp_transport_error",
                     requestId: requestIdValue,
                     correlationId: correlationIdValue,
@@ -2505,7 +2550,7 @@ export function createMcpHttpPlugin(input: CreateMcpHttpPluginInput) {
                         statusText: handled.statusText,
                         headers: handled.headers,
                     });
-                    input.logger({
+                    safeMcpLogger(input.logger, {
                         event: "mcp_request",
                         method: request.method,
                         status: response.status,
@@ -2518,7 +2563,7 @@ export function createMcpHttpPlugin(input: CreateMcpHttpPluginInput) {
                     await server.close().catch(() => undefined);
                 }
             } catch {
-                input.logger({
+                safeMcpLogger(input.logger, {
                     event: "mcp_request_failed",
                     method: request.method,
                     status: 503,

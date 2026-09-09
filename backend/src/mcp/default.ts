@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import { auditLogs, users } from "../db/schema";
+import { getMcpDiagnosticTrace, listMcpDiagnostics, persistMcpDiagnosticBestEffort } from "../services/mcp-diagnostic-service";
 import {
     addBorrowerAlias,
     confirmBorrowerAlias,
@@ -188,6 +189,8 @@ export function createDefaultMcpToolHandlers(
     dependencies: DefaultMcpDependencies = {},
 ): Record<McpToolName, McpToolHandler> {
     return {
+    "system.error-diagnostic.get": (ctx, input) => getMcpDiagnosticTrace(ctx, asString(input, "correlationId")),
+    "system.error-diagnostic.list": (ctx, input) => listMcpDiagnostics(ctx, input as Parameters<typeof listMcpDiagnostics>[1]),
     "borrower.search": (ctx, input) => searchBorrowers(ctx, { query: asString(input, "query") }),
     "borrower.portfolio": (ctx, input) => getBorrowerPortfolio(ctx, asString(input, "borrowerPublicId")),
     "borrower.create": (ctx, input) => createBorrower(ctx, input as unknown as BorrowerInput),
@@ -685,6 +688,7 @@ export function createDefaultMcpHttpPlugin(
         handlers: createDefaultMcpToolHandlers(dependencies),
         consumeRateLimit: (input) => limiter.consume(input),
         logger: structuredLog,
+        persistDiagnostic: persistMcpDiagnosticBestEffort,
         resolvePrincipal: async ({ tenantId, actorEmail }) => {
             const actor = await db.query.users.findFirst({ where: and(
                 eq(users.tenantId, tenantId),

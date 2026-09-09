@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.11 - 2026-09-09
+
+### Added
+- Added tenant-scoped append-only MCP diagnostic event storage with bounded breadcrumbs and 30-day retention indexes.
+- Added bounded diagnostic retention cleanup and operator guidance.
+- Added actionable MCP error projection, diagnostic read tools, and synchronized private plugin contract guidance.
+- Hardened SDK-backed dispatch validation, bounded persistence deadlines, role checks, opaque pagination, redaction, and failure-safe observability.
+- Added executable plugin evals for diagnostic follow-up, bounded lookup, authorization denial, and confirmation-boundary preservation.
+
 ## v0.4.10 - 2026-09-09
 
 ### Changed

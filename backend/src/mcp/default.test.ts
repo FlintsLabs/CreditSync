@@ -888,16 +888,18 @@ describe("default MCP adapter integration", () => {
         });
 
         expect(result.isError).toBe(true);
-        expect(result.structuredContent).toEqual({
+        expect(result.structuredContent).toMatchObject({
             schemaVersion: "1.0",
             error: {
                 code: "ALLOCATION_EXCEEDS_DRAWDOWN",
                 message: "Allocation exceeds remaining drawdown balance",
+                suggestedAction: "Inspect the remaining drawdown balance and revise the allocation",
                 retryable: false,
                 reviewRequired: false,
                 details: { sourceRemaining: "0.00" },
             },
         });
+        expect((result.structuredContent as { error: { correlationId: string } }).error.correlationId).toMatch(/^[0-9a-f-]{36}$/);
         expect(await db.query.loans.findFirst({ where: eq(loans.id, draft!.id) })).toMatchObject({
             status: "draft",
             outstandingPrincipal: "0.00",
@@ -1383,10 +1385,11 @@ describe("default MCP adapter integration", () => {
             disbursementPublicId,
             idempotencyKey: "mcp-all-tools-disbursement-post",
         });
-        await expect(client.callTool({
+        const immutableUpdate = await client.callTool({
             name: "loan.disbursement.update",
             arguments: { disbursementPublicId, changes: { note: "Must remain immutable" } },
-        })).rejects.toThrow();
+        });
+        expect(immutableUpdate.isError).toBe(true);
         expect(await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, disbursementPublicId) }))
             .toMatchObject({ status: "posted", note: "Corrected attributed amount" });
         await call("loan.disbursement.reverse", {
@@ -1890,6 +1893,16 @@ describe("default MCP adapter integration", () => {
             idempotencyKey: "mcp-all-tools-correction",
         })).rejects.toBeDefined();
         called.push("payment.allocation-correction.execute");
+
+        await expect(call("system.error-diagnostic.get", {
+            correlationId: crypto.randomUUID(),
+        })).rejects.toBeDefined();
+        called.push("system.error-diagnostic.get");
+        await call("system.error-diagnostic.list", {
+            from: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+            to: new Date().toISOString(),
+            limit: 10,
+        });
 
         expect([...new Set(called)].sort()).toEqual([...MCP_TOOL_NAMES].sort());
         expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length);

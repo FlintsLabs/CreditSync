@@ -1,4 +1,5 @@
 import { createClient, type RedisClientType } from "redis";
+import { recordMcpBreadcrumb } from "../mcp/diagnostic-context";
 
 const cacheUrl = process.env.CACHE_URL;
 const defaultTtlSeconds = Number(process.env.CACHE_TTL_SECONDS ?? 30);
@@ -15,6 +16,7 @@ async function getCacheClient() {
     }
 
     if (!clientPromise) {
+        recordMcpBreadcrumb({ stage: "cache.connect", outcome: "started" });
         clientPromise = (async () => {
             try {
                 const client = createClient({ url: cacheUrl });
@@ -22,8 +24,10 @@ async function getCacheClient() {
                     console.error("Cache client error", error);
                 });
                 await client.connect();
+                recordMcpBreadcrumb({ stage: "cache.connect", outcome: "succeeded" });
                 return client;
             } catch (error) {
+                recordMcpBreadcrumb({ stage: "cache.connect", outcome: "failed", metadata: { timeout: error instanceof Error && /timeout/i.test(error.message) } });
                 console.error("Failed to connect cache client", error);
                 return null;
             }
@@ -72,6 +76,7 @@ export async function withTenantCache<T>(input: {
         });
         return value;
     } catch (error) {
+        recordMcpBreadcrumb({ stage: "cache.connect", outcome: "failed", metadata: { timeout: error instanceof Error && /timeout/i.test(error.message) } });
         console.error("Cache read/write failed, falling back to loader", error);
         return await input.loader();
     }

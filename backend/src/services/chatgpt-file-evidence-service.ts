@@ -16,6 +16,7 @@ import {
     type SignedPutRequest,
     type StoredObjectHead,
 } from "../lib/storage";
+import { recordMcpBreadcrumb } from "../mcp/diagnostic-context";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 
@@ -89,16 +90,19 @@ export async function downloadChatGptFile(file: ChatGptFileParam, dependencies: 
     if (!hosts.has(host) || url.username || url.password || url.port) throw new DomainError("CHATGPT_FILE_UNTRUSTED_HOST", "ChatGPT file host is not trusted", 400);
     const resolveHost = dependencies.resolveHost ?? (async (hostname: string) => (await lookup(hostname, { all: true, verbatim: true })).map((item) => item.address));
     let addresses: string[];
-    try { addresses = await resolveHost(host); } catch { throw new DomainError("CHATGPT_FILE_UNAVAILABLE", "ChatGPT file is temporarily unavailable", 409); }
+    recordMcpBreadcrumb({ stage: "chatgpt_file.dns", outcome: "started" });
+    try { addresses = await resolveHost(host); recordMcpBreadcrumb({ stage: "chatgpt_file.dns", outcome: "succeeded" }); } catch { recordMcpBreadcrumb({ stage: "chatgpt_file.dns", outcome: "failed" }); throw new DomainError("CHATGPT_FILE_UNAVAILABLE", "ChatGPT file is temporarily unavailable", 409); }
     if (!addresses.length || addresses.some(privateAddress)) throw new DomainError("CHATGPT_FILE_UNTRUSTED_HOST", "ChatGPT file host is not trusted", 400);
 
     let response: Response;
-    try { response = await (dependencies.fetch ?? globalThis.fetch)(url.toString(), { redirect: "error" }); }
-    catch { throw new DomainError("CHATGPT_FILE_UNAVAILABLE", "ChatGPT file is temporarily unavailable", 409); }
+    recordMcpBreadcrumb({ stage: "chatgpt_file.download", outcome: "started" });
+    try { response = await (dependencies.fetch ?? globalThis.fetch)(url.toString(), { redirect: "error" }); recordMcpBreadcrumb({ stage: "chatgpt_file.download", outcome: "succeeded" }); }
+    catch { recordMcpBreadcrumb({ stage: "chatgpt_file.download", outcome: "failed" }); throw new DomainError("CHATGPT_FILE_UNAVAILABLE", "ChatGPT file is temporarily unavailable", 409); }
     if (response.status >= 300 && response.status < 400) throw new DomainError("CHATGPT_FILE_REDIRECT", "ChatGPT file redirects are not allowed", 400);
     if (!response.ok || !response.body) throw new DomainError("CHATGPT_FILE_UNAVAILABLE", "ChatGPT file is temporarily unavailable", 409);
     const responseMime = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLocaleLowerCase("und") ?? "";
-    if (!allowedMimeTypes.has(responseMime)) throw new DomainError("CHATGPT_FILE_UNSUPPORTED_MIME", "ChatGPT file type is not supported", 400);
+    recordMcpBreadcrumb({ stage: "chatgpt_file.validate", outcome: "started" });
+    if (!allowedMimeTypes.has(responseMime)) { recordMcpBreadcrumb({ stage: "chatgpt_file.validate", outcome: "failed" }); throw new DomainError("CHATGPT_FILE_UNSUPPORTED_MIME", "ChatGPT file type is not supported", 400); }
     if (file.mimeType && file.mimeType.toLocaleLowerCase("und") !== responseMime) throw new DomainError("CHATGPT_FILE_MIME_MISMATCH", "ChatGPT file type does not match", 400);
     const maxBytes = dependencies.maxBytes ?? Math.max(1, Number(process.env.EVIDENCE_MAX_BYTES ?? 20 * 1024 * 1024));
     const declaredLength = Number(response.headers.get("content-length"));
@@ -122,6 +126,7 @@ export async function downloadChatGptFile(file: ChatGptFileParam, dependencies: 
     let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
     if (detectedMimeType(bytes) !== responseMime) throw new DomainError("CHATGPT_FILE_SIGNATURE_MISMATCH", "ChatGPT file contents do not match its type", 400);
+    recordMcpBreadcrumb({ stage: "chatgpt_file.validate", outcome: "succeeded" });
     return { bytes, mimeType: responseMime, size, sha256: createHash("sha256").update(bytes).digest("hex"), fileName: safeOriginalName(file.fileName) };
 }
 

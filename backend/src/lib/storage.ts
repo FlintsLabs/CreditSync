@@ -1,6 +1,7 @@
 import { BlobSASPermissions, BlobServiceClient, StorageSharedKeyCredential, generateBlobSASQueryParameters } from "@azure/storage-blob";
 import { CreateBucketCommand, DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { recordMcpBreadcrumb } from "../mcp/diagnostic-context";
 
 export type StorageProvider = "s3" | "azure-blob";
 
@@ -102,10 +103,13 @@ export function parseStorageReference(value: string): StoredObjectLocation | nul
 }
 
 async function ensureS3Bucket(bucket: string) {
+    recordMcpBreadcrumb({ stage: "storage.bucket", outcome: "started" });
     try {
         await s3.send(new HeadBucketCommand({ Bucket: bucket }));
+        recordMcpBreadcrumb({ stage: "storage.bucket", outcome: "succeeded" });
     } catch {
-        await s3.send(new CreateBucketCommand({ Bucket: bucket }));
+        try { await s3.send(new CreateBucketCommand({ Bucket: bucket })); recordMcpBreadcrumb({ stage: "storage.bucket", outcome: "succeeded" }); }
+        catch (error) { recordMcpBreadcrumb({ stage: "storage.bucket", outcome: "failed", metadata: { httpStatus: (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode ?? null } }); throw error; }
         console.log(`Bucket ${bucket} created`);
     }
 }
@@ -163,7 +167,9 @@ export async function headStoredObject(key: string, bucket = BUCKET_NAME): Promi
         throw new Error("Payment evidence finalization requires S3-compatible storage");
     }
     try {
+        recordMcpBreadcrumb({ stage: "storage.head", outcome: "started" });
         const response = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key, ChecksumMode: "ENABLED" }));
+        recordMcpBreadcrumb({ stage: "storage.head", outcome: "succeeded" });
         return {
             exists: true,
             contentType: response.ContentType ?? null,
@@ -173,8 +179,10 @@ export async function headStoredObject(key: string, bucket = BUCKET_NAME): Promi
         };
     } catch (error) {
         if ((error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404) {
+            recordMcpBreadcrumb({ stage: "storage.head", outcome: "succeeded", metadata: { httpStatus: 404 } });
             return { exists: false, contentType: null, contentLength: null, checksumSha256: null, metadata: {} };
         }
+        recordMcpBreadcrumb({ stage: "storage.head", outcome: "failed", metadata: { httpStatus: (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode ?? null } });
         throw error;
     }
 }
@@ -185,7 +193,8 @@ export async function putStoredObject(request: SignedPutRequest, body: Uint8Arra
     }
     const bucket = request.bucket ?? BUCKET_NAME;
     await ensureS3Bucket(bucket);
-    await s3.send(new PutObjectCommand({
+    recordMcpBreadcrumb({ stage: "storage.put", outcome: "started" });
+    try { await s3.send(new PutObjectCommand({
         Bucket: bucket,
         Key: request.key,
         Body: body,
@@ -193,7 +202,7 @@ export async function putStoredObject(request: SignedPutRequest, body: Uint8Arra
         ContentLength: request.contentLength,
         ChecksumSHA256: hexChecksumToBase64(request.checksumSha256),
         Metadata: request.metadata,
-    }));
+    })); recordMcpBreadcrumb({ stage: "storage.put", outcome: "succeeded" }); } catch (error) { recordMcpBreadcrumb({ stage: "storage.put", outcome: "failed", metadata: { httpStatus: (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode ?? null } }); throw error; }
     return { provider: "s3", bucket, key: request.key };
 }
 
@@ -201,7 +210,9 @@ export async function deleteStoredObject(key: string, bucket = BUCKET_NAME): Pro
     if (storageProvider !== "s3") {
         throw new Error("ChatGPT evidence import requires S3-compatible storage");
     }
-    await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    recordMcpBreadcrumb({ stage: "storage.delete", outcome: "started" });
+    try { await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key })); recordMcpBreadcrumb({ stage: "storage.delete", outcome: "succeeded" }); }
+    catch (error) { recordMcpBreadcrumb({ stage: "storage.delete", outcome: "failed", metadata: { httpStatus: (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode ?? null } }); throw error; }
 }
 
 async function ensureAzureContainer(bucket: string) {

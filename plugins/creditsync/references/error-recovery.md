@@ -1,6 +1,8 @@
 # CreditSync error recovery
 
-Tool errors have `{ code, message, retryable, reviewRequired, repreviewRequired, humanReviewRequired, details }`. Treat the flags and current record as authoritative; never infer success from a timeout. `repreviewRequired` invalidates prior approval; `humanReviewRequired` stops the workflow for an operator decision.
+Tool errors have `{ code, message, suggestedAction, retryable, reviewRequired, repreviewRequired, humanReviewRequired, details, correlationId }`. Treat the flags and current record as authoritative; never infer success from a timeout. `repreviewRequired` invalidates prior approval; `humanReviewRequired` stops the workflow for an operator decision.
+
+For unexpected, repeated retryable, database/cache/network/storage, or external-service failures, call `system.error-diagnostic.get` with the returned correlation ID as a read-only follow-up. Use `system.error-diagnostic.list` only with a bounded narrowing filter or a window of at most 24 hours when no correlation ID is available. A missing diagnostic can mean persistence timeout or retention expiry and is never proof of command failure. Diagnostics do not authorize bypassing confirmation, duplicate, mismatch, stale-preview, idempotency, or human-review boundaries.
 
 | Error class | Recovery |
 | --- | --- |
