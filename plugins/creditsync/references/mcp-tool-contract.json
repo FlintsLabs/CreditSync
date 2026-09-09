@@ -29334,7 +29334,7 @@
                         "additionalProperties": false,
                         "properties": {
                           "elapsedMs": {
-                            "maximum": 9007199254740991,
+                            "maximum": 86400000,
                             "minimum": 0,
                             "type": "integer"
                           },
@@ -29342,22 +29342,33 @@
                             "additionalProperties": false,
                             "properties": {
                               "attempt": {
-                                "maximum": 9007199254740991,
-                                "minimum": -9007199254740991,
+                                "maximum": 10000,
+                                "minimum": 0,
                                 "type": "integer"
                               },
                               "httpStatus": {
-                                "maximum": 9007199254740991,
-                                "minimum": -9007199254740991,
+                                "maximum": 599,
+                                "minimum": 100,
                                 "type": "integer"
                               },
                               "itemCount": {
-                                "maximum": 9007199254740991,
-                                "minimum": -9007199254740991,
+                                "maximum": 10000,
+                                "minimum": 0,
                                 "type": "integer"
                               },
                               "runtimeCodeCategory": {
-                                "maxLength": 80,
+                                "enum": [
+                                  "dns",
+                                  "timeout",
+                                  "connection",
+                                  "http",
+                                  "redirect",
+                                  "metadata",
+                                  "constraint",
+                                  "pool",
+                                  "cancelled",
+                                  "unknown"
+                                ],
                                 "type": "string"
                               },
                               "timeout": {
@@ -29376,6 +29387,24 @@
                             "type": "string"
                           },
                           "stage": {
+                            "enum": [
+                              "validation",
+                              "preflight",
+                              "handler",
+                              "cache.connect",
+                              "rate_limit.consume",
+                              "chatgpt_file.dns",
+                              "chatgpt_file.download",
+                              "chatgpt_file.validate",
+                              "storage.bucket",
+                              "storage.put",
+                              "storage.head",
+                              "storage.get",
+                              "storage.delete",
+                              "diagnostic.persist",
+                              "diagnostic.read",
+                              "breadcrumbs_truncated"
+                            ],
                             "type": "string"
                           }
                         },
@@ -29591,7 +29620,7 @@
                         "additionalProperties": false,
                         "properties": {
                           "elapsedMs": {
-                            "maximum": 9007199254740991,
+                            "maximum": 86400000,
                             "minimum": 0,
                             "type": "integer"
                           },
@@ -29599,22 +29628,33 @@
                             "additionalProperties": false,
                             "properties": {
                               "attempt": {
-                                "maximum": 9007199254740991,
-                                "minimum": -9007199254740991,
+                                "maximum": 10000,
+                                "minimum": 0,
                                 "type": "integer"
                               },
                               "httpStatus": {
-                                "maximum": 9007199254740991,
-                                "minimum": -9007199254740991,
+                                "maximum": 599,
+                                "minimum": 100,
                                 "type": "integer"
                               },
                               "itemCount": {
-                                "maximum": 9007199254740991,
-                                "minimum": -9007199254740991,
+                                "maximum": 10000,
+                                "minimum": 0,
                                 "type": "integer"
                               },
                               "runtimeCodeCategory": {
-                                "maxLength": 80,
+                                "enum": [
+                                  "dns",
+                                  "timeout",
+                                  "connection",
+                                  "http",
+                                  "redirect",
+                                  "metadata",
+                                  "constraint",
+                                  "pool",
+                                  "cancelled",
+                                  "unknown"
+                                ],
                                 "type": "string"
                               },
                               "timeout": {
@@ -29633,6 +29673,24 @@
                             "type": "string"
                           },
                           "stage": {
+                            "enum": [
+                              "validation",
+                              "preflight",
+                              "handler",
+                              "cache.connect",
+                              "rate_limit.consume",
+                              "chatgpt_file.dns",
+                              "chatgpt_file.download",
+                              "chatgpt_file.validate",
+                              "storage.bucket",
+                              "storage.put",
+                              "storage.head",
+                              "storage.get",
+                              "storage.delete",
+                              "diagnostic.persist",
+                              "diagnostic.read",
+                              "breadcrumbs_truncated"
+                            ],
                             "type": "string"
                           }
                         },

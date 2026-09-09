@@ -3,6 +3,7 @@
 ## v0.4.11 - 2026-09-09
 
 ### Added
+- Added follow-up hardening for enum-validated diagnostic breadcrumbs, safe typed error details, latest-boundary reporting, and resource-bounded PostgreSQL persistence with lock and statement timeouts.
 - Added tenant-scoped append-only MCP diagnostic event storage with bounded breadcrumbs and 30-day retention indexes.
 - Added bounded diagnostic retention cleanup and operator guidance.
 - Added actionable MCP error projection, diagnostic read tools, and synchronized private plugin contract guidance.

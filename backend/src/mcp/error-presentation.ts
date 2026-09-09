@@ -2,9 +2,10 @@ import { DomainError } from "../services/domain-error";
 import type { McpDiagnosticCategory, McpDiagnosticFailureClass, McpDiagnosticStage } from "../lib/mcp-diagnostic-types";
 
 export type OperationRecoveryPolicy = "read_only" | "mutating" | "financial";
+export type PublicMcpDetailValue = string | number | boolean | null | string[] | Record<string, number>;
 export type PublicMcpError = {
     code: string; message: string; suggestedAction: string; retryable: boolean; reviewRequired: boolean;
-    repreviewRequired?: boolean; humanReviewRequired?: boolean; details: Record<string, string | number | boolean | null>; correlationId: string;
+    repreviewRequired?: boolean; humanReviewRequired?: boolean; details: Record<string, PublicMcpDetailValue>; correlationId: string;
 };
 export type SafeDiagnosticClassification = {
     category: McpDiagnosticCategory; failureClass: McpDiagnosticFailureClass; terminalStage: McpDiagnosticStage;
@@ -12,7 +13,7 @@ export type SafeDiagnosticClassification = {
 };
 
 const catalog: Record<string, { message: string; action: string; retryable: boolean; review: boolean }> = {
-    CHATGPT_FILE_UNAVAILABLE: { message: "The attached file is unavailable", action: "Attach the file again and retry the read-only import", retryable: true, review: false },
+    CHATGPT_FILE_UNAVAILABLE: { message: "The attached file is unavailable", action: "Inspect the evidence state and retry the same import intent with its idempotency key", retryable: true, review: false },
     EVIDENCE_UPLOAD_EXPIRED: { message: "The evidence upload has expired", action: "Prepare a new upload URL and upload the evidence again", retryable: false, review: true },
     DIAGNOSTIC_FORBIDDEN: { message: "Diagnostic access is not permitted", action: "Ask a tenant owner or manager to inspect this correlation ID", retryable: false, review: false },
     DIAGNOSTIC_NOT_FOUND: { message: "No diagnostic trace is available for this correlation ID", action: "Do not retry a write; inspect authoritative state or ask an owner to investigate", retryable: false, review: true },
@@ -51,14 +52,46 @@ function failureClassFor(error: unknown): McpDiagnosticFailureClass {
     return "unknown";
 }
 
-function sanitizeDetails(details: Record<string, unknown> | undefined): Record<string, string | number | boolean | null> {
+const publicDetailKeys = new Set([
+    "paymentIntakePublicId", "transactionPublicId", "sourceRemaining", "availableFunding", "requestedPrincipal",
+    "downstreamEntryCount", "accrualPublicId", "accrualDate", "periodStartDate", "periodEndDate", "availableAmount",
+    "currentVersion", "oldBalanceVersion", "status", "eventPublicId", "transferredAt", "interestRatePreviewPublicId",
+    "earliestEditableDate", "field", "blockers", "blockerPublicIds", "reviewRequired", "correctedAmount", "collected",
+    "carriedForward", "treatedAsBorrowerPayment", "loanPublicId", "throughDate", "requestedAmount", "allocationType",
+]);
+const publicUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+const publicMoney = /^\d{1,30}(?:\.\d{2})$/u;
+const publicDate = /^\d{4}-\d{2}-\d{2}$/u;
+const publicField = /^(?:actualFunding|variance|oldLoanId|paymentIntakePublicId|proposalPublicId|loanPublicId|schedulePublicId)$/u;
+const publicStatus = /^(?:active|draft|posted|reversed|ready|needs_review|pending|completed|cancelled|unfunded|partially_funded|fully_funded)$/u;
+
+function safePublicString(key: string, value: string): boolean {
+    if (value.length > 500 || /^\s*(?:https?:|data:|bearer\b)/iu.test(value)) return false;
+    if (["paymentIntakePublicId", "transactionPublicId", "accrualPublicId", "interestRatePreviewPublicId", "eventPublicId", "loanPublicId"].includes(key)) return publicUuid.test(value);
+    if (["sourceRemaining", "availableFunding", "requestedPrincipal", "availableAmount", "correctedAmount", "requestedAmount"].includes(key)) return publicMoney.test(value);
+    if (["accrualDate", "periodStartDate", "periodEndDate", "earliestEditableDate", "throughDate"].includes(key)) return publicDate.test(value);
+    if (key === "transferredAt") return !Number.isNaN(Date.parse(value));
+    if (key === "field") return publicField.test(value);
+    if (key === "status") return publicStatus.test(value);
+    if (key === "allocationType") return /^(?:initial|manual_adjustment|reallocation_in|reallocation_out)$/u.test(value);
+    return false;
+}
+
+function sanitizeDetails(details: Record<string, unknown> | undefined): Record<string, PublicMcpDetailValue> {
     if (!details) return {};
-    const denied = /(name|email|alias|phone|card|address|qr|reference|url|token|secret|hash|amount|payload|header|query|sql|file|key|credential|evidence|account)/iu;
-    const result: Record<string, string | number | boolean | null> = {};
+    const result: Record<string, PublicMcpDetailValue> = {};
     for (const [key, value] of Object.entries(details)) {
-        if (denied.test(key)) continue;
-        if (value === null || typeof value === "boolean" || typeof value === "number") result[key] = value;
-        else if (typeof value === "string" && value.length <= 200) result[key] = value;
+        if (!publicDetailKeys.has(key)) continue;
+        if (value === null || typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value))) result[key] = value;
+        else if (typeof value === "string" && safePublicString(key, value)) result[key] = value;
+        else if (key === "blockerPublicIds" && Array.isArray(value) && value.length <= 100 && value.every((item) => typeof item === "string" && publicUuid.test(item))) result[key] = value;
+        else if (key === "blockers" && value && typeof value === "object" && !Array.isArray(value)) {
+            const blockers: Record<string, number> = {};
+            for (const [blockerKey, blockerValue] of Object.entries(value)) {
+                if (/^(?:rateChanges|laterRenewals|downstreamEntries)$/u.test(blockerKey) && typeof blockerValue === "number" && Number.isInteger(blockerValue) && blockerValue >= 0 && blockerValue <= 10000) blockers[blockerKey] = blockerValue;
+            }
+            if (Object.keys(blockers).length) result[key] = blockers;
+        }
     }
     return result;
 }
@@ -70,13 +103,13 @@ export function presentMcpError(error: unknown, correlationId: string, policy: O
     const status = domain ? error.status : 500;
     const reviewRequired = domain ? status === 409 || /(AMBIGUOUS|MISMATCH|REVIEW|STALE|NOT_LATEST|OUTPUT|CONFIRM)/u.test(code) : policy !== "read_only";
     const transient = domain ? (status === 429 || status >= 500) : true;
-    const retryable = known?.retryable ?? transient;
+    const retryable = (known?.retryable ?? false) || transient;
     const publicError: PublicMcpError = {
         code,
         message: known?.message ?? "The MCP tool could not complete the request",
         suggestedAction: known?.action ?? (policy === "read_only" && retryable ? "Retry this read-only operation once; otherwise inspect the correlation ID" : "Inspect authoritative state and this correlation ID before retrying"),
         retryable,
-        reviewRequired: known?.review ?? reviewRequired,
+        reviewRequired: (known?.review ?? false) || reviewRequired,
         details: sanitizeDetails(domain ? error.details : undefined),
         correlationId,
         ...(code.startsWith("BATCH_") ? { repreviewRequired: ["BATCH_STATE_CHANGED_SEMANTICS_SAME", "BATCH_EXECUTION_CONFLICT"].includes(code), humanReviewRequired: ["BATCH_NEEDS_REVIEW", "BATCH_DUPLICATE_EVIDENCE", "BATCH_ALLOCATION_MISMATCH", "BATCH_CONFIRMATION_STALE"].includes(code) } : {}),
@@ -86,7 +119,7 @@ export function presentMcpError(error: unknown, correlationId: string, policy: O
         upstreamStatus: status >= 100 && status <= 599 ? status : null,
         retryable, reviewRequired: publicError.reviewRequired,
     };
-    return { publicError, diagnostic: classification, persist: !domain || retryable || ["DATABASE_ERROR", "CACHE_ERROR", "STORAGE_ERROR", "EXTERNAL_SERVICE_ERROR"].includes(code) };
+    return { publicError, diagnostic: classification, persist: !domain || retryable || ["database", "cache", "network", "storage", "external_service", "timeout"].includes(classification.category) };
 }
 
 export function shouldPersistMcpDiagnostic(result: ReturnType<typeof presentMcpError>) { return result.persist; }

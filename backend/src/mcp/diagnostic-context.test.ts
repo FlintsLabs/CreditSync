@@ -18,6 +18,20 @@ describe("MCP diagnostic context", () => {
         expect(snapshot?.breadcrumbs.at(-1)?.stage).toBe("breadcrumbs_truncated");
         expect(JSON.stringify(snapshot)).not.toContain("token");
         expect(JSON.stringify(snapshot)).not.toContain("amount");
+        expect(snapshot?.breadcrumbs.some((item) => item.metadata?.itemCount === 24)).toBe(true);
+    });
+
+    test("rejects invalid runtime metadata and breadcrumb enums at capture", async () => {
+        const snapshot = await withMcpDiagnosticScope(ctx, "borrower.search", async () => {
+            recordMcpBreadcrumb({ stage: "handler", outcome: "failed", elapsedMs: 3, metadata: { runtimeCodeCategory: "https://secret.invalid", httpStatus: 700, timeout: "yes" as any, attempt: -1 } });
+            recordMcpBreadcrumb({ stage: "handler" as any, outcome: "leaked" as any, elapsedMs: Number.NaN });
+            return currentMcpDiagnosticSnapshot();
+        });
+        expect(snapshot?.breadcrumbs).toEqual([
+            { stage: "breadcrumbs_truncated", outcome: "rejected", elapsedMs: 3 },
+            { stage: "breadcrumbs_truncated", outcome: "rejected", elapsedMs: 0 },
+        ]);
+        expect(JSON.stringify(snapshot)).not.toContain("https://");
     });
 
     test("isolates concurrent async scopes", async () => {

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import postgres from "postgres";
 import { db } from "../db";
 import { mcpDiagnosticEvents, users } from "../db/schema";
 import { eq, inArray } from "drizzle-orm";
@@ -23,6 +24,15 @@ describe("MCP diagnostic persistence safety", () => {
         expect(JSON.stringify(values)).not.toContain("must-drop");
         expect((values?.breadcrumbs as any[])[0]).toEqual({ stage: "handler", outcome: "failed", elapsedMs: 12, metadata: { itemCount: 1 } });
         expect((values?.expiresAt as Date).toISOString()).toBe("2026-10-09T00:00:00.000Z");
+    });
+
+    test("projects injected stored snapshots without accepting invalid enum values", async () => {
+        let values: Record<string, unknown> | undefined;
+        const executor = { insert: () => ({ values: (input: Record<string, unknown>) => { values = input; return Promise.resolve([]); } }) } as any;
+        const injected = { ...snapshot, breadcrumbs: [{ stage: "handler", outcome: "failed", elapsedMs: 2, metadata: { runtimeCodeCategory: "https://secret.invalid", httpStatus: 999, timeout: "yes", attempt: -1, itemCount: 3 } }, { stage: "not-a-stage", outcome: "failed", elapsedMs: 2 }] } as any;
+        await persistMcpDiagnosticBestEffort({ ctx, toolName: snapshot.toolName, publicError: { code: "INTERNAL_ERROR", message: "safe", suggestedAction: "inspect", retryable: true, reviewRequired: false, details: {}, correlationId: ctx.correlationId }, classification: { category: "internal", failureClass: "unknown", terminalStage: "handler", upstreamStatus: 500, retryable: true, reviewRequired: false }, snapshot: injected, executor, logger: () => undefined });
+        expect(values?.breadcrumbs).toEqual([{ stage: "handler", outcome: "failed", elapsedMs: 2, metadata: { itemCount: 3 } }]);
+        expect(JSON.stringify(values)).not.toContain("secret.invalid");
     });
 
     test("bounded persistence preserves the caller when an injected writer never settles", async () => {
@@ -84,6 +94,33 @@ describe("MCP diagnostic persistence safety", () => {
             await db.delete(mcpDiagnosticEvents).where(eq(mcpDiagnosticEvents.tenantId, tenantId));
             await db.delete(mcpDiagnosticEvents).where(eq(mcpDiagnosticEvents.tenantId, otherTenantId));
             await db.delete(users).where(inArray(users.id, [owner.id, viewer.id, otherOwner.id]));
+        }
+    });
+
+    test("bounds dedicated persistence under a blocked PostgreSQL lock", async () => {
+        if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required for diagnostic resource coverage");
+        const blocker = postgres(process.env.DATABASE_URL, { max: 1, prepare: false });
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => { release = resolve; });
+        const held = blocker.begin(async (tx) => {
+            await tx`LOCK TABLE mcp_diagnostic_events IN ACCESS EXCLUSIVE MODE`;
+            await released;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const logs: Record<string, unknown>[] = [];
+        try {
+            const started = performance.now();
+            await Promise.all([1, 2, 3].map(() => persistMcpDiagnosticBestEffort({
+                ctx, toolName: "borrower.search", publicError: { code: "INTERNAL_ERROR", message: "safe", suggestedAction: "inspect", retryable: true, reviewRequired: false, details: {}, correlationId: ctx.correlationId },
+                classification: { category: "internal", failureClass: "unknown", terminalStage: "handler", upstreamStatus: 500, retryable: true, reviewRequired: false }, snapshot,
+                logger: (entry) => logs.push(entry), timeoutMs: 500,
+            })));
+            expect(performance.now() - started).toBeLessThan(900);
+            expect(logs.filter((entry) => entry.event === "mcp_diagnostic_persist_failed").length).toBeGreaterThanOrEqual(1);
+        } finally {
+            release();
+            await held;
+            await blocker.end();
         }
     });
 });

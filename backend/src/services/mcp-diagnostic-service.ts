@@ -5,6 +5,7 @@ import { mcpDiagnosticEvents, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import type { PublicMcpError, SafeDiagnosticClassification } from "../mcp/error-presentation";
 import type { McpDiagnosticBreadcrumb, McpDiagnosticCategory } from "../lib/mcp-diagnostic-types";
+import { projectMcpDiagnosticBreadcrumbs } from "../mcp/diagnostic-context";
 import type { McpDiagnosticSnapshot } from "../mcp/diagnostic-context";
 import { DomainError } from "./domain-error";
 import { canAccessTenantWideData } from "../lib/access";
@@ -46,6 +47,9 @@ export async function persistMcpDiagnosticBestEffort(input: {
     const write = input.executor
         ? Promise.resolve().then(() => input.executor!.insert(mcpDiagnosticEvents).values({ tenantId: input.ctx.tenantId, toolName: input.toolName, requestId: input.ctx.requestId, correlationId: input.ctx.correlationId, category: input.classification.category, failureClass: input.classification.failureClass, errorCode: input.publicError.code, terminalStage: input.classification.terminalStage, retryable: input.classification.retryable, reviewRequired: input.classification.reviewRequired, upstreamStatus: input.classification.upstreamStatus, durationMs: input.snapshot.durationMs, breadcrumbs, occurredAt, expiresAt })).then(() => undefined)
         : insertWithDiagnosticPool({ input, breadcrumbs, occurredAt, expiresAt, onQuery: (query) => { queryTimer = setTimeout(() => query.cancel(), Math.min(input.timeoutMs ?? maxWaitMs, queryTimeoutMs)); } });
+    if (!input.executor) {
+        write.then(() => { diagnosticInFlight -= 1; }, () => { diagnosticInFlight -= 1; });
+    }
     const timeout = new Promise<never>((_, reject) => { deadlineTimer = setTimeout(() => reject(new Error("diagnostic persistence timeout")), Math.min(input.timeoutMs ?? maxWaitMs, maxWaitMs)); });
     write.catch(() => undefined);
     try {
@@ -57,24 +61,16 @@ export async function persistMcpDiagnosticBestEffort(input: {
         if (queryTimer) clearTimeout(queryTimer);
         if (deadlineTimer) clearTimeout(deadlineTimer);
         if (!settled) write.catch(() => undefined);
-        if (!input.executor) diagnosticInFlight -= 1;
     }
 }
 
 function sanitizeBreadcrumbs(value: readonly McpDiagnosticBreadcrumb[]): McpDiagnosticBreadcrumb[] {
-    return value.slice(0, 20).map((item) => {
-        const metadata: Record<string, string | number | boolean | null> = {};
-        for (const key of ["runtimeCodeCategory", "httpStatus", "timeout", "attempt", "itemCount"] as const) {
-            const candidate = item.metadata?.[key];
-            if (typeof candidate === "string" && candidate.length <= 80 || typeof candidate === "number" && Number.isFinite(candidate) || typeof candidate === "boolean" || candidate === null) metadata[key] = candidate;
-        }
-        return { stage: item.stage, outcome: item.outcome, elapsedMs: Math.max(0, Math.min(Math.round(item.elapsedMs), 86_400_000)), ...(Object.keys(metadata).length ? { metadata } : {}) };
-    });
+    return projectMcpDiagnosticBreadcrumbs(value, "stored").slice(0, 20);
 }
 
 async function insertWithDiagnosticPool(input: { input: Parameters<typeof persistMcpDiagnosticBestEffort>[0]; breadcrumbs: McpDiagnosticBreadcrumb[]; occurredAt: Date; expiresAt: Date; onQuery: (query: { cancel: () => void }) => void }) {
     const { input: value, breadcrumbs, occurredAt, expiresAt } = input;
-    const query = diagnosticPool`INSERT INTO mcp_diagnostic_events (tenant_id, tool_name, request_id, correlation_id, category, failure_class, error_code, terminal_stage, retryable, review_required, upstream_status, duration_ms, breadcrumbs, occurred_at, expires_at) VALUES (${value.ctx.tenantId}, ${value.toolName}, ${value.ctx.requestId}, ${value.ctx.correlationId}, ${value.classification.category}, ${value.classification.failureClass}, ${value.publicError.code}, ${value.classification.terminalStage}, ${value.classification.retryable}, ${value.classification.reviewRequired}, ${value.classification.upstreamStatus}, ${value.snapshot.durationMs}, ${JSON.stringify(breadcrumbs)}, ${occurredAt}, ${expiresAt})`;
+    const query = diagnosticPool`SET statement_timeout = '450ms'; SET lock_timeout = '100ms'; INSERT INTO mcp_diagnostic_events (tenant_id, tool_name, request_id, correlation_id, category, failure_class, error_code, terminal_stage, retryable, review_required, upstream_status, duration_ms, breadcrumbs, occurred_at, expires_at) VALUES (${value.ctx.tenantId}, ${value.toolName}, ${value.ctx.requestId}, ${value.ctx.correlationId}, ${value.classification.category}, ${value.classification.failureClass}, ${value.publicError.code}, ${value.classification.terminalStage}, ${value.classification.retryable}, ${value.classification.reviewRequired}, ${value.classification.upstreamStatus}, ${value.snapshot.durationMs}, ${JSON.stringify(breadcrumbs)}, ${occurredAt}, ${expiresAt})`;
     input.onQuery(query);
     await query;
 }

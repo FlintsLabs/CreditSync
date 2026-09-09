@@ -11,6 +11,7 @@ import { authenticateBearer, hostIsAllowed, type McpRuntimeConfig } from "./secu
 import { currentMcpDiagnosticSnapshot, recordMcpBreadcrumb, withMcpDiagnosticScope } from "./diagnostic-context";
 import { presentMcpError, type OperationRecoveryPolicy } from "./error-presentation";
 import { persistMcpDiagnosticBestEffort } from "../services/mcp-diagnostic-service";
+import { mcpDiagnosticCategories, mcpDiagnosticStages, safeDiagnosticRuntimeCategories } from "../lib/mcp-diagnostic-types";
 
 export const MCP_TOOL_NAMES = [
     "borrower.search",
@@ -149,6 +150,7 @@ export interface CreateMcpHttpPluginInput {
     }) => Promise<string[]>;
     logger: (entry: Record<string, unknown>) => void;
     persistDiagnostic?: (input: Parameters<typeof persistMcpDiagnosticBestEffort>[0]) => Promise<void>;
+    parseToolInput?: (toolName: McpToolName, input: unknown) => Promise<{ success: boolean; data?: Record<string, unknown> }>;
 }
 
 const uuid = z.uuid();
@@ -1083,8 +1085,8 @@ const fundingAllocationPreviewOutput = z.object({
     warnings: z.array(z.string()),
 }).strict();
 const diagnosticBreadcrumbOutput = z.object({
-    stage: z.string(), outcome: z.enum(["started", "succeeded", "failed", "rejected"]), elapsedMs: z.number().int().nonnegative(),
-    metadata: z.object({ runtimeCodeCategory: z.string().max(80).optional(), httpStatus: z.number().int().optional(), timeout: z.boolean().optional(), attempt: z.number().int().optional(), itemCount: z.number().int().optional() }).strict().optional(),
+    stage: z.enum([...mcpDiagnosticStages, "breadcrumbs_truncated"] as [string, ...string[]]), outcome: z.enum(["started", "succeeded", "failed", "rejected"]), elapsedMs: z.number().int().nonnegative().max(86_400_000),
+    metadata: z.object({ runtimeCodeCategory: z.enum(safeDiagnosticRuntimeCategories).optional(), httpStatus: z.number().int().min(100).max(599).optional(), timeout: z.boolean().optional(), attempt: z.number().int().nonnegative().max(10_000).optional(), itemCount: z.number().int().nonnegative().max(10_000).optional() }).strict().optional(),
 }).strict();
 const diagnosticItemOutput = z.object({
     diagnosticPublicId: uuid, toolName: z.string(), correlationId: uuid, requestId: uuid,
@@ -1863,7 +1865,7 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
     "system.error-diagnostic.list": z.object({
         correlationId: uuid.optional(), requestId: uuid.optional(), toolName: z.string().trim().min(1).max(120).optional(),
         errorCode: z.string().trim().min(1).max(160).optional(),
-        category: z.enum(["domain", "validation", "authorization", "database", "cache", "network", "storage", "external_service", "timeout", "internal"]).optional(),
+        category: z.enum(mcpDiagnosticCategories).optional(),
         from: z.iso.datetime({ offset: true }).optional(), to: z.iso.datetime({ offset: true }).optional(),
         cursor: z.string().trim().min(1).max(300).optional(), limit: z.number().int().min(1).max(100).optional(),
     }).strict(),
@@ -1877,7 +1879,14 @@ const safeErrorSchema = z.object({
     reviewRequired: z.boolean(),
     repreviewRequired: z.boolean().optional(),
     humanReviewRequired: z.boolean().optional(),
-    details: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
+    details: z.object({
+        paymentIntakePublicId: uuid, transactionPublicId: uuid, sourceRemaining: z.string(), availableFunding: z.string(), requestedPrincipal: z.string(),
+        downstreamEntryCount: z.number(), accrualPublicId: uuid, accrualDate: z.string(), periodStartDate: z.string(), periodEndDate: z.string(), availableAmount: z.string(),
+        currentVersion: z.number(), oldBalanceVersion: z.number(), status: z.string(), eventPublicId: uuid, transferredAt: z.string(), interestRatePreviewPublicId: uuid,
+        earliestEditableDate: z.string(), field: z.string(), blockers: z.object({ rateChanges: z.number(), laterRenewals: z.number(), downstreamEntries: z.number() }).partial().strict(),
+        blockerPublicIds: z.array(uuid).max(100), reviewRequired: z.boolean(), correctedAmount: z.string(), collected: z.boolean(), carriedForward: z.boolean(),
+        treatedAsBorrowerPayment: z.boolean(), loanPublicId: uuid, throughDate: z.string(), requestedAmount: z.string(), allocationType: z.string(),
+    }).partial().strict(),
     correlationId: uuid,
 }).strict();
 
@@ -2409,16 +2418,16 @@ export function createMcpProtocolServer(input: CreateMcpHttpPluginInput, ctx: Co
         const toolContext = { ...ctx };
         const policy: OperationRecoveryPolicy = financialTools.has(toolName) ? "financial" : readOnlyTools.has(toolName) ? "read_only" : "mutating";
         return withMcpDiagnosticScope(toolContext, toolName, async () => {
-            const invalid = !MCP_TOOL_NAMES.includes(toolName) ? null : await toolInputSchemas[toolName].safeParseAsync(request.params.arguments ?? {});
             try {
                 if (!MCP_TOOL_NAMES.includes(toolName)) throw new DomainError("UNKNOWN_TOOL", "The requested MCP tool is not available", 400);
                 recordMcpBreadcrumb({ stage: "validation", outcome: "started" });
-                if (!invalid?.success) {
+                const parsedInput = await (input.parseToolInput ?? ((name, args) => toolInputSchemas[name].safeParseAsync(args) as Promise<{ success: boolean; data?: Record<string, unknown> }>))(toolName, request.params.arguments ?? {});
+                if (!parsedInput.success) {
                     recordMcpBreadcrumb({ stage: "validation", outcome: "failed" });
                     throw new DomainError("INVALID_TOOL_ARGUMENTS", "The MCP tool arguments are invalid", 422);
                 }
                 recordMcpBreadcrumb({ stage: "validation", outcome: "succeeded" });
-                const parsed = invalid.data as Record<string, unknown>;
+                const parsed = parsedInput.data as Record<string, unknown>;
                 const idempotencyKey = typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey : undefined;
                 const { idempotencyKey: _removed, ...handlerInput } = parsed;
                 toolContext.idempotencyKey = idempotencyKey ?? (toolName === "loan.activate" ? `mcp:loan.activate:${String(handlerInput.loanPublicId)}` : undefined);
@@ -2434,8 +2443,11 @@ export function createMcpProtocolServer(input: CreateMcpHttpPluginInput, ctx: Co
                 if (!structuredContent.success) throw new DomainError("INVALID_TOOL_OUTPUT", "The application service returned data outside the public MCP contract", 422);
                 return { content: [{ type: "text" as const, text: completionText(toolName) }], structuredContent: structuredContent.data };
             } catch (error) {
-                const presented = presentMcpError(error, toolContext.correlationId, policy, currentMcpDiagnosticSnapshot()?.breadcrumbs.at(-1)?.stage === "validation" ? "validation" : "handler");
                 const snapshot = currentMcpDiagnosticSnapshot();
+                const failedBreadcrumb = [...(snapshot?.breadcrumbs ?? [])].reverse().find((breadcrumb) => breadcrumb.outcome === "failed" || breadcrumb.outcome === "rejected");
+                const activeBreadcrumb = [...(snapshot?.breadcrumbs ?? [])].reverse().find((breadcrumb) => breadcrumb.outcome === "started");
+                const terminalStage = failedBreadcrumb?.stage ?? activeBreadcrumb?.stage ?? "handler";
+                const presented = presentMcpError(error, toolContext.correlationId, policy, terminalStage);
                 if (presented.persist && snapshot && !toolName.startsWith("system.error-diagnostic.")) {
                     const persist = input.persistDiagnostic ?? ((value: Parameters<typeof persistMcpDiagnosticBestEffort>[0]) => persistMcpDiagnosticBestEffort(value));
                     let pending: Promise<void>;

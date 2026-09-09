@@ -10,6 +10,7 @@ import { parseMoney, serializeMoney } from "../lib/money";
 import { loansRoute } from "../modules/loans";
 import { normalizeMoney as normalizeFrontendMoney } from "../../../frontend/src/lib/workflow-api";
 import { advertisedMcpToolMetadata, createMcpHttpPlugin, MCP_TOOL_NAMES, type CreateMcpHttpPluginInput, type McpToolHandler } from "./server";
+import { recordMcpBreadcrumb } from "./diagnostic-context";
 import { paymentPostCommandContext } from "./default";
 import type { McpRuntimeConfig } from "./security";
 
@@ -71,6 +72,7 @@ async function startServer(input: {
     logs?: Array<Record<string, unknown>>;
     auditPublicIds?: string[];
     persistDiagnostic?: CreateMcpHttpPluginInput["persistDiagnostic"];
+    parseToolInput?: CreateMcpHttpPluginInput["parseToolInput"];
     logger?: (entry: Record<string, unknown>) => void;
 }) {
     const pluginInput: CreateMcpHttpPluginInput = {
@@ -86,6 +88,7 @@ async function startServer(input: {
         findAuditPublicIds: async () => input.auditPublicIds ?? [AUDIT_ID],
         logger: input.logger ?? ((entry) => input.logs?.push(entry)),
         persistDiagnostic: input.persistDiagnostic,
+        parseToolInput: input.parseToolInput,
     };
     const app = new Elysia().use(createMcpHttpPlugin(pluginInput)).listen({ hostname: "127.0.0.1", port: 0 });
     runningApps.push(app);
@@ -1589,6 +1592,33 @@ describe("CreditSync stateless MCP contract", () => {
             suggestedAction: expect.any(String), correlationId: expect.stringMatching(/^[0-9a-f-]{36}$/),
         } });
         expect(JSON.stringify(result)).not.toContain("private upstream payload");
+        await client.close();
+    });
+
+    test("persists the latest nested integration boundary as terminal stage", async () => {
+        let persisted: any;
+        const baseUrl = await startServer({
+            toolHandlers: { "borrower.search": async () => { recordMcpBreadcrumb({ stage: "storage.put", outcome: "failed", elapsedMs: 4 }); throw new DomainError("STORAGE_ERROR", "private", 503); } },
+            persistDiagnostic: async (value) => { persisted = value; },
+        });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const result = await client.callTool({ name: "borrower.search", arguments: { query: "safe" } });
+        expect(result.isError).toBe(true);
+        expect(persisted.classification.terminalStage).toBe("storage.put");
+        await client.close();
+    });
+
+    test("preserves a safe error when application-owned schema parsing throws", async () => {
+        const baseUrl = await startServer({
+            parseToolInput: async () => { throw new Error("parser internals must stay private"); },
+        });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const result = await client.callTool({ name: "borrower.search", arguments: { query: "safe" } });
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({ error: { code: "INTERNAL_ERROR", message: "The MCP tool could not complete the request" } });
+        expect(JSON.stringify(result)).not.toContain("parser internals");
         await client.close();
     });
 

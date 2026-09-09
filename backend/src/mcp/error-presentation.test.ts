@@ -29,4 +29,21 @@ describe("MCP error presentation", () => {
         expect(presentMcpError(new DomainError("CONFIRMATION_REQUIRED", "confirm", 409), correlationId).persist).toBe(false);
         expect(presentMcpError(new DomainError("DATABASE_ERROR", "db", 503), correlationId).persist).toBe(true);
     });
+
+    test("uses typed public details and preserves blocker IDs", () => {
+        const blocker = "0198c481-3e2b-7000-8000-000000000002";
+        const result = presentMcpError(new DomainError("BLOCKED", "private", 409, {
+            debug: "https://secret.invalid/x", blockerPublicIds: [blocker], amount: "100.00", blockers: { laterRenewals: 2, url: 1 },
+        }), correlationId);
+        expect(result.publicError.details).toEqual({ blockerPublicIds: [blocker], blockers: { laterRenewals: 2 } });
+        expect(JSON.stringify(result.publicError)).not.toContain("secret.invalid");
+        expect(result.publicError.reviewRequired).toBe(true);
+    });
+
+    test("keeps transient retryability for unknown server DomainErrors", () => {
+        const result = presentMcpError(new DomainError("UNLISTED_CODE", "private", 503), correlationId);
+        expect(result.publicError.retryable).toBe(true);
+        expect(result.diagnostic.category).toBe("internal");
+        expect(result.persist).toBe(true);
+    });
 });

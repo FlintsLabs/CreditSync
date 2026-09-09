@@ -20,10 +20,14 @@ export type McpDiagnosticFailureClass = (typeof mcpDiagnosticFailureClasses)[num
 
 export const safeDiagnosticMetadataKeys = ["runtimeCodeCategory", "httpStatus", "timeout", "attempt", "itemCount"] as const;
 export type SafeDiagnosticMetadataKey = (typeof safeDiagnosticMetadataKeys)[number];
+export const safeDiagnosticRuntimeCategories = ["dns", "timeout", "connection", "http", "redirect", "metadata", "constraint", "pool", "cancelled", "unknown"] as const;
+export type SafeDiagnosticRuntimeCategory = (typeof safeDiagnosticRuntimeCategories)[number];
+export const mcpDiagnosticOutcomes = ["started", "succeeded", "failed", "rejected"] as const;
+export type McpDiagnosticOutcome = (typeof mcpDiagnosticOutcomes)[number];
 
 export type McpDiagnosticBreadcrumb = {
     stage: McpDiagnosticStage;
-    outcome: "started" | "succeeded" | "failed" | "rejected";
+    outcome: McpDiagnosticOutcome;
     elapsedMs: number;
     metadata?: Partial<Readonly<Record<SafeDiagnosticMetadataKey, string | number | boolean | null>>>;
 };

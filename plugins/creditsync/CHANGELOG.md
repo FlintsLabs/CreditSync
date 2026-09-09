@@ -2,6 +2,7 @@
 
 ## 9.2.0 - 2026-09-09
 
+- Hardened the synchronized diagnostic contract for bounded breadcrumb enums, redacted typed error details, and safe retry/terminal-stage guidance.
 - Added owner/manager-only `system.error-diagnostic.get` and `system.error-diagnostic.list` tools.
 - Added correlation IDs and suggested actions to the common MCP error envelope with operation-aware retry guidance.
 - Synchronized the frozen 114-tool contract and diagnostic recovery guidance.
