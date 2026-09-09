@@ -15,7 +15,7 @@ const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
 async function waitForBackfillBorrowerWait(observer: ReturnType<typeof postgres>, blockerPid: number) {
     for (let attempt = 0; attempt < 100; attempt += 1) {
         const waiting = await observer`
-            SELECT 1
+            SELECT activity.pid
             FROM pg_locks waiting
             JOIN pg_stat_activity activity ON activity.pid = waiting.pid
             WHERE waiting.granted = false
@@ -28,10 +28,10 @@ async function waitForBackfillBorrowerWait(observer: ReturnType<typeof postgres>
               )
             LIMIT 1
         `;
-        if (waiting.length) return;
+        if (waiting.length) return Number(waiting[0]!.pid);
         await Promise.resolve();
     }
-    throw new Error("restore schedule backfill did not wait on the borrower row lock");
+    throw new Error("payment operation did not wait on the borrower row lock");
 }
 
 describe("payment reconciliation allocation kernel", () => {
@@ -297,7 +297,11 @@ describe("payment reconciliation persistence", () => {
         const child = await db.insert(paymentIntakes).values({ tenantId, status: "posted", amount: "100.00", receivedAt: source.receivedAt, repostOfIntakeId: source.id, createdByUserId: actor.id, postedByUserId: actor.id, postedAt: new Date() }).returning().then((rows) => rows[0]!);
         await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan.id, scheduleId: schedule.id, amount: "100.00", principalComponent: "83.33", interestComponent: "16.67", feeComponent: "0.00", penaltyComponent: "0.00", paymentIntakeId: child.id, entryType: "repayment", transactionDate: child.receivedAt, recordedByUserId: actor.id });
 
-        const result = await backfillPostedRestoreSchedule(ctx, { paymentIntakePublicId: child.publicId, reason: "Repair schedule aggregate after exact restore", idempotencyKey: ctx.idempotencyKey! });
+        const [result, concurrentReplay] = await Promise.all([
+            backfillPostedRestoreSchedule(ctx, { paymentIntakePublicId: child.publicId, reason: "Repair schedule aggregate after exact restore", idempotencyKey: ctx.idempotencyKey! }),
+            backfillPostedRestoreSchedule({ ...ctx, correlationId: crypto.randomUUID() }, { paymentIntakePublicId: child.publicId, reason: "Repair schedule aggregate after exact restore", idempotencyKey: ctx.idempotencyKey! }),
+        ]);
+        expect(concurrentReplay).toEqual(result);
         expect(result).toMatchObject({ changed: true, paymentIntakePublicId: child.publicId, schedulePublicId: schedule.publicId });
         expect(await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.id, schedule.id) })).toMatchObject({ paidTotal: "100.00", remainingDue: "0.00", status: "paid" });
         expect(await db.select().from(transactions).where(and(eq(transactions.tenantId, tenantId), eq(transactions.paymentIntakeId, child.id)))).toHaveLength(1);
@@ -306,9 +310,20 @@ describe("payment reconciliation persistence", () => {
         expect(replay).toEqual(result);
         expect(await db.select().from(auditLogs).where(and(eq(auditLogs.tenantId, tenantId), eq(auditLogs.action, "restore_schedule_backfilled")))).toHaveLength(1);
         await expect(backfillPostedRestoreSchedule(ctx, { paymentIntakePublicId: child.publicId, reason: "Different target payload", idempotencyKey: ctx.idempotencyKey! })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+        const alternateSource = await db.insert(paymentIntakes).values({ tenantId, status: "reversed", amount: "100.00", receivedAt: source.receivedAt, createdByUserId: actor.id }).returning().then((rows) => rows[0]!);
+        const alternateChild = await db.insert(paymentIntakes).values({ tenantId, status: "posted", amount: "100.00", receivedAt: source.receivedAt, repostOfIntakeId: alternateSource.id, createdByUserId: actor.id, postedByUserId: actor.id, postedAt: new Date() }).returning().then((rows) => rows[0]!);
+        await expect(backfillPostedRestoreSchedule(ctx, { paymentIntakePublicId: alternateChild.publicId, reason: "Different target", idempotencyKey: ctx.idempotencyKey! })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
         const noop = await backfillPostedRestoreSchedule({ ...ctx, idempotencyKey: "restore-backfill-noop" }, { paymentIntakePublicId: child.publicId, reason: "Independent projection check", idempotencyKey: "restore-backfill-noop" });
         expect(noop).toMatchObject({ changed: false, paymentIntakePublicId: child.publicId, schedulePublicId: schedule.publicId, auditPublicId: expect.any(String) });
-        expect(await db.select().from(commandReceipts).where(and(eq(commandReceipts.tenantId, tenantId), eq(commandReceipts.operationType, "restore_schedule_backfill")))).toHaveLength(2);
+        const receipts = await db.select().from(commandReceipts).where(and(eq(commandReceipts.tenantId, tenantId), eq(commandReceipts.operationType, "restore_schedule_backfill")));
+        expect(receipts).toHaveLength(2);
+        expect(await db.select().from(auditLogs).where(and(eq(auditLogs.tenantId, tenantId), eq(auditLogs.action, "restore_schedule_backfilled")))).toHaveLength(2);
+        await expect(db.update(commandReceipts).set({ result: { forged: true } }).where(eq(commandReceipts.id, receipts[0]!.id)).execute()).rejects.toThrow();
+        await expect(db.delete(commandReceipts).where(eq(commandReceipts.id, receipts[0]!.id)).execute()).rejects.toThrow();
+        await expect(db.insert(commandReceipts).values({ tenantId, operationType: "foreign-audit-test", operationKey: "foreign-audit-test", requestHash: "f".repeat(64), result: {}, auditPublicId: crypto.randomUUID(), correlationId: crypto.randomUUID(), createdByUserId: actor.id }).execute()).rejects.toThrow();
+        const foreignTenant = `restore-backfill-foreign-${crypto.randomUUID()}`;
+        const foreignActor = await db.insert(users).values({ tenantId: foreignTenant, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+        await expect(backfillPostedRestoreSchedule({ tenantId: foreignTenant, actorUserId: foreignActor.id, actorSource: "web", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID() }, { paymentIntakePublicId: child.publicId, reason: "Cross tenant replay", idempotencyKey: "cross-tenant-replay" })).rejects.toThrow();
     });
 
     integrationTest("backfill acquires the borrower lock before the restore schedule lock", async () => {
@@ -356,6 +371,7 @@ describe("payment reconciliation persistence", () => {
         const intake = await createPaymentIntake(ctx, { amount: "10.00", receivedAt: "2026-08-15T09:28:00.000Z", payerName: borrower.name });
         await reviewPaymentIntake(ctx, intake.publicId, { status: "needs_review" });
         const preview = await previewPaymentReconciliation(ctx, { paymentIntakePublicId: intake.publicId, allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: draft.publicId, amount: "10.00", component: "interest" }], reason: "Historical explicit interest correction" });
+        const intakeRow = await db.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, tenantId), eq(paymentIntakes.publicId, intake.publicId)) });
         const loanRow = await db.query.loans.findFirst({ where: and(eq(loans.tenantId, tenantId), eq(loans.publicId, draft.publicId)) });
         const locker = postgres(process.env.TEST_DATABASE_URL!);
         const observer = postgres(process.env.TEST_DATABASE_URL!);
@@ -368,21 +384,47 @@ describe("payment reconciliation persistence", () => {
             await tx`SELECT id FROM borrowers WHERE tenant_id = ${tenantId} AND id = ${loanRow!.borrowerId} FOR UPDATE`;
             await released;
         });
+        let executing: Promise<unknown> | undefined;
         try {
             const blockerPid = await pidReady;
-            const executing = executePaymentReconciliation(ctx, preview.publicId, { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "historical-lock-execute" });
-            await waitForBackfillBorrowerWait(observer, blockerPid);
+            executing = executePaymentReconciliation(ctx, preview.publicId, { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "historical-lock-execute" });
+            const waitingPid = await waitForBackfillBorrowerWait(observer, blockerPid);
+            expect(waitingPid).toBeGreaterThan(0);
+            expect(await observer`SELECT id FROM payment_intakes WHERE tenant_id = ${tenantId} AND id = ${intakeRow!.id} FOR UPDATE NOWAIT`).toHaveLength(1);
+            expect(await observer`SELECT id FROM loans WHERE tenant_id = ${tenantId} AND id = ${loanRow!.id} FOR UPDATE NOWAIT`).toHaveLength(1);
             expect(await db.select().from(transactions).where(eq(transactions.tenantId, tenantId))).toHaveLength(0);
             release();
             await expect(executing).resolves.toMatchObject({ correctedTransactionPublicIds: [expect.any(String)], auditPublicIds: [expect.any(String)] });
             await blocker;
             expect(await db.select().from(transactions).where(eq(transactions.tenantId, tenantId))).toHaveLength(1);
+            expect(waitingPid).not.toBe(blockerPid);
         } finally {
             release();
+            if (executing) await Promise.allSettled([executing]);
             await Promise.allSettled([blocker]);
             await locker.end({ timeout: 1000 });
             await observer.end({ timeout: 1000 });
         }
+    });
+
+    integrationTest("historical explicit reconciliation rejects an ordinary posting after preview without compensation", async () => {
+        const tenantId = `historical-reconcile-stale-${crypto.randomUUID()}`;
+        const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+        const ctx: CommandContext = { tenantId, actorUserId: actor.id, actorSource: "web", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() };
+        const borrower = await createBorrower(ctx, { name: "Historical Stale Borrower" });
+        const draft = await createLoanDraft(ctx, { borrowerPublicId: borrower.publicId, principal: "1000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1, startDate: "2026-08-06", floatingDailyInterest: { mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day" } });
+        await activateLoan(ctx, draft.publicId);
+        const intake = await createPaymentIntake(ctx, { amount: "10.00", receivedAt: "2026-08-15T09:28:00.000Z", payerName: borrower.name });
+        await reviewPaymentIntake(ctx, intake.publicId, { status: "needs_review" });
+        const preview = await previewPaymentReconciliation(ctx, { paymentIntakePublicId: intake.publicId, allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: draft.publicId, amount: "10.00", component: "interest" }], reason: "Historical stale explicit interest" });
+        const ordinaryCtx = { ...ctx, requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: "ordinary-before-historical-execute" };
+        const ordinary = await createPaymentIntake(ordinaryCtx, { amount: "5.00", receivedAt: "2026-08-14T09:28:00.000Z", payerName: `${borrower.name} earlier` });
+        const ordinaryProposal = await previewPaymentMatch(ordinaryCtx, ordinary.publicId, { allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: draft.publicId, amount: "5.00" }] });
+        await postPayment(ordinaryCtx, ordinary.publicId, { proposalPublicId: ordinaryProposal.publicId });
+        await expect(executePaymentReconciliation(ctx, preview.publicId, { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "historical-stale-execute" })).rejects.toMatchObject({ code: "STALE_RECONCILIATION_PREVIEW" });
+        const sourceRow = await db.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, tenantId), eq(paymentIntakes.publicId, intake.publicId)) });
+        expect(await db.select().from(transactions).where(and(eq(transactions.tenantId, tenantId), eq(transactions.paymentIntakeId, sourceRow!.id)))).toHaveLength(0);
+        expect(await db.select().from(transactions).where(and(eq(transactions.tenantId, tenantId), eq(transactions.paymentIntakeId, (await db.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, tenantId), eq(paymentIntakes.publicId, ordinary.publicId)) }))!.id)))).toHaveLength(1);
     });
 
     integrationTest("fails closed when a reversed floating replacement lacks complete accrual provenance", async () => {
