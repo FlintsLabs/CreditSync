@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import postgres from "postgres";
@@ -14,6 +15,16 @@ async function applySqlFile(sql: ReturnType<typeof postgres>, path: string) {
     for (const statement of content.split("--> statement-breakpoint")) {
         if (statement.trim()) await sql.unsafe(statement);
     }
+}
+
+async function makeMigrationFixture(prefix: string, maximumIndex?: number) {
+    const fixture = await mkdtemp(`${prefix}-`);
+    await mkdir(`${fixture}/meta`);
+    const journal = await Bun.file(`${root}drizzle/meta/_journal.json`).json() as { entries: Array<{ idx: number; tag: string }> };
+    const entries = journal.entries.filter((entry) => maximumIndex === undefined || entry.idx <= maximumIndex);
+    for (const entry of entries) await cp(`${root}drizzle/${entry.tag}.sql`, `${fixture}/${entry.tag}.sql`);
+    await writeFile(`${fixture}/meta/_journal.json`, JSON.stringify({ ...journal, entries }));
+    return fixture;
 }
 
 describe("atomic payment batch migration", () => {
@@ -188,6 +199,82 @@ describe("atomic payment batch migration", () => {
             expect(Array.from(journalBefore)).toEqual(Array.from(journalBeforeRerun));
         } finally {
             await sql.end();
+        }
+    });
+
+    integrationTest("runs the real 0067 to 0068 migrator against populated draft and posted data", async () => {
+        const baseUrl = process.env.TEST_DATABASE_URL!;
+        const admin = postgres(baseUrl, { max: 1 });
+        const databaseName = `creditsync_upgrade_${crypto.randomUUID().replaceAll("-", "")}`;
+        const prefixDir = await makeMigrationFixture("/tmp/creditsync-migrations-0067", 67);
+        const fullDir = await makeMigrationFixture("/tmp/creditsync-migrations-full");
+        let scratch: ReturnType<typeof postgres> | undefined;
+        try {
+            await admin.unsafe(`CREATE DATABASE "${databaseName}"`);
+            const scratchUrl = new URL(baseUrl);
+            scratchUrl.pathname = `/${databaseName}`;
+            scratch = postgres(scratchUrl.toString(), { max: 1 });
+            const { drizzle } = await import("drizzle-orm/postgres-js");
+            const { migrate } = await import("drizzle-orm/postgres-js/migrator");
+            await migrate(drizzle(scratch), { migrationsFolder: prefixDir });
+            expect(Array.from(await scratch`SELECT to_regclass('public.payment_batch_staging_items')`)).toEqual([{ to_regclass: "payment_batch_staging_items" }]);
+            expect(Array.from(await scratch`SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'payment_batch_staging_items' AND column_name = 'resolution_state')`)).toEqual([{ exists: false }]);
+            expect(Array.from(await scratch`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations WHERE created_at = 1788912000003`)).toEqual([{ count: 0 }]);
+
+            const tenantId = `migration-real-${crypto.randomUUID()}`;
+            const [actor] = await scratch<{ id: number }[]>`INSERT INTO users (tenant_id, email, role) VALUES (${tenantId}, ${crypto.randomUUID()} || '@example.test', 'owner') RETURNING id`;
+            const [borrower] = await scratch<{ id: number }[]>`INSERT INTO borrowers (tenant_id, owner_user_id, name) VALUES (${tenantId}, ${actor!.id}, 'Real upgrade borrower') RETURNING id`;
+            const [loan] = await scratch<{ id: number }[]>`INSERT INTO loans (tenant_id, owner_user_id, borrower_id, principal_amount, interest_rate, repayment_type, status, start_date, outstanding_principal, outstanding_interest, outstanding_fees) VALUES (${tenantId}, ${actor!.id}, ${borrower!.id}, 2000, 0, 'daily', 'active', DATE '2026-08-01', 2000, 0, 0) RETURNING id`;
+            const [schedule] = await scratch<{ id: number }[]>`INSERT INTO loan_schedules (tenant_id, loan_id, installment_no, due_date, scheduled_total, remaining_due) VALUES (${tenantId}, ${loan!.id}, 1, DATE '2026-08-10', 100, 100) RETURNING id`;
+            const [draft] = await scratch<{ id: number }[]>`INSERT INTO payment_batches (tenant_id, borrower_id, status, version, state_hash, create_idempotency_key, created_by_user_id, updated_by_user_id) VALUES (${tenantId}, ${borrower!.id}, 'needs_review', 1, 'draft-state', ${crypto.randomUUID()}, ${actor!.id}, ${actor!.id}) RETURNING id`;
+            const [posted] = await scratch<{ id: number }[]>`INSERT INTO payment_batches (tenant_id, borrower_id, status, version, state_hash, confirmation_hash, create_idempotency_key, created_by_user_id, updated_by_user_id) VALUES (${tenantId}, ${borrower!.id}, 'needs_review', 2, 'posted-state', 'posted-confirmation', ${crypto.randomUUID()}, ${actor!.id}, ${actor!.id}) RETURNING id`;
+            const [intake] = await scratch<{ id: number }[]>`INSERT INTO payment_intakes (tenant_id, owner_user_id, source, status, amount, received_at, idempotency_key, created_by_user_id, updated_by_user_id) VALUES (${tenantId}, ${actor!.id}, 'web', 'posted', 100, TIMESTAMPTZ '2026-08-11 03:00:00+00', ${crypto.randomUUID()}, ${actor!.id}, ${actor!.id}) RETURNING id`;
+            const [mapped] = await scratch<{ id: number; public_id: string }[]>`INSERT INTO payment_batch_staging_items (tenant_id, batch_id, client_item_key, payload_fingerprint, amount, received_at, status, reviewed_mapping, created_by_user_id, updated_by_user_id) VALUES (${tenantId}, ${posted!.id}, 'posted-mapped', 'posted-mapped-fp', 100, TIMESTAMPTZ '2026-08-11 03:00:00+00', 'validated', ${JSON.stringify({ borrowerPublicId: crypto.randomUUID(), loanPublicId: crypto.randomUUID() })}, ${actor!.id}, ${actor!.id}) RETURNING id, public_id`;
+            const [unknown] = await scratch<{ id: number; public_id: string }[]>`INSERT INTO payment_batch_staging_items (tenant_id, batch_id, client_item_key, payload_fingerprint, amount, received_at, status, created_by_user_id, updated_by_user_id) VALUES (${tenantId}, ${draft!.id}, 'draft-unknown', 'draft-unknown-fp', 25, TIMESTAMPTZ '2026-08-11 04:00:00+00', 'staged', ${actor!.id}, ${actor!.id}) RETURNING id, public_id`;
+            const [member] = await scratch<{ id: number }[]>`INSERT INTO payment_batch_items (tenant_id, batch_id, payment_intake_id, staging_item_id, item_order) VALUES (${tenantId}, ${posted!.id}, ${intake!.id}, ${mapped!.id}, 1) RETURNING id`;
+            await scratch`UPDATE payment_batch_staging_items SET payment_intake_id = ${intake!.id}, batch_item_id = ${member!.id} WHERE id = ${mapped!.id}`;
+            const [preview] = await scratch<{ id: number }[]>`INSERT INTO payment_batch_previews (tenant_id, batch_id, version, status, state_hash, preview_hash, confirmation_hash, posting_sequence, evidence_ready, expires_at, created_by_user_id) VALUES (${tenantId}, ${posted!.id}, 2, 'posted', 'posted-state', 'posted-preview', 'posted-confirmation', ${JSON.stringify([mapped!.public_id])}, true, TIMESTAMPTZ '2026-09-01 00:00:00+00', ${actor!.id}) RETURNING id`;
+            await scratch`INSERT INTO payment_batch_allocations (tenant_id, preview_id, item_id, allocation_order, borrower_id, loan_id, schedule_id, amount, target_due_date, intent, calculated_components, status) VALUES (${tenantId}, ${preview!.id}, ${member!.id}, 1, ${borrower!.id}, ${loan!.id}, ${schedule!.id}, 100, DATE '2026-08-10', 'on_time', ${JSON.stringify({ principal: '100.00', interest: '0.00', fee: '0.00', penalty: '0.00' })}, 'posted')`;
+            const [file] = await scratch<{ id: number }[]>`INSERT INTO files (tenant_id, owner_user_id, bucket, key, original_name, mime_type, size) VALUES (${tenantId}, ${actor!.id}, 'test', ${crypto.randomUUID()}, 'upgrade.png', 'image/png', 12) RETURNING id`;
+            await scratch`INSERT INTO payment_batch_staging_evidence (tenant_id, staging_item_id, file_id, evidence_hash, mime_type, declared_size, status, finalized_at, created_by_user_id, updated_by_user_id) VALUES (${tenantId}, ${mapped!.id}, ${file!.id}, ${crypto.randomUUID()}, 'image/png', 12, 'ready', TIMESTAMPTZ '2026-08-11 03:05:00+00', ${actor!.id}, ${actor!.id})`;
+            await scratch`INSERT INTO transactions (tenant_id, owner_user_id, loan_id, schedule_id, amount, principal_component, interest_component, fee_component, penalty_component, transaction_date, payment_intake_id, idempotency_key, posted_at) VALUES (${tenantId}, ${actor!.id}, ${loan!.id}, ${schedule!.id}, 100, 100, 0, 0, 0, TIMESTAMPTZ '2026-08-11 03:00:00+00', ${intake!.id}, ${crypto.randomUUID()}, TIMESTAMPTZ '2026-08-11 03:01:00+00')`;
+            await scratch`UPDATE payment_batches SET status = 'posted', posted_at = TIMESTAMPTZ '2026-08-12 03:00:00+00', execute_idempotency_key = ${crypto.randomUUID()} WHERE id = ${posted!.id}`;
+
+            const postedSnapshot = async () => ({
+                batch: Array.from(await scratch!`SELECT id, public_id, status, version, state_hash, confirmation_hash, posted_at FROM payment_batches WHERE id = ${posted!.id}`),
+                member: Array.from(await scratch!`SELECT id, public_id, batch_id, payment_intake_id, staging_item_id, item_order FROM payment_batch_items WHERE id = ${member!.id}`),
+                allocation: Array.from(await scratch!`SELECT id, public_id, preview_id, item_id, borrower_id, loan_id, schedule_id, amount, target_due_date, calculated_components, status FROM payment_batch_allocations WHERE preview_id = ${preview!.id}`),
+                transaction: Array.from(await scratch!`SELECT id, public_id, loan_id, schedule_id, amount, principal_component, interest_component, fee_component, penalty_component, transaction_date, payment_intake_id, posted_at FROM transactions WHERE payment_intake_id = ${intake!.id}`),
+                evidence: Array.from(await scratch!`SELECT staging_item_id, file_id, evidence_hash, status, finalized_at FROM payment_batch_staging_evidence WHERE staging_item_id = ${mapped!.id}`),
+            });
+            const before = await postedSnapshot();
+            const oldJournal = Array.from(await scratch`SELECT id, hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id`);
+            await migrate(drizzle(scratch), { migrationsFolder: fullDir });
+            expect(Array.from(await scratch`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations WHERE created_at = 1788912000003`)).toEqual([{ count: 1 }]);
+            expect(Array.from(await scratch`SELECT reviewed_mapping IS NOT NULL AS mapped, resolution_state FROM payment_batch_staging_items WHERE id = ${mapped!.id}`)).toEqual([{ mapped: true, resolution_state: "mapped" }]);
+            expect(Array.from(await scratch`SELECT reviewed_mapping IS NULL AS unmapped, resolution_state FROM payment_batch_staging_items WHERE id = ${unknown!.id}`)).toEqual([{ unmapped: true, resolution_state: "unresolved" }]);
+            const after = await postedSnapshot();
+            expect(after).toEqual(before);
+            let postedBatchRejected = false;
+            try { await scratch`UPDATE payment_batches SET notes = 'tamper' WHERE id = ${posted!.id}`; } catch { postedBatchRejected = true; }
+            expect(postedBatchRejected).toBe(true);
+            let postedMemberRejected = false;
+            try { await scratch`DELETE FROM payment_batch_items WHERE id = ${member!.id}`; } catch { postedMemberRejected = true; }
+            expect(postedMemberRejected).toBe(true);
+            let postedEvidenceRejected = false;
+            try { await scratch`DELETE FROM payment_batch_staging_evidence WHERE staging_item_id = ${mapped!.id}`; } catch { postedEvidenceRejected = true; }
+            expect(postedEvidenceRejected).toBe(true);
+            const journalAfter = Array.from(await scratch`SELECT id, hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id`);
+            expect(journalAfter.slice(0, oldJournal.length)).toEqual(oldJournal);
+            await migrate(drizzle(scratch), { migrationsFolder: fullDir });
+            expect(Array.from(await scratch`SELECT id, hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id`)).toEqual(journalAfter);
+            expect(await postedSnapshot()).toEqual(before);
+        } finally {
+            if (scratch) await scratch.end();
+            await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}"`);
+            await admin.end();
+            await rm(prefixDir, { recursive: true, force: true });
+            await rm(fullDir, { recursive: true, force: true });
         }
     });
     test("registers the additive batch schema and immutable posted boundary", async () => {
