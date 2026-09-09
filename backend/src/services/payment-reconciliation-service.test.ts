@@ -388,7 +388,7 @@ describe("payment reconciliation persistence", () => {
             await tx`SELECT id FROM borrowers WHERE tenant_id = ${tenantId} AND id = ${loanRow!.borrowerId} FOR UPDATE`;
             await released;
         });
-        let executing: Promise<unknown> | undefined;
+        let executing: ReturnType<typeof executePaymentReconciliation> | undefined;
         try {
             const blockerPid = await pidReady;
             executing = executePaymentReconciliation(ctx, preview.publicId, { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "historical-lock-execute" });
@@ -398,7 +398,9 @@ describe("payment reconciliation persistence", () => {
             expect(await observer`SELECT id FROM loans WHERE tenant_id = ${tenantId} AND id = ${loanRow!.id} FOR UPDATE NOWAIT`).toHaveLength(1);
             expect(await db.select().from(transactions).where(eq(transactions.tenantId, tenantId))).toHaveLength(0);
             release();
-            await expect(executing).resolves.toMatchObject({ correctedTransactionPublicIds: [expect.any(String)], auditPublicIds: [expect.any(String)] });
+            const executionResult = await executing;
+            expect(executionResult).toMatchObject({ correctedTransactionPublicIds: [expect.any(String)], auditPublicIds: [expect.any(String)] });
+            expect(await executePaymentReconciliation({ ...ctx, correlationId: crypto.randomUUID() }, preview.publicId, { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "historical-lock-execute" })).toEqual(executionResult);
             await blocker;
             expect(await db.select().from(transactions).where(eq(transactions.tenantId, tenantId))).toHaveLength(1);
             expect(waitingPid).not.toBe(blockerPid);
