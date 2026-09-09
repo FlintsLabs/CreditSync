@@ -1713,6 +1713,7 @@ export const paymentBatchStagingItems = pgTable("payment_batch_staging_items", {
     reviewedRangeTo: date("reviewed_range_to"),
     reviewedReason: text("reviewed_reason"),
     reviewedMapping: jsonb("reviewed_mapping").$type<{ borrowerPublicId?: string; loanPublicId?: string; schedulePublicId?: string } | null>(),
+    resolutionState: text("resolution_state").default("unresolved").notNull(),
     operationKey: text("operation_key"),
     operationRequestHash: text("operation_request_hash"),
     operationResult: jsonb("operation_result").$type<Record<string, unknown> | null>(),

@@ -376,10 +376,19 @@ integration("public remapping after a batch preview replaces the prior borrower 
         { itemPublicId: second.batchItemPublicId as string, borrowerPublicId: header!.publicId, loanPublicId: loan!.publicId, schedulePublicId: schedules[1]!.publicId, amount: "1.00", targetDueDate: "2026-09-07", intent: "on_time" },
     ] });
     expect(sourcePreview.status).toBe("ready");
-    const revision = (await db.query.paymentBatchStagingItems.findFirst({ where: eq(paymentBatchStagingItems.publicId, f.staged.items[0]!.publicId) }))!.revision;
-    await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[0]!.publicId, expectedRevision: revision, idempotencyKey: "post-preview-map-b", reason: "synthetic remap after preview", mapping: { borrowerPublicId: secondary!.publicId } });
-    const secondRevision = (await db.query.paymentBatchStagingItems.findFirst({ where: eq(paymentBatchStagingItems.publicId, f.staged.items[1]!.publicId) }))!.revision;
-    await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[1]!.publicId, expectedRevision: secondRevision, idempotencyKey: "post-preview-map-b-second", reason: "synthetic remap after preview", mapping: { borrowerPublicId: secondary!.publicId } });
+    const firstRevisionAfterPreview = (await db.query.paymentBatchStagingItems.findFirst({ where: eq(paymentBatchStagingItems.publicId, f.staged.items[0]!.publicId) }))!.revision;
+    await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[0]!.publicId, expectedRevision: firstRevisionAfterPreview, idempotencyKey: "post-preview-clear-first", reason: "synthetic clear after preview", mapping: null });
+    const secondRevisionAfterPreview = (await db.query.paymentBatchStagingItems.findFirst({ where: eq(paymentBatchStagingItems.publicId, f.staged.items[1]!.publicId) }))!.revision;
+    await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[1]!.publicId, expectedRevision: secondRevisionAfterPreview, idempotencyKey: "post-preview-clear-second", reason: "synthetic clear after preview", mapping: null });
+    expect(await db.query.paymentBatches.findFirst({ where: eq(paymentBatches.publicId, f.staged.batchPublicId) })).toMatchObject({ status: "needs_review" });
+    const laterAfterClear = await capturePaymentBatch(f.ctx, { idempotencyKey: "post-preview-clear-later", borrowerPublicId: header!.publicId, items: [{ clientItemKey: "later-clear", intakeIdempotencyKey: "post-preview-clear-later-intake", amount: "1.00", receivedAt: "2026-09-08T09:00:00+07:00" }] });
+    await expect(previewPaymentBatch(f.ctx, laterAfterClear.publicId, { borrowerPublicId: header!.publicId })).resolves.toMatchObject({ status: "ready" });
+    const laterAfterClearRevision = (await db.query.paymentBatches.findFirst({ where: eq(paymentBatches.publicId, laterAfterClear.publicId) }))!.version;
+    await cancelPaymentBatch(f.ctx, laterAfterClear.publicId, { reason: "synthetic clear dependency cleanup", revision: laterAfterClearRevision, idempotencyKey: "post-preview-clear-cancel" });
+    const firstRevisionAfterClear = (await db.query.paymentBatchStagingItems.findFirst({ where: eq(paymentBatchStagingItems.publicId, f.staged.items[0]!.publicId) }))!.revision;
+    await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[0]!.publicId, expectedRevision: firstRevisionAfterClear, idempotencyKey: "post-preview-map-b", reason: "synthetic remap after preview", mapping: { borrowerPublicId: secondary!.publicId } });
+    const secondRevisionAfterClear = (await db.query.paymentBatchStagingItems.findFirst({ where: eq(paymentBatchStagingItems.publicId, f.staged.items[1]!.publicId) }))!.revision;
+    await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[1]!.publicId, expectedRevision: secondRevisionAfterClear, idempotencyKey: "post-preview-map-b-second", reason: "synthetic remap after preview", mapping: { borrowerPublicId: secondary!.publicId } });
     const laterA = await capturePaymentBatch(f.ctx, { idempotencyKey: "post-preview-later-a", borrowerPublicId: header!.publicId, items: [{ clientItemKey: "later-a", intakeIdempotencyKey: "post-preview-later-a-intake", amount: "1.00", receivedAt: "2026-09-08T10:00:00+07:00" }] });
     await expect(previewPaymentBatch(f.ctx, laterA.publicId, { borrowerPublicId: header!.publicId })).resolves.toMatchObject({ status: "ready" });
     const laterB = await capturePaymentBatch(f.ctx, { idempotencyKey: "post-preview-later-b", borrowerPublicId: secondary!.publicId, items: [{ clientItemKey: "later-b", intakeIdempotencyKey: "post-preview-later-b-intake", amount: "1.00", receivedAt: "2026-09-08T10:00:00+07:00" }] });

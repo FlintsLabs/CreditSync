@@ -17,10 +17,10 @@ export async function paymentIntakeBorrowerIds(tx: DbExecutor, tenantId: string,
             JOIN payment_batches b ON b.tenant_id = bi.tenant_id AND b.id = bi.batch_id
             JOIN payment_batch_allocations a ON a.tenant_id = bi.tenant_id AND a.item_id = bi.id
             WHERE bi.tenant_id = ${tenantId} AND bi.payment_intake_id = ${intakeId} AND b.status <> 'cancelled'
-              AND a.preview_id = (SELECT p.id FROM payment_batch_previews p WHERE p.tenant_id = bi.tenant_id AND p.batch_id = bi.batch_id ORDER BY p.version DESC LIMIT 1))
+              AND a.preview_id = (SELECT p.id FROM payment_batch_previews p WHERE p.tenant_id = bi.tenant_id AND p.batch_id = bi.batch_id AND p.status = 'ready' AND p.version = b.version ORDER BY p.version DESC LIMIT 1))
         OR l.borrower_id IN (SELECT br.id FROM payment_batch_staging_items si
             JOIN borrowers br ON br.tenant_id = si.tenant_id AND br.public_id::text = si.reviewed_mapping->>'borrowerPublicId'
-            WHERE si.tenant_id = ${tenantId} AND si.payment_intake_id = ${intakeId} AND si.status = 'validated')
+            WHERE si.tenant_id = ${tenantId} AND si.payment_intake_id = ${intakeId} AND si.status = 'validated' AND si.resolution_state = 'mapped')
     ) ORDER BY l.borrower_id`);
     return Array.from(rows, (row) => Number(row.borrower_id));
 }
@@ -56,7 +56,7 @@ export async function assertNoOlderPendingPayment(tx: DbExecutor, tenantId: stri
           AND NOT EXISTS (SELECT 1 FROM payment_batch_staging_items current_stage
               WHERE current_stage.tenant_id = i.tenant_id AND current_stage.payment_intake_id = i.id
                 AND current_stage.status = 'validated'
-                AND (current_stage.reviewed_mapping IS NOT NULL OR EXISTS (
+                AND (current_stage.reviewed_mapping IS NOT NULL OR current_stage.resolution_state = 'cleared' OR EXISTS (
                     SELECT 1 FROM payment_batch_items current_item
                     JOIN payment_batches current_batch ON current_batch.tenant_id = current_item.tenant_id AND current_batch.id = current_item.batch_id
                     JOIN payment_batch_previews current_preview ON current_preview.tenant_id = current_batch.tenant_id AND current_preview.batch_id = current_batch.id
@@ -72,6 +72,7 @@ export async function assertNoOlderPendingPayment(tx: DbExecutor, tenantId: stri
         JOIN borrowers br ON br.tenant_id = si.tenant_id AND br.id = ${borrowerId}
         WHERE si.tenant_id = ${tenantId} ${stagedExcluded} AND si.status <> 'failed'
           AND b.status NOT IN ('posted', 'cancelled') AND si.received_at < ${receivedAt.toISOString()}
+          AND si.resolution_state = 'mapped'
           AND ((si.reviewed_mapping->>'borrowerPublicId') = br.public_id::text
             OR (si.reviewed_mapping->>'loanPublicId') IN (SELECT public_id::text FROM loans WHERE tenant_id = ${tenantId} AND borrower_id = ${borrowerId}))
         LIMIT 1`);
