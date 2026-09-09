@@ -31,6 +31,11 @@ export default defineConfig({
     },
     test: {
         environment: 'jsdom',
+        // Node's native storage shadows jsdom's origin-scoped browser storage.
+        // Disable it in test workers only, on runtimes that expose this flag.
+        execArgv: process.allowedNodeEnvironmentFlags.has('--no-experimental-webstorage')
+            ? ['--no-experimental-webstorage']
+            : [],
         setupFiles: ['./tests/setup.ts'],
         include: ['tests/**/*.{test,vitest}.{ts,tsx}'],
     },

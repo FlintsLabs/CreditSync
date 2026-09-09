@@ -567,6 +567,8 @@ bun run build
 
 `frontend/bunfig.toml` preloads the local Happy DOM and Testing Library matcher setup for Bun-native DOM tests; Vitest continues to use its separate jsdom configuration for the full frontend suite.
 
+Vitest automatically disables Node's native webstorage in test workers when the runtime supports that option, so jsdom supplies browser storage on Node 26 without a manual `NODE_OPTIONS` override. Tests discovered by Vitest must import test APIs from `vitest`, not `bun:test`.
+
 Database-backed service tests are opt-in and require `TEST_DATABASE_URL` to point to a disposable database. To create an isolated ephemeral PostgreSQL 18 container with a dynamically assigned host port, migrate it, run a focused test, and remove it automatically:
 
 ```bash

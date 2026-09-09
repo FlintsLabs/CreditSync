@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.14 - 2026-09-09
+
+### Fixed
+- Restored frontend verification on Node 26 by disabling native webstorage only in compatible Vitest workers; aligned deferral tests with Vitest, sidebar assertions with release metadata, and repayment fixtures with the separate schedule-summary response. Production financial logic is unchanged.
+
 ## v0.4.13 - 2026-09-09
 
 ### Fixed

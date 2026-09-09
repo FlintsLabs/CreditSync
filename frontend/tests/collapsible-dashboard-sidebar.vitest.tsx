@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import DashboardLayout from "../src/layouts/DashboardLayout";
+import { APPLICATION_VERSION, MCP_SCHEMA_VERSION, PLUGIN_VERSION } from "../src/lib/release";
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "creditsync:sidebar-collapsed";
 
@@ -144,9 +145,9 @@ describe("compact dashboard sidebar", () => {
         );
 
         const footer = screen.getByTestId("application-footer");
-        expect(within(footer).getByText("CreditSync v0.3.58")).toBeInTheDocument();
-        expect(within(footer).getByText("MCP v1.0")).toBeInTheDocument();
-        expect(within(footer).getByText("Plugin v9.0.0")).toBeInTheDocument();
+        expect(within(footer).getByText(`CreditSync v${APPLICATION_VERSION}`)).toBeInTheDocument();
+        expect(within(footer).getByText(`MCP v${MCP_SCHEMA_VERSION}`)).toBeInTheDocument();
+        expect(within(footer).getByText(`Plugin v${PLUGIN_VERSION}`)).toBeInTheDocument();
         expect(within(footer).getByRole("link", { name: "Changelog" })).toHaveAttribute(
             "href",
             "https://github.com/FlintsLabs/CreditSync/blob/main/CHANGELOG.md",

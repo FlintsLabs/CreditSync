@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { canDeferScheduleRow } from "../src/pages/dashboard/loans/loan-schedule-deferral-model";
 
 test("shows deferral only for a fully unpaid installment", () => {
