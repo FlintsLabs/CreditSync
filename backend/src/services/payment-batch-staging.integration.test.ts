@@ -381,10 +381,22 @@ integration("public remapping after a batch preview replaces the prior borrower 
     const secondRevisionAfterPreview = (await db.query.paymentBatchStagingItems.findFirst({ where: eq(paymentBatchStagingItems.publicId, f.staged.items[1]!.publicId) }))!.revision;
     await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[1]!.publicId, expectedRevision: secondRevisionAfterPreview, idempotencyKey: "post-preview-clear-second", reason: "synthetic clear after preview", mapping: null });
     expect(await db.query.paymentBatches.findFirst({ where: eq(paymentBatches.publicId, f.staged.batchPublicId) })).toMatchObject({ status: "needs_review" });
+    await expect(previewPaymentBatch(f.ctx, f.staged.batchPublicId, { borrowerPublicId: header!.publicId })).rejects.toThrow("Cleared resolution");
+    await expect(executePaymentBatch(f.ctx, f.staged.batchPublicId, { previewPublicId: sourcePreview.publicId, previewHash: sourcePreview.previewHash, confirmationHash: sourcePreview.confirmationHash, confirmed: true, idempotencyKey: "post-preview-clear-old-execute" })).rejects.toThrow("preview");
+    expect(await db.select().from(transactions).where(eq(transactions.tenantId, f.ctx.tenantId))).toHaveLength(0);
     const laterAfterClear = await capturePaymentBatch(f.ctx, { idempotencyKey: "post-preview-clear-later", borrowerPublicId: header!.publicId, items: [{ clientItemKey: "later-clear", intakeIdempotencyKey: "post-preview-clear-later-intake", amount: "1.00", receivedAt: "2026-09-08T09:00:00+07:00" }] });
     await expect(previewPaymentBatch(f.ctx, laterAfterClear.publicId, { borrowerPublicId: header!.publicId })).resolves.toMatchObject({ status: "ready" });
     const laterAfterClearRevision = (await db.query.paymentBatches.findFirst({ where: eq(paymentBatches.publicId, laterAfterClear.publicId) }))!.version;
     await cancelPaymentBatch(f.ctx, laterAfterClear.publicId, { reason: "synthetic clear dependency cleanup", revision: laterAfterClearRevision, idempotencyKey: "post-preview-clear-cancel" });
+    const reselected = await previewPaymentBatch(f.ctx, f.staged.batchPublicId, { borrowerPublicId: header!.publicId, allocations: [
+        { itemPublicId: first.batchItemPublicId as string, borrowerPublicId: header!.publicId, loanPublicId: loan!.publicId, schedulePublicId: schedules[0]!.publicId, amount: "120.00", targetDueDate: "2026-09-07", intent: "on_time" },
+        { itemPublicId: second.batchItemPublicId as string, borrowerPublicId: header!.publicId, loanPublicId: loan!.publicId, schedulePublicId: schedules[1]!.publicId, amount: "1.00", targetDueDate: "2026-09-07", intent: "on_time" },
+    ] });
+    expect(reselected.status).toBe("ready");
+    const laterAfterReselect = await capturePaymentBatch(f.ctx, { idempotencyKey: "post-preview-reselect-later", borrowerPublicId: header!.publicId, items: [{ clientItemKey: "later-reselect", intakeIdempotencyKey: "post-preview-reselect-later-intake", amount: "1.00", receivedAt: "2026-09-08T09:30:00+07:00" }] });
+    await expect(previewPaymentBatch(f.ctx, laterAfterReselect.publicId, { borrowerPublicId: header!.publicId })).rejects.toThrow("chronology");
+    const laterAfterReselectRevision = (await db.query.paymentBatches.findFirst({ where: eq(paymentBatches.publicId, laterAfterReselect.publicId) }))!.version;
+    await cancelPaymentBatch(f.ctx, laterAfterReselect.publicId, { reason: "synthetic reselect dependency cleanup", revision: laterAfterReselectRevision, idempotencyKey: "post-preview-reselect-cancel" });
     const firstRevisionAfterClear = (await db.query.paymentBatchStagingItems.findFirst({ where: eq(paymentBatchStagingItems.publicId, f.staged.items[0]!.publicId) }))!.revision;
     await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: f.staged.items[0]!.publicId, expectedRevision: firstRevisionAfterClear, idempotencyKey: "post-preview-map-b", reason: "synthetic remap after preview", mapping: { borrowerPublicId: secondary!.publicId } });
     const secondRevisionAfterClear = (await db.query.paymentBatchStagingItems.findFirst({ where: eq(paymentBatchStagingItems.publicId, f.staged.items[1]!.publicId) }))!.revision;

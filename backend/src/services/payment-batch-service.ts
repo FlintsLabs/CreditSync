@@ -185,7 +185,7 @@ async function inspectBatchChronology(
         const ownerBatch = otherBatches.find((candidate) => candidate.id === item.batchId);
         const currentAllocation = otherAllocations.find((allocation) => allocation.itemId === item.id);
         const resolvedBorrowerId = staging
-            ? (staging.resolutionState === "cleared" ? undefined : staging.reviewedMapping ? mappedBorrowerId : currentAllocation?.borrowerId ?? ownerBatch?.borrowerId)
+            ? (staging.resolutionState === "cleared" ? currentAllocation?.borrowerId : staging.reviewedMapping ? mappedBorrowerId : currentAllocation?.borrowerId ?? ownerBatch?.borrowerId)
             : ownerBatch?.borrowerId;
         return intake && resolvedBorrowerId === borrower.id ? [{ itemId: item.publicId, borrowerId: borrower.publicId, receivedAt: intake.receivedAt.toISOString(), status: intake.status }] : [];
     }), ...standalone.map(({ intake }) => ({ itemId: intake.publicId, borrowerId: borrower.publicId, receivedAt: intake.receivedAt?.toISOString() ?? null, status: intake.status }))];
@@ -808,6 +808,8 @@ export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: st
         return { itemPublicId: item.publicId, borrowerPublicId: targetBorrowers.find((candidate) => candidate.id === loan.borrowerId)!.publicId, loanPublicId: loan.publicId, ...(schedule ? { schedulePublicId: schedule.publicId } : {}), amount: intakes.find((intake) => intake.id === item.paymentIntakeId)!.amount, targetDueDate: schedule?.dueDate ?? bangkokBusinessDate(new Date(slips.find((slip) => slip.itemPublicId === item.publicId)!.receivedAt)), intent: "on_time" as const };
     });
     const hasReviewedMapping = mappedAllocations.some((allocation) => allocation !== null) || authoritativeBorrowerByItem.size > 0;
+    const hasClearedResolution = stagingForItems.some((staging) => staging.resolutionState === "cleared");
+    if (!input.allocations && hasClearedResolution) throw new DomainError("BATCH_MAPPING_REQUIRES_REVIEW", "Cleared resolution requires an explicit allocation before preview", 409);
     if (!input.allocations && hasReviewedMapping && mappedAllocations.some((allocation) => allocation === null)) throw new DomainError("BATCH_MAPPING_REQUIRES_REVIEW", "Every item with a reviewed mapping must have a complete mapping before preview", 409);
     if (input.allocations && hasReviewedMapping) {
         for (const [index, mapped] of mappedAllocations.entries()) {

@@ -56,7 +56,15 @@ export async function assertNoOlderPendingPayment(tx: DbExecutor, tenantId: stri
           AND NOT EXISTS (SELECT 1 FROM payment_batch_staging_items current_stage
               WHERE current_stage.tenant_id = i.tenant_id AND current_stage.payment_intake_id = i.id
                 AND current_stage.status = 'validated'
-                AND (current_stage.reviewed_mapping IS NOT NULL OR current_stage.resolution_state = 'cleared'))
+                AND (current_stage.reviewed_mapping IS NOT NULL OR (current_stage.resolution_state = 'cleared' AND NOT EXISTS (
+                    SELECT 1 FROM payment_batch_items current_item
+                    JOIN payment_batches current_batch ON current_batch.tenant_id = current_item.tenant_id AND current_batch.id = current_item.batch_id
+                    JOIN payment_batch_previews current_preview ON current_preview.tenant_id = current_batch.tenant_id AND current_preview.batch_id = current_batch.id
+                    JOIN payment_batch_allocations current_allocation ON current_allocation.tenant_id = current_item.tenant_id AND current_allocation.item_id = current_item.id AND current_allocation.preview_id = current_preview.id
+                    WHERE current_item.tenant_id = i.tenant_id AND current_item.payment_intake_id = i.id
+                      AND current_batch.status NOT IN ('posted', 'cancelled')
+                      AND current_preview.status = 'ready' AND current_preview.id = (SELECT latest.id FROM payment_batch_previews latest WHERE latest.tenant_id = current_preview.tenant_id AND latest.batch_id = current_preview.batch_id ORDER BY latest.version DESC LIMIT 1)
+                ))))
           LIMIT 1`);
     const stagedExcluded = excludedIntakeIds.length ? sql`AND (si.payment_intake_id IS NULL OR si.payment_intake_id NOT IN (${sql.join(excludedIntakeIds.map((id) => sql`${id}`), sql`, `)}))` : sql``;
     const stagedPending = await tx.execute(sql`SELECT si.public_id FROM payment_batch_staging_items si
