@@ -1,4 +1,5 @@
 import Decimal from "decimal.js";
+import { bangkokBusinessDate } from "./payment-chronology-guard";
 import type { BatchCandidate, BatchObligation, BatchSlip, BatchSolveInput, BatchSolveResult, BatchWarning, ExplicitBatchAllocation } from "./payment-batch-types";
 
 export const MAX_BATCH_ITEMS = 50;
@@ -34,8 +35,14 @@ function eligibleForSlip(obligation: BatchObligation, slip: BatchSlip) {
     if (slip.borrowerPublicId && obligation.borrowerPublicId !== slip.borrowerPublicId) return false;
     const requestedDate = slip.requestedDueDate;
     if (requestedDate && obligation.dueDate !== requestedDate) return false;
-    const receivedDate = slip.receivedAt.slice(0, 10);
+    const receivedDate = businessDate(slip.receivedAt);
     return obligation.dueDate <= receivedDate || slip.allowAdvance === true;
+}
+
+function businessDate(value: string) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) throw new Error("receivedAt must be a valid ISO timestamp");
+    return bangkokBusinessDate(date);
 }
 
 function allocationFor(slip: BatchSlip, obligation: BatchObligation, amount: bigint, intent: ExplicitBatchAllocation["intent"]): ExplicitBatchAllocation {
@@ -60,7 +67,7 @@ export function solvePaymentBatch(input: BatchSolveInput): BatchSolveResult {
     const slipCents = input.slips.map((item) => cents(item.amount, "amount"));
     const warnings: BatchWarning[] = [];
     for (const slip of input.slips) {
-        const future = obligations.some((item) => item.dueDate > slip.receivedAt.slice(0, 10));
+        const future = obligations.some((item) => item.dueDate > businessDate(slip.receivedAt));
         if (future && !slip.allowAdvance && !obligations.some((item) => eligibleForSlip(item, slip))) {
             warnings.push({ code: "IMPLICIT_ADVANCE_NOT_ALLOWED", itemPublicId: slip.itemPublicId, message: "Future obligations require explicit advance intent" });
         }
@@ -87,7 +94,7 @@ export function solvePaymentBatch(input: BatchSolveInput): BatchSolveResult {
                 const available = obligationCents[index]!;
                 if (available <= 0n || available > remaining) continue;
                 selectedIds.add(index);
-                const intent = obligations[index]!.dueDate > slip.receivedAt.slice(0, 10) ? "advance" : "on_time";
+                const intent = obligations[index]!.dueDate > businessDate(slip.receivedAt) ? "advance" : "on_time";
                 selected.push(allocationFor(slip, obligations[index]!, available, intent));
                 visit(index + 1, remaining - available);
                 selected.pop();
@@ -114,7 +121,8 @@ export function solvePaymentBatch(input: BatchSolveInput): BatchSolveResult {
     visitSlips(0, new Set(), []);
     const resultWarnings = limited ? [{ code: "BATCH_SOLVER_LIMIT_REACHED", message: "The bounded solver reached its safety limit" }] : [];
     if (limited) return { status: "needs_review", allocations: [], candidates, warnings: resultWarnings };
-    if (candidates.length === 1) return { status: "ready", allocations: candidates[0]!.allocations, candidates, warnings: resultWarnings };
+    const requiresHumanSelection = candidates.length === 1 && input.slips.some((slip) => candidates[0]!.allocations.filter((allocation) => allocation.itemPublicId === slip.itemPublicId).length > 1);
+    if (candidates.length === 1 && !requiresHumanSelection) return { status: "ready", allocations: candidates[0]!.allocations, candidates, warnings: resultWarnings };
     return { status: "needs_review", allocations: [], candidates, warnings: candidates.length ? resultWarnings : [{ code: "NO_EXACT_ALLOCATION", message: "No exact allocation covers every slip" }] };
 }
 

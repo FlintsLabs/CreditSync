@@ -317,3 +317,16 @@ integration("borrower-only staging mappings reject an explicit allocation to ano
     await executePaymentBatch(f.ctx, f.staged.batchPublicId, { previewPublicId: validPreview.publicId, previewHash: validPreview.previewHash, confirmationHash: validPreview.confirmationHash, confirmed: true, idempotencyKey: "execute-borrower-constraints" });
     expect(await db.select().from(transactions).where(eq(transactions.tenantId, f.ctx.tenantId))).toHaveLength(2);
 });
+
+integration("batch preview holds a unique amount sum spanning multiple contracts for human selection", async () => {
+    const f = await fixture();
+    const borrower = await db.query.borrowers.findFirst({ where: eq(borrowers.publicId, f.input.borrowerPublicId!) });
+    const [loan] = await db.insert(loans).values({ tenantId: f.ctx.tenantId, ownerUserId: f.ctx.actorUserId!, borrowerId: borrower!.id, principalAmount: "120.00", interestRate: "0.00", repaymentType: "monthly", outstandingPrincipal: "120.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" }).returning();
+    await db.insert(loanSchedules).values([
+        { tenantId: f.ctx.tenantId, loanId: loan!.id, installmentNo: 1, dueDate: "2026-09-07", scheduledPrincipal: "75.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "75.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "75.00", status: "pending" },
+        { tenantId: f.ctx.tenantId, loanId: loan!.id, installmentNo: 2, dueDate: "2026-09-08", scheduledPrincipal: "45.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "45.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "45.00", status: "pending" },
+    ]);
+    const captured = await capturePaymentBatch(f.ctx, { idempotencyKey: "unique-sum-capture", borrowerPublicId: f.input.borrowerPublicId!, items: [{ clientItemKey: "unique-sum", intakeIdempotencyKey: "unique-sum-intake", amount: "120.00", receivedAt: "2026-09-09T03:00:00Z" }] });
+    const preview = await previewPaymentBatch(f.ctx, captured.publicId, { borrowerPublicId: f.input.borrowerPublicId! });
+    expect(preview.status).toBe("needs_review");
+});

@@ -158,11 +158,13 @@ async function inspectBatchChronology(
     if (!borrower) return null;
     const allMembers = await executor.select({ paymentIntakeId: paymentBatchItems.paymentIntakeId }).from(paymentBatchItems).where(and(eq(paymentBatchItems.tenantId, ctx.tenantId), eq(paymentBatchItems.batchId, batch.id)));
     for (const intake of currentIntakes) await assertNoOlderPendingPayment(executor, ctx.tenantId, borrower.id, intake.receivedAt, allMembers.map((row) => row.paymentIntakeId));
-    const pendingBatches = await executor.select().from(paymentBatches).where(and(
-        eq(paymentBatches.tenantId, ctx.tenantId), eq(paymentBatches.borrowerId, borrower.id),
-    ));
-    const otherBatchIds = pendingBatches.filter((candidate) => candidate.id !== batch.id && !["posted", "cancelled"].includes(candidate.status)).map((candidate) => candidate.id);
+    const pendingBatches = await executor.select().from(paymentBatches).where(and(eq(paymentBatches.tenantId, ctx.tenantId), sql`${paymentBatches.status} NOT IN ('posted', 'cancelled')`));
+    const otherBatches = pendingBatches.filter((candidate) => candidate.id !== batch.id);
+    const otherBatchIds = otherBatches.map((candidate) => candidate.id);
     const otherItems = otherBatchIds.length ? await executor.select().from(paymentBatchItems).where(and(eq(paymentBatchItems.tenantId, ctx.tenantId), inArray(paymentBatchItems.batchId, otherBatchIds))) : [];
+    const otherStaging = otherItems.length ? await executor.select().from(paymentBatchStagingItems).where(and(eq(paymentBatchStagingItems.tenantId, ctx.tenantId), inArray(paymentBatchStagingItems.batchItemId, otherItems.map((item) => item.id)))) : [];
+    const otherMappedLoanIds = otherStaging.flatMap((item) => item.reviewedMapping?.loanPublicId ? [item.reviewedMapping.loanPublicId] : []);
+    const otherMappedLoans = otherMappedLoanIds.length ? await executor.select().from(loans).where(and(eq(loans.tenantId, ctx.tenantId), inArray(loans.publicId, otherMappedLoanIds))) : [];
     const allIntakeIds = [...otherItems.map((item) => item.paymentIntakeId), ...currentIntakes.map((intake) => intake.id)];
     const allIntakes = allIntakeIds.length ? await executor.select().from(paymentIntakes).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.id, allIntakeIds))) : [];
     const standalone = await executor.select({ intake: paymentIntakes }).from(paymentIntakes).innerJoin(loans, eq(paymentIntakes.originLoanId, loans.id)).where(and(
@@ -171,7 +173,13 @@ async function inspectBatchChronology(
     ));
     const pending: PendingChronologyItem[] = [...otherItems.flatMap((item) => {
         const intake = allIntakes.find((candidate) => candidate.id === item.paymentIntakeId);
-        return intake ? [{ itemId: item.publicId, borrowerId: borrower.publicId, receivedAt: intake.receivedAt.toISOString(), status: intake.status }] : [];
+        const staging = otherStaging.find((candidate) => candidate.batchItemId === item.id);
+        const mappedBorrowerId = staging?.reviewedMapping?.borrowerPublicId === borrower.publicId
+            ? borrower.id
+            : otherMappedLoans.find((loan) => loan.publicId === staging?.reviewedMapping?.loanPublicId)?.borrowerId;
+        const ownerBatch = otherBatches.find((candidate) => candidate.id === item.batchId);
+        const resolvedBorrowerId = mappedBorrowerId ?? ownerBatch?.borrowerId;
+        return intake && resolvedBorrowerId === borrower.id ? [{ itemId: item.publicId, borrowerId: borrower.publicId, receivedAt: intake.receivedAt.toISOString(), status: intake.status }] : [];
     }), ...standalone.map(({ intake }) => ({ itemId: intake.publicId, borrowerId: borrower.publicId, receivedAt: intake.receivedAt?.toISOString() ?? null, status: intake.status }))];
     const incoming: ChronologyItem[] = currentItems.flatMap((item) => {
         const intake = currentIntakes.find((candidate) => candidate.id === item.paymentIntakeId);
@@ -803,11 +811,12 @@ export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: st
         }
     }
     const effectiveAllocations = input.allocations ?? (mappedAllocations.every((allocation) => allocation !== null) ? mappedAllocations as ExplicitBatchAllocation[] : undefined);
-    const solved = effectiveAllocations ? { status: "ready" as const, allocations: effectiveAllocations.map((allocation) => ({ ...allocation, matchSource: "human_explicit" as const })), candidates: [], warnings: [] } : solvePaymentBatch({ obligations, slips });
+    const planningSlips = [...slips].sort((left, right) => Date.parse(left.receivedAt) - Date.parse(right.receivedAt) || left.itemPublicId.localeCompare(right.itemPublicId));
+    const solved = effectiveAllocations ? { status: "ready" as const, allocations: effectiveAllocations.map((allocation) => ({ ...allocation, matchSource: "human_explicit" as const })), candidates: [], warnings: [] } : solvePaymentBatch({ obligations, slips: planningSlips });
     const chronologyResults = await Promise.all(targetBorrowers.map(async (target) => {
         const targetItems = items.filter((item) => {
-            const resolved = solved.allocations.filter((allocation) => allocation.itemPublicId === item.publicId).some((allocation) => loansForBorrower.some((loan) => loan.publicId === allocation.loanPublicId && loan.borrowerId === target.id));
-            if (resolved) return true;
+            const solvedForItem = solved.allocations.filter((allocation) => allocation.itemPublicId === item.publicId);
+            if (solvedForItem.length) return solvedForItem.some((allocation) => loansForBorrower.some((loan) => loan.publicId === allocation.loanPublicId && loan.borrowerId === target.id));
             const reviewedBorrower = authoritativeBorrowerByItem.get(item.publicId);
             return reviewedBorrower ? reviewedBorrower === target.publicId : input.borrowerPublicId === target.publicId;
         });

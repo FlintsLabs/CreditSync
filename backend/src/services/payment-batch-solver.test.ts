@@ -49,3 +49,20 @@ test("rejects non-canonical money and does not infer future or backdated allocat
     expect(result.status).toBe("needs_review");
     expect(result.warnings.map((warning) => warning.code)).toContain("IMPLICIT_ADVANCE_NOT_ALLOWED");
 });
+
+test("keeps a unique multi-contract sum as a human selection candidate", () => {
+    const result = solvePaymentBatch({
+        obligations: [obligation("s-75", "75.00", "2026-08-20"), obligation("s-45", "45.00", "2026-08-21")],
+        slips: [slip("item-120", "120.00", "2026-08-23T03:00:00.000Z")],
+    });
+    expect(result.candidates).toHaveLength(1);
+    expect(result.status).toBe("needs_review");
+    expect(result.allocations).toEqual([]);
+});
+
+test("uses the Bangkok business date for solver eligibility and fails closed on invalid timestamps", () => {
+    const result = solvePaymentBatch({ obligations: [obligation("s-bkk", "10.00", "2026-09-08")], slips: [slip("item-bkk", "10.00", "2026-09-07T17:00:00.000Z")] });
+    expect(result.status).toBe("ready");
+    expect(result.allocations[0]?.intent).toBe("on_time");
+    expect(() => solvePaymentBatch({ obligations: [obligation("s-invalid", "10.00", "2026-09-08")], slips: [slip("item-invalid", "10.00", "not-a-date")] })).toThrow();
+});
