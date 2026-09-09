@@ -15,6 +15,7 @@
 - Fixed the upload-first batch preview to use freshly returned staged item UUIDs during the same retry, avoiding an empty allocation mapping before React state refreshes.
 - Corrected the disposable PostgreSQL runner to serialize test files with `--parallel=1`; the previous `--max-concurrency=1` did not prevent cross-file lock cycles during shared-table resets.
 - Made disposable PostgreSQL cleanup ownership-safe by retaining the generated labeled volume name and removing only that volume and its run-specific container on success or failure.
+- Restored the shared later-floating-payment chronology error before principal reprojection, while preserving penalty-specific validation precedence and atomic rollback.
 
 ## v0.4.13 - 2026-09-09
 

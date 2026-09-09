@@ -1762,6 +1762,11 @@ async function postPaymentKernel(ctx: CommandContext, intakePublicId: string, in
                     duePenalty: obligations.duePenalty, dueInterest: obligations.dueInterest, advanceInterest: advanceInterestDue,
                 });
 
+                // Principal changes trigger immutable floating re-projection. Reject a
+                // later payment before that work so the chronology error remains the
+                // stable public boundary and no provisional transaction is inserted.
+                if (principal.gt(0)) await assertNoLaterFloatingPayment(tx, ctx.tenantId, loan.id, intake.receivedAt);
+
                 const effectiveDate = paymentBusinessDate(intake.receivedAt);
                 const laterExactAllocation = paidFloatingPenalty.gt(0) || paidFloatingInterest.gt(0)
                     ? await findActiveFloatingTransactionAllocation(tx, ctx.tenantId, loan.id, effectiveDate)
