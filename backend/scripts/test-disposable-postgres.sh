@@ -40,4 +40,7 @@ test_database_url="postgres://$database_user:$database_password@127.0.0.1:$host_
 
 cd "$(dirname "$0")/.."
 DATABASE_URL="$test_database_url" bun run migrate
-DATABASE_URL="$test_database_url" TEST_DATABASE_URL="$test_database_url" bun test --max-concurrency=1 "$@"
+# The suite shares one disposable database and many files reset overlapping tables.
+# max-concurrency only limits tests inside a worker; --parallel=1 is required to
+# prevent independent Bun workers from holding RowExclusiveLocks across resets.
+DATABASE_URL="$test_database_url" TEST_DATABASE_URL="$test_database_url" bun test --max-concurrency=1 --parallel=1 "$@"

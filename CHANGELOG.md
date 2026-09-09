@@ -13,6 +13,7 @@
 - Restored frontend verification on Node 26 by disabling native webstorage only in compatible Vitest workers; aligned deferral tests with Vitest, sidebar assertions with release metadata, and repayment fixtures with the separate schedule-summary response. Production financial logic is unchanged.
 - Preserved the component-specific floating penalty compensation error when chronology checks also apply, while retaining the later-payment safety guard.
 - Fixed the upload-first batch preview to use freshly returned staged item UUIDs during the same retry, avoiding an empty allocation mapping before React state refreshes.
+- Corrected the disposable PostgreSQL runner to serialize test files with `--parallel=1`; the previous `--max-concurrency=1` did not prevent cross-file lock cycles during shared-table resets.
 
 ## v0.4.13 - 2026-09-09
 
