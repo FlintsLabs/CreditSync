@@ -9,12 +9,16 @@ export type BatchItemDraft = {
     intent: BatchIntent;
     loanPublicId: string;
     schedulePublicId: string;
+    receivedAt?: string;
+    file?: File;
+    stagingItemPublicId?: string;
+    batchItemPublicId?: string;
 };
 
 export type ExplicitBatchAllocation = {
     itemPublicId: string;
     loanPublicId: string;
-    schedulePublicId: string;
+    schedulePublicId?: string;
     amount: string;
     targetDueDate: string;
     intent: BatchIntent;
@@ -45,13 +49,13 @@ export function isBatchReady(items: BatchItemDraft[], borrowerPublicId: string, 
     if (!readyPreview) return false;
     return confirmed && Boolean(borrowerPublicId.trim()) && items.length > 0 && readyPreview.status === "ready" && readyPreview.evidenceReady
         && readyPreview.warnings.length === 0 && readyPreview.allocations.length > 0
-        && items.every((item) => item.paymentIntakePublicId.trim() && item.targetDueDate && item.loanPublicId && item.schedulePublicId && new Decimal(normalizeMoney(item.amount)).gt(0));
+        && items.every((item) => item.paymentIntakePublicId.trim() && item.targetDueDate && item.loanPublicId && new Decimal(normalizeMoney(item.amount)).gt(0));
 }
 
 export function toExplicitBatchAllocations(items: BatchItemDraft[], itemPublicIds: string[]): ExplicitBatchAllocation[] {
     if (items.length !== itemPublicIds.length) throw new Error("BATCH_ITEM_MAPPING_MISMATCH");
     return items.map((item, index) => ({
-        itemPublicId: itemPublicIds[index], loanPublicId: item.loanPublicId, schedulePublicId: item.schedulePublicId,
+        itemPublicId: itemPublicIds[index], loanPublicId: item.loanPublicId, ...(item.schedulePublicId ? { schedulePublicId: item.schedulePublicId } : {}),
         amount: normalizeMoney(item.amount), targetDueDate: item.targetDueDate, intent: item.intent,
     }));
 }

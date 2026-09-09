@@ -1,6 +1,4 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-// @ts-expect-error Bun runs this source-level test, while the frontend build excludes Bun's test types.
-import { setSystemTime } from "bun:test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../../../lib/api";
 import appI18n from "../../../lib/i18n";
@@ -19,8 +17,8 @@ const composition = {
 } as const;
 
 describe("LoanRenewalPanel manual renewal", () => {
-    beforeEach(async () => { setSystemTime(new Date("2026-08-24T12:00:00.000Z")); vi.clearAllMocks(); await appI18n.changeLanguage("en"); (api.get as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => ({ data: url.endsWith("/summary") ? { status: "preview", watermark: "preview_not_executed", renewalPublicId: "01a01eaf-fdec-79a1-9e0c-fa66a5efa4cc", borrower: { displayName: "Customer" }, oldContract: { publicId: "019ff2b2-15e2-7df7-a594-eb836ff388f0", startDate: "2026-08-01", dueDate: "2026-08-24" }, replacement: { publicId: null, principal: "2000.00", installmentAmount: "100.00", totalInstallments: 24 }, composition, generatedAt: "2026-08-10T10:00:00.000Z" } : [] })); });
-    afterEach(() => { setSystemTime(); });
+    beforeEach(async () => { vi.useFakeTimers({ shouldAdvanceTime: true }); vi.setSystemTime(new Date("2026-08-24T12:00:00.000Z")); vi.clearAllMocks(); await appI18n.changeLanguage("en"); (api.get as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => ({ data: url.endsWith("/summary") ? { status: "preview", watermark: "preview_not_executed", renewalPublicId: "01a01eaf-fdec-79a1-9e0c-fa66a5efa4cc", borrower: { displayName: "Customer" }, oldContract: { publicId: "019ff2b2-15e2-7df7-a594-eb836ff388f0", startDate: "2026-08-01", dueDate: "2026-08-24" }, replacement: { publicId: null, principal: "2000.00", installmentAmount: "100.00", totalInstallments: 24 }, composition, generatedAt: "2026-08-10T10:00:00.000Z" } : [] })); });
+    afterEach(() => { vi.useRealTimers(); });
 
     test("sends explicit policy and manual lines, renders backend values, and edit discards approval", async () => {
         (api.post as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => url === "/loan-renewals/preview"
@@ -31,9 +29,9 @@ describe("LoanRenewalPanel manual renewal", () => {
         fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: "25" } });
         fireEvent.change(screen.getByLabelText(/required reason/i), { target: { value: "manual review" } });
         fireEvent.click(screen.getByRole("button", { name: /preview renewal/i }));
-        await screen.findByText(/full old-contract interest/i);
+        expect((await screen.findAllByText(/full old-contract interest/i)).length).toBeGreaterThan(0);
         expect((api.post as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]).toEqual({ oldLoanPublicId: "019ff2b2-15e2-7df7-a594-eb836ff388f0", requestedPrincipal: "2000.00", renewalDate: "2026-08-24", paymentStartDate: "2026-08-25", settlementPolicy: "full_contract_interest", adjustments: [{ kind: "fee", amount: "25.00", reason: "manual review" }] });
-        expect(screen.getByText(/manual review/)).not.toBeNull();
+        expect(screen.getAllByText(/manual review/).length).toBeGreaterThan(0);
         expect(screen.getAllByText(/908\.34/).length).toBeGreaterThan(0);
         fireEvent.click(screen.getByRole("button", { name: /edit and re-preview/i }));
         await waitFor(() => expect(screen.queryByText(/full old-contract interest/i)).toBeNull());
