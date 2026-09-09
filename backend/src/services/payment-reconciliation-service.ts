@@ -406,16 +406,36 @@ export async function createPaymentRestoreDraft(ctx: CommandContext, input: { pa
 export async function backfillPostedRestoreSchedule(ctx: CommandContext, input: { paymentIntakePublicId: string; reason: string; idempotencyKey: string }) {
     if (!input.reason?.trim() || !input.idempotencyKey?.trim()) throw new DomainError("RECONCILIATION_COMMAND_CONTEXT_REQUIRED", "Backfill requires a reason and idempotency key", 400);
     return db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${ctx.tenantId}:restore-schedule-backfill:${input.idempotencyKey.trim()}`}, 0))`);
+        const initialIntake = await accessibleIntake(ctx, input.paymentIntakePublicId, tx);
+        if (initialIntake.status !== "posted" || initialIntake.repostOfIntakeId === null) throw new DomainError("RESTORE_BACKFILL_TARGET_INVALID", "Only a posted restore child can be backfilled", 409);
+        const initialSource = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, initialIntake.repostOfIntakeId)) });
+        if (!initialSource || initialSource.status !== "reversed") throw new DomainError("RESTORE_BACKFILL_SOURCE_INVALID", "Restore source must remain reversed", 409);
+        const initialBorrowerIds = [...new Set([
+            ...await paymentIntakeBorrowerIds(tx, ctx.tenantId, initialIntake.id),
+            ...await paymentIntakeBorrowerIds(tx, ctx.tenantId, initialSource.id),
+        ])].sort((left, right) => left - right);
+        await lockPaymentBorrowers(tx, ctx.tenantId, initialBorrowerIds);
+
         const intake = await accessibleIntake(ctx, input.paymentIntakePublicId, tx);
         if (intake.status !== "posted" || intake.repostOfIntakeId === null) throw new DomainError("RESTORE_BACKFILL_TARGET_INVALID", "Only a posted restore child can be backfilled", 409);
         const source = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, intake.repostOfIntakeId)) });
         if (!source || source.status !== "reversed") throw new DomainError("RESTORE_BACKFILL_SOURCE_INVALID", "Restore source must remain reversed", 409);
-        await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id IN (${source.id}, ${intake.id}) FOR UPDATE`);
+        const currentBorrowerIds = [...new Set([
+            ...await paymentIntakeBorrowerIds(tx, ctx.tenantId, intake.id),
+            ...await paymentIntakeBorrowerIds(tx, ctx.tenantId, source.id),
+        ])].sort((left, right) => left - right);
+        if (currentBorrowerIds.some((id) => !initialBorrowerIds.includes(id))) throw new DomainError("STALE_RECONCILIATION_PREVIEW", "Restore backfill borrower scope changed while waiting for its lock", 409);
+        await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id IN (${source.id}, ${intake.id}) ORDER BY id FOR UPDATE`);
         const repayments = await tx.select().from(transactions).where(and(
             eq(transactions.tenantId, ctx.tenantId), eq(transactions.paymentIntakeId, intake.id), eq(transactions.entryType, "repayment"),
         )).orderBy(transactions.id);
         const scheduleIds = [...new Set(repayments.map((row) => row.scheduleId).filter((id): id is number => id !== null))];
         if (scheduleIds.length !== 1) throw new DomainError("RESTORE_BACKFILL_TARGET_INVALID", "Restore must target exactly one scheduled installment", 409);
+        const loanIds = [...new Set(repayments.map((row) => row.loanId))].sort((left, right) => left - right);
+        if (!loanIds.length) throw new DomainError("RESTORE_BACKFILL_TARGET_INVALID", "Restore has no scheduled loan transaction", 409);
+        await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(loanIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
+        await tx.execute(sql`SELECT id FROM transactions WHERE tenant_id = ${ctx.tenantId} AND payment_intake_id = ${intake.id} AND entry_type = 'repayment' ORDER BY id FOR UPDATE`);
         const schedule = await tx.query.loanSchedules.findFirst({ where: and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.id, scheduleIds[0]!)) });
         if (!schedule) throw new DomainError("RESTORE_BACKFILL_TARGET_INVALID", "Restore schedule no longer exists", 409);
         await tx.execute(sql`SELECT id FROM loan_schedules WHERE tenant_id = ${ctx.tenantId} AND id = ${schedule.id} FOR UPDATE`);
@@ -433,7 +453,8 @@ export async function backfillPostedRestoreSchedule(ctx: CommandContext, input: 
         const status = remainingDue.isZero() ? "paid" : paidTotal.gt(0) || paidPenalty.gt(0) ? "partial" : "pending";
         const changed = schedule.paidTotal !== paidTotal.toFixed(2) || schedule.paidPenalty !== paidPenalty.toFixed(2) || schedule.remainingDue !== remainingDue.toFixed(2) || schedule.status !== status;
         if (changed) await tx.update(loanSchedules).set({ paidTotal: paidTotal.toFixed(2), paidPenalty: paidPenalty.toFixed(2), remainingDue: remainingDue.toFixed(2), status, overdueDays: remainingDue.isZero() ? 0 : schedule.overdueDays, updatedAt: new Date() }).where(and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.id, schedule.id)));
-        const audit = await createAuditLog(tx, { ...contextPayload(ctx), entityType: "loan_schedule", entityId: schedule.publicId, action: "restore_schedule_backfilled", payload: { paymentIntakePublicId: intake.publicId, sourcePaymentPublicId: source.publicId, schedulePublicId: schedule.publicId, changed, reason: input.reason.trim(), idempotencyKey: input.idempotencyKey, before: { paidTotal: schedule.paidTotal, paidPenalty: schedule.paidPenalty, remainingDue: schedule.remainingDue, status: schedule.status }, after: { paidTotal: paidTotal.toFixed(2), paidPenalty: paidPenalty.toFixed(2), remainingDue: remainingDue.toFixed(2), status } } });
+        if (!changed) return { changed, paymentIntakePublicId: intake.publicId, schedulePublicId: schedule.publicId, auditPublicId: null, correlationId: ctx.correlationId };
+        const audit = await createAuditLog(tx, { ...contextPayload(ctx), entityType: "loan_schedule", entityId: schedule.publicId, action: "restore_schedule_backfilled", payload: { requestFingerprint: hash({ operation: "restore_schedule_backfill", paymentIntakePublicId: intake.publicId, reason: input.reason.trim() }), paymentIntakePublicId: intake.publicId, sourcePaymentPublicId: source.publicId, schedulePublicId: schedule.publicId, changed, reason: input.reason.trim(), idempotencyKey: input.idempotencyKey, before: { paidTotal: schedule.paidTotal, paidPenalty: schedule.paidPenalty, remainingDue: schedule.remainingDue, status: schedule.status }, after: { paidTotal: paidTotal.toFixed(2), paidPenalty: paidPenalty.toFixed(2), remainingDue: remainingDue.toFixed(2), status } } });
         return { changed, paymentIntakePublicId: intake.publicId, schedulePublicId: schedule.publicId, auditPublicId: audit.publicId, correlationId: ctx.correlationId };
     });
 }

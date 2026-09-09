@@ -9,12 +9,14 @@ import type { CommandContext } from "./command-context";
 
 const integration = process.env.TEST_DATABASE_URL ? test : test.skip;
 
-async function waitForBorrowerLockWait(observer: ReturnType<typeof postgres>) {
+async function waitForBorrowerLockWait(observer: ReturnType<typeof postgres>, blockerPid: number) {
     for (let attempt = 0; attempt < 100; attempt += 1) {
         const waiting = await observer`
-            SELECT 1 FROM pg_stat_activity
-            WHERE wait_event_type = 'Lock' AND state = 'active'
-              AND query LIKE '%FROM borrowers%' AND query LIKE '%FOR UPDATE%'
+            SELECT 1 FROM pg_locks waiting
+            JOIN pg_stat_activity activity ON activity.pid = waiting.pid
+            WHERE waiting.granted = false AND activity.wait_event_type = 'Lock' AND activity.state = 'active'
+              AND activity.query LIKE '%FROM borrowers%' AND activity.query LIKE '%FOR UPDATE%'
+              AND EXISTS (SELECT 1 FROM pg_locks blocker WHERE blocker.pid = ${blockerPid} AND blocker.granted = true)
             LIMIT 1
         `;
         if (waiting.length) return;
@@ -107,15 +109,19 @@ integration("restore execute waits on the borrower lock before intake or loan lo
     const releaseSignal = new Promise<void>((resolve) => { release = resolve; });
     let acquired!: () => void;
     const acquiredSignal = new Promise<void>((resolve) => { acquired = resolve; });
+    let announcePid!: (pid: number) => void;
+    const pidReady = new Promise<number>((resolve) => { announcePid = resolve; });
     const lock = locker.begin(async (tx) => {
+        announcePid(Number((await tx`SELECT pg_backend_pid() AS pid`)[0]!.pid));
         await tx`SELECT id FROM borrowers WHERE tenant_id = ${f.ctx.tenantId} AND id = ${f.borrower.id} FOR UPDATE`;
         acquired();
         await releaseSignal;
     });
     try {
         await acquiredSignal;
+        const blockerPid = await pidReady;
         const executing = executePaymentReconciliation(f.ctx, preview.publicId, { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "restore-borrower-lock" });
-        await waitForBorrowerLockWait(observer);
+        await waitForBorrowerLockWait(observer, blockerPid);
         const childBeforeRelease = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, f.draft.restoreDraftPublicId) });
         expect(childBeforeRelease?.status).toBe("draft");
         expect(await db.select().from(transactions).where(eq(transactions.paymentIntakeId, childBeforeRelease!.id))).toHaveLength(0);

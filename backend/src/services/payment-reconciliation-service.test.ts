@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import Decimal from "decimal.js";
+import postgres from "postgres";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db";
 import { auditLogs, borrowers, floatingTransactionAllocations, loanInterestAccruals, loanSchedules, loans, paymentEvidence, paymentIntakes, paymentMatchProposals, paymentReconciliationEntries, paymentReconciliationGroups, paymentReconciliationProposals, transactions, users } from "../db/schema";
@@ -10,6 +11,28 @@ import type { CommandContext } from "./command-context";
 import { backfillPostedRestoreSchedule, calculateReconciliationComponents, createPaymentRestoreDraft, deriveExactRestoreComponents, executePaymentReconciliation, markPaymentReconciliationReview, preflightPaymentExecution, previewPaymentRestore, previewPaymentReconciliation, type ReconciliationAllocation } from "./payment-reconciliation-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
+
+async function waitForBackfillBorrowerWait(observer: ReturnType<typeof postgres>, blockerPid: number) {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+        const waiting = await observer`
+            SELECT 1
+            FROM pg_locks waiting
+            JOIN pg_stat_activity activity ON activity.pid = waiting.pid
+            WHERE waiting.granted = false
+              AND activity.wait_event_type = 'Lock'
+              AND activity.query LIKE '%FROM borrowers%'
+              AND activity.query LIKE '%FOR UPDATE%'
+              AND EXISTS (
+                SELECT 1 FROM pg_locks blocker
+                WHERE blocker.pid = ${blockerPid} AND blocker.granted = true
+              )
+            LIMIT 1
+        `;
+        if (waiting.length) return;
+        await Promise.resolve();
+    }
+    throw new Error("restore schedule backfill did not wait on the borrower row lock");
+}
 
 describe("payment reconciliation allocation kernel", () => {
     test("derives an exact restore split from the immutable source transaction", () => {
@@ -281,6 +304,42 @@ describe("payment reconciliation persistence", () => {
 
         const replay = await backfillPostedRestoreSchedule(ctx, { paymentIntakePublicId: child.publicId, reason: "Repair schedule aggregate after exact restore", idempotencyKey: ctx.idempotencyKey! });
         expect(replay).toMatchObject({ changed: false, paymentIntakePublicId: child.publicId, schedulePublicId: schedule.publicId });
+        expect(await db.select().from(auditLogs).where(and(eq(auditLogs.tenantId, tenantId), eq(auditLogs.action, "restore_schedule_backfilled")))).toHaveLength(1);
+    });
+
+    integrationTest("backfill acquires the borrower lock before the restore schedule lock", async () => {
+        const tenantId = `restore-backfill-lock-${crypto.randomUUID()}`;
+        const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+        const ctx: CommandContext = { tenantId, actorUserId: actor.id, actorSource: "system", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: "restore-backfill-lock-once" };
+        const borrower = await createBorrower(ctx, { name: "Restore Backfill Lock Borrower" });
+        const borrowerRow = await db.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, tenantId), eq(borrowers.publicId, borrower.publicId)) });
+        const loan = await db.insert(loans).values({ tenantId, ownerUserId: actor.id, borrowerId: borrowerRow!.id, principalAmount: "1000.00", interestRate: "0.00", repaymentType: "daily", termMonths: 1, startDate: "2026-08-01", outstandingPrincipal: "916.67", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" }).returning().then((rows) => rows[0]!);
+        const schedule = await db.insert(loanSchedules).values({ tenantId, loanId: loan.id, installmentNo: 1, dueDate: "2026-08-24", scheduledPrincipal: "83.33", scheduledInterest: "16.67", scheduledFee: "0.00", scheduledTotal: "100.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "100.00", status: "pending" }).returning().then((rows) => rows[0]!);
+        const source = await db.insert(paymentIntakes).values({ tenantId, status: "reversed", amount: "100.00", receivedAt: new Date("2026-08-24T08:57:00.000Z"), createdByUserId: actor.id }).returning().then((rows) => rows[0]!);
+        const child = await db.insert(paymentIntakes).values({ tenantId, status: "posted", amount: "100.00", receivedAt: source.receivedAt, repostOfIntakeId: source.id, createdByUserId: actor.id, postedByUserId: actor.id, postedAt: new Date() }).returning().then((rows) => rows[0]!);
+        await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan.id, scheduleId: schedule.id, amount: "100.00", principalComponent: "83.33", interestComponent: "16.67", feeComponent: "0.00", penaltyComponent: "0.00", paymentIntakeId: child.id, entryType: "repayment", transactionDate: child.receivedAt, recordedByUserId: actor.id });
+
+        const locker = postgres(process.env.TEST_DATABASE_URL!);
+        const observer = postgres(process.env.TEST_DATABASE_URL!);
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => { release = resolve; });
+        let announcePid!: (pid: number) => void;
+        const pidReady = new Promise<number>((resolve) => { announcePid = resolve; });
+        const blocker = locker.begin(async (tx) => {
+            const blockerPid = Number((await tx`SELECT pg_backend_pid() AS pid`)[0]!.pid);
+            await tx`SELECT id FROM borrowers WHERE tenant_id = ${tenantId} AND id = ${borrowerRow!.id} FOR UPDATE`;
+            announcePid(blockerPid);
+            await released;
+        });
+        const blockerPid = await pidReady;
+        const backfill = backfillPostedRestoreSchedule(ctx, { paymentIntakePublicId: child.publicId, reason: "Repair schedule under lock", idempotencyKey: ctx.idempotencyKey! });
+        await waitForBackfillBorrowerWait(observer, blockerPid);
+        expect(await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.id, schedule.id) })).toMatchObject({ status: "pending", paidTotal: "0.00" });
+        release();
+        await expect(backfill).resolves.toMatchObject({ changed: true, schedulePublicId: schedule.publicId });
+        await blocker;
+        await locker.end({ timeout: 1000 });
+        await observer.end({ timeout: 1000 });
     });
 
     integrationTest("fails closed when a reversed floating replacement lacks complete accrual provenance", async () => {
