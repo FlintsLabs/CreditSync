@@ -484,6 +484,13 @@
       "when": 1788912000003,
       "tag": "0068_staging_resolution_state",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1788912000004,
+      "tag": "0069_generic_command_receipts",
+      "breakpoints": true
     }
   ]
 }

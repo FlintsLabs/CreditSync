@@ -4,7 +4,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
     auditLogs, borrowers, loans, loanSchedules, paymentEvidence, paymentIntakes, paymentReconciliationEntries,
-    paymentReconciliationGroups, paymentReconciliationProposals, transactions,
+    paymentReconciliationGroups, paymentReconciliationProposals, transactions, commandReceipts,
     floatingTransactionAllocations, loanInterestAccruals, paymentMatchProposals, paymentMatchAllocations,
 } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
@@ -407,6 +407,15 @@ export async function backfillPostedRestoreSchedule(ctx: CommandContext, input: 
     if (!input.reason?.trim() || !input.idempotencyKey?.trim()) throw new DomainError("RECONCILIATION_COMMAND_CONTEXT_REQUIRED", "Backfill requires a reason and idempotency key", 400);
     return db.transaction(async (tx) => {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${ctx.tenantId}:restore-schedule-backfill:${input.idempotencyKey.trim()}`}, 0))`);
+        const requestHash = hash({ operation: "restore_schedule_backfill", paymentIntakePublicId: input.paymentIntakePublicId, reason: input.reason.trim() });
+        await accessibleIntake(ctx, input.paymentIntakePublicId, tx);
+        const priorReceipt = await tx.query.commandReceipts.findFirst({ where: and(
+            eq(commandReceipts.tenantId, ctx.tenantId), eq(commandReceipts.operationType, "restore_schedule_backfill"), eq(commandReceipts.operationKey, input.idempotencyKey.trim()),
+        ) });
+        if (priorReceipt) {
+            if (priorReceipt.requestHash !== requestHash) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was used for a different restore backfill", 409);
+            return priorReceipt.result as { changed: boolean; paymentIntakePublicId: string; schedulePublicId: string; auditPublicId: string; correlationId: string | null };
+        }
         const initialIntake = await accessibleIntake(ctx, input.paymentIntakePublicId, tx);
         if (initialIntake.status !== "posted" || initialIntake.repostOfIntakeId === null) throw new DomainError("RESTORE_BACKFILL_TARGET_INVALID", "Only a posted restore child can be backfilled", 409);
         const initialSource = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, initialIntake.repostOfIntakeId)) });
@@ -453,9 +462,10 @@ export async function backfillPostedRestoreSchedule(ctx: CommandContext, input: 
         const status = remainingDue.isZero() ? "paid" : paidTotal.gt(0) || paidPenalty.gt(0) ? "partial" : "pending";
         const changed = schedule.paidTotal !== paidTotal.toFixed(2) || schedule.paidPenalty !== paidPenalty.toFixed(2) || schedule.remainingDue !== remainingDue.toFixed(2) || schedule.status !== status;
         if (changed) await tx.update(loanSchedules).set({ paidTotal: paidTotal.toFixed(2), paidPenalty: paidPenalty.toFixed(2), remainingDue: remainingDue.toFixed(2), status, overdueDays: remainingDue.isZero() ? 0 : schedule.overdueDays, updatedAt: new Date() }).where(and(eq(loanSchedules.tenantId, ctx.tenantId), eq(loanSchedules.id, schedule.id)));
-        if (!changed) return { changed, paymentIntakePublicId: intake.publicId, schedulePublicId: schedule.publicId, auditPublicId: null, correlationId: ctx.correlationId };
-        const audit = await createAuditLog(tx, { ...contextPayload(ctx), entityType: "loan_schedule", entityId: schedule.publicId, action: "restore_schedule_backfilled", payload: { requestFingerprint: hash({ operation: "restore_schedule_backfill", paymentIntakePublicId: intake.publicId, reason: input.reason.trim() }), paymentIntakePublicId: intake.publicId, sourcePaymentPublicId: source.publicId, schedulePublicId: schedule.publicId, changed, reason: input.reason.trim(), idempotencyKey: input.idempotencyKey, before: { paidTotal: schedule.paidTotal, paidPenalty: schedule.paidPenalty, remainingDue: schedule.remainingDue, status: schedule.status }, after: { paidTotal: paidTotal.toFixed(2), paidPenalty: paidPenalty.toFixed(2), remainingDue: remainingDue.toFixed(2), status } } });
-        return { changed, paymentIntakePublicId: intake.publicId, schedulePublicId: schedule.publicId, auditPublicId: audit.publicId, correlationId: ctx.correlationId };
+        const audit = await createAuditLog(tx, { ...contextPayload(ctx), entityType: "loan_schedule", entityId: schedule.publicId, action: "restore_schedule_backfilled", payload: { requestFingerprint: requestHash, paymentIntakePublicId: intake.publicId, sourcePaymentPublicId: source.publicId, schedulePublicId: schedule.publicId, changed, reason: input.reason.trim(), idempotencyKey: input.idempotencyKey.trim(), before: { paidTotal: schedule.paidTotal, paidPenalty: schedule.paidPenalty, remainingDue: schedule.remainingDue, status: schedule.status }, after: { paidTotal: paidTotal.toFixed(2), paidPenalty: paidPenalty.toFixed(2), remainingDue: remainingDue.toFixed(2), status } } });
+        const result = { changed, paymentIntakePublicId: intake.publicId, schedulePublicId: schedule.publicId, auditPublicId: audit.publicId, correlationId: ctx.correlationId };
+        await tx.insert(commandReceipts).values({ tenantId: ctx.tenantId, operationType: "restore_schedule_backfill", operationKey: input.idempotencyKey.trim(), requestHash, result, auditPublicId: audit.publicId, correlationId: ctx.correlationId, createdByUserId: ctx.actorUserId });
+        return result;
     });
 }
 

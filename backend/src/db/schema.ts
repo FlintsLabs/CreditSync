@@ -1801,6 +1801,25 @@ export const paymentBatchOperationReceipts = pgTable("payment_batch_operation_re
     foreignKey({ name: "payment_batch_operation_receipts_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
 ]);
 
+export const commandReceipts = pgTable("command_receipts", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    operationType: text("operation_type").notNull(),
+    operationKey: text("operation_key").notNull(),
+    requestHash: text("request_hash").notNull(),
+    result: jsonb("result").$type<Record<string, unknown>>().notNull(),
+    auditPublicId: uuid("audit_public_id").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    createdByUserId: integer("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("command_receipts_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("command_receipts_tenant_operation_unique").on(table.tenantId, table.operationType, table.operationKey),
+    foreignKey({ name: "command_receipts_tenant_audit_fk", columns: [table.tenantId, table.auditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
+    foreignKey({ name: "command_receipts_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
+
 export const paymentBatchDecisions = pgTable("payment_batch_decisions", {
     id: serial("id").primaryKey(),
     publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
