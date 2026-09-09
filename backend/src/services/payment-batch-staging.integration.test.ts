@@ -4,7 +4,7 @@ import { db } from "../db";
 import { borrowers, paymentBatches, paymentBatchOperationReceipts, paymentBatchStagingEvidence, paymentBatchStagingItems, paymentIntakes, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import type { EvidenceStorageGateway } from "./payment-service";
-import { stagePaymentBatchItems, preparePaymentBatchStagingEvidence, finalizePaymentBatchStagingEvidence, reviewPaymentBatchStagingItem, previewPaymentBatch, cancelPaymentBatch, capturePaymentBatch } from "./payment-batch-service";
+import { stagePaymentBatchItems, preparePaymentBatchStagingEvidence, finalizePaymentBatchStagingEvidence, reviewPaymentBatchStagingItem, previewPaymentBatch, cancelPaymentBatch, capturePaymentBatch, getPaymentBatchWorkspace } from "./payment-batch-service";
 
 const integration = process.env.TEST_DATABASE_URL ? test : test.skip;
 async function fixture() {
@@ -34,6 +34,16 @@ integration("stage retry is order independent and rejects changed membership wit
     await expect(stagePaymentBatchItems(f.ctx, { ...f.input, items: [...f.input.items, { clientItemKey: "c" }] })).rejects.toThrow("idempotency");
     expect(await db.select().from(paymentBatchStagingItems).where(eq(paymentBatchStagingItems.tenantId, f.ctx.tenantId))).toHaveLength(2);
     expect(await db.select().from(paymentIntakes).where(eq(paymentIntakes.tenantId, f.ctx.tenantId))).toHaveLength(0);
+});
+
+integration("workspace resumes upload-first staging with evidence and review links", async () => {
+    const f = await fixture();
+    const workspace = await getPaymentBatchWorkspace(f.ctx, f.staged.batchPublicId);
+    expect(workspace.batchPublicId).toBe(f.staged.batchPublicId);
+    expect(workspace.items).toHaveLength(2);
+    expect(workspace.items.map((item) => item.clientItemKey)).toEqual(["a", "b"]);
+    expect(workspace.items[0]).toMatchObject({ status: "staged", revision: 1, evidenceStatus: null, paymentIntakePublicId: null, batchItemPublicId: null });
+    expect(workspace.items[0]).not.toHaveProperty("fileId");
 });
 
 integration("a restricted actor cannot stage slips against a borrower outside their portfolio", async () => {

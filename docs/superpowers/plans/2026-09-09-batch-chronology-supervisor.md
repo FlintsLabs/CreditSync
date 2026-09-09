@@ -4,6 +4,11 @@
 
 The user approved main-agent direct takeover after the stopped Luna worker. Routing is no longer blocked. All partial changes remain owned by this task; no merge, push, deploy or production writes are authorized. Original seven-task scope remains in force.
 
+### 2026-09-09 user-resume workspace evidence
+
+- At clean HEAD `310e088`, the serialized full disposable backend suite passed 906 tests, skipped 3 cache-invalidation tests, failed 0, with 5799 expectations; the runner's exact owned container and anonymous volume were removed after completion.
+- Task 1 continuation used TDD: the workspace integration test first failed on the missing service export, then passed 10/10 with 46 expectations after adding `GET /payment-batches/:id/workspace` and tenant/actor-scoped read-only staging projection. It deliberately excludes raw evidence/storage/OCR fields. This is a partial Task 1 gate; split/dependency/edit APIs and all later tasks remain open.
+
 ### 2026-09-09 continuation evidence
 
 - Commit `e462435` adds real posted-parent `INSERT`/move protections to migration 0065 and a disposable-PostgreSQL regression; commit `a2d6df9` binds cancellation to reason, revision, idempotency, and an append-only receipt; commit `712326f` wires the upload-first batch editor and enables default discovery of `frontend/src` tests.

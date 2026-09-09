@@ -8,7 +8,7 @@ Scope: implement and verify all seven approved tasks; no merge, push, deploy, pr
 ## Progress
 
 - [x] Baseline verification and repository mapping
-- [ ] Task 1: durable batch staging and retry (service/API, resumable receipts/evidence checks, and posted-membership DB gates now green; split/dependencies and complete workspace API remain)
+- [ ] Task 1: durable batch staging and retry (service/API, resumable receipts/evidence checks, posted-membership DB gates, and read-only resumable workspace API now green; split/dependencies remain)
 - [ ] Task 2: shared chronology guard (partial; all-writer locking and decision persistence remain)
 - [ ] Task 3: floating multi-contract planner (partial; projected sequential state and accounting parity remain)
 - [ ] Task 4: bound atomic execute (existing rollback/concurrency green; preview binding and all-borrower chronology recheck remain)
@@ -74,3 +74,9 @@ The latest checkpoint closes the specifically named staging/posted-parent and fr
 ## TDD evidence
 
 Red/green commands will be appended per task before implementation claims.
+
+### 2026-09-09 — user-resume workspace continuation
+
+- Workspace RED: `backend/scripts/test-disposable-postgres.sh src/services/payment-batch-staging.integration.test.ts` failed because the new `getPaymentBatchWorkspace` service export did not exist.
+- Workspace GREEN: the same serialized disposable test passed 10/10 with 46 expectations. The API returns staging public IDs, client keys, lifecycle revision, normalized amount/time when reviewed, evidence status/metadata, review reason/range, and public intake/batch-item links; raw file IDs, storage keys, hashes, signed URLs, and OCR contents are excluded.
+- The full serialized suite at commit `310e088` remains the latest backend gate: 906 passed, 3 skipped, 0 failed, 5799 expectations. This continuation's workspace change requires a new full-suite run before final acceptance.

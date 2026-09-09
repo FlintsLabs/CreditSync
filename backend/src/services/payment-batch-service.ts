@@ -454,6 +454,48 @@ export async function addPaymentBatchItem(ctx: CommandContext, batchPublicId: st
 
 export async function getPaymentBatch(ctx: CommandContext, batchPublicId: string) { return view(ctx, await accessibleBatch(ctx, batchPublicId)); }
 
+/**
+ * Read-only resumable staging workspace. It intentionally exposes lifecycle
+ * metadata and public links only; raw files, storage keys, hashes, and OCR
+ * contents remain behind the evidence service.
+ */
+export async function getPaymentBatchWorkspace(ctx: CommandContext, batchPublicId: string) {
+    const batch = await accessibleBatch(ctx, batchPublicId);
+    const [summary, stagingItems, batchItems] = await Promise.all([
+        view(ctx, batch),
+        db.select().from(paymentBatchStagingItems).where(and(eq(paymentBatchStagingItems.tenantId, ctx.tenantId), eq(paymentBatchStagingItems.batchId, batch.id))).orderBy(asc(paymentBatchStagingItems.id)),
+        db.select().from(paymentBatchItems).where(and(eq(paymentBatchItems.tenantId, ctx.tenantId), eq(paymentBatchItems.batchId, batch.id))),
+    ]);
+    const evidence = stagingItems.length
+        ? await db.select({ stagingItemId: paymentBatchStagingEvidence.stagingItemId, publicId: paymentBatchStagingEvidence.publicId, status: paymentBatchStagingEvidence.status, mimeType: paymentBatchStagingEvidence.mimeType, declaredSize: paymentBatchStagingEvidence.declaredSize, finalizedAt: paymentBatchStagingEvidence.finalizedAt }).from(paymentBatchStagingEvidence).where(and(eq(paymentBatchStagingEvidence.tenantId, ctx.tenantId), inArray(paymentBatchStagingEvidence.stagingItemId, stagingItems.map((item) => item.id))))
+        : [];
+    return {
+        batchPublicId: batch.publicId,
+        batch: summary,
+        items: stagingItems.map((item) => {
+            const itemEvidence = evidence.find((entry) => entry.stagingItemId === item.id);
+            const batchItem = batchItems.find((candidate) => candidate.id === item.batchItemId);
+            const intakePublicId = batchItem ? summary.items.find((candidate) => candidate.publicId === batchItem.publicId)?.paymentIntakePublicId ?? null : null;
+            return {
+                publicId: item.publicId,
+                clientItemKey: item.clientItemKey,
+                status: item.status,
+                revision: item.revision,
+                amount: item.amount,
+                receivedAt: item.receivedAt?.toISOString() ?? null,
+                payerName: item.payerName,
+                paymentIntakePublicId: intakePublicId,
+                batchItemPublicId: batchItem?.publicId ?? null,
+                reviewedReason: item.reviewedReason,
+                reviewedRangeFrom: item.reviewedRangeFrom,
+                reviewedRangeTo: item.reviewedRangeTo,
+                evidence: itemEvidence ? { publicId: itemEvidence.publicId, status: itemEvidence.status, mimeType: itemEvidence.mimeType, declaredSize: itemEvidence.declaredSize, finalizedAt: itemEvidence.finalizedAt } : null,
+                evidenceStatus: itemEvidence?.status ?? null,
+            };
+        }),
+    };
+}
+
 type BatchEvidencePrepareItem = { batchItemPublicId: string; paymentIntakePublicId: string; mimeType: "image/jpeg" | "image/png" | "application/pdf"; size: number; sha256: string; evidenceType?: "slip" | "qr" };
 type BatchEvidenceFinalizeItem = { batchItemPublicId: string; paymentIntakePublicId: string; evidencePublicId: string };
 async function assertBatchEvidenceItems(ctx: CommandContext, batchPublicId: string, items: Array<{ batchItemPublicId: string; paymentIntakePublicId: string }>) {

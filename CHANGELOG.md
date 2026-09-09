@@ -3,6 +3,7 @@
 ## v0.4.14 - 2026-09-09
 
 ### Added
+- Added a tenant-scoped read-only payment-batch workspace endpoint (`GET /payment-batches/:id/workspace`) that resumes upload-first staging with revision, evidence readiness, review metadata, and public intake/item links without exposing raw evidence or storage details.
 - Added tenant-scoped upload-first payment-batch staging and review APIs, staging evidence intents, Bangkok chronology regressions, shared floating-accrual batch previews, borrower-ordered execute locks, and REST restore linkage. Final MCP/UI contract synchronization and full acceptance gates remain pending.
 - Hardened the additive batch migration so posted parents reject new or moved members at the database boundary, with real disposable-PostgreSQL coverage.
 - Added revision-bound, reasoned, idempotent payment-batch cancellation receipts and lifecycle metadata; stale cancellation requests now stop before changing the batch.
