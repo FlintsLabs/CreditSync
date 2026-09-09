@@ -8,7 +8,7 @@ Scope: implement and verify all seven approved tasks; no merge, push, deploy, pr
 ## Progress
 
 - [x] Baseline verification and repository mapping
-- [ ] Task 1: durable batch staging and retry (service/API, resumable receipts/evidence checks, posted-membership DB gates, read-only workspace, revision-bound edits, and atomic split/dependency APIs are green; broader chronology/review acceptance remains)
+- [ ] Task 1: durable batch staging and retry (service/API, resumable receipts/evidence checks, posted-membership DB gates, read-only workspace, revision-bound edits, atomic split/dependency APIs, and round-three mapping/lock fixes are green; broader chronology/review acceptance remains)
 - [ ] Task 2: shared chronology guard (partial; all-writer locking and decision persistence remain)
 - [ ] Task 3: floating multi-contract planner (partial; projected sequential state and accounting parity remain)
 - [ ] Task 4: bound atomic execute (existing rollback/concurrency green; preview binding and all-borrower chronology recheck remain)
@@ -101,3 +101,10 @@ Red/green commands will be appended per task before implementation claims.
 - TDD disposable regressions cover mixed mapped/unmapped fallback, secondary borrower mapping, UTC-midnight Bangkok date conversion, old/current/requested borrower lock coverage, known mapped staging without an intake, review propagation, and tagged staging/item membership identities.
 - Targeted serialized result: `./scripts/test-disposable-postgres.sh src/services/payment-batch-staging.integration.test.ts src/services/payment-chronology-guard.test.ts src/services/payment-batch-atomic.integration.test.ts` — 38 passed, 0 failed; `cd backend && bun run typecheck` — passed.
 - Runtime split provenance remains immutable and separate from chronology blocking; source/destination are not unconditionally ordered. Full ready-prefix split-direction execution coverage, broader UI/MCP/reconciliation work, and final full-plan verification remain supervisor gaps.
+
+### 2026-09-10 — supervisor fix round three
+
+- TDD RED: the new multi-borrower review regression failed with `BATCH_ALLOCATION_MISMATCH`, proving review incorrectly treated the batch header borrower as exclusive. A queued review mapping-drift regression was added and requires rejection before any intake write.
+- Fixes: review now compares preliminary and post-lock mapping/revision/header state, revalidates borrower portfolio access, uses the authoritative post-lock loan for intake provenance, and leaves batch borrower resolution per item. Edit and preview apply the same post-lock drift boundary; explicit allocations are checked in full against every reviewed mapping; pending chronology includes reviewed mappings after intake creation while excluding only the current intake set.
+- Serialized disposable verification: `./scripts/test-disposable-postgres.sh src/services/payment-batch-staging.integration.test.ts src/services/payment-chronology-guard.test.ts src/services/payment-batch-atomic.integration.test.ts` — 41 passed, 0 failed, 128 expectations; `cd backend && bun run typecheck` — passed. Ready-prefix regression executed and posted the older selected item while the later selected portion remained blocked; no later transaction was created.
+- Round-three scope is complete on this branch, but the seven-task plan remains unfinished: reconciliation/reflow, broader UI/MCP synchronization, and final full-plan verification remain open.

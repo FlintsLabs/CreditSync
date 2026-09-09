@@ -3,7 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { borrowers, fundLedgerEntries, loanSchedules, loans, paymentBatchAllocations, paymentBatchPreviews, paymentBatches, paymentIntakes, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
-import { addPaymentBatchItem, createPaymentBatch, decidePaymentBatch, executePaymentBatch, previewPaymentBatch } from "./payment-batch-service";
+import { addPaymentBatchItem, createPaymentBatch, decidePaymentBatch, executePaymentBatch, previewPaymentBatch, splitPaymentBatch } from "./payment-batch-service";
 import { postPayment, previewPaymentMatch, reversePayment } from "./payment-service";
 
 const integration = process.env.TEST_DATABASE_URL ? test : test.skip;
@@ -161,4 +161,20 @@ integration("reversal waits on the shared borrower lock before holding an intake
     } finally {
         await reversal;
     }
+});
+
+integration("split previews and executes the chronological ready prefix while holding the later portion", async () => {
+    const older = await fixture();
+    const olderCurrent = await db.query.paymentBatches.findFirst({ where: eq(paymentBatches.publicId, older.batch.publicId) });
+    const olderSplit = await splitPaymentBatch(older.ctx, older.batch.publicId, { selectedItemPublicIds: [older.allocations[1]!.itemPublicId], expectedSourceRevision: olderCurrent!.version, idempotencyKey: "prefix-older", reason: "synthetic ready prefix" });
+    const olderPreview = await previewPaymentBatch(older.ctx, olderSplit.destinationBatchPublicId, { borrowerPublicId: older.borrower.publicId, allocations: [older.allocations[1]!] });
+    expect(olderPreview.status).toBe("ready");
+    await executePaymentBatch(older.ctx, olderSplit.destinationBatchPublicId, { previewPublicId: olderPreview.publicId, previewHash: olderPreview.previewHash, confirmationHash: olderPreview.confirmationHash, confirmed: true, idempotencyKey: "execute-prefix-older" });
+    expect(await db.select().from(transactions).where(eq(transactions.tenantId, older.ctx.tenantId))).toHaveLength(1);
+
+    const later = await fixture();
+    const laterCurrent = await db.query.paymentBatches.findFirst({ where: eq(paymentBatches.publicId, later.batch.publicId) });
+    const laterSplit = await splitPaymentBatch(later.ctx, later.batch.publicId, { selectedItemPublicIds: [later.allocations[0]!.itemPublicId], expectedSourceRevision: laterCurrent!.version, idempotencyKey: "prefix-later", reason: "synthetic held later portion" });
+    await expect(previewPaymentBatch(later.ctx, laterSplit.destinationBatchPublicId, { borrowerPublicId: later.borrower.publicId, allocations: [later.allocations[0]!] })).rejects.toThrow("chronology");
+    expect(await db.select().from(transactions).where(eq(transactions.tenantId, later.ctx.tenantId))).toHaveLength(0);
 });

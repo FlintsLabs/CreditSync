@@ -206,6 +206,50 @@ integration("split reloads source revision after a queued lock and cannot pass w
     await expect(queued!).rejects.toThrow("revision");
 });
 
+integration("review keeps per-item borrowers in a multi-borrower staging batch", async () => {
+    const f = await fixture();
+    const [secondBorrower] = await db.insert(borrowers).values({ tenantId: f.ctx.tenantId, ownerUserId: f.ctx.actorUserId, name: "Synthetic second staging borrower" }).returning();
+    const first = f.staged.items[0]!;
+    const second = f.staged.items[1]!;
+    for (const item of [first, second]) {
+        const evidenceInput = { ...f.evidenceInput, stagingItemPublicId: item.publicId, sha256: item.publicId === first.publicId ? "d".repeat(64) : "e".repeat(64) };
+        const prepared = await preparePaymentBatchStagingEvidence(f.ctx, evidenceInput, f.gateway);
+        await finalizePaymentBatchStagingEvidence(f.ctx, item.publicId, prepared.evidencePublicId, f.gateway);
+    }
+    await editPaymentBatchStagingItem(f.ctx, {
+        stagingItemPublicId: first.publicId,
+        expectedRevision: 1,
+        idempotencyKey: "map-second-borrower",
+        reason: "synthetic multi-borrower mapping",
+        mapping: { borrowerPublicId: secondBorrower!.publicId },
+    });
+    const reviewedFirst = await reviewPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: first.publicId, amount: "120.00", receivedAt: "2026-09-07T10:00:00+07:00", intakeIdempotencyKey: "review-second-borrower" });
+    const reviewedSecond = await reviewPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: second.publicId, amount: "120.00", receivedAt: "2026-09-08T10:00:00+07:00", intakeIdempotencyKey: "review-first-borrower" });
+    expect(reviewedFirst.paymentIntakePublicId).toBeString();
+    expect(reviewedSecond.paymentIntakePublicId).toBeString();
+});
+
+integration("review rejects a mapping expanded while its preliminary borrower lock is queued", async () => {
+    const f = await fixture();
+    const [secondBorrower] = await db.insert(borrowers).values({ tenantId: f.ctx.tenantId, ownerUserId: f.ctx.actorUserId, name: "Synthetic queued review borrower" }).returning();
+    const item = f.staged.items[0]!;
+    const evidence = await preparePaymentBatchStagingEvidence(f.ctx, f.evidenceInput, f.gateway);
+    await finalizePaymentBatchStagingEvidence(f.ctx, item.publicId, evidence.evidencePublicId, f.gateway);
+    await editPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: item.publicId, expectedRevision: 1, idempotencyKey: "queued-review-old", reason: "synthetic old mapping", mapping: { borrowerPublicId: f.input.borrowerPublicId! } });
+    const staging = await db.query.paymentBatchStagingItems.findFirst({ where: eq(paymentBatchStagingItems.publicId, item.publicId) });
+    const batch = await db.query.paymentBatches.findFirst({ where: eq(paymentBatches.publicId, f.staged.batchPublicId) });
+    let queued: Promise<unknown> | undefined;
+    await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT id FROM borrowers WHERE tenant_id = ${f.ctx.tenantId} AND id = ${(await db.query.borrowers.findFirst({ where: eq(borrowers.publicId, f.input.borrowerPublicId!) }))!.id} FOR UPDATE`);
+        queued = reviewPaymentBatchStagingItem(f.ctx, { stagingItemPublicId: item.publicId, amount: "120.00", receivedAt: "2026-09-07T10:00:00+07:00", intakeIdempotencyKey: "queued-review-current" });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        await tx.update(paymentBatchStagingItems).set({ reviewedMapping: { borrowerPublicId: secondBorrower!.publicId } }).where(eq(paymentBatchStagingItems.id, staging!.id));
+        await tx.update(paymentBatches).set({ version: batch!.version + 1 }).where(eq(paymentBatches.id, batch!.id));
+    });
+    await expect(queued!).rejects.toThrow("changed while review");
+    expect(await db.select().from(paymentIntakes).where(eq(paymentIntakes.tenantId, f.ctx.tenantId))).toHaveLength(0);
+});
+
 integration("mapping edits require portfolio access and feed review into the preview mapping", async () => {
     const f = await fixture();
     const loan = await db.insert(loans).values({ tenantId: f.ctx.tenantId, ownerUserId: f.ctx.actorUserId!, borrowerId: (await db.query.borrowers.findFirst({ where: eq(borrowers.publicId, f.input.borrowerPublicId!) }))!.id, principalAmount: "240.00", interestRate: "0.00", repaymentType: "monthly", outstandingPrincipal: "240.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" }).returning().then((rows) => rows[0]!);

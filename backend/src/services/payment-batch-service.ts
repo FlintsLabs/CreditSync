@@ -336,6 +336,7 @@ export async function reviewPaymentBatchStagingItem(ctx: CommandContext, input: 
             if (existingReceipt.requestHash !== requestHash) throw new DomainError("IDEMPOTENCY_CONFLICT", "Review idempotency key was reused with different data", 409);
             return existingReceipt.result;
         }
+        if (staging.revision !== preliminary.staging.revision || digest(staging.reviewedMapping) !== digest(preliminary.staging.reviewedMapping) || batch.version !== preliminary.batch.version) throw new DomainError("STAGING_MAPPING_STALE", "Staging mapping changed while review was waiting for its locks; inspect and retry", 409);
         assertBatchEditable(batch);
         if (staging.status === "validated" || staging.paymentIntakeId || staging.batchItemId) throw new DomainError("PAYMENT_BATCH_STAGING_REVIEW_CONFLICT", "Staging item was already reviewed without a matching receipt", 409);
         const evidence = await tx.query.paymentBatchStagingEvidence.findFirst({ where: and(eq(paymentBatchStagingEvidence.tenantId, ctx.tenantId), eq(paymentBatchStagingEvidence.stagingItemId, staging.id), eq(paymentBatchStagingEvidence.status, "ready")) });
@@ -349,15 +350,15 @@ export async function reviewPaymentBatchStagingItem(ctx: CommandContext, input: 
             if (!mappedBorrower) throw new DomainError("BORROWER_NOT_FOUND", "Mapped borrower is unavailable", 404);
             await assertBorrowerPortfolio(ctx, [mappedBorrower], tx);
         }
-        if (reviewMappedBorrower && batch.borrowerId !== null && batch.borrowerId !== reviewMappedBorrower.id) throw new DomainError("BATCH_ALLOCATION_MISMATCH", "Mapped borrower does not match the batch borrower", 409);
+        if (reviewMappedBorrower) await assertBorrowerPortfolio(ctx, [reviewMappedBorrower], tx);
         const batchItems = await tx.select().from(paymentBatchItems).where(and(eq(paymentBatchItems.tenantId, ctx.tenantId), eq(paymentBatchItems.batchId, staging.batchId))).orderBy(desc(paymentBatchItems.itemOrder));
-        const intake = await tx.insert(paymentIntakes).values({ tenantId: ctx.tenantId, ownerUserId: ctx.actorUserId, source: ctx.actorSource === "mcp" ? "mcp" : "web", status: "draft", amount: serializeMoney(amount), receivedAt, originLoanId: mappedLoan?.id ?? null, payerName: staging.payerName, bankReferenceHash: staging.bankReferenceHash, evidenceRequired: true, idempotencyKey: input.intakeIdempotencyKey.trim(), createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((values) => values[0]!);
+        const intake = await tx.insert(paymentIntakes).values({ tenantId: ctx.tenantId, ownerUserId: ctx.actorUserId, source: ctx.actorSource === "mcp" ? "mcp" : "web", status: "draft", amount: serializeMoney(amount), receivedAt, originLoanId: reviewMappedLoan?.id ?? null, payerName: staging.payerName, bankReferenceHash: staging.bankReferenceHash, evidenceRequired: true, idempotencyKey: input.intakeIdempotencyKey.trim(), createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((values) => values[0]!);
         await tx.insert(paymentEvidence).values({ tenantId: ctx.tenantId, paymentIntakeId: intake.id, fileId: evidence.fileId, evidenceType: "slip", status: "ready", evidenceHash: evidence.evidenceHash, mimeType: evidence.mimeType, declaredSize: evidence.declaredSize, finalizedAt: evidence.finalizedAt, createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId });
         const batchItem = await tx.insert(paymentBatchItems).values({ tenantId: ctx.tenantId, batchId: staging.batchId, paymentIntakeId: intake.id, stagingItemId: staging.id, itemOrder: (batchItems[0]?.itemOrder ?? 0) + 1 }).returning().then((values) => values[0]!);
         const updated = await tx.update(paymentBatchStagingItems).set({ amount: serializeMoney(amount), receivedAt, status: "validated", revision: staging.revision + 1, paymentIntakeId: intake.id, batchItemId: batchItem.id, reviewedReason: input.reviewedReason?.trim() || null, reviewedRangeFrom: input.reviewedRangeFrom || null, reviewedRangeTo: input.reviewedRangeTo || null, updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(eq(paymentBatchStagingItems.tenantId, ctx.tenantId), eq(paymentBatchStagingItems.id, staging.id), eq(paymentBatchStagingItems.status, "staged"))).returning().then((values) => values[0]);
         if (!updated) throw new DomainError("PAYMENT_BATCH_STAGING_REVIEW_CONFLICT", "Staging item was reviewed concurrently", 409);
         await tx.update(paymentBatchPreviews).set({ status: "stale" }).where(and(eq(paymentBatchPreviews.tenantId, ctx.tenantId), eq(paymentBatchPreviews.batchId, batch.id), inArray(paymentBatchPreviews.status, ["ready", "needs_review"])));
-        await tx.update(paymentBatches).set({ borrowerId: batch.borrowerId ?? reviewMappedBorrower?.id ?? null, status: "needs_review", version: batch.version + 1, stateHash: digest({ batchPublicId: batch.publicId, revision: staging.revision + 1 }), confirmationHash: null, updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(eq(paymentBatches.tenantId, ctx.tenantId), eq(paymentBatches.id, batch.id)));
+        await tx.update(paymentBatches).set({ status: "needs_review", version: batch.version + 1, stateHash: digest({ batchPublicId: batch.publicId, revision: staging.revision + 1 }), confirmationHash: null, updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(eq(paymentBatches.tenantId, ctx.tenantId), eq(paymentBatches.id, batch.id)));
         const result = { stagingItemPublicId: staging.publicId, status: updated.status, paymentIntakePublicId: intake.publicId, batchItemPublicId: batchItem.publicId, receipt: { operationType: "staging.review", operationKey: input.intakeIdempotencyKey.trim() } };
         return recordOperation(tx, ctx, batch, staging.id, "staging.review", input.intakeIdempotencyKey.trim(), requestHash, result);
     });
@@ -397,6 +398,7 @@ export async function editPaymentBatchStagingItem(ctx: CommandContext, input: Ed
         const { staging, batch } = await lockedStagingItem(ctx, input.stagingItemPublicId, tx);
         const prior = await operationReceipt<{ stagingItemPublicId: string; status: string; revision: number }>(tx, ctx, "staging.edit", input.idempotencyKey.trim(), requestHash);
         if (prior) return prior;
+        if (staging.revision !== preliminary.staging.revision || digest(staging.reviewedMapping) !== digest(preliminary.staging.reviewedMapping) || batch.version !== preliminary.batch.version) throw new DomainError("STAGING_MAPPING_STALE", "Staging mapping changed while edit was waiting for its locks; inspect and retry", 409);
         assertBatchEditable(batch);
         if (staging.revision !== input.expectedRevision) throw new DomainError("STAGING_REVISION_STALE", "Staging item revision is stale", 409);
         if (staging.status === "failed") throw new DomainError("PAYMENT_BATCH_STAGING_EDIT_CONFLICT", "Failed staging items cannot be edited", 409);
@@ -730,6 +732,7 @@ export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: st
     const mappedBorrowerIds = [...new Set(mappedLoans.map((loan) => loan.borrowerId))];
     const mappedBorrowers = mappedBorrowerIds.length ? await db.select().from(borrowers).where(and(eq(borrowers.tenantId, ctx.tenantId), inArray(borrowers.id, mappedBorrowerIds))) : [];
     const mappedBorrowerPublicIds = [...stagedForResolution.flatMap((item) => item.reviewedMapping?.borrowerPublicId ? [item.reviewedMapping.borrowerPublicId] : []), ...mappedBorrowers.map((row) => row.publicId)];
+    const mappingSnapshot = digest(stagedForResolution.map((item) => ({ publicId: item.publicId, revision: item.revision, mapping: item.reviewedMapping })).sort((a, b) => a.publicId.localeCompare(b.publicId)));
     const borrower = await db.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, ctx.tenantId), eq(borrowers.publicId, input.borrowerPublicId)) });
     if (!borrower) throw new DomainError("BORROWER_NOT_FOUND", "Borrower not found", 404);
     const requestedBorrowers = [...new Set([input.borrowerPublicId, ...mappedBorrowerPublicIds, ...(input.allocations ?? []).flatMap((allocation) => allocation.borrowerPublicId ? [allocation.borrowerPublicId] : [])])];
@@ -742,6 +745,8 @@ export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: st
     await db.execute(sql`SELECT id FROM payment_batches WHERE tenant_id = ${ctx.tenantId} AND public_id = ${batchPublicId} FOR UPDATE`);
     const batch = await accessibleBatch(ctx, batchPublicId, db);
     assertBatchEditable(batch);
+    const lockedMappings = await db.select({ publicId: paymentBatchStagingItems.publicId, revision: paymentBatchStagingItems.revision, reviewedMapping: paymentBatchStagingItems.reviewedMapping }).from(paymentBatchStagingItems).where(and(eq(paymentBatchStagingItems.tenantId, ctx.tenantId), eq(paymentBatchStagingItems.batchId, batch.id)));
+    if (digest(lockedMappings.map((item) => ({ publicId: item.publicId, revision: item.revision, mapping: item.reviewedMapping })).sort((a, b) => a.publicId.localeCompare(b.publicId))) !== mappingSnapshot) throw new DomainError("BATCH_MAPPING_STALE", "Staging mappings changed while preview was waiting for borrower locks; inspect and retry", 409);
     const decision = input.decisionPublicId ? await db.query.paymentBatchDecisions.findFirst({ where: and(eq(paymentBatchDecisions.tenantId, ctx.tenantId), eq(paymentBatchDecisions.batchId, batch.id), eq(paymentBatchDecisions.publicId, input.decisionPublicId), eq(paymentBatchDecisions.revision, batch.version)) }) : undefined;
     if (input.decisionPublicId && !decision) throw new DomainError("BATCH_DECISION_STALE", "Decision belongs to a different batch revision", 409);
     const items = await db.select().from(paymentBatchItems).where(and(eq(paymentBatchItems.tenantId, ctx.tenantId), eq(paymentBatchItems.batchId, batch.id))).orderBy(asc(paymentBatchItems.itemOrder));
@@ -773,8 +778,8 @@ export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: st
     if (input.allocations && hasReviewedMapping) {
         for (const [index, mapped] of mappedAllocations.entries()) {
             if (!mapped) continue;
-            const explicit = input.allocations.find((allocation) => allocation.itemPublicId === mapped.itemPublicId);
-            if (!explicit || explicit.loanPublicId !== mapped.loanPublicId || explicit.schedulePublicId !== mapped.schedulePublicId || (explicit.borrowerPublicId ?? mapped.borrowerPublicId) !== mapped.borrowerPublicId) throw new DomainError("BATCH_MAPPING_CONFLICT", `Explicit allocation conflicts with reviewed mapping for item ${index + 1}`, 409);
+            const explicit = input.allocations.filter((allocation) => allocation.itemPublicId === mapped.itemPublicId);
+            if (!explicit.length || explicit.some((allocation) => allocation.loanPublicId !== mapped.loanPublicId || allocation.schedulePublicId !== mapped.schedulePublicId || (allocation.borrowerPublicId ?? mapped.borrowerPublicId) !== mapped.borrowerPublicId)) throw new DomainError("BATCH_MAPPING_CONFLICT", `Explicit allocation conflicts with reviewed mapping for item ${index + 1}`, 409);
         }
     }
     const effectiveAllocations = input.allocations ?? (mappedAllocations.every((allocation) => allocation !== null) ? mappedAllocations as ExplicitBatchAllocation[] : undefined);
