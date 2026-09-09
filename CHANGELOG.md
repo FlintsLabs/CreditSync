@@ -5,6 +5,7 @@
 ### Added
 - Added tenant-scoped upload-first payment-batch staging and review APIs, staging evidence intents, Bangkok chronology regressions, shared floating-accrual batch previews, borrower-ordered execute locks, and REST restore linkage. Final MCP/UI contract synchronization and full acceptance gates remain pending.
 - Hardened the additive batch migration so posted parents reject new or moved members at the database boundary, with real disposable-PostgreSQL coverage.
+- Added revision-bound, reasoned, idempotent payment-batch cancellation receipts and lifecycle metadata; stale cancellation requests now stop before changing the batch.
 
 ### Fixed
 - Restored frontend verification on Node 26 by disabling native webstorage only in compatible Vitest workers; aligned deferral tests with Vitest, sidebar assertions with release metadata, and repayment fixtures with the separate schedule-summary response. Production financial logic is unchanged.
