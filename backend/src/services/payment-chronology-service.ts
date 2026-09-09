@@ -17,7 +17,7 @@ export async function paymentIntakeBorrowerIds(tx: DbExecutor, tenantId: string,
             JOIN payment_batches b ON b.tenant_id = bi.tenant_id AND b.id = bi.batch_id
             JOIN payment_batch_allocations a ON a.tenant_id = bi.tenant_id AND a.item_id = bi.id
             WHERE bi.tenant_id = ${tenantId} AND bi.payment_intake_id = ${intakeId} AND b.status <> 'cancelled'
-              AND a.preview_id = (SELECT p.id FROM payment_batch_previews p WHERE p.tenant_id = bi.tenant_id AND p.batch_id = bi.batch_id AND p.status = 'ready' AND p.version = b.version ORDER BY p.version DESC LIMIT 1))
+              AND a.preview_id = (SELECT p.id FROM payment_batch_previews p WHERE p.tenant_id = bi.tenant_id AND p.batch_id = bi.batch_id AND p.status = 'ready' AND p.id = (SELECT latest.id FROM payment_batch_previews latest WHERE latest.tenant_id = p.tenant_id AND latest.batch_id = p.batch_id ORDER BY latest.version DESC LIMIT 1)))
         OR l.borrower_id IN (SELECT br.id FROM payment_batch_staging_items si
             JOIN borrowers br ON br.tenant_id = si.tenant_id AND br.public_id::text = si.reviewed_mapping->>'borrowerPublicId'
             WHERE si.tenant_id = ${tenantId} AND si.payment_intake_id = ${intakeId} AND si.status = 'validated' AND si.resolution_state = 'mapped')
@@ -50,21 +50,13 @@ export async function assertNoOlderPendingPayment(tx: DbExecutor, tenantId: stri
                 JOIN payment_batch_allocations a ON a.tenant_id = bi.tenant_id AND a.item_id = bi.id
                 WHERE bi.tenant_id = i.tenant_id AND bi.payment_intake_id = i.id AND a.borrower_id = ${borrowerId}
                   AND b.status NOT IN ('posted', 'cancelled')
-                  AND a.preview_id = (SELECT p.id FROM payment_batch_previews p WHERE p.tenant_id = bi.tenant_id AND p.batch_id = bi.batch_id ORDER BY p.version DESC LIMIT 1))
+                  AND a.preview_id = (SELECT p.id FROM payment_batch_previews p WHERE p.tenant_id = bi.tenant_id AND p.batch_id = bi.batch_id AND p.status = 'ready' AND p.id = (SELECT latest.id FROM payment_batch_previews latest WHERE latest.tenant_id = p.tenant_id AND latest.batch_id = p.batch_id ORDER BY latest.version DESC LIMIT 1)))
             OR EXISTS (SELECT 1 FROM payment_batch_items bi JOIN payment_batches b ON b.tenant_id = bi.tenant_id AND b.id = bi.batch_id WHERE bi.tenant_id = i.tenant_id AND bi.payment_intake_id = i.id AND b.borrower_id = ${borrowerId} AND b.status NOT IN ('posted', 'cancelled'))
           )
           AND NOT EXISTS (SELECT 1 FROM payment_batch_staging_items current_stage
               WHERE current_stage.tenant_id = i.tenant_id AND current_stage.payment_intake_id = i.id
                 AND current_stage.status = 'validated'
-                AND (current_stage.reviewed_mapping IS NOT NULL OR current_stage.resolution_state = 'cleared' OR EXISTS (
-                    SELECT 1 FROM payment_batch_items current_item
-                    JOIN payment_batches current_batch ON current_batch.tenant_id = current_item.tenant_id AND current_batch.id = current_item.batch_id
-                    JOIN payment_batch_previews current_preview ON current_preview.tenant_id = current_batch.tenant_id AND current_preview.batch_id = current_batch.id
-                    JOIN payment_batch_allocations current_allocation ON current_allocation.tenant_id = current_item.tenant_id AND current_allocation.item_id = current_item.id AND current_allocation.preview_id = current_preview.id
-                    WHERE current_item.tenant_id = i.tenant_id AND current_item.payment_intake_id = i.id
-                      AND current_batch.status NOT IN ('posted', 'cancelled')
-                      AND current_preview.status = 'ready' AND current_preview.version = current_batch.version
-                )))
+                AND (current_stage.reviewed_mapping IS NOT NULL OR current_stage.resolution_state = 'cleared'))
           LIMIT 1`);
     const stagedExcluded = excludedIntakeIds.length ? sql`AND (si.payment_intake_id IS NULL OR si.payment_intake_id NOT IN (${sql.join(excludedIntakeIds.map((id) => sql`${id}`), sql`, `)}))` : sql``;
     const stagedPending = await tx.execute(sql`SELECT si.public_id FROM payment_batch_staging_items si

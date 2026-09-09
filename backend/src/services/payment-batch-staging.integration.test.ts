@@ -5,7 +5,7 @@ import { borrowers, loans, loanSchedules, paymentBatches, paymentBatchDependenci
 import type { CommandContext } from "./command-context";
 import type { EvidenceStorageGateway } from "./payment-service";
 import { assertNoOlderPendingPayment } from "./payment-chronology-service";
-import { previewPaymentMatch } from "./payment-service";
+import { createPaymentIntake, postPayment, previewPaymentMatch } from "./payment-service";
 import { stagePaymentBatchItems, preparePaymentBatchStagingEvidence, finalizePaymentBatchStagingEvidence, reviewPaymentBatchStagingItem, previewPaymentBatch, executePaymentBatch, cancelPaymentBatch, capturePaymentBatch, getPaymentBatchWorkspace, editPaymentBatchStagingItem, splitPaymentBatch } from "./payment-batch-service";
 
 const integration = process.env.TEST_DATABASE_URL ? test : test.skip;
@@ -419,6 +419,14 @@ integration("a current explicit batch preview resolves an unmapped reviewed inta
         ],
     });
     expect(sourcePreview.status).toBe("ready");
+    const secondaryRow = await db.query.borrowers.findFirst({ where: eq(borrowers.publicId, secondary!.publicId) });
+    const resolvedBatchAllocation = await db.execute(sql`SELECT a.id FROM payment_batch_allocations a JOIN payment_batch_items bi ON bi.tenant_id = a.tenant_id AND bi.id = a.item_id JOIN payment_batches b ON b.tenant_id = bi.tenant_id AND b.id = bi.batch_id JOIN payment_batch_previews p ON p.tenant_id = a.tenant_id AND p.id = a.preview_id WHERE bi.payment_intake_id = (SELECT bi2.payment_intake_id FROM payment_batch_items bi2 WHERE bi2.tenant_id = ${f.ctx.tenantId} AND bi2.public_id = ${reviewed.batchItemPublicId}) AND a.borrower_id = ${secondaryRow!.id} AND p.status = 'ready' AND p.id = (SELECT latest.id FROM payment_batch_previews latest WHERE latest.tenant_id = p.tenant_id AND latest.batch_id = p.batch_id ORDER BY latest.version DESC LIMIT 1)`);
+    expect(resolvedBatchAllocation).toHaveLength(1);
+    await expect(assertNoOlderPendingPayment(db, f.ctx.tenantId, secondaryRow!.id, new Date("2026-09-08T10:00:00+07:00"), [])).rejects.toThrow("chronology");
+    const standalone = await createPaymentIntake(f.ctx, { originLoanPublicId: loan!.publicId, amount: "1.00", receivedAt: "2026-09-08T10:00:00+07:00" });
+    const standaloneProposal = await previewPaymentMatch(f.ctx, standalone.publicId, { allocations: [{ borrowerPublicId: secondary!.publicId, loanPublicId: loan!.publicId, amount: "1.00" }] });
+    await expect(postPayment(f.ctx, standalone.publicId, { proposalPublicId: standaloneProposal.publicId })).rejects.toThrow("chronology");
+    expect(await db.select().from(transactions).where(eq(transactions.tenantId, f.ctx.tenantId))).toHaveLength(0);
     const later = await capturePaymentBatch(f.ctx, { idempotencyKey: "preview-resolved-later", borrowerPublicId: secondary!.publicId, items: [{ clientItemKey: "later", intakeIdempotencyKey: "preview-resolved-later-intake", amount: "1.00", receivedAt: "2026-09-08T10:00:00+07:00" }] });
     await expect(previewPaymentBatch(f.ctx, later.publicId, { borrowerPublicId: secondary!.publicId })).rejects.toThrow("chronology");
 });
