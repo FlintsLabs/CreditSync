@@ -23,7 +23,7 @@ export type ExplicitBatchAllocation = {
     itemPublicId: string;
     borrowerPublicId?: string;
     loanPublicId: string;
-    schedulePublicId: string;
+    schedulePublicId?: string;
     amount: string;
     targetDueDate: string;
     intent: "on_time" | "advance" | "backdated";

@@ -19,6 +19,7 @@ export function PaymentBatchEditor({ onPreview, onExecute }: PaymentBatchEditorP
     const { t } = useTranslation();
     const [borrowerPublicId, setBorrowerPublicId] = useState("");
     const [items, setItems] = useState<BatchItemDraft[]>([newItem()]);
+    const [stageIdempotencyKey] = useState(() => crypto.randomUUID());
     const [batchPublicId, setBatchPublicId] = useState<string | null>(null);
     const [batchItemPublicIds, setBatchItemPublicIds] = useState<string[]>([]);
     const [preview, setPreview] = useState<BatchPreview | null>(null);
@@ -30,39 +31,48 @@ export function PaymentBatchEditor({ onPreview, onExecute }: PaymentBatchEditorP
     const update = (id: string, patch: Partial<BatchItemDraft>) => { setPreview(null); setConfirmed(false); setItems((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item)); };
     const addItem = () => { if (batchPublicId) return; setPreview(null); setConfirmed(false); setItems((current) => [...current, newItem()]); };
 
-    const stageAndReview = async (): Promise<string | null> => {
-        if (batchPublicId) return batchPublicId;
+    const stageAndReview = async (): Promise<{ batchPublicId: string; batchItemPublicIds: string[]; items: BatchItemDraft[] } | null> => {
         if (items.some((item) => !item.file || !item.amount || !item.receivedAt)) return null;
-        const staged = (await api.post("/payment-batches/stage", { idempotencyKey: crypto.randomUUID(), borrowerPublicId: borrowerPublicId.trim() || null, items: items.map((item) => ({ clientItemKey: item.id })) })).data as { batchPublicId: string; items: Array<{ publicId: string; clientItemKey: string }> };
+        const staged = batchPublicId
+            ? { batchPublicId, items: items.filter((item) => item.stagingItemPublicId).map((item) => ({ publicId: item.stagingItemPublicId!, clientItemKey: item.id })) }
+            : (await api.post("/payment-batches/stage", { idempotencyKey: stageIdempotencyKey, borrowerPublicId: borrowerPublicId.trim() || null, items: items.map((item) => ({ clientItemKey: item.id })) })).data as { batchPublicId: string; items: Array<{ publicId: string; clientItemKey: string }> };
         const next = [...items];
-        const batchItems: string[] = [];
+        const batchItems: string[] = items.flatMap((item) => item.batchItemPublicId ?? []);
+        if (!batchPublicId) setBatchPublicId(staged.batchPublicId);
+        for (const stagedItem of staged.items) {
+            const index = next.findIndex((item) => item.id === stagedItem.clientItemKey);
+            if (index >= 0) next[index] = { ...next[index], stagingItemPublicId: stagedItem.publicId };
+        }
+        setItems(next);
         for (const stagedItem of staged.items) {
             const index = next.findIndex((item) => item.id === stagedItem.clientItemKey);
             const item = next[index];
-            if (!item?.file) throw new Error("PAYMENT_BATCH_FILE_REQUIRED");
+            if (!item?.file || item.paymentIntakePublicId) continue;
             const file = item.file;
-            const prepared = (await api.post(`/payment-batches/staging/${stagedItem.publicId}/evidence/prepare`, { mimeType: file.type, size: file.size, sha256: await sha256(file), originalName: file.name })).data as { evidencePublicId: string; uploadUrl?: string; requiredHeaders?: Record<string, string> };
-            if (prepared.uploadUrl) {
+            const prepared = (await api.post(`/payment-batches/staging/${stagedItem.publicId}/evidence/prepare`, { mimeType: file.type, size: file.size, sha256: await sha256(file), originalName: file.name })).data as { evidencePublicId: string; status?: string; uploadUrl?: string; requiredHeaders?: Record<string, string> };
+            if (prepared.status !== "ready" && prepared.uploadUrl) {
                 const uploaded = await fetch(prepared.uploadUrl, { method: "PUT", headers: prepared.requiredHeaders, body: file });
                 if (!uploaded.ok) throw new Error("PAYMENT_BATCH_UPLOAD_FAILED");
+                await api.post(`/payment-batches/staging/${stagedItem.publicId}/evidence/finalize`, { evidencePublicId: prepared.evidencePublicId });
             }
-            await api.post(`/payment-batches/staging/${stagedItem.publicId}/evidence/finalize`, { evidencePublicId: prepared.evidencePublicId });
             const review = (await api.post(`/payment-batches/staging/${stagedItem.publicId}/review`, { amount: normalizeMoney(item.amount), receivedAt: new Date(item.receivedAt!).toISOString(), intakeIdempotencyKey: `batch-intake:${item.id}` })).data as { paymentIntakePublicId: string; batchItemPublicId: string };
             next[index] = { ...item, stagingItemPublicId: stagedItem.publicId, paymentIntakePublicId: review.paymentIntakePublicId, batchItemPublicId: review.batchItemPublicId };
             batchItems.push(review.batchItemPublicId);
         }
         setBatchPublicId(staged.batchPublicId); setBatchItemPublicIds(batchItems); setItems(next);
-        return staged.batchPublicId;
+        return { batchPublicId: staged.batchPublicId, batchItemPublicIds: batchItems, items: next };
     };
 
     const previewBatch = async () => {
         setBusy(true); setMessage(""); setConfirmed(false);
         try {
-            const activeBatchId = batchPublicId ?? await stageAndReview();
+            const staged = batchPublicId ? null : await stageAndReview();
+            const activeBatchId = batchPublicId ?? staged?.batchPublicId;
             if (!activeBatchId) { setMessage(t("paymentBatch.reviewBeforePreview")); return; }
-            const ids = batchItemPublicIds.length ? batchItemPublicIds : items.map((item) => item.batchItemPublicId ?? "");
-            const response = await api.post(`/payment-batches/${activeBatchId}/preview`, { borrowerPublicId: borrowerPublicId.trim(), allocations: toExplicitBatchAllocations(items, ids) });
-            setPreview(response.data); onPreview?.(response.data, semanticSummary(items));
+            const previewRows = staged?.items ?? items;
+            const ids = batchItemPublicIds.length ? batchItemPublicIds : staged?.batchItemPublicIds ?? previewRows.map((item) => item.batchItemPublicId ?? "");
+            const response = await api.post(`/payment-batches/${activeBatchId}/preview`, { borrowerPublicId: borrowerPublicId.trim(), allocations: toExplicitBatchAllocations(previewRows, ids) });
+            setPreview(response.data); onPreview?.(response.data, semanticSummary(previewRows));
         } catch (error) { setMessage(errorMessage(error)); }
         finally { setBusy(false); }
     };

@@ -15,13 +15,14 @@ import { auditLogsRoute } from "./modules/audit-logs";
 import { dashboardRoute } from "./modules/dashboard";
 import { reconciliationRoute } from "./modules/reconciliation";
 import { paymentIntakesRoute } from "./modules/payment-intakes";
-import { paymentBatchesRoute, paymentBatchCancelRoute } from "./modules/payment-batches";
+import { paymentBatchesRoute, paymentBatchCancelRoute, paymentBatchStagingRoute } from "./modules/payment-batches";
 import { intermediariesRoute } from "./modules/intermediaries";
 import { loanRenewalsRoute } from "./modules/loan-renewals";
 import { loanSettlementRoutes } from "./modules/loan-settlement-routes";
 import { intermediatedDisbursementsRoute } from "./modules/intermediated-disbursements";
 import { createDefaultMcpHttpPlugin } from "./mcp/default";
 import { assistantChatRoute } from "./modules/assistant-chat";
+import { paymentRestoresRoute } from "./modules/payment-restores";
 
 const isProd = process.env.NODE_ENV === "production";
 const corsOrigins = (process.env.CORS_ORIGINS || "")
@@ -59,6 +60,8 @@ const app = new Elysia()
             .use(transactionsRoute)
             .use(paymentIntakesRoute)
             .use(paymentBatchesRoute)
+            .use(paymentBatchStagingRoute)
+            .use(paymentRestoresRoute)
             .use(paymentBatchCancelRoute)
             .use(intermediariesRoute)
             .use(intermediatedDisbursementsRoute)

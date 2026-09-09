@@ -1438,7 +1438,8 @@ describe("default MCP adapter integration", () => {
         })).data;
         const batchItemPublicId = String((batchItem.items as Array<{ publicId: string }>)[0]!.publicId);
         await call("payment.batch.capture", {
-            borrowerPublicId,
+            // Upload/capture-only smoke drafts remain unresolved. Assigning the
+            // posting fixture's borrower would correctly block its later money.
             idempotencyKey: "mcp-all-tools-batch-capture",
             items: [{
                 clientItemKey: "capture-1", amount: "2.00", receivedAt: "2026-08-10T00:00:00.000Z",
@@ -1451,7 +1452,7 @@ describe("default MCP adapter integration", () => {
             idempotencyKey: "mcp-all-tools-many-intake",
         })).data;
         const manyBatch = (await call("payment.batch.create", {
-            borrowerPublicId, idempotencyKey: "mcp-all-tools-many-batch",
+            idempotencyKey: "mcp-all-tools-many-batch",
         })).data;
         const manyBatchItem = (await call("payment.batch.item.add", {
             batchPublicId: manyBatch.publicId, paymentIntakePublicId: manyIntake.publicId, itemOrder: 1,
