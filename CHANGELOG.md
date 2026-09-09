@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.7 - 2026-09-09
+
+### Changed
+- Documented the approved central MCP error-diagnostics design with actionable public errors, safe persisted failure breadcrumbs, 30-day retention, and authorized read-only investigation tools, and added implementation tracking to the project TODO.
+
 ## v0.4.6 - 2026-09-09
 
 ### Changed
