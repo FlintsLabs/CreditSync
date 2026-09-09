@@ -15,7 +15,7 @@ import { auditLogsRoute } from "./modules/audit-logs";
 import { dashboardRoute } from "./modules/dashboard";
 import { reconciliationRoute } from "./modules/reconciliation";
 import { paymentIntakesRoute } from "./modules/payment-intakes";
-import { paymentBatchesRoute, paymentBatchCancelRoute, paymentBatchStagingEditRoute, paymentBatchStagingRoute } from "./modules/payment-batches";
+import { paymentBatchesRoute, paymentBatchCancelRoute, paymentBatchDecisionRoute, paymentBatchStagingEditRoute, paymentBatchStagingRoute } from "./modules/payment-batches";
 import { intermediariesRoute } from "./modules/intermediaries";
 import { loanRenewalsRoute } from "./modules/loan-renewals";
 import { loanSettlementRoutes } from "./modules/loan-settlement-routes";
@@ -62,6 +62,7 @@ const app = new Elysia()
             .use(paymentBatchesRoute)
             .use(paymentBatchStagingRoute)
             .use(paymentBatchStagingEditRoute)
+            .use(paymentBatchDecisionRoute)
             .use(paymentRestoresRoute)
             .use(paymentBatchCancelRoute)
             .use(intermediariesRoute)

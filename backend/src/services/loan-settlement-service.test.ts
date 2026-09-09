@@ -15,6 +15,7 @@ import {
     loanInterestRatePreviews,
     loans,
     loanSettlementPreviews,
+    paymentIntakes,
     transactions,
     users,
 } from "../db/schema";
@@ -857,6 +858,25 @@ describe("loan settlement service", () => {
             requestId: "req-settlement-execute-once",
             correlationId: "corr-settlement-execute-once",
         })]);
+    });
+
+    integrationTest("replays a committed settlement before a newly discovered pending payment guard", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-replay-authority" });
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-15");
+        const executeContext = context(seeded.actor, "settlement-replay-authority");
+        const input = { settlementPublicId: preview.publicId, previewHash: preview.previewHash, confirmed: true as const, reason: "stable settlement replay" };
+        const first = await executeLoanSettlement(executeContext, input);
+        await db.insert(paymentIntakes).values({
+            tenantId: seeded.actor.tenantId,
+            ownerUserId: seeded.actor.id,
+            originLoanId: seeded.loan.id,
+            amount: "10.00",
+            receivedAt: new Date("2026-08-10T03:00:00.000Z"),
+            status: "draft",
+            createdByUserId: seeded.actor.id,
+        });
+        await expect(executeLoanSettlement(executeContext, input)).resolves.toEqual(first);
+        expect(await db.select().from(transactions).where(eq(transactions.loanId, seeded.loan.id))).toHaveLength(1);
     });
 
     integrationTest("waits on the borrower lock before acquiring settlement loan locks", async () => {

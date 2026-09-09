@@ -475,7 +475,6 @@ export async function executeLoanSettlement(ctx: CommandContext, input: ExecuteL
         const settlement = locked.settlement;
         const loan = locked.loan;
         if (loan.borrowerId !== accessible.loan.borrowerId) return { stale: true as const };
-        await assertNoOlderPendingPayment(tx, ctx.tenantId, loan.borrowerId, new Date(`${settlement.asOfDate}T23:59:59.999+07:00`), []);
         if (settlement.status === "executed") {
             if (settlement.executeIdempotencyKey === idempotencyKey) {
                 const replay = await presentExecution(tx, ctx, settlement, loan);
@@ -483,6 +482,7 @@ export async function executeLoanSettlement(ctx: CommandContext, input: ExecuteL
             }
             throw new DomainError("SETTLEMENT_ALREADY_EXECUTED", "Loan settlement has already been executed", 409);
         }
+        await assertNoOlderPendingPayment(tx, ctx.tenantId, loan.borrowerId, new Date(`${settlement.asOfDate}T23:59:59.999+07:00`), []);
         const executedAt = new Date();
         if (settlement.status !== "ready"
             || settlement.expiresAt.getTime() <= executedAt.getTime()

@@ -146,7 +146,7 @@ import {
     type CreatePaymentAttributionInput,
 } from "../services/payment-attribution-service";
 import { backfillPostedRestoreSchedule, createPaymentRestoreDraft, executePaymentReconciliation, markPaymentReconciliationReview, preflightPaymentExecution, previewPaymentReconciliation, previewPaymentRestore, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
-import { addPaymentBatchItem, capturePaymentBatch, createPaymentBatch, executePaymentBatch, finalizePaymentBatchEvidenceMany, getPaymentBatch, preparePaymentBatchEvidenceMany, previewPaymentBatch } from "../services/payment-batch-service";
+import { addPaymentBatchItem, cancelPaymentBatch, capturePaymentBatch, createPaymentBatch, decidePaymentBatch, editPaymentBatchStagingItem, executePaymentBatch, finalizePaymentBatchEvidenceMany, getPaymentBatch, getPaymentBatchWorkspace, preparePaymentBatchEvidenceMany, previewPaymentBatch, reviewPaymentBatchStagingItem, splitPaymentBatch } from "../services/payment-batch-service";
 import { executeUnfundedLoanCancellation, previewUnfundedLoanCancellation } from "../services/loan-cancellation-service";
 import { executePaymentAllocationCorrection, previewPaymentAllocationCorrection } from "../services/payment-allocation-correction-service";
 import { importChatGptPaymentEvidence, importChatGptSupplementEvidence, recordPaymentEvidenceSupplement } from "../services/chatgpt-file-evidence-service";
@@ -282,6 +282,12 @@ export function createDefaultMcpToolHandlers(
     "payment.batch.evidence.prepare": (ctx, input) => preparePaymentEvidence(ctx, asString(input, "paymentIntakePublicId"), { mimeType: input.mimeType as string, size: input.size as number, sha256: asString(input, "sha256"), evidenceType: input.evidenceType as "slip" | "qr" | undefined }, dependencies.evidenceGateway),
     "payment.batch.evidence.finalize": (ctx, input) => finalizePaymentEvidence(ctx, asString(input, "paymentIntakePublicId"), asString(input, "evidencePublicId"), dependencies.evidenceGateway),
     "payment.batch.get": (ctx, input) => getPaymentBatch(ctx, asString(input, "batchPublicId")),
+    "payment.batch.workspace": (ctx, input) => getPaymentBatchWorkspace(ctx, asString(input, "batchPublicId")),
+    "payment.batch.staging.review": (ctx, input) => reviewPaymentBatchStagingItem(ctx, input as any),
+    "payment.batch.staging.edit": (ctx, input) => editPaymentBatchStagingItem(ctx, input as any),
+    "payment.batch.split": (ctx, input) => splitPaymentBatch(ctx, asString(input, "batchPublicId"), input as any),
+    "payment.batch.decision": (ctx, input) => decidePaymentBatch(ctx, asString(input, "batchPublicId"), input as any),
+    "payment.batch.cancel": (ctx, input) => cancelPaymentBatch(ctx, asString(input, "batchPublicId"), input as any),
     "payment.batch.preview": (ctx, input) => previewPaymentBatch(ctx, asString(input, "batchPublicId"), { borrowerPublicId: asString(input, "borrowerPublicId"), allocations: input.allocations as any[] | undefined }),
     "payment.batch.execute": (ctx, input) => executePaymentBatch(ctx, asString(input, "batchPublicId"), { previewPublicId: asString(input, "previewPublicId"), previewHash: asString(input, "previewHash"), confirmationHash: asString(input, "confirmationHash"), confirmed: true, idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey") }),
     "payment.reconcile.preview": (ctx, input) => previewPaymentReconciliation(ctx, {

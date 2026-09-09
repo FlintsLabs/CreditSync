@@ -116,6 +116,28 @@ describe("CreditSync stateless MCP contract", () => {
         expect((result.structuredContent as any)?.error).toMatchObject({ code: "INVALID_TOOL_ARGUMENTS", correlationId: expect.any(String), suggestedAction: expect.any(String) });
         expect(handlerCalls).toBe(0);
     });
+
+    test("advertises closed batch staging workflow tools and rejects unknown split fields", async () => {
+        const baseUrl = await startServer({});
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const listed = await client.listTools();
+        expect(listed.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+            "payment.batch.workspace", "payment.batch.staging.review", "payment.batch.staging.edit",
+            "payment.batch.split", "payment.batch.decision", "payment.batch.cancel",
+        ]));
+        const result = await client.callTool({ name: "payment.batch.split", arguments: {
+            batchPublicId: BORROWER_ID,
+            selectedItemPublicIds: [INTAKE_ID],
+            expectedSourceRevision: 1,
+            idempotencyKey: "split-1",
+            reason: "synthetic split",
+            unexpected: true,
+        } });
+        expect(result.isError).toBe(true);
+        expect((result.structuredContent as any)?.error?.code).toBe("INVALID_TOOL_ARGUMENTS");
+        await client.close();
+    });
     // Break caught: frontend, backend parsing, REST, and MCP enforce different public-money lengths or round the shared maximum.
     test("keeps every public boundary on the 32-character unsigned money contract", async () => {
         const maximum = "99999999999999999999999999999.99";
@@ -927,6 +949,11 @@ describe("CreditSync stateless MCP contract", () => {
             "payment.batch.item.add",
             "payment.batch.evidence.prepare",
             "payment.batch.evidence.finalize",
+            "payment.batch.staging.review",
+            "payment.batch.staging.edit",
+            "payment.batch.split",
+            "payment.batch.decision",
+            "payment.batch.cancel",
             "payment.batch.preview",
             "payment.batch.execute",
             "payment.reconcile.preview",

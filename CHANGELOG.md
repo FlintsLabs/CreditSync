@@ -3,6 +3,7 @@
 ## v0.4.14 - 2026-09-09
 
 ### Added
+- Added revision-bound REST and direct-MCP contracts for resumable payment-batch workspace, staging review/edit, split, chronology decision, and cancellation workflows; the frozen plugin contract now advertises 122 tools while reusing the existing tenant-safe batch services.
 - Added revision-bound staging edits and atomic split/dependency APIs for unposted payment batches; edits synchronize draft intake fields, invalidate previews, and split moves existing staging/intake/evidence membership without duplicating financial records.
 - Added a tenant-scoped read-only payment-batch workspace endpoint (`GET /payment-batches/:id/workspace`) that resumes upload-first staging with revision, evidence readiness, review metadata, and public intake/item links without exposing raw evidence or storage details.
 - Added tenant-scoped upload-first payment-batch staging and review APIs, staging evidence intents, Bangkok chronology regressions, shared floating-accrual batch previews, borrower-ordered execute locks, and REST restore linkage. Final MCP/UI contract synchronization and full acceptance gates remain pending.
@@ -12,6 +13,7 @@
 - Kept the newly discovered renewal-panel regression portable under Vitest by replacing its Bun-only clock import with Vitest fake-timer controls.
 
 ### Fixed
+- Exact committed restructure and settlement retries now return their durable receipt before evaluating newly arrived pending-payment chronology; new executions retain the borrower-first chronology guard. Restructure reversal also validates the current replacement borrower before downstream loan locks.
 - Restructure and settlement preview/execute/reversal flows now acquire deterministic borrower locks before loan, proposal, intake, and schedule locks, re-read borrower state, and apply the shared older-pending chronology guard without changing financial formulas; added lock-barrier, stale ordinary-post, and exact replay regressions.
 - Renewal preview, execution, and reversal now acquire sorted borrower locks before loan/renewal locks, re-read borrower state after the boundary, and apply the shared older-pending chronology guard before renewal snapshots; added deterministic borrower-wait/NOWAIT and exact replay coverage without changing renewal accounting formulas.
 - Completed durable restore-backfill receipt and historical explicit reconciliation concurrency coverage: concurrent same-key backfills, including initial mutation and no-op replay, return one exact receipt; tenant/FK/immutability boundaries are enforced; non-restore execution waits for borrower locks before intake/loan locks, replays one exact result, and rejects a stale ordinary posting without compensation.

@@ -3,11 +3,13 @@
 ## v9.2.0 - 2026-09-09
 
 ### Added
+- Added the resumable payment-batch workspace, staging review/edit, split, chronology decision, and cancellation tools with revision-bound stale-state and idempotency guidance.
 - Added owner/manager-only `system.error-diagnostic.get` and `system.error-diagnostic.list` tools.
 - Added correlation IDs and suggested actions to the common MCP error envelope with operation-aware retry guidance.
 - Added executable diagnostic follow-up, bounded-list, authorization-denial, and no-bypass eval scenarios.
 
 ### Changed
+- Synchronized the frozen 122-tool contract with the backend's direct batch staging services; REST remains a separate authenticated Web surface and MCP does not call REST internally.
 - Hardened the synchronized diagnostic contract for bounded breadcrumb enums, redacted typed error details, and safe retry/terminal-stage guidance.
 - Synchronized the frozen 114-tool contract and diagnostic recovery guidance.
 

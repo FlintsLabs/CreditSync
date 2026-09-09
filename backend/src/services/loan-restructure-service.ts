@@ -549,11 +549,11 @@ export async function executeLoanRestructure(ctx: CommandContext, restructurePub
         await tx.execute(sql`SELECT id FROM loan_restructures WHERE tenant_id=${ctx.tenantId} AND id=${accessible.row.id} FOR UPDATE`);
         const { row, oldLoan } = await accessibleRestructure(ctx, restructurePublicId, tx);
         if (oldLoan.borrowerId !== accessible.oldLoan.borrowerId) return { stale: true as const };
-        await assertNoOlderPendingPayment(tx, ctx.tenantId, oldLoan.borrowerId, new Date(`${row.settlementDate}T23:59:59.999+07:00`), []);
         if (row.status === "executed") {
             if (row.executeIdempotencyKey === required.idempotencyKey && row.executeRequestHash === required.requestHash) return { value: await presentExecution(tx, row, oldLoan) };
             throw new DomainError("IDEMPOTENCY_KEY_CONFLICT", "Restructure was executed with a different key or payload", 409);
         }
+        await assertNoOlderPendingPayment(tx, ctx.tenantId, oldLoan.borrowerId, new Date(`${row.settlementDate}T23:59:59.999+07:00`), []);
         if (row.status !== "preview") throw new DomainError("RESTRUCTURE_NOT_EXECUTABLE", "Restructure preview is not executable", 409);
         if (row.expiresAt.getTime() <= Date.now() || row.previewHash !== input.previewHash || row.oldBalanceVersion !== input.expectedBalanceVersion) return { stale: true as const };
         const stored = row.requestedReplacementTerms as unknown as PreviewLoanRestructureInput & { currentVersion: string };
@@ -640,6 +640,8 @@ export async function reverseLoanRestructure(ctx: CommandContext, restructurePub
             throw new DomainError("REVERSAL_IDEMPOTENCY_CONFLICT", "Restructure reversal payload conflicts", 409);
         }
         if (row.status !== "executed" || !row.newLoanId || !row.preExecutionOldLoanState) throw new DomainError("RESTRUCTURE_NOT_REVERSIBLE", "Only executed restructures can be reversed", 409);
+        const currentNewLoan = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, row.newLoanId)) });
+        if (!currentNewLoan || !borrowerIds.includes(currentNewLoan.borrowerId)) throw new DomainError("STALE_RESTRUCTURE_PREVIEW", "Replacement borrower changed while acquiring reversal locks", 409);
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id=${ctx.tenantId} AND id IN (${oldLoan.id}, ${row.newLoanId}) ORDER BY id FOR UPDATE`);
         if (!borrowerIds.includes(oldLoan.borrowerId)) throw new DomainError("STALE_RESTRUCTURE_PREVIEW", "Old loan borrower changed while acquiring reversal locks", 409);
         const [paymentCount, postedDisbursements, laterWaivers, laterRestructures, laterRenewals, rateChanges] = await Promise.all([
