@@ -74,6 +74,20 @@ export function solvePaymentBatch(input: BatchSolveInput): BatchSolveResult {
     }
     if (warnings.length) return { status: "needs_review", allocations: [], candidates: [], warnings };
 
+    // A unique amount match is still unsafe when more than one accessible
+    // contract could receive this item. Count contracts before the subset
+    // search; allocation count would confuse multiple schedules on one loan
+    // with a choice between contracts.
+    const eligibleContractCounts = new Map<string, number>();
+    for (const slip of input.slips) {
+        const contracts = new Set(
+            obligations
+                .filter((item) => eligibleForSlip(item, slip))
+                .map((item) => item.loanPublicId),
+        );
+        eligibleContractCounts.set(slip.itemPublicId, contracts.size);
+    }
+
     let states = 0;
     let limited = false;
     const candidates: BatchCandidate[] = [];
@@ -121,7 +135,7 @@ export function solvePaymentBatch(input: BatchSolveInput): BatchSolveResult {
     visitSlips(0, new Set(), []);
     const resultWarnings = limited ? [{ code: "BATCH_SOLVER_LIMIT_REACHED", message: "The bounded solver reached its safety limit" }] : [];
     if (limited) return { status: "needs_review", allocations: [], candidates, warnings: resultWarnings };
-    const requiresHumanSelection = candidates.length === 1 && input.slips.some((slip) => candidates[0]!.allocations.filter((allocation) => allocation.itemPublicId === slip.itemPublicId).length > 1);
+    const requiresHumanSelection = candidates.length === 1 && input.slips.some((slip) => (eligibleContractCounts.get(slip.itemPublicId) ?? 0) > 1);
     if (candidates.length === 1 && !requiresHumanSelection) return { status: "ready", allocations: candidates[0]!.allocations, candidates, warnings: resultWarnings };
     return { status: "needs_review", allocations: [], candidates, warnings: candidates.length ? resultWarnings : [{ code: "NO_EXACT_ALLOCATION", message: "No exact allocation covers every slip" }] };
 }

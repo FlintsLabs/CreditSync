@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db, type DbExecutor } from "../db";
-import { borrowers, files, loans, paymentBatchAllocations, paymentBatchDecisions, paymentBatchDependencies, paymentBatchItems, paymentBatchOperationReceipts, paymentBatchPreviews, paymentBatches, paymentBatchStagingEvidence, paymentBatchStagingItems, paymentEvidence, paymentIntakes, loanSchedules } from "../db/schema";
+import { borrowers, files, loans, paymentBatchAllocations, paymentBatchDecisions, paymentBatchDependencies, paymentBatchItems, paymentBatchOperationReceipts, paymentBatchPreviews, paymentBatches, paymentBatchStagingEvidence, paymentBatchStagingItems, paymentEvidence, paymentIntakes, paymentMatchProposals, loanSchedules } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import { canAccessTenantWideData } from "../lib/access";
 import { parseMoney, serializeMoney } from "../lib/money";
@@ -178,7 +178,9 @@ async function inspectBatchChronology(
             ? borrower.id
             : otherMappedLoans.find((loan) => loan.publicId === staging?.reviewedMapping?.loanPublicId)?.borrowerId;
         const ownerBatch = otherBatches.find((candidate) => candidate.id === item.batchId);
-        const resolvedBorrowerId = mappedBorrowerId ?? ownerBatch?.borrowerId;
+        const resolvedBorrowerId = staging
+            ? (staging.reviewedMapping ? mappedBorrowerId : staging.paymentIntakeId === null ? ownerBatch?.borrowerId : undefined)
+            : ownerBatch?.borrowerId;
         return intake && resolvedBorrowerId === borrower.id ? [{ itemId: item.publicId, borrowerId: borrower.publicId, receivedAt: intake.receivedAt.toISOString(), status: intake.status }] : [];
     }), ...standalone.map(({ intake }) => ({ itemId: intake.publicId, borrowerId: borrower.publicId, receivedAt: intake.receivedAt?.toISOString() ?? null, status: intake.status }))];
     const incoming: ChronologyItem[] = currentItems.flatMap((item) => {
@@ -442,6 +444,7 @@ export async function editPaymentBatchStagingItem(ctx: CommandContext, input: Ed
         const updated = await tx.update(paymentBatchStagingItems).set({ ...(amount !== undefined ? { amount } : {}), ...(receivedAt ? { receivedAt } : {}), reviewedMapping: nextMapping, revision: staging.revision + 1, updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(eq(paymentBatchStagingItems.tenantId, ctx.tenantId), eq(paymentBatchStagingItems.id, staging.id), eq(paymentBatchStagingItems.revision, input.expectedRevision))).returning().then((rows) => rows[0]);
         if (!updated) throw new DomainError("STAGING_REVISION_STALE", "Staging item revision is stale", 409);
         await tx.update(paymentBatchPreviews).set({ status: "stale" }).where(and(eq(paymentBatchPreviews.tenantId, ctx.tenantId), eq(paymentBatchPreviews.batchId, batch.id), inArray(paymentBatchPreviews.status, ["ready", "needs_review"])));
+        if (staging.paymentIntakeId) await tx.update(paymentMatchProposals).set({ status: "stale", updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(eq(paymentMatchProposals.tenantId, ctx.tenantId), eq(paymentMatchProposals.paymentIntakeId, staging.paymentIntakeId), inArray(paymentMatchProposals.status, ["draft", "ready", "needs_review"])));
         await tx.update(paymentBatches).set({ status: "needs_review", version: batch.version + 1, confirmationHash: null, stateHash: digest({ batchPublicId: batch.publicId, revision: updated.revision }), updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(eq(paymentBatches.id, batch.id));
         return recordOperation(tx, ctx, batch, staging.id, "staging.edit", input.idempotencyKey.trim(), requestHash, { stagingItemPublicId: updated.publicId, status: updated.status, revision: updated.revision });
     });

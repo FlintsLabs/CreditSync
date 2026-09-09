@@ -32,14 +32,14 @@ test("finds materially distinct exact combinations without selecting an ambiguou
 
 test("solves multiple slips jointly and never consumes one schedule twice", () => {
     const result = solvePaymentBatch({
-        obligations: [obligation("s-30", "30.00", "2026-08-20"), obligation("s-20", "20.00", "2026-08-21"), obligation("s-10", "10.00", "2026-08-22")],
+        obligations: [obligation("s-30", "30.00", "2026-08-20", "loan-shared"), obligation("s-20", "20.00", "2026-08-21", "loan-shared"), obligation("s-10", "10.00", "2026-08-22", "loan-shared")],
         slips: [slip("item-1", "30.00"), slip("item-2", "20.00")],
     });
 
     expect(result.status).toBe("ready");
     expect(result.allocations).toEqual([
-        { itemPublicId: "item-1", schedulePublicId: "s-30", loanPublicId: "loan-s-30", amount: "30.00", targetDueDate: "2026-08-20", intent: "on_time", matchSource: "unique_exact" },
-        { itemPublicId: "item-2", schedulePublicId: "s-20", loanPublicId: "loan-s-20", amount: "20.00", targetDueDate: "2026-08-21", intent: "on_time", matchSource: "unique_exact" },
+        { itemPublicId: "item-1", schedulePublicId: "s-30", loanPublicId: "loan-shared", amount: "30.00", targetDueDate: "2026-08-20", intent: "on_time", matchSource: "unique_exact" },
+        { itemPublicId: "item-2", schedulePublicId: "s-20", loanPublicId: "loan-shared", amount: "20.00", targetDueDate: "2026-08-21", intent: "on_time", matchSource: "unique_exact" },
     ]);
 });
 
@@ -54,6 +54,16 @@ test("keeps a unique multi-contract sum as a human selection candidate", () => {
     const result = solvePaymentBatch({
         obligations: [obligation("s-75", "75.00", "2026-08-20"), obligation("s-45", "45.00", "2026-08-21")],
         slips: [slip("item-120", "120.00", "2026-08-23T03:00:00.000Z")],
+    });
+    expect(result.candidates).toHaveLength(1);
+    expect(result.status).toBe("needs_review");
+    expect(result.allocations).toEqual([]);
+});
+
+test("does not auto-select one exact amount while another eligible contract is available", () => {
+    const result = solvePaymentBatch({
+        obligations: [obligation("s-120", "120.00", "2026-08-20", "loan-120"), obligation("s-80", "80.00", "2026-08-20", "loan-80")],
+        slips: [slip("item-120-candidate", "120.00")],
     });
     expect(result.candidates).toHaveLength(1);
     expect(result.status).toBe("needs_review");

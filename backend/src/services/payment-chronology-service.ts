@@ -49,7 +49,11 @@ export async function assertNoOlderPendingPayment(tx: DbExecutor, tenantId: stri
                   AND b.status NOT IN ('posted', 'cancelled')
                   AND a.preview_id = (SELECT p.id FROM payment_batch_previews p WHERE p.tenant_id = bi.tenant_id AND p.batch_id = bi.batch_id ORDER BY p.version DESC LIMIT 1))
             OR EXISTS (SELECT 1 FROM payment_batch_items bi JOIN payment_batches b ON b.tenant_id = bi.tenant_id AND b.id = bi.batch_id WHERE bi.tenant_id = i.tenant_id AND bi.payment_intake_id = i.id AND b.borrower_id = ${borrowerId} AND b.status NOT IN ('posted', 'cancelled'))
-          ) LIMIT 1`);
+          )
+          AND NOT EXISTS (SELECT 1 FROM payment_batch_staging_items current_stage
+              WHERE current_stage.tenant_id = i.tenant_id AND current_stage.payment_intake_id = i.id
+                AND current_stage.status = 'validated')
+          LIMIT 1`);
     const stagedExcluded = excludedIntakeIds.length ? sql`AND (si.payment_intake_id IS NULL OR si.payment_intake_id NOT IN (${sql.join(excludedIntakeIds.map((id) => sql`${id}`), sql`, `)}))` : sql``;
     const stagedPending = await tx.execute(sql`SELECT si.public_id FROM payment_batch_staging_items si
         JOIN payment_batches b ON b.tenant_id = si.tenant_id AND b.id = si.batch_id
