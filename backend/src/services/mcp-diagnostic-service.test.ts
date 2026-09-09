@@ -13,6 +13,19 @@ const snapshot: McpDiagnosticSnapshot = Object.freeze({
 });
 
 describe("MCP diagnostic persistence safety", () => {
+    test("persists a diagnostic through the actual dedicated pool", async () => {
+        const correlationId = crypto.randomUUID();
+        const logs: Record<string, unknown>[] = [];
+        await persistMcpDiagnosticBestEffort({
+            ctx: { ...ctx, correlationId }, toolName: "borrower.search",
+            publicError: { code: "INTERNAL_ERROR", message: "safe", suggestedAction: "inspect", retryable: true, reviewRequired: false, details: {}, correlationId },
+            classification: { category: "internal", failureClass: "unknown", terminalStage: "handler", upstreamStatus: null, retryable: true, reviewRequired: false },
+            snapshot, logger: (entry) => logs.push(entry),
+        });
+        expect(logs).toEqual([]);
+        const rows = await db.select().from(mcpDiagnosticEvents).where(eq(mcpDiagnosticEvents.correlationId, correlationId));
+        expect(rows).toHaveLength(1);
+    });
     test("redacts injected breadcrumb metadata before persistence", async () => {
         let values: Record<string, unknown> | undefined;
         const executor = { insert: () => ({ values: (input: Record<string, unknown>) => { values = input; return Promise.resolve([]); } }) } as any;

@@ -2,6 +2,9 @@
 
 ## v0.4.11 - 2026-09-09
 
+### Fixed
+- Verified actual diagnostic-pool persistence and corrected parameterized SQL execution, timestamp binding, and JSONB serialization; configured server-side timeouts at connection startup and added a real insertion regression.
+
 ### Added
 - Added follow-up hardening for enum-validated diagnostic breadcrumbs, safe typed error details, latest-boundary reporting, and resource-bounded PostgreSQL persistence with lock and statement timeouts.
 - Added tenant-scoped append-only MCP diagnostic event storage with bounded breadcrumbs and 30-day retention indexes.

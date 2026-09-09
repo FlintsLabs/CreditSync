@@ -15,6 +15,7 @@ const maxWaitMs = 500;
 const queryTimeoutMs = 450;
 const diagnosticPool = postgres(process.env.DATABASE_URL || "postgres://user:password@localhost:5432/creditsync", {
     max: 2, connect_timeout: 0.2, idle_timeout: 5, max_lifetime: 30, prepare: false,
+    connection: { statement_timeout: 450, lock_timeout: 100 },
 });
 let diagnosticInFlight = 0;
 
@@ -70,7 +71,7 @@ function sanitizeBreadcrumbs(value: readonly McpDiagnosticBreadcrumb[]): McpDiag
 
 async function insertWithDiagnosticPool(input: { input: Parameters<typeof persistMcpDiagnosticBestEffort>[0]; breadcrumbs: McpDiagnosticBreadcrumb[]; occurredAt: Date; expiresAt: Date; onQuery: (query: { cancel: () => void }) => void }) {
     const { input: value, breadcrumbs, occurredAt, expiresAt } = input;
-    const query = diagnosticPool`SET statement_timeout = '450ms'; SET lock_timeout = '100ms'; INSERT INTO mcp_diagnostic_events (tenant_id, tool_name, request_id, correlation_id, category, failure_class, error_code, terminal_stage, retryable, review_required, upstream_status, duration_ms, breadcrumbs, occurred_at, expires_at) VALUES (${value.ctx.tenantId}, ${value.toolName}, ${value.ctx.requestId}, ${value.ctx.correlationId}, ${value.classification.category}, ${value.classification.failureClass}, ${value.publicError.code}, ${value.classification.terminalStage}, ${value.classification.retryable}, ${value.classification.reviewRequired}, ${value.classification.upstreamStatus}, ${value.snapshot.durationMs}, ${JSON.stringify(breadcrumbs)}, ${occurredAt}, ${expiresAt})`;
+    const query = diagnosticPool`INSERT INTO mcp_diagnostic_events (tenant_id, tool_name, request_id, correlation_id, category, failure_class, error_code, terminal_stage, retryable, review_required, upstream_status, duration_ms, breadcrumbs, occurred_at, expires_at) VALUES (${value.ctx.tenantId}, ${value.toolName}, ${value.ctx.requestId}, ${value.ctx.correlationId}, ${value.classification.category}, ${value.classification.failureClass}, ${value.publicError.code}, ${value.classification.terminalStage}, ${value.classification.retryable}, ${value.classification.reviewRequired}, ${value.classification.upstreamStatus}, ${value.snapshot.durationMs}, ${diagnosticPool.json(breadcrumbs)}, ${occurredAt.toISOString()}, ${expiresAt.toISOString()})`;
     input.onQuery(query);
     await query;
 }
