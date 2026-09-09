@@ -2,16 +2,29 @@
 set -euo pipefail
 
 container_name="creditsync-test-postgres-$$"
+volume_name=""
 database_name="creditsync_disbursement_test"
 database_user="creditsync_test"
 database_password="creditsync_test"
 
 cleanup() {
-  docker rm --force "$container_name" >/dev/null 2>&1 || true
+  # The volume is created by this invocation and its generated name is retained
+  # explicitly. This remains safe when docker run or postgres startup fails.
+  docker rm --force --volumes "$container_name" >/dev/null 2>&1 || true
+  if [ -n "$volume_name" ]; then
+    docker volume rm "$volume_name" >/dev/null 2>&1 || true
+  fi
 }
 trap cleanup EXIT
 
+volume_name="$(docker volume create \
+  --label "creditsync.test=disposable-postgres" \
+  --label "creditsync.test.container=$container_name")"
+
 docker run --detach --rm --name "$container_name" \
+  --volume "$volume_name:/var/lib/postgresql" \
+  --label "creditsync.test=disposable-postgres" \
+  --label "creditsync.test.container=$container_name" \
   --env "POSTGRES_DB=$database_name" \
   --env "POSTGRES_USER=$database_user" \
   --env "POSTGRES_PASSWORD=$database_password" \
