@@ -1131,7 +1131,52 @@ describe("default MCP adapter integration", () => {
     });
 
     // Break caught: a frozen tool delegates to the wrong shared service or its real presenter violates the advertised schema.
-    integrationTest("successfully calls every frozen tool through the real default service adapter", async () => {
+    integrationTest("runs the resumable staging workflow through real MCP handlers and strict public outputs", async () => {
+        const actor = await db.insert(users).values({ tenantId: TENANT_ID, email: ACTOR_EMAIL, role: "owner" }).returning().then((rows) => rows[0]!);
+        const ctx: CommandContext = { tenantId: TENANT_ID, actorUserId: actor.id, actorSource: "mcp", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID() };
+        const borrower = await createBorrower(ctx, { name: "MCP staged workflow borrower" });
+        const draft = await createLoanDraft(ctx, { borrowerPublicId: borrower.publicId, principal: "75.00", interestRate: "0.00", repaymentType: "daily", termMonths: 1, startDate: "2026-08-09", totalInstallments: 1, installmentAmount: "75.00" });
+        await activateLoan({ ...ctx, idempotencyKey: `mcp-stage-activate-${crypto.randomUUID()}` }, draft.publicId);
+        const activated = (await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) }))!;
+        const preparedHeads = new Map<string, Awaited<ReturnType<EvidenceStorageGateway["head"]>>>();
+        const gateway: EvidenceStorageGateway = {
+            preparePut: async (request) => {
+                preparedHeads.set(request.key, { exists: true, contentType: request.contentType, contentLength: request.contentLength, checksumSha256: request.checksumSha256, metadata: request.metadata });
+                return { uploadUrl: `https://upload.example.test/${encodeURIComponent(request.key)}`, expiresAt: new Date(Date.now() + 5 * 60_000), requiredHeaders: {} };
+            },
+            head: async (key) => preparedHeads.get(key) ?? { exists: false, contentType: null, contentLength: null, checksumSha256: null, metadata: {} },
+        };
+        const { client } = await startDefaultServer({ evidenceGateway: gateway });
+        const call = async (name: McpToolName, args: Record<string, unknown>) => resultData(await client.callTool({ name, arguments: args }));
+        const staged = await call("payment.batch.stage", { idempotencyKey: `mcp-stage-${crypto.randomUUID()}`, borrowerPublicId: borrower.publicId, items: [{ clientItemKey: "staged-1", payerName: "reviewed payer", bankReference: "synthetic-ref" }] });
+        expectWriteAuditMetadata(staged.data);
+        const stagingPublicId = String((staged.data.items as Array<{ publicId: string }>)[0]!.publicId);
+        const workspace = await call("payment.batch.workspace", { batchPublicId: staged.data.batchPublicId });
+        expect(workspace.data.items).toHaveLength(1);
+        const evidence = await call("payment.batch.staging.evidence.prepare", { stagingItemPublicId: stagingPublicId, mimeType: "image/png", size: 4, sha256: "a".repeat(64) });
+        expectWriteAuditMetadata(evidence.data);
+        await call("payment.batch.staging.evidence.finalize", { stagingItemPublicId: stagingPublicId, evidencePublicId: evidence.data.evidencePublicId });
+        const reviewed = await call("payment.batch.staging.review", { stagingItemPublicId: stagingPublicId, amount: "75.00", receivedAt: "2026-08-10T00:00:00.000Z", intakeIdempotencyKey: `mcp-stage-intake-${crypto.randomUUID()}` });
+        expectWriteAuditMetadata(reviewed.data);
+        const reviewedSchedule = await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.loanId, activated.id) });
+        expect(reviewedSchedule).not.toBeNull();
+        const allocation = { itemPublicId: reviewed.data.batchItemPublicId, borrowerPublicId: borrower.publicId, loanPublicId: activated.publicId, schedulePublicId: reviewedSchedule!.publicId, amount: "75.00", targetDueDate: reviewedSchedule!.dueDate, intent: "on_time" };
+        const preview = await call("payment.batch.preview", { batchPublicId: staged.data.batchPublicId, borrowerPublicId: borrower.publicId, allocations: [allocation] });
+        const decision = await call("payment.batch.decision", { batchPublicId: staged.data.batchPublicId, previewPublicId: preview.data.publicId, previewHash: preview.data.previewHash, revision: preview.data.version, action: "confirm_no_older_pending", reason: "synthetic chronology review", fromDate: "2026-08-10", toDate: "2026-08-10", idempotencyKey: `mcp-stage-decision-${crypto.randomUUID()}` });
+        expectWriteAuditMetadata(decision.data);
+        const finalPreview = await call("payment.batch.preview", { batchPublicId: staged.data.batchPublicId, borrowerPublicId: borrower.publicId, decisionPublicId: decision.data.decisionPublicId, allocations: [allocation] });
+        const previewWorkspace = await call("payment.batch.workspace", { batchPublicId: staged.data.batchPublicId });
+        expect((previewWorkspace.data as { batch: { latestPreview: unknown } }).batch.latestPreview).toMatchObject({ id: finalPreview.data.publicId, previewHash: finalPreview.data.previewHash });
+        const executeKey = `mcp-stage-execute-${crypto.randomUUID()}`;
+        const executed = await call("payment.batch.execute", { batchPublicId: staged.data.batchPublicId, previewPublicId: finalPreview.data.publicId, previewHash: finalPreview.data.previewHash, confirmationHash: finalPreview.data.confirmationHash, confirmed: true, idempotencyKey: executeKey });
+        expect(executed.correlationId).toMatch(UUID_PATTERN);
+        expect(executed.auditPublicIds).toEqual(expect.arrayContaining([expect.stringMatching(UUID_PATTERN)]));
+        const replay = await call("payment.batch.execute", { batchPublicId: staged.data.batchPublicId, previewPublicId: finalPreview.data.publicId, previewHash: finalPreview.data.previewHash, confirmationHash: finalPreview.data.confirmationHash, confirmed: true, idempotencyKey: executeKey });
+        expect(replay.data).toEqual(executed.data);
+        await client.close();
+    });
+
+    integrationTest("successfully calls the established frozen tools through the real default service adapter", async () => {
         const actor = await db.insert(users).values({
             tenantId: TENANT_ID,
             email: ACTOR_EMAIL,
@@ -1909,11 +1954,16 @@ describe("default MCP adapter integration", () => {
             limit: 10,
         });
 
-        expect([...new Set(called)].sort()).toEqual([...MCP_TOOL_NAMES].sort());
-        expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length);
+        const resumableBatchTools = new Set<McpToolName>([
+            "payment.batch.stage", "payment.batch.staging.evidence.prepare", "payment.batch.staging.evidence.finalize",
+            "payment.batch.workspace", "payment.batch.staging.review", "payment.batch.staging.edit",
+            "payment.batch.split", "payment.batch.decision", "payment.batch.cancel",
+        ]);
+        expect([...new Set(called)].sort()).toEqual(MCP_TOOL_NAMES.filter((name) => !resumableBatchTools.has(name)).sort());
+        expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length - resumableBatchTools.size);
         expect(called.filter((name) => name === "intermediary.disbursement.event.create")).toHaveLength(2);
         expect(called.filter((name) => name === "loan.restructure.execute")).toHaveLength(2);
-        expect(called).toHaveLength(MCP_TOOL_NAMES.length + 10);
+        expect(called).toHaveLength(MCP_TOOL_NAMES.length - resumableBatchTools.size + 10);
 
         await client.close();
     }, 10_000);

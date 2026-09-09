@@ -3,6 +3,7 @@
 ## v0.4.14 - 2026-09-09
 
 ### Added
+- Added the complete resumable payment-batch REST/MCP contract, including staging creation and evidence prepare/finalize, borrower-aware floating allocations, decision binding, strict public outputs, and plugin 9.3.0 contract synchronization at 125 tools.
 - Added revision-bound REST and direct-MCP contracts for resumable payment-batch workspace, staging review/edit, split, chronology decision, and cancellation workflows; the frozen plugin contract now advertises 122 tools while reusing the existing tenant-safe batch services.
 - Added revision-bound staging edits and atomic split/dependency APIs for unposted payment batches; edits synchronize draft intake fields, invalidate previews, and split moves existing staging/intake/evidence membership without duplicating financial records.
 - Added a tenant-scoped read-only payment-batch workspace endpoint (`GET /payment-batches/:id/workspace`) that resumes upload-first staging with revision, evidence readiness, review metadata, and public intake/item links without exposing raw evidence or storage details.

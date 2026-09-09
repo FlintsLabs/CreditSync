@@ -1767,6 +1767,25 @@
         "payment.batch.execute"
       ],
       "humanBoundary": "Changed semantics require a fresh preview and confirmation."
+    },
+    {
+      "id": "payment-batch-resumable-staging",
+      "kind": "positive",
+      "skill": "reconcile-payments",
+      "prompt": "Resume an upload-first batch, review one staged slip, preview an explicit borrower-aware allocation, record chronology decision, and execute the latest confirmed result.",
+      "expectedCalls": [
+        "payment.batch.stage",
+        "payment.batch.workspace",
+        "payment.batch.staging.evidence.prepare",
+        "payment.batch.staging.evidence.finalize",
+        "payment.batch.staging.review",
+        "payment.batch.preview",
+        "payment.batch.decision",
+        "payment.batch.preview",
+        "payment.batch.execute"
+      ],
+      "forbiddenCalls": [],
+      "humanBoundary": "Evidence, review, chronology decision, and fresh confirmation are required before posting; MCP returns backend results without agent-side accounting."
     }
   ]
 }
