@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.4.33 - 2026-09-10
+
+### Fixed
+
+- Record the final Task 7 full verification after validating the application Tesseract.js runtime and worker failure cleanup.
+
+## v0.4.32 - 2026-09-10
+
+### Fixed
+
+- Verify the application Tesseract.js/WASM OCR runtime with a synthetic image and close the worker on recognition failures without persisting raw OCR text.
+
 ## v0.4.31 - 2026-09-10
 
 ### Fixed
