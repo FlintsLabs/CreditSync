@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.30 - 2026-09-10
+
+### Fixed
+
+- Completed the Task 7 verification rerun after excluding signed reversal allocations from active temporal-reflow sources; recorded the full backend, frontend, typecheck, and plugin gate evidence with absolute log paths.
+
 ## v0.4.29 - 2026-09-10
 
 ### Fixed
