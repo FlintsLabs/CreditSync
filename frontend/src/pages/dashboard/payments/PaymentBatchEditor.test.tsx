@@ -66,7 +66,7 @@ test("requires explicit contract selection after named borrower selection", asyn
     const file = new File(["synthetic"], "slip.png", { type: "image/png" }); fireEvent.change(screen.getByLabelText("Choose payment slips"), { target: { files: [file] } });
     fireEvent.change(screen.getAllByRole("textbox")[0], { target: { value: "Nok" } }); fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "120.00" } }); fireEvent.change(screen.getByLabelText("Transfer date and time"), { target: { value: "2026-09-10T00:30" } }); fireEvent.change(screen.getByLabelText("Target due date"), { target: { value: "2026-09-10" } });
     fireEvent.click(screen.getByRole("button", { name: "Upload and review" })); await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith("/payment-batches/stage", expect.anything()));
-    fireEvent.click(screen.getByRole("button", { name: /all slips uploaded and reviewed/i })); await waitFor(() => expect(screen.getByText(/candidate data ready|human review required/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("button", { name: /all slips uploaded and reviewed/i })).not.toHaveAttribute("disabled")); fireEvent.click(screen.getByRole("button", { name: /all slips uploaded and reviewed/i })); await waitFor(() => expect(screen.getByText(/candidate data ready|human review required/i)).toBeTruthy());
     fireEvent.change(screen.getByRole("combobox", { name: "Borrower candidate" }), { target: { value: "00000000-0000-4000-8000-000000000006" } });
     expect(screen.getByRole("button", { name: "Preview complete batch" }).hasAttribute("disabled")).toBe(true);
 });
