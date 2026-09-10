@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.35 - 2026-09-10
+
+### Added
+
+- Added disposable legacy-reflow coverage for two floating loans with multiple later transactions, exact `75.00` plus `45.00` conservation, concurrent replay, and stale-state rejection.
+- Added a synthetic local-tenant Playwright acceptance harness with screenshots for upload, manual OCR review, chronology preview, explicit confirmation, and receipt; OCR/API are explicitly mocked and no financial data is used.
+
+### Changed
+
+- Documented the isolated browser acceptance command and its boundary between UI evidence, backend financial tests, and OCR runtime checks.
+
 ## v0.4.34 - 2026-09-10
 
 ### Added

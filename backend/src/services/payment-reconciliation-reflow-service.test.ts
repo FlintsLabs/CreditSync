@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import Decimal from "decimal.js";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { auditLogs, borrowers, floatingTransactionAllocations, loans, paymentEvidence, paymentIntakes, paymentReconciliationEntries, paymentReconciliationGroups, paymentReconciliationProposals, paymentReconciliationReflowEntries, paymentReconciliationReflowGroups, paymentReconciliationReflowProposals, transactions, users } from "../db/schema";
@@ -30,6 +31,41 @@ async function legacyFixture() {
     const reconciliation = await db.insert(paymentReconciliationGroups).values({ tenantId, proposalId: proposal.id, paymentIntakeId: sourceRow!.id, postedIntakeId: sourceRow!.id, reason: proposal.reason, idempotencyKey: `legacy-${crypto.randomUUID()}`, correlationId: ctx.correlationId, auditPublicId: audit.publicId, createdByUserId: actor.id }).returning().then((rows) => rows[0]!);
     await db.insert(paymentReconciliationEntries).values({ tenantId, groupId: reconciliation.id, entryType: "replacement", component: "interest", amount: "10.00", interestComponent: "10.00", principalComponent: "0.00", feeComponent: "0.00", penaltyComponent: "0.00", sourceTransactionId: laterTransaction!.id, transactionId: laterTransaction!.id, loanId: laterTransaction!.loanId, scheduleId: null, reason: proposal.reason, auditPublicId: audit.publicId, createdByUserId: actor.id });
     return { tenantId, ctx, reconciliation, laterTransaction: laterTransaction!, source };
+}
+
+async function legacyTwoLoanFixture() {
+    const tenantId = `legacy-reflow-two-loans-${crypto.randomUUID()}`;
+    const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+    const ctx: CommandContext = { tenantId, actorUserId: actor.id, actorSource: "web", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() };
+    const borrower = await createBorrower(ctx, { name: "Legacy Repair Two Loan Borrower" });
+    const createFloating = async (key: string) => {
+        const loanCtx = { ...ctx, requestId: crypto.randomUUID(), idempotencyKey: `${key}-${crypto.randomUUID()}` };
+        const draft = await createLoanDraft(loanCtx, { borrowerPublicId: borrower.publicId, principal: "10000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1, startDate: "2026-08-06", floatingDailyInterest: { mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day" } });
+        await activateLoan(loanCtx, draft.publicId);
+        return draft;
+    };
+    const loanA = await createFloating("loan-a");
+    const loanB = await createFloating("loan-b");
+    const postLater = async (amount: string, loanPublicId: string, key: string) => {
+        const later = await createPaymentIntake({ ...ctx, requestId: crypto.randomUUID(), idempotencyKey: `${key}-${crypto.randomUUID()}` }, { amount, receivedAt: key.endsWith("-1") ? "2026-08-20T05:00:00.000Z" : "2026-08-21T05:00:00.000Z", payerName: borrower.name });
+        const proposal = await previewPaymentMatch(ctx, later.publicId, { allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId, amount }] });
+        await postPayment(ctx, later.publicId, { proposalPublicId: proposal.publicId });
+        const intake = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, later.publicId) });
+        return (await db.query.transactions.findFirst({ where: and(eq(transactions.tenantId, tenantId), eq(transactions.paymentIntakeId, intake!.id)) }))!;
+    };
+    const laterA1 = await postLater("75.00", loanA.publicId, "legacy-a-1");
+    const laterA2 = await postLater("75.00", loanA.publicId, "legacy-a-2");
+    const laterB1 = await postLater("45.00", loanB.publicId, "legacy-b-1");
+    const laterB2 = await postLater("45.00", loanB.publicId, "legacy-b-2");
+    const source = await createPaymentIntake({ ...ctx, idempotencyKey: crypto.randomUUID() }, { amount: "120.00", receivedAt: "2026-08-18T05:00:00.000Z", payerName: borrower.name });
+    const sourceRow = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, source.publicId) });
+    const audit = await createAuditLog(db, { tenantId, actorUserId: actor.id, actorSource: "web", requestId: ctx.requestId, correlationId: ctx.correlationId, entityType: "payment_reconciliation", entityId: source.publicId, action: "executed", payload: { syntheticLegacy: true } });
+    const proposal = await db.insert(paymentReconciliationProposals).values({ tenantId, paymentIntakeId: sourceRow!.id, status: "executed", previewHash: "v1:legacy-two-loans", expectedBalanceVersion: "v1:legacy-two-loans", sourceSnapshot: { mode: "historical_needs_review" }, proposedAllocations: [], warnings: [], reason: "Legacy two-loan chronological repair", expiresAt: new Date(), createdByUserId: actor.id, executedByUserId: actor.id, executedAt: new Date() }).returning().then((rows) => rows[0]!);
+    const reconciliation = await db.insert(paymentReconciliationGroups).values({ tenantId, proposalId: proposal.id, paymentIntakeId: sourceRow!.id, postedIntakeId: sourceRow!.id, reason: proposal.reason, idempotencyKey: `legacy-two-loans-${crypto.randomUUID()}`, correlationId: ctx.correlationId, auditPublicId: audit.publicId, createdByUserId: actor.id }).returning().then((rows) => rows[0]!);
+    for (const transaction of [laterA1, laterA2, laterB1, laterB2]) {
+        await db.insert(paymentReconciliationEntries).values({ tenantId, groupId: reconciliation.id, entryType: "replacement", component: "interest", amount: transaction.interestComponent, interestComponent: transaction.interestComponent, principalComponent: "0.00", feeComponent: "0.00", penaltyComponent: "0.00", sourceTransactionId: transaction.id, transactionId: transaction.id, loanId: transaction.loanId, scheduleId: null, reason: proposal.reason, auditPublicId: audit.publicId, createdByUserId: actor.id });
+    }
+    return { tenantId, ctx, reconciliation, source, loanA, loanB, laterTransactions: [laterA1, laterA2, laterB1, laterB2] };
 }
 
 describe("existing-data temporal reflow repair", () => {
@@ -86,6 +122,36 @@ describe("existing-data temporal reflow repair", () => {
         }
         expect(await db.select().from(transactions).where(eq(transactions.tenantId, fixture.tenantId))).toEqual(beforeTransactions);
         expect(await db.select().from(paymentReconciliationReflowGroups).where(eq(paymentReconciliationReflowGroups.tenantId, fixture.tenantId))).toHaveLength(0);
+        expect(await db.select().from(paymentReconciliationReflowEntries).where(eq(paymentReconciliationReflowEntries.tenantId, fixture.tenantId))).toHaveLength(0);
+    });
+
+    integrationTest("repairs two legacy floating loans with multiple later transactions and exact 75 plus 45 conservation", async () => {
+        const fixture = await legacyTwoLoanFixture();
+        const preview = await previewPaymentReconciliationReflow(fixture.ctx, { reconciliationPublicId: fixture.reconciliation.publicId, reason: "Repair two-loan chronological interest" });
+        expect(preview.plan.transactions).toHaveLength(4);
+        expect(preview.plan.transactions.filter((row) => row.loanPublicId === fixture.loanA.publicId).reduce((sum, row) => sum.plus(row.displacedAmount), new Decimal(0)).toFixed(2)).toBe("150.00");
+        expect(preview.plan.transactions.filter((row) => row.loanPublicId === fixture.loanB.publicId).reduce((sum, row) => sum.plus(row.displacedAmount), new Decimal(0)).toFixed(2)).toBe("90.00");
+        expect(preview.plan.displacedTotal).toBe("240.00");
+        const input = { reflowPreviewPublicId: preview.publicId, previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true as const, reason: preview.reason, idempotencyKey: "legacy-two-loans-execute" };
+        const [first, replay] = await Promise.all([executePaymentReconciliationReflow(fixture.ctx, input), executePaymentReconciliationReflow(fixture.ctx, input)]);
+        expect(replay).toEqual(first);
+        expect(first.compensatingTransactionPublicIds).toHaveLength(4);
+        const entries = await db.select().from(paymentReconciliationReflowEntries).where(eq(paymentReconciliationReflowEntries.tenantId, fixture.tenantId));
+        expect(entries.length).toBeGreaterThanOrEqual(4);
+        expect(entries.reduce((sum, entry) => sum.plus(entry.displacedAmount), new Decimal(0)).toFixed(2)).toBe("240.00");
+        expect(await db.select().from(paymentReconciliationReflowGroups).where(eq(paymentReconciliationReflowGroups.tenantId, fixture.tenantId))).toHaveLength(1);
+        expect(await db.select().from(transactions).where(and(eq(transactions.tenantId, fixture.tenantId), eq(transactions.id, fixture.laterTransactions[0]!.id)))).toHaveLength(1);
+    });
+
+    integrationTest("rejects a legacy repair when later financial state changes after preview", async () => {
+        const fixture = await legacyFixture();
+        const preview = await previewPaymentReconciliationReflow(fixture.ctx, { reconciliationPublicId: fixture.reconciliation.publicId, reason: "Reject stale legacy repair" });
+        const extra = await createPaymentIntake({ ...fixture.ctx, requestId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() }, { amount: "10.00", receivedAt: "2026-08-22T05:00:00.000Z", payerName: "Legacy Repair Borrower" });
+        const extraProposal = await previewPaymentMatch(fixture.ctx, extra.publicId, { allocations: [{ borrowerPublicId: (await db.query.borrowers.findFirst({ where: eq(borrowers.tenantId, fixture.tenantId) }))!.publicId, loanPublicId: (await db.query.loans.findFirst({ where: eq(loans.tenantId, fixture.tenantId) }))!.publicId, amount: "10.00" }] });
+        await postPayment(fixture.ctx, extra.publicId, { proposalPublicId: extraProposal.publicId });
+        const beforeGroups = await db.select().from(paymentReconciliationReflowGroups).where(eq(paymentReconciliationReflowGroups.tenantId, fixture.tenantId));
+        await expect(executePaymentReconciliationReflow(fixture.ctx, { reflowPreviewPublicId: preview.publicId, previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "stale-financial-repair" })).rejects.toMatchObject({ code: "STALE_TEMPORAL_REFLOW_PREVIEW" });
+        expect(await db.select().from(paymentReconciliationReflowGroups).where(eq(paymentReconciliationReflowGroups.tenantId, fixture.tenantId))).toEqual(beforeGroups);
         expect(await db.select().from(paymentReconciliationReflowEntries).where(eq(paymentReconciliationReflowEntries.tenantId, fixture.tenantId))).toHaveLength(0);
     });
 });

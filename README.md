@@ -569,6 +569,15 @@ bun run lint
 bun run build
 ```
 
+The scoped browser acceptance harness uses a synthetic local tenant and a locally signed test JWT. It mocks only the API/OCR boundary, never uses production credentials or financial data, and captures the batch upload → OCR review → chronology preview → confirmation → receipt screens:
+
+```bash
+cd frontend
+bun run test:e2e
+```
+
+This browser harness is UI workflow evidence; backend financial invariants and real OCR runtime checks remain separate disposable/test-only gates.
+
 `frontend/bunfig.toml` preloads the local Happy DOM and Testing Library matcher setup for Bun-native DOM tests; Vitest continues to use its separate jsdom configuration for the full frontend suite.
 
 Vitest automatically disables Node's native webstorage in test workers when the runtime supports that option, so jsdom supplies browser storage on Node 26 without a manual `NODE_OPTIONS` override. Tests discovered by Vitest must import test APIs from `vitest`, not `bun:test`.
