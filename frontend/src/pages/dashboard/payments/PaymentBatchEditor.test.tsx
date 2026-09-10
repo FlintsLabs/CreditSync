@@ -193,3 +193,23 @@ test("retries a failed finalize with the same staged membership and skips stagin
     expect(apiMock.post.mock.calls.filter(([path]) => String(path).includes("/evidence/prepare"))).toHaveLength(2);
     expect(apiMock.post.mock.calls.filter(([path]) => String(path).includes("/evidence/prepare"))[0][0]).toContain(workspace.items[0].publicId);
 });
+
+test("replays a split after response loss with the same batch operation key", async () => {
+    const scope = "creditsync.paymentBatch.workspace:anonymous:anonymous";
+    const source = { ...workspace, items: [{ ...workspace.items[0], clientItemKey: "split-retry-key", batchItemPublicId: "00000000-0000-4000-8000-000000000005", paymentIntakePublicId: "00000000-0000-4000-8000-000000000004" }] };
+    const destinationId = "00000000-0000-4000-8000-000000000050";
+    localStorage.setItem(`${scope}:batch-id`, workspace.batchPublicId);
+    apiMock.get.mockImplementation((path: string) => Promise.resolve({ data: path.includes(destinationId) ? { ...source, batchPublicId: destinationId, batch: { ...source.batch, publicId: destinationId }, items: [{ ...source.items[0], publicId: "00000000-0000-4000-8000-000000000051" }] } : source }));
+    let splitCalls = 0;
+    apiMock.post.mockImplementation((path: string, body: { idempotencyKey?: string }) => { if (!path.endsWith("/split")) return Promise.resolve({ data: {} }); splitCalls += 1; return splitCalls === 1 ? Promise.reject(new Error("synthetic response loss")) : Promise.resolve({ data: { sourceBatchPublicId: workspace.batchPublicId, destinationBatchPublicId: destinationId, dependencyPublicId: "00000000-0000-4000-8000-000000000052", movedItemPublicIds: [source.items[0].batchItemPublicId], auditPublicId: "00000000-0000-4000-8000-000000000053", correlationId: "00000000-0000-4000-8000-000000000054", operationKey: body.idempotencyKey } }); });
+    vi.spyOn(window, "prompt").mockReturnValue("split retry synthetic");
+    renderEditor();
+    await waitFor(() => expect(screen.getAllByRole("checkbox").some((input) => !input.hasAttribute("disabled"))).toBe(true));
+    fireEvent.click(screen.getAllByRole("checkbox").find((input) => !input.hasAttribute("disabled"))!);
+    fireEvent.click(screen.getByRole("button", { name: "Split held items" }));
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("PAYMENT_BATCH_REQUEST_FAILED"));
+    fireEvent.click(screen.getByRole("button", { name: "Split held items" }));
+    await waitFor(() => expect(screen.getByTestId("payment-batch-split-result")).toBeTruthy());
+    expect(apiMock.post.mock.calls.filter(([path]) => String(path).endsWith("/split"))).toHaveLength(2);
+    expect(apiMock.post.mock.calls[0][1].idempotencyKey).toBe(apiMock.post.mock.calls[1][1].idempotencyKey);
+});

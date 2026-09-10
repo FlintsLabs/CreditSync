@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.19 - 2026-09-10
+
+### Fixed
+- Persisted the split operation key per batch so a response-loss retry reuses the same idempotent command while retaining the server-owned destination result.
+
 ## v0.4.18 - 2026-09-10
 
 ### Fixed
