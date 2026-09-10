@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.21 - 2026-09-10
+
+### Added
+- Added the additive Task 5 temporal-reflow provenance boundary after the existing reconciliation ledger: immutable plan, command, and allocation-lineage metadata with tenant composite foreign keys and fail-closed mutation triggers.
+
+### Changed
+- Reclassified the prior temporal-reflow review from an approval blocker to outstanding authorized implementation work; the replay kernel and reconciliation integration remain in progress.
+
 ## v0.4.20 - 2026-09-10
 
 ### Changed

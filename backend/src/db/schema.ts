@@ -2007,6 +2007,91 @@ export const paymentReconciliationEntries = pgTable("payment_reconciliation_entr
     foreignKey({ name: "payment_reconciliation_entries_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
 ]);
 
+// Allocation-level temporal repair provenance. These rows describe only the
+// compensating/replay lineage; payment reconciliation groups remain the
+// existing transaction-level correction ledger.
+export const paymentReconciliationReflowProposals = pgTable("payment_reconciliation_reflow_proposals", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    reconciliationGroupId: integer("reconciliation_group_id").notNull(),
+    status: text("status").default("ready").notNull(),
+    previewHash: text("preview_hash").notNull(),
+    expectedBalanceVersion: text("expected_balance_version").notNull(),
+    sourceSnapshot: jsonb("source_snapshot").notNull(),
+    proposedReflow: jsonb("proposed_reflow").notNull(),
+    warnings: jsonb("warnings").$type<Array<Record<string, unknown>>>().notNull().default([]),
+    reason: text("reason").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdByUserId: integer("created_by_user_id"),
+    executedByUserId: integer("executed_by_user_id"),
+    executedAt: timestamp("executed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_reconciliation_reflow_proposals_tenant_id_id_unique").on(table.tenantId, table.id),
+    index("payment_reconciliation_reflow_proposals_tenant_group_idx").on(table.tenantId, table.reconciliationGroupId, table.createdAt),
+    check("payment_reconciliation_reflow_proposals_status_check", sql`${table.status} IN ('ready', 'executed', 'expired')`),
+    foreignKey({ name: "payment_reconciliation_reflow_proposals_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+    foreignKey({ name: "payment_reconciliation_reflow_proposals_tenant_executed_by_fk", columns: [table.tenantId, table.executedByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
+
+export const paymentReconciliationReflowGroups = pgTable("payment_reconciliation_reflow_groups", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    reconciliationGroupId: integer("reconciliation_group_id").notNull(),
+    proposalId: integer("proposal_id"),
+    origin: text("origin").notNull(),
+    status: text("status").default("executed").notNull(),
+    reason: text("reason").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    auditPublicId: uuid("audit_public_id").notNull(),
+    createdByUserId: integer("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_reconciliation_reflow_groups_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("payment_reconciliation_reflow_groups_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
+    uniqueIndex("reflow_groups_reconciliation_unique").on(table.tenantId, table.reconciliationGroupId),
+    check("payment_reconciliation_reflow_groups_status_check", sql`${table.status} = 'executed'`),
+    check("payment_reconciliation_reflow_groups_origin_check", sql`${table.origin} IN ('automatic', 'repair')`),
+    foreignKey({ name: "payment_reconciliation_reflow_groups_tenant_reconciliation_fk", columns: [table.tenantId, table.reconciliationGroupId], foreignColumns: [paymentReconciliationGroups.tenantId, paymentReconciliationGroups.id] }),
+    foreignKey({ name: "payment_reconciliation_reflow_groups_tenant_proposal_fk", columns: [table.tenantId, table.proposalId], foreignColumns: [paymentReconciliationReflowProposals.tenantId, paymentReconciliationReflowProposals.id] }),
+    foreignKey({ name: "payment_reconciliation_reflow_groups_tenant_audit_fk", columns: [table.tenantId, table.auditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
+    foreignKey({ name: "payment_reconciliation_reflow_groups_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
+
+export const paymentReconciliationReflowEntries = pgTable("payment_reconciliation_reflow_entries", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    groupId: integer("group_id").notNull(),
+    loanId: integer("loan_id").notNull(),
+    transactionId: integer("transaction_id").notNull(),
+    sourceAllocationId: integer("source_allocation_id").notNull(),
+    reversalAllocationId: integer("reversal_allocation_id").notNull(),
+    replacementAllocationId: integer("replacement_allocation_id").notNull(),
+    effectiveDate: date("effective_date").notNull(),
+    oldDueDate: date("old_due_date").notNull(),
+    newDueDate: date("new_due_date").notNull(),
+    displacedAmount: numeric("displaced_amount").notNull(),
+    auditPublicId: uuid("audit_public_id").notNull(),
+    createdByUserId: integer("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_reconciliation_reflow_entries_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("payment_reconciliation_reflow_entries_source_unique").on(table.tenantId, table.sourceAllocationId),
+    check("payment_reconciliation_reflow_entries_amount_check", sql`${table.displacedAmount} > 0 AND scale(${table.displacedAmount}) <= 2`),
+    foreignKey({ name: "payment_reconciliation_reflow_entries_tenant_group_fk", columns: [table.tenantId, table.groupId], foreignColumns: [paymentReconciliationReflowGroups.tenantId, paymentReconciliationReflowGroups.id] }),
+    foreignKey({ name: "payment_reconciliation_reflow_entries_tenant_loan_fk", columns: [table.tenantId, table.loanId], foreignColumns: [loans.tenantId, loans.id] }),
+    foreignKey({ name: "payment_reconciliation_reflow_entries_tenant_transaction_fk", columns: [table.tenantId, table.loanId, table.transactionId], foreignColumns: [transactions.tenantId, transactions.loanId, transactions.id] }),
+    foreignKey({ name: "reflow_entries_source_alloc_fk", columns: [table.tenantId, table.loanId, table.sourceAllocationId], foreignColumns: [floatingTransactionAllocations.tenantId, floatingTransactionAllocations.loanId, floatingTransactionAllocations.id] }),
+    foreignKey({ name: "reflow_entries_reversal_alloc_fk", columns: [table.tenantId, table.loanId, table.reversalAllocationId], foreignColumns: [floatingTransactionAllocations.tenantId, floatingTransactionAllocations.loanId, floatingTransactionAllocations.id] }),
+    foreignKey({ name: "reflow_entries_replacement_alloc_fk", columns: [table.tenantId, table.loanId, table.replacementAllocationId], foreignColumns: [floatingTransactionAllocations.tenantId, floatingTransactionAllocations.loanId, floatingTransactionAllocations.id] }),
+    foreignKey({ name: "payment_reconciliation_reflow_entries_tenant_audit_fk", columns: [table.tenantId, table.auditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
+    foreignKey({ name: "payment_reconciliation_reflow_entries_tenant_created_by_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
+
 export const paymentAllocationCorrectionPreviews = pgTable("payment_allocation_correction_previews", {
     id: serial("id").primaryKey(),
     publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
