@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.18 - 2026-09-10
+
+### Fixed
+- Completed the bounded batch-workspace identity and response-safety matrix: reloads use batch-scoped capture/execute keys, delayed hydration cannot overwrite edits, empty/unknown server membership clears rather than inherits local state, failed evidence remains retryable, and cancellation removes only the cancelled batch's operation keys.
+
+### Changed
+- The workspace presents backend-confirmed allocation sequence and translated principal, interest, fee, and penalty components with identifiable contract terms; split results retain destination membership/dependency details for resume navigation, while reviewed edits remain blocked from preview until persisted and rehydrated.
+
 ## v0.4.17 - 2026-09-10
 
 ### Fixed
