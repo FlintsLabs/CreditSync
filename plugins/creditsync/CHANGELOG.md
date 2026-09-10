@@ -7,6 +7,7 @@
 
 ### Changed
 - Bumped the frozen contract for the two new repair tools; existing posted transaction history remains immutable.
+- Synchronized the frozen `loan.contract.get` output with the loan accrual detail fields.
 
 ## v9.6.0 - 2026-09-10
 
