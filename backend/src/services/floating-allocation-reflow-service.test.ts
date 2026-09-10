@@ -115,4 +115,35 @@ describe("floating temporal reflow kernel", () => {
         expect(plan.transactions[0]!.after).toHaveLength(2);
         expect(plan.replacementTotal).toBe("30.00");
     });
+
+    test("invokes the stateful authoritative allocator in chronological order", async () => {
+        const calls: string[] = [];
+        let projectedPaid = "0.00";
+        await buildTemporalReflowPlanWithAuthoritativeResolver({
+            effectiveAfterDate: "2026-09-04",
+            allocations: [
+                source({ allocationPublicId: "new", transactionPublicId: "tx-z", effectiveDate: "2026-09-06", accrualPublicId: "a-new" }),
+                source({ allocationPublicId: "old", transactionPublicId: "tx-a", effectiveDate: "2026-09-05", accrualPublicId: "a-old" }),
+            ],
+            resolveReplacement: async ({ effectiveDate, requestedAmount }) => {
+                calls.push(`${effectiveDate}:${projectedPaid}`);
+                projectedPaid = new (await import("decimal.js")).default(projectedPaid).plus(requestedAmount).toFixed(2);
+                return [{ accrualPublicId: `replacement-${effectiveDate}`, dueDate: effectiveDate, amount: requestedAmount }];
+            },
+        });
+        expect(calls).toEqual(["2026-09-05:0.00", "2026-09-06:30.00"]);
+    });
+
+    test("validates every source before invoking the authoritative allocator", async () => {
+        let calls = 0;
+        await expect(buildTemporalReflowPlanWithAuthoritativeResolver({
+            effectiveAfterDate: "2026-09-04",
+            allocations: [source({ allocationPublicId: "invalid", transactionComponents: { principal: "1.00", interest: "29.00", fee: "0.00", penalty: "0.00" } })],
+            resolveReplacement: async () => {
+                calls += 1;
+                return [];
+            },
+        })).rejects.toThrow("TEMPORAL_REFLOW_UNSUPPORTED_COMPONENT");
+        expect(calls).toBe(0);
+    });
 });

@@ -4,14 +4,15 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
     auditLogs, borrowers, loans, loanSchedules, paymentEvidence, paymentIntakes, paymentReconciliationEntries,
-    paymentReconciliationGroups, paymentReconciliationProposals, transactions, commandReceipts,
+    paymentReconciliationGroups, paymentReconciliationProposals, paymentReconciliationReflowEntries, paymentReconciliationReflowGroups, transactions, commandReceipts,
     floatingTransactionAllocations, loanInterestAccruals, paymentMatchProposals, paymentMatchAllocations,
 } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import { parseMoney, serializeMoney } from "../lib/money";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
-import { accrueFloatingInterestThrough, resolveFloatingInterestAllocationPlan, type FloatingInterestAllocationPlan } from "./floating-interest-service";
+import { accrueFloatingInterestThrough, resolveFloatingInterestAllocationPlan, type FloatingInterestAllocationPlan, type FloatingPaymentProjection } from "./floating-interest-service";
+import { buildTemporalReflowPlanForLoan, executeTemporalReflow, type TemporalReflowPlan } from "./floating-allocation-reflow-service";
 import { assertPaymentEvidenceReady, postPayment } from "./payment-service";
 import { lockPaymentBorrowers, paymentIntakeBorrowerIds } from "./payment-chronology-service";
 
@@ -503,6 +504,50 @@ function presentProposal(row: typeof paymentReconciliationProposals.$inferSelect
     };
 }
 
+function combineTemporalReflowPlans(plans: TemporalReflowPlan[]): TemporalReflowPlan {
+    const transactions = plans.flatMap((plan) => plan.transactions).sort((left, right) => left.loanPublicId.localeCompare(right.loanPublicId) || left.effectiveDate.localeCompare(right.effectiveDate) || left.transactionPublicId.localeCompare(right.transactionPublicId));
+    return {
+        effectiveAfterDate: plans[0]?.effectiveAfterDate ?? "",
+        displacedTotal: plans.reduce((sum, plan) => sum.plus(plan.displacedTotal), new Decimal(0)).toFixed(2),
+        replacementTotal: plans.reduce((sum, plan) => sum.plus(plan.replacementTotal), new Decimal(0)).toFixed(2),
+        transactions,
+    };
+}
+
+async function buildTemporalReflowForAllocations(
+    tx: any,
+    ctx: CommandContext,
+    allocations: ReconciliationAllocation[],
+    provenancePlans: FloatingInterestAllocationPlan[],
+    effectiveAfterDate: string,
+) {
+    const byLoan = new Map<string, FloatingPaymentProjection["allocations"]>();
+    for (const allocation of allocations) {
+        if (allocation.component !== "interest") continue;
+        const plan = provenancePlans.find((candidate) => candidate.loanPublicId === allocation.loanPublicId && candidate.requestedAmount === serializeMoney(allocation.amount));
+        if (!plan) continue;
+        const incoming = plan.allocations.map((row) => ({
+            effectiveDate: effectiveAfterDate,
+            dueDate: row.dueDate,
+            accrualDate: row.dueDate,
+            component: "interest" as const,
+            amount: row.amount,
+        }));
+        byLoan.set(allocation.loanPublicId, [...(byLoan.get(allocation.loanPublicId) ?? []), ...incoming]);
+    }
+    const results: Array<Awaited<ReturnType<typeof buildTemporalReflowPlanForLoan>>> = [];
+    for (const [loanPublicId, incoming] of [...byLoan.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+        const loan = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.publicId, loanPublicId)) });
+        if (!loan) throw new DomainError("INVALID_RECONCILIATION_TARGET", "Allocation target disappeared", 409);
+        results.push(await buildTemporalReflowPlanForLoan(tx, ctx, loan, effectiveAfterDate, incoming));
+    }
+    return {
+        plan: combineTemporalReflowPlans(results.map((result) => result.plan)),
+        sources: results.flatMap((result) => result.sources),
+        replacements: Object.fromEntries(results.flatMap((result) => Object.entries(result.replacements))),
+    };
+}
+
 async function deriveRestoreAllocations(ctx: CommandContext, executor: any, originals: Array<typeof transactions.$inferSelect>) {
     const allocations: ReconciliationAllocation[] = [];
     const principalByLoan = new Map<number, Decimal>();
@@ -622,12 +667,14 @@ export async function previewPaymentReconciliation(ctx: CommandContext, input: {
             provenancePlans.push(plan);
             if (!plan.provenanceReady) throw new DomainError("RECONCILIATION_INTEREST_PROVENANCE_UNAVAILABLE", "Historical floating interest has no complete accrual provenance", 409, { loanPublicId: item.loan.publicId, warnings: plan.warnings });
         }
+        const temporalReflow = await buildTemporalReflowForAllocations(tx, ctx, allocations, provenancePlans, bangkokBusinessDate(intake.receivedAt));
         const source = {
             mode: inspected.mode, paymentIntakePublicId: intake.publicId, status: intake.status, amount: serializeMoney(intake.amount), receivedAt: intake.receivedAt,
             hasReadyEvidence: inspected.hasReadyEvidence,
             currentAllocationSnapshot: originals.map(sourceTransactionSnapshot),
             reversalSnapshot: inspected.reversals.map(sourceTransactionSnapshot),
             provenancePlans,
+            temporalReflowPlan: temporalReflow.plan,
         };
         const financialBalanceVersion = await authoritativeBalanceVersion(tx, ctx, [...allocations.map((item) => item.loanId), ...originals.map((item) => item.loanId)], false);
         const expectedBalanceVersion = inspected.mode === "reversed_repost" ? hash({ financialBalanceVersion, source }) : financialBalanceVersion;
@@ -665,7 +712,8 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
             const transactionRows = transactionIds.length ? await tx.select({ id: transactions.id, publicId: transactions.publicId }).from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), inArray(transactions.id, transactionIds))) : [];
             const publicIdById = new Map(transactionRows.map((row) => [row.id, row.publicId]));
             const idsFor = (entryType: "reversal" | "replacement") => entries.filter((entry) => entry.entryType === entryType).map((entry) => entry.transactionId === null ? undefined : publicIdById.get(entry.transactionId)).filter((id): id is string => Boolean(id));
-            return { reconciliationPublicId: prior.publicId, sourcePaymentPublicId: sourcePayment?.publicId, postedPaymentPublicId: postedPayment?.publicId, compensatingTransactionPublicIds: idsFor("reversal"), correctedTransactionPublicIds: idsFor("replacement"), auditPublicIds: [prior.auditPublicId], correlationId: prior.correlationId };
+            const reflowGroup = await tx.query.paymentReconciliationReflowGroups.findFirst({ where: and(eq(paymentReconciliationReflowGroups.tenantId, ctx.tenantId), eq(paymentReconciliationReflowGroups.reconciliationGroupId, prior.id)) });
+            return { reconciliationPublicId: prior.publicId, sourcePaymentPublicId: sourcePayment?.publicId, postedPaymentPublicId: postedPayment?.publicId, compensatingTransactionPublicIds: idsFor("reversal"), correctedTransactionPublicIds: idsFor("replacement"), auditPublicIds: [prior.auditPublicId], correlationId: prior.correlationId, ...(reflowGroup ? { reflowGroupPublicId: reflowGroup.publicId } : {}) };
         }
         const initialAllocations = await resolveAllocations(ctx, initialProposal.proposedAllocations as ReconciliationAllocation[], tx);
         const initialBorrowerIds = [...new Set([...await paymentIntakeBorrowerIds(tx, ctx.tenantId, initialIntake.id), ...initialAllocations.map((row) => row.loan.borrowerId)])];
@@ -707,6 +755,9 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
                 if (!plan.provenanceReady) throw new DomainError("RECONCILIATION_INTEREST_PROVENANCE_UNAVAILABLE", "Historical floating interest has no complete accrual provenance", 409, { loanPublicId: item.loan.publicId, warnings: plan.warnings });
             }
         }
+        const temporalReflow = restoreMode
+            ? { plan: combineTemporalReflowPlans([]), sources: [], replacements: {} }
+            : await buildTemporalReflowForAllocations(tx, ctx, allocations, currentProvenancePlans, bangkokBusinessDate(intake.receivedAt));
         const currentSource = {
             mode: restoreMode ? "exact_restore" : inspected.mode,
             ...(restoreMode ? { sourceMode: inspected.mode } : {}),
@@ -716,6 +767,7 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
             currentAllocationSnapshot: currentOriginals.map(sourceTransactionSnapshot),
             reversalSnapshot: inspected.reversals.map(sourceTransactionSnapshot),
             provenancePlans: currentProvenancePlans,
+            ...(!restoreMode ? { temporalReflowPlan: temporalReflow.plan } : {}),
         };
         if (!provenancePlansMatch(currentProvenancePlans, previewPlans)) throw new DomainError("STALE_RECONCILIATION_PREVIEW", "Floating interest provenance differs from preview", 409);
         const financialBalanceVersion = await authoritativeBalanceVersion(tx, ctx, [...allocations.map((item) => item.loanId), ...currentOriginals.map((item) => item.loanId)], restoreMode);
@@ -786,9 +838,32 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
                 }
             }
         }
+        let reflowGroupPublicId: string | undefined;
+        if (temporalReflow.plan.transactions.length > 0) {
+            const reflowGroup = await tx.insert(paymentReconciliationReflowGroups).values({
+                tenantId: ctx.tenantId, reconciliationGroupId: group.id, proposalId: null, origin: "automatic", reason: input.reason.trim(),
+                idempotencyKey: `${input.idempotencyKey}:temporal-reflow`, correlationId: ctx.correlationId, auditPublicId: audit.publicId, createdByUserId: ctx.actorUserId,
+            }).returning().then((rows) => rows[0]!);
+            const executedReflow = await executeTemporalReflow(tx, ctx, {
+                plan: temporalReflow.plan, sources: temporalReflow.sources, replacements: temporalReflow.replacements, groupId: reflowGroup.id,
+                auditPublicId: audit.publicId, reason: input.reason.trim(), idempotencyPrefix: `${input.idempotencyKey}:temporal-reflow`,
+            });
+            const sourceById = new Map(temporalReflow.sources.map((source) => [source.allocationId, source]));
+            for (const entry of executedReflow.entries) {
+                const source = sourceById.get(entry.sourceAllocationId);
+                if (!source) throw new DomainError("RECONCILIATION_INTEREST_PROVENANCE_UNAVAILABLE", "Temporal reflow source disappeared", 409);
+                await tx.insert(paymentReconciliationReflowEntries).values({
+                    tenantId: ctx.tenantId, groupId: reflowGroup.id, loanId: source.loanId, transactionId: entry.replacementTransactionId,
+                    sourceAllocationId: entry.sourceAllocationId, reversalAllocationId: entry.reversalAllocationId, replacementAllocationId: entry.replacementAllocationId,
+                    effectiveDate: source.effectiveDate, oldDueDate: entry.oldDueDate, newDueDate: entry.newDueDate,
+                    displacedAmount: entry.displacedAmount, auditPublicId: audit.publicId, createdByUserId: ctx.actorUserId,
+                });
+            }
+            reflowGroupPublicId = reflowGroup.publicId;
+        }
         await tx.update(paymentReconciliationProposals).set({ status: "executed", executedByUserId: ctx.actorUserId, executedAt: new Date() }).where(eq(paymentReconciliationProposals.id, proposal.id));
         if (intake.status === "needs_review") await tx.update(paymentIntakes).set({ status: "posted", postedAt: new Date(), postedByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(eq(paymentIntakes.id, intake.id));
-        return { reconciliationPublicId: group.publicId, sourcePaymentPublicId: intake.publicId, postedPaymentPublicId: postedIntake.publicId, compensatingTransactionPublicIds: [...entryRows.map((entry) => entry.transactionId).filter((id): id is number => id !== null)], correctedTransactionPublicIds: replacementPublicIds, auditPublicIds: [audit.publicId], correlationId: ctx.correlationId };
+        return { reconciliationPublicId: group.publicId, sourcePaymentPublicId: intake.publicId, postedPaymentPublicId: postedIntake.publicId, compensatingTransactionPublicIds: [...entryRows.map((entry) => entry.transactionId).filter((id): id is number => id !== null)], correctedTransactionPublicIds: replacementPublicIds, auditPublicIds: [audit.publicId], correlationId: ctx.correlationId, ...(reflowGroupPublicId ? { reflowGroupPublicId } : {}) };
     });
 }
 

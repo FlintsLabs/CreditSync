@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.23 - 2026-09-10
+
+### Added
+- Connected historical interest-only reconciliation to the approved temporal-reflow kernel: preview binds the authoritative chronological impact plan, and execute appends signed allocation reversal/replacement transactions with one-to-many lineage, immutable source transactions, rebuilt accrual totals, and exact reconciliation-key replay.
+
+### Fixed
+- Temporal-reflow resolver callbacks now run only after complete source validation and in deterministic loan/date/transaction order; invalid input cannot trigger stateful allocation work.
+
 ## v0.4.22 - 2026-09-10
 
 ### Fixed

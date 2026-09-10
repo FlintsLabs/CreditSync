@@ -529,6 +529,7 @@ export async function resolveFloatingInterestAllocationPlan(
     requestedAmount: string,
     context: CommandContext,
     mode: "preview" | "execute",
+    projection?: FloatingPaymentProjection,
 ): Promise<FloatingInterestAllocationPlan> {
     if (loan.repaymentType !== "floating") {
         return { loanPublicId: loan.publicId, throughDate: bangkokDate(receivedAt), periodStartDate: "", periodEndDate: "", requestedAmount, availableAmount: "0.00", allocations: [], provenanceReady: false, warnings: [{ code: "FLOATING_LOAN_REQUIRED", details: {} }] };
@@ -547,7 +548,7 @@ export async function resolveFloatingInterestAllocationPlan(
         const materializeThrough = new Date(`${addCalendarDays(target.nextPeriodStart, -1)}T16:59:59.999Z`);
         await accrueFloatingInterestThroughInTransaction(tx, loan, materializeThrough, context);
     }
-    const projected = await projectFloatingAccrualRows(tx, loan, mode === "execute" ? addCalendarDays(target.nextPeriodStart, -1) : throughDate);
+    const projected = await projectFloatingAccrualRows(tx, loan, mode === "execute" ? addCalendarDays(target.nextPeriodStart, -1) : throughDate, projection);
     const periodRows = projected.filter((row) => (hasPeriodPolicy(loan)
         ? row.periodStartDate === target.periodStart && row.periodEndDate === target.nextPeriodStart
         : accrualDueDate(row) <= throughDate) && row.status !== "reversed");
