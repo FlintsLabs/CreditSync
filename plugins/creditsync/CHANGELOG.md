@@ -1,5 +1,13 @@
 # CreditSync Plugin Changelog
 
+## v10.0.0 - 2026-09-10
+
+### Added
+- Added closed temporal-reflow existing-reconciliation repair preview and execute tools using the append-only repair provenance ledger.
+
+### Changed
+- Bumped the frozen contract for the two new repair tools; existing posted transaction history remains immutable.
+
 ## v9.6.0 - 2026-09-10
 
 ### Added

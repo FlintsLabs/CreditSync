@@ -1787,6 +1787,24 @@
       ],
       "forbiddenCalls": [],
       "humanBoundary": "Evidence, review, chronology decision, and fresh confirmation are required before posting; MCP returns backend results without agent-side accounting."
+    },
+    {
+      "id": "payment-reconcile-legacy-reflow-confirmation",
+      "kind": "positive",
+      "skill": "reconcile-payments",
+      "prompt": "Repair an existing executed interest-only reconciliation through the temporal-reflow preview and explicit confirmation workflow.",
+      "expectedCalls": ["payment.reconcile.reflow.preview", "payment.reconcile.reflow.execute"],
+      "forbiddenCalls": [],
+      "humanBoundary": "Repair only complete floating-interest provenance; preserve original transactions and require explicit confirmation with a stable idempotency key."
+    },
+    {
+      "id": "payment-reconcile-legacy-reflow-stale-stops",
+      "kind": "negative",
+      "skill": "reconcile-payments",
+      "prompt": "A legacy temporal-reflow preview is stale; attempt to execute it anyway.",
+      "expectedCalls": ["payment.reconcile.reflow.preview", "payment.reconcile.reflow.execute"],
+      "forbiddenCalls": [],
+      "humanBoundary": "A stale or expired repair preview is a hard stop and must not create financial records."
     }
   ]
 }

@@ -7,6 +7,13 @@ Scope: implement and verify all seven approved tasks; no merge, push, deploy, pr
 
 ## Progress
 
+### 2026-09-10 — Task 5 existing-data temporal-reflow repair checkpoint
+
+- Implemented `backend/src/services/payment-reconciliation-reflow-service.ts` using the existing authoritative floating allocator and append-only reflow tables. Preview locks tenant-authorized borrowers, derives the Bangkok effective date, validates legacy replacement/source transaction lineage and interest-only components, snapshots safe transaction/evidence metadata, and writes no financial records. Execute re-reads the proposal/context under locks, rejects stale/expired/unsupported/already-repaired state, appends signed reversal/replacement provenance atomically, rebuilds touched accrual projections, and returns the durable exact replay result.
+- Added public MCP tools `payment.reconcile.reflow.preview` and `payment.reconcile.reflow.execute`; synchronized backend closed schemas, direct application handlers, plugin 10.0.0/129-tool contract, reconciliation skill, and two eval scenarios. No REST endpoint or duplicate reverse/restore ledger was added.
+- Focused RED `/tmp/creditsync-batch-resume.cs2Qp2/task9-reflow-bangkok-red.log` caught UTC slicing at a Bangkok evening boundary; GREEN `/tmp/creditsync-batch-resume.cs2Qp2/task9-reflow-bangkok-green.log` passes `2 tests, 0 failures, 11 expectations`. The suite now also covers preview no-write, exact replay/key conflict, already-repaired rejection, expiry/tenant denial, and injected mid-provenance-write rollback. Plugin/MCP focused checks and backend typecheck are still pending at this checkpoint.
+- Remaining Task 5 evidence includes broader multi-loan legacy fixtures and full reflowed reverse/restore inspection; authenticated browser QA, final full gates, and other approved plan tasks remain open.
+
 ### 2026-09-10 — Task 7 OCR runtime and remaining acceptance audit
 
 - Application OCR runtime smoke `/tmp/creditsync-batch-resume.cs2Qp2/task8-ocr-runtime-smoke.log` invoked `backend/src/lib/ocr.ts` through installed `tesseract.js@7.0.0` against a synthetic dependency PNG: `ok`, 23,940 input bytes, 2 output characters. This is a synthetic English/runtime smoke only, not bank-slip accuracy evidence. The system `tesseract` CLI is irrelevant and was not installed.

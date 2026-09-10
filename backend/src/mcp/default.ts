@@ -146,6 +146,7 @@ import {
     type CreatePaymentAttributionInput,
 } from "../services/payment-attribution-service";
 import { backfillPostedRestoreSchedule, createPaymentRestoreDraft, executePaymentReconciliation, markPaymentReconciliationReview, preflightPaymentExecution, previewPaymentReconciliation, previewPaymentRestore, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
+import { executePaymentReconciliationReflow, previewPaymentReconciliationReflow } from "../services/payment-reconciliation-reflow-service";
 import { addPaymentBatchItem, cancelPaymentBatch, capturePaymentBatch, createPaymentBatch, decidePaymentBatch, editPaymentBatchStagingItem, executePaymentBatch, finalizePaymentBatchEvidenceMany, finalizePaymentBatchStagingEvidence, getPaymentBatch, getPaymentBatchWorkspace, preparePaymentBatchEvidenceMany, preparePaymentBatchStagingEvidence, previewPaymentBatch, reviewPaymentBatchStagingItem, splitPaymentBatch, stagePaymentBatchItems } from "../services/payment-batch-service";
 import { discoverPaymentBatchCandidates } from "../services/payment-batch-candidate-service";
 import { executeUnfundedLoanCancellation, previewUnfundedLoanCancellation } from "../services/loan-cancellation-service";
@@ -301,6 +302,10 @@ export function createDefaultMcpToolHandlers(
         paymentIntakePublicId: asString(input, "paymentIntakePublicId"),
         allocations: input.allocations as ReconciliationAllocation[],
         reason: asString(input, "reason"),
+    }),
+    "payment.reconcile.reflow.preview": (ctx, input) => previewPaymentReconciliationReflow(ctx, { reconciliationPublicId: asString(input, "reconciliationPublicId"), reason: asString(input, "reason") }),
+    "payment.reconcile.reflow.execute": (ctx, input) => executePaymentReconciliationReflow({ ...ctx, idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey") }, {
+        reflowPreviewPublicId: asString(input, "reflowPreviewPublicId"), previewHash: asString(input, "previewHash"), expectedBalanceVersion: asString(input, "expectedBalanceVersion"), confirmed: true, reason: asString(input, "reason"), idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"),
     }),
     "payment.allocation-correction.preview": (ctx, input) => previewPaymentAllocationCorrection(ctx, {
         paymentIntakePublicId: asString(input, "paymentIntakePublicId"), transactionPublicId: asString(input, "transactionPublicId"), targetSchedulePublicId: asString(input, "targetSchedulePublicId"), reason: asString(input, "reason"),
