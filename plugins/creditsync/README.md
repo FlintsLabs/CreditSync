@@ -1,10 +1,10 @@
-# CreditSync Plugin 9.2.0
+# CreditSync Plugin 10.0.0
 
 This private Codex plugin orchestrates the CreditSync MCP app for borrower and intermediary identity, payments, intermediary remittances and multi-leg disbursements, generalized floating-interest origination and settlement, effective-dated rate changes, direct loan disbursements, renewals, and append-only reversal.
 
 ## Package contract
 
-- Plugin version: `9.2.0`
+- Plugin version: `10.0.0`
 - MCP schema version: `1.0`
 - 11 orchestration skills: `creditsync`, `manage-borrowers`, `reconcile-payments`, `reconcile-intermediary-remittances`, `manage-loans`, `manage-floating-interest-rates`, `settle-floating-loans`, `manage-disbursements`, `manage-intermediated-disbursements`, `renew-daily-loan`, `restructure-loan`
 - App manifest: `.app.json`
@@ -13,6 +13,8 @@ This private Codex plugin orchestrates the CreditSync MCP app for borrower and i
 The package does not contain an MCP URL, bearer token, `.mcp.json`, OAuth configuration, hooks, plugin UI, or funding mutation capability. It references a private registered app so credentials remain in Codex/server secret storage.
 
 For two or more slips belonging to one resolved borrower, use `payment.batch.capture` once, then prepare/finalize the complete evidence set with `payment.batch.evidence.prepare-many` and `payment.batch.evidence.finalize-many`. Preview the complete allocation set once, stop on ambiguity or duplicates, obtain one explicit confirmation, execute with stable idempotency, and verify every posted item. Never continue a partial batch.
+
+For resumable multi-slip work, inspect `payment.batch.workspace`, then use the staging review/edit tools only with the returned revision and reason. `payment.batch.split`, `payment.batch.decision`, and `payment.batch.cancel` are revision-bound and idempotent; every change requires a fresh preview/confirmation, and MCP calls the same backend services directly as REST without an internal REST hop. Candidate contracts and accounting amounts come from tenant-authorized backend inspection and planning; do not infer a mapping or calculate money in the agent.
 
 For a single ChatGPT-attached payment slip, create the intake and call `evidence.import-chatgpt-file` with the official top-level file parameter before previewing. The backend alone downloads and stores it; never expose file bytes, IDs, URLs, account details, QR payloads, or full references. A missing or unavailable file stops an image-first flow. Evidence received after posting uses `payment.evidence-supplement.import-chatgpt-file` followed by a separately confirmed, reasoned `payment.evidence-supplement.record`; it never edits or reposts the payment.
 
@@ -85,7 +87,7 @@ Publishing to Git does not hot-reload an installed copy. Start a new Codex task 
 - Floating-loan corrections that need missing interest restored use `payment.reverse-with-accrual.preview` → explicit confirmation → `payment.reverse-with-accrual.execute`; this atomically compensates the payment and materializes payable accruals through the original payment date without posting a replacement payment.
 - Before any payment reconciliation or posting confirmation, run `payment.reconcile.preflight`. It is explicitly no-write (`wouldWrite: false`) and uses the real allocator inside a rollback-only transaction. If an ordinary ready proposal returns `FLOATING_BACKDATED_ALLOCATION_REQUIRES_RECONCILIATION`, inspect the exact intake and obtain explicit confirmation before `payment.reconcile.mark-review`; then create a fresh reconciliation preview/preflight and obtain a separate confirmation before execute.
 
-See `references/` for matching, accounting invariants, error recovery, and the frozen full 114-tool metadata snapshot. Unexpected, retryable, and integration failures include a correlation ID and suggested action; owner/manager agents may inspect them with `system.error-diagnostic.get` and bounded `system.error-diagnostic.list`. These tools never bypass confirmation, idempotency, duplicate, stale-state, mismatch, or review gates. The snapshot is generated through an authenticated local MCP SDK Client `tools/list` call. `evals/evals.json` and `evals/harness.ts` execute exact ordered/repeated tool calls, supported arguments, injected workflow states, external upload effects, and forbidden-write boundaries while remaining honest that no live private app was used.
+See `references/` for matching, accounting invariants, error recovery, and the frozen 129-tool metadata snapshot. `payment.batch.staging.extract` runs only the configured local OCR boundary after finalized evidence and returns review-only candidates bound to the staging revision and evidence checksum; it never creates an intake or financial record. For complete legacy interest-only reconciliation provenance, `payment.reconcile.reflow.preview` → explicit confirmation → `payment.reconcile.reflow.execute` repairs existing chronology with immutable source transactions and exact idempotent replay; unsupported components or missing lineage remain blocked. Unexpected, retryable, and integration failures include a correlation ID and suggested action; owner/manager agents may inspect them with `system.error-diagnostic.get` and bounded `system.error-diagnostic.list`. These tools never bypass confirmation, idempotency, duplicate, stale-state, mismatch, or review gates. The snapshot is generated through an authenticated local MCP SDK Client `tools/list` call. `evals/evals.json` and `evals/harness.ts` execute exact ordered/repeated tool calls, supported arguments, injected workflow states, external upload effects, and forbidden-write boundaries while remaining honest that no live private app was used.
 
 Deployment, credential rotation, MinIO evidence, and recovery procedures are maintained in the root repository documentation:
 

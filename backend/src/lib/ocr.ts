@@ -1,16 +1,24 @@
 import { createWorker } from 'tesseract.js';
 
-export async function extractTextFromImage(imageBuffer: Buffer, languages: string = 'eng+tha'): Promise<string> {
+type OcrWorker = {
+    recognize: (image: Buffer) => Promise<{ data: { text: string } }>;
+    terminate: () => Promise<unknown>;
+};
+
+type OcrWorkerFactory = (languages: string) => Promise<OcrWorker>;
+
+export async function extractTextFromImage(
+    imageBuffer: Buffer,
+    languages: string = 'eng+tha',
+    workerFactory: OcrWorkerFactory = createWorker as unknown as OcrWorkerFactory,
+): Promise<string> {
+    let worker: OcrWorker | undefined;
     try {
-        // V6 usage: createWorker('eng+tha')
-        const worker = await createWorker(languages);
+        worker = await workerFactory(languages);
 
         const { data: { text } } = await worker.recognize(imageBuffer);
-
-        await worker.terminate();
         return text;
-    } catch (error) {
-        console.error("OCR Error", error);
-        throw error;
+    } finally {
+        if (worker) await worker.terminate();
     }
 }

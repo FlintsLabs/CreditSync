@@ -14,6 +14,8 @@ export type BatchSlip = {
     itemPublicId: string;
     amount: string;
     receivedAt: string;
+    /** Human-reviewed borrower constraint; absent means unresolved for solver purposes. */
+    borrowerPublicId?: string;
     requestedDueDate?: string;
     allowAdvance?: boolean;
     allowBackdated?: boolean;
@@ -23,11 +25,12 @@ export type ExplicitBatchAllocation = {
     itemPublicId: string;
     borrowerPublicId?: string;
     loanPublicId: string;
-    schedulePublicId: string;
+    schedulePublicId?: string;
     amount: string;
     targetDueDate: string;
     intent: "on_time" | "advance" | "backdated";
     matchSource?: "human_explicit" | "unique_exact" | "selected_candidate";
+    calculatedComponents?: { principal: string; interest: string; fee: string; penalty: string };
 };
 
 export type BatchCandidate = {

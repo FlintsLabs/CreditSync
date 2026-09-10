@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, loanSchedules, loans, paymentBatchAllocations, paymentBatchItems, paymentBatchPreviews, paymentBatches, paymentIntakes, transactions, users } from "../db/schema";
+import { borrowers, loanInterestRatePeriods, loanSchedules, loans, paymentBatchAllocations, paymentBatchItems, paymentBatchPreviews, paymentBatches, paymentBatchStagingItems, paymentIntakes, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
-import { capturePaymentBatch, createPaymentBatch, previewPaymentBatch } from "./payment-batch-service";
+import { capturePaymentBatch, createPaymentBatch, finalizePaymentBatchStagingEvidence, preparePaymentBatchStagingEvidence, previewPaymentBatch, reviewPaymentBatchStagingItem, stagePaymentBatchItems } from "./payment-batch-service";
 import type { PreviewPaymentBatchInput } from "./payment-batch-service";
 import { executePaymentBatch } from "./payment-batch-service";
 
@@ -18,9 +18,8 @@ async function fixture() {
     const intake = await db.insert(paymentIntakes).values({ tenantId, ownerUserId: actor.id, amount: "30.00", receivedAt: new Date("2026-08-23T03:00:00.000Z"), status: "draft", createdByUserId: actor.id }).returning().then((rows) => rows[0]!);
     const batch = await db.insert(paymentBatches).values({ tenantId, borrowerId: borrower.id, status: "ready", version: 1, stateHash: "v1:fixture", confirmationHash: "v1:confirmation", createIdempotencyKey: crypto.randomUUID(), createdByUserId: actor.id, updatedByUserId: actor.id }).returning().then((rows) => rows[0]!);
     const item = await db.insert(paymentBatchItems).values({ tenantId, batchId: batch.id, paymentIntakeId: intake.id, itemOrder: 1 }).returning().then((rows) => rows[0]!);
-    const preview = await db.insert(paymentBatchPreviews).values({ tenantId, batchId: batch.id, version: 1, status: "ready", stateHash: "v1:fixture", previewHash: "v1:preview", confirmationHash: "v1:confirmation", warnings: [], candidates: [], evidenceReady: true, expiresAt: new Date(Date.now() + 60_000), createdByUserId: actor.id }).returning().then((rows) => rows[0]!);
-    await db.insert(paymentBatchAllocations).values({ tenantId, previewId: preview.id, itemId: item.id, allocationOrder: 1, borrowerId: borrower.id, loanId: loan.id, scheduleId: schedule.id, amount: "30.00", targetDueDate: "2026-08-20", intent: "on_time", calculatedComponents: { principal: "30.00", interest: "0.00", fee: "0.00", penalty: "0.00" } });
     const ctx: CommandContext = { tenantId, actorUserId: actor.id, actorSource: "web", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() };
+    const preview = await previewPaymentBatch(ctx, batch.publicId, { borrowerPublicId: borrower.publicId, allocations: [{ itemPublicId: item.publicId, loanPublicId: loan.publicId, schedulePublicId: schedule.publicId, amount: "30.00", targetDueDate: "2026-08-20", intent: "on_time" }] });
     return { actor, borrower, loan, schedule, intake, batch, preview, ctx };
 }
 
@@ -58,5 +57,49 @@ describe("payment batch service contract", () => {
         expect(first.status).toBe("posted");
         expect(second.status).toBe("posted");
         expect(await db.select().from(transactions).where(and(eq(transactions.tenantId, seeded.ctx.tenantId), eq(transactions.paymentIntakeId, seeded.intake.id), eq(transactions.entryType, "repayment")))).toHaveLength(1);
+    });
+
+    integrationTest("stages evidence before amount/time and creates the intake only after review", async () => {
+        const tenantId = `batch-staging-${crypto.randomUUID()}`;
+        const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+        const ctx: CommandContext = { tenantId, actorUserId: actor.id, actorSource: "web", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() };
+        const staged = await stagePaymentBatchItems(ctx, { idempotencyKey: "stage-upload-first", items: [{ clientItemKey: "slip-1", payerName: "Synthetic payer" }] });
+        const staging = await db.query.paymentBatchStagingItems.findFirst({ where: eq(paymentBatchStagingItems.publicId, staged.items[0]!.publicId) });
+        expect(staging).toMatchObject({ amount: null, receivedAt: null, status: "staged", paymentIntakeId: null, batchItemId: null });
+        expect(await db.select().from(paymentIntakes).where(eq(paymentIntakes.tenantId, tenantId))).toHaveLength(0);
+        const gateway = {
+            preparePut: async () => ({ uploadUrl: "https://upload.invalid/staging", expiresAt: new Date(Date.now() + 60_000), requiredHeaders: {} }),
+            head: async () => ({ exists: true, contentType: "image/png", contentLength: 32, checksumSha256: "a".repeat(64), metadata: { tenant: tenantId, staging: staging!.publicId } }),
+        };
+        const prepared = await preparePaymentBatchStagingEvidence(ctx, { stagingItemPublicId: staging!.publicId, mimeType: "image/png", size: 32, sha256: "a".repeat(64) }, gateway);
+        await finalizePaymentBatchStagingEvidence(ctx, staging!.publicId, prepared.evidencePublicId, gateway);
+        const reviewed = await reviewPaymentBatchStagingItem(ctx, { stagingItemPublicId: staging!.publicId, amount: "120.00", receivedAt: "2026-09-08T04:00:00.000Z", intakeIdempotencyKey: "reviewed-intake-1" });
+        expect(reviewed.status).toBe("validated");
+        expect(await db.select().from(paymentIntakes).where(eq(paymentIntakes.tenantId, tenantId))).toHaveLength(1);
+        expect(await db.query.paymentBatchStagingItems.findFirst({ where: eq(paymentBatchStagingItems.publicId, staging!.publicId) })).toMatchObject({ amount: "120.00", status: "validated" });
+    });
+
+    integrationTest("uses the shared floating accrual planner for chronological multi-slip preview", async () => {
+        const tenantId = `batch-floating-${crypto.randomUUID()}`;
+        const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId, ownerUserId: actor.id, name: "Floating batch fixture" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({ tenantId, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "5000.00", interestRate: "0.00", repaymentType: "floating", dailyInterestMode: "per_thousand", dailyInterestRate: "15.0000", firstDayTreatment: "start_next_day", interestStartDate: "2026-09-06", interestPeriodUnit: "day", interestPeriodLength: 1, advanceInterestPeriods: 0, advanceInterestRefundPolicy: "non_refundable", interestPeriodAnchorDate: "2026-09-06", floatingAccrualCycle: "daily", outstandingPrincipal: "5000.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" }).returning().then((rows) => rows[0]!);
+        await db.insert(loanInterestRatePeriods).values({ tenantId, loanId: loan.id, effectiveDate: "2026-09-06", expiryDate: null, rateType: "per_thousand", rate: "15.0000", periodUnit: "day", periodLength: 1, createdByUserId: actor.id });
+        const intake07 = await db.insert(paymentIntakes).values({ tenantId, ownerUserId: actor.id, amount: "75.00", receivedAt: new Date("2026-09-07T04:00:00.000Z"), status: "draft", idempotencyKey: "floating-intake-07", createdByUserId: actor.id }).returning().then((rows) => rows[0]!);
+        const intake08 = await db.insert(paymentIntakes).values({ tenantId, ownerUserId: actor.id, amount: "75.00", receivedAt: new Date("2026-09-08T04:00:00.000Z"), status: "draft", idempotencyKey: "floating-intake-08", createdByUserId: actor.id }).returning().then((rows) => rows[0]!);
+        const batch = await db.insert(paymentBatches).values({ tenantId, borrowerId: borrower.id, status: "draft", version: 2, stateHash: "v1:floating", createIdempotencyKey: "floating-batch", createdByUserId: actor.id, updatedByUserId: actor.id }).returning().then((rows) => rows[0]!);
+        const item07 = await db.insert(paymentBatchItems).values({ tenantId, batchId: batch.id, paymentIntakeId: intake07.id, itemOrder: 1 }).returning().then((rows) => rows[0]!);
+        const item08 = await db.insert(paymentBatchItems).values({ tenantId, batchId: batch.id, paymentIntakeId: intake08.id, itemOrder: 2 }).returning().then((rows) => rows[0]!);
+        const ctx: CommandContext = { tenantId, actorUserId: actor.id, actorSource: "web", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() };
+        const preview = await previewPaymentBatch(ctx, batch.publicId, { borrowerPublicId: borrower.publicId, allocations: [
+            { itemPublicId: item07.publicId, loanPublicId: loan.publicId, amount: "75.00", targetDueDate: "2026-09-07", intent: "on_time" },
+            { itemPublicId: item08.publicId, loanPublicId: loan.publicId, amount: "75.00", targetDueDate: "2026-09-08", intent: "on_time" },
+        ] });
+        expect(preview.status).toBe("ready");
+        expect(await db.select().from(paymentBatchAllocations).where(eq(paymentBatchAllocations.previewId, (await db.query.paymentBatchPreviews.findFirst({ where: eq(paymentBatchPreviews.publicId, preview.publicId) }))!.id))).toMatchObject([
+            { calculatedComponents: { principal: "0.00", interest: "75.00", fee: "0.00", penalty: "0.00" } },
+            { calculatedComponents: { principal: "0.00", interest: "75.00", fee: "0.00", penalty: "0.00" } },
+        ]);
+        expect(await db.select().from(transactions).where(eq(transactions.tenantId, tenantId))).toHaveLength(0);
     });
 });

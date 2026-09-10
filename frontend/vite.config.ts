@@ -37,6 +37,6 @@ export default defineConfig({
             ? ['--no-experimental-webstorage']
             : [],
         setupFiles: ['./tests/setup.ts'],
-        include: ['tests/**/*.{test,vitest}.{ts,tsx}'],
+        include: ['tests/**/*.{test,vitest}.{ts,tsx}', 'src/**/*.{test,vitest}.{ts,tsx}'],
     },
 })

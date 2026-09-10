@@ -1767,6 +1767,44 @@
         "payment.batch.execute"
       ],
       "humanBoundary": "Changed semantics require a fresh preview and confirmation."
+    },
+    {
+      "id": "payment-batch-resumable-staging",
+      "kind": "positive",
+      "skill": "reconcile-payments",
+      "prompt": "Resume an upload-first batch, review one staged slip, preview an explicit borrower-aware allocation, record chronology decision, and execute the latest confirmed result.",
+      "expectedCalls": [
+        "payment.batch.stage",
+        "payment.batch.workspace",
+        "payment.batch.candidates",
+        "payment.batch.staging.evidence.prepare",
+        "payment.batch.staging.evidence.finalize",
+        "payment.batch.staging.review",
+        "payment.batch.preview",
+        "payment.batch.decision",
+        "payment.batch.preview",
+        "payment.batch.execute"
+      ],
+      "forbiddenCalls": [],
+      "humanBoundary": "Evidence, review, chronology decision, and fresh confirmation are required before posting; MCP returns backend results without agent-side accounting."
+    },
+    {
+      "id": "payment-reconcile-legacy-reflow-confirmation",
+      "kind": "positive",
+      "skill": "reconcile-payments",
+      "prompt": "Repair an existing executed interest-only reconciliation through the temporal-reflow preview and explicit confirmation workflow.",
+      "expectedCalls": ["payment.reconcile.reflow.preview", "payment.reconcile.reflow.execute"],
+      "forbiddenCalls": [],
+      "humanBoundary": "Repair only complete floating-interest provenance; preserve original transactions and require explicit confirmation with a stable idempotency key."
+    },
+    {
+      "id": "payment-reconcile-legacy-reflow-stale-stops",
+      "kind": "negative",
+      "skill": "reconcile-payments",
+      "prompt": "A legacy temporal-reflow preview is stale; attempt to execute it anyway.",
+      "expectedCalls": ["payment.reconcile.reflow.preview", "payment.reconcile.reflow.execute"],
+      "forbiddenCalls": [],
+      "humanBoundary": "A stale or expired repair preview is a hard stop and must not create financial records."
     }
   ]
 }

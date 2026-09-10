@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import Decimal from "decimal.js";
+import postgres from "postgres";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
@@ -18,6 +19,7 @@ import {
 } from "../db/schema";
 import { generateLoanSchedule } from "../lib/loan-schedule";
 import type { CommandContext } from "./command-context";
+import { createPaymentIntake, postPayment, previewPaymentMatch } from "./payment-service";
 import {
     allocateFundingByLargestRemainder,
     executeLoanRenewal,
@@ -27,6 +29,28 @@ import {
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
+
+async function waitForRenewalBorrowerWait(observer: ReturnType<typeof postgres>, blockerPid: number) {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+        const waiting = await observer`
+            SELECT activity.pid
+            FROM pg_locks waiting
+            JOIN pg_stat_activity activity ON activity.pid = waiting.pid
+            WHERE waiting.granted = false
+              AND activity.wait_event_type = 'Lock'
+              AND activity.query LIKE '%FROM borrowers%'
+              AND activity.query LIKE '%FOR UPDATE%'
+              AND EXISTS (
+                SELECT 1 FROM pg_locks blocker
+                WHERE blocker.pid = ${blockerPid} AND blocker.granted = true
+              )
+            LIMIT 1
+        `;
+        if (waiting.length) return Number(waiting[0]!.pid);
+        await Promise.resolve();
+    }
+    throw new Error("renewal operation did not wait on the borrower row lock");
+}
 
 async function resetRenewalTables() {
     await db.execute(sql`TRUNCATE TABLE
@@ -708,8 +732,10 @@ describe("daily-loan renewal service", () => {
         releaseLock();
         await blocker;
         const [first, retry] = await Promise.all([firstPending, retryPending]);
+        const sequentialRetry = await execute();
 
         expect(retry).toEqual(first);
+        expect(sequentialRetry).toEqual(first);
         expect(first).toMatchObject({
             id: preview.publicId,
             publicId: preview.publicId,
@@ -791,6 +817,70 @@ describe("daily-loan renewal service", () => {
             eq(auditLogs.entityId, preview.publicId),
             eq(auditLogs.action, "executed"),
         ))).toHaveLength(1);
+    });
+
+    integrationTest("waits on the borrower lock before acquiring renewal loan locks", async () => {
+        const seeded = await seedDailyLoan();
+        const preview = await previewLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id),
+            seeded.oldLoan.publicId,
+            { requestedPrincipal: "2500.00" },
+        );
+        const locker = postgres(process.env.TEST_DATABASE_URL!);
+        const observer = postgres(process.env.TEST_DATABASE_URL!);
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => { release = resolve; });
+        let announcePid!: (pid: number) => void;
+        const pidReady = new Promise<number>((resolve) => { announcePid = resolve; });
+        const blocker = locker.begin(async (tx) => {
+            await tx`SELECT id FROM borrowers WHERE tenant_id = ${seeded.tenantId} AND id = ${seeded.borrower.id} FOR UPDATE`;
+            announcePid(Number((await tx`SELECT pg_backend_pid() AS pid`)[0]!.pid));
+            await released;
+        });
+        let execution: ReturnType<typeof executeLoanRenewal> | undefined;
+        try {
+            const blockerPid = await pidReady;
+            execution = executeLoanRenewal(
+                context(seeded.tenantId, seeded.actor.id, "renewal-borrower-lock"),
+                preview.publicId,
+                { previewHash: preview.previewHash, confirmed: true, reason: "borrower lock ordering" },
+            );
+            const waitingPid = await waitForRenewalBorrowerWait(observer, blockerPid);
+            expect(waitingPid).not.toBe(blockerPid);
+            expect(await observer`SELECT id FROM loans WHERE tenant_id = ${seeded.tenantId} AND id = ${seeded.oldLoan.id} FOR UPDATE NOWAIT`).toHaveLength(1);
+            expect(await observer`SELECT id FROM loan_renewals WHERE tenant_id = ${seeded.tenantId} AND public_id = ${preview.publicId} FOR UPDATE NOWAIT`).toHaveLength(1);
+            release();
+            await blocker;
+            expect((await execution).status).toBe("executed");
+        } finally {
+            release();
+            if (execution) await Promise.allSettled([execution]);
+            await Promise.allSettled([blocker]);
+            await locker.end({ timeout: 1000 });
+            await observer.end({ timeout: 1000 });
+        }
+    });
+
+    integrationTest("rejects renewal execution after an ordinary payment changes its preview snapshot", async () => {
+        const seeded = await seedDailyLoan();
+        const renewal = await previewLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id), seeded.oldLoan.publicId, { requestedPrincipal: "2500.00" },
+        );
+        const paymentContext = context(seeded.tenantId, seeded.actor.id, "renewal-race-ordinary-payment");
+        const intake = await createPaymentIntake(paymentContext, {
+            amount: "190.00", receivedAt: "2026-08-20T03:00:00.000Z", payerName: seeded.borrower.name,
+        });
+        const paymentPreview = await previewPaymentMatch(paymentContext, intake.publicId, {
+            allocations: [{ borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.oldLoan.publicId, amount: "190.00" }],
+        });
+        await postPayment(paymentContext, intake.publicId, { proposalPublicId: paymentPreview.publicId });
+        const beforeReplacementCount = await db.select().from(loans).where(eq(loans.clonedFromLoanId, seeded.oldLoan.id));
+        await expect(executeLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id, "renewal-after-ordinary-payment"), renewal.publicId,
+            { previewHash: renewal.previewHash, confirmed: true, reason: "ordinary payment won the snapshot race" },
+        )).rejects.toMatchObject({ code: "STALE_RENEWAL_PREVIEW", status: 409 });
+        expect(await db.select().from(loans).where(eq(loans.clonedFromLoanId, seeded.oldLoan.id))).toEqual(beforeReplacementCount);
+        expect(await db.select().from(transactions).where(eq(transactions.tenantId, seeded.tenantId))).toHaveLength(11);
     });
 
     integrationTest("resolves concurrent same-key executions of different renewals as one success and one stable conflict", async () => {

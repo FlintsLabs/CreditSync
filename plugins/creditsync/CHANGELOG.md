@@ -1,13 +1,45 @@
 # CreditSync Plugin Changelog
 
-## v9.2.0 - 2026-09-09
+## v10.0.0 - 2026-09-10
 
 ### Added
+- Added closed temporal-reflow existing-reconciliation repair preview and execute tools using the append-only repair provenance ledger.
+
+### Changed
+- Bumped the frozen contract for the two new repair tools; existing posted transaction history remains immutable.
+
+## v9.6.0 - 2026-09-10
+
+### Added
+- Added `payment.batch.staging.extract` for local, evidence-bound, review-only payment-slip OCR candidates; it never creates an intake or financial record.
+- Synchronized the frozen private contract to 127 tools.
+
+## v9.5.0 - 2026-09-10
+
+### Added
+- Added the optional temporal-reflow group identifier to reconciliation execute output so clients can resume and audit append-only interest reflow results.
+
+## v9.4.0 - 2026-09-10
+
+### Added
+- Added tenant-safe named borrower and backend-calculated contract candidate discovery for reviewed staging slips across REST and direct MCP.
+
+### Changed
+- Synchronized the frozen private contract to 126 tools and plugin version 9.4.0.
+- Synchronized backend-confirmed batch allocation component fields in the frozen preview output contract.
+
+## v9.3.0 - 2026-09-10
+
+### Added
+- Added direct MCP staging creation and staging-evidence prepare/finalize tools for the upload-first resumable batch workflow.
+- Added the resumable payment-batch workspace, staging review/edit, split, chronology decision, and cancellation tools with revision-bound stale-state and idempotency guidance.
 - Added owner/manager-only `system.error-diagnostic.get` and `system.error-diagnostic.list` tools.
 - Added correlation IDs and suggested actions to the common MCP error envelope with operation-aware retry guidance.
 - Added executable diagnostic follow-up, bounded-list, authorization-denial, and no-bypass eval scenarios.
 
 ### Changed
+- Synchronized borrower-aware floating allocation targets, decision-bound previews, strict safe batch outputs, and the frozen 125-tool contract.
+- Synchronized the frozen 122-tool contract with the backend's direct batch staging services; REST remains a separate authenticated Web surface and MCP does not call REST internally.
 - Hardened the synchronized diagnostic contract for bounded breadcrumb enums, redacted typed error details, and safe retry/terminal-stage guidance.
 - Synchronized the frozen 114-tool contract and diagnostic recovery guidance.
 

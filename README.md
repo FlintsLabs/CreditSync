@@ -20,6 +20,8 @@ CreditSync is designed for workflows like:
 - Generating installment schedules before confirming a loan
 - Supporting weekly or monthly schedules with a borrower-agreed installment count: the backend derives the rate-based amount when no amount is supplied, while an explicit count-plus-amount pair creates a fixed-total schedule whose amount above principal is scheduled interest
 - Capturing data-only or image-first repayments, reviewing matches, posting allocations, and reversing corrections
+
+Payment-slip batches support an upload-first, human-review-only OCR step after staging evidence is finalized. The local OCR boundary returns candidate amount, Bangkok transfer time, payer/receiver, fee, and a hashed reference; it verifies downloaded bytes against the finalized evidence checksum, serializes extraction receipts by tenant/key, and does not create an intake, choose a borrower/loan, calculate accounting, or post money. Missing or ambiguous fields stay unresolved for manual review, and the existing evidence checksum/revision gates require a fresh preview after any change.
 - Calculating closing balances for early payoff
 - Tracking source-of-funds profiles and traceability between bank funding and downstream loans
 - Receiving images from LINE webhooks and storing them for later processing
@@ -35,10 +37,11 @@ The repo already contains a working MVP foundation:
 - OCR endpoint for uploaded ID-card-like images
 - Loan calculation plus draft-review-activation flow
 - Payment intake, evidence, review, grouped allocation, posting, and compensating reversal workflow
-- Historical payment reconciliation for reviewed `needs_review` intakes and fully compensated, finalized-evidence-backed `reversed` sources. A `ready` backdated floating payment blocked by later immutable allocations first passes rollback-only preflight, then requires explicit confirmation for the audited `payment.reconcile.mark-review` transition; a fresh reconciliation preview requires a second confirmation before execution. `payment.reconcile.*` remains interest-only, while `payment.restore.*` creates one linked child with the exact original component split and retains source evidence unchanged
-- Floating-payment allocation integrity checker and fail-closed post guard for overfilled accrual provenance, plus an idempotent append-only grouped-batch repair script that reverses/reposts in Bangkok business-date order and verifies all floating contracts afterward
+- Historical payment reconciliation for reviewed `needs_review` intakes and fully compensated, finalized-evidence-backed `reversed` sources. A `ready` backdated floating payment blocked by later immutable allocations first passes rollback-only preflight, then requires explicit confirmation for the audited `payment.reconcile.mark-review` transition; a fresh reconciliation preview requires a second confirmation before execution. The preview exposes the backend chronological temporal-reflow impact, and execute returns its durable reflow-group identifier. Existing executed legacy reconciliations with complete interest-only provenance can use `payment.reconcile.reflow.preview` → explicit confirmation → `payment.reconcile.reflow.execute`; original transactions remain immutable and missing/unsupported provenance is held. `payment.reconcile.*` remains interest-only, while `payment.restore.*` creates one linked child with the exact original component split and retains source evidence unchanged
 - Same-loan scheduled-payment allocation correction through `payment.allocation-correction.preview` → exact before/after review and zero-variance conservation → explicit confirmation → `payment.allocation-correction.execute`. It preserves the posted intake and original transaction, appends one compensation and one replacement, and stops on floating, cross-loan, overpayment, duplicate, stale, or downstream-dependent states. Only an executed renewal's verified `principal_transfer` and `cash_payout` opening ancestors on the renewal-created loan are exempted from dependency warnings; all unknown or unrelated adjustments remain blockers and opening lineage participates in stale-state validation. Production repair remains a separately authorized post-deployment operation requiring a fresh preview.
-- Atomic scheduled-loan payment batches through the closed `payment.batch.*` workflow: for multiple slips, use one compact capture call and multi-item evidence preparation/finalization, then preview the whole batch, confirm once, execute with stable idempotency, and verify every posted intake and loan balance. Any duplicate, ambiguity, mismatch, or changed semantics stops the whole batch for review.
+- Atomic payment batches use an upload-first staging/review boundary: `/payment-batches/stage` creates resumable tenant-scoped slip drafts without inventing amount or transfer time; `GET /payment-batches/:id/workspace` resumes that workspace with public staging status, revision, evidence readiness, and review links; staging evidence is prepared/finalized before review records normalized fields and creates the intake. The authenticated REST workflow and direct MCP tools (`payment.batch.stage`, staging evidence prepare/finalize, workspace, `payment.batch.candidates`, review/edit, split, decision, cancel, preview, execute) use the same application services and strict public UUID/money/date contracts. Candidate discovery returns bounded tenant/portfolio-authorized named borrowers and backend-calculated scheduled/floating contract projections, with separate current due components and input-specific proposal components plus revision-bound fingerprints; fuzzy or multiple matches remain human decisions and are never auto-mapped. Draft staging edits are revision/reason/idempotency bound, mapping-aware, and invalidate previews; reviewed borrower mappings remain authoritative per item, including borrower-only mappings, and explicit multi-contract allocations must stay within that borrower. Automatic planning uses Bangkok business dates, holds a unique sum spanning multiple contracts until an explicit human selection, and sorts slips chronologically. `/payment-batches/:id/split` moves selected unposted membership atomically into a provenance-linked batch without duplicating intakes or evidence; runtime holds are derived from the actual borrower/date chronology so a ready prefix is not blocked by a later held source member. The batch then requires chronology-aware preview, explicit confirmation, stable idempotency, and atomic execute. Calendar gaps, duplicate/ambiguity/mismatch, missing provenance, or changed semantics hold the whole batch; no capture or review path posts financial records.
+- Payment-batch cancellation is an explicit reasoned, revision-bound, idempotent operation; a stale or replay-conflicting cancel request does not alter the batch.
+- The Web batch workspace now presents the bounded four-step capture → human review → chronology → confirmation flow: capture 1–50 files and evidence first, enter human-confirmed amount/time afterward, resume staged work after refresh or connection loss, reselect a file against its stable pending staging row without duplicating evidence, choose named borrower/contract candidates and explicit multi-contract amounts, then execute only the latest ready preview. Preview renders backend-confirmed chronological allocations and translated component breakdowns; split shows the destination batch, exact moved members, and dependency before navigation, while cancellation produces a terminal receipt and isolates a genuinely new draft's keys. It never auto-posts from OCR or accepts manually typed internal UUIDs; backend candidate/accounting services remain authoritative. Missing OCR remains an explicit manual-review state.
 - Daily-loan renewal preview, confirmed execution, and compensating reversal workflow
 - Single-payment settlement/restructure preview, explicit confirmation, component waivers, replacement contracts, and compensating reversal workflow
 - Explicitly confirmed, idempotent unfunded-loan cancellation preview/execute workflow, guarded by zero actual disbursement, no effective posted payment, and no downstream financial activity
@@ -441,7 +444,7 @@ For rotation, put the old and new hashes in `MCP_API_TOKEN_HASHES` separated by 
 
 ## Private CreditSync Plugin
 
-The repository includes CreditSync Plugin `9.1.0` under [`plugins/creditsync`](./plugins/creditsync). It combines 11 orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
+The repository includes CreditSync Plugin `10.0.0` under [`plugins/creditsync`](./plugins/creditsync). It combines 11 orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
 
 Before installation, register the deployed MCP endpoint as a private Codex app and replace the conspicuous `plugin_asdk_app_REPLACE_AFTER_PRIVATE_REGISTRATION` value in `plugins/creditsync/.app.json` with the returned `plugin_asdk_app...` technical ID. Then validate the package, add this Git repository as the marketplace that tracks `main`, and install the plugin:
 
@@ -568,6 +571,15 @@ bun run lint
 bun run build
 ```
 
+The scoped browser acceptance harness uses a synthetic local tenant and a locally signed test JWT. It mocks only the API/OCR boundary, never uses production credentials or financial data, and captures the batch upload → OCR review → chronology preview → confirmation → receipt screens:
+
+```bash
+cd frontend
+bun run test:e2e
+```
+
+This browser harness is UI workflow evidence; backend financial invariants and real OCR runtime checks remain separate disposable/test-only gates.
+
 `frontend/bunfig.toml` preloads the local Happy DOM and Testing Library matcher setup for Bun-native DOM tests; Vitest continues to use its separate jsdom configuration for the full frontend suite.
 
 Vitest automatically disables Node's native webstorage in test workers when the runtime supports that option, so jsdom supplies browser storage on Node 26 without a manual `NODE_OPTIONS` override. Tests discovered by Vitest must import test APIs from `vitest`, not `bun:test`.
@@ -579,6 +591,8 @@ Database-backed service tests are opt-in and require `TEST_DATABASE_URL` to poin
 ```
 
 The script deliberately does not use the local development database. To use a separately provisioned disposable database instead, set both `DATABASE_URL` and `TEST_DATABASE_URL` to that database before running `bun test`.
+
+With no focused file argument, the disposable runner drops and recreates the disposable `public`/`drizzle` schemas, applies the current migrations, and executes every backend test file in a separate Bun process. Each test process receives an explicit runner-owned database URL, preventing stale migration journals or timed-out transactions from leaking across files; it does not change per-test timeouts, assertions, or skipped-test policy.
 
 Current tests cover:
 

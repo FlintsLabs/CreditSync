@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { batchTotal, isBatchReady, normalizeMoney, semanticSummary, toExplicitBatchAllocations } from "./payment-batch-model";
+import { batchTotal, isBatchReady, normalizeBangkokDateTime, normalizeMoney, semanticSummary, toBangkokDateTimeInput, toExplicitBatchAllocations } from "./payment-batch-model";
 
 describe("payment batch model", () => {
     it("uses exact decimal strings for totals", () => {
@@ -24,5 +24,25 @@ describe("payment batch model", () => {
             { itemPublicId: "item-a", loanPublicId: "loan-a", schedulePublicId: "schedule-a", amount: "30.10", targetDueDate: "2026-08-23", intent: "on_time" },
             { itemPublicId: "item-b", loanPublicId: "loan-b", schedulePublicId: "schedule-b", amount: "20.00", targetDueDate: "2026-08-24", intent: "backdated" },
         ]);
+    });
+    it("expands an explicitly selected multi-contract allocation without recalculating money", () => {
+        const rows = [{ id: "a", paymentIntakePublicId: "i", amount: "120", targetDueDate: "2026-08-23", intent: "on_time" as const, loanPublicId: "loan-a", schedulePublicId: "", selectedBorrowerPublicId: "borrower-a", allocations: [{ loanPublicId: "loan-a", schedulePublicId: "schedule-a", amount: "75" }, { loanPublicId: "loan-b", amount: "45" }] }];
+        expect(toExplicitBatchAllocations(rows, ["item-a"])).toEqual([
+            { itemPublicId: "item-a", borrowerPublicId: "borrower-a", loanPublicId: "loan-a", schedulePublicId: "schedule-a", amount: "75.00", targetDueDate: "2026-08-23", intent: "on_time" },
+            { itemPublicId: "item-a", borrowerPublicId: "borrower-a", loanPublicId: "loan-b", amount: "45.00", targetDueDate: "2026-08-23", intent: "on_time" },
+        ]);
+    });
+    it("does not enable execution when an explicit allocation is incomplete", () => {
+        const item = { id: "a", paymentIntakePublicId: "i", amount: "120", targetDueDate: "2026-08-23", intent: "on_time" as const, loanPublicId: "loan-a", schedulePublicId: "", allocations: [{ loanPublicId: "loan-a", amount: "75" }, { loanPublicId: "", amount: "45" }] };
+        const preview = { publicId: "preview", status: "ready", version: 1, previewHash: "p", confirmationHash: "c", evidenceReady: true, allocations: [], candidates: [], warnings: [] };
+        expect(isBatchReady([item], "borrower", true, preview)).toBe(false);
+    });
+    it("normalizes datetime-local as Bangkok and rejects impossible or unknown values", () => {
+        expect(normalizeBangkokDateTime("2026-09-10T00:30")).toBe("2026-09-09T17:30:00.000Z");
+        expect(toBangkokDateTimeInput("2026-09-09T17:30:00.000Z")).toBe("2026-09-10T00:30");
+    expect(normalizeBangkokDateTime("2026-02-30T10:00")).toBeNull();
+    expect(normalizeBangkokDateTime("2026-09-10T24:00")).toBeNull();
+    expect(normalizeBangkokDateTime("2026-09-10T10:60")).toBeNull();
+        expect(normalizeBangkokDateTime("not-a-time")).toBeNull();
     });
 });

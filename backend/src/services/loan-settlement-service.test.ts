@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import { and, eq, inArray, sql } from "drizzle-orm";
+import postgres from "postgres";
 import { db } from "../db";
 import {
     auditLogs,
@@ -14,6 +15,7 @@ import {
     loanInterestRatePreviews,
     loans,
     loanSettlementPreviews,
+    paymentIntakes,
     transactions,
     users,
 } from "../db/schema";
@@ -33,6 +35,25 @@ import { accrueFloatingInterestThrough } from "./floating-interest-service";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
+
+async function waitForSettlementBorrowerWait(observer: ReturnType<typeof postgres>, blockerPid: number) {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+        const rows = await observer`
+            SELECT activity.pid
+            FROM pg_locks waiting
+            JOIN pg_stat_activity activity ON activity.pid = waiting.pid
+            WHERE waiting.granted = false
+              AND activity.wait_event_type = 'Lock'
+              AND activity.query LIKE '%FROM borrowers%'
+              AND activity.query LIKE '%FOR UPDATE%'
+              AND EXISTS (SELECT 1 FROM pg_locks blocker WHERE blocker.pid = ${blockerPid} AND blocker.granted = true)
+            LIMIT 1
+        `;
+        if (rows.length) return Number(rows[0]!.pid);
+        await Promise.resolve();
+    }
+    throw new Error("settlement execution did not wait on the borrower row lock");
+}
 
 async function resetApplicationTables() {
     await db.execute(sql`SET client_min_messages TO WARNING`);
@@ -837,6 +858,61 @@ describe("loan settlement service", () => {
             requestId: "req-settlement-execute-once",
             correlationId: "corr-settlement-execute-once",
         })]);
+    });
+
+    integrationTest("replays a committed settlement before a newly discovered pending payment guard", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-replay-authority" });
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-15");
+        const executeContext = context(seeded.actor, "settlement-replay-authority");
+        const input = { settlementPublicId: preview.publicId, previewHash: preview.previewHash, confirmed: true as const, reason: "stable settlement replay" };
+        const first = await executeLoanSettlement(executeContext, input);
+        await db.insert(paymentIntakes).values({
+            tenantId: seeded.actor.tenantId,
+            ownerUserId: seeded.actor.id,
+            originLoanId: seeded.loan.id,
+            amount: "10.00",
+            receivedAt: new Date("2026-08-10T03:00:00.000Z"),
+            status: "draft",
+            createdByUserId: seeded.actor.id,
+        });
+        await expect(executeLoanSettlement(executeContext, input)).resolves.toEqual(first);
+        expect(await db.select().from(transactions).where(eq(transactions.loanId, seeded.loan.id))).toHaveLength(1);
+    });
+
+    integrationTest("waits on the borrower lock before acquiring settlement loan locks", async () => {
+        const seeded = await seedWeeklyLoan({ tenantId: "tenant-settlement-borrower-lock" });
+        const preview = await previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-15");
+        const locker = postgres(process.env.TEST_DATABASE_URL!);
+        const observer = postgres(process.env.TEST_DATABASE_URL!);
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => { release = resolve; });
+        let announce!: (pid: number) => void;
+        const announced = new Promise<number>((resolve) => { announce = resolve; });
+        const blocker = locker.begin(async (tx) => {
+            await tx`SELECT id FROM borrowers WHERE tenant_id = ${seeded.actor.tenantId} AND id = ${seeded.loan.borrowerId} FOR UPDATE`;
+            announce(Number((await tx`SELECT pg_backend_pid() AS pid`)[0]!.pid));
+            await released;
+        });
+        let executing: ReturnType<typeof executeLoanSettlement> | undefined;
+        try {
+            const blockerPid = await announced;
+            executing = executeLoanSettlement(context(seeded.actor, "settlement-borrower-lock"), {
+                settlementPublicId: preview.publicId, previewHash: preview.previewHash, confirmed: true, reason: "borrower lock ordering",
+            });
+            const waitingPid = await waitForSettlementBorrowerWait(observer, blockerPid);
+            expect(waitingPid).not.toBe(blockerPid);
+            expect(await observer`SELECT id FROM loans WHERE tenant_id = ${seeded.actor.tenantId} AND id = ${seeded.loan.id} FOR UPDATE NOWAIT`).toHaveLength(1);
+            expect(await observer`SELECT id FROM loan_settlement_previews WHERE tenant_id = ${seeded.actor.tenantId} AND public_id = ${preview.publicId} FOR UPDATE NOWAIT`).toHaveLength(1);
+            release();
+            await blocker;
+            await expect(executing).resolves.toMatchObject({ status: "executed" });
+        } finally {
+            release();
+            if (executing) await Promise.allSettled([executing]);
+            await Promise.allSettled([blocker]);
+            await locker.end({ timeout: 1000 });
+            await observer.end({ timeout: 1000 });
+        }
     });
 
     // Break caught: close-account posting bypasses the funded principal return and income ledger effects.

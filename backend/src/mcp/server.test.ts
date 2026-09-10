@@ -116,6 +116,42 @@ describe("CreditSync stateless MCP contract", () => {
         expect((result.structuredContent as any)?.error).toMatchObject({ code: "INVALID_TOOL_ARGUMENTS", correlationId: expect.any(String), suggestedAction: expect.any(String) });
         expect(handlerCalls).toBe(0);
     });
+
+    test("advertises the complete closed batch staging workflow and accepts floating allocations", async () => {
+        const baseUrl = await startServer({ toolHandlers: {
+            "payment.batch.preview": async () => ({
+                id: BORROWER_ID, publicId: BORROWER_ID, batchPublicId: BORROWER_ID, version: 1, status: "needs_review",
+                stateHash: "state", previewHash: "preview", confirmationHash: "confirmation", evidenceReady: true,
+                allocations: [{ itemPublicId: INTAKE_ID, borrowerPublicId: BORROWER_ID, loanPublicId: BORROWER_ID, schedulePublicId: null, amount: "75.00", targetDueDate: "2026-08-10", intent: "on_time" }], candidates: [], warnings: [],
+            }),
+        } });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const listed = await client.listTools();
+        expect(listed.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+            "payment.batch.stage", "payment.batch.staging.evidence.prepare", "payment.batch.staging.evidence.finalize",
+            "payment.batch.workspace", "payment.batch.staging.review", "payment.batch.staging.edit",
+            "payment.batch.split", "payment.batch.decision", "payment.batch.cancel",
+        ]));
+        const result = await client.callTool({ name: "payment.batch.split", arguments: {
+            batchPublicId: BORROWER_ID,
+            selectedItemPublicIds: [INTAKE_ID],
+            expectedSourceRevision: 1,
+            idempotencyKey: "split-1",
+            reason: "synthetic split",
+            unexpected: true,
+        } });
+        expect(result.isError).toBe(true);
+        expect((result.structuredContent as any)?.error?.code).toBe("INVALID_TOOL_ARGUMENTS");
+        const floating = await client.callTool({ name: "payment.batch.preview", arguments: {
+            batchPublicId: BORROWER_ID,
+            borrowerPublicId: BORROWER_ID,
+            allocations: [{ itemPublicId: INTAKE_ID, borrowerPublicId: BORROWER_ID, loanPublicId: BORROWER_ID, amount: "75.00", targetDueDate: "2026-08-10", intent: "on_time" }],
+            decisionPublicId: BORROWER_ID,
+        } });
+        expect(floating.isError).not.toBe(true);
+        await client.close();
+    });
     // Break caught: frontend, backend parsing, REST, and MCP enforce different public-money lengths or round the shared maximum.
     test("keeps every public boundary on the 32-character unsigned money contract", async () => {
         const maximum = "99999999999999999999999999999.99";
@@ -927,6 +963,15 @@ describe("CreditSync stateless MCP contract", () => {
             "payment.batch.item.add",
             "payment.batch.evidence.prepare",
             "payment.batch.evidence.finalize",
+            "payment.batch.stage",
+            "payment.batch.staging.evidence.prepare",
+            "payment.batch.staging.evidence.finalize",
+            "payment.batch.staging.extract",
+            "payment.batch.staging.review",
+            "payment.batch.staging.edit",
+            "payment.batch.split",
+            "payment.batch.decision",
+            "payment.batch.cancel",
             "payment.batch.preview",
             "payment.batch.execute",
             "payment.reconcile.preview",

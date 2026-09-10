@@ -25,6 +25,7 @@ import {
 import { parseMoney, serializeMoney } from "../lib/money";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
+import { assertNoOlderPendingPayment, lockPaymentBorrowers } from "./payment-chronology-service";
 
 type Executor = any;
 type LoanRow = typeof loans.$inferSelect;
@@ -416,14 +417,19 @@ export async function previewLoanRenewal(
     }
     const accessible = await accessibleLoan(ctx, oldLoanPublicId);
     return db.transaction(async (tx) => {
+        await lockPaymentBorrowers(tx, ctx.tenantId, [accessible.borrowerId]);
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${accessible.id} FOR UPDATE`);
         const loan = await accessibleLoan(ctx, oldLoanPublicId, tx);
+        if (loan.borrowerId !== accessible.borrowerId) {
+            throw new DomainError("STALE_RENEWAL_PREVIEW", "Loan borrower changed while acquiring renewal locks", 409);
+        }
         if (loan.repaymentType !== "daily" || !["active", "paid"].includes(loan.status ?? "")) {
             throw new DomainError("LOAN_NOT_RENEWABLE", "Only active or paid daily loans can be renewed", 409);
         }
         const asOf = new Date();
         const { renewalDate, paymentStartDate } = resolveRenewalDates(input, loan, asOf);
         const renewalAsOf = renewalDate === bangkokDate(asOf) ? asOf : businessDateAsOf(renewalDate);
+        await assertNoOlderPendingPayment(tx, ctx.tenantId, loan.borrowerId, renewalAsOf, []);
         const snapshot = await renewalSnapshot(tx, ctx, loan, renewalAsOf, {
             requestedPrincipal,
             settlementPolicy,
@@ -634,11 +640,15 @@ export async function executeLoanRenewal(
         if (reusedKey && reusedKey.id !== accessible.renewal.id) {
             throw new DomainError("IDEMPOTENCY_KEY_CONFLICT", "Idempotency-Key was already used for another renewal", 409);
         }
+        await lockPaymentBorrowers(tx, ctx.tenantId, [accessible.oldLoan.borrowerId]);
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${accessible.oldLoan.id} FOR UPDATE`);
         await tx.execute(sql`SELECT id FROM loan_renewals WHERE tenant_id = ${ctx.tenantId} AND id = ${accessible.renewal.id} FOR UPDATE`);
         const locked = await accessibleRenewal(ctx, renewalPublicId, tx);
         const renewal = locked.renewal;
         const oldLoan = locked.oldLoan;
+        if (oldLoan.borrowerId !== accessible.oldLoan.borrowerId) {
+            throw new DomainError("STALE_RENEWAL_PREVIEW", "Loan borrower changed while acquiring renewal locks", 409);
+        }
         if (renewal.status === "executed") {
             if (renewal.idempotencyKey === idempotencyKey) return { value: await presentExecution(tx, renewal, oldLoan) };
             throw new DomainError("RENEWAL_ALREADY_EXECUTED", "Loan renewal has already been executed", 409);
@@ -655,6 +665,7 @@ export async function executeLoanRenewal(
         const frozenComposition = renewal.composition as RenewalComposition | null;
         const renewalDate = renewal.renewalDate ?? frozenComposition?.renewalDate ?? bangkokDate(effectiveAt);
         const snapshotAsOf = renewalDate === bangkokDate(effectiveAt) ? effectiveAt : businessDateAsOf(renewalDate);
+        await assertNoOlderPendingPayment(tx, ctx.tenantId, oldLoan.borrowerId, snapshotAsOf, []);
         const snapshot = await renewalSnapshot(tx, ctx, oldLoan, snapshotAsOf, {
             requestedPrincipal: new Decimal(renewal.requestedPrincipal),
             settlementPolicy: renewal.settlementPolicy,
@@ -1017,6 +1028,14 @@ export async function reverseLoanRenewal(
         if (reusedReversalKey && reusedReversalKey.id !== accessible.renewal.id) {
             throw new DomainError("REVERSAL_IDEMPOTENCY_CONFLICT", "Idempotency-Key was already used for another renewal reversal", 409);
         }
+        const initialNewLoan = accessible.renewal.newLoanId === null ? null : await tx.query.loans.findFirst({ where: and(
+            eq(loans.tenantId, ctx.tenantId), eq(loans.id, accessible.renewal.newLoanId),
+        ) });
+        const initialBorrowerIds = [...new Set([
+            accessible.oldLoan.borrowerId,
+            ...(initialNewLoan ? [initialNewLoan.borrowerId] : []),
+        ])].sort((a, b) => a - b);
+        await lockPaymentBorrowers(tx, ctx.tenantId, initialBorrowerIds);
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId}
             AND id = ${accessible.oldLoan.id} FOR UPDATE`);
         await tx.execute(sql`SELECT id FROM loan_renewals WHERE tenant_id = ${ctx.tenantId}
@@ -1024,6 +1043,9 @@ export async function reverseLoanRenewal(
         const locked = await accessibleRenewal(ctx, renewalPublicId, tx);
         const renewal = locked.renewal;
         const oldLoan = locked.oldLoan;
+        if (oldLoan.borrowerId !== accessible.oldLoan.borrowerId) {
+            throw new DomainError("STALE_RENEWAL_PREVIEW", "Loan borrower changed while acquiring reversal locks", 409);
+        }
         if (renewal.status === "reversed") {
             if (renewal.reversalIdempotencyKey === idempotencyKey
                 && renewal.reversalRequestHash === reversalRequestHash) {
@@ -1038,12 +1060,14 @@ export async function reverseLoanRenewal(
         if (renewal.status !== "executed" || renewal.newLoanId === null) {
             throw new DomainError("RENEWAL_NOT_REVERSIBLE", "Only an executed renewal can be reversed", 409);
         }
-        await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId}
-            AND id = ${renewal.newLoanId} FOR UPDATE`);
         const newLoan = await tx.query.loans.findFirst({ where: and(
             eq(loans.tenantId, ctx.tenantId), eq(loans.id, renewal.newLoanId),
         ) });
         if (!newLoan) throw new DomainError("RENEWAL_NOT_REVERSIBLE", "Replacement loan no longer exists", 409);
+        if (!initialBorrowerIds.includes(newLoan.borrowerId)) {
+            throw new DomainError("STALE_RENEWAL_PREVIEW", "Replacement borrower changed while acquiring reversal locks", 409);
+        }
+        await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id = ${newLoan.id} FOR UPDATE`);
         const downstreamTransactions = await tx.select().from(transactions).where(and(
             eq(transactions.tenantId, ctx.tenantId), eq(transactions.loanId, newLoan.id),
         ));

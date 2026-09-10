@@ -19,6 +19,7 @@ import { parseMoney, serializeMoney } from "../lib/money";
 import { calculateSinglePaymentSettlement, type SinglePaymentExposure, type SinglePaymentTerms } from "../lib/single-payment";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
+import { assertNoOlderPendingPayment, lockPaymentBorrowers } from "./payment-chronology-service";
 import { createDisbursementDraftInTransaction } from "./loan-disbursement-service";
 import { settlementSnapshot } from "./loan-settlement-service";
 import { postExternalSettlementCreditInTransaction, reversePayment } from "./payment-service";
@@ -429,9 +430,14 @@ function presentPreview(row: Restructure, loan: Loan, computed: Awaited<ReturnTy
 
 export async function previewLoanRestructure(ctx: CommandContext, oldLoanPublicId: string, input: PreviewLoanRestructureInput) {
     const loan = await accessibleLoan(ctx, oldLoanPublicId);
-    const computed = await computePreview(db, ctx, loan, input);
-    const expiresAt = new Date(Date.now() + Math.max(60, Number(process.env.RESTRUCTURE_PREVIEW_TTL_SECONDS ?? 900)) * 1000);
     const row = await db.transaction(async tx => {
+        await lockPaymentBorrowers(tx, ctx.tenantId, [loan.borrowerId]);
+        await tx.execute(sql`SELECT id FROM loans WHERE tenant_id=${ctx.tenantId} AND id=${loan.id} FOR UPDATE`);
+        const lockedLoan = await accessibleLoan(ctx, oldLoanPublicId, tx);
+        if (lockedLoan.borrowerId !== loan.borrowerId) throw new DomainError("STALE_RESTRUCTURE_PREVIEW", "Loan borrower changed while acquiring restructure locks", 409);
+        await assertNoOlderPendingPayment(tx, ctx.tenantId, lockedLoan.borrowerId, new Date(`${input.settlementDate}T23:59:59.999+07:00`), []);
+        const computed = await computePreview(tx, ctx, lockedLoan, input);
+        const expiresAt = new Date(Date.now() + Math.max(60, Number(process.env.RESTRUCTURE_PREVIEW_TTL_SECONDS ?? 900)) * 1000);
         await tx.update(loanRestructures).set({ status: "expired", updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(eq(loanRestructures.tenantId, ctx.tenantId), eq(loanRestructures.oldLoanId, loan.id), eq(loanRestructures.status, "preview")));
         const created = await tx.insert(loanRestructures).values({
             tenantId: ctx.tenantId, oldLoanId: loan.id, settlementDate: input.settlementDate, oldBalanceVersion: computed.current.version,
@@ -444,9 +450,9 @@ export async function previewLoanRestructure(ctx: CommandContext, oldLoanPublicI
             expiresAt, createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId,
         }).returning().then((rows: Restructure[]) => rows[0]!);
         await createAuditLog(tx, { ...auditContext(ctx), entityType: "loan_restructure", entityId: created.publicId, action: "previewed", payload: { oldLoanPublicId, previewHash: created.previewHash, oldBalanceVersion: created.oldBalanceVersion, settlementDate: created.settlementDate } });
-        return created;
+        return { created, computed, lockedLoan };
     });
-    return presentPreview(row, loan, computed);
+    return presentPreview(row.created, row.lockedLoan, row.computed);
 }
 
 export interface ExecuteLoanRestructureInput { confirmed: boolean; previewHash: string; expectedBalanceVersion: string; reason: string }
@@ -535,16 +541,19 @@ export async function executeLoanRestructure(ctx: CommandContext, restructurePub
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`loan-restructure-execute:${ctx.tenantId}:${required.idempotencyKey}`}, 0))`);
         const reused = await tx.query.loanRestructures.findFirst({ where: and(eq(loanRestructures.tenantId, ctx.tenantId), eq(loanRestructures.executeIdempotencyKey, required.idempotencyKey)) });
         if (reused && reused.id !== accessible.row.id) throw new DomainError("IDEMPOTENCY_KEY_CONFLICT", "Idempotency key belongs to a different restructure", 409);
+        await lockPaymentBorrowers(tx, ctx.tenantId, [accessible.oldLoan.borrowerId]);
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id=${ctx.tenantId} AND id=${accessible.oldLoan.id} FOR UPDATE`);
         await tx.execute(sql`SELECT id FROM transactions WHERE tenant_id=${ctx.tenantId} AND loan_id=${accessible.oldLoan.id} ORDER BY id FOR UPDATE`);
         await tx.execute(sql`SELECT id FROM loan_disbursement_events WHERE tenant_id=${ctx.tenantId} AND loan_id=${accessible.oldLoan.id} ORDER BY id FOR UPDATE`);
         await tx.execute(sql`SELECT id FROM loan_schedules WHERE tenant_id=${ctx.tenantId} AND loan_id=${accessible.oldLoan.id} ORDER BY id FOR UPDATE`);
         await tx.execute(sql`SELECT id FROM loan_restructures WHERE tenant_id=${ctx.tenantId} AND id=${accessible.row.id} FOR UPDATE`);
         const { row, oldLoan } = await accessibleRestructure(ctx, restructurePublicId, tx);
+        if (oldLoan.borrowerId !== accessible.oldLoan.borrowerId) return { stale: true as const };
         if (row.status === "executed") {
             if (row.executeIdempotencyKey === required.idempotencyKey && row.executeRequestHash === required.requestHash) return { value: await presentExecution(tx, row, oldLoan) };
             throw new DomainError("IDEMPOTENCY_KEY_CONFLICT", "Restructure was executed with a different key or payload", 409);
         }
+        await assertNoOlderPendingPayment(tx, ctx.tenantId, oldLoan.borrowerId, new Date(`${row.settlementDate}T23:59:59.999+07:00`), []);
         if (row.status !== "preview") throw new DomainError("RESTRUCTURE_NOT_EXECUTABLE", "Restructure preview is not executable", 409);
         if (row.expiresAt.getTime() <= Date.now() || row.previewHash !== input.previewHash || row.oldBalanceVersion !== input.expectedBalanceVersion) return { stale: true as const };
         const stored = row.requestedReplacementTerms as unknown as PreviewLoanRestructureInput & { currentVersion: string };
@@ -621,6 +630,9 @@ export async function reverseLoanRestructure(ctx: CommandContext, restructurePub
     const accessible = await accessibleRestructure(ctx, restructurePublicId);
     return db.transaction(async tx => {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`loan-restructure-reverse:${ctx.tenantId}:${idempotencyKey}`}, 0))`);
+        const initialNewLoan = accessible.row.newLoanId === null ? null : await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, accessible.row.newLoanId)) });
+        const borrowerIds = [...new Set([accessible.oldLoan.borrowerId, ...(initialNewLoan ? [initialNewLoan.borrowerId] : [])])].sort((a, b) => a - b);
+        await lockPaymentBorrowers(tx, ctx.tenantId, borrowerIds);
         await tx.execute(sql`SELECT id FROM loan_restructures WHERE tenant_id=${ctx.tenantId} AND id=${accessible.row.id} FOR UPDATE`);
         const { row, oldLoan } = await accessibleRestructure(ctx, restructurePublicId, tx);
         if (row.status === "reversed") {
@@ -628,7 +640,10 @@ export async function reverseLoanRestructure(ctx: CommandContext, restructurePub
             throw new DomainError("REVERSAL_IDEMPOTENCY_CONFLICT", "Restructure reversal payload conflicts", 409);
         }
         if (row.status !== "executed" || !row.newLoanId || !row.preExecutionOldLoanState) throw new DomainError("RESTRUCTURE_NOT_REVERSIBLE", "Only executed restructures can be reversed", 409);
+        const currentNewLoan = await tx.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, row.newLoanId)) });
+        if (!currentNewLoan || !borrowerIds.includes(currentNewLoan.borrowerId)) throw new DomainError("STALE_RESTRUCTURE_PREVIEW", "Replacement borrower changed while acquiring reversal locks", 409);
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id=${ctx.tenantId} AND id IN (${oldLoan.id}, ${row.newLoanId}) ORDER BY id FOR UPDATE`);
+        if (!borrowerIds.includes(oldLoan.borrowerId)) throw new DomainError("STALE_RESTRUCTURE_PREVIEW", "Old loan borrower changed while acquiring reversal locks", 409);
         const [paymentCount, postedDisbursements, laterWaivers, laterRestructures, laterRenewals, rateChanges] = await Promise.all([
             tx.select({ count: sql<number>`count(*)::int` }).from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.loanId, row.newLoanId))),
             tx.select({ count: sql<number>`count(*)::int` }).from(loanDisbursementEvents).where(and(eq(loanDisbursementEvents.tenantId, ctx.tenantId), eq(loanDisbursementEvents.loanId, row.newLoanId), inArray(loanDisbursementEvents.status, ["posted", "reversed"]))),

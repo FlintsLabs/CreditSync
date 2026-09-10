@@ -676,13 +676,10 @@ describe("payment application service", () => {
         await expect(postPayment(context(actor), backdatedIntake.publicId, {
             proposalPublicId: backdatedPreview.publicId,
         })).rejects.toMatchObject({
-            code: "FLOATING_ACCRUAL_PAID_CONFLICT",
+            // The shared chronology guard now refuses this before attempting
+            // accrual reprojection; all state snapshots below must stay intact.
+            code: "FLOATING_BACKDATED_ALLOCATION_REQUIRES_RECONCILIATION",
             status: 409,
-            details: {
-                accrualDate: "2026-08-16",
-                paidAmount: "85.72",
-                recalculatedInterestAmount: "68.57",
-            },
         });
 
         expect(await db.select().from(transactions).orderBy(transactions.id)).toEqual(before.transactions);
@@ -982,13 +979,14 @@ describe("payment application service", () => {
         await expect(postPayment(context(actor), downgradedIntake.publicId, { proposalPublicId: downgradedPreview.publicId }))
             .rejects.toMatchObject({ code: "PAYMENT_NOT_READY", status: 409 });
 
-        await db.update(loanSchedules).set({ remainingDue: "100.00", updatedAt: new Date() })
-            .where(eq(loanSchedules.id, seeded.schedules[0]!.id));
+        // Isolate the double-post race from intentionally unresolved older
+        // drafts above: chronology correctly blocks newer payments for them.
+        const liveSeeded = await seedLoan({ actor, borrowerName: "Concurrent poster", schedules: [{ total: "100.00" }] });
         const liveIntake = await createPaymentIntake(context(actor), {
             amount: "100.00", receivedAt: "2026-08-10T11:00:00.000Z",
         });
         const livePreview = await previewPaymentMatch(context(actor), liveIntake.publicId, {
-            allocations: [{ borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "100.00" }],
+            allocations: [{ borrowerPublicId: liveSeeded.borrower.publicId, loanPublicId: liveSeeded.loan.publicId, amount: "100.00" }],
         });
         const [first, second] = await Promise.all([
             postPayment(context(actor), liveIntake.publicId, { proposalPublicId: livePreview.publicId }),

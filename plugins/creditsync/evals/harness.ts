@@ -1472,6 +1472,46 @@ const batchItemFixture = { id: "0198c481-3e2b-7000-8000-000000000502", publicId:
 const batchFixture = (publicId: string) => ({ id: publicId, publicId, status: "draft", version: 1, borrowerPublicId: BORROWER_A, stateHash: "s".repeat(64), confirmationHash: null, confirmedVersion: null, notes: null, items: [batchItemFixture], latestPreview: null, postedAt: null, createdAt: "2026-08-23T00:00:00.000Z", updatedAt: "2026-08-23T00:00:00.000Z" });
 const batchPreviewFixture = (batchPublicId: string) => ({ id: "0198c481-3e2b-7000-8000-000000000503", publicId: "0198c481-3e2b-7000-8000-000000000503", batchPublicId, version: 1, status: "ready", stateHash: "s".repeat(64), previewHash: "a".repeat(64), confirmationHash: "b".repeat(64), evidenceReady: true, allocations: [], candidates: [], warnings: [] });
 const batchExecutionFixture = (batchPublicId: string) => ({ batchPublicId, status: "posted", posted: [], auditPublicIds: ["0198c481-3e2b-7000-8000-000000000511"], correlationId: "0198c481-3e2b-7000-8000-000000000512" });
+const stagingWorkflowBatch = "0198c481-3e2b-7000-8000-000000000513";
+const stagingWorkflowItem = "0198c481-3e2b-7000-8000-000000000514";
+const stagingWorkflowBatchItem = "0198c481-3e2b-7000-8000-000000000515";
+const stagingWorkflowEvidence = "0198c481-3e2b-7000-8000-000000000516";
+const stagingWorkflowDecision = "0198c481-3e2b-7000-8000-000000000517";
+const stagingWorkflowAudit = "0198c481-3e2b-7000-8000-000000000518";
+const stagingWorkflowCorrelation = "0198c481-3e2b-7000-8000-000000000519";
+const stagingWorkflowHash = "c".repeat(64);
+const stagingWorkflowWorkspace = {
+    batchPublicId: stagingWorkflowBatch,
+    batch: {
+        id: stagingWorkflowBatch, publicId: stagingWorkflowBatch, status: "draft", version: 1,
+        stateHash: "s".repeat(64), confirmationHash: null, confirmedVersion: null,
+        borrowerPublicId: BORROWER_A, items: [], latestPreview: null,
+        createdAt: "2026-08-23T00:00:00.000Z", updatedAt: "2026-08-23T00:00:00.000Z",
+    },
+    items: [{
+        publicId: stagingWorkflowItem, clientItemKey: "slip-1", status: "reviewed", revision: 1,
+        amount: "120.00", receivedAt: "2026-08-23T04:00:00.000Z", payerName: "Synthetic payer",
+        paymentIntakePublicId: INTAKE, batchItemPublicId: stagingWorkflowBatchItem,
+        reviewedReason: "Human reviewed synthetic slip", reviewedRangeFrom: null, reviewedRangeTo: null,
+        evidence: null, evidenceStatus: "ready",
+    }],
+};
+const stagingWorkflowPreview = {
+    id: "0198c481-3e2b-7000-8000-000000000520", publicId: "0198c481-3e2b-7000-8000-000000000520",
+    batchPublicId: stagingWorkflowBatch, version: 1, status: "ready", stateHash: "s".repeat(64),
+    previewHash: `v1:${stagingWorkflowHash}`, confirmationHash: `v1:${"d".repeat(64)}`,
+    evidenceReady: true,
+    allocations: [{ itemPublicId: stagingWorkflowItem, borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A,
+        schedulePublicId: null, amount: "120.00", targetDueDate: "2026-08-23", intent: "on_time", matchSource: "human_explicit" }],
+    candidates: [], warnings: [],
+};
+const stagingWorkflowCandidates = {
+    stagingItemPublicId: stagingWorkflowItem, batchItemPublicId: stagingWorkflowBatchItem, stagingRevision: 1, batchRevision: 1, inputFingerprint: `v1:${"e".repeat(64)}`, amount: "120.00",
+    receivedAt: "2026-08-23T04:00:00.000Z", businessDate: "2026-08-23", borrowerResolution: "unique", matchType: "canonical",
+    borrowerCandidates: [{ publicId: BORROWER_A, name: "Synthetic borrower", matchType: "canonical" }],
+    contractCandidates: [{ borrowerPublicId: BORROWER_A, borrowerName: "Synthetic borrower", loanPublicId: LOAN_A, repaymentType: "daily", status: "active", eligible: true, eligibilityCode: null, principalAmount: "500.00", outstandingPrincipal: "500.00", interestRate: "0.00", startDate: "2026-08-01", nextDueDate: "2026-08-23", dueComponents: { principal: "120.00", interest: "0.00", fee: "0.00", penalty: "0.00" }, proposalComponents: { principal: "120.00", interest: "0.00", fee: "0.00", penalty: "0.00" }, schedules: [] }],
+    candidateLimitReached: false, reviewRequired: false,
+};
 
 async function unfundedCancellationFlow(mcp: ScriptedMcp, execute = true) {
     const search = await mcp.call("borrower.search", { query: "Unfunded Borrower" });
@@ -1669,6 +1709,35 @@ const SCENARIOS: Record<string, Scenario> = {
     "payment-batch-duplicate-stops": { script: [{ name: "payment.batch.preview", arguments: { batchPublicId: "0198c481-3e2b-7000-8000-000000000508", borrowerPublicId: BORROWER_A }, result: { ...batchPreviewFixture("0198c481-3e2b-7000-8000-000000000508"), status: "needs_review", warnings: [{ code: "DUPLICATE_PAYMENT" }] } }], run: async (mcp) => { await mcp.call("payment.batch.preview", { batchPublicId: "0198c481-3e2b-7000-8000-000000000508", borrowerPublicId: BORROWER_A }); return { outcome: "stopped", stopReason: "batch-duplicate-human-review" } as const; } },
     "payment-batch-same-semantics-repreview": { script: [{ name: "payment.batch.get", arguments: { batchPublicId: "0198c481-3e2b-7000-8000-000000000509" }, result: { ...batchFixture("0198c481-3e2b-7000-8000-000000000509"), status: "preview_required" } }, { name: "payment.batch.preview", arguments: { batchPublicId: "0198c481-3e2b-7000-8000-000000000509", borrowerPublicId: BORROWER_A }, result: batchPreviewFixture("0198c481-3e2b-7000-8000-000000000509") }], run: async (mcp) => { await mcp.call("payment.batch.get", { batchPublicId: "0198c481-3e2b-7000-8000-000000000509" }); await mcp.call("payment.batch.preview", { batchPublicId: "0198c481-3e2b-7000-8000-000000000509", borrowerPublicId: BORROWER_A }); return { outcome: "stopped", stopReason: "batch-confirmation-required-after-repreview" } as const; } },
     "payment-batch-changed-semantics-requires-confirmation": { script: [{ name: "payment.batch.preview", arguments: { batchPublicId: "0198c481-3e2b-7000-8000-000000000510", borrowerPublicId: BORROWER_A }, result: { ...batchPreviewFixture("0198c481-3e2b-7000-8000-000000000510"), status: "needs_review", warnings: [{ code: "BATCH_STATE_CHANGED_SEMANTICS_SAME" }] } }], run: async (mcp) => { await mcp.call("payment.batch.preview", { batchPublicId: "0198c481-3e2b-7000-8000-000000000510", borrowerPublicId: BORROWER_A }); return { outcome: "stopped", stopReason: "batch-repreview-required" } as const; } },
+    "payment-batch-resumable-staging": {
+        script: [
+            { name: "payment.batch.stage", arguments: { idempotencyKey: "staging-workflow-1", items: [{ clientItemKey: "slip-1", payerName: "Synthetic payer", bankReference: null }] }, result: { batchPublicId: stagingWorkflowBatch, status: "draft", items: [{ publicId: stagingWorkflowItem, clientItemKey: "slip-1", status: "staged" }], auditPublicId: stagingWorkflowAudit, correlationId: stagingWorkflowCorrelation } },
+            { name: "payment.batch.workspace", arguments: { batchPublicId: stagingWorkflowBatch }, result: stagingWorkflowWorkspace },
+            { name: "payment.batch.candidates", arguments: { stagingItemPublicId: stagingWorkflowItem, borrowerQuery: "Synthetic borrower" }, result: stagingWorkflowCandidates },
+            { name: "payment.batch.staging.evidence.prepare", arguments: { stagingItemPublicId: stagingWorkflowItem, mimeType: "image/jpeg", size: PAYMENT_EVIDENCE_BYTES.byteLength, sha256: FILE_HASH }, result: { evidencePublicId: stagingWorkflowEvidence, stagingItemPublicId: stagingWorkflowItem, status: "pending", uploadUrl: "https://storage.example/staging-upload", expiresAt: "2026-08-23T05:00:00.000Z", requiredHeaders: {}, immutable: false, auditPublicId: stagingWorkflowAudit, correlationId: stagingWorkflowCorrelation } },
+            { name: "payment.batch.staging.evidence.finalize", arguments: { stagingItemPublicId: stagingWorkflowItem, evidencePublicId: stagingWorkflowEvidence }, result: { evidencePublicId: stagingWorkflowEvidence, status: "ready", sha256: FILE_HASH, auditPublicId: stagingWorkflowAudit, correlationId: stagingWorkflowCorrelation } },
+            { name: "payment.batch.staging.review", arguments: { stagingItemPublicId: stagingWorkflowItem, amount: "120.00", receivedAt: "2026-08-23T04:00:00.000Z", reviewedReason: "Human reviewed synthetic slip", intakeIdempotencyKey: "staging-intake-1" }, result: { stagingItemPublicId: stagingWorkflowItem, status: "reviewed", paymentIntakePublicId: INTAKE, batchItemPublicId: stagingWorkflowBatchItem, receipt: { operationType: "staging.review", operationKey: "staging-intake-1" }, auditPublicId: stagingWorkflowAudit, correlationId: stagingWorkflowCorrelation } },
+            { name: "payment.batch.preview", arguments: { batchPublicId: stagingWorkflowBatch, borrowerPublicId: BORROWER_A, allocations: [{ itemPublicId: stagingWorkflowItem, borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: null, amount: "120.00", targetDueDate: "2026-08-23", intent: "on_time" }] }, result: stagingWorkflowPreview },
+            { name: "payment.batch.decision", arguments: { batchPublicId: stagingWorkflowBatch, previewPublicId: stagingWorkflowPreview.publicId, previewHash: stagingWorkflowPreview.previewHash, revision: 1, action: "confirm_no_older_pending", reason: "Reviewed synthetic chronology", fromDate: "2026-08-23", toDate: "2026-08-23", idempotencyKey: "staging-decision-1" }, result: { decisionPublicId: stagingWorkflowDecision, batchPublicId: stagingWorkflowBatch, revision: 1, action: "confirm_no_older_pending", auditPublicId: stagingWorkflowAudit, correlationId: stagingWorkflowCorrelation } },
+            { name: "payment.batch.preview", arguments: { batchPublicId: stagingWorkflowBatch, borrowerPublicId: BORROWER_A, decisionPublicId: stagingWorkflowDecision, allocations: [{ itemPublicId: stagingWorkflowItem, borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: null, amount: "120.00", targetDueDate: "2026-08-23", intent: "on_time" }] }, result: stagingWorkflowPreview },
+            { name: "payment.batch.execute", arguments: { batchPublicId: stagingWorkflowBatch, previewPublicId: stagingWorkflowPreview.publicId, previewHash: stagingWorkflowPreview.previewHash, confirmationHash: stagingWorkflowPreview.confirmationHash, confirmed: true, idempotencyKey: "staging-execute-1" }, result: batchExecutionFixture(stagingWorkflowBatch) },
+        ],
+        run: async (mcp) => {
+            for (const step of [
+                ["payment.batch.stage", { idempotencyKey: "staging-workflow-1", items: [{ clientItemKey: "slip-1", payerName: "Synthetic payer", bankReference: null }] }],
+                ["payment.batch.workspace", { batchPublicId: stagingWorkflowBatch }],
+                ["payment.batch.candidates", { stagingItemPublicId: stagingWorkflowItem, borrowerQuery: "Synthetic borrower" }],
+                ["payment.batch.staging.evidence.prepare", { stagingItemPublicId: stagingWorkflowItem, mimeType: "image/jpeg", size: PAYMENT_EVIDENCE_BYTES.byteLength, sha256: FILE_HASH }],
+                ["payment.batch.staging.evidence.finalize", { stagingItemPublicId: stagingWorkflowItem, evidencePublicId: stagingWorkflowEvidence }],
+                ["payment.batch.staging.review", { stagingItemPublicId: stagingWorkflowItem, amount: "120.00", receivedAt: "2026-08-23T04:00:00.000Z", reviewedReason: "Human reviewed synthetic slip", intakeIdempotencyKey: "staging-intake-1" }],
+            ] as const) await mcp.call(step[0] as McpToolName, step[1]);
+            await mcp.call("payment.batch.preview", { batchPublicId: stagingWorkflowBatch, borrowerPublicId: BORROWER_A, allocations: [{ itemPublicId: stagingWorkflowItem, borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: null, amount: "120.00", targetDueDate: "2026-08-23", intent: "on_time" }] });
+            await mcp.call("payment.batch.decision", { batchPublicId: stagingWorkflowBatch, previewPublicId: stagingWorkflowPreview.publicId, previewHash: stagingWorkflowPreview.previewHash, revision: 1, action: "confirm_no_older_pending", reason: "Reviewed synthetic chronology", fromDate: "2026-08-23", toDate: "2026-08-23", idempotencyKey: "staging-decision-1" });
+            await mcp.call("payment.batch.preview", { batchPublicId: stagingWorkflowBatch, borrowerPublicId: BORROWER_A, decisionPublicId: stagingWorkflowDecision, allocations: [{ itemPublicId: stagingWorkflowItem, borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: null, amount: "120.00", targetDueDate: "2026-08-23", intent: "on_time" }] });
+            await mcp.call("payment.batch.execute", { batchPublicId: stagingWorkflowBatch, previewPublicId: stagingWorkflowPreview.publicId, previewHash: stagingWorkflowPreview.previewHash, confirmationHash: stagingWorkflowPreview.confirmationHash, confirmed: true, idempotencyKey: "staging-execute-1" });
+            return { outcome: "completed" } as const;
+        },
+    },
     "payment-slip": {
         script: [
             { name: "intake.create", arguments: intakeArgs, result: { publicId: INTAKE, duplicate: false, status: "fixture", warnings: [], duplicateReason: null, ...noRepostLineage } },
@@ -2400,9 +2469,20 @@ const SCENARIOS: Record<string, Scenario> = {
             return { outcome: "completed" } as const;
         },
     },
+    "payment-reconcile-legacy-reflow-confirmation": {
+        script: [
+            { name: "payment.reconcile.reflow.preview", arguments: { reconciliationPublicId: ALLOCATION_PREVIEW, reason: "Repair legacy interest chronology" }, result: { publicId: ALLOCATION_CORRECTION, status: "ready", reconciliationGroupPublicId: ALLOCATION_PREVIEW, effectiveAfterDate: "2026-08-18", plan: { effectiveAfterDate: "2026-08-18", displacedTotal: "75.00", replacementTotal: "75.00", transactions: [] }, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, reason: "Repair legacy interest chronology", expiresAt: "2026-09-10T12:00:00.000Z", warnings: [] } },
+            { name: "payment.reconcile.reflow.execute", arguments: { reflowPreviewPublicId: ALLOCATION_CORRECTION, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, confirmed: true, reason: "Repair legacy interest chronology", idempotencyKey: "legacy-reflow-1" }, result: { reflowGroupPublicId: ALLOCATION_CORRECTION, reconciliationGroupPublicId: ALLOCATION_PREVIEW, compensatingTransactionPublicIds: [ALLOCATION_REVERSAL_TRANSACTION], correctedTransactionPublicIds: [ALLOCATION_REPLACEMENT_TRANSACTION], auditPublicIds: [COMMISSION_AUDIT], correlationId: COMMISSION_CORRELATION } },
+        ],
+        run: async (mcp) => { const preview = await mcp.call("payment.reconcile.reflow.preview", { reconciliationPublicId: ALLOCATION_PREVIEW, reason: "Repair legacy interest chronology" }); await mcp.call("payment.reconcile.reflow.execute", { reflowPreviewPublicId: preview.publicId, previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "legacy-reflow-1" }); return { outcome: "completed" } as const; },
+    },
+    "payment-reconcile-legacy-reflow-stale-stops": {
+        script: [{ name: "payment.reconcile.reflow.preview", arguments: { reconciliationPublicId: ALLOCATION_PREVIEW, reason: "Repair stale legacy chronology" }, result: { publicId: ALLOCATION_CORRECTION, status: "ready", reconciliationGroupPublicId: ALLOCATION_PREVIEW, effectiveAfterDate: "2026-08-18", plan: { effectiveAfterDate: "2026-08-18", displacedTotal: "75.00", replacementTotal: "75.00", transactions: [] }, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, reason: "Repair stale legacy chronology", expiresAt: "2026-09-10T12:00:00.000Z", warnings: [] } }, { name: "payment.reconcile.reflow.execute", arguments: { reflowPreviewPublicId: ALLOCATION_CORRECTION, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, confirmed: true, reason: "Repair stale legacy chronology", idempotencyKey: "legacy-reflow-stale" }, error: { code: "STALE_TEMPORAL_REFLOW_PREVIEW", message: "Temporal reflow preview is stale", retryable: false, reviewRequired: true, details: {} } }],
+        run: async (mcp) => { const preview = await mcp.call("payment.reconcile.reflow.preview", { reconciliationPublicId: ALLOCATION_PREVIEW, reason: "Repair stale legacy chronology" }); try { await mcp.call("payment.reconcile.reflow.execute", { reflowPreviewPublicId: preview.publicId, previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "legacy-reflow-stale" }); } catch (error) { if (error instanceof ScriptedMcpError && error.code === "STALE_TEMPORAL_REFLOW_PREVIEW") return { outcome: "stopped", stopReason: "stale-reflow-preview" } as const; throw error; } return { outcome: "completed" } as const; },
+    },
 };
 
-const BATCH_EVAL_IDS = ["payment-batch-unique-exact", "payment-batch-ambiguous-stops", "payment-batch-human-explicit-edit", "payment-batch-duplicate-stops", "payment-batch-same-semantics-repreview", "payment-batch-changed-semantics-requires-confirmation"];
+const BATCH_EVAL_IDS = ["payment-batch-unique-exact", "payment-batch-ambiguous-stops", "payment-batch-human-explicit-edit", "payment-batch-duplicate-stops", "payment-batch-same-semantics-repreview", "payment-batch-changed-semantics-requires-confirmation", "payment-batch-resumable-staging", "payment-reconcile-legacy-reflow-confirmation", "payment-reconcile-legacy-reflow-stale-stops"];
 export const EVAL_SCENARIO_IDS = Object.freeze([...Object.keys(SCENARIOS).filter((id) => !BATCH_EVAL_IDS.includes(id)), ...BATCH_EVAL_IDS]);
 
 export async function runEvalScenario(id: string, validators?: HarnessSchemaValidators): Promise<HarnessResult> {

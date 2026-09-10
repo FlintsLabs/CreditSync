@@ -21,6 +21,7 @@ import { FinancialDecimal } from "../lib/financial-decimal";
 import { serializeMoney } from "../lib/money";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
+import { assertNoOlderPendingPayment, lockPaymentBorrowers } from "./payment-chronology-service";
 import {
     accrueFloatingInterestThrough,
     floatingPaymentObligations,
@@ -300,15 +301,18 @@ export async function previewLoanSettlement(
     parseAsOfDate(asOfDate);
     const accessible = await accessibleLoan(ctx, loanPublicId);
     return db.transaction(async (tx) => {
+        await lockPaymentBorrowers(tx, ctx.tenantId, [accessible.borrowerId]);
         await tx.execute(sql`SELECT id FROM loans
             WHERE tenant_id = ${ctx.tenantId} AND id = ${accessible.id} FOR UPDATE`);
         const loan = await accessibleLoan(ctx, loanPublicId, tx);
+        if (loan.borrowerId !== accessible.borrowerId) throw new DomainError("STALE_SETTLEMENT_PREVIEW", "Loan borrower changed while acquiring settlement locks", 409);
         if (loan.repaymentType !== "floating" || loan.status !== "active") {
             throw new DomainError("LOAN_NOT_SETTLEABLE", "Only an active floating loan can be settled", 409);
         }
         if (loan.interestPeriodAnchorDate && asOfDate < loan.interestPeriodAnchorDate) {
             throw new DomainError("INVALID_SETTLEMENT_DATE", "asOfDate cannot precede the floating interest anchor", 400);
         }
+        await assertNoOlderPendingPayment(tx, ctx.tenantId, loan.borrowerId, new Date(`${asOfDate}T23:59:59.999+07:00`), []);
         const snapshot = await settlementSnapshot(tx, ctx, loan, asOfDate);
         const previewHash = settlementPreviewHash(asOfDate, snapshot);
         const createdAt = new Date();
@@ -462,6 +466,7 @@ export async function executeLoanSettlement(ctx: CommandContext, input: ExecuteL
         if (reusedKey && reusedKey.id !== accessible.settlement.id) {
             throw new DomainError("IDEMPOTENCY_KEY_CONFLICT", "Idempotency-Key was already used for another settlement", 409);
         }
+        await lockPaymentBorrowers(tx, ctx.tenantId, [accessible.loan.borrowerId]);
         await tx.execute(sql`SELECT id FROM loans
             WHERE tenant_id = ${ctx.tenantId} AND id = ${accessible.loan.id} FOR UPDATE`);
         await tx.execute(sql`SELECT id FROM loan_settlement_previews
@@ -469,6 +474,7 @@ export async function executeLoanSettlement(ctx: CommandContext, input: ExecuteL
         const locked = await accessibleSettlement(ctx, input.settlementPublicId, tx);
         const settlement = locked.settlement;
         const loan = locked.loan;
+        if (loan.borrowerId !== accessible.loan.borrowerId) return { stale: true as const };
         if (settlement.status === "executed") {
             if (settlement.executeIdempotencyKey === idempotencyKey) {
                 const replay = await presentExecution(tx, ctx, settlement, loan);
@@ -476,6 +482,7 @@ export async function executeLoanSettlement(ctx: CommandContext, input: ExecuteL
             }
             throw new DomainError("SETTLEMENT_ALREADY_EXECUTED", "Loan settlement has already been executed", 409);
         }
+        await assertNoOlderPendingPayment(tx, ctx.tenantId, loan.borrowerId, new Date(`${settlement.asOfDate}T23:59:59.999+07:00`), []);
         const executedAt = new Date();
         if (settlement.status !== "ready"
             || settlement.expiresAt.getTime() <= executedAt.getTime()
@@ -726,11 +733,13 @@ export async function reverseLoanSettlement(ctx: CommandContext, input: ReverseL
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(
             ${`loan-settlement-reverse:${ctx.tenantId}:${idempotencyKey}`}, 0
         ))`);
+        await lockPaymentBorrowers(tx, ctx.tenantId, [accessible.loan.borrowerId]);
         await tx.execute(sql`SELECT id FROM loans
             WHERE tenant_id = ${ctx.tenantId} AND id = ${accessible.loan.id} FOR UPDATE`);
         await tx.execute(sql`SELECT id FROM loan_settlement_previews
             WHERE tenant_id = ${ctx.tenantId} AND id = ${accessible.settlement.id} FOR UPDATE`);
         const locked = await accessibleSettlement(ctx, input.settlementPublicId, tx);
+        if (locked.loan.borrowerId !== accessible.loan.borrowerId) throw new DomainError("STALE_SETTLEMENT_PREVIEW", "Loan borrower changed while acquiring reversal locks", 409);
         if (locked.settlement.status !== "executed" || !locked.settlement.executeIdempotencyKey) {
             throw new DomainError("SETTLEMENT_NOT_EXECUTED", "Only an executed settlement can be reversed", 409);
         }

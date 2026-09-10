@@ -1,23 +1,208 @@
 # Changelog
 
-## v0.4.16 - 2026-09-10
+## v0.4.36 - 2026-09-10
 
 ### Added
-- Added an accrual table tab to loan detail pages, showing each materialized interest accrual with exact interest, paid, remaining, period, and status values.
+
+- Preserved the loan-detail Accrual Table tab from the main branch while merging batch chronology safety.
+
+## v0.4.35 - 2026-09-10
+
+### Added
+
+- Added disposable legacy-reflow coverage for two floating loans with multiple later transactions, exact `75.00` plus `45.00` conservation, concurrent replay, and stale-state rejection.
+- Added a synthetic local-tenant Playwright acceptance harness with screenshots for upload, manual OCR review, chronology preview, explicit confirmation, and receipt; OCR/API are explicitly mocked and no financial data is used.
+
+### Changed
+
+- Documented the isolated browser acceptance command and its boundary between UI evidence, backend financial tests, and OCR runtime checks.
+- Made the disposable backend runner reset its disposable schemas, validate the migration baseline, and execute each test file in a fresh process with an explicit runner-owned database URL, preventing stale journals and leaked PostgreSQL locks from contaminating later financial tests.
+- Stabilized disposable migration acceptance coverage for the real 0067→0068 and 0069→0070 upgrades on the runner-owned database while preserving the current 0071/0072 reflow provenance triggers.
+
+## v0.4.34 - 2026-09-10
+
+### Added
+
+- Preserved the in-progress legacy-reflow implementation as a remote handoff checkpoint and added a continuation prompt; final independent verification and browser acceptance remain required before release.
+- Added the existing-data interest-only temporal-reflow repair service and closed MCP preview/execute tools. Legacy executed reconciliations now require complete tenant-safe floating provenance, Bangkok effective dates, fresh state, explicit confirmation, and durable idempotent append-only compensation/replay; unsupported components remain fail-closed.
+- Synchronized the private CreditSync plugin to version 10.0.0 with 129 frozen MCP tools and legacy-reflow eval/skill guidance.
+- Added an acceptance evidence matrix for the chronology/reflow handoff and recorded the remaining full-suite and browser gaps.
+
+- Bound legacy temporal-reflow repair snapshots to ready, finalized evidence and reject reconciliation entries whose amounts do not equal their source transaction's interest component.
+
+## v0.4.33 - 2026-09-10
+
+### Fixed
+
+- Record the final Task 7 full verification after validating the application Tesseract.js runtime and worker failure cleanup.
+
+## v0.4.32 - 2026-09-10
+
+### Fixed
+
+- Verify the application Tesseract.js/WASM OCR runtime with a synthetic image and close the worker on recognition failures without persisting raw OCR text.
+
+## v0.4.31 - 2026-09-10
+
+### Fixed
+
+- Ensure the local Tesseract.js worker is terminated on both successful and failed recognition, with a test-only worker seam for lifecycle verification.
+
+## v0.4.30 - 2026-09-10
+
+### Fixed
+
+- Completed the Task 7 verification rerun after excluding signed reversal allocations from active temporal-reflow sources; recorded the full backend, frontend, typecheck, and plugin gate evidence with absolute log paths.
+
+## v0.4.29 - 2026-09-10
+
+### Fixed
+- Excluded signed reversal allocations from active temporal-reflow source loading so historical reconciliation preview cannot pass negative amounts into the unsigned floating allocator.
+- Synchronized the default MCP all-tools integration expectation with the resumable staging extraction tool.
+
+## v0.4.28 - 2026-09-10
+
+### Fixed
+- Hardened local payment-slip OCR against Bangkok early-morning/year-boundary parsing errors, account/QR text leaking into names, finalized-evidence byte checksum mismatches, and concurrent same-key extraction races; extraction remains review-only and never creates financial records.
+- Rejected CE-formatted years instead of silently converting them as Buddhist years, and bound delayed editor OCR responses to the current item generation, staging revision, and ready evidence state.
+
+## v0.4.27 - 2026-09-10
+
+### Added
+- Added evidence-bound local payment-slip OCR extraction for resumable staging items. Extraction stores only a review receipt with normalized candidate fields, evidence checksum, staging revision, audit ID, and correlation ID; it never creates an intake or financial record.
+- Exposed the extraction command through the closed REST and direct MCP contracts and synchronized the private plugin to 9.6.0/127 tools.
+- Added a component regression proving the editor presents local OCR output as review-only candidates after evidence finalization and never calls review implicitly.
+- Hardened the existing component workflow test to await the enabled review transition before asserting candidate discovery under the full Vitest scheduler.
+- Final full frontend verification is `62 files, 292 tests` after the scheduler-safe regression update.
+
+### Changed
+- Upload-first staging now has an explicit extract-for-human-review boundary; unreadable fields remain null and require manual confirmation.
+
+## v0.4.26 - 2026-09-10
+
+### Fixed
+- Bound historical reconciliation previews to the tenant-safe finalized evidence identity/checksum/metadata snapshot and rechecked it before execute; adding ready evidence after preview now fails closed without financial writes.
+- Added lifecycle assertions for repeated reconciliation after temporal reflow and parity coverage for restore-child evidence replacement.
+
+## v0.4.25 - 2026-09-10
+
+### Added
+- Added disposable financial integration coverage for intermediate temporal-reflow write failure rollback and barriered two-loan `75.00`/`45.00` replay with exact idempotent conflict handling.
+
+### Fixed
+- Confirmed the actual reconciliation execute transaction rolls back signed reversals, replacements, lineage, caches, balances, intake/proposal state, and audit rows together when a later reflow write fails.
+
+## v0.4.24 - 2026-09-10
+
+### Added
+- Exposed the approved temporal-reflow impact in reconciliation preview and the resulting reflow group in execute output; synchronized the private MCP contract to plugin 9.5.0.
+
+### Fixed
+- Replayed later floating-interest transactions in deterministic chronological order while carrying each prior authoritative replacement projection forward, and scanned complete active source provenance so unsupported or incomplete rows fail closed.
+
+## v0.4.23 - 2026-09-10
+
+### Added
+- Connected historical interest-only reconciliation to the approved temporal-reflow kernel: preview binds the authoritative chronological impact plan, and execute appends signed allocation reversal/replacement transactions with one-to-many lineage, immutable source transactions, rebuilt accrual totals, and exact reconciliation-key replay.
+
+### Fixed
+- Temporal-reflow resolver callbacks now run only after complete source validation and in deterministic loan/date/transaction order; invalid input cannot trigger stateful allocation work.
+
+## v0.4.22 - 2026-09-10
+
+### Fixed
+- Hardened temporal-reflow proposal lifecycle identity checks with additive migration 0071, rejecting identity, tenant, creator, timestamp, and snapshot mutation while allowing only validated ready-to-executed/expired transitions.
+- Preserved chronological loan/date/transaction ordering and rejected duplicate or inconsistent source provenance; additive migration 0072 now supports one-source-to-many-replacement lineage.
+
+## v0.4.21 - 2026-09-10
+
+### Added
+- Added the additive Task 5 temporal-reflow provenance boundary after the existing reconciliation ledger: immutable plan, command, and allocation-lineage metadata with tenant composite foreign keys and fail-closed mutation triggers.
+
+### Changed
+- Reclassified the prior temporal-reflow review from an approval blocker to outstanding authorized implementation work; the replay kernel and reconciliation integration remain in progress.
+
+## v0.4.20 - 2026-09-10
+
+### Changed
+- Recorded the temporal-reflow prerequisite review: this branch has no reflow proposal/group/entry persistence or replay service, while existing reconciliation performs transaction-level compensation; no unsafe partial implementation was introduced. The daily advance-period regression fixture did not reproduce a duplicate obligation in the current projection.
+
+## v0.4.19 - 2026-09-10
+
+### Fixed
+- Persisted the split operation key per batch so a response-loss retry reuses the same idempotent command while retaining the server-owned destination result.
+
+## v0.4.18 - 2026-09-10
+
+### Fixed
+- Completed the bounded batch-workspace identity and response-safety matrix: reloads use batch-scoped capture/execute keys, delayed hydration cannot overwrite edits, empty/unknown server membership clears rather than inherits local state, failed evidence remains retryable, and cancellation removes only the cancelled batch's operation keys.
+
+### Changed
+- The workspace presents backend-confirmed allocation sequence and translated principal, interest, fee, and penalty components with identifiable contract terms; split results retain destination membership/dependency details for resume navigation, while reviewed edits remain blocked from preview until persisted and rehydrated.
+
+## v0.4.17 - 2026-09-10
+
+### Fixed
+- Closed additional batch workspace safety gaps: server workspace membership is matched only by stable client key, missing evidence remains pending unless the server reports ready, missing upload URLs fail closed, Bangkok local times reject out-of-range clock values, retry file selection can attach to resumed pending rows, and reviewed local edits block preview until the audited server mutation completes.
+
+### Added
+- Batch previews now expose backend-calculated principal, interest, fee, and penalty components; the workspace renders identifiable candidate labels, chronological allocations, and split destination/dependency membership from the service response.
+
+## v0.4.16 - 2026-09-10
+
+### Fixed
+- Hardened the batch workspace state boundary: capture/evidence is separate from human metadata review, stable scoped idempotency keys and client keys survive partial retries, workspace hydration preserves public provenance and draft selections, Bangkok datetime input is fail-closed, current decision IDs bind the fresh preview, and reviewed items use audited edits instead of permanent local-only fields.
 
 ## v0.4.15 - 2026-09-10
 
-### Fixed
-- Added floating-payment allocation integrity detection and a fail-closed post guard for overfilled accrual provenance.
-- Added an idempotent, append-only grouped-batch repair workflow that preserves original records, repairs business-date ordering, and verifies every floating contract after repair.
+### Added
+- Added the first bounded four-step payment-batch workspace UI: multi-file upload-first capture with resumable workspace state, human borrower/contract candidate selection, explicit multi-contract allocations, chronology decision refresh, revision-bound confirmation, split/cancel controls, and stable execute retry keys. Draft and review actions remain explicitly unposted.
 
 ### Changed
-- Documented the inspect, confirm, reverse/repost, and post-repair verification procedure for future CreditSync agents.
+- Updated payment-batch editor translations for named review, candidate selection, chronology decisions, and exact no-financial-write workflow messaging in English and Thai.
 
 ## v0.4.14 - 2026-09-09
 
+### Added
+- Candidate discovery now returns revision-bound input fingerprints, portfolio-filtered contracts, and separate authoritative due versus input proposal components for scheduled and floating loans.
+- Added tenant-safe named borrower and backend-calculated contract candidate discovery for reviewed batch staging through the shared REST/MCP services.
+- Added the complete resumable payment-batch REST/MCP contract, including staging creation and evidence prepare/finalize, borrower-aware floating allocations, decision binding, strict public outputs, and plugin 9.3.0 contract synchronization at 125 tools.
+- Added revision-bound REST and direct-MCP contracts for resumable payment-batch workspace, staging review/edit, split, chronology decision, and cancellation workflows; the frozen plugin contract now advertises 122 tools while reusing the existing tenant-safe batch services.
+- Added revision-bound staging edits and atomic split/dependency APIs for unposted payment batches; edits synchronize draft intake fields, invalidate previews, and split moves existing staging/intake/evidence membership without duplicating financial records.
+- Added a tenant-scoped read-only payment-batch workspace endpoint (`GET /payment-batches/:id/workspace`) that resumes upload-first staging with revision, evidence readiness, review metadata, and public intake/item links without exposing raw evidence or storage details.
+- Added tenant-scoped upload-first payment-batch staging and review APIs, staging evidence intents, Bangkok chronology regressions, shared floating-accrual batch previews, borrower-ordered execute locks, and REST restore linkage. Final MCP/UI contract synchronization and full acceptance gates remain pending.
+- Hardened the additive batch migration so posted parents reject new or moved members at the database boundary, with real disposable-PostgreSQL coverage.
+- Added revision-bound, reasoned, idempotent payment-batch cancellation receipts and lifecycle metadata; stale cancellation requests now stop before changing the batch.
+- Enabled default Vitest discovery for the payment-batch component/model tests under `frontend/src`, so the four-step upload/review UI is covered by the normal frontend test command.
+- Kept the newly discovered renewal-panel regression portable under Vitest by replacing its Bun-only clock import with Vitest fake-timer controls.
+
 ### Fixed
+- Exact committed restructure and settlement retries now return their durable receipt before evaluating newly arrived pending-payment chronology; new executions retain the borrower-first chronology guard. Restructure reversal also validates the current replacement borrower before downstream loan locks.
+- Restructure and settlement preview/execute/reversal flows now acquire deterministic borrower locks before loan, proposal, intake, and schedule locks, re-read borrower state, and apply the shared older-pending chronology guard without changing financial formulas; added lock-barrier, stale ordinary-post, and exact replay regressions.
+- Renewal preview, execution, and reversal now acquire sorted borrower locks before loan/renewal locks, re-read borrower state after the boundary, and apply the shared older-pending chronology guard before renewal snapshots; added deterministic borrower-wait/NOWAIT and exact replay coverage without changing renewal accounting formulas.
+- Completed durable restore-backfill receipt and historical explicit reconciliation concurrency coverage: concurrent same-key backfills, including initial mutation and no-op replay, return one exact receipt; tenant/FK/immutability boundaries are enforced; non-restore execution waits for borrower locks before intake/loan locks, replays one exact result, and rejects a stale ordinary posting without compensation.
+- Added additive tenant-scoped command receipts for restore schedule backfill: identical retries return the original changed/audit/correlation result, conflicting payloads fail before mutation, and initial no-op repairs still create one audited durable receipt.
+- Serialized posted-restore schedule backfill behind the deterministic borrower-first boundary, re-reading source/child state after locks and holding loan, transaction, and schedule projections before repair; unchanged replays no longer append duplicate audit rows.
+- Added deterministic borrower-lock and ordinary-post race coverage for restore/reconciliation execution: restore waits before intake/loan locks, rejects a changed balance preview without child compensation, and preserves idempotent append-only results.
+- Added a real prefix/full migrator gate for populated 0067→0068 staging resolution upgrades in an owned scratch database; mapped/unresolved legacy semantics, posted batch membership, ready evidence, transaction components, migration journal history, constraints, and posted immutability are preserved across apply and idempotent rerun.
+- Cleared staging resolutions now fail closed for an unmapped preview until explicit allocations reselect the target; the prior preview is stale, explicit reselection becomes the current authority, and shared chronology blocks later payments for that borrower without creating financial writes.
+- Added additive staging resolution state (`unresolved`, `mapped`, `cleared`) so shared chronology treats current ready batch allocations and explicit mappings as authoritative, preserves captured-header semantics only for never-resolved rows, and prevents cleared rows from inheriting stale dependencies. Current batch preview locks now require the ready preview at the current revision.
+- Added direct shared-guard and standalone-post regressions proving a current explicit batch allocation blocks the mapped borrower without relying on the batch preview service's extra lookup, with no financial writes.
+- Corrected shared chronology to use the latest ready batch preview as the current authority; stale preview rows are ignored while direct guard and standalone post paths now reject the current borrower dependency.
+- Distinguished current payment resolution from merely validated staging: reviewed mappings and current ready batch allocations are authoritative for chronology, stale proposals/previews no longer participate, and unmapped reviewed items retain only their captured batch-header semantics. Public remap-after-preview and preview-resolved borrower regressions now verify stale dependency invalidation without financial writes.
+- Enforced candidate cardinality by distinct eligible loan contract: an exact amount match remains held for explicit human selection when another accessible contract is eligible, while multiple schedules on one contract remain auto-plannable. Current reviewed staging mappings suppress stale proposal/header chronology fallbacks and edits invalidate active match proposals.
+- Completed per-item selection safety for batch planning: borrower-only mappings constrain solver candidates and reject cross-borrower allocations, Bangkok business dates replace UTC slicing, unique multi-contract sums remain human-review candidates, chronological planning is timestamp ordered, and chronology no longer applies a primary-borrower fallback to items resolved for another borrower.
+- Made reviewed borrower-only mappings authoritative per batch item: the bounded solver now constrains candidates by the selected borrower, explicit allocations are checked against every reviewed borrower, and chronology groups items by their resolved borrower without broadening unknown mappings across the tenant. Added cross-borrower DB and solver regressions while preserving explicit multi-contract planning.
+- Closed round-three staging review gaps: review now revalidates mappings after ordered borrower/batch locks, permits authoritative per-item borrowers in multi-borrower batches, carries reviewed borrower-only mappings into shared pending chronology after intake creation, validates every explicit allocation against reviewed mapping, and rejects post-lock mapping drift without financial writes. Added disposable coverage for queued review, multi-borrower resolution, mapped pending dependencies, and both real ready-prefix split directions.
+- Hardened staging chronology round-two edges: partial reviewed mappings now fail closed instead of falling back to solver allocation, mapped borrowers are included in ordered locks and intake/batch resolution, Bangkok dates are used for floating targets, staged known mappings block later payments, and split membership identity is tagged across staging/item namespaces.
+- Corrected batch staging edit/split concurrency and membership lineage: split reloads the source after its row lock, normalizes staging and reviewed-item identifiers to one atomic membership, derives runtime chronology from actual borrower/date state, and resolves mapping access and clear-vs-omit fingerprints safely.
+- Recorded and isolated the remaining serialized-suite timeout: the intermediary remittance file passed in three clean disposable reproductions, and the full rerun passed without changing its five-second assertion timeout.
 - Restored frontend verification on Node 26 by disabling native webstorage only in compatible Vitest workers; aligned deferral tests with Vitest, sidebar assertions with release metadata, and repayment fixtures with the separate schedule-summary response. Production financial logic is unchanged.
+- Preserved the component-specific floating penalty compensation error when chronology checks also apply, while retaining the later-payment safety guard.
+- Fixed the upload-first batch preview to use freshly returned staged item UUIDs during the same retry, avoiding an empty allocation mapping before React state refreshes.
+- Corrected the disposable PostgreSQL runner to serialize test files with `--parallel=1`; the previous `--max-concurrency=1` did not prevent cross-file lock cycles during shared-table resets.
+- Made disposable PostgreSQL cleanup ownership-safe by retaining the generated labeled volume name and removing only that volume and its run-specific container on success or failure.
+- Restored the shared later-floating-payment chronology error before principal reprojection, while preserving penalty-specific validation precedence and atomic rollback.
 
 ## v0.4.13 - 2026-09-09
 
