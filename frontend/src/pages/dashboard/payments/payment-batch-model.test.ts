@@ -40,7 +40,9 @@ describe("payment batch model", () => {
     it("normalizes datetime-local as Bangkok and rejects impossible or unknown values", () => {
         expect(normalizeBangkokDateTime("2026-09-10T00:30")).toBe("2026-09-09T17:30:00.000Z");
         expect(toBangkokDateTimeInput("2026-09-09T17:30:00.000Z")).toBe("2026-09-10T00:30");
-        expect(normalizeBangkokDateTime("2026-02-30T10:00")).toBeNull();
+    expect(normalizeBangkokDateTime("2026-02-30T10:00")).toBeNull();
+    expect(normalizeBangkokDateTime("2026-09-10T24:00")).toBeNull();
+    expect(normalizeBangkokDateTime("2026-09-10T10:60")).toBeNull();
         expect(normalizeBangkokDateTime("not-a-time")).toBeNull();
     });
 });

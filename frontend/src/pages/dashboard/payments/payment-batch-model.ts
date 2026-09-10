@@ -22,6 +22,7 @@ export type BatchItemDraft = {
     revision?: number;
     evidenceStatus?: string | null;
     uploadStatus?: "pending" | "uploading" | "ready" | "failed";
+    reviewedEditPending?: boolean;
 };
 
 export type BatchCandidateResult = {
@@ -62,6 +63,7 @@ export function normalizeBangkokDateTime(value: string): string | null {
     const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
     if (!match) return null;
     const [, year, month, day, hour, minute] = match;
+    if (Number(hour) > 23 || Number(minute) > 59) return null;
     const calendar = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
     if (calendar.getUTCFullYear() !== Number(year) || calendar.getUTCMonth() !== Number(month) - 1 || calendar.getUTCDate() !== Number(day)) return null;
     const candidate = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour) - 7, Number(minute)));
