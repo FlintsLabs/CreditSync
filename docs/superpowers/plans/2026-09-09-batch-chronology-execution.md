@@ -7,6 +7,12 @@ Scope: implement and verify all seven approved tasks; no merge, push, deploy, pr
 
 ## Progress
 
+### 2026-09-10 — Task 5 sequential temporal-reflow integration checkpoint
+
+- `buildTemporalReflowPlanForLoan` now carries each prior authoritative replacement projection into the next chronological resolver call; source loading scans active ledger components before rejecting unsupported or incomplete provenance. The serialized disposable reflow integration passed `30/30, 131 expectations` in `.codex-task-logs/task5-round2-db-disposable.log`; non-DB smoke passed `17/28` with 13 database tests skipped in `.codex-task-logs/task5-round2-db-final.log`.
+- Preview and execute compare the same two-transaction plan, preserve original transactions/allocations, append signed compensation/replacement lineage, rebuild touched accrual totals, and retain exact-key replay coverage. MCP preview now exposes a strict temporal-reflow impact object and execute exposes `reflowGroupPublicId`; the frozen plugin contract is synchronized to 9.5.0 and 126 tools.
+- Remaining mandated failure-injection rollback, two-affected-loan conservation, stale confirmation, and full OCR/browser/plan gates require further verification; no full-plan completion is claimed.
+
 - [x] Baseline verification and repository mapping
 - [ ] Task 1: durable batch staging and retry (service/API, resumable receipts/evidence checks, posted-membership DB gates, read-only workspace, revision-bound edits, atomic split/dependency APIs, and round-three mapping/lock fixes are green; broader chronology/review acceptance remains)
 - [ ] Task 2: shared chronology guard (partial; all-writer locking and decision persistence remain)

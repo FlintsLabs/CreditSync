@@ -146,4 +146,20 @@ describe("floating temporal reflow kernel", () => {
         })).rejects.toThrow("TEMPORAL_REFLOW_UNSUPPORTED_COMPONENT");
         expect(calls).toBe(0);
     });
+
+    test("carries each prior replay projection into the next chronological allocator call", async () => {
+        const projectionSizes: number[] = [];
+        await buildTemporalReflowPlanWithAuthoritativeResolver({
+            effectiveAfterDate: "2026-09-04",
+            allocations: [
+                source({ allocationPublicId: "second", transactionPublicId: "tx-second", effectiveDate: "2026-09-06", accrualPublicId: "a-second" }),
+                source({ allocationPublicId: "first", transactionPublicId: "tx-first", effectiveDate: "2026-09-05", accrualPublicId: "a-first" }),
+            ],
+            resolveReplacement: async ({ projection, effectiveDate, requestedAmount }) => {
+                projectionSizes.push(projection.allocations.length);
+                return [{ accrualPublicId: `replacement-${effectiveDate}`, dueDate: effectiveDate, amount: requestedAmount }];
+            },
+        });
+        expect(projectionSizes).toEqual([0, 1]);
+    });
 });

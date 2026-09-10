@@ -101,23 +101,34 @@ describe("payment reconciliation persistence", () => {
         const later = await createPaymentIntake({ ...ctx, idempotencyKey: crypto.randomUUID() }, { amount: "10.00", receivedAt: "2026-08-20T05:00:00.000Z", payerName: borrower.name });
         const laterProposal = await previewPaymentMatch(ctx, later.publicId, { allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: loanDraft.publicId, amount: "10.00" }] });
         await postPayment(ctx, later.publicId, { proposalPublicId: laterProposal.publicId });
+        const laterTwo = await createPaymentIntake({ ...ctx, idempotencyKey: crypto.randomUUID(), requestId: crypto.randomUUID() }, { amount: "10.00", receivedAt: "2026-08-21T05:00:00.000Z", payerName: borrower.name });
+        const laterTwoProposal = await previewPaymentMatch(ctx, laterTwo.publicId, { allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: loanDraft.publicId, amount: "10.00" }] });
+        await postPayment(ctx, laterTwo.publicId, { proposalPublicId: laterTwoProposal.publicId });
         const loan = await db.query.loans.findFirst({ where: and(eq(loans.tenantId, tenantId), eq(loans.publicId, loanDraft.publicId)) });
         const laterTransaction = await db.query.transactions.findFirst({ where: and(eq(transactions.tenantId, tenantId), eq(transactions.paymentIntakeId, (await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, later.publicId) }))!.id)) });
+        const laterTwoTransaction = await db.query.transactions.findFirst({ where: and(eq(transactions.tenantId, tenantId), eq(transactions.paymentIntakeId, (await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, laterTwo.publicId) }))!.id)) });
         const originalLater = { transactionDate: laterTransaction!.transactionDate, amount: laterTransaction!.amount, interestComponent: laterTransaction!.interestComponent, principalComponent: laterTransaction!.principalComponent, feeComponent: laterTransaction!.feeComponent, penaltyComponent: laterTransaction!.penaltyComponent };
         const originalLaterAllocations = await db.select().from(floatingTransactionAllocations).where(and(eq(floatingTransactionAllocations.tenantId, tenantId), eq(floatingTransactionAllocations.transactionId, laterTransaction!.id)));
+        const originalLaterTwoAllocations = await db.select().from(floatingTransactionAllocations).where(and(eq(floatingTransactionAllocations.tenantId, tenantId), eq(floatingTransactionAllocations.transactionId, laterTwoTransaction!.id)));
         const backdated = await createPaymentIntake({ ...ctx, idempotencyKey: crypto.randomUUID() }, { amount: "10.00", receivedAt: "2026-08-18T05:00:00.000Z", payerName: borrower.name });
         await reviewPaymentIntake(ctx, backdated.publicId, { status: "needs_review" });
         const preview = await previewPaymentReconciliation(ctx, { paymentIntakePublicId: backdated.publicId, allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: loanDraft.publicId, amount: "10.00", component: "interest" }], reason: "Backdated interest requires chronological reflow" });
+        const plannedReflow = (preview.sourcePayment as { temporalReflowPlan: { transactions: Array<{ after: Array<{ dueDate: string }> }> } }).temporalReflowPlan;
+        expect(plannedReflow.transactions).toHaveLength(2);
         const result = await executePaymentReconciliation(ctx, preview.publicId, { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "temporal-reflow-execute" });
         expect(result.correctedTransactionPublicIds.length).toBeGreaterThan(0);
-        const reflowEntries = await db.select().from(paymentReconciliationReflowEntries).where(eq(paymentReconciliationReflowEntries.tenantId, tenantId));
-        expect(reflowEntries).toHaveLength(1);
-        expect(reflowEntries[0]!.transactionId).not.toBe(laterTransaction!.id);
-        expect(reflowEntries[0]!.oldDueDate).not.toBe(reflowEntries[0]!.newDueDate);
+        const reflowEntries = await db.select().from(paymentReconciliationReflowEntries).where(eq(paymentReconciliationReflowEntries.tenantId, tenantId)).orderBy(paymentReconciliationReflowEntries.effectiveDate, paymentReconciliationReflowEntries.id);
+        expect(reflowEntries).toHaveLength(2);
+        expect(new Set(reflowEntries.map((entry) => entry.newDueDate)).size).toBe(2);
+        expect(reflowEntries.map((entry) => entry.newDueDate)).toEqual(plannedReflow.transactions.flatMap((transaction) => transaction.after.map((row) => row.dueDate)));
+        expect(reflowEntries.every((entry) => entry.transactionId !== laterTransaction!.id && entry.transactionId !== laterTwoTransaction!.id && entry.oldDueDate !== entry.newDueDate)).toBe(true);
         expect(await db.select().from(floatingTransactionAllocations).where(and(eq(floatingTransactionAllocations.tenantId, tenantId), eq(floatingTransactionAllocations.transactionId, laterTransaction!.id)))).toEqual(originalLaterAllocations);
-        const replacementAllocations = await db.select().from(floatingTransactionAllocations).where(and(eq(floatingTransactionAllocations.tenantId, tenantId), eq(floatingTransactionAllocations.transactionId, reflowEntries[0]!.transactionId)));
-        expect(replacementAllocations.reduce((sum, row) => sum.plus(row.amount), new Decimal(0)).toFixed(2)).toBe("10.00");
-        expect(await db.query.transactions.findFirst({ where: and(eq(transactions.tenantId, tenantId), eq(transactions.id, reflowEntries[0]!.transactionId)) })).toMatchObject({ entryType: "repayment", interestComponent: "10.00", transactionDate: originalLater.transactionDate });
+        expect(await db.select().from(floatingTransactionAllocations).where(and(eq(floatingTransactionAllocations.tenantId, tenantId), eq(floatingTransactionAllocations.transactionId, laterTwoTransaction!.id)))).toEqual(originalLaterTwoAllocations);
+        for (const entry of reflowEntries) {
+            const replacementAllocations = await db.select().from(floatingTransactionAllocations).where(and(eq(floatingTransactionAllocations.tenantId, tenantId), eq(floatingTransactionAllocations.transactionId, entry.transactionId)));
+            expect(replacementAllocations.reduce((sum, row) => sum.plus(row.amount), new Decimal(0)).toFixed(2)).toBe("10.00");
+            expect(await db.query.transactions.findFirst({ where: and(eq(transactions.tenantId, tenantId), eq(transactions.id, entry.transactionId)) })).toMatchObject({ entryType: "repayment", interestComponent: "10.00" });
+        }
         expect(await db.query.transactions.findFirst({ where: eq(transactions.id, laterTransaction!.id) })).toMatchObject(originalLater);
         expect(loan).toBeTruthy();
         const executeInput = { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true as const, reason: preview.reason, idempotencyKey: "temporal-reflow-execute" };
@@ -128,8 +139,9 @@ describe("payment reconciliation persistence", () => {
         expect(retryOne).toEqual(result);
         expect(retryTwo).toEqual(result);
         expect(await db.select().from(paymentReconciliationGroups).where(eq(paymentReconciliationGroups.tenantId, tenantId))).toHaveLength(1);
-        expect(await db.select().from(paymentReconciliationReflowEntries).where(eq(paymentReconciliationReflowEntries.tenantId, tenantId))).toHaveLength(1);
+        expect(await db.select().from(paymentReconciliationReflowEntries).where(eq(paymentReconciliationReflowEntries.tenantId, tenantId))).toHaveLength(2);
     });
+
     integrationTest("preflight proves a ready payment is executable without changing financial state", async () => {
         const tenantId = `payment-preflight-${crypto.randomUUID()}`;
         const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);

@@ -127,15 +127,17 @@ export function buildTemporalReflowPlan(input: {
 export async function buildTemporalReflowPlanWithAuthoritativeResolver(input: {
     effectiveAfterDate: string;
     allocations: ReflowSourceAllocation[];
-    resolveReplacement: (input: { loanPublicId: string; transactionPublicId: string; effectiveDate: string; requestedAmount: string }) => Promise<ReflowReplacement[]>;
+    resolveReplacement: (input: { loanPublicId: string; transactionPublicId: string; effectiveDate: string; requestedAmount: string; projection: FloatingPaymentProjection }) => Promise<ReflowReplacement[]>;
 }): Promise<TemporalReflowPlan> {
     const byTransaction = validatedSourceGroups(input);
     const replacements: Record<string, ReflowReplacement[]> = {};
+    const projectedAllocations: FloatingPaymentProjection["allocations"] = [];
     for (const [transactionPublicId, rows] of [...byTransaction.entries()].sort(([, left], [, right]) => left[0]!.loanPublicId.localeCompare(right[0]!.loanPublicId)
         || left[0]!.effectiveDate.localeCompare(right[0]!.effectiveDate)
         || left[0]!.transactionPublicId.localeCompare(right[0]!.transactionPublicId))) {
         const requestedAmount = rows.reduce((sum, row) => sum.plus(money(row.amount)), new FinancialDecimal(0)).toFixed(2);
-        replacements[transactionPublicId] = await input.resolveReplacement({ loanPublicId: rows[0]!.loanPublicId, transactionPublicId, effectiveDate: rows[0]!.effectiveDate, requestedAmount });
+        replacements[transactionPublicId] = await input.resolveReplacement({ loanPublicId: rows[0]!.loanPublicId, transactionPublicId, effectiveDate: rows[0]!.effectiveDate, requestedAmount, projection: { principalPayments: [], allocations: [...projectedAllocations] } });
+        projectedAllocations.push(...replacements[transactionPublicId]!.map((replacement) => ({ effectiveDate: rows[0]!.effectiveDate, dueDate: replacement.dueDate, accrualDate: replacement.dueDate, component: "interest" as const, amount: replacement.amount })));
     }
     return buildTemporalReflowPlan({ effectiveAfterDate: input.effectiveAfterDate, allocations: input.allocations, replacements });
 }
@@ -144,7 +146,7 @@ export type ExecutableReflowSource = ReflowSourceAllocation & {
     allocationId: number;
     loanId: number;
     transactionId: number;
-    interestAccrualId: number;
+    interestAccrualId: number | null;
 };
 
 export type ExecutableReflowReplacement = ReflowReplacement & { accrualId: number };
@@ -158,20 +160,18 @@ export async function loadActiveInterestReflowSources(tx: any, tenantId: string,
     }).from(floatingTransactionAllocations)
         .innerJoin(transactions, and(eq(transactions.tenantId, tenantId), eq(transactions.id, floatingTransactionAllocations.transactionId), eq(transactions.loanId, loanId)))
         .innerJoin(loans, and(eq(loans.tenantId, tenantId), eq(loans.id, loanId)))
-        .innerJoin(loanInterestAccruals, and(eq(loanInterestAccruals.tenantId, tenantId), eq(loanInterestAccruals.loanId, loanId), eq(loanInterestAccruals.id, floatingTransactionAllocations.interestAccrualId)))
+        .leftJoin(loanInterestAccruals, and(eq(loanInterestAccruals.tenantId, tenantId), eq(loanInterestAccruals.loanId, loanId), eq(loanInterestAccruals.id, floatingTransactionAllocations.interestAccrualId)))
         .where(and(
             eq(floatingTransactionAllocations.tenantId, tenantId),
             eq(floatingTransactionAllocations.loanId, loanId),
-            eq(floatingTransactionAllocations.component, "interest"),
-            eq(floatingTransactionAllocations.entryType, "payment"),
             sql`${floatingTransactionAllocations.effectiveDate} > ${effectiveAfterDate}`,
             sql`NOT EXISTS (SELECT 1 FROM floating_transaction_allocations reversal WHERE reversal.tenant_id = ${tenantId} AND reversal.reversed_allocation_id = ${floatingTransactionAllocations.id})`,
+            sql`NOT EXISTS (SELECT 1 FROM transactions reversal WHERE reversal.tenant_id = ${tenantId} AND reversal.reversed_transaction_id = ${transactions.id})`,
         ))
         .orderBy(floatingTransactionAllocations.effectiveDate, floatingTransactionAllocations.transactionId, floatingTransactionAllocations.allocationOrder, floatingTransactionAllocations.id);
     return rows.map((row: any) => {
         const allocation = row.allocation;
         const transaction = row.transaction;
-        if (!allocation.interestAccrualId) throw new Error("TEMPORAL_REFLOW_PROVENANCE_INCOMPLETE");
         return {
             allocationPublicId: allocation.publicId,
             allocationId: allocation.id,
@@ -179,14 +179,14 @@ export async function loadActiveInterestReflowSources(tx: any, tenantId: string,
             loanId,
             transactionPublicId: transaction.publicId,
             transactionId: transaction.id,
-            accrualPublicId: row.accrual.publicId,
+            accrualPublicId: row.accrual?.publicId ?? null,
             interestAccrualId: allocation.interestAccrualId,
             effectiveDate: allocation.effectiveDate,
             dueDate: allocation.dueDate,
             amount: allocation.amount,
-            component: "interest" as const,
-            entryType: "payment" as const,
-            reversed: false,
+            component: allocation.component as "interest" | "penalty",
+            entryType: allocation.entryType as "payment" | "reversal",
+            reversed: allocation.reversedAllocationId !== null,
             transactionComponents: {
                 principal: transaction.principalComponent,
                 interest: transaction.interestComponent,
@@ -200,6 +200,7 @@ export async function loadActiveInterestReflowSources(tx: any, tenantId: string,
 /** Builds a reflow plan by replaying each source through the existing allocator. */
 export async function buildTemporalReflowPlanForLoan(tx: any, ctx: CommandContext, loan: typeof loans.$inferSelect, effectiveAfterDate: string, incomingAllocations: FloatingPaymentProjection["allocations"] = []) {
     const sources = await loadActiveInterestReflowSources(tx, ctx.tenantId, loan.id, effectiveAfterDate);
+    validatedSourceGroups({ effectiveAfterDate, allocations: sources });
     const negativeProjection: FloatingPaymentProjection["allocations"] = sources.map((source) => ({
         effectiveDate: source.effectiveDate,
         dueDate: source.dueDate,
@@ -208,13 +209,15 @@ export async function buildTemporalReflowPlanForLoan(tx: any, ctx: CommandContex
         amount: `-${source.amount}`,
     }));
     const replacements: Record<string, ExecutableReflowReplacement[]> = {};
+    const projectedAllocations: FloatingPaymentProjection["allocations"] = [...negativeProjection, ...incomingAllocations];
     const groups = new Map<string, ExecutableReflowSource[]>();
     for (const source of sources) groups.set(source.transactionPublicId, [...(groups.get(source.transactionPublicId) ?? []), source]);
     for (const [transactionPublicId, rows] of [...groups.entries()].sort(([, left], [, right]) => left[0]!.effectiveDate.localeCompare(right[0]!.effectiveDate) || left[0]!.transactionPublicId.localeCompare(right[0]!.transactionPublicId))) {
         const requestedAmount = rows.reduce((sum: any, row) => sum.plus(row.amount), new FinancialDecimal(0)).toFixed(2);
-        const authoritative = await resolveFloatingInterestAllocationPlan(tx, loan, new Date(`${rows[0]!.effectiveDate}T16:59:59.999Z`), requestedAmount, ctx, "preview", { principalPayments: [], allocations: [...negativeProjection, ...incomingAllocations] });
+        const authoritative = await resolveFloatingInterestAllocationPlan(tx, loan, new Date(`${rows[0]!.effectiveDate}T16:59:59.999Z`), requestedAmount, ctx, "preview", { principalPayments: [], allocations: projectedAllocations });
         if (!authoritative.provenanceReady) throw new Error("TEMPORAL_REFLOW_PROVENANCE_INCOMPLETE");
         replacements[transactionPublicId] = authoritative.allocations.map((allocation) => ({ accrualId: allocation.accrualId, accrualPublicId: allocation.accrualPublicId, dueDate: allocation.dueDate, amount: allocation.amount }));
+        projectedAllocations.push(...authoritative.allocations.map((allocation) => ({ effectiveDate: rows[0]!.effectiveDate, dueDate: allocation.dueDate, accrualDate: allocation.dueDate, component: "interest" as const, amount: allocation.amount })));
     }
     return { plan: buildTemporalReflowPlan({ effectiveAfterDate, allocations: sources, replacements }), sources, replacements };
 }
@@ -241,6 +244,7 @@ export async function executeTemporalReflow(tx: any, ctx: CommandContext, input:
         const before = transaction.before.map((row) => sourceByPublicId.get(row.allocationPublicId));
         if (before.some((row) => !row) || before.length !== transaction.before.length) throw new Error("TEMPORAL_REFLOW_PROVENANCE_INCOMPLETE");
         const rows = before as ExecutableReflowSource[];
+        if (rows.some((row) => !row.interestAccrualId || !row.accrualPublicId)) throw new Error("TEMPORAL_REFLOW_PROVENANCE_INCOMPLETE");
         if (rows.some((row) => row.loanPublicId !== transaction.loanPublicId || row.transactionPublicId !== transaction.transactionPublicId || row.effectiveDate !== transaction.effectiveDate)) throw new Error("TEMPORAL_REFLOW_TRANSACTION_INCONSISTENT");
         const transactionRow = await tx.query.transactions.findFirst({ where: and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.id, rows[0]!.transactionId), eq(transactions.loanId, rows[0]!.loanId)) });
         if (!transactionRow || !new FinancialDecimal(transactionRow.principalComponent).isZero() || !new FinancialDecimal(transactionRow.feeComponent).isZero() || !new FinancialDecimal(transactionRow.penaltyComponent).isZero()) throw new Error("TEMPORAL_REFLOW_UNSUPPORTED_COMPONENT");
@@ -266,10 +270,12 @@ export async function executeTemporalReflow(tx: any, ctx: CommandContext, input:
         let replacementIndex = 0;
         let replacementRemaining = replacements[0] ? money(replacements[0].amount) : new FinancialDecimal(0);
         for (const row of rows) {
+            const interestAccrualId = row.interestAccrualId;
+            if (!interestAccrualId || !row.accrualPublicId) throw new Error("TEMPORAL_REFLOW_PROVENANCE_INCOMPLETE");
             const existingReversal = await tx.query.floatingTransactionAllocations.findFirst({ where: and(eq(floatingTransactionAllocations.tenantId, ctx.tenantId), eq(floatingTransactionAllocations.reversedAllocationId, row.allocationId)) });
             if (existingReversal) throw new Error("TEMPORAL_REFLOW_ALREADY_REVERSED");
-            const reversal = await tx.insert(floatingTransactionAllocations).values({ tenantId: ctx.tenantId, loanId: row.loanId, transactionId: reversalTransactionId, dueDate: row.dueDate, component: "interest", interestAccrualId: row.interestAccrualId, effectiveDate: row.effectiveDate, allocationOrder: ++allocationOrder, entryType: "reversal", amount: money(row.amount).negated().toFixed(2), reversedAllocationId: row.allocationId, reason: input.reason, idempotencyKey: `${input.idempotencyPrefix}:reversal:${row.allocationId}`, auditPublicId: input.auditPublicId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, createdByUserId: ctx.actorUserId }).returning().then((result: Array<typeof floatingTransactionAllocations.$inferSelect>) => result[0]!);
-            touchedAccrualIds.add(row.interestAccrualId);
+            const reversal = await tx.insert(floatingTransactionAllocations).values({ tenantId: ctx.tenantId, loanId: row.loanId, transactionId: reversalTransactionId, dueDate: row.dueDate, component: "interest", interestAccrualId, effectiveDate: row.effectiveDate, allocationOrder: ++allocationOrder, entryType: "reversal", amount: money(row.amount).negated().toFixed(2), reversedAllocationId: row.allocationId, reason: input.reason, idempotencyKey: `${input.idempotencyPrefix}:reversal:${row.allocationId}`, auditPublicId: input.auditPublicId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, createdByUserId: ctx.actorUserId }).returning().then((result: Array<typeof floatingTransactionAllocations.$inferSelect>) => result[0]!);
+            touchedAccrualIds.add(interestAccrualId);
             let sourceRemaining = money(row.amount);
             while (sourceRemaining.gt(0)) {
                 const replacement = replacements[replacementIndex];

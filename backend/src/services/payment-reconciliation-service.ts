@@ -494,6 +494,7 @@ function bangkokBusinessDate(value: Date) {
 }
 
 function presentProposal(row: typeof paymentReconciliationProposals.$inferSelect, source: unknown, allocations: ReconciliationAllocation[], correction: Record<Component, string>, groups: string[]) {
+    const temporalReflowPlan = (source as { temporalReflowPlan?: unknown }).temporalReflowPlan;
     return {
         id: row.publicId, publicId: row.publicId, status: row.status, sourcePayment: source,
         currentAllocationSnapshot: (source as { currentAllocationSnapshot?: unknown })?.currentAllocationSnapshot ?? [],
@@ -501,6 +502,7 @@ function presentProposal(row: typeof paymentReconciliationProposals.$inferSelect
         correction: { principal: correction.principal, interest: correction.interest, fee: correction.fee, penalty: correction.penalty },
         warnings: row.warnings ?? [], previewHash: row.previewHash, expectedBalanceVersion: row.expectedBalanceVersion,
         expiresAt: row.expiresAt, historicalReconciliationGroupPublicIds: groups, reason: row.reason,
+        ...(temporalReflowPlan ? { temporalReflowPlan } : {}),
     };
 }
 

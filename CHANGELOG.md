@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.24 - 2026-09-10
+
+### Added
+- Exposed the approved temporal-reflow impact in reconciliation preview and the resulting reflow group in execute output; synchronized the private MCP contract to plugin 9.5.0.
+
+### Fixed
+- Replayed later floating-interest transactions in deterministic chronological order while carrying each prior authoritative replacement projection forward, and scanned complete active source provenance so unsupported or incomplete rows fail closed.
+
 ## v0.4.23 - 2026-09-10
 
 ### Added

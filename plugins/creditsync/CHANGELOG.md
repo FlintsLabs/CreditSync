@@ -1,5 +1,10 @@
 # CreditSync Plugin Changelog
 
+## v9.5.0 - 2026-09-10
+
+### Added
+- Added the optional temporal-reflow group identifier to reconciliation execute output so clients can resume and audit append-only interest reflow results.
+
 ## v9.4.0 - 2026-09-10
 
 ### Added

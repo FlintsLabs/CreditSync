@@ -411,6 +411,20 @@ const transactionOutput = z.object({
     entryType: z.string(),
     postedAt: nullableIsoDateTime.optional(),
 }).strict();
+const temporalReflowPlanOutput = z.object({
+    effectiveAfterDate: date,
+    displacedTotal: money,
+    replacementTotal: money,
+    transactions: z.array(z.object({
+        transactionPublicId: uuid,
+        loanPublicId: uuid,
+        effectiveDate: date,
+        displacedAmount: money,
+        before: z.array(z.object({ allocationPublicId: uuid, accrualPublicId: uuid, dueDate: date, amount: money }).strict()),
+        after: z.array(z.object({ accrualPublicId: uuid, dueDate: date, amount: money }).strict()),
+        conserved: z.literal(true),
+    }).strict()),
+}).strict();
 const reconciliationPreviewOutput = z.object({
     ...publicEntity,
     status: z.enum(["ready", "executed", "expired"]),
@@ -424,6 +438,7 @@ const reconciliationPreviewOutput = z.object({
     expiresAt: isoDateTime,
     historicalReconciliationGroupPublicIds: z.array(uuid),
     reason: z.string(),
+    temporalReflowPlan: temporalReflowPlanOutput.optional(),
 }).strict();
 const restorePreviewOutput = reconciliationPreviewOutput.extend({
     proposedAllocation: z.array(reconciliationAllocationOutput.extend({
@@ -438,6 +453,7 @@ const reconciliationExecuteOutput = z.object({
     correctedTransactionPublicIds: z.array(uuid).optional(),
     auditPublicIds: z.array(uuid),
     correlationId: uuid,
+    reflowGroupPublicId: uuid.optional(),
 }).strict();
 const paymentExecutionPreflightOutput = z.object({
     status: z.enum(["ready_to_execute", "review_required", "blocked"]),
