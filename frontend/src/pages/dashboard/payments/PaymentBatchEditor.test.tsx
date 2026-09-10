@@ -38,6 +38,24 @@ test("captures evidence before metadata review and does not invent amount or tim
     expect(apiMock.post.mock.calls.some(([path]) => String(path).includes("/review"))).toBe(false);
 });
 
+test("shows local OCR candidates as review-only data after evidence finalizes", async () => {
+    let stagedClientKey = "";
+    apiMock.post.mockImplementation((path: string, body?: { items?: Array<{ clientItemKey: string }> }) => {
+        if (path === "/payment-batches/stage") { stagedClientKey = body!.items![0].clientItemKey; return Promise.resolve({ data: { batchPublicId: workspace.batchPublicId, items: [{ publicId: workspace.items[0].publicId, clientItemKey: stagedClientKey, status: "staged" }] } }); }
+        if (path.includes("/extract")) return Promise.resolve({ data: { proposal: { status: "needs_human_review", reviewRequired: true, amount: "120.00", transferredAt: "2026-09-09T11:00:00.000Z", payerName: "Nok", receiverName: "CreditSync", fee: "0.00", evidenceSha256: "a".repeat(64) } } });
+        return Promise.resolve({ data: { evidencePublicId: "00000000-0000-4000-8000-000000000003", status: "ready" } });
+    });
+    apiMock.get.mockResolvedValue({ data: { ...workspace, items: [{ ...workspace.items[0], clientItemKey: stagedClientKey, evidenceStatus: "ready" }] } });
+    renderEditor();
+    fireEvent.change(screen.getByLabelText("Choose payment slips"), { target: { files: [new File(["synthetic"], "slip.png", { type: "image/png" })] } });
+    fireEvent.click(screen.getByRole("button", { name: "Upload and review" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Extract review candidates" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Extract review candidates" }));
+    await waitFor(() => expect(screen.getByText(/OCR candidates only/i)).toBeTruthy());
+    expect(apiMock.post.mock.calls.some(([path]) => String(path).includes("/extract"))).toBe(true);
+    expect(apiMock.post.mock.calls.some(([path]) => String(path).includes("/review"))).toBe(false);
+});
+
 test("requires explicit contract selection after named borrower selection", async () => {
     let stagedClientKey = "";
     apiMock.post.mockImplementationOnce((_path: string, body: { items: Array<{ clientItemKey: string }> }) => { stagedClientKey = body.items[0].clientItemKey; return Promise.resolve({ data: { batchPublicId: workspace.batchPublicId, items: [{ publicId: workspace.items[0].publicId, clientItemKey: stagedClientKey, status: "staged" }] } }); });
