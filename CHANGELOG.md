@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.20 - 2026-09-10
+
+### Changed
+- Recorded the temporal-reflow prerequisite review: this branch has no reflow proposal/group/entry persistence or replay service, while existing reconciliation performs transaction-level compensation; no unsafe partial implementation was introduced. The daily advance-period regression fixture did not reproduce a duplicate obligation in the current projection.
+
 ## v0.4.19 - 2026-09-10
 
 ### Fixed
