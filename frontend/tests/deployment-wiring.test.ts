@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { existsSync } from "node:fs";
 
 const frontendRoot = resolve(import.meta.dirname, "..");
 
@@ -21,4 +22,5 @@ it("keeps deployment metadata runtime-only and supplies it from compose deployme
     expect(nginx).toContain("Cache-Control \"no-store\"");
     expect(nginx).toContain("try_files /deployment.json =404;");
     expect(nginx).not.toContain("location /deployment.json");
+    expect(existsSync(resolve(frontendRoot, "tests/deployment-wiring.test.ts"))).toBe(true);
 });

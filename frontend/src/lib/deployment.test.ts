@@ -8,6 +8,10 @@ describe("deployment metadata", () => {
         expect(isValidDeploymentTimestamp("")).toBe(false);
         expect(isValidDeploymentTimestamp("not-a-timestamp")).toBe(false);
         expect(isValidDeploymentTimestamp("2026-02-30T17:30:00Z")).toBe(false);
+        expect(isValidDeploymentTimestamp("2026-01-01T24:00:00Z")).toBe(false);
+        expect(isValidDeploymentTimestamp("2026-01-01T23:60:00Z")).toBe(false);
+        expect(isValidDeploymentTimestamp("2026-01-01T23:59:60Z")).toBe(false);
+        expect(isValidDeploymentTimestamp("2026-01-01T12:00:00+24:00")).toBe(false);
         expect(parseDeploymentMetadata({ timestamp: "not-a-timestamp" })).toBeNull();
         expect(parseDeploymentMetadata({})).toBeNull();
     });

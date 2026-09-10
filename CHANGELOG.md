@@ -4,7 +4,7 @@
 
 ### Added
 
-- Added the latest deployment timestamp to the application footer using validated runtime metadata supplied by the deployment environment, with localized Bangkok/UTC+7 formatting and a safe unavailable fallback.
+- Added the latest deployment timestamp to the application footer using validated runtime metadata supplied by the deployment environment, with localized Bangkok/UTC+7 formatting, explicit semantic time validation, and a safe unavailable fallback.
 - Documented the repeatable `DEPLOYED_AT` Compose deployment command.
 
 ## v0.4.37 - 2026-09-10
