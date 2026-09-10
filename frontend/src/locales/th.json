@@ -1372,4 +1372,10 @@
     ,"paymentBatchDueComponents": "ยอดคงเหลือตามระบบบัญชี"
     ,"paymentBatchProposalComponents": "องค์ประกอบข้อเสนอ"
     ,"paymentBatchReceipt": "ใบรับรายการ"
+    ,"paymentBatchComponents": "องค์ประกอบจากระบบบัญชี"
+    ,"paymentBatchSplitComplete": "แยกชุดสำเร็จและรีเฟรชชุดต้นทางแล้ว"
+    ,"paymentBatchDestinationBatch": "ชุดปลายทาง"
+    ,"paymentBatchDependency": "ความสัมพันธ์ลำดับเวลา"
+    ,"paymentBatchMovedMembers": "สมาชิกที่ย้าย"
+    ,"paymentBatchOpenDestination": "เปิดชุดปลายทาง"
 }

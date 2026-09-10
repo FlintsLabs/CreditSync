@@ -897,7 +897,8 @@ export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: st
         await tx.update(paymentBatches).set({ borrowerId: borrower.id, status, version: nextVersion, stateHash, confirmationHash: status === "ready" ? confirmationHash : null, updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(eq(paymentBatches.tenantId, ctx.tenantId), eq(paymentBatches.id, batch.id)));
         return preview;
     })();
-    return { id: created.publicId, publicId: created.publicId, batchPublicId: batch.publicId, version: created.version, status, stateHash, previewHash, confirmationHash, evidenceReady, allocations: solved.allocations, candidates: solved.candidates, warnings: solved.warnings };
+    const publicAllocations = solved.allocations.map((allocation) => ({ ...allocation, calculatedComponents: componentsByAllocation.get(allocation)! }));
+    return { id: created.publicId, publicId: created.publicId, batchPublicId: batch.publicId, version: created.version, status, stateHash, previewHash, confirmationHash, evidenceReady, allocations: publicAllocations, candidates: solved.candidates, warnings: solved.warnings };
     });
 }
 export type PaymentBatchExecutionOptions = { afterStage?: (stage: "locks" | "preview" | "item" | "all") => Promise<void> | void };

@@ -2132,6 +2132,38 @@
                                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                                     "type": "string"
                                   },
+                                  "calculatedComponents": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "fee": {
+                                        "maxLength": 32,
+                                        "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                        "type": "string"
+                                      },
+                                      "interest": {
+                                        "maxLength": 32,
+                                        "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                        "type": "string"
+                                      },
+                                      "penalty": {
+                                        "maxLength": 32,
+                                        "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                        "type": "string"
+                                      },
+                                      "principal": {
+                                        "maxLength": 32,
+                                        "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "principal",
+                                      "interest",
+                                      "fee",
+                                      "penalty"
+                                    ],
+                                    "type": "object"
+                                  },
                                   "intent": {
                                     "enum": [
                                       "on_time",
@@ -2853,6 +2885,38 @@
                                         "format": "uuid",
                                         "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                                         "type": "string"
+                                      },
+                                      "calculatedComponents": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "fee": {
+                                            "maxLength": 32,
+                                            "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                            "type": "string"
+                                          },
+                                          "interest": {
+                                            "maxLength": 32,
+                                            "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                            "type": "string"
+                                          },
+                                          "penalty": {
+                                            "maxLength": 32,
+                                            "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                            "type": "string"
+                                          },
+                                          "principal": {
+                                            "maxLength": 32,
+                                            "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "principal",
+                                          "interest",
+                                          "fee",
+                                          "penalty"
+                                        ],
+                                        "type": "object"
                                       },
                                       "intent": {
                                         "enum": [
@@ -4391,6 +4455,38 @@
                                         "format": "uuid",
                                         "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                                         "type": "string"
+                                      },
+                                      "calculatedComponents": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "fee": {
+                                            "maxLength": 32,
+                                            "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                            "type": "string"
+                                          },
+                                          "interest": {
+                                            "maxLength": 32,
+                                            "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                            "type": "string"
+                                          },
+                                          "penalty": {
+                                            "maxLength": 32,
+                                            "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                            "type": "string"
+                                          },
+                                          "principal": {
+                                            "maxLength": 32,
+                                            "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "principal",
+                                          "interest",
+                                          "fee",
+                                          "penalty"
+                                        ],
+                                        "type": "object"
                                       },
                                       "intent": {
                                         "enum": [
@@ -6958,6 +7054,38 @@
                                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                                     "type": "string"
                                   },
+                                  "calculatedComponents": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "fee": {
+                                        "maxLength": 32,
+                                        "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                        "type": "string"
+                                      },
+                                      "interest": {
+                                        "maxLength": 32,
+                                        "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                        "type": "string"
+                                      },
+                                      "penalty": {
+                                        "maxLength": 32,
+                                        "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                        "type": "string"
+                                      },
+                                      "principal": {
+                                        "maxLength": 32,
+                                        "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "principal",
+                                      "interest",
+                                      "fee",
+                                      "penalty"
+                                    ],
+                                    "type": "object"
+                                  },
                                   "intent": {
                                     "enum": [
                                       "on_time",
@@ -7948,6 +8076,38 @@
                                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                                     "type": "string"
                                   },
+                                  "calculatedComponents": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "fee": {
+                                        "maxLength": 32,
+                                        "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                        "type": "string"
+                                      },
+                                      "interest": {
+                                        "maxLength": 32,
+                                        "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                        "type": "string"
+                                      },
+                                      "penalty": {
+                                        "maxLength": 32,
+                                        "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                        "type": "string"
+                                      },
+                                      "principal": {
+                                        "maxLength": 32,
+                                        "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "principal",
+                                      "interest",
+                                      "fee",
+                                      "penalty"
+                                    ],
+                                    "type": "object"
+                                  },
                                   "intent": {
                                     "enum": [
                                       "on_time",
@@ -8518,6 +8678,38 @@
                       "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                       "type": "string"
                     },
+                    "calculatedComponents": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "fee": {
+                          "maxLength": 32,
+                          "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                          "type": "string"
+                        },
+                        "interest": {
+                          "maxLength": 32,
+                          "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                          "type": "string"
+                        },
+                        "penalty": {
+                          "maxLength": 32,
+                          "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                          "type": "string"
+                        },
+                        "principal": {
+                          "maxLength": 32,
+                          "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "principal",
+                        "interest",
+                        "fee",
+                        "penalty"
+                      ],
+                      "type": "object"
+                    },
                     "intent": {
                       "enum": [
                         "on_time",
@@ -8595,6 +8787,38 @@
                             "format": "uuid",
                             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                             "type": "string"
+                          },
+                          "calculatedComponents": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "fee": {
+                                "maxLength": 32,
+                                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                "type": "string"
+                              },
+                              "interest": {
+                                "maxLength": 32,
+                                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                "type": "string"
+                              },
+                              "penalty": {
+                                "maxLength": 32,
+                                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                "type": "string"
+                              },
+                              "principal": {
+                                "maxLength": 32,
+                                "pattern": "^(0|[1-9]\\d*)\\.\\d{2}$",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "principal",
+                              "interest",
+                              "fee",
+                              "penalty"
+                            ],
+                            "type": "object"
                           },
                           "intent": {
                             "enum": [

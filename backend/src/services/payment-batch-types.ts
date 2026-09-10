@@ -30,6 +30,7 @@ export type ExplicitBatchAllocation = {
     targetDueDate: string;
     intent: "on_time" | "advance" | "backdated";
     matchSource?: "human_explicit" | "unique_exact" | "selected_candidate";
+    calculatedComponents?: { principal: string; interest: string; fee: string; penalty: string };
 };
 
 export type BatchCandidate = {

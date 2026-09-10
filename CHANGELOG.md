@@ -5,6 +5,9 @@
 ### Fixed
 - Closed additional batch workspace safety gaps: server workspace membership is matched only by stable client key, missing evidence remains pending unless the server reports ready, missing upload URLs fail closed, Bangkok local times reject out-of-range clock values, retry file selection can attach to resumed pending rows, and reviewed local edits block preview until the audited server mutation completes.
 
+### Added
+- Batch previews now expose backend-calculated principal, interest, fee, and penalty components; the workspace renders identifiable candidate labels, chronological allocations, and split destination/dependency membership from the service response.
+
 ## v0.4.16 - 2026-09-10
 
 ### Fixed

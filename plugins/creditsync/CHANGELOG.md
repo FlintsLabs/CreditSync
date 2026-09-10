@@ -7,6 +7,7 @@
 
 ### Changed
 - Synchronized the frozen private contract to 126 tools and plugin version 9.4.0.
+- Synchronized backend-confirmed batch allocation component fields in the frozen preview output contract.
 
 ## v9.3.0 - 2026-09-10
 

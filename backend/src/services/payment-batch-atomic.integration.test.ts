@@ -92,6 +92,7 @@ integration("an older standalone resolved proposal blocks a later batch even wit
 integration("preview exposes actual scheduled accounting components instead of labelling everything principal", async () => {
     const f = await fixture(true);
     const preview = await previewPaymentBatch(f.ctx, f.batch.publicId, { borrowerPublicId: f.borrower.publicId, allocations: f.allocations });
+    expect(preview.allocations.map((allocation) => allocation.calculatedComponents)).toEqual([1, 2, 3].map(() => ({ principal: "20.00", interest: "7.00", fee: "3.00", penalty: "0.00" })));
     const stored = await db.query.paymentBatchPreviews.findFirst({ where: eq(paymentBatchPreviews.publicId, preview.publicId) });
     const rows = await db.select().from(paymentBatchAllocations).where(eq(paymentBatchAllocations.previewId, stored!.id));
     expect(rows.map((r) => r.calculatedComponents)).toEqual([1, 2, 3].map(() => ({ principal: "20.00", interest: "7.00", fee: "3.00", penalty: "0.00" })));

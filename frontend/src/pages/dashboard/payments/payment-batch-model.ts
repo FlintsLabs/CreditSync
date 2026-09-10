@@ -45,6 +45,7 @@ export type ExplicitBatchAllocation = {
     amount: string;
     targetDueDate: string;
     intent: BatchIntent;
+    calculatedComponents?: { principal: string; interest: string; fee: string; penalty: string };
 };
 
 export type BatchPreview = {

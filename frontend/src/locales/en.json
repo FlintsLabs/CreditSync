@@ -1446,4 +1446,10 @@
     ,"paymentBatchDueComponents": "authoritative remaining due"
     ,"paymentBatchProposalComponents": "proposal components"
     ,"paymentBatchReceipt": "Receipt"
+    ,"paymentBatchComponents": "backend components"
+    ,"paymentBatchSplitComplete": "Split completed; source refreshed"
+    ,"paymentBatchDestinationBatch": "Destination batch"
+    ,"paymentBatchDependency": "Chronology dependency"
+    ,"paymentBatchMovedMembers": "Moved members"
+    ,"paymentBatchOpenDestination": "Open destination batch"
 }
