@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.15 - 2026-09-10
+
+### Added
+- Added the first bounded four-step payment-batch workspace UI: multi-file upload-first capture with resumable workspace state, human borrower/contract candidate selection, explicit multi-contract allocations, chronology decision refresh, revision-bound confirmation, split/cancel controls, and stable execute retry keys. Draft and review actions remain explicitly unposted.
+
+### Changed
+- Updated payment-batch editor translations for named review, candidate selection, chronology decisions, and exact no-financial-write workflow messaging in English and Thai.
+
 ## v0.4.14 - 2026-09-09
 
 ### Added

@@ -25,4 +25,16 @@ describe("payment batch model", () => {
             { itemPublicId: "item-b", loanPublicId: "loan-b", schedulePublicId: "schedule-b", amount: "20.00", targetDueDate: "2026-08-24", intent: "backdated" },
         ]);
     });
+    it("expands an explicitly selected multi-contract allocation without recalculating money", () => {
+        const rows = [{ id: "a", paymentIntakePublicId: "i", amount: "120", targetDueDate: "2026-08-23", intent: "on_time" as const, loanPublicId: "loan-a", schedulePublicId: "", selectedBorrowerPublicId: "borrower-a", allocations: [{ loanPublicId: "loan-a", schedulePublicId: "schedule-a", amount: "75" }, { loanPublicId: "loan-b", amount: "45" }] }];
+        expect(toExplicitBatchAllocations(rows, ["item-a"])).toEqual([
+            { itemPublicId: "item-a", borrowerPublicId: "borrower-a", loanPublicId: "loan-a", schedulePublicId: "schedule-a", amount: "75.00", targetDueDate: "2026-08-23", intent: "on_time" },
+            { itemPublicId: "item-a", borrowerPublicId: "borrower-a", loanPublicId: "loan-b", amount: "45.00", targetDueDate: "2026-08-23", intent: "on_time" },
+        ]);
+    });
+    it("does not enable execution when an explicit allocation is incomplete", () => {
+        const item = { id: "a", paymentIntakePublicId: "i", amount: "120", targetDueDate: "2026-08-23", intent: "on_time" as const, loanPublicId: "loan-a", schedulePublicId: "", allocations: [{ loanPublicId: "loan-a", amount: "75" }, { loanPublicId: "", amount: "45" }] };
+        const preview = { publicId: "preview", status: "ready", version: 1, previewHash: "p", confirmationHash: "c", evidenceReady: true, allocations: [], candidates: [], warnings: [] };
+        expect(isBatchReady([item], "borrower", true, preview)).toBe(false);
+    });
 });

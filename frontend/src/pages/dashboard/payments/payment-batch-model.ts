@@ -13,10 +13,29 @@ export type BatchItemDraft = {
     file?: File;
     stagingItemPublicId?: string;
     batchItemPublicId?: string;
+    payerName?: string;
+    bankReference?: string;
+    candidates?: BatchCandidateResult;
+    selectedBorrowerPublicId?: string;
+    allocations?: Array<{ loanPublicId: string; schedulePublicId?: string; amount: string }>;
+    error?: string;
+};
+
+export type BatchCandidateResult = {
+    stagingItemPublicId: string;
+    stagingRevision: number;
+    batchRevision: number;
+    inputFingerprint: string;
+    borrowerResolution: string;
+    borrowerCandidates: Array<{ publicId: string; name: string; matchType: string | null }>;
+    contractCandidates: Array<{ borrowerPublicId: string; borrowerName: string; loanPublicId: string; repaymentType: string; status: string; eligible: boolean; eligibilityCode: string | null; dueComponents: Record<string, string> | null; proposalComponents: Record<string, string> | null; schedules: Array<{ publicId: string; dueDate: string; status: string; remainingDue: string; components: Record<string, string> }> }>;
+    candidateLimitReached: boolean;
+    reviewRequired: boolean;
 };
 
 export type ExplicitBatchAllocation = {
     itemPublicId: string;
+    borrowerPublicId?: string;
     loanPublicId: string;
     schedulePublicId?: string;
     amount: string;
@@ -49,15 +68,16 @@ export function isBatchReady(items: BatchItemDraft[], borrowerPublicId: string, 
     if (!readyPreview) return false;
     return confirmed && Boolean(borrowerPublicId.trim()) && items.length > 0 && readyPreview.status === "ready" && readyPreview.evidenceReady
         && readyPreview.warnings.length === 0 && readyPreview.allocations.length > 0
-        && items.every((item) => item.paymentIntakePublicId.trim() && item.targetDueDate && item.loanPublicId && new Decimal(normalizeMoney(item.amount)).gt(0));
+        && items.every((item) => item.paymentIntakePublicId.trim() && item.targetDueDate && item.loanPublicId && new Decimal(normalizeMoney(item.amount)).gt(0)
+            && (item.allocations ?? [{ loanPublicId: item.loanPublicId, amount: item.amount }]).every((allocation) => allocation.loanPublicId && new Decimal(normalizeMoney(allocation.amount)).gt(0)));
 }
 
 export function toExplicitBatchAllocations(items: BatchItemDraft[], itemPublicIds: string[]): ExplicitBatchAllocation[] {
     if (items.length !== itemPublicIds.length) throw new Error("BATCH_ITEM_MAPPING_MISMATCH");
-    return items.map((item, index) => ({
-        itemPublicId: itemPublicIds[index], loanPublicId: item.loanPublicId, ...(item.schedulePublicId ? { schedulePublicId: item.schedulePublicId } : {}),
-        amount: normalizeMoney(item.amount), targetDueDate: item.targetDueDate, intent: item.intent,
-    }));
+    return items.flatMap((item, index) => {
+        const allocations = item.allocations?.length ? item.allocations : [{ loanPublicId: item.loanPublicId, schedulePublicId: item.schedulePublicId || undefined, amount: item.amount }];
+        return allocations.map((allocation) => ({ itemPublicId: itemPublicIds[index], ...(item.selectedBorrowerPublicId ? { borrowerPublicId: item.selectedBorrowerPublicId } : {}), loanPublicId: allocation.loanPublicId, ...(allocation.schedulePublicId ? { schedulePublicId: allocation.schedulePublicId } : {}), amount: normalizeMoney(allocation.amount), targetDueDate: item.targetDueDate, intent: item.intent }));
+    });
 }
 
 export function semanticSummary(items: BatchItemDraft[]) {
