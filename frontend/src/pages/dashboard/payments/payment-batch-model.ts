@@ -19,6 +19,9 @@ export type BatchItemDraft = {
     selectedBorrowerPublicId?: string;
     allocations?: Array<{ loanPublicId: string; schedulePublicId?: string; amount: string }>;
     error?: string;
+    revision?: number;
+    evidenceStatus?: string | null;
+    uploadStatus?: "pending" | "uploading" | "ready" | "failed";
 };
 
 export type BatchCandidateResult = {
@@ -28,7 +31,7 @@ export type BatchCandidateResult = {
     inputFingerprint: string;
     borrowerResolution: string;
     borrowerCandidates: Array<{ publicId: string; name: string; matchType: string | null }>;
-    contractCandidates: Array<{ borrowerPublicId: string; borrowerName: string; loanPublicId: string; repaymentType: string; status: string; eligible: boolean; eligibilityCode: string | null; dueComponents: Record<string, string> | null; proposalComponents: Record<string, string> | null; schedules: Array<{ publicId: string; dueDate: string; status: string; remainingDue: string; components: Record<string, string> }> }>;
+    contractCandidates: Array<{ borrowerPublicId: string; borrowerName: string; loanPublicId: string; repaymentType: string; status: string; eligible: boolean; eligibilityCode: string | null; startDate?: string | null; principalAmount?: string; outstandingPrincipal?: string; dueComponents: Record<string, string> | null; proposalComponents: Record<string, string> | null; schedules: Array<{ publicId: string; dueDate: string; status: string; remainingDue: string; components: Record<string, string> }> }>;
     candidateLimitReached: boolean;
     reviewRequired: boolean;
 };
@@ -54,6 +57,23 @@ export type BatchPreview = {
     candidates: unknown[];
     warnings: Array<{ code: string; [key: string]: unknown }>;
 };
+
+export function normalizeBangkokDateTime(value: string): string | null {
+    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+    if (!match) return null;
+    const [, year, month, day, hour, minute] = match;
+    const calendar = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+    if (calendar.getUTCFullYear() !== Number(year) || calendar.getUTCMonth() !== Number(month) - 1 || calendar.getUTCDate() !== Number(day)) return null;
+    const candidate = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour) - 7, Number(minute)));
+    return candidate.toISOString();
+}
+
+export function toBangkokDateTimeInput(value: string | null | undefined): string {
+    if (!value) return "";
+    const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Bangkok", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date(value));
+    const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+    return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
+}
 
 export function normalizeMoney(value: string): string {
     try { return new Decimal(value.trim() || "0").toFixed(2); } catch { return "0.00"; }

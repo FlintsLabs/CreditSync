@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.16 - 2026-09-10
+
+### Fixed
+- Hardened the batch workspace state boundary: capture/evidence is separate from human metadata review, stable scoped idempotency keys and client keys survive partial retries, workspace hydration preserves public provenance and draft selections, Bangkok datetime input is fail-closed, current decision IDs bind the fresh preview, and reviewed items use audited edits instead of permanent local-only fields.
+
 ## v0.4.15 - 2026-09-10
 
 ### Added

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { batchTotal, isBatchReady, normalizeMoney, semanticSummary, toExplicitBatchAllocations } from "./payment-batch-model";
+import { batchTotal, isBatchReady, normalizeBangkokDateTime, normalizeMoney, semanticSummary, toBangkokDateTimeInput, toExplicitBatchAllocations } from "./payment-batch-model";
 
 describe("payment batch model", () => {
     it("uses exact decimal strings for totals", () => {
@@ -36,5 +36,11 @@ describe("payment batch model", () => {
         const item = { id: "a", paymentIntakePublicId: "i", amount: "120", targetDueDate: "2026-08-23", intent: "on_time" as const, loanPublicId: "loan-a", schedulePublicId: "", allocations: [{ loanPublicId: "loan-a", amount: "75" }, { loanPublicId: "", amount: "45" }] };
         const preview = { publicId: "preview", status: "ready", version: 1, previewHash: "p", confirmationHash: "c", evidenceReady: true, allocations: [], candidates: [], warnings: [] };
         expect(isBatchReady([item], "borrower", true, preview)).toBe(false);
+    });
+    it("normalizes datetime-local as Bangkok and rejects impossible or unknown values", () => {
+        expect(normalizeBangkokDateTime("2026-09-10T00:30")).toBe("2026-09-09T17:30:00.000Z");
+        expect(toBangkokDateTimeInput("2026-09-09T17:30:00.000Z")).toBe("2026-09-10T00:30");
+        expect(normalizeBangkokDateTime("2026-02-30T10:00")).toBeNull();
+        expect(normalizeBangkokDateTime("not-a-time")).toBeNull();
     });
 });
