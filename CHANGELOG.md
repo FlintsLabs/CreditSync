@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.37 - 2026-09-10
+
+### Fixed
+
+- Kept the loan accrual detail response compatible with the frozen MCP contract and historical loan-schema verification fixtures; missing legacy accrual columns remain read-only empty data while unrelated database errors still fail.
+
 ## v0.4.36 - 2026-09-10
 
 ### Added

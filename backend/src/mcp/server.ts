@@ -542,6 +542,18 @@ const loanOutput = z.object({
     outstandingInterest: money,
     outstandingFees: money,
     status: z.string().nullable(),
+    accruals: z.array(z.object({
+        publicId: uuid,
+        accrualDate: date,
+        periodStartDate: date.nullable(),
+        periodEndDate: date.nullable(),
+        periodUnit: z.enum(["day", "week", "month"]).nullable(),
+        periodDayIndex: z.number().int().nullable(),
+        interestAmount: money,
+        paidAmount: money,
+        remainingAmount: money,
+        status: z.string(),
+    }).strict()).optional(),
     createdAt: nullableIsoDateTime.optional(),
     updatedAt: nullableIsoDateTime.optional(),
 }).strict();

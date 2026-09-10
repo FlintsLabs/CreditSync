@@ -532,14 +532,22 @@ export function previewLoan(input: PublicLoanCalculationParams) {
 export async function getLoanApplication(ctx: CommandContext, publicId: string) {
     const loan = await accessibleLoan(ctx, publicId);
     const base = await presentLoan(loan);
-    const [inbound, outbound, replacementLineages, accrualRows] = await Promise.all([
+    const [inbound, outbound, replacementLineages] = await Promise.all([
         db.query.loanRestructures.findFirst({ where: and(eq(loanRestructures.tenantId, ctx.tenantId), inArray(loanRestructures.status, ["executed", "reversed"]), eq(loanRestructures.newLoanId, loan.id)), orderBy: [desc(loanRestructures.createdAt)] }),
         db.query.loanRestructures.findFirst({ where: and(eq(loanRestructures.tenantId, ctx.tenantId), inArray(loanRestructures.status, ["executed", "reversed"]), eq(loanRestructures.oldLoanId, loan.id)), orderBy: [desc(loanRestructures.createdAt)] }),
         getLoanReplacementLineages(ctx.tenantId, [loan]),
-        db.select().from(loanInterestAccruals)
-            .where(and(eq(loanInterestAccruals.tenantId, ctx.tenantId), eq(loanInterestAccruals.loanId, loan.id)))
-            .orderBy(asc(loanInterestAccruals.accrualDate), asc(loanInterestAccruals.id)),
     ]);
+    let accrualRows: typeof loanInterestAccruals.$inferSelect[];
+    try {
+        accrualRows = await db.select().from(loanInterestAccruals)
+            .where(and(eq(loanInterestAccruals.tenantId, ctx.tenantId), eq(loanInterestAccruals.loanId, loan.id)))
+            .orderBy(asc(loanInterestAccruals.accrualDate), asc(loanInterestAccruals.id));
+    } catch (error) {
+        const cause = error && typeof error === "object" && "cause" in error ? (error as { cause?: unknown }).cause : undefined;
+        const code = [error, cause].map((candidate) => candidate && typeof candidate === "object" && "code" in candidate ? (candidate as { code?: unknown }).code : undefined).find(Boolean);
+        if (code !== "42703" && code !== "42P01") throw error;
+        accrualRows = [];
+    }
     const accruals = accrualRows.map((row) => ({
         publicId: row.publicId,
         accrualDate: row.accrualDate,
