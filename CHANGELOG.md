@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.26 - 2026-09-10
+
+### Fixed
+- Bound historical reconciliation previews to the tenant-safe finalized evidence identity/checksum/metadata snapshot and rechecked it before execute; adding ready evidence after preview now fails closed without financial writes.
+- Added lifecycle assertions for repeated reconciliation after temporal reflow and parity coverage for restore-child evidence replacement.
+
 ## v0.4.25 - 2026-09-10
 
 ### Added

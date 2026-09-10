@@ -6,7 +6,7 @@ import { db } from "../db";
 import { auditLogs, borrowers, commandReceipts, floatingTransactionAllocations, loanInterestAccruals, loanSchedules, loans, paymentEvidence, paymentIntakes, paymentMatchProposals, paymentReconciliationEntries, paymentReconciliationGroups, paymentReconciliationProposals, paymentReconciliationReflowEntries, paymentReconciliationReflowGroups, transactions, users } from "../db/schema";
 import { createBorrower } from "./borrower-service";
 import { createLoanDraft, activateLoan } from "./loan-application-service";
-import { createPaymentIntake, postPayment, previewPaymentMatch, reviewPaymentIntake } from "./payment-service";
+import { createPaymentIntake, finalizePaymentEvidence, postPayment, preparePaymentEvidence, previewPaymentMatch, reviewPaymentIntake, type EvidenceStorageGateway } from "./payment-service";
 import type { CommandContext } from "./command-context";
 import { backfillPostedRestoreSchedule, calculateReconciliationComponents, createPaymentRestoreDraft, deriveExactRestoreComponents, executePaymentReconciliation, markPaymentReconciliationReview, preflightPaymentExecution, previewPaymentRestore, previewPaymentReconciliation, type ReconciliationAllocation } from "./payment-reconciliation-service";
 
@@ -140,6 +140,7 @@ describe("payment reconciliation persistence", () => {
         expect(retryTwo).toEqual(result);
         expect(await db.select().from(paymentReconciliationGroups).where(eq(paymentReconciliationGroups.tenantId, tenantId))).toHaveLength(1);
         expect(await db.select().from(paymentReconciliationReflowEntries).where(eq(paymentReconciliationReflowEntries.tenantId, tenantId))).toHaveLength(2);
+        await expect(previewPaymentReconciliation(ctx, { paymentIntakePublicId: backdated.publicId, allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: loanDraft.publicId, amount: "10.00", component: "interest" }], reason: preview.reason })).rejects.toMatchObject({ code: "RECONCILIATION_INTAKE_INVALID" });
     });
 
     integrationTest("rolls back every reflow write when an intermediate signed entry fails", async () => {
@@ -272,6 +273,43 @@ describe("payment reconciliation persistence", () => {
         }
         expect(await db.select().from(transactions).where(eq(transactions.tenantId, tenantId)).then((rows) => rows.filter((row) => originalTransactions.some((original) => original.id === row.id)).map((row) => ({ id: row.id, transactionDate: row.transactionDate, amount: row.amount, principalComponent: row.principalComponent, interestComponent: row.interestComponent, feeComponent: row.feeComponent, penaltyComponent: row.penaltyComponent })))).toEqual(originalTransactions.map((row) => ({ id: row.id, transactionDate: row.transactionDate, amount: row.amount, principalComponent: row.principalComponent, interestComponent: row.interestComponent, feeComponent: row.feeComponent, penaltyComponent: row.penaltyComponent })));
         expect(await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, backdated.publicId) })).toMatchObject({ status: "posted" });
+    });
+
+    integrationTest("rejects a reconciliation execute when ready source evidence changes after preview", async () => {
+        const tenantId = `reconciliation-evidence-stale-${crypto.randomUUID()}`;
+        const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+        const ctx: CommandContext = { tenantId, actorUserId: actor.id, actorSource: "web", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() };
+        const borrower = await createBorrower(ctx, { name: "Evidence Stale Borrower" });
+        const loanContext = { ...ctx, idempotencyKey: crypto.randomUUID(), requestId: crypto.randomUUID() };
+        const loanDraft = await createLoanDraft(loanContext, { borrowerPublicId: borrower.publicId, principal: "1000.00", interestRate: "0.00", repaymentType: "daily", termMonths: 1, startDate: "2026-08-01" });
+        await activateLoan(loanContext, loanDraft.publicId);
+        const intake = await createPaymentIntake({ ...ctx, idempotencyKey: crypto.randomUUID() }, { amount: "10.00", receivedAt: "2026-08-20T05:00:00.000Z", payerName: borrower.name });
+        await reviewPaymentIntake(ctx, intake.publicId, { status: "needs_review" });
+        const objects = new Map<string, Awaited<ReturnType<EvidenceStorageGateway["head"]>>>();
+        const gateway: EvidenceStorageGateway = {
+            preparePut: async (request) => {
+                objects.set(request.key, { exists: true, contentType: request.contentType, contentLength: request.contentLength, checksumSha256: request.checksumSha256, metadata: request.metadata ?? {} });
+                return { uploadUrl: "https://upload.invalid/reconciliation", expiresAt: new Date(Date.now() + 60000), requiredHeaders: {} };
+            },
+            head: async (key) => objects.get(key) ?? { exists: false, contentType: null, contentLength: null, checksumSha256: null, metadata: {} },
+        };
+        const firstEvidence = await preparePaymentEvidence(ctx, intake.publicId, { mimeType: "image/png", size: 12, sha256: "a".repeat(64) }, gateway);
+        await finalizePaymentEvidence(ctx, intake.publicId, firstEvidence.publicId, gateway);
+        const preview = await previewPaymentReconciliation(ctx, { paymentIntakePublicId: intake.publicId, allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: loanDraft.publicId, amount: "10.00", component: "interest" }], reason: "Evidence-bound reconciliation" });
+        const before = {
+            transactions: await db.select().from(transactions).where(eq(transactions.tenantId, tenantId)),
+            allocations: await db.select().from(floatingTransactionAllocations).where(eq(floatingTransactionAllocations.tenantId, tenantId)),
+            proposals: await db.select().from(paymentReconciliationProposals).where(eq(paymentReconciliationProposals.tenantId, tenantId)),
+            audits: await db.select().from(auditLogs).where(eq(auditLogs.tenantId, tenantId)),
+        };
+        const secondEvidence = await preparePaymentEvidence(ctx, intake.publicId, { mimeType: "image/png", size: 12, sha256: "b".repeat(64) }, gateway);
+        await finalizePaymentEvidence(ctx, intake.publicId, secondEvidence.publicId, gateway);
+        before.audits = await db.select().from(auditLogs).where(eq(auditLogs.tenantId, tenantId));
+        await expect(executePaymentReconciliation(ctx, preview.publicId, { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "stale-evidence-execute" })).rejects.toMatchObject({ code: "STALE_RECONCILIATION_PREVIEW" });
+        expect(await db.select().from(transactions).where(eq(transactions.tenantId, tenantId))).toEqual(before.transactions);
+        expect(await db.select().from(floatingTransactionAllocations).where(eq(floatingTransactionAllocations.tenantId, tenantId))).toEqual(before.allocations);
+        expect(await db.select().from(paymentReconciliationProposals).where(eq(paymentReconciliationProposals.tenantId, tenantId))).toEqual(before.proposals);
+        expect(await db.select().from(auditLogs).where(eq(auditLogs.tenantId, tenantId))).toEqual(before.audits);
     });
 
     integrationTest("preflight proves a ready payment is executable without changing financial state", async () => {

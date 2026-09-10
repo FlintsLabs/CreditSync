@@ -318,6 +318,19 @@ async function activeSourceRepayments(executor: any, ctx: CommandContext, intake
     )).orderBy(transactions.id);
 }
 
+async function readyEvidenceSnapshot(executor: any, ctx: CommandContext, intakeId: number) {
+    return executor.select({
+        publicId: paymentEvidence.publicId,
+        checksum: paymentEvidence.evidenceHash,
+        mimeType: paymentEvidence.mimeType,
+        size: paymentEvidence.declaredSize,
+        finalizedAt: paymentEvidence.finalizedAt,
+    }).from(paymentEvidence).where(and(
+        eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.paymentIntakeId, intakeId),
+        eq(paymentEvidence.status, "ready"), sql`${paymentEvidence.finalizedAt} IS NOT NULL`,
+    )).orderBy(paymentEvidence.publicId);
+}
+
 type ReconciliationMode = "historical_needs_review" | "reversed_repost";
 
 function isExactCompensation(original: typeof transactions.$inferSelect, reversal: typeof transactions.$inferSelect) {
@@ -335,9 +348,10 @@ async function inspectReconciliationSource(executor: any, ctx: CommandContext, i
     originals: Array<typeof transactions.$inferSelect>;
     reversals: Array<typeof transactions.$inferSelect>;
     hasReadyEvidence: boolean;
+    evidenceSnapshot: Array<{ publicId: string; checksum: string | null; mimeType: string | null; size: number | null; finalizedAt: Date | null }>;
     repostChild: typeof paymentIntakes.$inferSelect | null;
 }> {
-    if (intake.status === "needs_review") return { mode: "historical_needs_review", originals: [], reversals: [], hasReadyEvidence: false, repostChild: null };
+    if (intake.status === "needs_review") return { mode: "historical_needs_review", originals: [], reversals: [], hasReadyEvidence: false, evidenceSnapshot: await readyEvidenceSnapshot(executor, ctx, intake.id), repostChild: null };
     if (intake.status !== "reversed") throw new DomainError("RECONCILIATION_INTAKE_INVALID", "Only needs_review or fully reversed intakes can be reconciled", 409);
     const originals: Array<typeof transactions.$inferSelect> = await executor.select().from(transactions).where(and(
         eq(transactions.tenantId, ctx.tenantId), eq(transactions.paymentIntakeId, intake.id), eq(transactions.entryType, "repayment"),
@@ -347,9 +361,8 @@ async function inspectReconciliationSource(executor: any, ctx: CommandContext, i
             eq(transactions.tenantId, ctx.tenantId), eq(transactions.entryType, "reversal"), inArray(transactions.reversedTransactionId, originals.map((row) => row.id)),
         )).orderBy(transactions.id)
         : [];
-    const hasReadyEvidence = Boolean(await executor.query.paymentEvidence.findFirst({ where: and(
-        eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.paymentIntakeId, intake.id), eq(paymentEvidence.status, "ready"), sql`${paymentEvidence.finalizedAt} IS NOT NULL`,
-    ) }));
+    const evidenceSnapshot = await readyEvidenceSnapshot(executor, ctx, intake.id);
+    const hasReadyEvidence = evidenceSnapshot.length > 0;
     const child = await executor.query.paymentIntakes.findFirst({ where: and(
         eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.repostOfIntakeId, intake.id),
     ) });
@@ -360,7 +373,7 @@ async function inspectReconciliationSource(executor: any, ctx: CommandContext, i
     })) throw new DomainError("RECONCILIATION_SOURCE_NOT_FULLY_REVERSED", "Every source repayment must have one exact compensating reversal", 409);
     if (options.requireSourceEvidence !== false && !hasReadyEvidence) throw new DomainError("RECONCILIATION_SOURCE_EVIDENCE_REQUIRED", "A finalized ready source evidence record is required", 409);
     if (child && !(options.allowDraftChild && child.status === "draft")) throw new DomainError("RECONCILIATION_SOURCE_ALREADY_REPOSTED", "The reversed source already has a repost child", 409);
-    return { mode: "reversed_repost", originals, reversals, hasReadyEvidence, repostChild: child ?? null };
+    return { mode: "reversed_repost", originals, reversals, hasReadyEvidence, evidenceSnapshot, repostChild: child ?? null };
 }
 
 async function restoreDraftEvidence(executor: any, ctx: CommandContext, draft: typeof paymentIntakes.$inferSelect | null) {
@@ -634,7 +647,7 @@ export async function previewPaymentRestore(ctx: CommandContext, input: { paymen
             mode: "exact_restore", sourceMode: inspected.mode, paymentIntakePublicId: intake.publicId, status: intake.status,
             amount: serializeMoney(intake.amount), receivedAt: intake.receivedAt, hasReadyEvidence: true, restoreDraftPublicId: draft.publicId,
             restoreEvidence: await restoreEvidenceSnapshot(tx, ctx, draft.id),
-            currentAllocationSnapshot: inspected.originals.map(sourceTransactionSnapshot), reversalSnapshot: inspected.reversals.map(sourceTransactionSnapshot),
+            currentAllocationSnapshot: inspected.originals.map(sourceTransactionSnapshot), reversalSnapshot: inspected.reversals.map(sourceTransactionSnapshot), evidenceSnapshot: inspected.evidenceSnapshot,
             provenancePlans,
         };
         const financialBalanceVersion = await authoritativeBalanceVersion(tx, ctx, inspected.originals.map((item) => item.loanId));
@@ -675,6 +688,7 @@ export async function previewPaymentReconciliation(ctx: CommandContext, input: {
             hasReadyEvidence: inspected.hasReadyEvidence,
             currentAllocationSnapshot: originals.map(sourceTransactionSnapshot),
             reversalSnapshot: inspected.reversals.map(sourceTransactionSnapshot),
+            evidenceSnapshot: inspected.evidenceSnapshot,
             provenancePlans,
             temporalReflowPlan: temporalReflow.plan,
         };
@@ -768,6 +782,7 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
             ...(restoreMode ? { restoreDraftPublicId: restoreDraft!.publicId, restoreEvidence: await restoreEvidenceSnapshot(tx, ctx, restoreDraft!.id) } : {}),
             currentAllocationSnapshot: currentOriginals.map(sourceTransactionSnapshot),
             reversalSnapshot: inspected.reversals.map(sourceTransactionSnapshot),
+            evidenceSnapshot: inspected.evidenceSnapshot,
             provenancePlans: currentProvenancePlans,
             ...(!restoreMode ? { temporalReflowPlan: temporalReflow.plan } : {}),
         };

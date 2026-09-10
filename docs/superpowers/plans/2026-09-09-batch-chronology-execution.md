@@ -7,6 +7,12 @@ Scope: implement and verify all seven approved tasks; no merge, push, deploy, pr
 
 ## Progress
 
+### 2026-09-10 — Task 5 evidence and lifecycle verification checkpoint
+
+- RED `.codex-task-logs/task5-evidence-red.log` reproduced a ready-evidence replacement being accepted after reconciliation preview. The shared reconciliation source snapshot now records only safe finalized evidence identity/checksum/type/size/time metadata and the execute hash recheck rejects changed evidence before writes; GREEN `.codex-task-logs/task5-evidence-green2.log` passes the public prepare/finalize/preview/execute scenario with zero transaction/allocation/proposal/execute-audit writes.
+- Serialized reconciliation, restore, and reflow kernel coverage passed `41/41, 200 expectations` in `.codex-task-logs/task5-round4-focused-final.log`. It includes restore-child evidence replacement parity, temporal-reflow repeat-compensation rejection, multi-transaction replay, rollback, two-loan barriered replay, and fail-closed unsupported provenance. Backend typecheck passed in `.codex-task-logs/task5-round4-typecheck-final.log`.
+- The existing strict MCP preview/execute contract remains synchronized at plugin 9.5.0/126 tools and was not changed by this evidence-only field addition because the service already exposes `sourcePayment` as the safe transport envelope with the strict temporal-reflow plan field from the prior checkpoint. An explicit reflow-specific reverse/restore endpoint is not present; current supported restore uses the original source plus a separate finalized child evidence set, and repeated compensation is blocked. OCR/browser/full-plan gates remain open.
+
 ### 2026-09-10 — Task 5 financial integration verification checkpoint
 
 - Added an actual application-execute rollback fixture using a disposable PostgreSQL trigger that fails only after the first signed reflow entry; `payment-reconciliation-service.test.ts` passed `21/21, 148 expectations` in `.codex-task-logs/task5-round3-service-final.log`. The test removes the owned trigger/function in `finally` and proves transactions, allocations, reflow groups/entries, accrual caches, loans, intake/proposal state, and audits are unchanged. The final serialized combined reflow/kernel/service/migration gate passed `36/36, 191 expectations` in `.codex-task-logs/task5-round3-focused-final2.log`.
