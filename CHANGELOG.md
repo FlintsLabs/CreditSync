@@ -7,6 +7,7 @@
 - Exposed the extraction command through the closed REST and direct MCP contracts and synchronized the private plugin to 9.6.0/127 tools.
 - Added a component regression proving the editor presents local OCR output as review-only candidates after evidence finalization and never calls review implicitly.
 - Hardened the existing component workflow test to await the enabled review transition before asserting candidate discovery under the full Vitest scheduler.
+- Final full frontend verification is `62 files, 292 tests` after the scheduler-safe regression update.
 
 ### Changed
 - Upload-first staging now has an explicit extract-for-human-review boundary; unreadable fields remain null and require manual confirmation.
