@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.15 - 2026-09-10
+
+### Fixed
+- Added floating-payment allocation integrity detection and a fail-closed post guard for overfilled accrual provenance.
+- Added an idempotent, append-only grouped-batch repair workflow that preserves original records, repairs business-date ordering, and verifies every floating contract after repair.
+
+### Changed
+- Documented the inspect, confirm, reverse/repost, and post-repair verification procedure for future CreditSync agents.
+
 ## v0.4.14 - 2026-09-09
 
 ### Fixed

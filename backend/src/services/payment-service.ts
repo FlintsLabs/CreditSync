@@ -28,6 +28,7 @@ import { createAuditLog } from "../lib/audit-log";
 import { canAccessTenantWideData } from "../lib/access";
 import { invalidateTenantCache } from "../lib/cache";
 import { FinancialDecimal } from "../lib/financial-decimal";
+import { findFloatingAllocationIssues } from "../lib/floating-allocation-integrity";
 import { computeLoanRollup } from "../lib/loan-rollup";
 import { parseMoney, serializeMoney, sumMoney } from "../lib/money";
 import {
@@ -1659,6 +1660,24 @@ export async function postPayment(ctx: CommandContext, intakePublicId: string, i
             if (loan.status !== "active") throw new DomainError("STALE_PAYMENT_PROPOSAL", "Payment target is no longer an active loan", 409);
             if (!allocation.scheduleId && loan.repaymentType === "floating") {
                 await accrueFloatingInterestThrough(tx, loan, intake.receivedAt, ctx);
+                const integrityAccruals = await tx.select().from(loanInterestAccruals).where(and(
+                    eq(loanInterestAccruals.tenantId, ctx.tenantId),
+                    eq(loanInterestAccruals.loanId, loan.id),
+                ));
+                const integrityAllocations = await tx.select().from(floatingTransactionAllocations).where(and(
+                    eq(floatingTransactionAllocations.tenantId, ctx.tenantId),
+                    eq(floatingTransactionAllocations.loanId, loan.id),
+                    eq(floatingTransactionAllocations.component, "interest"),
+                ));
+                const integrityIssues = findFloatingAllocationIssues({ accruals: integrityAccruals, allocations: integrityAllocations });
+                if (integrityIssues.length) {
+                    throw new DomainError(
+                        "FLOATING_ALLOCATION_INTEGRITY_REPAIR_REQUIRED",
+                        "Floating payment allocation history requires append-only repair before another payment can be posted",
+                        409,
+                        { loanPublicId: loan.publicId, issueCodes: [...new Set(integrityIssues.map((issue) => issue.code))] },
+                    );
+                }
                 let obligations = await floatingPaymentObligations(tx, loan, intake.receivedAt, ctx);
                 const advanceInterestTargets = await selectFloatingInterestPaymentTargets(tx, loan, intake.receivedAt, ctx);
                 const restructureBuckets = await currentRestructureBuckets(tx, ctx.tenantId, loan.id);
