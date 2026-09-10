@@ -2080,7 +2080,7 @@ export const paymentReconciliationReflowEntries = pgTable("payment_reconciliatio
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
     uniqueIndex("payment_reconciliation_reflow_entries_tenant_id_id_unique").on(table.tenantId, table.id),
-    uniqueIndex("payment_reconciliation_reflow_entries_source_unique").on(table.tenantId, table.sourceAllocationId),
+    uniqueIndex("reflow_entries_source_replacement_unique").on(table.tenantId, table.groupId, table.sourceAllocationId, table.replacementAllocationId),
     check("payment_reconciliation_reflow_entries_amount_check", sql`${table.displacedAmount} > 0 AND scale(${table.displacedAmount}) <= 2`),
     foreignKey({ name: "payment_reconciliation_reflow_entries_tenant_group_fk", columns: [table.tenantId, table.groupId], foreignColumns: [paymentReconciliationReflowGroups.tenantId, paymentReconciliationReflowGroups.id] }),
     foreignKey({ name: "payment_reconciliation_reflow_entries_tenant_loan_fk", columns: [table.tenantId, table.loanId], foreignColumns: [loans.tenantId, loans.id] }),

@@ -498,6 +498,20 @@
       "when": 1788912000005,
       "tag": "0070_payment_reconciliation_temporal_reflow",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1788912000006,
+      "tag": "0071_reflow_proposal_immutability",
+      "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1788912000007,
+      "tag": "0072_reflow_source_split_lineage",
+      "breakpoints": true
     }
   ]
 }

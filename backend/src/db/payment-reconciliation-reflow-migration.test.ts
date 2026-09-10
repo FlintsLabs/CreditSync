@@ -28,6 +28,8 @@ describe("temporal reflow migration", () => {
         expect(migration).toContain("payment_reconciliation_reflow_groups_immutable");
         expect(migration).toContain("payment_reconciliation_reflow_entries_immutable");
         expect(migration).not.toMatch(/DROP TABLE/i);
+        expect(await readFile(resolve(root, "drizzle/0071_reflow_proposal_immutability.sql"), "utf8")).toContain("NEW.public_id = OLD.public_id");
+        expect(await readFile(resolve(root, "drizzle/0072_reflow_source_split_lineage.sql"), "utf8")).toContain("reflow_entries_source_replacement_unique");
     });
 
     integrationTest("registers the additive tables, tenant constraints, and immutable triggers", async () => {
@@ -100,6 +102,41 @@ describe("temporal reflow migration", () => {
             await admin.end();
             await rm(prefix, { recursive: true, force: true });
             await rm(full, { recursive: true, force: true });
+        }
+    });
+
+    integrationTest("keeps reflow proposal identity immutable across its lifecycle", async () => {
+        const sql = postgres(process.env.TEST_DATABASE_URL!, { max: 1 });
+        const tenantId = `reflow-trigger-${crypto.randomUUID()}`;
+        try {
+            const [actor] = await sql<{ id: number }[]>`INSERT INTO users (tenant_id, email, role) VALUES (${tenantId}, ${crypto.randomUUID()} || '@example.test', 'owner') RETURNING id`;
+            const [intake] = await sql<{ id: number }[]>`INSERT INTO payment_intakes (tenant_id, owner_user_id, source, status, amount, received_at, idempotency_key, created_by_user_id, updated_by_user_id) VALUES (${tenantId}, ${actor!.id}, 'system', 'posted', 1.00, now(), ${crypto.randomUUID()}, ${actor!.id}, ${actor!.id}) RETURNING id`;
+            const [reconciliationAudit] = await sql<{ public_id: string }[]>`INSERT INTO audit_logs (tenant_id, entity_type, entity_id, action, actor_user_id, actor_source) VALUES (${tenantId}, 'payment', ${String(intake!.id)}, 'reconciliation', ${actor!.id}, 'system') RETURNING public_id`;
+            const [proposal] = await sql<{ id: number }[]>`INSERT INTO payment_reconciliation_proposals (tenant_id, payment_intake_id, preview_hash, expected_balance_version, source_snapshot, proposed_allocations, reason, expires_at) VALUES (${tenantId}, ${intake!.id}, 'source-hash', 'balance-v1', '{}'::jsonb, '[]'::jsonb, 'synthetic reflow trigger', now() + interval '1 hour') RETURNING id`;
+            const [group] = await sql<{ id: number }[]>`INSERT INTO payment_reconciliation_groups (tenant_id, proposal_id, payment_intake_id, status, reason, idempotency_key, correlation_id, audit_public_id) VALUES (${tenantId}, ${proposal!.id}, ${intake!.id}, 'executed', 'synthetic reconciliation', ${crypto.randomUUID()}, ${crypto.randomUUID()}, ${reconciliationAudit!.public_id}) RETURNING id`;
+            const [reflow] = await sql<{ id: number; public_id: string }[]>`INSERT INTO payment_reconciliation_reflow_proposals (tenant_id, reconciliation_group_id, preview_hash, expected_balance_version, source_snapshot, proposed_reflow, reason, expires_at) VALUES (${tenantId}, ${group!.id}, 'reflow-hash', 'balance-v1', '{}'::jsonb, '{}'::jsonb, 'synthetic trigger proposal', now() + interval '1 hour') RETURNING id, public_id`;
+            let identityRejected = false;
+            try { await sql`UPDATE payment_reconciliation_reflow_proposals SET status = 'executed', public_id = uuidv7(), executed_by_user_id = ${actor!.id}, executed_at = now() WHERE id = ${reflow!.id}`; } catch { identityRejected = true; }
+            expect(identityRejected).toBe(true);
+            let creatorRejected = false;
+            try { await sql`UPDATE payment_reconciliation_reflow_proposals SET status = 'executed', created_by_user_id = ${actor!.id}, executed_by_user_id = ${actor!.id}, executed_at = now() WHERE id = ${reflow!.id}`; } catch { creatorRejected = true; }
+            expect(creatorRejected).toBe(true);
+            let tenantRejected = false;
+            try { await sql`UPDATE payment_reconciliation_reflow_proposals SET status = 'executed', tenant_id = ${`${tenantId}-other`}, executed_by_user_id = ${actor!.id}, executed_at = now() WHERE id = ${reflow!.id}`; } catch { tenantRejected = true; }
+            expect(tenantRejected).toBe(true);
+            let createdAtRejected = false;
+            try { await sql`UPDATE payment_reconciliation_reflow_proposals SET status = 'executed', created_at = now() + interval '1 minute', executed_by_user_id = ${actor!.id}, executed_at = now() WHERE id = ${reflow!.id}`; } catch { createdAtRejected = true; }
+            expect(createdAtRejected).toBe(true);
+            let snapshotRejected = false;
+            try { await sql`UPDATE payment_reconciliation_reflow_proposals SET status = 'executed', proposed_reflow = '{"changed":true}'::jsonb, executed_by_user_id = ${actor!.id}, executed_at = now() WHERE id = ${reflow!.id}`; } catch { snapshotRejected = true; }
+            expect(snapshotRejected).toBe(true);
+            await sql`UPDATE payment_reconciliation_reflow_proposals SET status = 'executed', executed_by_user_id = ${actor!.id}, executed_at = now() WHERE id = ${reflow!.id}`;
+            expect(Array.from(await sql`SELECT status, executed_by_user_id FROM payment_reconciliation_reflow_proposals WHERE id = ${reflow!.id}`)).toEqual([{ status: "executed", executed_by_user_id: actor!.id }]);
+            let deleteRejected = false;
+            try { await sql`DELETE FROM payment_reconciliation_reflow_proposals WHERE id = ${reflow!.id}`; } catch { deleteRejected = true; }
+            expect(deleteRejected).toBe(true);
+        } finally {
+            await sql.end();
         }
     });
 });

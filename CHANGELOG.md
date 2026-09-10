@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.22 - 2026-09-10
+
+### Fixed
+- Hardened temporal-reflow proposal lifecycle identity checks with additive migration 0071, rejecting identity, tenant, creator, timestamp, and snapshot mutation while allowing only validated ready-to-executed/expired transitions.
+- Preserved chronological loan/date/transaction ordering and rejected duplicate or inconsistent source provenance; additive migration 0072 now supports one-source-to-many-replacement lineage.
+
 ## v0.4.21 - 2026-09-10
 
 ### Added

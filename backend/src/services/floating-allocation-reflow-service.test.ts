@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildTemporalReflowPlan, type ReflowSourceAllocation } from "./floating-allocation-reflow-service";
+import { buildTemporalReflowPlan, buildTemporalReflowPlanWithAuthoritativeResolver, type ReflowSourceAllocation } from "./floating-allocation-reflow-service";
 
 const source = (overrides: Partial<ReflowSourceAllocation> = {}): ReflowSourceAllocation => ({
     allocationPublicId: "alloc-later",
@@ -29,6 +29,7 @@ describe("floating temporal reflow kernel", () => {
             replacementTotal: "30.00",
             transactions: [{
                 transactionPublicId: "tx-later",
+                loanPublicId: "loan-1",
                 effectiveDate: "2026-09-05",
                 displacedAmount: "30.00",
                 before: [{ allocationPublicId: "alloc-later", accrualPublicId: "accrual-04", dueDate: "2026-09-04", amount: "30.00" }],
@@ -66,10 +67,52 @@ describe("floating temporal reflow kernel", () => {
         const amount = "9007199254740991.99";
         const plan = buildTemporalReflowPlan({
             effectiveAfterDate: "2026-09-04",
-            allocations: [source({ amount })],
+            allocations: [source({ amount, transactionComponents: { principal: "0.00", interest: amount, fee: "0.00", penalty: "0.00" } })],
             replacements: { "tx-later": [{ accrualPublicId: "accrual-05", dueDate: "2026-09-05", amount }] },
         });
         expect(plan.displacedTotal).toBe(amount);
         expect(plan.replacementTotal).toBe(amount);
+    });
+
+    test("retains chronological ordering when transaction UUID order disagrees with dates", () => {
+        const plan = buildTemporalReflowPlan({
+            effectiveAfterDate: "2026-09-04",
+            allocations: [
+                source({ allocationPublicId: "z-old", transactionPublicId: "tx-z", effectiveDate: "2026-09-05", accrualPublicId: "a-old", transactionComponents: { principal: "0.00", interest: "30.00", fee: "0.00", penalty: "0.00" } }),
+                source({ allocationPublicId: "a-new", transactionPublicId: "tx-a", effectiveDate: "2026-09-06", accrualPublicId: "a-new", transactionComponents: { principal: "0.00", interest: "30.00", fee: "0.00", penalty: "0.00" } }),
+            ],
+            replacements: {
+                "tx-z": [{ accrualPublicId: "a-z2", dueDate: "2026-09-05", amount: "30.00" }],
+                "tx-a": [{ accrualPublicId: "a-a2", dueDate: "2026-09-06", amount: "30.00" }],
+            },
+        });
+        expect(plan.transactions.map((row) => [row.transactionPublicId, row.effectiveDate])).toEqual([["tx-z", "2026-09-05"], ["tx-a", "2026-09-06"]]);
+    });
+
+    test("rejects duplicate sources and inconsistent transaction provenance", () => {
+        expect(() => buildTemporalReflowPlan({ effectiveAfterDate: "2026-09-04", allocations: [source(), source()], replacements: { "tx-later": [{ accrualPublicId: "a-5", dueDate: "2026-09-05", amount: "60.00" }] } })).toThrow("TEMPORAL_REFLOW_DUPLICATE_SOURCE");
+        expect(() => buildTemporalReflowPlan({ effectiveAfterDate: "2026-09-04", allocations: [source(), source({ allocationPublicId: "other", loanPublicId: "loan-2" })], replacements: { "tx-later": [{ accrualPublicId: "a-5", dueDate: "2026-09-05", amount: "60.00" }] } })).toThrow("TEMPORAL_REFLOW_TRANSACTION_INCONSISTENT");
+    });
+
+    test("requires replacement projections from the authoritative allocator boundary", async () => {
+        const plan = await buildTemporalReflowPlanWithAuthoritativeResolver({
+            effectiveAfterDate: "2026-09-04",
+            allocations: [source()],
+            resolveReplacement: async ({ requestedAmount }) => [{ accrualPublicId: "authoritative-accrual", dueDate: "2026-09-05", amount: requestedAmount }],
+        });
+        expect(plan.transactions[0]!.after).toEqual([{ accrualPublicId: "authoritative-accrual", dueDate: "2026-09-05", amount: "30.00" }]);
+    });
+
+    test("supports one source allocation replaying across multiple accruals", () => {
+        const plan = buildTemporalReflowPlan({
+            effectiveAfterDate: "2026-09-04",
+            allocations: [source()],
+            replacements: { "tx-later": [
+                { accrualPublicId: "accrual-05", dueDate: "2026-09-05", amount: "12.00" },
+                { accrualPublicId: "accrual-06", dueDate: "2026-09-06", amount: "18.00" },
+            ] },
+        });
+        expect(plan.transactions[0]!.after).toHaveLength(2);
+        expect(plan.replacementTotal).toBe("30.00");
     });
 });
