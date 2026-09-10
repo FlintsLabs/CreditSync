@@ -966,6 +966,7 @@ describe("CreditSync stateless MCP contract", () => {
             "payment.batch.stage",
             "payment.batch.staging.evidence.prepare",
             "payment.batch.staging.evidence.finalize",
+            "payment.batch.staging.extract",
             "payment.batch.staging.review",
             "payment.batch.staging.edit",
             "payment.batch.split",

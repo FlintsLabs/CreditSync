@@ -1,5 +1,11 @@
 # CreditSync Plugin Changelog
 
+## v9.6.0 - 2026-09-10
+
+### Added
+- Added `payment.batch.staging.extract` for local, evidence-bound, review-only payment-slip OCR candidates; it never creates an intake or financial record.
+- Synchronized the frozen private contract to 127 tools.
+
 ## v9.5.0 - 2026-09-10
 
 ### Added

@@ -1374,7 +1374,7 @@
     ,"paymentBatchReceipt": "ใบรับรายการ"
     ,"paymentBatchComponents": "องค์ประกอบจากระบบบัญชี"
     ,"paymentBatchComponent": { "principal": "เงินต้น", "interest": "ดอกเบี้ย", "fee": "ค่าธรรมเนียม", "penalty": "เบี้ยปรับ" }
-    ,"paymentBatchNoComponents": "ไม่มีรายละเอียดองค์ประกอบจากระบบบัญชี"
+    ,"paymentBatchNoComponents": "ไม่มีรายละเอียดองค์ประกอบจากระบบบัญชี", "paymentBatch.extractCandidates": "แยกข้อมูลเพื่อให้ตรวจทาน", "paymentBatch.ocrReviewOnly": "ข้อมูล OCR เป็นเพียงข้อเสนอ ต้องยืนยันทุกช่องก่อนตรวจทาน", "paymentBatch.ocrAmount": "ยอดที่อ่านได้", "paymentBatch.ocrTime": "เวลาไทยที่อ่านได้", "paymentBatch.ocrReceiver": "ผู้รับ", "paymentBatch.ocrFee": "ค่าธรรมเนียม", "paymentBatch.useOcrCandidate": "ใช้ข้อมูลนี้เพื่อตรวจทาน"
     ,"paymentBatchSequence": "ลำดับที่ {{number}}"
     ,"paymentBatchSelectedContract": "สัญญาที่เลือก"
     ,"paymentBatchUnknownStart": "ไม่ทราบวันเริ่มสัญญา"

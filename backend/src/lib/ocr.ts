@@ -9,8 +9,5 @@ export async function extractTextFromImage(imageBuffer: Buffer, languages: strin
 
         await worker.terminate();
         return text;
-    } catch (error) {
-        console.error("OCR Error", error);
-        throw error;
-    }
+    } catch (error) { throw error; }
 }

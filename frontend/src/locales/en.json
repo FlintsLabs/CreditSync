@@ -1448,7 +1448,7 @@
     ,"paymentBatchReceipt": "Receipt"
     ,"paymentBatchComponents": "backend components"
     ,"paymentBatchComponent": { "principal": "principal", "interest": "interest", "fee": "fee", "penalty": "penalty" }
-    ,"paymentBatchNoComponents": "No backend component detail"
+    ,"paymentBatchNoComponents": "No backend component detail", "paymentBatch.extractCandidates": "Extract review candidates", "paymentBatch.ocrReviewOnly": "OCR candidates only; confirm every field before review", "paymentBatch.ocrAmount": "Candidate amount", "paymentBatch.ocrTime": "Candidate Bangkok time", "paymentBatch.ocrReceiver": "Receiver", "paymentBatch.ocrFee": "Fee", "paymentBatch.useOcrCandidate": "Use candidate for review"
     ,"paymentBatchSequence": "Sequence {{number}}"
     ,"paymentBatchSelectedContract": "Selected contract"
     ,"paymentBatchUnknownStart": "start date unavailable"

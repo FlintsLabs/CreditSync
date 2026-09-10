@@ -23,6 +23,16 @@ export type BatchItemDraft = {
     evidenceStatus?: string | null;
     uploadStatus?: "pending" | "uploading" | "ready" | "failed";
     reviewedEditPending?: boolean;
+    ocrProposal?: {
+        status: "needs_human_review";
+        reviewRequired: true;
+        amount: string | null;
+        transferredAt: string | null;
+        payerName: string | null;
+        receiverName: string | null;
+        fee: string | null;
+        evidenceSha256: string;
+    };
 };
 
 export type BatchCandidateResult = {

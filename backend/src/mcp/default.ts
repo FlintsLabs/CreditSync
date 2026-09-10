@@ -151,6 +151,7 @@ import { discoverPaymentBatchCandidates } from "../services/payment-batch-candid
 import { executeUnfundedLoanCancellation, previewUnfundedLoanCancellation } from "../services/loan-cancellation-service";
 import { executePaymentAllocationCorrection, previewPaymentAllocationCorrection } from "../services/payment-allocation-correction-service";
 import { importChatGptPaymentEvidence, importChatGptSupplementEvidence, recordPaymentEvidenceSupplement } from "../services/chatgpt-file-evidence-service";
+import { extractPaymentBatchStagingItem } from "../services/payment-batch-ocr-service";
 
 type ToolInput = Record<string, unknown>;
 
@@ -286,6 +287,7 @@ export function createDefaultMcpToolHandlers(
     "payment.batch.stage": (ctx, input) => stagePaymentBatchItems(ctx, { ...input as any, idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey") }),
     "payment.batch.staging.evidence.prepare": (ctx, input) => preparePaymentBatchStagingEvidence(ctx, input as any, dependencies.evidenceGateway),
     "payment.batch.staging.evidence.finalize": (ctx, input) => finalizePaymentBatchStagingEvidence(ctx, asString(input, "stagingItemPublicId"), asString(input, "evidencePublicId"), dependencies.evidenceGateway),
+    "payment.batch.staging.extract": (ctx, input) => extractPaymentBatchStagingItem(ctx, { stagingItemPublicId: asString(input, "stagingItemPublicId"), idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey") }),
     "payment.batch.workspace": (ctx, input) => getPaymentBatchWorkspace(ctx, asString(input, "batchPublicId")),
     "payment.batch.candidates": (ctx, input) => discoverPaymentBatchCandidates(ctx, input as any),
     "payment.batch.staging.review": (ctx, input) => reviewPaymentBatchStagingItem(ctx, input as any),

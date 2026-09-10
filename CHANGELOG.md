@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.27 - 2026-09-10
+
+### Added
+- Added evidence-bound local payment-slip OCR extraction for resumable staging items. Extraction stores only a review receipt with normalized candidate fields, evidence checksum, staging revision, audit ID, and correlation ID; it never creates an intake or financial record.
+- Exposed the extraction command through the closed REST and direct MCP contracts and synchronized the private plugin to 9.6.0/127 tools.
+
+### Changed
+- Upload-first staging now has an explicit extract-for-human-review boundary; unreadable fields remain null and require manual confirmation.
+
 ## v0.4.26 - 2026-09-10
 
 ### Fixed
