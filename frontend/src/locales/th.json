@@ -51,7 +51,9 @@
         "changelog": "บันทึกการเปลี่ยนแปลง",
         "applicationVersion": "CreditSync เวอร์ชัน {{version}}",
         "mcpVersion": "MCP เวอร์ชัน {{version}}",
-        "pluginVersion": "ปลั๊กอิน เวอร์ชัน {{version}}"
+        "pluginVersion": "ปลั๊กอิน เวอร์ชัน {{version}}",
+        "deploymentTimestamp": "Deploy ล่าสุด",
+        "deploymentUnavailable": "ไม่พบเวลาการ deploy"
     },
     "evidence": {
         "description": "ดูตัวอย่างหลักฐานที่เลือกโดยไม่ออกจากหน้านี้",

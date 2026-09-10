@@ -22,6 +22,8 @@ services:
       context: ./frontend
       args:
         VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID}
+    environment:
+      DEPLOYED_AT: ${DEPLOYED_AT:-}
     container_name: creditsync-frontend-prod
     restart: unless-stopped
     depends_on:
