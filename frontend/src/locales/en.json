@@ -51,7 +51,9 @@
         "changelog": "Changelog",
         "applicationVersion": "CreditSync v{{version}}",
         "mcpVersion": "MCP v{{version}}",
-        "pluginVersion": "Plugin v{{version}}"
+        "pluginVersion": "Plugin v{{version}}",
+        "deploymentTimestamp": "Deployed",
+        "deploymentUnavailable": "Deployment time unavailable"
     },
     "evidence": {
         "description": "Preview the selected evidence without leaving this page.",

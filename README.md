@@ -283,6 +283,7 @@ Important variables include:
 - `MCP_ALLOWED_HOSTS`
 - `MCP_TENANT_ID`
 - `MCP_ACTOR_EMAIL`
+- `DEPLOYED_AT` (the explicit ISO 8601 deployment timestamp used by the frontend footer)
 - `MCP_RATE_LIMIT_MAX`
 - `MCP_RATE_LIMIT_WINDOW_SECONDS`
 - `LINE_CHANNEL_SECRET`
@@ -519,11 +520,16 @@ At minimum, update:
 docker compose --env-file .env.production -f docker-compose.infra.yml up -d
 ```
 
-### 3. Build and start the app
+### 3. Build and start the app with a deployment timestamp
 
 ```bash
-docker compose --env-file .env.production -f docker-compose.app.yml up --build -d
+DEPLOYED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  docker compose --env-file .env.production -f docker-compose.app.yml up --build -d
 ```
+
+Supply the deployment timestamp once for the Compose invocation. The frontend displays the same value after refreshes and frontend container restarts. If the variable is omitted or invalid, the footer shows a localized unavailable message rather than using the browser or container clock.
+
+The frontend writes `/deployment.json` from this runtime environment value on container startup. It preserves an existing value in the container and serves the exact route with `Cache-Control: no-store`; it is not a build timestamp or browser-generated time.
 
 This exposes:
 

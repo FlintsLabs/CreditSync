@@ -17,10 +17,11 @@ import {
     TooltipTrigger,
 } from "../components/ui/tooltip";
 import { AIAssistant } from "../components/AIAssistant";
+import DeploymentTimestamp from "../components/DeploymentTimestamp";
 
 export default function DashboardLayout() {
     const location = useLocation();
-    const { t } = useTranslation();
+    const { t, i18n } = useTranslation();
     const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
     const currentUser = getStoredUser();
     const isTenantAdmin = isTenantAdminUser(currentUser);
@@ -184,6 +185,11 @@ export default function DashboardLayout() {
                             <span>{t("footer.applicationVersion", { version: APPLICATION_VERSION, defaultValue: "CreditSync v{{version}}" })}</span>
                             <span>{t("footer.mcpVersion", { version: MCP_SCHEMA_VERSION, defaultValue: "MCP v{{version}}" })}</span>
                             <span>{t("footer.pluginVersion", { version: PLUGIN_VERSION, defaultValue: "Plugin v{{version}}" })}</span>
+                            <DeploymentTimestamp
+                                language={i18n.language}
+                                label={t("footer.deploymentTimestamp", "Deployed")}
+                                unavailableLabel={t("footer.deploymentUnavailable", "Deployment time unavailable")}
+                            />
                         </div>
                     </div>
                 </footer>
