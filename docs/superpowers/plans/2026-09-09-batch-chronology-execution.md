@@ -7,6 +7,12 @@ Scope: implement and verify all seven approved tasks; no merge, push, deploy, pr
 
 ## Progress
 
+### 2026-09-10 — Remote continuation verification and provenance hardening
+
+- Focused disposable reflow repair and migration coverage passed after installing locked Bun dependencies in this worktree; backend typecheck, frontend lint/build, and plugin 10.0.0/129-tool validation passed. The repair service now ignores non-finalized evidence and checks source entry/component conservation before planning.
+- A serialized full backend rerun was started alone with a runner-owned disposable PostgreSQL instance. It reproduced existing 5-second timeout/deadlock cascade failures in unrelated intermediated-disbursement and floating-penalty suites; the evidence is retained at `.codex-task-logs/backend-full-final.log` and is not treated as green.
+- Detailed acceptance evidence and remaining gaps are recorded in `docs/superpowers/plans/2026-09-10-batch-chronology-evidence-matrix.md`.
+
 ### 2026-09-10 — Task 5 existing-data temporal-reflow repair checkpoint
 
 - Implemented `backend/src/services/payment-reconciliation-reflow-service.ts` using the existing authoritative floating allocator and append-only reflow tables. Preview locks tenant-authorized borrowers, derives the Bangkok effective date, validates legacy replacement/source transaction lineage and interest-only components, snapshots safe transaction/evidence metadata, and writes no financial records. Execute re-reads the proposal/context under locks, rejects stale/expired/unsupported/already-repaired state, appends signed reversal/replacement provenance atomically, rebuilds touched accrual projections, and returns the durable exact replay result.

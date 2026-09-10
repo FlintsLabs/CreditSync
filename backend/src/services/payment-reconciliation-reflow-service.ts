@@ -90,12 +90,16 @@ async function loadRepairContext(tx: any, ctx: CommandContext, reconciliationPub
         throw new DomainError("TEMPORAL_REFLOW_PROVENANCE_INCOMPLETE", "Legacy reconciliation is missing source transaction lineage", 409);
     }
     const sourceTransactions = await tx.select().from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), inArray(transactions.id, sourceTransactionIds))).orderBy(transactions.id) as Array<typeof transactions.$inferSelect>;
-    if (sourceTransactions.length !== sourceTransactionIds.length || sourceTransactions.some((row) => !loanIds.includes(row.loanId) || row.entryType !== "repayment" || row.reversedTransactionId !== null || !new Decimal(row.principalComponent).isZero() || !new Decimal(row.feeComponent).isZero() || !new Decimal(row.penaltyComponent).isZero())) {
+    const sourceById = new Map(sourceTransactions.map((row) => [row.id, row]));
+    if (sourceTransactions.length !== sourceTransactionIds.length || entries.some((entry) => {
+        const source = entry.sourceTransactionId === null ? undefined : sourceById.get(entry.sourceTransactionId);
+        return !source || entry.amount !== source.interestComponent;
+    }) || sourceTransactions.some((row) => !loanIds.includes(row.loanId) || row.entryType !== "repayment" || row.reversedTransactionId !== null || !new Decimal(row.principalComponent).isZero() || !new Decimal(row.feeComponent).isZero() || !new Decimal(row.penaltyComponent).isZero())) {
         throw new DomainError("TEMPORAL_REFLOW_PROVENANCE_INCOMPLETE", "Legacy reconciliation source transactions are not a complete interest-only chain", 409);
     }
     const evidence = await tx.select({ publicId: paymentEvidence.publicId, status: paymentEvidence.status, evidenceHash: paymentEvidence.evidenceHash, mimeType: paymentEvidence.mimeType, declaredSize: paymentEvidence.declaredSize, finalizedAt: paymentEvidence.finalizedAt })
         .from(paymentEvidence)
-        .where(and(eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.paymentIntakeId, intake.id)))
+        .where(and(eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.paymentIntakeId, intake.id), eq(paymentEvidence.status, "ready"), sql`${paymentEvidence.finalizedAt} IS NOT NULL`))
         .orderBy(paymentEvidence.id);
     const borrowersForLocks: number[] = [...new Set(loanRows.map((loan) => loan.borrowerId))].sort((a: number, b: number) => a - b);
     return { group, intake, entries, sourceTransactions, evidence, loanRows, borrowersForLocks };

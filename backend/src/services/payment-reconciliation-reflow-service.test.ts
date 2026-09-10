@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { auditLogs, borrowers, floatingTransactionAllocations, loans, paymentIntakes, paymentReconciliationEntries, paymentReconciliationGroups, paymentReconciliationProposals, paymentReconciliationReflowEntries, paymentReconciliationReflowGroups, transactions, users } from "../db/schema";
+import { auditLogs, borrowers, floatingTransactionAllocations, loans, paymentEvidence, paymentIntakes, paymentReconciliationEntries, paymentReconciliationGroups, paymentReconciliationProposals, paymentReconciliationReflowEntries, paymentReconciliationReflowGroups, paymentReconciliationReflowProposals, transactions, users } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import { createBorrower } from "./borrower-service";
 import type { CommandContext } from "./command-context";
@@ -35,12 +35,15 @@ async function legacyFixture() {
 describe("existing-data temporal reflow repair", () => {
     integrationTest("previews without financial writes, executes once, replays exactly, and conflicts on changed key payload", async () => {
         const fixture = await legacyFixture();
+        await db.insert(paymentEvidence).values({ tenantId: fixture.tenantId, paymentIntakeId: fixture.reconciliation.paymentIntakeId, status: "pending", evidenceType: "slip", createdByUserId: fixture.ctx.actorUserId, updatedByUserId: fixture.ctx.actorUserId });
         const before = await db.select().from(transactions).where(eq(transactions.tenantId, fixture.tenantId));
         const preview = await previewPaymentReconciliationReflow(fixture.ctx, { reconciliationPublicId: fixture.reconciliation.publicId, reason: "Repair legacy chronological interest" });
         expect(preview.status).toBe("ready");
         expect(preview.effectiveAfterDate).toBe("2026-08-19");
         expect(preview.plan.transactions.length).toBeGreaterThan(0);
         expect(await db.select().from(transactions).where(eq(transactions.tenantId, fixture.tenantId))).toEqual(before);
+        const persistedProposal = await db.query.paymentReconciliationReflowProposals.findFirst({ where: eq(paymentReconciliationReflowProposals.publicId, preview.publicId) });
+        expect((persistedProposal?.sourceSnapshot as { evidence: unknown[] }).evidence).toEqual([]);
         const input = { reflowPreviewPublicId: preview.publicId, previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true as const, reason: preview.reason, idempotencyKey: "legacy-repair-execute" };
         const result = await executePaymentReconciliationReflow(fixture.ctx, input);
         expect(result.reflowGroupPublicId).toBeTruthy();

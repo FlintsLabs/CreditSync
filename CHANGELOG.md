@@ -7,6 +7,11 @@
 - Preserved the in-progress legacy-reflow implementation as a remote handoff checkpoint and added a continuation prompt; final independent verification and browser acceptance remain required before release.
 - Added the existing-data interest-only temporal-reflow repair service and closed MCP preview/execute tools. Legacy executed reconciliations now require complete tenant-safe floating provenance, Bangkok effective dates, fresh state, explicit confirmation, and durable idempotent append-only compensation/replay; unsupported components remain fail-closed.
 - Synchronized the private CreditSync plugin to version 10.0.0 with 129 frozen MCP tools and legacy-reflow eval/skill guidance.
+- Added an acceptance evidence matrix for the chronology/reflow handoff and recorded the remaining full-suite and browser gaps.
+
+### Fixed
+
+- Bound legacy temporal-reflow repair snapshots to ready, finalized evidence and reject reconciliation entries whose amounts do not equal their source transaction's interest component.
 
 ## v0.4.33 - 2026-09-10
 
