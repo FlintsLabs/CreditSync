@@ -21,7 +21,7 @@ CreditSync is designed for workflows like:
 - Supporting weekly or monthly schedules with a borrower-agreed installment count: the backend derives the rate-based amount when no amount is supplied, while an explicit count-plus-amount pair creates a fixed-total schedule whose amount above principal is scheduled interest
 - Capturing data-only or image-first repayments, reviewing matches, posting allocations, and reversing corrections
 
-Payment-slip batches support an upload-first, human-review-only OCR step after staging evidence is finalized. The local OCR boundary returns candidate amount, Bangkok transfer time, payer/receiver, fee, and a hashed reference; it does not create an intake, choose a borrower/loan, calculate accounting, or post money. Missing or ambiguous fields stay unresolved for manual review, and the existing evidence checksum/revision gates require a fresh preview after any change.
+Payment-slip batches support an upload-first, human-review-only OCR step after staging evidence is finalized. The local OCR boundary returns candidate amount, Bangkok transfer time, payer/receiver, fee, and a hashed reference; it verifies downloaded bytes against the finalized evidence checksum, serializes extraction receipts by tenant/key, and does not create an intake, choose a borrower/loan, calculate accounting, or post money. Missing or ambiguous fields stay unresolved for manual review, and the existing evidence checksum/revision gates require a fresh preview after any change.
 - Calculating closing balances for early payoff
 - Tracking source-of-funds profiles and traceability between bank funding and downstream loans
 - Receiving images from LINE webhooks and storing them for later processing

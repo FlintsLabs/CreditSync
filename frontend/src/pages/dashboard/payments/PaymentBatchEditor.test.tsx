@@ -56,6 +56,18 @@ test("shows local OCR candidates as review-only data after evidence finalizes", 
     expect(apiMock.post.mock.calls.some(([path]) => String(path).includes("/review"))).toBe(false);
 });
 
+test("does not apply an OCR response bound to a different staging revision", async () => {
+    const scope = "creditsync.paymentBatch.workspace:anonymous:anonymous";
+    localStorage.setItem(`${scope}:batch-id`, workspace.batchPublicId);
+    apiMock.get.mockResolvedValue({ data: workspace });
+    apiMock.post.mockResolvedValue({ data: { stagingRevision: 99, proposal: { status: "needs_human_review", reviewRequired: true, amount: "120.00", transferredAt: null, payerName: "stale", receiverName: null, fee: null, evidenceSha256: "a".repeat(64) } } });
+    renderEditor();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Extract review candidates" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "Extract review candidates" }));
+    await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith(expect.stringContaining("/extract"), expect.anything()));
+    expect(screen.queryByText(/OCR candidates only/i)).toBeNull();
+});
+
 test("requires explicit contract selection after named borrower selection", async () => {
     let stagedClientKey = "";
     apiMock.post.mockImplementationOnce((_path: string, body: { items: Array<{ clientItemKey: string }> }) => { stagedClientKey = body.items[0].clientItemKey; return Promise.resolve({ data: { batchPublicId: workspace.batchPublicId, items: [{ publicId: workspace.items[0].publicId, clientItemKey: stagedClientKey, status: "staged" }] } }); });
@@ -66,7 +78,7 @@ test("requires explicit contract selection after named borrower selection", asyn
     const file = new File(["synthetic"], "slip.png", { type: "image/png" }); fireEvent.change(screen.getByLabelText("Choose payment slips"), { target: { files: [file] } });
     fireEvent.change(screen.getAllByRole("textbox")[0], { target: { value: "Nok" } }); fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "120.00" } }); fireEvent.change(screen.getByLabelText("Transfer date and time"), { target: { value: "2026-09-10T00:30" } }); fireEvent.change(screen.getByLabelText("Target due date"), { target: { value: "2026-09-10" } });
     fireEvent.click(screen.getByRole("button", { name: "Upload and review" })); await waitFor(() => expect(apiMock.post).toHaveBeenCalledWith("/payment-batches/stage", expect.anything()));
-    await waitFor(() => expect(screen.getByRole("button", { name: /all slips uploaded and reviewed/i })).not.toHaveAttribute("disabled")); fireEvent.click(screen.getByRole("button", { name: /all slips uploaded and reviewed/i })); await waitFor(() => expect(screen.getByText(/candidate data ready|human review required/i)).toBeTruthy());
+    await waitFor(() => expect(screen.getByRole("button", { name: /all slips uploaded and reviewed/i }).hasAttribute("disabled")).toBe(false)); fireEvent.click(screen.getByRole("button", { name: /all slips uploaded and reviewed/i })); await waitFor(() => expect(screen.getByText(/candidate data ready|human review required/i)).toBeTruthy());
     fireEvent.change(screen.getByRole("combobox", { name: "Borrower candidate" }), { target: { value: "00000000-0000-4000-8000-000000000006" } });
     expect(screen.getByRole("button", { name: "Preview complete batch" }).hasAttribute("disabled")).toBe(true);
 });

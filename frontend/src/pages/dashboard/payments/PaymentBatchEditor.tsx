@@ -47,6 +47,7 @@ export function PaymentBatchEditor({ onPreview, onExecute }: PaymentBatchEditorP
     const [executeKey, setExecuteKey] = useState(() => { const batchId = localStorage.getItem(`${storageScope()}:batch-id`); return localStorage.getItem(operationStorageKey("execute", batchId)) ?? crypto.randomUUID(); });
     const [splitKey, setSplitKey] = useState(() => { const batchId = localStorage.getItem(`${storageScope()}:batch-id`); return localStorage.getItem(operationStorageKey("split", batchId)) ?? crypto.randomUUID(); });
     const candidateRequest = useRef(new Map<string, number>());
+    const ocrRequest = useRef(new Map<string, number>());
     const previewRequest = useRef(0);
     const hydrationRequest = useRef(0);
     const initialSavedBatchId = useRef(localStorage.getItem(`${storageScope()}:batch-id`));
@@ -127,9 +128,18 @@ export function PaymentBatchEditor({ onPreview, onExecute }: PaymentBatchEditorP
     };
     const extractProposal = async (item: BatchItemDraft) => {
         if (!item.stagingItemPublicId || item.evidenceStatus !== "ready") return;
+        const requestNumber = (ocrRequest.current.get(item.id) ?? 0) + 1;
+        ocrRequest.current.set(item.id, requestNumber);
+        const hydrationGeneration = hydrationRequest.current;
+        const requestedRevision = item.revision;
         setBusy(true); setMessage("");
-        try { const { data } = await api.post(`/payment-batches/staging/${item.stagingItemPublicId}/extract`, { idempotencyKey: `batch-extract:${item.stagingItemPublicId}:${item.revision ?? 1}` }); update(item.id, { ocrProposal: data.proposal }); }
-        catch (error) { update(item.id, { error: safeError(error) }); } finally { setBusy(false); }
+        try {
+            const { data } = await api.post(`/payment-batches/staging/${item.stagingItemPublicId}/extract`, { idempotencyKey: `batch-extract:${item.stagingItemPublicId}:${item.revision ?? 1}` });
+            if (ocrRequest.current.get(item.id) !== requestNumber || hydrationRequest.current !== hydrationGeneration || (data.stagingRevision !== undefined && data.stagingRevision !== requestedRevision)) return;
+            setItems((current) => current.map((row) => row.id === item.id && row.stagingItemPublicId === item.stagingItemPublicId && row.revision === requestedRevision && row.evidenceStatus === "ready" ? { ...row, ocrProposal: data.proposal } : row));
+        } catch (error) {
+            if (ocrRequest.current.get(item.id) === requestNumber && hydrationRequest.current === hydrationGeneration) setItems((current) => current.map((row) => row.id === item.id ? { ...row, error: safeError(error) } : row));
+        } finally { setBusy(false); }
     };
     const applyOcrProposal = (item: BatchItemDraft) => {
         if (!item.ocrProposal) return;

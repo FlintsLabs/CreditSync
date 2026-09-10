@@ -45,13 +45,20 @@ async function accessibleStaging(ctx: CommandContext, executor: DbExecutor, publ
     return { staging, batch };
 }
 
+async function lockExtractionScope(ctx: CommandContext, executor: DbExecutor, publicId: string, key: string) {
+    await executor.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${ctx.tenantId}:staging.extract:${key}`}, 0))`);
+    const initial = await accessibleStaging(ctx, executor, publicId);
+    await executor.execute(sql`SELECT id FROM payment_batches WHERE tenant_id = ${ctx.tenantId} AND id = ${initial.batch.id} FOR UPDATE`);
+    await executor.execute(sql`SELECT id FROM payment_batch_staging_items WHERE tenant_id = ${ctx.tenantId} AND id = ${initial.staging.id} FOR UPDATE`);
+    return accessibleStaging(ctx, executor, publicId);
+}
+
 /** Extracts transient OCR text locally and stores only a review receipt, never raw text or financial state. */
 export async function extractPaymentBatchStagingItem(ctx: CommandContext, input: { stagingItemPublicId: string; idempotencyKey: string }, dependencies: OcrDependencies = {}) {
     const key = input.idempotencyKey.trim();
     if (!key) throw new DomainError("INVALID_IDEMPOTENCY_KEY", "idempotencyKey must not be blank", 400);
     const metadata = await db.transaction(async (tx) => {
-        const { staging, batch } = await accessibleStaging(ctx, tx, input.stagingItemPublicId);
-        await tx.execute(sql`SELECT id FROM payment_batches WHERE tenant_id = ${ctx.tenantId} AND id = ${batch.id} FOR SHARE`);
+        const { staging, batch } = await lockExtractionScope(ctx, tx, input.stagingItemPublicId, key);
         const evidence = await tx.query.paymentBatchStagingEvidence.findFirst({ where: and(eq(paymentBatchStagingEvidence.tenantId, ctx.tenantId), eq(paymentBatchStagingEvidence.stagingItemId, staging.id), eq(paymentBatchStagingEvidence.status, "ready")) });
         if (!evidence || !evidence.finalizedAt) throw new DomainError("EVIDENCE_REQUIRED_NOT_READY", "Finalize staging evidence before extraction", 409);
         const file = await tx.query.files.findFirst({ where: and(eq(files.tenantId, ctx.tenantId), eq(files.id, evidence.fileId)) });
@@ -67,10 +74,12 @@ export async function extractPaymentBatchStagingItem(ctx: CommandContext, input:
     });
     if (metadata.prior) return metadata.prior;
     const bytes = await (dependencies.download ?? downloadFile)(metadata.file!.key, metadata.file!.bucket);
+    const downloadedSha256 = createHash("sha256").update(bytes).digest("hex");
+    if (downloadedSha256 !== metadata.evidence.evidenceHash.toLowerCase()) throw new DomainError("STAGING_EVIDENCE_CHECKSUM_MISMATCH", "Downloaded evidence checksum does not match finalized evidence", 409);
     const text = await (dependencies.extract ?? ((buffer: Buffer) => extractTextFromImage(buffer)))(bytes);
     const proposal = parsePaymentSlipOcrCandidate(text, metadata.evidence.evidenceHash);
     return db.transaction(async (tx) => {
-        const { staging, batch } = await accessibleStaging(ctx, tx, input.stagingItemPublicId);
+        const { staging, batch } = await lockExtractionScope(ctx, tx, input.stagingItemPublicId, key);
         const currentEvidence = await tx.query.paymentBatchStagingEvidence.findFirst({ where: and(eq(paymentBatchStagingEvidence.tenantId, ctx.tenantId), eq(paymentBatchStagingEvidence.stagingItemId, staging.id), eq(paymentBatchStagingEvidence.status, "ready")) });
         if (!currentEvidence || staging.revision !== metadata.staging.revision || currentEvidence.publicId !== metadata.evidence.publicId || currentEvidence.evidenceHash !== metadata.evidence.evidenceHash) throw new DomainError("STALE_STAGING_EVIDENCE", "Evidence or staging revision changed during extraction; retry review", 409);
         const prior = await tx.query.paymentBatchOperationReceipts.findFirst({ where: and(eq(paymentBatchOperationReceipts.tenantId, ctx.tenantId), eq(paymentBatchOperationReceipts.operationType, "staging.extract"), eq(paymentBatchOperationReceipts.operationKey, key)) });
@@ -104,14 +113,20 @@ function bangkokIso(day: string | null | undefined, month: string | null | undef
     const monthNumber = month ? thaiMonths[month] : undefined;
     const dayNumber = Number(day);
     const rawYear = Number(year);
-    const yearNumber = rawYear < 100 ? 2500 + rawYear : rawYear;
+    const yearNumber = rawYear < 100 ? 2500 + rawYear : rawYear >= 2400 && rawYear <= 2800 ? rawYear : NaN;
     const hourNumber = Number(hour);
     const minuteNumber = Number(minute);
     const ceYear = yearNumber - 543;
     if (!monthNumber || !Number.isInteger(dayNumber) || dayNumber < 1 || dayNumber > 31 || !Number.isInteger(ceYear) || ceYear < 1900 || ceYear > 2200 || hourNumber < 0 || hourNumber > 23 || minuteNumber < 0 || minuteNumber > 59) return null;
+    const localCalendar = new Date(Date.UTC(ceYear, monthNumber - 1, dayNumber));
+    if (localCalendar.getUTCFullYear() !== ceYear || localCalendar.getUTCMonth() !== monthNumber - 1 || localCalendar.getUTCDate() !== dayNumber) return null;
     const value = new Date(Date.UTC(ceYear, monthNumber - 1, dayNumber, hourNumber - 7, minuteNumber));
-    if (value.getUTCFullYear() !== ceYear || value.getUTCMonth() !== monthNumber - 1 || value.getUTCDate() !== dayNumber) return null;
     return value.toISOString();
+}
+
+function safeName(value: string | null) {
+    if (!value || value.length > 100 || /[0-9๐-๙]|https?:|[@/:|]/i.test(value) || !/[A-Za-zก-๙]/.test(value)) return null;
+    return value.trim().replace(/\s+/g, " ") || null;
 }
 
 function field(text: string, pattern: RegExp) {
@@ -126,8 +141,8 @@ export function parsePaymentSlipOcrCandidate(text: string, evidenceSha256: strin
         reviewRequired: true,
         amount: money(field(text, /จำนวน\s*:?\s*([๐-๙0-9,]+(?:\.\d{1,2})?)/)),
         transferredAt: bangkokIso(date[1], date[2], date[3], date[4], date[5]),
-        payerName: field(text, /จาก\s+(.+?)\s+ถึง/),
-        receiverName: field(text, /ถึง\s+(.+?)\s+จำนวน/),
+        payerName: safeName(field(text, /จาก\s+(.+?)\s+ถึง/)),
+        receiverName: safeName(field(text, /ถึง\s+(.+?)\s+จำนวน/)),
         fee: money(field(text, /ค่าธรรมเนียม\s*:?\s*([๐-๙0-9,]+(?:\.\d{1,2})?)/)),
         referenceHash: reference ? createHash("sha256").update(reference).digest("hex") : null,
         evidenceSha256: evidenceSha256.toLowerCase(),

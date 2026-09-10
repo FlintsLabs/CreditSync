@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.28 - 2026-09-10
+
+### Fixed
+- Hardened local payment-slip OCR against Bangkok early-morning/year-boundary parsing errors, account/QR text leaking into names, finalized-evidence byte checksum mismatches, and concurrent same-key extraction races; extraction remains review-only and never creates financial records.
+- Rejected CE-formatted years instead of silently converting them as Buddhist years, and bound delayed editor OCR responses to the current item generation, staging revision, and ready evidence state.
+
 ## v0.4.27 - 2026-09-10
 
 ### Added

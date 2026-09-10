@@ -7,6 +7,12 @@ Scope: implement and verify all seven approved tasks; no merge, push, deploy, pr
 
 ## Progress
 
+### 2026-09-10 — Task 6 OCR safety hardening checkpoint
+
+- TDD RED `.codex-task-logs/task6-fix-ocr-red-parser.log` reproduced the Bangkok 00:30/year-boundary rejection and numeric receiver leakage. GREEN `.codex-task-logs/task6-fix-ocr-disposable2.log` passed the real disposable OCR service suite `7 pass, 0 fail, 26 expectations`, including Bangkok local-calendar/leap/CE-vs-BE validation, allowlisted names, finalized-byte SHA-256 verification, no financial writes, and concurrent same-key extraction returning one exact receipt/audit.
+- Extraction now serializes the tenant/key command with a transaction advisory lock, locks batch then staging and rereads authorization/evidence state, verifies downloaded bytes before invoking OCR, and rechecks revision/evidence after transient extraction. The UI binds delayed OCR results to generation, staging revision, and ready evidence; stale responses cannot overwrite current review state.
+- Final focused disposable `.codex-task-logs/task6-fix-ocr-final-disposable.log` passed `7/7, 27 expectations`; final frontend `.codex-task-logs/task6-fix-ocr-final-frontend2.log` passed `62 files, 293 tests`, lint/build passed with the existing chunk-size warning, and backend typecheck `.codex-task-logs/task6-fix-ocr-final-backend-typecheck2.log` passed. Full backend `.codex-task-logs/task6-fix-ocr-final-full-backend.log` reached `966 pass, 3 skip, 3 fail`; after correcting one test-only code-vs-message assertion, the remaining failures reproduce independently in existing `payment.reconcile.preview` MCP adapter setup (`17 pass, 1 fail`) and full-suite restore 5-second contention (restore file alone `8 pass, 0 fail` in 1.71s). Plugin remains `56 pass, 1710 expectations`, validator `9.6.0/127 tools`. Authenticated browser QA was not run without a safe synthetic auth harness; full backend green and browser verification remain open.
+
 ### 2026-09-10 — Task 6 local OCR staging boundary checkpoint
 
 - Added `extractPaymentBatchStagingItem` and closed REST/MCP `payment.batch.staging.extract`. It requires finalized staging evidence, performs local Tesseract extraction only, returns normalized candidate amount/time/payer/receiver/fee plus hashed reference and evidence checksum, and stores an append-only staging operation receipt bound to the current staging revision/evidence. Raw OCR text is transient and never returned, persisted, or logged; extraction/retry creates no intake, ledger, allocation, or transaction.
