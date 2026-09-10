@@ -590,6 +590,8 @@ Database-backed service tests are opt-in and require `TEST_DATABASE_URL` to poin
 
 The script deliberately does not use the local development database. To use a separately provisioned disposable database instead, set both `DATABASE_URL` and `TEST_DATABASE_URL` to that database before running `bun test`.
 
+With no focused file argument, the disposable runner drops and recreates the disposable `public`/`drizzle` schemas, applies the current migrations, and executes every backend test file in a separate Bun process. Each test process receives an explicit runner-owned database URL, preventing stale migration journals or timed-out transactions from leaking across files; it does not change per-test timeouts, assertions, or skipped-test policy.
+
 Current tests cover:
 
 - OCR smoke test

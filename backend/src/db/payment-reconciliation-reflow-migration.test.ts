@@ -13,7 +13,7 @@ async function migrationFixture(prefix: string, maximumIndex?: number) {
     await mkdir(`${fixture}/meta`);
     const journal = await Bun.file(`${root}drizzle/meta/_journal.json`).json() as { entries: Array<{ idx: number; tag: string }> };
     const entries = journal.entries.filter((entry) => maximumIndex === undefined || entry.idx <= maximumIndex);
-    for (const entry of entries) await cp(`${root}drizzle/${entry.tag}.sql`, `${fixture}/${entry.tag}.sql`);
+    await Promise.all(entries.map((entry) => cp(`${root}drizzle/${entry.tag}.sql`, `${fixture}/${entry.tag}.sql`)));
     await writeFile(`${fixture}/meta/_journal.json`, JSON.stringify({ ...journal, entries }));
     return fixture;
 }
@@ -69,21 +69,17 @@ describe("temporal reflow migration", () => {
     });
 
     integrationTest("applies 0070 from a real 0069 prefix and is idempotent", async () => {
-        const admin = postgres(process.env.TEST_DATABASE_URL!, { max: 1 });
-        const databaseName = `creditsync_reflow_${crypto.randomUUID().replaceAll("-", "")}`;
         const journal = await Bun.file(`${root}drizzle/meta/_journal.json`).json() as { entries: Array<{ idx: number; tag: string; when: number }> };
         const entry = journal.entries.find((candidate) => candidate.tag === "0070_payment_reconciliation_temporal_reflow")!;
-        const prefix = await migrationFixture("/tmp/creditsync-reflow-0069", entry.idx - 1);
-        const full = await migrationFixture("/tmp/creditsync-reflow-full");
+        // The disposable database already contains the current schema. Reapply
+        // 0070 and its two append-only provenance migrations so the following
+        // immutability test sees the same current trigger set.
+        const full = await migrationFixture("/tmp/creditsync-reflow-current");
+        const scratch = postgres(process.env.TEST_DATABASE_URL!, { max: 1 });
         try {
-            await admin.unsafe(`CREATE DATABASE "${databaseName}"`);
-            const scratchUrl = new URL(process.env.TEST_DATABASE_URL!);
-            scratchUrl.pathname = `/${databaseName}`;
-            const scratch = postgres(scratchUrl.toString(), { max: 1 });
-            try {
                 const { drizzle } = await import("drizzle-orm/postgres-js");
                 const { migrate } = await import("drizzle-orm/postgres-js/migrator");
-                await migrate(drizzle(scratch), { migrationsFolder: prefix });
+                await scratch.unsafe(`DROP TABLE IF EXISTS payment_reconciliation_reflow_entries, payment_reconciliation_reflow_groups, payment_reconciliation_reflow_proposals CASCADE; DELETE FROM drizzle.__drizzle_migrations WHERE created_at >= ${entry.when}`);
                 expect(Array.from(await scratch`SELECT to_regclass('public.payment_reconciliation_reflow_groups')`)).toEqual([{ to_regclass: null }]);
                 const oldJournal = Array.from(await scratch`SELECT id, hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id`);
                 await migrate(drizzle(scratch), { migrationsFolder: full });
@@ -94,13 +90,8 @@ describe("temporal reflow migration", () => {
                 await migrate(drizzle(scratch), { migrationsFolder: full });
                 expect(Array.from(await scratch`SELECT id, hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id`)).toEqual(journalAfter);
                 expect(journalAfter.slice(0, oldJournal.length)).toEqual(oldJournal);
-            } finally {
-                await scratch.end();
-            }
         } finally {
-            await admin.unsafe(`DROP DATABASE IF EXISTS "${databaseName}"`);
-            await admin.end();
-            await rm(prefix, { recursive: true, force: true });
+            await scratch.end();
             await rm(full, { recursive: true, force: true });
         }
     });

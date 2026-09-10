@@ -51,9 +51,47 @@ fi
 host_port="$(docker port "$container_name" 5432/tcp | awk -F: 'NR == 1 { print $NF }')"
 test_database_url="postgres://$database_user:$database_password@127.0.0.1:$host_port/$database_name"
 
+reset_schema() {
+  docker exec "$container_name" psql --username "$database_user" --dbname "$database_name" --command \
+    'DROP SCHEMA IF EXISTS public CASCADE; DROP SCHEMA IF EXISTS drizzle CASCADE; CREATE SCHEMA public;' >/dev/null
+}
+
 cd "$(dirname "$0")/.."
+reset_schema
 DATABASE_URL="$test_database_url" bun run migrate
-# The suite shares one disposable database and many files reset overlapping tables.
-# max-concurrency only limits tests inside a worker; --parallel=1 is required to
-# prevent independent Bun workers from holding RowExclusiveLocks across resets.
-DATABASE_URL="$test_database_url" TEST_DATABASE_URL="$test_database_url" bun test --max-concurrency=1 --parallel=1 "$@"
+BUN_DATABASE_URL="$test_database_url" bun -e 'import postgres from "postgres"; const sql = postgres(process.env.BUN_DATABASE_URL!); const rows = await sql`SELECT to_regclass('"'"'public.payment_batch_staging_items'"'"') AS table_name`; if (rows[0]?.table_name !== "payment_batch_staging_items") throw new Error(`Disposable migration baseline missing payment_batch_staging_items: ${rows[0]?.table_name ?? "null"}`); await sql.end();'
+# Bun's --parallel=1 limits worker count but keeps every test file in one worker
+# process. A timed-out concurrent DB test can therefore leave a transaction or
+# pool connection alive for the next file, deadlocking its destructive fixture
+# reset. Focused invocations retain the direct one-process behavior; the full
+# suite gives every file a fresh process and reapplies the current migrations so
+# disposable schema-mutating tests cannot leak state across files.
+if [ "$#" -gt 0 ]; then
+  BUN_RUNTIME_TRANSPILER_CACHE_PATH="/tmp/creditsync-bun-transpiler-$container_name" CREDITSYNC_TEST_DATABASE_URL="$test_database_url" DATABASE_URL="$test_database_url" TEST_DATABASE_URL="$test_database_url" bun test --max-concurrency=1 --isolate "$@"
+  exit $?
+fi
+
+mapfile -t test_files < <(find src -type f -name '*.test.ts' -print | sort)
+failed_files=0
+for test_file in "${test_files[@]}"; do
+  echo "\n=== disposable backend test: $test_file ==="
+  test_file_path="$(realpath "$test_file")"
+  if ! reset_schema; then
+    echo "Disposable schema reset failed before $test_file" >&2
+    failed_files=$((failed_files + 1))
+    continue
+  fi
+  if ! DATABASE_URL="$test_database_url" bun run migrate >/dev/null; then
+    echo "Migration baseline failed before $test_file" >&2
+    failed_files=$((failed_files + 1))
+    continue
+  fi
+  if ! BUN_RUNTIME_TRANSPILER_CACHE_PATH="/tmp/creditsync-bun-transpiler-$container_name" CREDITSYNC_TEST_DATABASE_URL="$test_database_url" DATABASE_URL="$test_database_url" TEST_DATABASE_URL="$test_database_url" bun test --max-concurrency=1 --isolate "$test_file_path"; then
+    failed_files=$((failed_files + 1))
+  fi
+done
+
+if [ "$failed_files" -gt 0 ]; then
+  echo "Disposable backend suite failed in $failed_files test file(s)." >&2
+  exit 1
+fi

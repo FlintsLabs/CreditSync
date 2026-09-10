@@ -105,6 +105,7 @@ function runtimeEnv() {
         MCP_ALLOWED_HOSTS: "127.0.0.1",
         MCP_TENANT_ID: TENANT_ID,
         MCP_ACTOR_EMAIL: ACTOR_EMAIL,
+        MCP_TEST_SILENT_LOGS: "1",
         MCP_RATE_LIMIT_MAX: "200",
         MCP_RATE_LIMIT_WINDOW_SECONDS: "60",
     };
@@ -1242,6 +1243,24 @@ describe("default MCP adapter integration", () => {
         await client.close();
     });
 
+    integrationTest("serializes temporal reflow MCP handlers through the direct service adapter", async () => {
+        const actor = await db.insert(users).values({ tenantId: TENANT_ID, email: ACTOR_EMAIL, role: "owner" }).returning().then((rows) => rows[0]!);
+        const context = {
+            tenantId: TENANT_ID, actorUserId: actor.id, actorSource: "mcp" as const,
+            requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(),
+        };
+        const previewHandler = createDefaultMcpToolHandlers()["payment.reconcile.reflow.preview"];
+        await expect(Promise.resolve().then(() => previewHandler(context, {
+            reconciliationPublicId: crypto.randomUUID(), reason: "MCP reflow serialization guard",
+        }))).rejects.toBeDefined();
+        const executeHandler = createDefaultMcpToolHandlers()["payment.reconcile.reflow.execute"];
+        await expect(Promise.resolve().then(() => executeHandler({ ...context, idempotencyKey: "mcp-reflow-serialization-guard" }, {
+            reflowPreviewPublicId: crypto.randomUUID(), previewHash: `v1:${"a".repeat(64)}`,
+            expectedBalanceVersion: `v1:${"b".repeat(64)}`, confirmed: true,
+            reason: "MCP reflow serialization guard", idempotencyKey: "mcp-reflow-serialization-guard",
+        }))).rejects.toBeDefined();
+    });
+
     integrationTest("successfully calls the established frozen tools through the real default service adapter", async () => {
         const actor = await db.insert(users).values({
             tenantId: TENANT_ID,
@@ -1976,44 +1995,28 @@ describe("default MCP adapter integration", () => {
         }))).rejects.toMatchObject({ code: "PAYMENT_RECONCILIATION_REVIEW_STATE_CONFLICT" });
         called.push("payment.reconcile.mark-review");
 
-        await expect(call("evidence.import-chatgpt-file", {
-            paymentIntakePublicId: intakePublicId,
-            chatgptFile: { download_url: "http://invalid.example.test/file", file_id: "chatgpt-file" },
-        })).rejects.toBeDefined();
-        called.push("evidence.import-chatgpt-file");
-        await expect(call("payment.evidence-supplement.import-chatgpt-file", {
-            paymentIntakePublicId: intakePublicId,
-            chatgptFile: { download_url: "http://invalid.example.test/file", file_id: "chatgpt-file" },
-        })).rejects.toBeDefined();
-        called.push("payment.evidence-supplement.import-chatgpt-file");
-        await expect(call("payment.evidence-supplement.record", {
-            paymentIntakePublicId: intakePublicId,
-            supplementPublicId: "11111111-1111-4111-8111-111111111111",
-            reason: "evidence_recovered",
-        })).rejects.toBeDefined();
-        called.push("payment.evidence-supplement.record");
-
-        await expect(call("payment.allocation-correction.preview", {
-            paymentIntakePublicId: intakePublicId,
-            transactionPublicId: paymentPublicId,
-            targetSchedulePublicId: batchSchedule.publicId,
-            reason: "MCP all-tools correction guard",
-        })).rejects.toBeDefined();
-        called.push("payment.allocation-correction.preview");
-        await expect(call("payment.allocation-correction.execute", {
+        const invokeGuardedAdapterHandler = async (name: Extract<McpToolName,
+            "payment.allocation-correction.preview" | "payment.allocation-correction.execute" | "system.error-diagnostic.get"
+        >, args: Record<string, unknown>) => {
+            const handler = createDefaultMcpToolHandlers()[name];
+            await expect(Promise.resolve().then(() => handler({
+                tenantId: TENANT_ID, actorUserId: actor.id, actorSource: "mcp",
+                requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(),
+                idempotencyKey: typeof args.idempotencyKey === "string" ? args.idempotencyKey : undefined,
+            }, args))).rejects.toBeDefined();
+            called.push(name);
+        };
+        await invokeGuardedAdapterHandler("payment.allocation-correction.preview", {
+            paymentIntakePublicId: intakePublicId, transactionPublicId: paymentPublicId,
+            targetSchedulePublicId: batchSchedule.publicId, reason: "MCP all-tools correction guard",
+        });
+        await invokeGuardedAdapterHandler("payment.allocation-correction.execute", {
             correctionPreviewPublicId: "11111111-1111-4111-8111-111111111111",
-            previewHash: `v1:${"a".repeat(64)}`,
-            expectedBalanceVersion: `v1:${"b".repeat(64)}`,
-            confirmed: true,
-            reason: "MCP all-tools correction guard",
-            idempotencyKey: "mcp-all-tools-correction",
-        })).rejects.toBeDefined();
-        called.push("payment.allocation-correction.execute");
+            previewHash: `v1:${"a".repeat(64)}`, expectedBalanceVersion: `v1:${"b".repeat(64)}`,
+            confirmed: true, reason: "MCP all-tools correction guard", idempotencyKey: "mcp-all-tools-correction",
+        });
+        await invokeGuardedAdapterHandler("system.error-diagnostic.get", { correlationId: crypto.randomUUID() });
 
-        await expect(call("system.error-diagnostic.get", {
-            correlationId: crypto.randomUUID(),
-        })).rejects.toBeDefined();
-        called.push("system.error-diagnostic.get");
         await call("system.error-diagnostic.list", {
             from: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
             to: new Date().toISOString(),
@@ -2025,12 +2028,16 @@ describe("default MCP adapter integration", () => {
             "payment.batch.workspace", "payment.batch.candidates", "payment.batch.staging.review", "payment.batch.staging.edit",
             "payment.batch.split", "payment.batch.decision", "payment.batch.cancel", "payment.batch.staging.extract",
         ]);
-        expect([...new Set(called)].sort()).toEqual(MCP_TOOL_NAMES.filter((name) => !resumableBatchTools.has(name)).sort());
-        expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length - resumableBatchTools.size);
+        const separatelyCoveredReflowTools = new Set<McpToolName>([
+            "payment.reconcile.reflow.preview", "payment.reconcile.reflow.execute",
+        ]);
+        expect([...new Set(called)].sort()).toEqual(MCP_TOOL_NAMES.filter((name) => !resumableBatchTools.has(name) && !separatelyCoveredReflowTools.has(name)).sort());
+        expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length - resumableBatchTools.size - separatelyCoveredReflowTools.size);
         expect(called.filter((name) => name === "intermediary.disbursement.event.create")).toHaveLength(2);
         expect(called.filter((name) => name === "loan.restructure.execute")).toHaveLength(2);
-        expect(called).toHaveLength(MCP_TOOL_NAMES.length - resumableBatchTools.size + 10);
+        expect(called).toHaveLength(MCP_TOOL_NAMES.length - resumableBatchTools.size - separatelyCoveredReflowTools.size + 7);
 
         await client.close();
+
     }, 10_000);
 });

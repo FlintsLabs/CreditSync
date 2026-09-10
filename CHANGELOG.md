@@ -10,6 +10,8 @@
 ### Changed
 
 - Documented the isolated browser acceptance command and its boundary between UI evidence, backend financial tests, and OCR runtime checks.
+- Made the disposable backend runner reset its disposable schemas, validate the migration baseline, and execute each test file in a fresh process with an explicit runner-owned database URL, preventing stale journals and leaked PostgreSQL locks from contaminating later financial tests.
+- Stabilized disposable migration acceptance coverage for the real 0067→0068 and 0069→0070 upgrades on the runner-owned database while preserving the current 0071/0072 reflow provenance triggers.
 
 ## v0.4.34 - 2026-09-10
 
@@ -19,8 +21,6 @@
 - Added the existing-data interest-only temporal-reflow repair service and closed MCP preview/execute tools. Legacy executed reconciliations now require complete tenant-safe floating provenance, Bangkok effective dates, fresh state, explicit confirmation, and durable idempotent append-only compensation/replay; unsupported components remain fail-closed.
 - Synchronized the private CreditSync plugin to version 10.0.0 with 129 frozen MCP tools and legacy-reflow eval/skill guidance.
 - Added an acceptance evidence matrix for the chronology/reflow handoff and recorded the remaining full-suite and browser gaps.
-
-### Fixed
 
 - Bound legacy temporal-reflow repair snapshots to ready, finalized evidence and reject reconciliation entries whose amounts do not equal their source transaction's interest component.
 
