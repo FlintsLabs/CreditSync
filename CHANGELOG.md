@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.25 - 2026-09-10
+
+### Added
+- Added disposable financial integration coverage for intermediate temporal-reflow write failure rollback and barriered two-loan `75.00`/`45.00` replay with exact idempotent conflict handling.
+
+### Fixed
+- Confirmed the actual reconciliation execute transaction rolls back signed reversals, replacements, lineage, caches, balances, intake/proposal state, and audit rows together when a later reflow write fails.
+
 ## v0.4.24 - 2026-09-10
 
 ### Added

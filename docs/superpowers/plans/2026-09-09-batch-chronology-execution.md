@@ -7,6 +7,12 @@ Scope: implement and verify all seven approved tasks; no merge, push, deploy, pr
 
 ## Progress
 
+### 2026-09-10 — Task 5 financial integration verification checkpoint
+
+- Added an actual application-execute rollback fixture using a disposable PostgreSQL trigger that fails only after the first signed reflow entry; `payment-reconciliation-service.test.ts` passed `21/21, 148 expectations` in `.codex-task-logs/task5-round3-service-final.log`. The test removes the owned trigger/function in `finally` and proves transactions, allocations, reflow groups/entries, accrual caches, loans, intake/proposal state, and audits are unchanged. The final serialized combined reflow/kernel/service/migration gate passed `36/36, 191 expectations` in `.codex-task-logs/task5-round3-focused-final2.log`.
+- Added a two-floating-loan fixture with multiple later payments and explicit `75.00 + 45.00` backdated allocation. A borrower lock barrier proves concurrent identical execute requests serialize and return the same receipt/correlation, while a changed-payload retry conflicts without another effect; preview/execute due-date projections, per-loan conservation, signed compensation/replacement pairing, original transaction snapshots, and all-or-nothing lineage are asserted.
+- Supervisor parity evidence at `/tmp/creditsync-batch-resume.cs2Qp2/supervisor-reflow-parity.log` reported `34 pass, 0 fail, 156 expectations` before this checkpoint. MCP/plugin contract gates remain unchanged from the prior synchronized 9.5.0/126-tool checkpoint. Remaining stale-preview-after-accounting/evidence mutation breadth and inspect/reverse/restore follow-up coverage remain explicit gaps; OCR/browser/full-plan gates remain open.
+
 ### 2026-09-10 — Task 5 sequential temporal-reflow integration checkpoint
 
 - `buildTemporalReflowPlanForLoan` now carries each prior authoritative replacement projection into the next chronological resolver call; source loading scans active ledger components before rejecting unsupported or incomplete provenance. The serialized disposable reflow integration passed `30/30, 131 expectations` in `.codex-task-logs/task5-round2-db-disposable.log`; non-DB smoke passed `17/28` with 13 database tests skipped in `.codex-task-logs/task5-round2-db-final.log`.
