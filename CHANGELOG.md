@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.29 - 2026-09-10
+
+### Fixed
+- Excluded signed reversal allocations from active temporal-reflow source loading so historical reconciliation preview cannot pass negative amounts into the unsigned floating allocator.
+- Synchronized the default MCP all-tools integration expectation with the resumable staging extraction tool.
+
 ## v0.4.28 - 2026-09-10
 
 ### Fixed

@@ -2023,7 +2023,7 @@ describe("default MCP adapter integration", () => {
         const resumableBatchTools = new Set<McpToolName>([
             "payment.batch.stage", "payment.batch.staging.evidence.prepare", "payment.batch.staging.evidence.finalize",
             "payment.batch.workspace", "payment.batch.candidates", "payment.batch.staging.review", "payment.batch.staging.edit",
-            "payment.batch.split", "payment.batch.decision", "payment.batch.cancel",
+            "payment.batch.split", "payment.batch.decision", "payment.batch.cancel", "payment.batch.staging.extract",
         ]);
         expect([...new Set(called)].sort()).toEqual(MCP_TOOL_NAMES.filter((name) => !resumableBatchTools.has(name)).sort());
         expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length - resumableBatchTools.size);

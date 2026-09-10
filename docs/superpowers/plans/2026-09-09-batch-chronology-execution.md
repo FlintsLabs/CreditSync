@@ -7,6 +7,12 @@ Scope: implement and verify all seven approved tasks; no merge, push, deploy, pr
 
 ## Progress
 
+### 2026-09-10 — Task 7 full-gate diagnosis checkpoint
+
+- Full backend evidence `/tmp/creditsync-batch-resume.cs2Qp2/task6-fix-ocr-final-full-backend.log` was not green at `966 pass, 3 skip, 3 fail`; one OCR assertion was corrected afterward and is green in `/tmp/creditsync-batch-resume.cs2Qp2/task6-fix-ocr-final-disposable.log`. The two remaining failures were investigated rather than labeled preexisting: MCP reconciliation preview traced to reversal allocation `-15.00` entering temporal-reflow loading and is fixed in this commit; restore first-test timeout remains a full-suite-only performance issue pending a fresh full run, while the isolated file passed `8/8` in `/tmp/creditsync-batch-resume.cs2Qp2/task6-fix-ocr-restore-repro.log`.
+- RED/root-cause trace `/tmp/creditsync-batch-resume.cs2Qp2/task7-mcp-debug.log` captured only non-sensitive error type/message and identified the negative signed allocation. Targeted MCP after the fix `/tmp/creditsync-batch-resume.cs2Qp2/task7-mcp-final-targeted.log` passed `18/18, 636 expectations`; no raw evidence or financial contents were logged.
+- Exact current full-gate status, including the three skipped tests and final rerun result, is intentionally left open until the new commit is verified.
+
 ### 2026-09-10 — Task 6 OCR safety hardening checkpoint
 
 - TDD RED `.codex-task-logs/task6-fix-ocr-red-parser.log` reproduced the Bangkok 00:30/year-boundary rejection and numeric receiver leakage. GREEN `.codex-task-logs/task6-fix-ocr-disposable2.log` passed the real disposable OCR service suite `7 pass, 0 fail, 26 expectations`, including Bangkok local-calendar/leap/CE-vs-BE validation, allowlisted names, finalized-byte SHA-256 verification, no financial writes, and concurrent same-key extraction returning one exact receipt/audit.

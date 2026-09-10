@@ -164,6 +164,7 @@ export async function loadActiveInterestReflowSources(tx: any, tenantId: string,
         .where(and(
             eq(floatingTransactionAllocations.tenantId, tenantId),
             eq(floatingTransactionAllocations.loanId, loanId),
+            eq(floatingTransactionAllocations.entryType, "payment"),
             sql`${floatingTransactionAllocations.effectiveDate} > ${effectiveAfterDate}`,
             sql`NOT EXISTS (SELECT 1 FROM floating_transaction_allocations reversal WHERE reversal.tenant_id = ${tenantId} AND reversal.reversed_allocation_id = ${floatingTransactionAllocations.id})`,
             sql`NOT EXISTS (SELECT 1 FROM transactions reversal WHERE reversal.tenant_id = ${tenantId} AND reversal.reversed_transaction_id = ${transactions.id})`,
