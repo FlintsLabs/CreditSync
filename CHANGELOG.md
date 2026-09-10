@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.31 - 2026-09-10
+
+### Fixed
+
+- Ensure the local Tesseract.js worker is terminated on both successful and failed recognition, with a test-only worker seam for lifecycle verification.
+
 ## v0.4.30 - 2026-09-10
 
 ### Fixed
