@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { db, type DbTransaction } from "../db";
 import { auditLogs, bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanOpeningBalanceComponents, loanReplacements, loanRestructures, loanRestructureWaivers, loanSchedules, loans, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
@@ -532,13 +532,28 @@ export function previewLoan(input: PublicLoanCalculationParams) {
 export async function getLoanApplication(ctx: CommandContext, publicId: string) {
     const loan = await accessibleLoan(ctx, publicId);
     const base = await presentLoan(loan);
-    const [inbound, outbound, replacementLineages] = await Promise.all([
+    const [inbound, outbound, replacementLineages, accrualRows] = await Promise.all([
         db.query.loanRestructures.findFirst({ where: and(eq(loanRestructures.tenantId, ctx.tenantId), inArray(loanRestructures.status, ["executed", "reversed"]), eq(loanRestructures.newLoanId, loan.id)), orderBy: [desc(loanRestructures.createdAt)] }),
         db.query.loanRestructures.findFirst({ where: and(eq(loanRestructures.tenantId, ctx.tenantId), inArray(loanRestructures.status, ["executed", "reversed"]), eq(loanRestructures.oldLoanId, loan.id)), orderBy: [desc(loanRestructures.createdAt)] }),
         getLoanReplacementLineages(ctx.tenantId, [loan]),
+        db.select().from(loanInterestAccruals)
+            .where(and(eq(loanInterestAccruals.tenantId, ctx.tenantId), eq(loanInterestAccruals.loanId, loan.id)))
+            .orderBy(asc(loanInterestAccruals.accrualDate), asc(loanInterestAccruals.id)),
     ]);
+    const accruals = accrualRows.map((row) => ({
+        publicId: row.publicId,
+        accrualDate: row.accrualDate,
+        periodStartDate: row.periodStartDate,
+        periodEndDate: row.periodEndDate,
+        periodUnit: row.periodUnit,
+        periodDayIndex: row.periodDayIndex,
+        interestAmount: serializeMoney(row.interestAmount),
+        paidAmount: serializeMoney(row.paidAmount),
+        remainingAmount: serializeMoney(FinancialDecimal.max(new FinancialDecimal(row.interestAmount).minus(row.paidAmount), 0)),
+        status: row.status,
+    }));
     const replacementLineage = replacementLineages.get(loan.id) ?? null;
-    if (!inbound && !outbound) return { ...base, replacementLineage, restructureLineage: null, openingBalanceComponents: [], restructureWaivers: [] };
+    if (!inbound && !outbound) return { ...base, replacementLineage, restructureLineage: null, openingBalanceComponents: [], restructureWaivers: [], accruals };
     const [inboundOldLoan, outboundNewLoan, opening, waivers] = await Promise.all([
         inbound ? db.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, inbound.oldLoanId)) }) : null,
         outbound?.newLoanId ? db.query.loans.findFirst({ where: and(eq(loans.tenantId, ctx.tenantId), eq(loans.id, outbound.newLoanId)) }) : null,
@@ -562,6 +577,7 @@ export async function getLoanApplication(ctx: CommandContext, publicId: string) 
         },
         openingBalanceComponents: opening.map(component => ({ publicId: component.publicId, kind: component.componentKind, amount: serializeMoney(component.amount), status: component.status, sourceType: component.sourceType, sourcePublicId: component.sourcePublicId })),
         restructureWaivers: waivers.map(waiver => ({ publicId: waiver.publicId, component: waiver.componentKind, amount: serializeMoney(waiver.amount), reason: waiver.reason, status: waiver.status, auditPublicId: waiver.auditPublicId, executedAt: waiver.executedAt, reversedAt: waiver.reversedAt })),
+        accruals,
     };
 }
 

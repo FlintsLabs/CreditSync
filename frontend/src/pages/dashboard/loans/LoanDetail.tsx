@@ -32,6 +32,7 @@ import { LoanInformationTab } from "./LoanInformationTab";
 import { LoanAgentsTab } from "./LoanAgentsTab";
 import { LoanPaymentHistoryTab } from "./LoanPaymentHistoryTab";
 import { LoanRepaymentScheduleTab } from "./LoanRepaymentScheduleTab";
+import { LoanAccrualsTab, type LoanAccrualRow } from "./LoanAccrualsTab";
 import { fetchLoanDetail, loanDetailQueryKey, useLoanQueryRevision } from "../../../lib/loan-query-invalidation";
 
 interface LoanDetailData {
@@ -84,6 +85,7 @@ interface LoanDetailData {
     } | null;
     openingBalanceComponents?: OpeningBalanceComponent[];
     restructureWaivers?: RestructureWaiver[];
+    accruals?: LoanAccrualRow[];
 }
 
 interface BorrowerData {
@@ -604,6 +606,8 @@ export default function LoanDetail() {
                         ? <LoanPaymentHistoryTab loanPublicId={loan.publicId} />
                         : tab === "schedule"
                             ? <LoanRepaymentScheduleTab loanPublicId={loan.publicId} />
+                            : tab === "accruals"
+                                ? <LoanAccrualsTab rows={loan.accruals ?? []} />
                             : <LoanInformationTab>
                 <>
                     {loan.repaymentType === "daily" && loan.dailyLoanCalculation && (

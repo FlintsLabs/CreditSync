@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
-export type LoanDetailTab = "information" | "agents" | "payments" | "schedule";
+export type LoanDetailTab = "information" | "agents" | "payments" | "schedule" | "accruals";
 
-const tabs: LoanDetailTab[] = ["information", "agents", "payments", "schedule"];
+const tabs: LoanDetailTab[] = ["information", "agents", "payments", "schedule", "accruals"];
 
 interface LoanDetailTabsProps {
     value: LoanDetailTab;
@@ -41,7 +41,7 @@ export function LoanDetailTabs({ value, onChange, renderPanel }: LoanDetailTabsP
                                 if (event.key === "End") { event.preventDefault(); onChange(tabs[tabs.length - 1]); }
                             }}
                         >
-                            {t(`loanDetail.tabs.${tab}`, tab === "information" ? "Information" : tab === "agents" ? "Agents" : tab === "payments" ? "Payment History" : "Repayment Schedule")}
+                            {t(`loanDetail.tabs.${tab}`, tab === "information" ? "Information" : tab === "agents" ? "Agents" : tab === "payments" ? "Payment History" : tab === "schedule" ? "Repayment Schedule" : "Accrual Table")}
                         </button>
                     ))}
                 </div>

@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.16 - 2026-09-10
+
+### Added
+- Added an accrual table tab to loan detail pages, showing each materialized interest accrual with exact interest, paid, remaining, period, and status values.
+
 ## v0.4.15 - 2026-09-10
 
 ### Fixed
