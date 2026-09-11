@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
 import { and, count, desc, eq, gt, gte, inArray, lt, or, sql } from "drizzle-orm";
-import { db } from "../db";
+import { db, type DbExecutor } from "../db";
 import {
     borrowerAliases,
     borrowers,
@@ -43,6 +43,7 @@ import {
 } from "../lib/storage";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
+import { getPaymentCancellationCapability } from "./payment-cancellation-service";
 import { assertNoLaterFloatingPayment, assertNoOlderPendingPayment, lockPaymentBorrowers, paymentIntakeBorrowerIds } from "./payment-chronology-service";
 import { normalizeBorrowerText } from "./borrower-service";
 import { executeLoanWaiver, getLoanWaiverAvailability, previewLoanWaiver } from "./loan-waiver-service";
@@ -57,7 +58,7 @@ import {
     reprojectFloatingInterestAfterTransaction,
 } from "./floating-interest-service";
 
-type Executor = any;
+type Executor = DbExecutor;
 type IntakeRow = typeof paymentIntakes.$inferSelect;
 type ProposalRow = typeof paymentMatchProposals.$inferSelect;
 type AllocationRow = typeof paymentMatchAllocations.$inferSelect;
@@ -176,6 +177,7 @@ function presentIntake(row: IntakeRow, lineage: IntakeLineage = { repostOfIntake
         postedAt: row.postedAt,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
+        cancellationMetadata: row.status === "cancelled" ? { reason: row.cancellationReason, cancelledAt: row.cancelledAt, auditPublicId: row.cancellationAuditPublicId } : null,
         ...lineage,
     };
 }
@@ -335,7 +337,7 @@ export async function listPaymentIntakes(ctx: CommandContext, input: { status?: 
     return rows.map((row) => presentIntake(row, lineage.get(row.id)));
 }
 
-const paymentIntakeStatuses = new Set(["draft", "needs_review", "ready", "posted", "reversed", "duplicate"]);
+const paymentIntakeStatuses = new Set(["draft", "needs_review", "ready", "posted", "reversed", "duplicate", "cancelled"]);
 const businessDatePattern = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface PaymentIntakeListInput {
@@ -524,10 +526,12 @@ export async function listPaymentReviewQueue(ctx: CommandContext) {
 
 export async function getPaymentIntake(ctx: CommandContext, publicId: string) {
     const row = await accessibleIntake(ctx, publicId);
-    const [evidenceRows, proposals, lineage] = await Promise.all([
+    const cancellation = await getPaymentCancellationCapability(ctx, publicId);
+    const [evidenceRows, proposals, lineage, cancellationActor] = await Promise.all([
         db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.paymentIntakeId, row.id))),
         db.select().from(paymentMatchProposals).where(and(eq(paymentMatchProposals.tenantId, ctx.tenantId), eq(paymentMatchProposals.paymentIntakeId, row.id))).orderBy(desc(paymentMatchProposals.version)),
         loadIntakeLineage(ctx, [row]),
+        row.cancelledByUserId === null ? Promise.resolve(null) : db.query.users.findFirst({ where: and(eq(users.tenantId, ctx.tenantId), eq(users.id, row.cancelledByUserId)) }),
     ]);
     const evidenceFileIds = evidenceRows.flatMap((item) => item.fileId ? [item.fileId] : []);
     const evidenceFiles = evidenceFileIds.length ? await db.select().from(files).where(and(
@@ -567,6 +571,8 @@ export async function getPaymentIntake(ctx: CommandContext, publicId: string) {
             filePublicId: item.fileId ? evidenceFileById.get(item.fileId)?.publicId ?? null : null,
         })),
         latestProposal: latest ? presentProposal(latest, latestAllocations) : null,
+        cancellation,
+        cancellationMetadata: row.status === "cancelled" ? { reason: row.cancellationReason, cancelledAt: row.cancelledAt, auditPublicId: row.cancellationAuditPublicId, actorPublicId: cancellationActor?.publicId ?? null } : null,
     };
 }
 
@@ -576,7 +582,7 @@ export async function reviewPaymentIntake(
     input: { status: "draft" | "needs_review"; notes?: string | null },
 ) {
     const existing = await accessibleIntake(ctx, publicId);
-    if (["posted", "reversed", "duplicate"].includes(existing.status)) {
+    if (["posted", "reversed", "duplicate", "cancelled"].includes(existing.status)) {
         throw new DomainError("PAYMENT_INTAKE_IMMUTABLE", "Posted, reversed, or duplicate intake cannot be reviewed", 409);
     }
     return db.transaction(async (tx) => {
@@ -584,7 +590,7 @@ export async function reviewPaymentIntake(
         const locked = await tx.query.paymentIntakes.findFirst({ where: and(
             eq(paymentIntakes.id, existing.id), eq(paymentIntakes.tenantId, ctx.tenantId),
         ) });
-        if (!locked || ["posted", "reversed", "duplicate"].includes(locked.status)) {
+        if (!locked || ["posted", "reversed", "duplicate", "cancelled"].includes(locked.status)) {
             throw new DomainError("PAYMENT_INTAKE_IMMUTABLE", "Posted, reversed, or duplicate intake cannot be reviewed", 409);
         }
         const row = await tx.update(paymentIntakes).set({
@@ -626,7 +632,7 @@ async function lockMutableEvidenceIntake(tx: Executor, ctx: CommandContext, inta
         eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, intakeId),
     ) });
     if (!current) throw new DomainError("PAYMENT_INTAKE_NOT_FOUND", "Payment intake not found", 404);
-    if (["posted", "reversed", "duplicate"].includes(current.status)) {
+    if (["posted", "reversed", "duplicate", "cancelled"].includes(current.status)) {
         throw new DomainError("PAYMENT_INTAKE_IMMUTABLE", "Evidence cannot be added to this intake", 409);
     }
     return current;
@@ -646,7 +652,7 @@ export async function preparePaymentEvidence(
 ): Promise<any> {
     validateEvidenceInput(input);
     const intake = await accessibleIntake(ctx, intakePublicId);
-    if (["posted", "reversed", "duplicate"].includes(intake.status)) throw new DomainError("PAYMENT_INTAKE_IMMUTABLE", "Evidence cannot be added to this intake", 409);
+    if (["posted", "reversed", "duplicate", "cancelled"].includes(intake.status)) throw new DomainError("PAYMENT_INTAKE_IMMUTABLE", "Evidence cannot be added to this intake", 409);
     const sha256 = input.sha256.toLocaleLowerCase();
     const existing = await db.query.paymentEvidence.findFirst({
         where: and(eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.evidenceHash, sha256)),
@@ -711,6 +717,11 @@ export async function preparePaymentEvidence(
         if (existing.status !== "ready") {
             if (evidenceIntentExpired(existing)) {
                 await db.transaction(async (tx) => {
+                    await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id = ${existing.paymentIntakeId} FOR UPDATE`);
+                    const original = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, existing.paymentIntakeId)) });
+                    if (original?.status === "cancelled") {
+                        throw new DomainError("EVIDENCE_HASH_PENDING", "The evidence checksum is retained by a cancelled intake", 409);
+                    }
                     await tx.execute(sql`SELECT id FROM payment_evidence WHERE tenant_id = ${ctx.tenantId} AND id = ${existing.id} FOR UPDATE`);
                     const current = await tx.query.paymentEvidence.findFirst({ where: and(
                         eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.id, existing.id),
@@ -806,10 +817,15 @@ export async function preparePaymentEvidence(
         });
     } catch (error) {
         await db.transaction(async (tx) => {
-            await tx.delete(paymentEvidence).where(and(
+            await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id = ${intake.id} FOR UPDATE`);
+            const current = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, intake.id)) });
+            // Cancellation retains even incomplete evidence reservations. A late
+            // signer failure must not release its checksum or file association.
+            if (current?.status === "cancelled") return;
+            const removed = await tx.delete(paymentEvidence).where(and(
                 eq(paymentEvidence.id, created.evidence.id), eq(paymentEvidence.status, "pending"),
-            ));
-            await tx.delete(files).where(and(eq(files.id, created.file.id), eq(files.tenantId, ctx.tenantId)));
+            )).returning();
+            if (removed.length) await tx.delete(files).where(and(eq(files.id, created.file.id), eq(files.tenantId, ctx.tenantId)));
         });
         throw error;
     }
@@ -1194,13 +1210,13 @@ export async function previewPaymentMatch(
     executor?: Executor,
 ) {
     const existing = await accessibleIntake(ctx, intakePublicId, executor ?? db);
-    if (["posted", "reversed", "duplicate"].includes(existing.status)) throw new DomainError("PAYMENT_INTAKE_IMMUTABLE", "This intake cannot be matched", 409);
+    if (["posted", "reversed", "duplicate", "cancelled"].includes(existing.status)) throw new DomainError("PAYMENT_INTAKE_IMMUTABLE", "This intake cannot be matched", 409);
     if (existing.repostOfIntakeId !== null) throw new DomainError("PAYMENT_RESTORE_DRAFT_REQUIRES_RESTORE_WORKFLOW", "Restore drafts must use payment.restore workflow", 409);
     const run = async (tx: Executor) => {
         await tx.execute(sql`SELECT id FROM payment_intakes WHERE id = ${existing.id} FOR UPDATE`);
         const intake = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.id, existing.id), eq(paymentIntakes.tenantId, ctx.tenantId)) });
         if (!intake) throw new DomainError("PAYMENT_INTAKE_NOT_FOUND", "Payment intake not found", 404);
-        if (["posted", "reversed", "duplicate"].includes(intake.status)) {
+        if (["posted", "reversed", "duplicate", "cancelled"].includes(intake.status)) {
             throw new DomainError("PAYMENT_INTAKE_IMMUTABLE", "This intake cannot be matched", 409);
         }
         if (intake.repostOfIntakeId !== null) throw new DomainError("PAYMENT_RESTORE_DRAFT_REQUIRES_RESTORE_WORKFLOW", "Restore drafts must use payment.restore workflow", 409);
@@ -1692,6 +1708,7 @@ async function postPaymentKernel(ctx: CommandContext, intakePublicId: string, in
         if (membership.length && membership[0].batchPublicId !== batchPublicId) throw new DomainError("PAYMENT_BATCH_POST_REQUIRED", "Payment belongs to a batch; confirm and execute the whole batch", 409);
         if (batchPublicId && membership[0]?.batchPublicId !== batchPublicId) throw new DomainError("PAYMENT_BATCH_MEMBERSHIP_CHANGED", "Payment batch membership changed", 409);
         if (intake.status === "posted" || intake.status === "reversed") return postedResult(tx, intake);
+        if (intake.status === "cancelled") throw new DomainError("PAYMENT_CANCEL_NOT_ALLOWED", "Cancelled payment intakes cannot be posted", 409);
         if (intake.repostOfIntakeId !== null) throw new DomainError("PAYMENT_RESTORE_DRAFT_REQUIRES_RESTORE_WORKFLOW", "Restore drafts must use payment.restore workflow", 409);
         if (intake.status !== "ready") {
             throw new DomainError("PAYMENT_NOT_READY", "Payment intake must be ready before posting", 409);

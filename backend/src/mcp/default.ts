@@ -74,6 +74,7 @@ import {
     type ExplicitPaymentAllocation,
     type PrepareEvidenceInput,
 } from "../services/payment-service";
+import { cancelPaymentIntake } from "../services/payment-cancellation-service";
 import {
     executeReverseWithInterestAccrual,
     previewReverseWithInterestAccrual,
@@ -251,6 +252,9 @@ export function createDefaultMcpToolHandlers(
         asString(input, "paymentIntakePublicId"),
         { allocations: input.allocations as ExplicitPaymentAllocation[] | undefined },
     ),
+    "payment.cancel": (ctx, input) => cancelPaymentIntake(ctx, asString(input, "paymentIntakePublicId"), {
+        reason: asString(input, "reason"), idempotencyKey: asString(input, "idempotencyKey"), expectedStateHash: asString(input, "expectedStateHash"),
+    }),
     "payment.post": (ctx, input) => postPayment(
         paymentPostCommandContext(ctx, input),
         asString(input, "paymentIntakePublicId"),

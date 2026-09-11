@@ -512,6 +512,13 @@
       "when": 1788912000007,
       "tag": "0072_reflow_source_split_lineage",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1788998400000,
+      "tag": "0073_payment_intake_cancellation",
+      "breakpoints": true
     }
   ]
 }

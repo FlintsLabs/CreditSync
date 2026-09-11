@@ -10,6 +10,7 @@ vi.mock("../../../lib/api", () => ({ api: apiMock }));
 const workspace = { batchPublicId: "00000000-0000-4000-8000-000000000001", batch: { publicId: "00000000-0000-4000-8000-000000000001", version: 2, status: "needs_review", latestPreview: null }, items: [{ publicId: "00000000-0000-4000-8000-000000000002", clientItemKey: "client-1", revision: 1, paymentIntakePublicId: null, batchItemPublicId: null, amount: "120.00", receivedAt: "2026-09-09T17:30:00.000Z", payerName: "Nok", evidenceStatus: "ready" }] };
 
 function renderEditor() { return render(<I18nextProvider i18n={i18n}><PaymentBatchEditor onPreview={() => undefined} onExecute={() => undefined} /></I18nextProvider>); }
+function renderEditorForBatch(batchPublicId: string) { return render(<I18nextProvider i18n={i18n}><PaymentBatchEditor initialBatchPublicId={batchPublicId} onPreview={() => undefined} onExecute={() => undefined} /></I18nextProvider>); }
 
 beforeEach(() => { localStorage.clear(); apiMock.get.mockReset(); apiMock.post.mockReset(); });
 afterEach(() => { vi.restoreAllMocks(); });
@@ -91,6 +92,17 @@ test("hydrates only matching stable keys and clears unknown server membership", 
     await waitFor(() => expect((screen.getByLabelText("Amount") as HTMLInputElement).value).toBe(""));
     expect((screen.getByLabelText("Amount") as HTMLInputElement).value).toBe("");
     expect(screen.queryByText("borrower-old")).toBeNull();
+});
+
+test("URL batch id takes precedence over local storage and fails closed when inaccessible", async () => {
+    const savedBatchId = "00000000-0000-4000-8000-000000000010";
+    const requestedBatchId = "00000000-0000-4000-8000-000000000011";
+    localStorage.setItem("creditsync.paymentBatch.workspace:anonymous:anonymous:batch-id", savedBatchId);
+    apiMock.get.mockRejectedValue(new Error("PAYMENT_BATCH_NOT_FOUND"));
+    renderEditorForBatch(requestedBatchId);
+    await waitFor(() => expect(apiMock.get).toHaveBeenCalledWith(`/payment-batches/${requestedBatchId}/workspace`));
+    expect(apiMock.get).not.toHaveBeenCalledWith(`/payment-batches/${savedBatchId}/workspace`);
+    expect(screen.getByRole("status").textContent).toContain("PAYMENT_BATCH_REQUEST_FAILED");
 });
 
 test("keeps a pending resumed row selectable for file reselection", async () => {

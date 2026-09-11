@@ -10,6 +10,7 @@ import { Badge } from "../../../components/ui/badge";
 import { EvidencePreviewButton } from "../../../components/evidence/EvidencePreviewButton";
 import { PaymentInboxList } from "./PaymentInboxList";
 import { PaymentBatchEditor } from "./PaymentBatchEditor";
+import { PaymentCancelDialog } from "./PaymentCancelDialog";
 import {
     initialPaymentInboxQuery,
     toPaymentInboxParams,
@@ -37,6 +38,8 @@ interface PaymentIntake extends PaymentIntakeSummary {
     warnings?: WorkflowWarning[];
     evidence?: Array<{ publicId: string; status: string; mimeType: string; filePublicId?: string | null }>;
     latestProposal?: PaymentProposal | null;
+    cancellation: { allowed: boolean; stateHash: string; blockedReason: string | null; batchPublicId: string | null };
+    cancellationMetadata?: { reason: string | null; cancelledAt: string | null; auditPublicId: string | null } | null;
 }
 interface LoanOption { publicId: string; borrowerPublicId: string; borrowerName: string; status: string }
 interface AuditEntry { id: number; action: string; requestId?: string | null; correlationId?: string | null; createdAt: string }
@@ -70,6 +73,8 @@ export default function PaymentInbox() {
     const [semanticReviewed, setSemanticReviewed] = useState(false);
     const [reversalOpen, setReversalOpen] = useState(false);
     const [reversalReason, setReversalReason] = useState("");
+    const [cancelOpen, setCancelOpen] = useState(false);
+    const [cancelIntent, setCancelIntent] = useState<{ targetId: string; stateHash: string; idempotencyKey: string; submittedReason: string } | null>(null);
     const [editorRevision, setEditorRevision] = useState(0);
     const [proposalRevision, setProposalRevision] = useState<number | null>(null);
     const selectionToken = useRef(0);
@@ -79,12 +84,12 @@ export default function PaymentInbox() {
 
     const money = useCallback((value: string) => formatMoneyExact(value, i18n.language), [i18n.language]);
     const dateTime = useCallback((value: string) => new Intl.DateTimeFormat(i18n.language, {
-        dateStyle: "medium", timeStyle: "short",
+        dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Bangkok",
     }).format(new Date(value)), [i18n.language]);
     const localizedError = useCallback((error: unknown, fallbackKey: string) => {
         const response = (error as { response?: { data?: { code?: string }; status?: number } }).response;
         return response?.data?.code
-            ? t(`domainErrors.${response.data.code}`, { defaultValue: t(fallbackKey) })
+            ? t(`payments.errors.${response.data.code}`, { defaultValue: t(`domainErrors.${response.data.code}`, { defaultValue: t(fallbackKey) }) })
             : t(fallbackKey);
     }, [t]);
 
@@ -121,6 +126,8 @@ export default function PaymentInbox() {
         setSemanticReviewed(false);
         setReversalOpen(false);
         setReversalReason("");
+        setCancelOpen(false);
+        setCancelIntent(null);
         setDetailLoading(true);
         setMessage("");
         setAudit({ status: "loading" });
@@ -190,7 +197,8 @@ export default function PaymentInbox() {
     const previewTotal = proposal?.totalAllocated ?? enteredTotal;
     const difference = moneyDifference(previewTotal, previousTotal);
     const semanticWarnings = detail?.warnings?.filter((warning) => warning.code === "POSSIBLE_SEMANTIC_DUPLICATE") ?? [];
-    const canEdit = Boolean(detail && !detailLoading && !busy && !["posted", "reversed", "duplicate"].includes(detail.status));
+    const canEdit = Boolean(detail && !detailLoading && !busy && ["draft", "needs_review", "ready"].includes(detail.status));
+    const canCancel = Boolean(detail?.cancellation?.allowed && canEdit);
     const proposalMatchesEditor = Boolean(proposal && proposalRevision === editorRevision);
 
     const preview = () => {
@@ -225,7 +233,7 @@ export default function PaymentInbox() {
         await api.post(`/payment-intakes/${detail!.publicId}/evidence/${intent.publicId}/finalize`);
     });
 
-    if (searchParams.get("batch") === "1") return <div className="space-y-6"><PaymentBatchEditor onPreview={() => undefined} onExecute={() => undefined} /></div>;
+    if (searchParams.get("batch") === "1") return <div className="space-y-6"><PaymentBatchEditor initialBatchPublicId={searchParams.get("batchId")} onPreview={() => undefined} onExecute={() => undefined} /></div>;
     return <div className="space-y-6" aria-busy={listLoading || detailLoading || busy}>
         <div className="flex flex-wrap items-center justify-between gap-3">
             <div><h1 className="text-3xl font-bold">{t("payments.title")}</h1><p className="text-muted-foreground">{t("payments.description")}</p></div>
@@ -252,7 +260,21 @@ export default function PaymentInbox() {
                     {detail.status === "duplicate" && <div role="alert" className="flex gap-2 rounded border border-amber-400/40 bg-amber-400/10 p-3 text-sm"><AlertTriangle className="h-4 w-4" />{t("payments.duplicateWarning")}</div>}
                     {semanticWarnings.map((warning) => <div role="alert" key={warning.code} className="rounded border border-amber-400/40 bg-amber-400/10 p-3 text-sm"><div className="flex gap-2 font-medium"><AlertTriangle className="h-4 w-4" />{t("payments.warnings.POSSIBLE_SEMANTIC_DUPLICATE")}</div><div className="mt-1 break-all font-mono text-xs">{warning.intakePublicIds?.join(", ")}</div><label className="mt-2 flex gap-2"><input type="checkbox" checked={semanticReviewed} onChange={(event) => setSemanticReviewed(event.target.checked)} />{t("payments.semanticReviewConfirmation")}</label></div>)}
                     <dl className="grid gap-3 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">{t("payments.amount")}</dt><dd>{money(detail.amount)}</dd></div><div><dt className="text-muted-foreground">{t("payments.reference")}</dt><dd>{detail.bankReference || "—"}</dd></div><div className="sm:col-span-2"><dt className="text-muted-foreground">{t("payments.intakeId")}</dt><dd className="break-all font-mono text-xs">{detail.publicId}</dd></div></dl>
-                    {canEdit && <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={busy} onClick={() => void mutate(async () => { await api.post(`/payment-intakes/${detail.publicId}/review`, { status: "needs_review", notes: detail.notes ?? null }); })}>{t("payments.markReview")}</Button><label className="inline-flex cursor-pointer items-center rounded border px-3 py-1.5 text-sm"><FileUp className="mr-2 h-4 w-4" />{t("payments.addEvidence")}<input type="file" accept="image/jpeg,image/png,application/pdf" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadEvidence(file); }} /></label></div>}
+                    {canEdit && <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={busy} onClick={() => void mutate(async () => { await api.post(`/payment-intakes/${detail.publicId}/review`, { status: "needs_review", notes: detail.notes ?? null }); })}>{t("payments.markReview")}</Button><label className="inline-flex cursor-pointer items-center rounded border px-3 py-1.5 text-sm"><FileUp className="mr-2 h-4 w-4" />{t("payments.addEvidence")}<input type="file" accept="image/jpeg,image/png,application/pdf" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadEvidence(file); }} /></label>{canCancel && <Button variant="destructive" onClick={() => { if (!cancelIntent || cancelIntent.targetId !== detail.publicId || !cancelIntent.submittedReason) setCancelIntent({ targetId: detail.publicId, stateHash: detail.cancellation.stateHash, idempotencyKey: crypto.randomUUID(), submittedReason: "" }); setCancelOpen(true); }}>{t("payments.cancel.button")}</Button>}</div>}
+                    {detail.cancellation?.blockedReason && !canCancel && detail.status !== "cancelled" && <div role="status" className="rounded border border-amber-400/40 bg-amber-400/10 p-3 text-sm">{t(`payments.errors.${detail.cancellation.blockedReason}`, { defaultValue: detail.cancellation.blockedReason })}{detail.cancellation.batchPublicId && <a className="ml-2 underline" href={`?batch=1&batchId=${detail.cancellation.batchPublicId}`}>{t("payments.cancel.openBatch")}</a>}</div>}
+                    {detail.cancellationMetadata?.reason && <div role="status" className="rounded border border-amber-400/40 bg-amber-400/10 p-3 text-sm">{t("payments.cancelledHistory", { reason: detail.cancellationMetadata.reason, date: detail.cancellationMetadata.cancelledAt ? dateTime(detail.cancellationMetadata.cancelledAt) : "—", actor: (detail.cancellationMetadata as { actorPublicId?: string | null }).actorPublicId ?? "—" })}</div>}
+                    <PaymentCancelDialog key={cancelIntent?.targetId ?? "cancel"} open={cancelOpen} busy={busy} amount={detail.amount} receivedAt={dateTime(detail.receivedAt)} blockedReason={cancelIntent?.targetId === detail.publicId ? (detail.cancellation?.allowed ? null : detail.cancellation?.blockedReason ?? "PAYMENT_CANCEL_NOT_ALLOWED") : "PAYMENT_CANCEL_STALE"} batchPublicId={detail.cancellation?.batchPublicId} onCancel={() => { setCancelOpen(false); }} onConfirm={(reason) => {
+                        const intent = cancelIntent;
+                        if (!intent || intent.targetId !== detail.publicId) return;
+                        const request = intent.submittedReason === reason ? intent : { ...intent, idempotencyKey: crypto.randomUUID(), submittedReason: reason };
+                        setCancelIntent(request);
+                        void (async () => {
+                            setBusy(true); setMessage("");
+                            try { await api.post(`/payment-intakes/${request.targetId}/cancel`, { reason, idempotencyKey: request.idempotencyKey, expectedStateHash: request.stateHash }); setCancelOpen(false); setCancelIntent(null); await loadList(); await selectIntake(request.targetId); }
+                            catch (error) { const code = (error as { response?: { data?: { code?: string } } }).response?.data?.code; if (code === "PAYMENT_CANCEL_STALE") { const staleMessage = localizedError(error, "payments.errors.action"); setCancelOpen(false); setCancelIntent(null); await loadList(); await selectIntake(request.targetId); setMessage(staleMessage); } else setMessage(localizedError(error, "payments.errors.action")); }
+                            finally { setBusy(false); }
+                        })();
+                    }} />
                     {!!detail.evidence?.length && detail.evidence.map((item, index) => {
                         const previewAvailable = item.status === "ready" && Boolean(item.filePublicId);
                         return <div key={item.publicId} className="flex flex-wrap items-center justify-between gap-2 rounded bg-muted/40 p-2 text-xs">

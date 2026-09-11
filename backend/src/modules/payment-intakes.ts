@@ -14,6 +14,7 @@ import {
     reversePayment,
     reviewPaymentIntake,
 } from "../services/payment-service";
+import { cancelPaymentIntake } from "../services/payment-cancellation-service";
 
 type RouteUser = { id: number; tenantId: string };
 
@@ -110,6 +111,19 @@ export const paymentIntakesRoute = new Elysia({ prefix: "/payment-intakes" })
             status: t.Union([t.Literal("draft"), t.Literal("needs_review")]),
             notes: t.Optional(t.Nullable(t.String())),
         }),
+    })
+    .post("/:id/cancel", async ({ params, body, user, request, set }) => {
+        if (!user) return unauthorized(set);
+        try {
+            const headerKey = request.headers.get("idempotency-key");
+            if (headerKey && body.idempotencyKey && headerKey.trim() !== body.idempotencyKey.trim()) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key conflicts with request body", 409);
+            return await cancelPaymentIntake(commandContext(user, request), params.id, body);
+        } catch (error) {
+            return domainFailure(error, set);
+        }
+    }, {
+        params: t.Object({ id: t.String() }),
+        body: t.Object({ reason: t.String(), idempotencyKey: t.String(), expectedStateHash: t.String() }, { additionalProperties: t.Never() }),
     })
     .post("/:id/evidence/upload-intents", async ({ params, body, user, request, set }) => {
         if (!user) return unauthorized(set);

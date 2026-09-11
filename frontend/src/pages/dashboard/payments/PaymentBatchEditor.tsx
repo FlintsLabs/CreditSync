@@ -9,6 +9,7 @@ import { batchTotal, isBatchReady, normalizeBangkokDateTime, normalizeMoney, sem
 export interface PaymentBatchEditorProps {
     onPreview?: (preview: BatchPreview, rows: BatchItemDraft[]) => void;
     onExecute?: (result: unknown) => void;
+    initialBatchPublicId?: string | null;
 }
 
 type StagedResponse = { batchPublicId: string; items: Array<{ publicId: string; clientItemKey: string }> };
@@ -28,7 +29,7 @@ function componentText(components: Record<string, string> | null | undefined, t:
     return ["principal", "interest", "fee", "penalty"].map((key) => `${t(`paymentBatchComponent.${key}`)} ${components[key] ?? "0.00"}`).join(" · ");
 }
 
-export function PaymentBatchEditor({ onPreview, onExecute }: PaymentBatchEditorProps) {
+export function PaymentBatchEditor({ onPreview, onExecute, initialBatchPublicId = null }: PaymentBatchEditorProps) {
     const { t } = useTranslation();
     const [items, setItems] = useState<BatchItemDraft[]>(() => draftItems() ?? [newItem()]);
     const [batchPublicId, setBatchPublicId] = useState<string | null>(null);
@@ -50,7 +51,7 @@ export function PaymentBatchEditor({ onPreview, onExecute }: PaymentBatchEditorP
     const ocrRequest = useRef(new Map<string, number>());
     const previewRequest = useRef(0);
     const hydrationRequest = useRef(0);
-    const initialSavedBatchId = useRef(localStorage.getItem(`${storageScope()}:batch-id`));
+    const initialSavedBatchId = useRef(initialBatchPublicId ?? localStorage.getItem(`${storageScope()}:batch-id`));
     const total = useMemo(() => batchTotal(items), [items]);
     const selectedBorrowers = [...new Set(items.flatMap((item) => item.allocations?.length ? [item.selectedBorrowerPublicId ?? ""] : []))].filter(Boolean);
     const borrowerPublicId = selectedBorrowers[0] ?? "";
@@ -63,8 +64,8 @@ export function PaymentBatchEditor({ onPreview, onExecute }: PaymentBatchEditorP
         const saved = initialSavedBatchId.current;
         if (!saved) return;
         const request = ++hydrationRequest.current;
-        void api.get(`/payment-batches/${saved}/workspace`).then(({ data }: { data: WorkspaceResponse }) => { if (request !== hydrationRequest.current || localStorage.getItem(`${storageScope()}:batch-id`) !== saved) return; mergeWorkspace(data); setStep(data.batch.latestPreview ? 3 : 2); }).catch(() => undefined);
-    }, []);
+        void api.get(`/payment-batches/${saved}/workspace`).then(({ data }: { data: WorkspaceResponse }) => { if (request !== hydrationRequest.current || (!initialBatchPublicId && localStorage.getItem(`${storageScope()}:batch-id`) !== saved)) return; mergeWorkspace(data); setStep(data.batch.latestPreview ? 3 : 2); }).catch((error) => setMessage(safeError(error)));
+    }, [initialBatchPublicId]);
     useEffect(() => { localStorage.setItem(`${storageScope()}:draft`, JSON.stringify(items.map(({ id, paymentIntakePublicId, amount, targetDueDate, intent, loanPublicId, schedulePublicId, stagingItemPublicId, batchItemPublicId, selectedBorrowerPublicId, allocations, revision, evidenceStatus, uploadStatus, payerName, ocrProposal }) => ({ id, paymentIntakePublicId, amount, targetDueDate, intent, loanPublicId, schedulePublicId, stagingItemPublicId, batchItemPublicId, selectedBorrowerPublicId, allocations, revision, evidenceStatus, uploadStatus, payerName, ocrProposal })))); }, [items]);
 
     const update = (id: string, patch: Partial<BatchItemDraft>) => { hydrationRequest.current += 1; previewRequest.current += 1; setPreview(null); setConfirmed(false); setDecisionAcknowledged(false); setDecisionReason(""); candidateRequest.current.set(id, (candidateRequest.current.get(id) ?? 0) + 1); setItems((current) => current.map((item) => { if (item.id !== id) return item; const reviewedFieldChanged = Boolean(item.paymentIntakePublicId && ("amount" in patch || "receivedAt" in patch || "targetDueDate" in patch || "payerName" in patch || "bankReference" in patch || "allocations" in patch)); return { ...item, ...patch, ...(reviewedFieldChanged ? { reviewedEditPending: true } : {}) }; })); };

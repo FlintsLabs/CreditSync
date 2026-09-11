@@ -15,7 +15,7 @@ interface Props {
     onSelect: (publicId: string) => void;
 }
 
-const statuses = ["draft", "needs_review", "ready", "posted", "reversed", "duplicate"];
+const statuses = ["draft", "needs_review", "ready", "posted", "reversed", "duplicate", "cancelled"];
 
 const neutralStatusTone = {
     name: "neutral",
@@ -43,6 +43,10 @@ const paymentStatusTones: Record<string, { name: string; className: string }> = 
     duplicate: {
         name: "duplicate",
         className: "border-orange-200 bg-orange-100 text-orange-800 dark:border-orange-800 dark:bg-orange-950/60 dark:text-orange-300",
+    },
+    cancelled: {
+        name: "neutral",
+        className: "border-slate-300 bg-slate-200 text-slate-700 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200",
     },
 };
 

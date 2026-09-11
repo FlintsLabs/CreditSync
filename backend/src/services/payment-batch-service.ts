@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db, type DbExecutor } from "../db";
-import { borrowers, files, loans, paymentBatchAllocations, paymentBatchDecisions, paymentBatchDependencies, paymentBatchItems, paymentBatchOperationReceipts, paymentBatchPreviews, paymentBatches, paymentBatchStagingEvidence, paymentBatchStagingItems, paymentEvidence, paymentIntakes, paymentMatchProposals, loanSchedules } from "../db/schema";
+import { borrowers, files, loans, paymentBatchAllocations, paymentBatchDecisions, paymentBatchDependencies, paymentBatchItems, paymentBatchOperationReceipts, paymentBatchPreviews, paymentBatches, paymentBatchStagingEvidence, paymentBatchStagingItems, paymentEvidence, paymentIntakes, paymentMatchProposals, loanSchedules, users } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import { canAccessTenantWideData } from "../lib/access";
 import { parseMoney, serializeMoney } from "../lib/money";
@@ -19,6 +19,7 @@ import { planScheduledPayment } from "./payment-service";
 import { assertPaymentEvidenceReady, finalizePaymentEvidence, normalizeBankReference, postPaymentAllocationInTransaction, preparePaymentEvidence, previewPaymentMatch, type EvidenceStorageGateway } from "./payment-service";
 import { emptyFloatingBatchState, projectFloatingBatchPayment, type FloatingBatchState } from "./payment-batch-accounting-planner";
 import { BUCKET_NAME, createSignedPutUrl, headStoredObject, toStorageReference } from "../lib/storage";
+import { cancelLockedPaymentIntake } from "./payment-cancellation-service";
 
 type BatchRow = typeof paymentBatches.$inferSelect;
 type ItemRow = typeof paymentBatchItems.$inferSelect;
@@ -48,6 +49,15 @@ async function recordOperation<T extends object>(tx: DbExecutor, ctx: CommandCon
 
 function assertBatchEditable(batch: BatchRow) {
     if (["posted", "cancelled"].includes(batch.status)) throw new DomainError("PAYMENT_BATCH_NOT_EDITABLE", "Posted or cancelled batches cannot be changed", 409);
+}
+function assertBatchMutationRole(user: typeof users.$inferSelect, batch: BatchRow) {
+    const role = user.role ?? "viewer";
+    if (!(role === "owner" || role === "manager" || role === "collector")) {
+        throw new DomainError("PAYMENT_BATCH_MUTATION_FORBIDDEN", "You are not authorized to change this payment batch", 403);
+    }
+    if (!canAccessTenantWideData({ role }) && batch.createdByUserId !== user.id) {
+        throw new DomainError("PAYMENT_BATCH_MUTATION_FORBIDDEN", "You are not authorized to change this payment batch", 403);
+    }
 }
 
 async function lockedStagingItem(ctx: CommandContext, publicId: string, tx: DbExecutor) {
@@ -86,7 +96,7 @@ function requireId(value: string, field: string) {
 }
 async function actor(ctx: CommandContext, executor: DbExecutor = db) {
     if (ctx.actorUserId === null) return null;
-    const user = await executor.query.users.findFirst({ where: (users: any, { and, eq }: any) => and(eq(users.id, ctx.actorUserId), eq(users.tenantId, ctx.tenantId)) });
+    const user = await executor.query.users.findFirst({ where: and(eq(users.id, ctx.actorUserId), eq(users.tenantId, ctx.tenantId)) });
     if (!user) throw new DomainError("ACTOR_NOT_FOUND", "Actor is not available in this tenant", 403);
     return user;
 }
@@ -96,7 +106,7 @@ async function assertBorrowerPortfolio(ctx: CommandContext, selected: Array<type
 }
 async function accessibleBatch(ctx: CommandContext, publicId: string, executor: DbExecutor = db): Promise<BatchRow> {
     requireId(publicId, "batchPublicId");
-    const row = await executor.query.paymentBatches.findFirst({ where: (batches: any, { and, eq }: any) => and(eq(batches.tenantId, ctx.tenantId), eq(batches.publicId, publicId)) });
+    const row = await executor.query.paymentBatches.findFirst({ where: and(eq(paymentBatches.tenantId, ctx.tenantId), eq(paymentBatches.publicId, publicId)) });
     if (!row) throw new DomainError("PAYMENT_BATCH_NOT_FOUND", "Payment batch not found", 404);
     const user = await actor(ctx, executor);
     if (user && !canAccessTenantWideData({ role: user.role ?? "viewer" }) && row.createdByUserId !== user.id) throw new DomainError("PAYMENT_BATCH_NOT_FOUND", "Payment batch not found", 404);
@@ -602,11 +612,29 @@ export async function addPaymentBatchItem(ctx: CommandContext, batchPublicId: st
     if (batch.status === "posted" || batch.status === "cancelled") throw new DomainError("PAYMENT_BATCH_NOT_EDITABLE", "Payment batch is not editable", 409);
     try {
         const row = await db.transaction(async (tx) => {
-            const created = await tx.insert(paymentBatchItems).values({ tenantId: ctx.tenantId, batchId: batch.id, paymentIntakeId: intake.id, itemOrder: input.itemOrder }).returning().then((rows) => rows[0]!);
-            await tx.update(paymentBatches).set({ version: batch.version + 1, status: "needs_review", stateHash: digest({ batch: batch.publicId, item: input.paymentIntakePublicId, amount: intake.amount }), updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(eq(paymentBatches.tenantId, ctx.tenantId), eq(paymentBatches.id, batch.id)));
-            return created;
+            const batchActor = await actor(ctx, tx);
+            if (!batchActor) throw new DomainError("UNAUTHORIZED", "Unauthorized", 401);
+            assertBatchMutationRole(batchActor, batch);
+            const borrowerIds = await paymentIntakeBorrowerIds(tx, ctx.tenantId, intake.id);
+            await lockPaymentBorrowers(tx, ctx.tenantId, borrowerIds);
+            await tx.execute(sql`SELECT id FROM payment_batches WHERE tenant_id = ${ctx.tenantId} AND id = ${batch.id} FOR UPDATE`);
+            const lockedBatch = await tx.query.paymentBatches.findFirst({ where: and(eq(paymentBatches.tenantId, ctx.tenantId), eq(paymentBatches.id, batch.id)) });
+            if (!lockedBatch || ["posted", "cancelled"].includes(lockedBatch.status)) throw new DomainError("PAYMENT_BATCH_NOT_EDITABLE", "Payment batch is not editable", 409);
+            await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id = ${intake.id} FOR UPDATE`);
+            const lockedIntake = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, intake.id)) });
+            if (!lockedIntake || !["draft", "needs_review", "ready"].includes(lockedIntake.status)) throw new DomainError("PAYMENT_BATCH_ITEM_NOT_ELIGIBLE", "Payment intake is not eligible for a batch", 409);
+            if (!canAccessTenantWideData({ role: batchActor.role ?? "viewer" }) && lockedIntake.ownerUserId !== batchActor.id) throw new DomainError("PAYMENT_INTAKE_NOT_FOUND", "Payment intake not found", 404);
+            const lockedBorrowerIds = await paymentIntakeBorrowerIds(tx, ctx.tenantId, lockedIntake.id);
+            if (lockedBorrowerIds.length !== borrowerIds.length || lockedBorrowerIds.some((id) => !borrowerIds.includes(id))) throw new DomainError("PAYMENT_BATCH_ITEM_MISMATCH", "Payment intake borrower mapping changed; inspect and retry", 409);
+            if (lockedBorrowerIds.length) {
+                const lockedBorrowers = await tx.select().from(borrowers).where(and(eq(borrowers.tenantId, ctx.tenantId), inArray(borrowers.id, lockedBorrowerIds)));
+                await assertBorrowerPortfolio(ctx, lockedBorrowers, tx);
+            }
+            const created = await tx.insert(paymentBatchItems).values({ tenantId: ctx.tenantId, batchId: lockedBatch.id, paymentIntakeId: lockedIntake.id, itemOrder: input.itemOrder }).returning().then((rows) => rows[0]!);
+            await tx.update(paymentBatches).set({ version: lockedBatch.version + 1, status: "needs_review", stateHash: digest({ batch: batch.publicId, item: input.paymentIntakePublicId, amount: lockedIntake.amount }), updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(eq(paymentBatches.tenantId, ctx.tenantId), eq(paymentBatches.id, batch.id)));
+            return { created, version: lockedBatch.version + 1 };
         });
-        return view(ctx, { ...batch, version: batch.version + 1, status: "needs_review" }, db);
+        return view(ctx, { ...batch, version: row.version, status: "needs_review" }, db);
     } catch (error) {
         if ((error as { code?: string }).code === "23505") throw new DomainError("PAYMENT_INTAKE_ALREADY_IN_BATCH", "Payment intake already belongs to a batch", 409);
         throw error;
@@ -686,20 +714,47 @@ export async function finalizePaymentBatchEvidenceMany(ctx: CommandContext, batc
 }
 export async function cancelPaymentBatch(ctx: CommandContext, batchPublicId: string, input: { reason: string; revision: number; idempotencyKey: string } = { reason: "legacy cancellation", revision: -1, idempotencyKey: `legacy-cancel:${batchPublicId}` }) {
     const batch = await accessibleBatch(ctx, batchPublicId);
-    const reason = input.reason.trim().replace(/[\u0000-\u001f\u007f]/g, " ");
+    const reason = input.reason.replace(/[\u0000-\u001f\u007f]/g, " ").trim();
     if (!reason || reason.length > 2000 || !input.idempotencyKey.trim() || !Number.isInteger(input.revision) || input.revision < -1) throw new DomainError("INVALID_BATCH_CANCEL", "Cancellation needs a reason, current revision and idempotency key", 400);
     const requestHash = digest({ batchPublicId, reason, revision: input.revision });
     const updated = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${ctx.tenantId}:batch-cancel:${input.idempotencyKey.trim()}`}, 0))`);
+        const membersBeforeLock = await tx.select({ paymentIntakeId: paymentBatchItems.paymentIntakeId }).from(paymentBatchItems).where(and(eq(paymentBatchItems.tenantId, ctx.tenantId), eq(paymentBatchItems.batchId, batch.id))).orderBy(asc(paymentBatchItems.id));
+        const borrowerIds = new Set<number>();
+        for (const member of membersBeforeLock) for (const borrowerId of await paymentIntakeBorrowerIds(tx, ctx.tenantId, member.paymentIntakeId)) borrowerIds.add(borrowerId);
+        await lockPaymentBorrowers(tx, ctx.tenantId, [...borrowerIds]);
         await tx.execute(sql`SELECT id FROM payment_batches WHERE tenant_id = ${ctx.tenantId} AND id = ${batch.id} FOR UPDATE`);
         const current = await tx.query.paymentBatches.findFirst({ where: and(eq(paymentBatches.tenantId, ctx.tenantId), eq(paymentBatches.id, batch.id)) });
         if (!current) throw new DomainError("PAYMENT_BATCH_NOT_FOUND", "Payment batch not found", 404);
+        const batchActor = await actor(ctx, tx);
+        if (!batchActor) throw new DomainError("UNAUTHORIZED", "Unauthorized", 401);
+        assertBatchMutationRole(batchActor, current);
         const prior = await operationReceipt<{ batchPublicId: string; status: string; reason: string; revision: number; view: unknown }>(tx, ctx, "batch.cancel", input.idempotencyKey.trim(), requestHash);
-        if (prior) return prior.view;
+        if (prior) return prior;
         if (["posted", "cancelled"].includes(current.status)) throw new DomainError("PAYMENT_BATCH_NOT_EDITABLE", "Posted or cancelled batches cannot be cancelled", 409);
         if (input.revision !== -1 && input.revision !== current.version) throw new DomainError("BATCH_REVISION_STALE", "Batch revision changed; inspect and retry cancellation", 409);
+        const members = await tx.select().from(paymentBatchItems).where(and(eq(paymentBatchItems.tenantId, ctx.tenantId), eq(paymentBatchItems.batchId, current.id))).orderBy(asc(paymentBatchItems.id));
+        if (members.length !== membersBeforeLock.length || members.some((member, index) => member.paymentIntakeId !== membersBeforeLock[index]?.paymentIntakeId)) {
+            throw new DomainError("BATCH_REVISION_STALE", "Batch membership changed; inspect and retry cancellation", 409);
+        }
+        const intakeIds = members.map((member) => member.paymentIntakeId).sort((left, right) => left - right);
+        if (intakeIds.length) await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(intakeIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
+        const intakes = intakeIds.length ? await tx.select().from(paymentIntakes).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.id, intakeIds))) : [];
+        const lockedBorrowerIds = new Set<number>();
+        for (const intake of intakes) for (const borrowerId of await paymentIntakeBorrowerIds(tx, ctx.tenantId, intake.id)) lockedBorrowerIds.add(borrowerId);
+        if (lockedBorrowerIds.size !== borrowerIds.size || [...lockedBorrowerIds].some((id) => !borrowerIds.has(id))) {
+            throw new DomainError("BATCH_REVISION_STALE", "Borrower mapping changed; inspect and retry cancellation", 409);
+        }
+        for (const intake of intakes) {
+            if (["duplicate", "reversed", "cancelled"].includes(intake.status)) continue;
+            if (intake.status === "posted") throw new DomainError("PAYMENT_CANCEL_DEPENDENCY_REQUIRED", "A posted batch member cannot be cancelled", 409);
+            const childKey = `${input.idempotencyKey.trim()}:intake:${intake.publicId}`;
+            const childHash = createHash("sha256").update(JSON.stringify({ batchPublicId, intakePublicId: intake.publicId, reason, idempotencyKey: childKey, expectedStateHash: current.stateHash })).digest("hex");
+            await cancelLockedPaymentIntake(ctx, tx, intake, { reason, idempotencyKey: childKey, expectedStateHash: "", requestHash: childHash }, batchPublicId);
+        }
         await tx.update(paymentBatchPreviews).set({ status: "stale" }).where(and(eq(paymentBatchPreviews.tenantId, ctx.tenantId), eq(paymentBatchPreviews.batchId, current.id), inArray(paymentBatchPreviews.status, ["ready", "needs_review"])));
         const cancelled = await tx.update(paymentBatches).set({ status: "cancelled", version: current.version + 1, confirmationHash: null, cancelIdempotencyKey: input.idempotencyKey.trim(), cancelRequestHash: requestHash, cancelReason: reason, cancelRevision: current.version, updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(eq(paymentBatches.tenantId, ctx.tenantId), eq(paymentBatches.id, current.id))).returning().then((rows) => rows[0]!);
-        const result = await view(ctx, cancelled, tx);
+        const result = JSON.parse(JSON.stringify(await view(ctx, cancelled, tx))) as Awaited<ReturnType<typeof view>>;
         return recordOperation(tx, ctx, cancelled, null, "batch.cancel", input.idempotencyKey.trim(), requestHash, { batchPublicId: cancelled.publicId, status: cancelled.status, reason, revision: current.version, view: result });
     });
     return updated;

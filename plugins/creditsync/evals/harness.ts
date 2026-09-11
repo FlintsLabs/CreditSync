@@ -243,7 +243,18 @@ class ScriptedMcp {
             this.validators?.validateError?.(name, step.error);
             throw new ScriptedMcpError(step.error.code, step.error.message, step.error.details);
         }
-        const result = step.result ?? {};
+        const result = name === "intake.get"
+            ? {
+                publicId: "0198c481-3e2b-7000-8000-000000000021",
+                status: "fixture",
+                repostOfIntakePublicId: null,
+                repostedByIntakePublicId: null,
+                evidence: [],
+                latestProposal: null,
+                cancellation: { allowed: false, stateHash: "c".repeat(64), blockedReason: null, batchPublicId: null },
+                ...(step.result ?? {}),
+            }
+            : (step.result ?? {});
         this.validators?.validateOutput(name, result);
         return result;
     }
@@ -1469,8 +1480,8 @@ type Scenario = {
 };
 
 const batchItemFixture = { id: "0198c481-3e2b-7000-8000-000000000502", publicId: "0198c481-3e2b-7000-8000-000000000502", itemOrder: 1, paymentIntakePublicId: INTAKE, evidenceStatus: "ready" };
-const batchFixture = (publicId: string) => ({ id: publicId, publicId, status: "draft", version: 1, borrowerPublicId: BORROWER_A, stateHash: "s".repeat(64), confirmationHash: null, confirmedVersion: null, notes: null, items: [batchItemFixture], latestPreview: null, postedAt: null, createdAt: "2026-08-23T00:00:00.000Z", updatedAt: "2026-08-23T00:00:00.000Z" });
-const batchPreviewFixture = (batchPublicId: string) => ({ id: "0198c481-3e2b-7000-8000-000000000503", publicId: "0198c481-3e2b-7000-8000-000000000503", batchPublicId, version: 1, status: "ready", stateHash: "s".repeat(64), previewHash: "a".repeat(64), confirmationHash: "b".repeat(64), evidenceReady: true, allocations: [], candidates: [], warnings: [] });
+const batchFixture = (publicId: string) => ({ id: publicId, publicId, status: "draft", version: 1, borrowerPublicId: BORROWER_A, stateHash: "c".repeat(64), confirmationHash: null, confirmedVersion: null, notes: null, items: [batchItemFixture], latestPreview: null, postedAt: null, createdAt: "2026-08-23T00:00:00.000Z", updatedAt: "2026-08-23T00:00:00.000Z" });
+const batchPreviewFixture = (batchPublicId: string) => ({ id: "0198c481-3e2b-7000-8000-000000000503", publicId: "0198c481-3e2b-7000-8000-000000000503", batchPublicId, version: 1, status: "ready", stateHash: "c".repeat(64), previewHash: "a".repeat(64), confirmationHash: "b".repeat(64), evidenceReady: true, allocations: [], candidates: [], warnings: [] });
 const batchExecutionFixture = (batchPublicId: string) => ({ batchPublicId, status: "posted", posted: [], auditPublicIds: ["0198c481-3e2b-7000-8000-000000000511"], correlationId: "0198c481-3e2b-7000-8000-000000000512" });
 const stagingWorkflowBatch = "0198c481-3e2b-7000-8000-000000000513";
 const stagingWorkflowItem = "0198c481-3e2b-7000-8000-000000000514";
@@ -1484,7 +1495,7 @@ const stagingWorkflowWorkspace = {
     batchPublicId: stagingWorkflowBatch,
     batch: {
         id: stagingWorkflowBatch, publicId: stagingWorkflowBatch, status: "draft", version: 1,
-        stateHash: "s".repeat(64), confirmationHash: null, confirmedVersion: null,
+        stateHash: "c".repeat(64), confirmationHash: null, confirmedVersion: null,
         borrowerPublicId: BORROWER_A, items: [], latestPreview: null,
         createdAt: "2026-08-23T00:00:00.000Z", updatedAt: "2026-08-23T00:00:00.000Z",
     },
@@ -1498,7 +1509,7 @@ const stagingWorkflowWorkspace = {
 };
 const stagingWorkflowPreview = {
     id: "0198c481-3e2b-7000-8000-000000000520", publicId: "0198c481-3e2b-7000-8000-000000000520",
-    batchPublicId: stagingWorkflowBatch, version: 1, status: "ready", stateHash: "s".repeat(64),
+    batchPublicId: stagingWorkflowBatch, version: 1, status: "ready", stateHash: "c".repeat(64),
     previewHash: `v1:${stagingWorkflowHash}`, confirmationHash: `v1:${"d".repeat(64)}`,
     evidenceReady: true,
     allocations: [{ itemPublicId: stagingWorkflowItem, borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A,
@@ -2480,10 +2491,24 @@ const SCENARIOS: Record<string, Scenario> = {
         script: [{ name: "payment.reconcile.reflow.preview", arguments: { reconciliationPublicId: ALLOCATION_PREVIEW, reason: "Repair stale legacy chronology" }, result: { publicId: ALLOCATION_CORRECTION, status: "ready", reconciliationGroupPublicId: ALLOCATION_PREVIEW, effectiveAfterDate: "2026-08-18", plan: { effectiveAfterDate: "2026-08-18", displacedTotal: "75.00", replacementTotal: "75.00", transactions: [] }, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, reason: "Repair stale legacy chronology", expiresAt: "2026-09-10T12:00:00.000Z", warnings: [] } }, { name: "payment.reconcile.reflow.execute", arguments: { reflowPreviewPublicId: ALLOCATION_CORRECTION, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION, confirmed: true, reason: "Repair stale legacy chronology", idempotencyKey: "legacy-reflow-stale" }, error: { code: "STALE_TEMPORAL_REFLOW_PREVIEW", message: "Temporal reflow preview is stale", retryable: false, reviewRequired: true, details: {} } }],
         run: async (mcp) => { const preview = await mcp.call("payment.reconcile.reflow.preview", { reconciliationPublicId: ALLOCATION_PREVIEW, reason: "Repair stale legacy chronology" }); try { await mcp.call("payment.reconcile.reflow.execute", { reflowPreviewPublicId: preview.publicId, previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "legacy-reflow-stale" }); } catch (error) { if (error instanceof ScriptedMcpError && error.code === "STALE_TEMPORAL_REFLOW_PREVIEW") return { outcome: "stopped", stopReason: "stale-reflow-preview" } as const; throw error; } return { outcome: "completed" } as const; },
     },
+    "payment-intake-cancel-confirmed": {
+        script: [
+            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: INTAKE, status: "ready", cancellation: { allowed: true, stateHash: "c".repeat(64), blockedReason: null, batchPublicId: null } } },
+            { name: "payment.cancel", arguments: { paymentIntakePublicId: INTAKE, reason: "Entered in error", idempotencyKey: "cancel-1", expectedStateHash: "c".repeat(64) }, result: { paymentIntakePublicId: INTAKE, status: "cancelled", reason: "Entered in error", cancelledAt: "2026-09-11T00:00:00.000Z", cancellationPublicId: COMMISSION_AUDIT, auditPublicId: COMMISSION_AUDIT, correlationId: COMMISSION_CORRELATION } },
+            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: INTAKE, status: "cancelled" } },
+        ],
+        run: async (mcp) => { const detail = await mcp.call("intake.get", { paymentIntakePublicId: INTAKE }); await mcp.call("payment.cancel", { paymentIntakePublicId: INTAKE, reason: "Entered in error", idempotencyKey: "cancel-1", expectedStateHash: (detail.cancellation as { stateHash: string }).stateHash }); await mcp.call("intake.get", { paymentIntakePublicId: INTAKE }); return { outcome: "completed" } as const; },
+    },
+    "payment-intake-cancel-stale-stop": {
+        script: [
+            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: INTAKE, status: "ready", cancellation: { allowed: true, stateHash: "c".repeat(64), blockedReason: null, batchPublicId: null } } },
+            { name: "payment.cancel", arguments: { paymentIntakePublicId: INTAKE, reason: "Entered in error", idempotencyKey: "cancel-stale", expectedStateHash: "c".repeat(64) }, error: { code: "PAYMENT_CANCEL_STALE", message: "Payment intake changed", retryable: false, reviewRequired: true, details: {} } },
+        ],
+        run: async (mcp) => { const detail = await mcp.call("intake.get", { paymentIntakePublicId: INTAKE }); try { await mcp.call("payment.cancel", { paymentIntakePublicId: INTAKE, reason: "Entered in error", idempotencyKey: "cancel-stale", expectedStateHash: detail.cancellation.stateHash }); } catch (error) { if (error instanceof ScriptedMcpError && error.code === "PAYMENT_CANCEL_STALE") return { outcome: "stopped", stopReason: "stale-cancellation-state" } as const; throw error; } return { outcome: "completed" } as const; },
+    },
 };
 
-const BATCH_EVAL_IDS = ["payment-batch-unique-exact", "payment-batch-ambiguous-stops", "payment-batch-human-explicit-edit", "payment-batch-duplicate-stops", "payment-batch-same-semantics-repreview", "payment-batch-changed-semantics-requires-confirmation", "payment-batch-resumable-staging", "payment-reconcile-legacy-reflow-confirmation", "payment-reconcile-legacy-reflow-stale-stops"];
-export const EVAL_SCENARIO_IDS = Object.freeze([...Object.keys(SCENARIOS).filter((id) => !BATCH_EVAL_IDS.includes(id)), ...BATCH_EVAL_IDS]);
+export const EVAL_SCENARIO_IDS = Object.freeze(Object.keys(SCENARIOS));
 
 export async function runEvalScenario(id: string, validators?: HarnessSchemaValidators): Promise<HarnessResult> {
     const scenario = SCENARIOS[id];

@@ -71,15 +71,17 @@ describe("temporal reflow migration", () => {
     integrationTest("applies 0070 from a real 0069 prefix and is idempotent", async () => {
         const journal = await Bun.file(`${root}drizzle/meta/_journal.json`).json() as { entries: Array<{ idx: number; tag: string; when: number }> };
         const entry = journal.entries.find((candidate) => candidate.tag === "0070_payment_reconciliation_temporal_reflow")!;
-        // The disposable database already contains the current schema. Reapply
-        // 0070 and its two append-only provenance migrations so the following
-        // immutability test sees the same current trigger set.
+        // Reconstruct the actual prefix, not only its migration journal. Keeping
+        // later columns while deleting their journal entries makes an additive
+        // migration run twice and does not represent a real upgrade.
+        const prefix = await migrationFixture("/tmp/creditsync-reflow-prefix", entry.idx - 1);
         const full = await migrationFixture("/tmp/creditsync-reflow-current");
         const scratch = postgres(process.env.TEST_DATABASE_URL!, { max: 1 });
         try {
                 const { drizzle } = await import("drizzle-orm/postgres-js");
                 const { migrate } = await import("drizzle-orm/postgres-js/migrator");
-                await scratch.unsafe(`DROP TABLE IF EXISTS payment_reconciliation_reflow_entries, payment_reconciliation_reflow_groups, payment_reconciliation_reflow_proposals CASCADE; DELETE FROM drizzle.__drizzle_migrations WHERE created_at >= ${entry.when}`);
+                await scratch.unsafe("DROP SCHEMA public CASCADE; DROP SCHEMA drizzle CASCADE; CREATE SCHEMA public");
+                await migrate(drizzle(scratch), { migrationsFolder: prefix });
                 expect(Array.from(await scratch`SELECT to_regclass('public.payment_reconciliation_reflow_groups')`)).toEqual([{ to_regclass: null }]);
                 const oldJournal = Array.from(await scratch`SELECT id, hash, created_at FROM drizzle.__drizzle_migrations ORDER BY id`);
                 await migrate(drizzle(scratch), { migrationsFolder: full });
@@ -92,9 +94,10 @@ describe("temporal reflow migration", () => {
                 expect(journalAfter.slice(0, oldJournal.length)).toEqual(oldJournal);
         } finally {
             await scratch.end();
+            await rm(prefix, { recursive: true, force: true });
             await rm(full, { recursive: true, force: true });
         }
-    });
+    }, 30_000);
 
     integrationTest("keeps reflow proposal identity immutable across its lifecycle", async () => {
         const sql = postgres(process.env.TEST_DATABASE_URL!, { max: 1 });

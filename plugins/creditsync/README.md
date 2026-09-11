@@ -1,10 +1,10 @@
-# CreditSync Plugin 10.0.0
+# CreditSync Plugin 10.1.0
 
 This private Codex plugin orchestrates the CreditSync MCP app for borrower and intermediary identity, payments, intermediary remittances and multi-leg disbursements, generalized floating-interest origination and settlement, effective-dated rate changes, direct loan disbursements, renewals, and append-only reversal.
 
 ## Package contract
 
-- Plugin version: `10.0.0`
+- Plugin version: `10.1.0`
 - MCP schema version: `1.0`
 - 11 orchestration skills: `creditsync`, `manage-borrowers`, `reconcile-payments`, `reconcile-intermediary-remittances`, `manage-loans`, `manage-floating-interest-rates`, `settle-floating-loans`, `manage-disbursements`, `manage-intermediated-disbursements`, `renew-daily-loan`, `restructure-loan`
 - App manifest: `.app.json`
@@ -15,6 +15,8 @@ The package does not contain an MCP URL, bearer token, `.mcp.json`, OAuth config
 For two or more slips belonging to one resolved borrower, use `payment.batch.capture` once, then prepare/finalize the complete evidence set with `payment.batch.evidence.prepare-many` and `payment.batch.evidence.finalize-many`. Preview the complete allocation set once, stop on ambiguity or duplicates, obtain one explicit confirmation, execute with stable idempotency, and verify every posted item. Never continue a partial batch.
 
 For resumable multi-slip work, inspect `payment.batch.workspace`, then use the staging review/edit tools only with the returned revision and reason. `payment.batch.split`, `payment.batch.decision`, and `payment.batch.cancel` are revision-bound and idempotent; every change requires a fresh preview/confirmation, and MCP calls the same backend services directly as REST without an internal REST hop. Candidate contracts and accounting amounts come from tenant-authorized backend inspection and planning; do not infer a mapping or calculate money in the agent.
+
+For an unwanted `draft`, `needs_review`, or `ready` intake, inspect the current detail and cancellation capability, obtain explicit confirmation of the normalized reason and state hash, then call `payment.cancel` once with a stable idempotency key. Cancellation preserves evidence and duplicate detection, is not a refund or debt waiver, and does not guarantee that another payment will pass the ordinary preview's separate chronology/dependency checks. Batch members must use the batch cancellation workflow; posted payments must use reversal.
 
 For a single ChatGPT-attached payment slip, create the intake and call `evidence.import-chatgpt-file` with the official top-level file parameter before previewing. The backend alone downloads and stores it; never expose file bytes, IDs, URLs, account details, QR payloads, or full references. A missing or unavailable file stops an image-first flow. Evidence received after posting uses `payment.evidence-supplement.import-chatgpt-file` followed by a separately confirmed, reasoned `payment.evidence-supplement.record`; it never edits or reposts the payment.
 

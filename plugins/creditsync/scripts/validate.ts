@@ -80,7 +80,7 @@ export async function validatePlugin() {
     const errors: string[] = [];
     const manifest = await parseJson(resolve(pluginRoot, ".codex-plugin/plugin.json"));
     if (manifest.name !== "creditsync") errors.push("manifest name must be creditsync");
-    if (manifest.version !== "10.0.0") errors.push("manifest version must be 10.0.0");
+    if (manifest.version !== "10.1.0") errors.push("manifest version must be 10.1.0");
     if (manifest.skills !== "./skills/") errors.push("manifest skills path must be ./skills/");
     if (manifest.apps !== "./.app.json") errors.push("manifest apps path must be ./.app.json");
     for (const field of ["mcpServers", "hooks", "ui", "oauth"]) {
@@ -168,7 +168,9 @@ export async function validatePlugin() {
     const cases = evals.cases ?? [];
     if (cases.filter((entry) => entry.kind === "positive").length < 8) errors.push("evals require at least eight positive workflows");
     if (cases.filter((entry) => entry.kind === "negative").length < 9) errors.push("evals require at least nine negative safety workflows");
-    if (!equalStrings(cases.map((entry) => entry.id), EVAL_SCENARIO_IDS)) errors.push("eval catalog and executable harness scenario order differ");
+    const catalogScenarioIds = cases.map((entry) => entry.id).sort();
+    const executableScenarioIds = [...EVAL_SCENARIO_IDS].sort();
+    if (!equalStrings(catalogScenarioIds, executableScenarioIds)) errors.push("eval catalog and executable harness scenario sets differ");
     const validTools = new Set<string>(MCP_TOOL_NAMES);
     for (const entry of cases) {
         if (!entry.id || !entry.prompt) errors.push("each eval requires id and prompt");
@@ -228,5 +230,5 @@ if (import.meta.main) {
     }
     const app = await parseJson(resolve(pluginRoot, ".app.json")) as { apps?: Record<string, { id?: string }> };
     const registration = classifyPrivateAppId(app.apps?.creditsync?.id);
-    console.log(`CreditSync plugin validation passed (10.0.0, 11 skills, ${MCP_TOOL_NAMES.length} tools, no bundled MCP/secrets; private app: ${registration}${registration === "placeholder" ? ", non-live" : ""}).`);
+    console.log(`CreditSync plugin validation passed (10.1.0, 11 skills, ${MCP_TOOL_NAMES.length} tools, no bundled MCP/secrets; private app: ${registration}${registration === "placeholder" ? ", non-live" : ""}).`);
 }

@@ -1,5 +1,14 @@
 # CreditSync Plugin Changelog
 
+## v10.1.0 - 2026-09-11
+
+### Added
+- Added `payment.cancel` for explicit, idempotent cancellation of authorized unposted payment intakes with stale-state and immutable receipt safeguards.
+- Documented batch routing, evidence retention, dependency limits, and the distinction between cancellation and refund.
+
+### Changed
+- Clarified that reversed intakes are terminal and must not be sent through cancellation or a second reversal, and kept atomic batch guidance under its own skill heading.
+
 ## v10.0.0 - 2026-09-10
 
 ### Added

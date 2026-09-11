@@ -1015,6 +1015,8 @@
         "preview": "Preview allocation",
         "post": "Confirm and post",
         "reverse": "Reverse posted payment",
+        "cancel": { "title": "Cancel payment intake", "description": "Remove this intake from processing queues while retaining its history and evidence. This is not a refund or debt waiver.", "reason": "Reason", "confirm": "Confirm cancellation", "button": "Cancel intake", "openBatch": "Open batch workflow" },
+        "cancelledHistory": "Cancelled: {{reason}} ({{date}}) by {{actor}}",
         "reversalReason": "Reason for reversal",
         "confirmReverse": "Confirm reversal",
         "lineage": { "repostedAfterReversal": "Posted again after reversal", "repostedBy": "A replacement payment was posted after this reversal", "viewOriginal": "View original payment", "viewRepost": "View reposted payment" },
@@ -1029,7 +1031,7 @@
         "auditFailed": "Unable to load the audit trail.",
         "status": {
             "draft": "Draft", "needs_review": "Needs review", "ready": "Ready", "posted": "Posted",
-            "reversed": "Reversed", "duplicate": "Duplicate", "pending": "Pending", "rejected": "Rejected", "stale": "Stale"
+            "reversed": "Reversed", "duplicate": "Duplicate", "cancelled": "Cancelled", "pending": "Pending", "rejected": "Rejected", "stale": "Stale"
         },
         "warnings": {
             "ALLOCATION_SUM_MISMATCH": "Allocation total does not match the intake amount.",
@@ -1038,7 +1040,7 @@
             "POSSIBLE_SEMANTIC_DUPLICATE": "Possible semantic duplicate found. Review the matching payments before posting.",
             "UNKNOWN": "Review this allocation warning before continuing."
         },
-        "errors": { "load": "Unable to load payment inbox.", "loadDetail": "Unable to load payment detail.", "action": "Payment action failed." }
+        "errors": { "load": "Unable to load payment inbox.", "loadDetail": "Unable to load payment detail.", "action": "Payment action failed.", "PAYMENT_CANCEL_BATCH_REQUIRED": "Cancel this intake through its batch workflow.", "PAYMENT_CANCEL_FORBIDDEN": "You are not authorized to cancel this intake.", "PAYMENT_CANCEL_STALE": "This intake changed. Review it again before cancelling.", "PAYMENT_REVERSE_REQUIRED": "Posted payments must use reversal.", "PAYMENT_CANCEL_NOT_ALLOWED": "This intake cannot be cancelled.", "PAYMENT_CANCEL_DEPENDENCY_REQUIRED": "A linked workflow must handle this cancellation.", "PAYMENT_BATCH_MUTATION_FORBIDDEN": "You are not authorized to change this batch." }
     },
     "renewal": {
         "title": "Daily Loan Renewal",

@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.4.40 - 2026-09-11
+
+### Added
+
+- Implemented authorized cancellation for unposted payment intakes across REST, MCP, and Web with stale-state protection, immutable receipts/audit, database guards, evidence retention, and posted-payment reversal routing.
+- Added cancellation regression coverage for authorization, replay, batch rollback, chronology, and Web retry/confirmation behavior, plus a synthetic browser suite covering Bangkok time and explicit batch navigation.
+
+### Fixed
+
+- Reconstructed the actual historical schema in the temporal-reflow migration upgrade test so later additive migrations are not applied over columns already present.
+- Preserved cancelled intake evidence and checksum reservations when an in-flight upload preparation fails or another intake attempts to reclaim expired evidence.
+- Fixed cancellation review retry intent retention across dialog close/reopen, stale-state notice preservation, Bangkok timezone formatting, and explicit authorized batch URL navigation with local-workspace precedence.
+
 ## v0.4.39 - 2026-09-11
 
 ### Added

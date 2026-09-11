@@ -22,6 +22,8 @@ CreditSync is designed for workflows like:
 - Capturing data-only or image-first repayments, reviewing matches, posting allocations, and reversing corrections
 
 Payment-slip batches support an upload-first, human-review-only OCR step after staging evidence is finalized. The local OCR boundary returns candidate amount, Bangkok transfer time, payer/receiver, fee, and a hashed reference; it verifies downloaded bytes against the finalized evidence checksum, serializes extraction receipts by tenant/key, and does not create an intake, choose a borrower/loan, calculate accounting, or post money. Missing or ambiguous fields stay unresolved for manual review, and the existing evidence checksum/revision gates require a fresh preview after any change.
+
+Unposted payment intakes can be explicitly cancelled from the Web inbox or MCP after inspecting the server-derived capability and confirming a reason/state hash. Cancellation retains the original evidence and audit history, excludes the intake from processing, and is not a refund or debt waiver; posted records continue through the existing compensating reversal workflow.
 - Calculating closing balances for early payoff
 - Tracking source-of-funds profiles and traceability between bank funding and downstream loans
 - Receiving images from LINE webhooks and storing them for later processing
@@ -585,6 +587,15 @@ bun run test:e2e
 ```
 
 This browser harness is UI workflow evidence; backend financial invariants and real OCR runtime checks remain separate disposable/test-only gates.
+
+The cancellation browser suite uses a separate local port (`5197`) and mocked API data. It checks explicit batch navigation, confirmation, retained history, and Bangkok timestamps from a browser outside Thailand:
+
+```bash
+cd frontend
+bun x playwright test --config playwright.cancellation.config.ts
+```
+
+Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to an existing Chromium executable when not using Playwright's bundled browser. For a resource-constrained machine, run the full Vitest suite with `bun run test --maxWorkers=2`.
 
 `frontend/bunfig.toml` preloads the local Happy DOM and Testing Library matcher setup for Bun-native DOM tests; Vitest continues to use its separate jsdom configuration for the full frontend suite.
 

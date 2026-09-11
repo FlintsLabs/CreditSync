@@ -1399,6 +1399,15 @@ export const paymentIntakes = pgTable("payment_intakes", {
     createdByUserId: integer("created_by_user_id"),
     updatedByUserId: integer("updated_by_user_id"),
     postedByUserId: integer("posted_by_user_id"),
+    cancellationReason: text("cancellation_reason"),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    cancelledByUserId: integer("cancelled_by_user_id"),
+    cancellationActorSource: text("cancellation_actor_source"),
+    cancellationRequestId: text("cancellation_request_id"),
+    cancellationCorrelationId: text("cancellation_correlation_id"),
+    cancellationIdempotencyKey: text("cancellation_idempotency_key"),
+    cancellationRequestHash: text("cancellation_request_hash"),
+    cancellationAuditPublicId: uuid("cancellation_audit_public_id"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
@@ -1419,8 +1428,9 @@ export const paymentIntakes = pgTable("payment_intakes", {
         .on(table.tenantId, table.originLoanId, table.receivedAt),
     check(
         "payment_intakes_status_check",
-        sql`${table.status} IN ('draft', 'needs_review', 'ready', 'posted', 'reversed', 'duplicate')`,
+        sql`${table.status} IN ('draft', 'needs_review', 'ready', 'posted', 'reversed', 'duplicate', 'cancelled')`,
     ),
+    check("payment_intakes_cancellation_lifecycle_check", sql`(${table.status} = 'cancelled' AND ${table.cancellationReason} IS NOT NULL AND length(trim(${table.cancellationReason})) BETWEEN 1 AND 2000 AND ${table.cancelledAt} IS NOT NULL AND ${table.cancelledByUserId} IS NOT NULL AND ${table.cancellationActorSource} IS NOT NULL AND length(trim(${table.cancellationActorSource})) > 0 AND ${table.cancellationRequestId} IS NOT NULL AND length(trim(${table.cancellationRequestId})) > 0 AND ${table.cancellationCorrelationId} IS NOT NULL AND length(trim(${table.cancellationCorrelationId})) > 0 AND ${table.cancellationIdempotencyKey} IS NOT NULL AND length(trim(${table.cancellationIdempotencyKey})) > 0 AND ${table.cancellationRequestHash} IS NOT NULL AND ${table.cancellationAuditPublicId} IS NOT NULL) OR (${table.status} <> 'cancelled' AND ${table.cancellationReason} IS NULL AND ${table.cancelledAt} IS NULL AND ${table.cancelledByUserId} IS NULL AND ${table.cancellationActorSource} IS NULL AND ${table.cancellationRequestId} IS NULL AND ${table.cancellationCorrelationId} IS NULL AND ${table.cancellationIdempotencyKey} IS NULL AND ${table.cancellationRequestHash} IS NULL AND ${table.cancellationAuditPublicId} IS NULL)`),
     foreignKey({
         name: "payment_intakes_tenant_owner_fk",
         columns: [table.tenantId, table.ownerUserId],
@@ -1456,6 +1466,34 @@ export const paymentIntakes = pgTable("payment_intakes", {
         columns: [table.tenantId, table.postedByUserId],
         foreignColumns: [users.tenantId, users.id],
     }),
+    foreignKey({ name: "payment_intakes_tenant_cancelled_by_fk", columns: [table.tenantId, table.cancelledByUserId], foreignColumns: [users.tenantId, users.id] }),
+    foreignKey({ name: "payment_intakes_tenant_cancellation_audit_fk", columns: [table.tenantId, table.cancellationAuditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
+]);
+
+export const paymentIntakeCancellations = pgTable("payment_intake_cancellations", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    paymentIntakeId: integer("payment_intake_id").notNull(),
+    operationKey: text("operation_key").notNull(),
+    requestHash: text("request_hash").notNull(),
+    reason: text("reason").notNull(),
+    originalStatus: text("original_status").notNull(),
+    actorUserId: integer("actor_user_id"),
+    actorSource: text("actor_source").notNull(),
+    requestId: text("request_id").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    auditPublicId: uuid("audit_public_id").notNull(),
+    originalResult: jsonb("original_result").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_intake_cancellations_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("payment_intake_cancellations_tenant_operation_unique").on(table.tenantId, table.operationKey),
+    uniqueIndex("payment_intake_cancellations_tenant_intake_unique").on(table.tenantId, table.paymentIntakeId),
+    foreignKey({ name: "payment_intake_cancellations_tenant_intake_fk", columns: [table.tenantId, table.paymentIntakeId], foreignColumns: [paymentIntakes.tenantId, paymentIntakes.id] }),
+    foreignKey({ name: "payment_intake_cancellations_tenant_actor_fk", columns: [table.tenantId, table.actorUserId], foreignColumns: [users.tenantId, users.id] }),
+    foreignKey({ name: "payment_intake_cancellations_tenant_audit_fk", columns: [table.tenantId, table.auditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
+    check("payment_intake_cancellations_reason_check", sql`length(trim(${table.reason})) BETWEEN 1 AND 2000`),
 ]);
 
 export const paymentEvidence = pgTable("payment_evidence", {

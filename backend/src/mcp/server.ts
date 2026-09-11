@@ -40,6 +40,7 @@ export const MCP_TOOL_NAMES = [
     "payment.evidence-supplement.import-chatgpt-file",
     "payment.evidence-supplement.record",
     "payment.preview",
+    "payment.cancel",
     "payment.post",
     "payment.reverse",
     "payment.reverse-with-accrual.preview",
@@ -178,6 +179,9 @@ const signedMoney = z.string().regex(/^-?(0|[1-9]\d*)\.\d{2}$/).max(33);
 const date = z.iso.date();
 const dateTime = z.iso.datetime({ offset: true });
 const shortText = z.string().trim().min(1).max(500);
+// Keep the MCP schema JSON-representable; canonical control-character removal
+// and post-normalization blank validation live in the shared service.
+const cancellationReason = z.string().min(1).max(2000);
 const optionalNullableText = z.string().trim().max(2_000).nullable().optional();
 const correctionScheduleProjectionOutput = z.object({
     schedulePublicId: uuid,
@@ -347,6 +351,9 @@ const borrowerOutput = z.object({
     notes: z.string().nullable().optional(),
     createdAt: nullableIsoDateTime.optional(),
     updatedAt: nullableIsoDateTime.optional(),
+    cancellationMetadata: z.object({
+        reason: z.string().nullable(), cancelledAt: nullableIsoDateTime, actorUserId: z.number().int().nullable(), auditPublicId: uuid.nullable(),
+    }).optional(),
 }).strict();
 const replacementLineageEventOutput = z.object({
     replacementPublicId: uuid,
@@ -386,6 +393,11 @@ const intakeOutput = z.object({
     updatedAt: nullableIsoDateTime.optional(),
     repostOfIntakePublicId: uuid.nullable(),
     repostedByIntakePublicId: uuid.nullable(),
+    cancellationMetadata: z.object({ reason: z.string().nullable(), cancelledAt: nullableIsoDateTime, auditPublicId: uuid.nullable(), actorPublicId: uuid.nullable() }).nullable().optional(),
+}).strict();
+const paymentCancellationOutput = z.object({
+    paymentIntakePublicId: uuid, status: z.literal("cancelled"), reason: z.string(), cancelledAt: isoDateTime,
+    cancellationPublicId: uuid, auditPublicId: uuid, correlationId: uuid,
 }).strict();
 const proposalAllocationOutput = z.object({
     ...publicEntity,
@@ -1198,6 +1210,7 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
             filePublicId: uuid.nullable(),
         }).strict()),
         latestProposal: proposalOutput.nullable(),
+        cancellation: z.object({ allowed: z.boolean(), stateHash: z.string().regex(/^[0-9a-f]{64}$/i), blockedReason: z.string().nullable(), batchPublicId: uuid.nullable() }).strict(),
     }),
     "intake.list": z.object({ items: z.array(intakeOutput) }).strict(),
     "intake.create": z.union([
@@ -1210,6 +1223,7 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "payment.evidence-supplement.import-chatgpt-file": evidenceFinalOutput.extend(writeAuditMetadata).strict(),
     "payment.evidence-supplement.record": evidenceFinalOutput.extend(writeAuditMetadata).strict(),
     "payment.preview": proposalOutput,
+    "payment.cancel": paymentCancellationOutput,
     "payment.post": intakeOutput.extend({ transactions: z.array(transactionOutput) }),
     "payment.reverse": intakeOutput.extend({ transactions: z.array(transactionOutput) }),
     "payment.reverse-with-accrual.preview": z.object({
@@ -1563,6 +1577,7 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
         paymentIntakePublicId: uuid,
         allocations: z.array(explicitAllocation).max(1_000).optional(),
     }).strict(),
+    "payment.cancel": z.object({ paymentIntakePublicId: uuid, reason: cancellationReason, idempotencyKey: z.string().trim().min(1).max(200), expectedStateHash: z.string().regex(/^[0-9a-f]{64}$/i) }).strict(),
     "payment.post": z.object({ paymentIntakePublicId: uuid, proposalPublicId: uuid }).strict(),
     "payment.reverse": z.object({
         paymentIntakePublicId: uuid,
@@ -2094,6 +2109,7 @@ const destructiveTools = new Set<McpToolName>([
     "payment.evidence-supplement.record",
     "payment.preview",
     "payment.post",
+    "payment.cancel",
     "payment.reverse",
     "payment.batch.create",
     "payment.batch.capture",
@@ -2201,6 +2217,7 @@ const idempotentTools = new Set<McpToolName>([
     "payment.evidence-supplement.import-chatgpt-file",
     "payment.evidence-supplement.record",
     "payment.post",
+    "payment.cancel",
     "payment.reverse",
     "payment.reconcile.execute",
     "payment.allocation-correction.execute",
@@ -2260,6 +2277,7 @@ const toolDescriptions: Record<McpToolName, string> = {
     "payment.evidence-supplement.record": "Record ready supplemental evidence after explicit operator confirmation.",
     "payment.preview": "Preview and persist a versioned payment match proposal.",
     "payment.post": "Post a ready payment proposal atomically.",
+    "payment.cancel": "Cancel an authorized unposted payment intake with an immutable receipt.",
     "payment.reverse": "Reverse a posted payment with compensating entries.",
     "payment.reverse-with-accrual.preview": "Preview reversing a floating-loan payment and materializing missing interest accruals through the original payment date.",
     "payment.reverse-with-accrual.execute": "Execute a confirmed atomic payment reversal with floating interest accrual materialization.",
