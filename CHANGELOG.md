@@ -4,7 +4,7 @@
 
 ### Added
 
-- Documented the approved append-only payment-intake cancellation design for unposted workflow states, chronology unblocking, Web/MCP parity, and posted-payment reversal routing.
+- Documented and reviewed the payment-intake cancellation design and implementation plan, including stale-state protection, immutable receipts, dependency and batch handling, Web/MCP parity, chronology exclusions, and posted-payment reversal routing; implementation is pending.
 
 ## v0.4.38 - 2026-09-10
 
