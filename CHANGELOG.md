@@ -11,6 +11,7 @@
 
 - Reconstructed the actual historical schema in the temporal-reflow migration upgrade test so later additive migrations are not applied over columns already present.
 - Preserved cancelled intake evidence and checksum reservations when an in-flight upload preparation fails or another intake attempts to reclaim expired evidence.
+- Rejected malformed cancellation UUIDs at the REST boundary as client validation errors before database access.
 - Fixed cancellation review retry intent retention across dialog close/reopen, stale-state notice preservation, Bangkok timezone formatting, and explicit authorized batch URL navigation with local-workspace precedence.
 
 ## v0.4.39 - 2026-09-11

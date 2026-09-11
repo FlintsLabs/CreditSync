@@ -122,7 +122,7 @@ export const paymentIntakesRoute = new Elysia({ prefix: "/payment-intakes" })
             return domainFailure(error, set);
         }
     }, {
-        params: t.Object({ id: t.String() }),
+        params: t.Object({ id: t.String({ format: "uuid" }) }),
         body: t.Object({ reason: t.String(), idempotencyKey: t.String(), expectedStateHash: t.String() }, { additionalProperties: t.Never() }),
     })
     .post("/:id/evidence/upload-intents", async ({ params, body, user, request, set }) => {
