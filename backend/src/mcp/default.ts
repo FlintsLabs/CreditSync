@@ -252,9 +252,17 @@ export function createDefaultMcpToolHandlers(
         asString(input, "paymentIntakePublicId"),
         { allocations: input.allocations as ExplicitPaymentAllocation[] | undefined },
     ),
-    "payment.cancel": (ctx, input) => cancelPaymentIntake(ctx, asString(input, "paymentIntakePublicId"), {
-        reason: asString(input, "reason"), idempotencyKey: asString(input, "idempotencyKey"), expectedStateHash: asString(input, "expectedStateHash"),
-    }),
+    "payment.cancel": (ctx, input) => {
+        const inputKey = input.idempotencyKey as string | undefined;
+        if (ctx.idempotencyKey && inputKey && ctx.idempotencyKey.trim() !== inputKey.trim()) {
+            throw new DomainError("IDEMPOTENCY_CONFLICT", "Command and transport idempotency keys differ", 409);
+        }
+        // The HTTP MCP boundary moves this field from arguments into context.
+        const idempotencyKey = ctx.idempotencyKey ?? inputKey ?? "";
+        return cancelPaymentIntake({ ...ctx, idempotencyKey }, asString(input, "paymentIntakePublicId"), {
+            reason: asString(input, "reason"), idempotencyKey, expectedStateHash: asString(input, "expectedStateHash"),
+        });
+    },
     "payment.post": (ctx, input) => postPayment(
         paymentPostCommandContext(ctx, input),
         asString(input, "paymentIntakePublicId"),

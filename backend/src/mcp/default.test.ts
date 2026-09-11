@@ -2023,6 +2023,25 @@ describe("default MCP adapter integration", () => {
             limit: 10,
         });
 
+        const cancellationDraft = (await call("intake.create", {
+            amount: "1.00", receivedAt: "2026-08-10T10:00:00.000Z",
+            payerName: "Synthetic cancellation contract draft",
+            idempotencyKey: "mcp-contract-cancellation-draft",
+        })).data;
+        const cancellationDetail = (await call("intake.get", {
+            paymentIntakePublicId: cancellationDraft.publicId,
+        })).data;
+        const cancellationCapability = cancellationDetail.cancellation as { allowed: boolean; stateHash: string };
+        expect(cancellationCapability.allowed).toBe(true);
+        const cancellationResult = (await call("payment.cancel", {
+            paymentIntakePublicId: cancellationDraft.publicId,
+            reason: "Explicit synthetic cancellation confirmation",
+            idempotencyKey: "mcp-contract-cancel-draft",
+            expectedStateHash: cancellationCapability.stateHash,
+        })).data;
+        expect(cancellationResult).toMatchObject({ status: "cancelled", paymentIntakePublicId: cancellationDraft.publicId });
+        expectWriteAuditMetadata(cancellationResult);
+
         const resumableBatchTools = new Set<McpToolName>([
             "payment.batch.stage", "payment.batch.staging.evidence.prepare", "payment.batch.staging.evidence.finalize",
             "payment.batch.workspace", "payment.batch.candidates", "payment.batch.staging.review", "payment.batch.staging.edit",
@@ -2035,9 +2054,11 @@ describe("default MCP adapter integration", () => {
         expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length - resumableBatchTools.size - separatelyCoveredReflowTools.size);
         expect(called.filter((name) => name === "intermediary.disbursement.event.create")).toHaveLength(2);
         expect(called.filter((name) => name === "loan.restructure.execute")).toHaveLength(2);
-        expect(called).toHaveLength(MCP_TOOL_NAMES.length - resumableBatchTools.size - separatelyCoveredReflowTools.size + 7);
+        expect(called).toHaveLength(MCP_TOOL_NAMES.length - resumableBatchTools.size - separatelyCoveredReflowTools.size + 9);
 
         await client.close();
 
-    }, 10_000);
+    // This is a serial compatibility tour of over one hundred tools, not a
+    // latency assertion. Keep all contract checks while allowing DB-backed work.
+    }, 30_000);
 });

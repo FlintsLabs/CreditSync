@@ -6,12 +6,14 @@
 
 - Implemented authorized cancellation for unposted payment intakes across REST, MCP, and Web with stale-state protection, immutable receipts/audit, database guards, evidence retention, and posted-payment reversal routing.
 - Added cancellation regression coverage for authorization, replay, batch rollback, chronology, and Web retry/confirmation behavior, plus a synthetic browser suite covering Bangkok time and explicit batch navigation.
+- Exercised `payment.cancel` through the real HTTP MCP adapter in the complete tool-contract tour; retained all contract assertions with a bounded 30-second allowance for its serial database workflows.
 
 ### Fixed
 
 - Reconstructed the actual historical schema in the temporal-reflow migration upgrade test so later additive migrations are not applied over columns already present.
 - Preserved cancelled intake evidence and checksum reservations when an in-flight upload preparation fails or another intake attempts to reclaim expired evidence.
 - Rejected malformed cancellation UUIDs at the REST boundary as client validation errors before database access.
+- Preserved cancellation idempotency keys when the HTTP MCP boundary transfers them from tool arguments into command context.
 - Fixed cancellation review retry intent retention across dialog close/reopen, stale-state notice preservation, Bangkok timezone formatting, and explicit authorized batch URL navigation with local-workspace precedence.
 
 ## v0.4.39 - 2026-09-11
