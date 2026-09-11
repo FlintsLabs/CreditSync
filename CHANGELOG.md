@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.39 - 2026-09-11
+
+### Added
+
+- Documented the approved append-only payment-intake cancellation design for unposted workflow states, chronology unblocking, Web/MCP parity, and posted-payment reversal routing.
+
 ## v0.4.38 - 2026-09-10
 
 ### Added
