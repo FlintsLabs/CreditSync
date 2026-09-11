@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.41 - 2026-09-12
+
+### Fixed
+
+- Ordered the unapplied payment-intake cancellation migration after the independently deployed service-account migration watermark, preserving its SQL hash and all existing migration receipts. Added a disposable PostgreSQL upgrade/replay regression for this production lineage.
+
 ## v0.4.40 - 2026-09-11
 
 ### Added
