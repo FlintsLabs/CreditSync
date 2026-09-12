@@ -51,6 +51,16 @@ function presentCollection(row: typeof intermediaryCollections.$inferSelect) {
     return { publicId: row.publicId, intermediaryId: row.intermediaryId, borrowerId: row.borrowerId, loanId: row.loanId, amount: serializeMoney(row.amount), borrowerPaidAt: row.borrowerPaidAt.toISOString(), status: row.status, bankReference: row.bankReference, note: row.note, manualApprovalReason: row.manualApprovalReason, linkedPaymentIntake: Boolean(row.postedPaymentIntakeId), createdAt: row.createdAt, updatedAt: row.updatedAt };
 }
 
+type ChronologicalIntermediaryCollection = Pick<typeof intermediaryCollections.$inferSelect, "borrowerPaidAt" | "createdAt" | "publicId">;
+
+export function sortIntermediaryCollectionsChronologically<T extends ChronologicalIntermediaryCollection>(rows: readonly T[]) {
+    return [...rows].sort((left, right) => (
+        left.borrowerPaidAt.getTime() - right.borrowerPaidAt.getTime()
+        || left.createdAt.getTime() - right.createdAt.getTime()
+        || left.publicId.localeCompare(right.publicId)
+    ));
+}
+
 export async function createIntermediary(ctx: CommandContext, input: { name: string; aliases?: string[]; notes?: string | null }) {
     const name = input.name?.trim();
     const normalizedName = normalizeIntermediaryText(name ?? "");
@@ -367,7 +377,8 @@ export async function finalizeIntermediaryRemittanceEvidence(ctx: CommandContext
 
 async function remittanceSelection(executor: DbExecutor, tenantId: string, remittanceId: number) {
     const allocations = await executor.select().from(intermediaryRemittanceAllocations).where(and(eq(intermediaryRemittanceAllocations.tenantId, tenantId), eq(intermediaryRemittanceAllocations.remittanceId, remittanceId), sql`${intermediaryRemittanceAllocations.releasedAt} IS NULL`)).orderBy(intermediaryRemittanceAllocations.allocationOrder);
-    const collections = allocations.length ? await executor.select().from(intermediaryCollections).where(and(eq(intermediaryCollections.tenantId, tenantId), inArray(intermediaryCollections.id, allocations.map((row: typeof intermediaryRemittanceAllocations.$inferSelect) => row.collectionId)))) : [];
+    const selectedCollections = allocations.length ? await executor.select().from(intermediaryCollections).where(and(eq(intermediaryCollections.tenantId, tenantId), inArray(intermediaryCollections.id, allocations.map((row: typeof intermediaryRemittanceAllocations.$inferSelect) => row.collectionId)))) : [];
+    const collections = sortIntermediaryCollectionsChronologically(selectedCollections);
     return { allocations, collections, selected: collections.reduce((sum: Decimal, row: typeof intermediaryCollections.$inferSelect) => sum.plus(row.amount), new Decimal(0)) };
 }
 
@@ -398,7 +409,8 @@ export async function saveRemittanceAllocations(ctx: CommandContext, publicId: s
         const total = selected.reduce((sum: Decimal, row: typeof intermediaryCollections.$inferSelect) => sum.plus(row.amount), new Decimal(0));
         const status = total.eq(remittance.grossAmount) ? "ready" : "needs_review";
         const updated = await tx.update(intermediaryRemittances).set({ status, updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(eq(intermediaryRemittances.id, remittance.id)).returning().then((rows) => rows[0]!);
-        return { ...presentRemittance(updated, total), collectionPublicIds: input.collectionPublicIds };
+        const canonicalSelected = sortIntermediaryCollectionsChronologically(selected);
+        return { ...presentRemittance(updated, total), collectionPublicIds: canonicalSelected.map((row) => row.publicId) };
     });
 }
 
