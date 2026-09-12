@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.42 - 2026-09-13
+
+### Fixed
+
+- Made payment chronology treat a stale draft batch as resolved when every linked intake is terminal, while continuing to block unlinked or pending staging members; added regression coverage for posted, reversed, mixed, duplicate, and idempotent batch flows.
+
 ## v0.4.41 - 2026-09-12
 
 ### Fixed

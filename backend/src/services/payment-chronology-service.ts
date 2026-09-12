@@ -39,7 +39,7 @@ export async function assertNoOlderPendingPayment(tx: DbExecutor, tenantId: stri
     // Latest proposal is authoritative even if origin_loan_id was never set.
     // Cancelled batches do not remain artificial chronology dependencies.
     const pending = await tx.execute(sql`SELECT i.public_id FROM payment_intakes i
-        WHERE i.tenant_id = ${tenantId} AND i.status NOT IN ('posted', 'reversed', 'cancelled', 'rejected')
+        WHERE i.tenant_id = ${tenantId} AND i.status NOT IN ('posted', 'reversed', 'cancelled', 'rejected', 'duplicate')
           AND i.received_at < ${receivedAt.toISOString()} ${excluded}
           AND NOT EXISTS (SELECT 1 FROM payment_batch_items bi JOIN payment_batches b ON b.tenant_id = bi.tenant_id AND b.id = bi.batch_id WHERE bi.tenant_id = i.tenant_id AND bi.payment_intake_id = i.id AND b.status = 'cancelled')
           AND (
@@ -69,9 +69,11 @@ export async function assertNoOlderPendingPayment(tx: DbExecutor, tenantId: stri
     const stagedExcluded = excludedIntakeIds.length ? sql`AND (si.payment_intake_id IS NULL OR si.payment_intake_id NOT IN (${sql.join(excludedIntakeIds.map((id) => sql`${id}`), sql`, `)}))` : sql``;
     const stagedPending = await tx.execute(sql`SELECT si.public_id FROM payment_batch_staging_items si
         JOIN payment_batches b ON b.tenant_id = si.tenant_id AND b.id = si.batch_id
+        LEFT JOIN payment_intakes linked_intake ON linked_intake.tenant_id = si.tenant_id AND linked_intake.id = si.payment_intake_id
         JOIN borrowers br ON br.tenant_id = si.tenant_id AND br.id = ${borrowerId}
         WHERE si.tenant_id = ${tenantId} ${stagedExcluded} AND si.status <> 'failed'
           AND b.status NOT IN ('posted', 'cancelled') AND si.received_at < ${receivedAt.toISOString()}
+          AND (linked_intake.id IS NULL OR linked_intake.status NOT IN ('posted', 'reversed', 'cancelled', 'rejected', 'duplicate'))
           AND si.resolution_state = 'mapped'
           AND ((si.reviewed_mapping->>'borrowerPublicId') = br.public_id::text
             OR (si.reviewed_mapping->>'loanPublicId') IN (SELECT public_id::text FROM loans WHERE tenant_id = ${tenantId} AND borrower_id = ${borrowerId}))

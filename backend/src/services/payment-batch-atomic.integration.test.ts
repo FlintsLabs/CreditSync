@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, fundLedgerEntries, loanSchedules, loans, paymentBatchAllocations, paymentBatchPreviews, paymentBatches, paymentIntakes, transactions, users } from "../db/schema";
+import { borrowers, fundLedgerEntries, loanSchedules, loans, paymentBatchAllocations, paymentBatchItems, paymentBatchPreviews, paymentBatches, paymentIntakes, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import { addPaymentBatchItem, createPaymentBatch, decidePaymentBatch, executePaymentBatch, previewPaymentBatch, splitPaymentBatch } from "./payment-batch-service";
 import { postPayment, previewPaymentMatch, reversePayment } from "./payment-service";
@@ -78,6 +78,33 @@ integration("single posting cannot bypass the gate of an unposted batch", async 
     const proposal = await previewPaymentMatch(f.ctx, f.intakes[0]!.publicId, { allocations: [{ borrowerPublicId: f.borrower.publicId, loanPublicId: allocation.loanPublicId, schedulePublicId: allocation.schedulePublicId!, amount: "30.00" }] });
     await expect(postPayment(f.ctx, f.intakes[0]!.publicId, { proposalPublicId: proposal.publicId })).rejects.toThrow("batch");
     expect(await db.select().from(transactions).where(eq(transactions.tenantId, f.ctx.tenantId))).toHaveLength(0);
+});
+
+integration("a draft batch containing only a posted intake does not block a later batch", async () => {
+    const f = await fixture();
+    const oldIntake = await db.insert(paymentIntakes).values({
+        tenantId: f.ctx.tenantId,
+        ownerUserId: f.ctx.actorUserId!,
+        amount: "30.00",
+        receivedAt: new Date("2026-08-20T03:00:00Z"),
+        status: "posted",
+        postedAt: new Date("2026-08-20T03:01:00Z"),
+        postedByUserId: f.ctx.actorUserId!,
+        createdByUserId: f.ctx.actorUserId!,
+    }).returning().then((rows) => rows[0]!);
+    const oldBatch = await db.insert(paymentBatches).values({
+        tenantId: f.ctx.tenantId,
+        borrowerId: f.borrower.id,
+        status: "draft",
+        version: 1,
+        stateHash: "v1:old-draft-posted",
+        createIdempotencyKey: "old-draft-posted",
+        createdByUserId: f.ctx.actorUserId!,
+        updatedByUserId: f.ctx.actorUserId!,
+    }).returning().then((rows) => rows[0]!);
+    await db.insert(paymentBatchItems).values({ tenantId: f.ctx.tenantId, batchId: oldBatch.id, paymentIntakeId: oldIntake.id, itemOrder: 1 });
+
+    await expect(previewPaymentBatch(f.ctx, f.batch.publicId, { borrowerPublicId: f.borrower.publicId, allocations: f.allocations })).resolves.toMatchObject({ status: "ready" });
 });
 
 integration("an older standalone resolved proposal blocks a later batch even without originLoanId", async () => {

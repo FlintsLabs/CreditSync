@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, files, loans, paymentBatchItems, paymentEvidence, paymentIntakeCancellations, paymentIntakes, users } from "../db/schema";
+import { borrowers, files, loans, paymentBatchItems, paymentBatches, paymentBatchStagingItems, paymentEvidence, paymentIntakeCancellations, paymentIntakes, users } from "../db/schema";
 import { assertNoOlderPendingPayment } from "./payment-chronology-service";
 import { Elysia } from "elysia";
 import { paymentIntakesRoute } from "../modules/payment-intakes";
@@ -182,6 +182,52 @@ suite("independent payment cancellation acceptance", () => {
         await cancelPaymentIntake(ctx, second.publicId, await request(second.publicId));
         await check();
         expect(await db.select().from(paymentIntakeCancellations)).toHaveLength(2);
+    });
+
+    test("legacy duplicate intake does not block later chronology, but an older draft still does", async () => {
+        const [borrower] = await db.insert(borrowers).values({ tenantId: ctx.tenantId, ownerUserId: ctx.actorUserId, name: "Synthetic duplicate chronology" }).returning();
+        const duplicate = await createPaymentIntake(ctx, { amount: "1.00", receivedAt: "2026-09-04T17:00:00.000Z", payerName: "Legacy duplicate" });
+        const duplicateBatch = await createPaymentBatch(ctx, { idempotencyKey: crypto.randomUUID(), borrowerPublicId: borrower!.publicId });
+        await addPaymentBatchItem(ctx, duplicateBatch.publicId, { paymentIntakePublicId: duplicate.publicId, itemOrder: 1 });
+        await db.update(paymentIntakes).set({ status: "duplicate", updatedAt: new Date() }).where(eq(paymentIntakes.publicId, duplicate.publicId));
+
+        const laterReceivedAt = new Date("2026-09-10T04:15:00.000Z");
+        await assertNoOlderPendingPayment(db, ctx.tenantId, borrower!.id, laterReceivedAt, []);
+
+        const draft = await createPaymentIntake(ctx, { amount: "2.00", receivedAt: "2026-09-05T17:00:00.000Z", payerName: "Older draft" });
+        const draftBatch = await createPaymentBatch(ctx, { idempotencyKey: crypto.randomUUID(), borrowerPublicId: borrower!.publicId });
+        await addPaymentBatchItem(ctx, draftBatch.publicId, { paymentIntakePublicId: draft.publicId, itemOrder: 1 });
+        await expect(assertNoOlderPendingPayment(db, ctx.tenantId, borrower!.id, laterReceivedAt, [])).rejects.toMatchObject({ code: "PAYMENT_CHRONOLOGY_CONFLICT" });
+    });
+
+    test("a validated staging row for a posted intake does not block later chronology", async () => {
+        const [borrower] = await db.insert(borrowers).values({ tenantId: ctx.tenantId, ownerUserId: ctx.actorUserId, name: "Synthetic posted batch borrower" }).returning();
+        const [batch] = await db.insert(paymentBatches).values({ tenantId: ctx.tenantId, borrowerId: borrower!.id, status: "draft", version: 1, stateHash: "v1:posted-member", createIdempotencyKey: crypto.randomUUID(), createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning();
+        const [intake] = await db.insert(paymentIntakes).values({ tenantId: ctx.tenantId, ownerUserId: ctx.actorUserId, amount: "10.00", receivedAt: new Date("2026-09-05T08:00:00.000Z"), status: "posted", postedAt: new Date("2026-09-05T08:01:00.000Z"), postedByUserId: ctx.actorUserId, createdByUserId: ctx.actorUserId }).returning();
+        const [staging] = await db.insert(paymentBatchStagingItems).values({ tenantId: ctx.tenantId, batchId: batch!.id, clientItemKey: "posted-member", payloadFingerprint: "posted-member-fingerprint", amount: "10.00", receivedAt: intake!.receivedAt, status: "validated", paymentIntakeId: intake!.id, reviewedMapping: { borrowerPublicId: borrower!.publicId }, resolutionState: "mapped", createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning();
+        const [item] = await db.insert(paymentBatchItems).values({ tenantId: ctx.tenantId, batchId: batch!.id, paymentIntakeId: intake!.id, stagingItemId: staging!.id, itemOrder: 1 }).returning();
+        await db.update(paymentBatchStagingItems).set({ batchItemId: item!.id }).where(eq(paymentBatchStagingItems.id, staging!.id));
+
+        await assertNoOlderPendingPayment(db, ctx.tenantId, borrower!.id, new Date("2026-09-06T08:00:00.000Z"), []);
+        // Reversal is the valid terminal transition for an already posted intake.
+        for (const status of ["reversed"] as const) {
+            await db.update(paymentIntakes).set({ status, updatedAt: new Date() }).where(eq(paymentIntakes.id, intake!.id));
+            await assertNoOlderPendingPayment(db, ctx.tenantId, borrower!.id, new Date("2026-09-06T08:00:00.000Z"), []);
+        }
+    });
+
+    test("a pending member still blocks when its batch also contains a posted member", async () => {
+        const [borrower] = await db.insert(borrowers).values({ tenantId: ctx.tenantId, ownerUserId: ctx.actorUserId, name: "Synthetic mixed batch borrower" }).returning();
+        const [batch] = await db.insert(paymentBatches).values({ tenantId: ctx.tenantId, borrowerId: borrower!.id, status: "draft", version: 1, stateHash: "v1:mixed-members", createIdempotencyKey: crypto.randomUUID(), createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning();
+        for (const [index, status] of (["posted", "draft"] as const).entries()) {
+            const receivedAt = new Date(`2026-09-05T0${8 + index}:00:00.000Z`);
+            const [intake] = await db.insert(paymentIntakes).values({ tenantId: ctx.tenantId, ownerUserId: ctx.actorUserId, amount: "10.00", receivedAt, status, ...(status === "posted" ? { postedAt: new Date(receivedAt.getTime() + 60_000), postedByUserId: ctx.actorUserId } : {}), createdByUserId: ctx.actorUserId }).returning();
+            const [staging] = await db.insert(paymentBatchStagingItems).values({ tenantId: ctx.tenantId, batchId: batch!.id, clientItemKey: `mixed-member-${index}`, payloadFingerprint: `mixed-member-fingerprint-${index}`, amount: "10.00", receivedAt, status: "validated", paymentIntakeId: intake!.id, reviewedMapping: { borrowerPublicId: borrower!.publicId }, resolutionState: "mapped", createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning();
+            const [item] = await db.insert(paymentBatchItems).values({ tenantId: ctx.tenantId, batchId: batch!.id, paymentIntakeId: intake!.id, stagingItemId: staging!.id, itemOrder: index + 1 }).returning();
+            await db.update(paymentBatchStagingItems).set({ batchItemId: item!.id }).where(eq(paymentBatchStagingItems.id, staging!.id));
+        }
+
+        await expect(assertNoOlderPendingPayment(db, ctx.tenantId, borrower!.id, new Date("2026-09-06T08:00:00.000Z"), [])).rejects.toMatchObject({ code: "PAYMENT_CHRONOLOGY_CONFLICT" });
     });
 
     test("racing review cannot revive a cancelled intake", async () => {
