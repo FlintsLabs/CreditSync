@@ -16,6 +16,7 @@
 - Hardened resolver tool help to refuse every non-inspection catalog tool and added payout-target evidence attachment guidance without widening the closed target model.
 - Added payout-post and loan-activation parity guards, signing-failure regression coverage, and an entry-point matrix documenting supported evidence transports and human-review-only paths.
 - Added the 10.3.0 plugin contract/eval refresh with the generated 135-tool catalog, independent profile snapshots, resolver safety scenarios, and explicit non-live host/mobile acceptance limits.
+- Added modern full/curated runtime acceptance proving `workflow.resolve` is dispatched as a read-only tool while legacy protocol negotiation remains covered.
 
 ## v0.4.45 - 2026-09-13
 

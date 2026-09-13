@@ -30,6 +30,11 @@ function startModernServer(
                 items: [{ clientItemKey: "item-1", paymentIntakePublicId: INTAKE_ID, batchItemPublicId: BORROWER_ID, status: "draft", duplicate: false }], latestPreview: null, postedAt: null,
                 createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z" };
         }
+        if (name === "workflow.resolve") return {
+            workflowId: "creditsync.inspect", workflowVersion: "workflow-resolver-1.0.0", catalogVersion: MCP_CATALOG_VERSION,
+            policyRevision: "evidence-safety-2026-09-14", observed: { state: "mutable", loanType: null, evidenceReady: false },
+            status: "next_step", nextSteps: [], blockers: [], prohibitedTools: [], reevaluateOn: "target_change",
+        };
         return name === "borrower.search" ? { resolution: "none", matchType: null, candidates: [] } : { ok: true };
     }])) as Record<(typeof MCP_TOOL_NAMES)[number], McpToolHandler>;
     const input: CreateMcpHttpPluginInput = {
@@ -74,8 +79,12 @@ function encodedCursor(profile: string, catalogVersion: string, offset: number) 
 }
 
 async function rawRequest(baseUrl: string, body: Record<string, unknown>, headers: Record<string, string> = {}) {
+    return rawRequestAt(baseUrl, "/mcp", body, headers);
+}
+
+async function rawRequestAt(baseUrl: string, path: string, body: Record<string, unknown>, headers: Record<string, string> = {}) {
     const method = body.method as string;
-    const response = await fetch(`${baseUrl}/mcp`, {
+    const response = await fetch(`${baseUrl}${path}`, {
         method: "POST",
         headers: {
             Authorization: `Bearer ${TOKEN}`,
@@ -92,6 +101,22 @@ async function rawRequest(baseUrl: string, body: Record<string, unknown>, header
 }
 
 describe("MCP 2026 transport adapter", () => {
+    test("advertises and dispatches read-only workflow resolution through full and curated modern profiles", async () => {
+        const baseUrl = startModernServer({}, ["full", "core-read"]);
+        const request = modernEnvelope("tools/call", {
+            name: "workflow.resolve",
+            arguments: { intent: "inspect", target: { kind: "borrower", publicId: BORROWER_ID }, attachments: "none" },
+        });
+        const full = await rawRequest(baseUrl, request);
+        expect(full.response.status).toBe(200);
+        expect(full.body.result.isError).not.toBe(true);
+        expect(full.body.result.structuredContent.data).toMatchObject({ status: "next_step", workflowVersion: "workflow-resolver-1.0.0" });
+        const curated = await rawRequestAt(baseUrl, "/mcp/core-read", request);
+        expect(curated.response.status).toBe(200);
+        expect(curated.body.result.isError).not.toBe(true);
+        expect(curated.body.result.structuredContent.data).toMatchObject({ status: "next_step" });
+    });
+
     test("actual v2 client retains UUID, money, and idempotency arguments", async () => {
         const observed: { input?: Record<string, unknown>; captureInput?: Record<string, unknown>; captureIdempotency?: string } = {};
         const baseUrl = startModernServer(observed);
