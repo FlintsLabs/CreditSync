@@ -475,7 +475,7 @@ codex plugin add creditsync@creditsync-marketplace
 
 A push does not hot-reload the installed copy. Start a new Codex task after installation or reinstall so the updated skills and app are discovered. The committed app ID is intentionally a non-runnable registration placeholder, so static validation is not evidence of a live private-app connection.
 
-See [`docs/operations/agent-mcp-plugin.md`](./docs/operations/agent-mcp-plugin.md) for Cloudflare, token rotation, MinIO evidence, private registration, and rollback, and [`docs/operations/backup-recovery.md`](./docs/operations/backup-recovery.md) for database/object backup and isolated restore verification.
+See [`docs/operations/agent-mcp-plugin.md`](./docs/operations/agent-mcp-plugin.md) for Cloudflare, token rotation, MinIO evidence, private registration, and rollback; [`docs/operations/workflow-resolver-acceptance.md`](./docs/operations/workflow-resolver-acceptance.md) for the implementation/host/device acceptance split; and [`docs/operations/backup-recovery.md`](./docs/operations/backup-recovery.md) for database/object backup and isolated restore verification. Resetting backend tests always uses a separate synthetic disposable database, never a restored real-data database.
 
 ### Dev vs Docker Quick Reference
 
@@ -612,6 +612,8 @@ The [generated catalog](plugins/creditsync/references/mcp-tool-contract.json) an
 The [MCP verification handoff](docs/operations/mcp-optimization-verification.md) records the tested implementation commit, complete disposable backend results, separate cache coverage, conformance evidence and remaining runtime acceptance gates.
 
 The initial 2026-09-13 recovery hold was traced to an overly broad checker: pending upload reservations and valid batch staging metadata must not be classified as lost finalized evidence. The backend was subsequently deployed after corrected recovery checks and a fresh backup; the frontend image was retained. Run `bun run --cwd backend scripts/check-evidence-recovery.ts` with explicit database/storage configuration for the read-only, lifecycle-aware gate, and `bun test backend/scripts/evidence-recovery-policy.test.ts` for its regressions. Pending warnings never authorize posting or imply attached evidence. See the handoff report for artifact, migration, deployment and backup evidence; mobile acceptance remains pending.
+
+The resolver acceptance matrix separates local implementation evidence from host/profile adoption, real-device file transport, and supervisor-controlled deployment. A repository fixture or `/mcp` test never marks those external gates passed.
 
 The cancellation browser suite uses a separate local port (`5197`) and mocked API data. It checks explicit batch navigation, confirmation, retained history, and Bangkok timestamps from a browser outside Thailand:
 

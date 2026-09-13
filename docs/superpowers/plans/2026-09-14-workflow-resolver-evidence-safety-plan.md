@@ -80,7 +80,7 @@ authorize exact target → lock parent → confirm mutable → register/increase
 - [x] Wire guards into preview readiness and the payment kernel, including batch/restore consumers; recheck after locking, never rely on a resolver result or old proposal.
 - [x] Keep terminal successful post replay ahead of new mutable-state requirements, returning the original receipt; normal new writes with unresolved evidence reject.
 - [x] Test both prepare/post interleavings with existing barrier patterns, ready+pending attachments, multiple declared attachments, same-file retries, expired cleanup, cancelled retention, tenant isolation, and direct service/REST bypass attempts. Assert no financial writes on rejection.
-- [x] Run the scoped disposable payment, requirement, batch staging/atomic, restore-floating, payout, loan-application, and ChatGPT importer suites. Backend typecheck has no backend errors; the existing frontend `decimal.js` dependency resolution error remains documented.
+- [x] Run the scoped disposable payment, requirement, batch staging/atomic, restore-floating, payout, loan-application, and ChatGPT importer suites. Backend typecheck passes; frontend dependencies were later installed frozen by the supervisor, so the old `decimal.js` setup error is not a current source defect.
 
 ### Task 3: Payout/activation parity and other financial entry points
 
@@ -139,8 +139,8 @@ type ResolverResult = {
 //   profile: ToolProfile): ResolverResult
 ```
 
-- [ ] Write literal routing tests before policy code. Scheduled close-out does not select floating settlement; posted intake with attachment selects supplement import; mutable intake with inaccessible file never suggests post; unknown identity returns needs_input; unsupported attachment transport returns blocked; wrong profile returns connection_required.
-- [ ] Add the critical resolver regression:
+- [x] Write literal routing tests before policy code. Scheduled close-out does not select floating settlement; posted intake with attachment selects supplement import; mutable intake with inaccessible file never suggests post; unknown identity returns needs_input; unsupported attachment transport returns blocked; wrong profile returns connection_required.
+- [x] Add the critical resolver regression:
 
 ```ts
 const result = resolveWorkflowPolicy(
@@ -150,9 +150,9 @@ expect(result.status).toBe('needs_input'); // No exact target supplied.
 expect(result.nextSteps.some(step=>step.toolName==='payment.post')).toBe(false);
 ```
 
-- [ ] Implement explicit rules from the spec; schema-close inputs and output status/limits. Suggested arguments contain only inspected public identifiers, never confirmation or invented keys. Status names match the spec exactly.
-- [ ] Assert every recommended tool exists in the catalog; every financial tool is mapped or marked human-review-only; route suggestions cannot escape profile membership. Adding a new tool without classification must fail CI.
-- [ ] Run `bun test backend/src/mcp/workflow-resolver.test.ts`. Commit registry/policy tests with CHANGELOG; no application service writes are introduced.
+- [x] Implement explicit rules from the spec; schema-close inputs and output status/limits. Suggested arguments contain only inspected public identifiers, never confirmation or invented keys. Status names match the spec exactly.
+- [x] Assert every recommended tool exists in the catalog; every financial tool is mapped or marked human-review-only; route suggestions cannot escape profile membership. Adding a new tool without classification must fail CI.
+- [x] Run `bun test backend/src/mcp/workflow-resolver.test.ts`. Commit registry/policy tests with CHANGELOG; no application service writes are introduced.
 
 ### Task 5: Register `workflow.resolve` and shared version/bootstrap guidance
 
@@ -160,9 +160,9 @@ expect(result.nextSteps.some(step=>step.toolName==='payment.post')).toBe(false);
 
 **Consumes:** Task 4 policy and registry. **Produces:** `resolveWorkflow(ctx,input,profile)` that performs bounded authorized service reads, creates `ResolverObservation`, and returns the closed response. It must not call existing preview/execute handlers to discover state.
 
-- [ ] Add the named tool to all profiles with read-only=true, destructive=false, no generic dispatch capability. Supply route profile via server wiring, not a model argument.
-- [ ] Add tests proving stale caller-reported state cannot override backend state, foreign UUIDs leak nothing, and a resolve call leaves financial/draft/preview/evidence/audit domain tables unchanged. Safe operational metrics are allowed.
-- [ ] Separate catalog hash, workflow version and policy revision. Add stale-version tests with this behavior:
+- [x] Add the named tool to all profiles with read-only=true, destructive=false, no generic dispatch capability. Supply route profile via server wiring, not a model argument.
+- [x] Add tests proving stale caller-reported state cannot override backend state, foreign UUIDs leak nothing, and a resolve call leaves financial/draft/preview/evidence/audit domain tables unchanged. Safe operational metrics are allowed.
+- [x] Separate catalog hash, workflow version and policy revision. Add stale-version tests with this behavior:
 
 ```text
 known versions differ → refresh_required, current versions returned, no financial next step
@@ -170,10 +170,10 @@ known versions absent → safe read/guidance allowed, client freshness unproven
 same versions but state changes → reevaluate from backend, never reuse permission
 ```
 
-- [ ] Update v1 instructions and modern discovery guidance supported by the installed SDK. Keep `listChanged` unchanged unless actual notification publication/delivery is implemented; notification transport work is not required for this release.
-- [ ] Add bounded recovery guidance within existing compatible error `details`: stable blocker code and `workflow.resolve` recommendation. Do not change all legacy success envelopes or treat guidance fields as authentication.
-- [ ] Regenerate using `bun run plugins/creditsync/scripts/mcp-contract.ts` and `bun run plugins/creditsync/scripts/mcp-profiles.ts` following each script's existing invocation contract; run plugin validator. Generated counts should reflect one added tool, not manually edited constants.
-- [ ] Run `bun run --cwd backend test src/mcp/server.test.ts src/mcp/default.test.ts src/mcp/modern.test.ts src/mcp/profiles.test.ts` and typecheck. Commit contracts, code, CHANGELOG and README together.
+- [x] Update v1 instructions and modern discovery guidance supported by the installed SDK. Keep `listChanged` unchanged unless actual notification publication/delivery is implemented; notification transport work is not required for this release.
+- [x] Add bounded recovery guidance within existing compatible error `details`: stable blocker code and `workflow.resolve` recommendation. Do not change all legacy success envelopes or treat guidance fields as authentication.
+- [x] Regenerate using `bun run plugins/creditsync/scripts/mcp-contract.ts` and `bun run plugins/creditsync/scripts/mcp-profiles.ts` following each script's existing invocation contract; run plugin validator. Generated counts should reflect one added tool, not manually edited constants.
+- [x] Run the resolver/runtime/profile MCP tests and typecheck. The supervisor will run the combined disposable MCP suite after alternate-owned changes are integrated. Commit contracts, code, CHANGELOG and README together.
 
 ### Task 6: Agent instructions, missing-file behavior and client update procedure
 
@@ -181,8 +181,8 @@ same versions but state changes → reevaluate from backend, never reuse permiss
 
 **Consumes:** resolver named contract and stable blockers. **Produces:** executable agent traces and a connection-update checklist, not a claim that ChatGPT automatically installs Codex skills.
 
-- [ ] Add failing scripted cases before instruction edits: missing resolver in cached catalog, available importer but omitted file parameter, missing DNS access, prepare then post without resolving, two attachments with only one ready, stale workflow, posted intake with pending evidence and profile missing required importer.
-- [ ] Require resolver at the start of a new financial intent and after errors/stale state/version changes; do not repeat it between every harmless read. Preserve full named tool schemas for actual calls.
+- [x] Add failing scripted cases before instruction edits: missing resolver in cached catalog, available importer but omitted file parameter, missing DNS access, prepare then post without resolving, two attachments with only one ready, stale workflow, posted intake with pending evidence and profile missing required importer.
+- [x] Require resolver at the start of a new financial intent and after errors/stale state/version changes; do not repeat it between every harmless read. Preserve full named tool schemas for actual calls.
 - [ ] The expected trace for unavailable attachment access is:
 
 ```text
@@ -190,9 +190,9 @@ resolve → inspect exact mutable target → declare requirement/create target i
 → importer fails or file descriptor unavailable → report blocked → no preview/post
 ```
 
-- [ ] For old clients unable to see resolver, stop attachment-bearing writes and request the operator refresh/reconnect; backend still guards known evidence attempts. Do not invent a resolver invocation or signed URL.
-- [ ] Document new versus ongoing conversation checks: tool visibility, workflow/catalog version, actual file descriptor arrival and backend ready read-back. Test every deployed connection/profile used on mobile; a successful `/mcp` server test does not prove host adoption.
-- [ ] Run `bun test plugins/creditsync/tests` and `bun run plugins/creditsync/scripts/validate.ts`. Update plugin version consistently (proposed 10.3.0 subject to current repository version), generated references, root CHANGELOG and README before committing.
+- [x] For old clients unable to see resolver, stop attachment-bearing writes and request the operator refresh/reconnect; backend still guards known evidence attempts. Do not invent a resolver invocation or signed URL.
+- [x] Document new versus ongoing conversation checks: tool visibility, workflow/catalog version, actual file descriptor arrival and backend ready read-back. Test every deployed connection/profile used on mobile; a successful `/mcp` server test does not prove host adoption.
+- [x] Run the plugin contract/eval suite and `bun run plugins/creditsync/scripts/validate.ts`. Update plugin version consistently to 10.3.0, generated references, root CHANGELOG and README before committing. Real host/mobile acceptance remains pending.
 
 ### Task 7: Cross-channel safety and read-only recovery compatibility
 
@@ -216,14 +216,14 @@ MCP_CONFORMANCE_ROOT=/tmp/creditsync-conformance-install.rk1bTn/repo bun run --c
 ```
 
 The displayed conformance checkout was used by the prior release. Before execution, verify it still exists and is at revision `7169291ec0b68eb370fddcd9947313ab0d5e4156` as documented in the existing baseline; recreate that pinned checkout using the existing conformance runbook if unavailable. If frontend code changes, also run its test/lint/build scripts. A skipped new database invariant is not acceptance.
-- [ ] Review generated tool counts, profile coverage, no per-request schema generation and resolver response bounds. Record latency/bytes without private IDs, file URLs, names or high-cardinality metrics. Commit acceptance evidence with CHANGELOG.
+- [x] Review generated tool counts, profile coverage, no per-request schema generation and resolver response bounds. Record latency/bytes without private IDs, file URLs, names or high-cardinality metrics. Commit acceptance evidence with CHANGELOG.
 
 ### Task 8: Controlled rollout and handoff
 
 **Files:** Update `docs/operations/workflow-resolver-acceptance.md`, `agent-mcp-plugin.md`, `mcp-canary-runbook.md`, `backup-recovery.md` only for genuinely changed procedures, root README/CHANGELOG.
 
 - [ ] Obtain approval for the completed implementation/spec and target deployment. Use supervised Luna medium/high in an isolated `codex/` worktree per AGENTS.md; do not infer new production financial write authority from this plan.
-- [ ] Before release, use a fresh PostgreSQL/MinIO recovery point and isolated restore rehearsal. Revalidate migration order, public-table fingerprints and lifecycle-aware evidence recovery. Apply no data repair to make the gate pass.
+- [ ] Before release, use a fresh PostgreSQL/MinIO recovery point and isolated restore rehearsal. Revalidate migration order, public-table fingerprints and lifecycle-aware evidence recovery. Apply no data repair to make the gate pass. The runbook now explicitly requires synthetic disposable DBs for reset suites and read-only probes on restored real data.
 - [ ] Release evidence enforcement first; expose resolver and updated clients next. Verify old clients receive stable safe blockers, new clients see resolver, and `/mcp` remains usable.
 - [ ] On an explicitly authorized non-production tenant, test mobile payment import, payout import, all-file requirements, unavailable file access, retry and late supplemental evidence. Financial transitions need explicit confirmation; start with ingestion/read-back-only cases.
 - [ ] Preserve this exact separation in the handoff:
