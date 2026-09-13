@@ -607,6 +607,8 @@ The [generated catalog](plugins/creditsync/references/mcp-tool-contract.json) an
 
 The [MCP verification handoff](docs/operations/mcp-optimization-verification.md) records the tested implementation commit, complete disposable backend results, separate cache coverage, conformance evidence and remaining runtime acceptance gates.
 
+The 2026-09-13 production deployment attempt is held on a failed evidence-recovery gate; the previous production image remains in service. See the handoff report for the owner-approved local backup, restore results and pre-existing storage findings that require review before rollout.
+
 The cancellation browser suite uses a separate local port (`5197`) and mocked API data. It checks explicit batch navigation, confirmation, retained history, and Bangkok timestamps from a browser outside Thailand:
 
 ```bash

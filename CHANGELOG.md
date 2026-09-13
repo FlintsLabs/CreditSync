@@ -11,6 +11,7 @@
 
 ### Changed
 
+- Recorded the production rollout hold after an owner-approved local backup and isolated restore rehearsal found pre-existing object/metadata inconsistencies; production remains on its previous image and migration watermark, with no financial record changes.
 - Recorded the independently verified MCP handoff: complete disposable backend suite, separate cache-dependent coverage, plugin/typecheck/conformance gates and discovery benchmark; documented legacy command-key compatibility and pending real-device/canary acceptance.
 - Kept legacy `/mcp` discovery full and unpaginated for compatibility while modern discovery uses closed schemas, per-request metadata, profile/catalog-bound cursors, and public definition cache hints; conformance uses an injected no-database fixture through the shared adapter and reports real check counts.
 - Classified `payment.allocation-correction.execute` as an audited financial operation without changing its established legacy receipt shape; curated legacy routes now follow the same bounded profile pagination contract, and runtime metrics include safe rejection/evidence-stop signals.

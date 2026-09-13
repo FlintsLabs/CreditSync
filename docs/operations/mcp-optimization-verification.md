@@ -1,5 +1,17 @@
 # MCP optimization verification report
 
+## Deployment attempt — held on recovery gate
+
+On 2026-09-13 the owner authorized deployment and explicitly approved storing the backup locally rather than off-host. The protected backup is outside Git at `/home/flintstone/backups/creditsync/mcp-f7eb631-hjUy378g` (directory mode 0700; dump/archive mode 0600). Local-only storage does not protect against loss of this host. The PostgreSQL dump and quiesced full MinIO archive have SHA-256 checksums; the restored archive compares byte-for-byte with its extraction. The original app images were retained as `creditsync-backend:before-mcp-f7eb631` and `creditsync-frontend:before-mcp-f7eb631`.
+
+The candidate image `creditsync-backend:mcp-f7eb631` built successfully and passed typecheck with the referenced frontend source mounted read-only (the standalone backend image does not include the frontend module imported by a test). Restoring PostgreSQL and applying migration 0074 in an isolated internal Docker network succeeded. Every public-table data fingerprint matched before restore and after the rehearsal migration, excluding the three new nullable import columns from comparison.
+
+The storage acceptance gate failed identically against the restored copy and a read-only scan of production: 312 file rows checked, 239 payment evidence checksum checks, 43 missing intake metadata values, 46 missing objects, and 4 MIME mismatches. No checksum or size mismatch was reported for retrieved objects. Counts describe check failures, not necessarily disjoint records. These are pre-existing conditions, not evidence of corruption caused by backup or the candidate migration. They have not been repaired or waived.
+
+Deployment therefore stopped before production migration/recreation. The old production backend image remains `sha256:dc0c080ceb083f839214c55d6114aa43d140c3be87a247b1165c08eea86d7bcb`, and its migration watermark remains `1789084800001` (0073). The previous services were restarted; backend MCP health and frontend HTTP checks returned 200. Production financial records were not changed. Further rollout requires review of these recovery findings; do not silently baseline them as passing or modify posted records to repair them. Real-device mobile and canary acceptance remain pending.
+
+## Local implementation acceptance
+
 Verified implementation commit: `36aa7f5996eab07dc9c0db880b0a6c283ba7f9b8` on `codex/mcp-optimization`, 2026-09-13. This is a feature-branch handoff, not a main-branch merge, deployment, canary, or mobile acceptance report. The complete disposable backend suite passed; production and real-device acceptance remain pending. The subsequent handoff commit changes documentation only.
 
 ## Implementation status
