@@ -168,10 +168,10 @@ export default function DashboardLayout() {
                 )}
 
                 {/* Page Content */}
-                <main className="min-w-0 flex-1 overflow-x-hidden p-4 md:p-8">
+                <main className="min-w-0 flex-1 overflow-x-hidden p-4 pb-20 md:p-8 md:pb-8">
                     <Outlet />
                 </main>
-                <footer data-testid="application-footer" className="border-t px-4 py-4 text-xs text-muted-foreground md:px-8">
+                <footer data-testid="application-footer" className="border-t px-4 py-4 mb-16 md:mb-0 text-xs text-muted-foreground md:px-8">
                     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                         <a
                             className="font-medium text-foreground underline-offset-4 hover:underline"
@@ -195,7 +195,32 @@ export default function DashboardLayout() {
                 </footer>
             </div>
 
-            <AIAssistant />
+            {/* Mobile Bottom Navigation */}
+            <div data-testid="mobile-bottom-nav" className="md:hidden fixed bottom-0 w-full z-40 border-t bg-background pb-safe">
+                <nav className="flex justify-around items-center h-16">
+                    {navigation.filter(item => ["/dashboard", "/borrowers", "/loans", "/transactions", "/payments"].includes(item.href)).slice(0, 5).map((item) => {
+                        const Icon = item.icon;
+                        const isActive = location.pathname === item.href || (item.href === "/intermediaries" && location.pathname.startsWith("/intermediaries/"));
+                        return (
+                            <Link
+                                key={item.href}
+                                to={item.href}
+                                className={cn(
+                                    "flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors",
+                                    isActive ? "text-primary" : "text-muted-foreground hover:text-foreground"
+                                )}
+                            >
+                                <Icon className="h-5 w-5" />
+                                <span className="text-[10px] font-medium">{item.name}</span>
+                            </Link>
+                        );
+                    })}
+                </nav>
+            </div>
+
+            <div className="fixed z-[100] bottom-20 md:bottom-8 right-4 md:right-8">
+                <AIAssistant />
+            </div>
         </div>
     );
 }
