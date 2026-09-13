@@ -616,7 +616,12 @@ export async function prepareDisbursementEvidence(ctx: CommandContext, disbursem
     if (event.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Evidence can only be prepared for a draft", 409);
     const sha256 = input.sha256.toLowerCase();
     await db.transaction(async (tx) => {
-        await registerFinancialEvidenceRequirement(tx, ctx, { kind: "loan_disbursement", publicId: event.publicId }, 1, { attemptKey: input.requirementAttemptKey ?? `sha256:${sha256}` });
+        await registerFinancialEvidenceRequirement(tx, ctx, { kind: "loan_disbursement", publicId: event.publicId }, 1, {
+            attemptKey: input.requirementAttemptKey ?? `sha256:${sha256}`,
+            importIdempotencyKey: input.importIdempotencyKey,
+            sourceFileFingerprint: input.sourceFileFingerprint,
+            bindingKind: input.importIdempotencyKey ? "disbursement" : undefined,
+        });
     });
     const existing = await db.query.loanDisbursementEvidenceIntents.findFirst({ where: and(
         eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId), eq(loanDisbursementEvidenceIntents.evidenceHash, sha256),

@@ -1655,6 +1655,9 @@ export const financialEvidenceRequirementAttempts = pgTable("financial_evidence_
     tenantId: tenantId,
     financialEvidenceRequirementId: integer("financial_evidence_requirement_id").notNull(),
     attemptKey: text("attempt_key").notNull(),
+    importIdempotencyKey: text("import_idempotency_key"),
+    sourceFileFingerprint: text("source_file_fingerprint"),
+    bindingKind: text("binding_kind"),
     createdByUserId: integer("created_by_user_id"),
     source: text("source").notNull(),
     requestId: text("request_id").notNull(),
@@ -1663,9 +1666,16 @@ export const financialEvidenceRequirementAttempts = pgTable("financial_evidence_
 }, (table) => [
     uniqueIndex("financial_evidence_requirement_attempts_tenant_id_id_unique").on(table.tenantId, table.id),
     uniqueIndex("financial_evidence_requirement_attempts_tenant_requirement_key_unique").on(table.tenantId, table.financialEvidenceRequirementId, table.attemptKey),
+    uniqueIndex("financial_evidence_requirement_attempts_tenant_kind_import_unique")
+        .on(table.tenantId, table.bindingKind, table.importIdempotencyKey)
+        .where(sql`${table.importIdempotencyKey} IS NOT NULL`),
     foreignKey({ name: "financial_evidence_requirement_attempts_tenant_requirement_fk", columns: [table.tenantId, table.financialEvidenceRequirementId], foreignColumns: [financialEvidenceRequirements.tenantId, financialEvidenceRequirements.id] }),
     foreignKey({ name: "financial_evidence_requirement_attempts_tenant_creator_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
     check("financial_evidence_requirement_attempts_key_check", sql`length(btrim(${table.attemptKey})) BETWEEN 1 AND 512`),
+    check("financial_evidence_requirement_attempts_binding_xor_check", sql`(${table.importIdempotencyKey} IS NULL) = (${table.sourceFileFingerprint} IS NULL) AND (${table.importIdempotencyKey} IS NULL) = (${table.bindingKind} IS NULL)`),
+    check("financial_evidence_requirement_attempts_import_key_check", sql`${table.importIdempotencyKey} IS NULL OR length(btrim(${table.importIdempotencyKey})) BETWEEN 1 AND 512`),
+    check("financial_evidence_requirement_attempts_source_fingerprint_check", sql`${table.sourceFileFingerprint} IS NULL OR ${table.sourceFileFingerprint} ~ '^[0-9a-f]{64}$'`),
+    check("financial_evidence_requirement_attempts_binding_kind_check", sql`${table.bindingKind} IS NULL OR ${table.bindingKind} IN ('payment', 'disbursement')`),
     check("financial_evidence_requirement_attempts_source_check", sql`length(btrim(${table.source})) > 0`),
     check("financial_evidence_requirement_attempts_request_context_check", sql`length(btrim(${table.requestId})) > 0 AND length(btrim(${table.correlationId})) > 0`),
 ]);
