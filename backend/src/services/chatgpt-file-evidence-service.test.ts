@@ -3,11 +3,12 @@ import { createHash } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 import { db } from "../db";
-import { auditLogs, borrowers, files, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loanDisbursements, loanSchedules, loans, paymentIntakes, users } from "../db/schema";
+import { auditLogs, borrowers, files, financialEvidenceRequirementAttempts, financialEvidenceRequirements, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loanDisbursements, loanSchedules, loans, paymentIntakes, users } from "../db/schema";
 import type { SignedPutRequest, StoredObjectHead } from "../lib/storage";
 import { DomainError } from "./domain-error";
-import { createDisbursementDraft, prepareDisbursementEvidence } from "./loan-disbursement-service";
+import { createDisbursementDraft, postDisbursement, prepareDisbursementEvidence } from "./loan-disbursement-service";
 import { importChatGptDisbursementEvidence, importChatGptPaymentEvidence, importChatGptSupplementEvidence, downloadChatGptFile, type ChatGptEvidenceDependencies, type ChatGptFileParam } from "./chatgpt-file-evidence-service";
+import { registerFinancialEvidenceRequirement } from "./financial-evidence-requirement-service";
 
 const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
 const file: ChatGptFileParam = {
@@ -159,7 +160,7 @@ function responseFor(bytes: Uint8Array = png) {
     return new Response(Buffer.from(bytes), { status: 200, headers: { "content-type": "image/png", "content-length": String(bytes.byteLength) } });
 }
 
-function importerDependencies(counters: { fetch: number; prepare: number; put: number; head: number }, options: { failPut?: boolean; failPrepare?: boolean } = {}): ChatGptEvidenceDependencies {
+function importerDependencies(counters: { fetch: number; prepare: number; put: number; head: number }, options: { failPut?: boolean; failPrepare?: boolean; bytes?: Uint8Array } = {}): ChatGptEvidenceDependencies {
     const objects = new Map<string, { request: SignedPutRequest; body: Uint8Array }>();
     const storage = {
         put: async (request: SignedPutRequest, body: Uint8Array) => {
@@ -177,7 +178,7 @@ function importerDependencies(counters: { fetch: number; prepare: number; put: n
     };
     return {
         ...dependencies(responseFor()),
-        fetch: async (_url: string, _init: RequestInit) => { counters.fetch++; return responseFor(); },
+        fetch: async (_url: string, _init: RequestInit) => { counters.fetch++; return responseFor(options.bytes ?? png); },
         disbursementEvidenceGateway: {
             preparePut: async (request: SignedPutRequest) => {
                 counters.prepare++;
@@ -218,6 +219,175 @@ integrationTest("imports payout evidence into a draft without creating or postin
     expect(await db.select().from(auditLogs).where(eq(auditLogs.publicId, resultAuditPublicId))).toHaveLength(1);
     expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, loan.id))).toHaveLength(0);
     expect(await db.select().from(loanDisbursements).where(eq(loanDisbursements.loanId, loan.id))).toHaveLength(0);
+});
+
+integrationTest("keeps payment ChatGPT source aliases at two attempts across distinct imports and retries", async () => {
+    const { user } = await seededDraft();
+    const intake = await db.insert(paymentIntakes).values({
+        tenantId: user.tenantId, ownerUserId: user.id, amount: "50.00", status: "draft", source: "mcp",
+    }).returning().then((rows) => rows[0]!);
+    const secondBytes = new Uint8Array([...png, 4]);
+    const counters = { fetch: 0, prepare: 0, put: 0, head: 0 };
+    const firstDeps = importerDependencies(counters);
+    const first = await importChatGptPaymentEvidence(dbContext(user, "payment-import-a"), intake.publicId, file, "payment-import-a", { ...firstDeps, storage: firstDeps.disbursementStorage });
+    const secondFile = { ...file, fileId: "platform-file-id-b" };
+    const secondDeps = importerDependencies(counters, { bytes: secondBytes });
+    const second = await importChatGptPaymentEvidence(dbContext(user, "payment-import-b"), intake.publicId, secondFile, "payment-import-b", { ...secondDeps, storage: secondDeps.disbursementStorage });
+    expect(first.status).toBe("ready");
+    expect(second.status).toBe("ready");
+    const requirement = await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.paymentIntakeId, intake.id) });
+    expect(requirement).toMatchObject({ expectedCount: 2 });
+    expect(await db.select().from(financialEvidenceRequirementAttempts).where(eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirement!.id))).toHaveLength(2);
+
+    const retry = await importChatGptPaymentEvidence(dbContext(user, "payment-import-a"), intake.publicId, { ...file, downloadUrl: "https://files.openai.test/expired" }, "payment-import-a", { fetch: async () => { throw new Error("ready retry must not download"); } });
+    expect(retry.publicId).toBe(first.publicId);
+    await db.transaction(async (tx) => {
+        await registerFinancialEvidenceRequirement(tx, dbContext(user, "payment-explicit-retry"), { kind: "payment_intake", publicId: intake.publicId }, 1, { attemptKey: `chatgpt:${createHash("sha256").update(file.fileId).digest("hex")}` });
+        await registerFinancialEvidenceRequirement(tx, dbContext(user, "payment-direct-alias"), { kind: "payment_intake", publicId: intake.publicId }, 1, { attemptKey: `sha256:${first.sha256}` });
+    });
+    const afterAliases = await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.paymentIntakeId, intake.id) });
+    expect(afterAliases).toMatchObject({ expectedCount: 2 });
+    expect(await db.select().from(financialEvidenceRequirementAttempts).where(eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, afterAliases!.id))).toHaveLength(2);
+});
+
+integrationTest("keeps payout ChatGPT source aliases at two attempts and reuses the same file for direct prepare", async () => {
+    const { user, draft } = await seededDraft();
+    const secondBytes = new Uint8Array([...png, 5]);
+    const counters = { fetch: 0, prepare: 0, put: 0, head: 0 };
+    const first = await importChatGptDisbursementEvidence(dbContext(user, "payout-import-a"), draft.publicId, file, importerDependencies(counters));
+    const second = await importChatGptDisbursementEvidence(dbContext(user, "payout-import-b"), draft.publicId, { ...file, fileId: "platform-file-id-b" }, importerDependencies(counters, { bytes: secondBytes }));
+    expect(first.status).toBe("ready");
+    expect(second.status).toBe("ready");
+    const event = await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, draft.publicId) });
+    const requirement = await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.loanDisbursementEventId, event!.id) });
+    expect(requirement).toMatchObject({ expectedCount: 2 });
+    expect(await db.select().from(financialEvidenceRequirementAttempts).where(eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirement!.id))).toHaveLength(2);
+
+    const retry = await importChatGptDisbursementEvidence(dbContext(user, "payout-import-a"), draft.publicId, { ...file, downloadUrl: "https://files.openai.test/expired" }, importerDependencies(counters));
+    expect(retry.publicId).toBe(first.publicId);
+    await db.transaction(async (tx) => {
+        await registerFinancialEvidenceRequirement(tx, dbContext(user, "payout-explicit-retry"), { kind: "loan_disbursement", publicId: draft.publicId }, 1, { attemptKey: `chatgpt:${createHash("sha256").update(file.fileId).digest("hex")}` });
+        await registerFinancialEvidenceRequirement(tx, dbContext(user, "payout-direct-alias"), { kind: "loan_disbursement", publicId: draft.publicId }, 1, { attemptKey: `sha256:${first.sha256}` });
+    });
+    const direct = await prepareDisbursementEvidence(dbContext(user, "payout-direct-prepare"), draft.publicId, { mimeType: "image/png", size: png.byteLength, sha256: first.sha256 }, importerDependencies(counters).disbursementEvidenceGateway);
+    expect(direct).toMatchObject({ publicId: first.publicId, status: "ready" });
+    const afterAliases = await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.loanDisbursementEventId, event!.id) });
+    expect(afterAliases).toMatchObject({ expectedCount: 2 });
+    expect(await db.select().from(financialEvidenceRequirementAttempts).where(eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, afterAliases!.id))).toHaveLength(2);
+});
+
+integrationTest("binds a failed payment import before download and rejects a changed descriptor without another attempt", async () => {
+    const { user } = await seededDraft();
+    const intake = await db.insert(paymentIntakes).values({
+        tenantId: user.tenantId, ownerUserId: user.id, amount: "50.00", status: "draft", source: "mcp",
+    }).returning().then((rows) => rows[0]!);
+    const changedFile = { ...file, fileId: "platform-file-id-changed" };
+    const failedCounters = { fetch: 0, prepare: 0, put: 0, head: 0 };
+    await expect(importChatGptPaymentEvidence(dbContext(user, "payment-failed-key"), intake.publicId, file, "payment-failed-key", {
+        ...importerDependencies(failedCounters),
+        fetch: async () => { failedCounters.fetch++; throw new Error("download unavailable"); },
+    })).rejects.toMatchObject({ code: "CHATGPT_FILE_UNAVAILABLE" });
+
+    const requirement = await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.paymentIntakeId, intake.id) });
+    expect(requirement).toMatchObject({ expectedCount: 1 });
+    expect(await db.select().from(financialEvidenceRequirementAttempts).where(eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirement!.id))).toMatchObject([
+        { importIdempotencyKey: "payment-failed-key", sourceFileFingerprint: createHash("sha256").update(file.fileId).digest("hex") },
+    ]);
+
+    let changedFetched = false;
+    await expect(importChatGptPaymentEvidence(dbContext(user, "payment-failed-key"), intake.publicId, changedFile, "payment-failed-key", {
+        ...importerDependencies(failedCounters),
+        fetch: async () => { changedFetched = true; return responseFor(); },
+    })).rejects.toMatchObject({ code: "EVIDENCE_IDEMPOTENCY_CONFLICT" });
+    expect(changedFetched).toBe(false);
+
+    const otherIntake = await db.insert(paymentIntakes).values({
+        tenantId: user.tenantId, ownerUserId: user.id, amount: "51.00", status: "draft", source: "mcp",
+    }).returning().then((rows) => rows[0]!);
+    let otherTargetFetched = false;
+    await expect(importChatGptPaymentEvidence(dbContext(user, "payment-failed-key"), otherIntake.publicId, changedFile, "payment-failed-key", {
+        ...importerDependencies(failedCounters),
+        fetch: async () => { otherTargetFetched = true; return responseFor(); },
+    })).rejects.toMatchObject({ code: "EVIDENCE_IDEMPOTENCY_CONFLICT" });
+    expect(otherTargetFetched).toBe(false);
+    expect(await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.paymentIntakeId, otherIntake.id) })).toBeUndefined();
+
+    const otherTenant = await db.insert(users).values({ tenantId: "tenant-b", email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+    const otherTenantIntake = await db.insert(paymentIntakes).values({
+        tenantId: otherTenant.tenantId, ownerUserId: otherTenant.id, amount: "52.00", status: "draft", source: "mcp",
+    }).returning().then((rows) => rows[0]!);
+    let otherTenantFetched = false;
+    await expect(importChatGptPaymentEvidence(dbContext(otherTenant, "payment-failed-key"), otherTenantIntake.publicId, changedFile, "payment-failed-key", {
+        ...importerDependencies(failedCounters),
+        fetch: async () => { otherTenantFetched = true; throw new Error("other tenant download unavailable"); },
+    })).rejects.toMatchObject({ code: "CHATGPT_FILE_UNAVAILABLE" });
+    expect(otherTenantFetched).toBe(true);
+
+    const retryDependencies = importerDependencies(failedCounters);
+    const retry = await importChatGptPaymentEvidence(dbContext(user, "payment-failed-key"), intake.publicId, file, "payment-failed-key", {
+        ...retryDependencies,
+        storage: retryDependencies.disbursementStorage,
+    });
+    expect(retry.status).toBe("ready");
+    expect(await db.select().from(financialEvidenceRequirementAttempts).where(eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirement!.id))).toHaveLength(1);
+}, 20_000);
+
+integrationTest("binds a failed payout import before download and scopes the binding to its target", async () => {
+    const { user, loan, draft } = await seededDraft();
+    const secondDraft = await createDisbursementDraft(dbContext(user, "binding-second-draft"), loan.publicId, {
+        grossAmount: "1.00", loanAttributedAmount: "1.00", channel: "cash", disbursedAt: "2026-09-13T11:00:00.000Z",
+    });
+    const changedFile = { ...file, fileId: "platform-file-id-changed" };
+    const failedCounters = { fetch: 0, prepare: 0, put: 0, head: 0 };
+    await expect(importChatGptDisbursementEvidence(dbContext(user, "payout-failed-key"), draft.publicId, file, {
+        ...importerDependencies(failedCounters),
+        fetch: async () => { failedCounters.fetch++; throw new Error("download unavailable"); },
+    })).rejects.toMatchObject({ code: "CHATGPT_FILE_UNAVAILABLE" });
+
+    const firstEvent = await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, draft.publicId) });
+    const firstRequirement = await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.loanDisbursementEventId, firstEvent!.id) });
+    expect(firstRequirement).toMatchObject({ expectedCount: 1 });
+    expect(await db.select().from(financialEvidenceRequirementAttempts).where(eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, firstRequirement!.id))).toMatchObject([
+        { importIdempotencyKey: "payout-failed-key", sourceFileFingerprint: createHash("sha256").update(file.fileId).digest("hex") },
+    ]);
+
+    let otherTargetFetched = false;
+    await expect(importChatGptDisbursementEvidence(dbContext(user, "payout-failed-key"), secondDraft.publicId, changedFile, {
+        ...importerDependencies(failedCounters),
+        fetch: async () => { otherTargetFetched = true; return responseFor(); },
+    })).rejects.toMatchObject({ code: "EVIDENCE_IDEMPOTENCY_CONFLICT" });
+    expect(otherTargetFetched).toBe(false);
+    const secondEvent = await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, secondDraft.publicId) });
+    expect(await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.loanDisbursementEventId, secondEvent!.id) })).toBeUndefined();
+
+    let changedFetched = false;
+    await expect(importChatGptDisbursementEvidence(dbContext(user, "payout-failed-key"), draft.publicId, changedFile, {
+        ...importerDependencies(failedCounters),
+        fetch: async () => { changedFetched = true; return responseFor(); },
+    })).rejects.toMatchObject({ code: "EVIDENCE_IDEMPOTENCY_CONFLICT" });
+    expect(changedFetched).toBe(false);
+
+    const retry = await importChatGptDisbursementEvidence(dbContext(user, "payout-failed-key"), draft.publicId, file, importerDependencies(failedCounters));
+    expect(retry.status).toBe("ready");
+    expect(await db.select().from(financialEvidenceRequirementAttempts).where(eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, firstRequirement!.id))).toMatchObject([
+        { importIdempotencyKey: "payout-failed-key", sourceFileFingerprint: createHash("sha256").update(file.fileId).digest("hex") },
+    ]);
+}, 20_000);
+
+integrationTest("commits the payout requirement before a ChatGPT download failure", async () => {
+    const { user, loan, draft } = await seededDraft();
+    const counters = { fetch: 0, prepare: 0, put: 0, head: 0 };
+    await expect(importChatGptDisbursementEvidence(dbContext(user, "download-failure"), draft.publicId, file, {
+        ...importerDependencies(counters),
+        fetch: async () => { counters.fetch++; throw new Error("download unavailable"); },
+    })).rejects.toMatchObject({ code: "CHATGPT_FILE_UNAVAILABLE" });
+    const event = await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, draft.publicId) });
+    expect(await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.loanDisbursementEventId, event!.id) })).toMatchObject({ expectedCount: 1 });
+    await db.update(loans).set({ status: "active" }).where(eq(loans.id, loan.id));
+    await expect(postDisbursement(dbContext(user, "download-failure-post"), draft.publicId)).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+    expect(await db.query.loans.findFirst({ where: eq(loans.id, loan.id) })).toMatchObject({ status: "active" });
+    expect(await db.select().from(loanDisbursementEvidenceIntents)).toHaveLength(0);
+    expect(await db.select().from(loanDisbursementEvidence)).toHaveLength(0);
 });
 
 integrationTest("retries ready evidence by stable key without fetching an expired ChatGPT URL", async () => {
@@ -269,6 +439,75 @@ integrationTest("rejects target and source identity conflicts before a second do
     await expect(importChatGptDisbursementEvidence(dbContext(first.user, "import-conflict"), second.publicId, file, deps)).rejects.toMatchObject({ code: "EVIDENCE_IDEMPOTENCY_CONFLICT" });
     await expect(importChatGptDisbursementEvidence(dbContext(first.user, "import-conflict"), first.draft.publicId, { ...file, fileId: "different-file" }, deps)).rejects.toMatchObject({ code: "EVIDENCE_IDEMPOTENCY_CONFLICT" });
     expect(counters.fetch).toBe(1);
+});
+
+integrationTest("normalizes a concurrent same-key payment target race without a second network fetch", async () => {
+    const { user } = await seededDraft();
+    const [firstIntake, secondIntake] = await db.insert(paymentIntakes).values([
+        { tenantId: user.tenantId, ownerUserId: user.id, amount: "50.00", status: "draft", source: "mcp" },
+        { tenantId: user.tenantId, ownerUserId: user.id, amount: "51.00", status: "draft", source: "mcp" },
+    ]).returning();
+    const counters = { fetch: 0, prepare: 0, put: 0, head: 0 };
+    let releaseFetch: ((response: Response) => void) | undefined;
+    const firstFetch = new Promise<Response>((resolve) => { releaseFetch = resolve; });
+    const deps = {
+        ...importerDependencies(counters),
+        fetch: async () => {
+            counters.fetch++;
+            if (counters.fetch === 1) return firstFetch;
+            return responseFor();
+        },
+    };
+    const operations = Promise.allSettled([
+        importChatGptPaymentEvidence(dbContext(user, "payment-race-key"), firstIntake!.publicId, file, "payment-race-key", { ...deps, storage: deps.disbursementStorage }),
+        importChatGptPaymentEvidence(dbContext(user, "payment-race-key"), secondIntake!.publicId, file, "payment-race-key", { ...deps, storage: deps.disbursementStorage }),
+    ]);
+    try {
+        for (let attempt = 0; attempt < 100 && counters.fetch === 0; attempt++) await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(counters.fetch).toBe(1);
+    } finally {
+        releaseFetch?.(responseFor());
+    }
+    const results = await operations;
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    expect(rejected?.reason).toMatchObject({ code: "EVIDENCE_IDEMPOTENCY_CONFLICT" });
+    expect(await db.select().from(financialEvidenceRequirements)).toHaveLength(1);
+    expect(await db.select().from(financialEvidenceRequirementAttempts)).toHaveLength(1);
+});
+
+integrationTest("normalizes a concurrent same-key payout target race without a second network fetch", async () => {
+    const { user, loan, draft } = await seededDraft();
+    const secondDraft = await createDisbursementDraft(dbContext(user, "race-second-draft"), loan.publicId, {
+        grossAmount: "1.00", loanAttributedAmount: "1.00", channel: "cash", disbursedAt: "2026-09-13T11:00:00.000Z",
+    });
+    const counters = { fetch: 0, prepare: 0, put: 0, head: 0 };
+    let releaseFetch: ((response: Response) => void) | undefined;
+    const firstFetch = new Promise<Response>((resolve) => { releaseFetch = resolve; });
+    const deps = {
+        ...importerDependencies(counters),
+        fetch: async () => {
+            counters.fetch++;
+            if (counters.fetch === 1) return firstFetch;
+            return responseFor();
+        },
+    };
+    const operations = Promise.allSettled([
+        importChatGptDisbursementEvidence(dbContext(user, "payout-race-key"), draft.publicId, file, { ...deps, storage: deps.disbursementStorage }),
+        importChatGptDisbursementEvidence(dbContext(user, "payout-race-key"), secondDraft.publicId, file, { ...deps, storage: deps.disbursementStorage }),
+    ]);
+    try {
+        for (let attempt = 0; attempt < 100 && counters.fetch === 0; attempt++) await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(counters.fetch).toBe(1);
+    } finally {
+        releaseFetch?.(responseFor());
+    }
+    const results = await operations;
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    expect(rejected?.reason).toMatchObject({ code: "EVIDENCE_IDEMPOTENCY_CONFLICT" });
+    expect(await db.select().from(financialEvidenceRequirements)).toHaveLength(1);
+    expect(await db.select().from(financialEvidenceRequirementAttempts)).toHaveLength(1);
 });
 
 integrationTest.each([false, true])("direct prepare preserves expired import reservation (different draft: %s)", async (differentDraft) => {

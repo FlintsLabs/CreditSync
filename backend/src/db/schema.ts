@@ -1611,6 +1611,75 @@ export const paymentEvidenceSupplements = pgTable("payment_evidence_supplements"
     }),
 ]);
 
+/**
+ * Durable, typed evidence declarations. A declaration is intentionally
+ * separate from immutable financial parents: a failed storage/import attempt
+ * must not be able to erase the requirement, and posted parents are never
+ * backfilled or reopened.
+ */
+export const financialEvidenceRequirements = pgTable("financial_evidence_requirements", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    paymentIntakeId: integer("payment_intake_id"),
+    loanDisbursementEventId: integer("loan_disbursement_event_id"),
+    expectedCount: integer("expected_count").notNull(),
+    createdByUserId: integer("created_by_user_id"),
+    source: text("source").notNull(),
+    requestId: text("request_id").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("financial_evidence_requirements_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("financial_evidence_requirements_tenant_payment_unique").on(table.tenantId, table.paymentIntakeId).where(sql`${table.paymentIntakeId} IS NOT NULL`),
+    uniqueIndex("financial_evidence_requirements_tenant_disbursement_unique").on(table.tenantId, table.loanDisbursementEventId).where(sql`${table.loanDisbursementEventId} IS NOT NULL`),
+    foreignKey({ name: "financial_evidence_requirements_tenant_payment_fk", columns: [table.tenantId, table.paymentIntakeId], foreignColumns: [paymentIntakes.tenantId, paymentIntakes.id] }),
+    foreignKey({ name: "financial_evidence_requirements_tenant_disbursement_fk", columns: [table.tenantId, table.loanDisbursementEventId], foreignColumns: [loanDisbursementEvents.tenantId, loanDisbursementEvents.id] }),
+    foreignKey({ name: "financial_evidence_requirements_tenant_creator_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+    check("financial_evidence_requirements_target_xor_check", sql`(${table.paymentIntakeId} IS NOT NULL) <> (${table.loanDisbursementEventId} IS NOT NULL)`),
+    check("financial_evidence_requirements_expected_count_check", sql`${table.expectedCount} BETWEEN 1 AND 20`),
+    check("financial_evidence_requirements_source_check", sql`length(btrim(${table.source})) > 0`),
+    check("financial_evidence_requirements_request_context_check", sql`length(btrim(${table.requestId})) > 0 AND length(btrim(${table.correlationId})) > 0`),
+]);
+
+/**
+ * Append-only identities for distinct evidence attempts. The key is a
+ * service-generated hash/fingerprint, never a raw file id, URL, or payload.
+ * Keeping this floor separate from removable upload intents prevents a failed
+ * signing/storage attempt from erasing a previously committed requirement.
+ */
+export const financialEvidenceRequirementAttempts = pgTable("financial_evidence_requirement_attempts", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    financialEvidenceRequirementId: integer("financial_evidence_requirement_id").notNull(),
+    attemptKey: text("attempt_key").notNull(),
+    importIdempotencyKey: text("import_idempotency_key"),
+    sourceFileFingerprint: text("source_file_fingerprint"),
+    bindingKind: text("binding_kind"),
+    createdByUserId: integer("created_by_user_id"),
+    source: text("source").notNull(),
+    requestId: text("request_id").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("financial_evidence_requirement_attempts_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("financial_evidence_requirement_attempts_tenant_requirement_key_unique").on(table.tenantId, table.financialEvidenceRequirementId, table.attemptKey),
+    uniqueIndex("financial_evidence_requirement_attempts_tenant_kind_import_unique")
+        .on(table.tenantId, table.bindingKind, table.importIdempotencyKey)
+        .where(sql`${table.importIdempotencyKey} IS NOT NULL`),
+    foreignKey({ name: "financial_evidence_requirement_attempts_tenant_requirement_fk", columns: [table.tenantId, table.financialEvidenceRequirementId], foreignColumns: [financialEvidenceRequirements.tenantId, financialEvidenceRequirements.id] }),
+    foreignKey({ name: "financial_evidence_requirement_attempts_tenant_creator_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+    check("financial_evidence_requirement_attempts_key_check", sql`length(btrim(${table.attemptKey})) BETWEEN 1 AND 512`),
+    check("financial_evidence_requirement_attempts_binding_xor_check", sql`(${table.importIdempotencyKey} IS NULL) = (${table.sourceFileFingerprint} IS NULL) AND (${table.importIdempotencyKey} IS NULL) = (${table.bindingKind} IS NULL)`),
+    check("financial_evidence_requirement_attempts_import_key_check", sql`${table.importIdempotencyKey} IS NULL OR length(btrim(${table.importIdempotencyKey})) BETWEEN 1 AND 512`),
+    check("financial_evidence_requirement_attempts_source_fingerprint_check", sql`${table.sourceFileFingerprint} IS NULL OR ${table.sourceFileFingerprint} ~ '^[0-9a-f]{64}$'`),
+    check("financial_evidence_requirement_attempts_binding_kind_check", sql`${table.bindingKind} IS NULL OR ${table.bindingKind} IN ('payment', 'disbursement')`),
+    check("financial_evidence_requirement_attempts_source_check", sql`length(btrim(${table.source})) > 0`),
+    check("financial_evidence_requirement_attempts_request_context_check", sql`length(btrim(${table.requestId})) > 0 AND length(btrim(${table.correlationId})) > 0`),
+]);
+
 export const paymentMatchProposals = pgTable("payment_match_proposals", {
     id: serial("id").primaryKey(),
     publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),

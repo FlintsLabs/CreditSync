@@ -5,6 +5,8 @@ description: Use when settling a CreditSync single-payment or floating loan into
 
 # Restructure a CreditSync Loan
 
+Call `workflow.resolve` before settlement/restructure work and after stale state, evidence, preview expiry, or version changes. It never calculates, persists, confirms, or authorizes a restructure; attachment-bearing paths without a supported evidence target remain human-review-only.
+
 This workflow supports active single-payment and floating loans. For a floating-to-floating restructure, the preview snapshots projected interest and penalty through the settlement date, carries eligible unpaid components into the replacement loan, and may return a separate additional-principal disbursement draft.
 
 ## Required sequence

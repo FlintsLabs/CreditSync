@@ -155,6 +155,8 @@ import { executePaymentAllocationCorrection, previewPaymentAllocationCorrection 
 import { importChatGptDisbursementEvidence, importChatGptPaymentEvidence, importChatGptSupplementEvidence, recordPaymentEvidenceSupplement } from "../services/chatgpt-file-evidence-service";
 import { extractPaymentBatchStagingItem } from "../services/payment-batch-ocr-service";
 import { inspectLoanContext, matchPaymentContext, resolveAndPortfolio } from "./composite-reads";
+import { resolveWorkflowFromBackend } from "./workflow-resolver-service";
+import { WORKFLOW_VERSION } from "./workflow-registry";
 
 type ToolInput = Record<string, unknown>;
 
@@ -202,6 +204,13 @@ export function createDefaultMcpToolHandlers(
     "borrower.search": (ctx, input) => searchBorrowers(ctx, { query: asString(input, "query") }),
     "borrower.portfolio": (ctx, input) => getBorrowerPortfolio(ctx, asString(input, "borrowerPublicId")),
     "borrower.resolve-and-portfolio": (ctx, input) => resolveAndPortfolio(ctx, input),
+    "workflow.resolve": (ctx, input) => resolveWorkflowFromBackend(
+        ctx,
+        input as Parameters<typeof resolveWorkflowFromBackend>[1],
+        (input.__profile as ToolProfile | undefined) ?? "full",
+        (input.__catalogVersion as string | undefined) ?? "mcp-catalog-unknown",
+        (input.__workflowVersion as string | undefined) ?? WORKFLOW_VERSION,
+    ),
     "borrower.create": (ctx, input) => createBorrower(ctx, input as unknown as BorrowerInput),
     "borrower.update": (ctx, input) => updateBorrower(
         ctx,

@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, test } from "bun:test";
+import { and, eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
-import { sql } from "drizzle-orm";
 import { db } from "../db";
-import { bankProfiles, borrowers, loans, users } from "../db/schema";
+import { auditLogs, bankProfiles, borrowers, loanDisbursementEvents, loans, users } from "../db/schema";
+import { createDisbursementDraft } from "../services/loan-disbursement-service";
 import { loansRoute } from "./loans";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
@@ -112,5 +113,22 @@ describe("loan disbursement REST adapter", () => {
             expect(result.response.status).toBe(404);
             expect(result.body).toMatchObject({ code: "DISBURSEMENT_NOT_FOUND" });
         }
+    });
+
+    integrationTest("REST payout rejects a pending requirement created with the default false evidence flag", async () => {
+        const actor = await db.insert(users).values({ tenantId: "tenant-disbursement-pending-evidence", email: "pending-evidence@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId: actor.tenantId, ownerUserId: actor.id, name: "Pending payout borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({ tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "100.00", interestRate: "0.00", repaymentType: "floating", outstandingPrincipal: "100.00", status: "active" }).returning().then((rows) => rows[0]!);
+        const ctx = { tenantId: actor.tenantId, actorUserId: actor.id, actorSource: "web" as const, requestId: "rest-pending-payout-request", correlationId: "rest-pending-payout-correlation" };
+        const draft = await createDisbursementDraft(ctx, loan.publicId, { grossAmount: "100.00", loanAttributedAmount: "100.00", channel: "cash", disbursedAt: "2026-09-14T04:00:00.000Z", attachmentRequirement: { expectedCount: 1 } });
+        const app = new Elysia().use(loansRoute);
+        const response = await jsonRequest(app, `/loans/${loan.publicId}/disbursements/${draft.publicId}/post`, await authToken(actor), {
+            method: "POST", headers: { "idempotency-key": "rest-pending-payout-post" }, body: JSON.stringify({}),
+        });
+
+        expect(response.response.status).toBe(409);
+        expect(response.body).toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+        expect(await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, draft.publicId) })).toMatchObject({ status: "draft", postedAt: null, postIdempotencyKey: null });
+        expect(await db.select().from(auditLogs).where(and(eq(auditLogs.tenantId, actor.tenantId), eq(auditLogs.entityId, draft.publicId), eq(auditLogs.action, "posted")))).toHaveLength(0);
     });
 });

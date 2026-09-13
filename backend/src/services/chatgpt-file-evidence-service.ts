@@ -7,6 +7,7 @@ import { and, eq, sql } from "drizzle-orm";
 
 import { db } from "../db";
 import { auditLogs, files, loanDisbursementEvidenceIntents, paymentEvidence, paymentEvidenceSupplements, paymentIntakes, users } from "../db/schema";
+import { registerFinancialEvidenceRequirement } from "./financial-evidence-requirement-service";
 import { canAccessTenantWideData } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
 import {
@@ -323,12 +324,12 @@ async function importEvidence(ctx: CommandContext, intakePublicId: string, sourc
         if (!auditPublicId) throw new DomainError("EVIDENCE_AUDIT_NOT_FOUND", "Ready evidence audit metadata is unavailable", 503);
         return safeResult(existing, storedFile.publicId, auditPublicId, ctx.correlationId);
     }
-    if (!supplement) {
-        await db.transaction(async (tx) => {
-            await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id = ${intake.id} FOR UPDATE`);
-            await tx.update(paymentIntakes).set({ evidenceRequired: true, updatedByUserId: ctx.actorUserId, updatedAt: new Date() }).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, intake.id)));
-        });
-    }
+    if (!supplement) await db.transaction(async (tx) => registerFinancialEvidenceRequirement(tx, ctx, { kind: "payment_intake", publicId: intake.publicId }, 1, {
+        attemptKey: `chatgpt:${fingerprint}`,
+        importIdempotencyKey: idempotencyKey,
+        sourceFileFingerprint: fingerprint,
+        bindingKind: "payment",
+    }));
     const verified = await downloadChatGptFile(source, dependencies);
     const key = `payment-evidence/${ctx.tenantId}/${intake.publicId}/${crypto.randomUUID()}`;
     const request: SignedPutRequest = { bucket: BUCKET_NAME, key, contentType: verified.mimeType, contentLength: verified.size, checksumSha256: verified.sha256, metadata: { tenant: ctx.tenantId, intake: intake.publicId, sha256: verified.sha256 } };
@@ -405,6 +406,18 @@ export async function importChatGptDisbursementEvidence(
     if (existingSourceIdentity?.importIdempotencyKey && existingSourceIdentity.importIdempotencyKey !== idempotencyKey) {
         throw new DomainError("EVIDENCE_IDEMPOTENCY_CONFLICT", "Evidence file identity is already bound to another import", 409);
     }
+    await db.transaction(async (tx) => registerFinancialEvidenceRequirement(
+        tx,
+        ctx,
+        { kind: "loan_disbursement", publicId: (event as { publicId: string }).publicId },
+        1,
+        {
+            attemptKey: `chatgpt:${sourceFileFingerprint}`,
+            importIdempotencyKey: idempotencyKey,
+            sourceFileFingerprint,
+            bindingKind: "disbursement",
+        },
+    ));
     const verified = await downloadChatGptFile(source, dependencies);
     const evidenceGateway = dependencies.disbursementEvidenceGateway ?? { preparePut: createSignedPutUrl, head: headStoredObject };
     const prepareInput = {
@@ -414,6 +427,7 @@ export async function importChatGptDisbursementEvidence(
         originalName: verified.fileName,
         importIdempotencyKey: idempotencyKey,
         sourceFileFingerprint,
+        requirementAttemptKey: `chatgpt:${sourceFileFingerprint}`,
     } as const;
     let intent;
     try {

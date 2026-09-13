@@ -5,6 +5,8 @@ description: Use when previewing, drafting, or activating a CreditSync loan, or 
 
 # Manage CreditSync Loans
 
+Start loan origination, disbursement, close-out, or renewal with `workflow.resolve` using the exact public target when available. It is read-only guidance only: still inspect the target, use the authoritative preview, obtain explicit confirmation, and call the named write. Floating close-out with an attachment and no supported association is human-review-only; never route it through a fake payment workflow.
+
 ## Overview
 
 Loan creation is `preview → draft → activate`. Terms become immutable after activation; the backend-generated schedule is the only accounting schedule to present or persist.

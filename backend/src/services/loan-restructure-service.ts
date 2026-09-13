@@ -19,6 +19,7 @@ import { parseMoney, serializeMoney } from "../lib/money";
 import { calculateSinglePaymentSettlement, type SinglePaymentExposure, type SinglePaymentTerms } from "../lib/single-payment";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
+import { assertLoanFinancialEvidenceReady } from "./financial-evidence-requirement-service";
 import { assertNoOlderPendingPayment, lockPaymentBorrowers } from "./payment-chronology-service";
 import { createDisbursementDraftInTransaction } from "./loan-disbursement-service";
 import { settlementSnapshot } from "./loan-settlement-service";
@@ -435,6 +436,7 @@ export async function previewLoanRestructure(ctx: CommandContext, oldLoanPublicI
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id=${ctx.tenantId} AND id=${loan.id} FOR UPDATE`);
         const lockedLoan = await accessibleLoan(ctx, oldLoanPublicId, tx);
         if (lockedLoan.borrowerId !== loan.borrowerId) throw new DomainError("STALE_RESTRUCTURE_PREVIEW", "Loan borrower changed while acquiring restructure locks", 409);
+        await assertLoanFinancialEvidenceReady(tx, ctx, lockedLoan.id);
         await assertNoOlderPendingPayment(tx, ctx.tenantId, lockedLoan.borrowerId, new Date(`${input.settlementDate}T23:59:59.999+07:00`), []);
         const computed = await computePreview(tx, ctx, lockedLoan, input);
         const expiresAt = new Date(Date.now() + Math.max(60, Number(process.env.RESTRUCTURE_PREVIEW_TTL_SECONDS ?? 900)) * 1000);
@@ -553,6 +555,7 @@ export async function executeLoanRestructure(ctx: CommandContext, restructurePub
             if (row.executeIdempotencyKey === required.idempotencyKey && row.executeRequestHash === required.requestHash) return { value: await presentExecution(tx, row, oldLoan) };
             throw new DomainError("IDEMPOTENCY_KEY_CONFLICT", "Restructure was executed with a different key or payload", 409);
         }
+        await assertLoanFinancialEvidenceReady(tx, ctx, oldLoan.id);
         await assertNoOlderPendingPayment(tx, ctx.tenantId, oldLoan.borrowerId, new Date(`${row.settlementDate}T23:59:59.999+07:00`), []);
         if (row.status !== "preview") throw new DomainError("RESTRUCTURE_NOT_EXECUTABLE", "Restructure preview is not executable", 409);
         if (row.expiresAt.getTime() <= Date.now() || row.previewHash !== input.previewHash || row.oldBalanceVersion !== input.expectedBalanceVersion) return { stale: true as const };

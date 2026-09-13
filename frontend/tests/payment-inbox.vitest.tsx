@@ -329,4 +329,52 @@ describe("PaymentInbox", () => {
         expect(await screen.findByText("Slip unavailable until upload verification succeeds. Upload the slip again to retry.")).toBeInTheDocument();
         expect(screen.queryByRole("button", { name: /preview slip/i })).not.toBeInTheDocument();
     });
+
+    test("uses the shared domain translation for an evidence blocker returned while posting", async () => {
+        const user = userEvent.setup();
+        vi.mocked(api.post).mockImplementation(async (url) => {
+            if (url.endsWith("/match-preview")) return { data: {
+                publicId: "019c3a5a-94ce-7f2c-8b08-f56852dca7af", status: "ready", version: 1,
+                totalAllocated: "40.00", allocations: [{ borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, amount: "40.00" }], warnings: [],
+                expiresAt: "2099-08-10T12:00:00.000Z",
+            } };
+            if (url.endsWith("/post")) throw { response: { status: 409, data: { code: "EVIDENCE_REQUIRED_NOT_READY", message: "Private backend details" } } };
+            throw new Error(`Unexpected POST ${url}`);
+        });
+        render(<MemoryRouter><PaymentInbox /></MemoryRouter>);
+
+        await user.click(await screen.findByRole("button", { name: /^B/ }));
+        const row = screen.getByTestId("allocation-row");
+        await user.selectOptions(within(row).getByLabelText(/borrower loan/i), LOAN_A);
+        await user.click(screen.getByRole("button", { name: /preview allocation/i }));
+        await user.click(await screen.findByRole("button", { name: /confirm and post/i }));
+
+        const alert = await screen.findByRole("alert");
+        expect(alert).toHaveTextContent("Required evidence is not ready. Complete and verify all required evidence before posting.");
+        expect(alert).not.toHaveTextContent("Private backend details");
+        expect(api.post.mock.calls.filter(([url]) => url.endsWith("/post"))).toHaveLength(1);
+    });
+
+    test.each([{ label: "null", error: null }, { label: "undefined", error: undefined }])("keeps the generic fallback when an action rejects with $label", async ({ error }) => {
+        const user = userEvent.setup();
+        vi.mocked(api.post).mockImplementation(async (url) => {
+            if (url.endsWith("/match-preview")) return { data: {
+                publicId: "019c3a5a-94ce-7f2c-8b08-f56852dca7af", status: "ready", version: 1,
+                totalAllocated: "40.00", allocations: [{ borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, amount: "40.00" }], warnings: [],
+                expiresAt: "2099-08-10T12:00:00.000Z",
+            } };
+            throw error;
+        });
+        render(<MemoryRouter><PaymentInbox /></MemoryRouter>);
+
+        await user.click(await screen.findByRole("button", { name: /^B/ }));
+        const row = screen.getByTestId("allocation-row");
+        await user.selectOptions(within(row).getByLabelText(/borrower loan/i), LOAN_A);
+        await user.click(screen.getByRole("button", { name: /preview allocation/i }));
+        await user.click(await screen.findByRole("button", { name: /confirm and post/i }));
+
+        const alert = await screen.findByRole("alert");
+        expect(alert).toHaveTextContent("Payment action failed.");
+        expect(screen.getByRole("button", { name: /confirm and post/i })).toBeInTheDocument();
+    });
 });

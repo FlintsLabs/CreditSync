@@ -1,13 +1,13 @@
 import { and, eq } from "drizzle-orm";
 import { describe, expect, test } from "bun:test";
 import { db } from "../db";
-import { borrowers, loanAdjustments, loanRenewals, loanSchedules, loans, paymentAllocationCorrectionEntries, paymentAllocationCorrectionGroups, paymentAllocationCorrectionPreviews, paymentIntakes, transactions, users } from "../db/schema";
+import { borrowers, financialEvidenceRequirements, loanAdjustments, loanRenewals, loanSchedules, loans, paymentAllocationCorrectionEntries, paymentAllocationCorrectionGroups, paymentAllocationCorrectionPreviews, paymentEvidence, paymentIntakes, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import { executePaymentAllocationCorrection, previewPaymentAllocationCorrection } from "./payment-allocation-correction-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
 
-async function fixture(targetScheduledTotal = "200.00") {
+async function fixture(targetScheduledTotal = "200.00", options: { declareEvidenceRequirement?: boolean } = {}) {
     const tenantId = `allocation-correction-${crypto.randomUUID()}`;
     const actor = (await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning())[0]!;
     const borrower = (await db.insert(borrowers).values({ tenantId, ownerUserId: actor.id, name: "Allocation Correction Borrower" }).returning())[0]!;
@@ -16,7 +16,14 @@ async function fixture(targetScheduledTotal = "200.00") {
         { tenantId, loanId: loan.id, installmentNo: 1, dueDate: "2026-09-06", scheduledPrincipal: "173.92", scheduledInterest: "26.08", scheduledFee: "0.00", scheduledTotal: "200.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "200.00", status: "pending" },
         { tenantId, loanId: loan.id, installmentNo: 2, dueDate: "2099-09-07", scheduledPrincipal: "173.92", scheduledInterest: "26.08", scheduledFee: "0.00", scheduledTotal: targetScheduledTotal, paidTotal: "200.00", paidPenalty: "0.00", remainingDue: targetScheduledTotal === "200.00" ? "0.00" : "100.00", status: targetScheduledTotal === "200.00" ? "paid" : "pending" },
     ]).returning();
-    const intake = (await db.insert(paymentIntakes).values({ tenantId, ownerUserId: actor.id, source: "mcp", status: "posted", amount: "200.00", receivedAt: new Date("2026-09-06T04:00:00.000Z"), bankReference: "fixture-reference", postedAt: new Date("2026-09-06T04:01:00.000Z"), createdByUserId: actor.id, postedByUserId: actor.id }).returning())[0]!;
+    const intake = (await db.insert(paymentIntakes).values({ tenantId, ownerUserId: actor.id, source: "mcp", status: options.declareEvidenceRequirement ? "draft" : "posted", amount: "200.00", receivedAt: new Date("2026-09-06T04:00:00.000Z"), bankReference: "fixture-reference", postedAt: options.declareEvidenceRequirement ? null : new Date("2026-09-06T04:01:00.000Z"), createdByUserId: actor.id, postedByUserId: options.declareEvidenceRequirement ? null : actor.id }).returning())[0]!;
+    if (options.declareEvidenceRequirement) {
+        await db.insert(financialEvidenceRequirements).values({
+            tenantId, paymentIntakeId: intake.id, expectedCount: 2, source: "test",
+            requestId: "correction-evidence-request", correlationId: "correction-evidence-correlation", createdByUserId: actor.id,
+        });
+        await db.update(paymentIntakes).set({ status: "posted", postedAt: new Date("2026-09-06T04:01:00.000Z"), postedByUserId: actor.id }).where(eq(paymentIntakes.id, intake.id));
+    }
     const source = (await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan.id, scheduleId: schedules[1]!.id, amount: "200.00", principalComponent: "173.92", interestComponent: "26.08", feeComponent: "0.00", penaltyComponent: "0.00", type: "repayment", transactionDate: new Date("2026-09-06T04:00:00.000Z"), recordedByUserId: actor.id, paymentIntakeId: intake.id, entryType: "repayment", postedAt: new Date("2026-09-06T04:01:00.000Z") }).returning())[0]!;
     const ctx: CommandContext = { tenantId, actorUserId: actor.id, actorSource: "mcp", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID() };
     return { tenantId, loan, schedules, intake, source, ctx };
@@ -139,6 +146,31 @@ describe("scheduled payment allocation correction", () => {
         expect(replay.correctionPublicId).toBe(result.correctionPublicId);
         expect(await db.select().from(paymentAllocationCorrectionGroups).where(eq(paymentAllocationCorrectionGroups.tenantId, seeded.tenantId))).toHaveLength(1);
         expect(await db.select().from(paymentAllocationCorrectionEntries).where(eq(paymentAllocationCorrectionEntries.tenantId, seeded.tenantId))).toHaveLength(2);
+    });
+
+    integrationTest("rejects correction when a consumed intake has one ready and one pending required attachment", async () => {
+        const seeded = await fixture("200.00", { declareEvidenceRequirement: true });
+        await db.insert(paymentEvidence).values([
+            { tenantId: seeded.tenantId, paymentIntakeId: seeded.intake.id, evidenceType: "slip", status: "ready", evidenceHash: "a".repeat(64), mimeType: "image/png", declaredSize: 128, finalizedAt: new Date(), createdByUserId: seeded.ctx.actorUserId, updatedByUserId: seeded.ctx.actorUserId },
+            { tenantId: seeded.tenantId, paymentIntakeId: seeded.intake.id, evidenceType: "slip", status: "pending", evidenceHash: "b".repeat(64), mimeType: "image/png", declaredSize: 128, createdByUserId: seeded.ctx.actorUserId, updatedByUserId: seeded.ctx.actorUserId },
+        ]);
+        const preview = await previewPaymentAllocationCorrection(seeded.ctx, {
+            paymentIntakePublicId: seeded.intake.publicId,
+            transactionPublicId: seeded.source.publicId,
+            targetSchedulePublicId: seeded.schedules[0]!.publicId,
+            reason: "Move payment with complete evidence",
+        });
+        const beforeTransactions = await db.select().from(transactions).where(eq(transactions.tenantId, seeded.tenantId));
+        await expect(executePaymentAllocationCorrection(seeded.ctx, {
+            correctionPreviewPublicId: preview.publicId,
+            previewHash: preview.previewHash,
+            expectedBalanceVersion: preview.expectedBalanceVersion,
+            confirmed: true,
+            reason: "Move payment with complete evidence",
+            idempotencyKey: "allocation-correction-pending-evidence",
+        })).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+        expect(await db.select().from(transactions).where(eq(transactions.tenantId, seeded.tenantId))).toEqual(beforeTransactions);
+        expect(await db.select().from(paymentAllocationCorrectionGroups).where(eq(paymentAllocationCorrectionGroups.tenantId, seeded.tenantId))).toHaveLength(0);
     });
 
     integrationTest("preserves renewal opening adjustments during correction execution", async () => {

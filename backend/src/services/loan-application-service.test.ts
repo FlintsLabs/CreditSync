@@ -3,7 +3,7 @@ import Decimal from "decimal.js";
 import { and, eq, sql } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { db } from "../db";
-import { auditLogs, bankLoans, bankProfiles, borrowers, loanDisbursements, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanReplacements, loanSchedules, loans, transactions, users } from "../db/schema";
+import { auditLogs, bankLoans, bankProfiles, borrowers, loanDisbursements, loanDisbursementEvents, loanFundingAllocations, loanInterestAccruals, loanInterestRatePeriods, loanReplacements, loanSchedules, loans, transactions, users } from "../db/schema";
 import { loansRoute } from "../modules/loans";
 import type { CommandContext } from "./command-context";
 import { createBorrower } from "./borrower-service";
@@ -17,6 +17,7 @@ import {
 import { accrueFloatingInterestThrough, correctFloatingInterestAccruals } from "./floating-interest-service";
 import { getLoanPaymentHealth } from "./loan-payment-health-service";
 import { seedReplacementFixture } from "./loan-replacement-test-fixture";
+import { createDisbursementDraft } from "./loan-disbursement-service";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
 const integrationTest = integrationEnabled ? test : test.skip;
@@ -89,6 +90,43 @@ async function jsonRequest(app: { handle(request: Request): Response | Promise<R
 }
 
 describe("loan application service", () => {
+    integrationTest("activation blocks a known payout requirement before locking loan terms", async () => {
+        const actor = await seedUser("tenant-a", "payout-requirement@example.test", "owner");
+        const ctx = context("tenant-a", actor.id, "payout-requirement-activation");
+        const borrower = await createBorrower(ctx, { name: "Payout Requirement Borrower" });
+        const draft = await createLoanDraft(ctx, { borrowerPublicId: borrower.publicId, ...terms });
+        const payout = await createDisbursementDraft(ctx, draft.publicId, {
+            grossAmount: "1200.00", loanAttributedAmount: "1200.00", channel: "bank_transfer",
+            disbursedAt: "2026-09-14T04:00:00.000Z", attachmentRequirement: { expectedCount: 1 },
+        });
+
+        await expect(activateLoan(ctx, draft.publicId)).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY", status: 409 });
+        expect(await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) })).toMatchObject({ status: "draft" });
+        expect(await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, payout.publicId) })).toMatchObject({ status: "draft", postedAt: null });
+    });
+
+    integrationTest("REST activation rejects a pending payout requirement with the default false evidence flag", async () => {
+        const actor = await seedUser("tenant-rest-activation-evidence", "rest-activation-evidence@example.test", "owner");
+        const ctx = context(actor.tenantId, actor.id, "rest-activation-pending-payout");
+        const borrower = await createBorrower(ctx, { name: "REST activation evidence borrower" });
+        const draft = await createLoanDraft(ctx, { borrowerPublicId: borrower.publicId, ...terms });
+        await createDisbursementDraft(ctx, draft.publicId, {
+            grossAmount: "1200.00", loanAttributedAmount: "1200.00", channel: "bank_transfer",
+            disbursedAt: "2026-09-14T04:00:00.000Z", attachmentRequirement: { expectedCount: 1 },
+        });
+        const app = new Elysia().use(loansRoute);
+        const response = await jsonRequest(app, `/loans/${draft.publicId}/activate`, {
+            method: "POST",
+            headers: { authorization: `Bearer ${await authToken(actor)}`, "idempotency-key": "rest-activation-pending-payout" },
+        });
+
+        expect(response.response.status, response.text).toBe(409);
+        expect(response.body).toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+        expect(await db.query.loans.findFirst({ where: eq(loans.publicId, draft.publicId) })).toMatchObject({ status: "draft", activationIdempotencyKey: null });
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.tenantId, actor.tenantId))).toHaveLength(0);
+        expect(await db.select().from(auditLogs).where(and(eq(auditLogs.tenantId, actor.tenantId), eq(auditLogs.entityId, draft.publicId), eq(auditLogs.action, "activated")))).toHaveLength(0);
+    });
+
     // Break caught: preview returns floating-point money or persists a loan.
     test("previews exact public schedule money without persistence", () => {
         const preview = previewLoan(terms);

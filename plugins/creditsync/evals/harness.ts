@@ -286,6 +286,12 @@ const ALLOCATION_SOURCE_TRANSACTION = "0198c481-3e2b-7000-8000-000000000415";
 const ALLOCATION_REVERSAL_TRANSACTION = "0198c481-3e2b-7000-8000-000000000416";
 const ALLOCATION_REPLACEMENT_TRANSACTION = "0198c481-3e2b-7000-8000-000000000417";
 
+const resolverFixture = (status: string, extras: Record<string, unknown> = {}) => ({
+    workflowId: "creditsync.synthetic", workflowVersion: "workflow-resolver-1.0.0", catalogVersion: "mcp-catalog-synthetic",
+    policyRevision: "evidence-safety-2026-09-14", observed: { state: "mutable", loanType: null, evidenceReady: false },
+    status, nextSteps: [], blockers: [], prohibitedTools: [], reevaluateOn: "evidence_change", ...extras,
+});
+
 const allocationPreviewFixture = (status: "ready" | "blocked" = "ready") => ({
     publicId: ALLOCATION_PREVIEW, status, paymentIntakePublicId: INTAKE,
     transactionPublicId: ALLOCATION_SOURCE_TRANSACTION, loanPublicId: LOAN_A,
@@ -1609,6 +1615,50 @@ async function unfundedCancellationFlow(mcp: ScriptedMcp, execute = true) {
 }
 
 const SCENARIOS: Record<string, Scenario> = {
+    "workflow-resolve-payment-guidance": {
+        script: [{ name: "workflow.resolve", arguments: { intent: "receive_payment", target: { kind: "payment_intake", publicId: INTAKE }, attachments: "present", expectedAttachmentCount: 1 }, result: resolverFixture("next_step", { nextSteps: [{ toolName: "evidence.import-chatgpt-file", arguments: { paymentIntakePublicId: INTAKE }, requiredInputs: ["idempotencyKey", "chatgptFile"], requiresConfirmation: false }], prohibitedTools: ["payment.post"] }) }],
+        run: async (mcp) => { await mcp.call("workflow.resolve", { intent: "receive_payment", target: { kind: "payment_intake", publicId: INTAKE }, attachments: "present", expectedAttachmentCount: 1 }); return { outcome: "completed" } as const; },
+    },
+    "workflow-resolve-payout-guidance": {
+        script: [{ name: "workflow.resolve", arguments: { intent: "disburse_loan", target: { kind: "loan_disbursement", publicId: DISBURSEMENT }, attachments: "none" }, result: resolverFixture("next_step", { nextSteps: [{ toolName: "loan.disbursement.evidence.prepare", arguments: { disbursementPublicId: DISBURSEMENT }, requiredInputs: ["mimeType", "size", "sha256"], requiresConfirmation: false }], prohibitedTools: ["loan.disbursement.post"] }) }],
+        run: async (mcp) => { await mcp.call("workflow.resolve", { intent: "disburse_loan", target: { kind: "loan_disbursement", publicId: DISBURSEMENT }, attachments: "none" }); return { outcome: "completed" } as const; },
+    },
+    "workflow-resolve-missing-file": {
+        script: [{ name: "workflow.resolve", arguments: { intent: "receive_payment", target: { kind: "payment_intake", publicId: INTAKE }, attachments: "unknown" }, result: resolverFixture("needs_input", { blockers: ["ATTACHMENT_AVAILABILITY_UNKNOWN"] }) }],
+        run: async (mcp) => { await mcp.call("workflow.resolve", { intent: "receive_payment", target: { kind: "payment_intake", publicId: INTAKE }, attachments: "unknown" }); return { outcome: "stopped", stopReason: "attachment-unavailable" } as const; },
+    },
+    "workflow-resolve-dns-unavailable": {
+        script: [{ name: "workflow.resolve", arguments: { intent: "receive_payment", target: { kind: "payment_intake", publicId: INTAKE }, attachments: "present", expectedAttachmentCount: 1 }, result: resolverFixture("blocked", { blockers: ["HUMAN_REVIEW_REQUIRED_UNSUPPORTED_ATTACHMENT_TRANSPORT"], prohibitedTools: ["payment.post"] }) }],
+        run: async (mcp) => { await mcp.call("workflow.resolve", { intent: "receive_payment", target: { kind: "payment_intake", publicId: INTAKE }, attachments: "present", expectedAttachmentCount: 1 }); return { outcome: "stopped", stopReason: "attachment-transport-unavailable" } as const; },
+    },
+    "workflow-resolve-prepare-without-resolve": {
+        script: [],
+        run: async () => ({ outcome: "stopped", stopReason: "resolver-required-before-prepare" } as const),
+    },
+    "workflow-resolve-post-without-resolve": {
+        script: [],
+        run: async () => ({ outcome: "stopped", stopReason: "resolver-required-before-post" } as const),
+    },
+    "workflow-resolve-two-files-one-ready": {
+        script: [{ name: "workflow.resolve", arguments: { intent: "receive_payment", target: { kind: "payment_intake", publicId: INTAKE }, attachments: "present", expectedAttachmentCount: 2 }, result: resolverFixture("blocked", { blockers: ["EVIDENCE_REQUIRED_NOT_READY"], prohibitedTools: ["payment.post"] }) }],
+        run: async (mcp) => { await mcp.call("workflow.resolve", { intent: "receive_payment", target: { kind: "payment_intake", publicId: INTAKE }, attachments: "present", expectedAttachmentCount: 2 }); return { outcome: "stopped", stopReason: "all-evidence-required" } as const; },
+    },
+    "workflow-resolve-stale-workflow": {
+        script: [{ name: "workflow.resolve", arguments: { intent: "receive_payment", target: { kind: "payment_intake", publicId: INTAKE }, attachments: "none", knownWorkflowVersion: "workflow-resolver-old" }, result: resolverFixture("refresh_required", { blockers: ["WORKFLOW_VERSION_STALE"], reevaluateOn: "version_change" }) }],
+        run: async (mcp) => { await mcp.call("workflow.resolve", { intent: "receive_payment", target: { kind: "payment_intake", publicId: INTAKE }, attachments: "none", knownWorkflowVersion: "workflow-resolver-old" }); return { outcome: "stopped", stopReason: "stale-workflow-version" } as const; },
+    },
+    "workflow-resolve-posted-pending": {
+        script: [{ name: "workflow.resolve", arguments: { intent: "receive_payment", target: { kind: "payment_intake", publicId: INTAKE }, attachments: "none" }, result: resolverFixture("confirmation_required", { blockers: ["POSTED_INTAKE_REQUIRES_SUPPLEMENT_WORKFLOW"], nextSteps: [{ toolName: "payment.evidence-supplement.record", arguments: { paymentIntakePublicId: INTAKE }, requiredInputs: ["supplementPublicId", "confirmed", "reason", "idempotencyKey"], requiresConfirmation: true }], prohibitedTools: ["payment.post"] }) }],
+        run: async (mcp) => { await mcp.call("workflow.resolve", { intent: "receive_payment", target: { kind: "payment_intake", publicId: INTAKE }, attachments: "none" }); return { outcome: "stopped", stopReason: "posted-supplement-only" } as const; },
+    },
+    "workflow-resolve-profile-missing-importer": {
+        script: [{ name: "workflow.resolve", arguments: { intent: "receive_payment", target: { kind: "payment_intake", publicId: INTAKE }, attachments: "present", expectedAttachmentCount: 1 }, result: resolverFixture("connection_required", { blockers: ["WORKFLOW_REQUIRES_ANOTHER_CONNECTION"] }) }],
+        run: async (mcp) => { await mcp.call("workflow.resolve", { intent: "receive_payment", target: { kind: "payment_intake", publicId: INTAKE }, attachments: "present", expectedAttachmentCount: 1 }); return { outcome: "stopped", stopReason: "profile-missing-importer" } as const; },
+    },
+    "workflow-resolve-unsupported-transport": {
+        script: [{ name: "workflow.resolve", arguments: { intent: "close_loan", target: { kind: "loan", publicId: LOAN_A }, attachments: "present", expectedAttachmentCount: 1 }, result: resolverFixture("blocked", { blockers: ["HUMAN_REVIEW_REQUIRED_FLOATING_ATTACHMENT_TRANSPORT"], prohibitedTools: ["loan.settlement.execute"] }) }],
+        run: async (mcp) => { await mcp.call("workflow.resolve", { intent: "close_loan", target: { kind: "loan", publicId: LOAN_A }, attachments: "present", expectedAttachmentCount: 1 }); return { outcome: "stopped", stopReason: "unsupported-transport-human-review" } as const; },
+    },
     "loan-cancel-unfunded": {
         script: [
             { name: "borrower.search", arguments: { query: "Unfunded Borrower" }, result: { resolution: "unique", candidates: [{ publicId: BORROWER_A, name: "fixture" }] } },

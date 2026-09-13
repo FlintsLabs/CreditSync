@@ -8,6 +8,7 @@ import { parseMoney, serializeMoney } from "../lib/money";
 import { BUCKET_NAME, createSignedPutUrl, headStoredObject, toStorageReference, type SignedPutRequest, type StoredObjectHead } from "../lib/storage";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
+import { assertFinancialEvidenceReady, registerFinancialEvidenceRequirement } from "./financial-evidence-requirement-service";
 
 type Executor = DbExecutor;
 type EventRow = typeof loanDisbursementEvents.$inferSelect;
@@ -32,10 +33,11 @@ export interface CreateDisbursementDraftInput {
     payeeHint?: string | null;
     note?: string | null;
     disbursedAt: string;
+    attachmentRequirement?: { expectedCount: number };
 }
 
 export type UpdateDisbursementDraftInput = Partial<CreateDisbursementDraftInput>;
-export interface PrepareDisbursementEvidenceInput { mimeType: string; size: number; sha256: string; originalName?: string | null; importIdempotencyKey?: string | null; sourceFileFingerprint?: string | null }
+export interface PrepareDisbursementEvidenceInput { mimeType: string; size: number; sha256: string; originalName?: string | null; importIdempotencyKey?: string | null; sourceFileFingerprint?: string | null; requirementAttemptKey?: string }
 
 export function rejectDisbursementDraftEvidenceIds(input: unknown) {
     if (input && typeof input === "object" && "evidenceFilePublicIds" in input) {
@@ -420,6 +422,9 @@ export async function createDisbursementDraft(ctx: CommandContext, loanPublicId:
             tenantId: ctx.tenantId, loanId: loan.id, ...draft, sourceBankProfileId: sourceProfile?.id ?? null,
             payeeHint: normalizedText(input.payeeHint), createdByUserId: ctx.actorUserId,
         }).returning().then((rows) => rows[0]!);
+        if (input.attachmentRequirement) {
+            await registerFinancialEvidenceRequirement(tx, ctx, { kind: "loan_disbursement", publicId: created.publicId }, input.attachmentRequirement.expectedCount);
+        }
         await writeAudit(tx, ctx, created, "draft_created", { loanPublicId, grossAmount: draft.grossAmount, loanAttributedAmount: draft.loanAttributedAmount });
         return presentEvent(created, [], tx);
     });
@@ -445,6 +450,9 @@ export async function createDisbursementDraftInTransaction(
         payeeHint: normalizedText(input.payeeHint),
         createdByUserId: ctx.actorUserId,
     }).returning().then((rows: EventRow[]) => rows[0]!);
+    if (input.attachmentRequirement) {
+        await registerFinancialEvidenceRequirement(tx, ctx, { kind: "loan_disbursement", publicId: created.publicId }, input.attachmentRequirement.expectedCount);
+    }
     await writeAudit(tx, ctx, created, "draft_created", {
         loanPublicId: loan.publicId,
         grossAmount: draft.grossAmount,
@@ -529,6 +537,7 @@ export async function postDisbursement(ctx: CommandContext, disbursementPublicId
                 409,
             );
         }
+        await assertFinancialEvidenceReady(tx, ctx, { kind: "loan_disbursement", publicId: current.publicId });
         const attached = await tx.select().from(loanDisbursementEvidence).where(and(
             eq(loanDisbursementEvidence.tenantId, ctx.tenantId), eq(loanDisbursementEvidence.loanDisbursementEventId, current.id),
         ));
@@ -606,6 +615,14 @@ export async function prepareDisbursementEvidence(ctx: CommandContext, disbursem
     const { event } = await accessibleEvent(ctx, disbursementPublicId);
     if (event.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Evidence can only be prepared for a draft", 409);
     const sha256 = input.sha256.toLowerCase();
+    await db.transaction(async (tx) => {
+        await registerFinancialEvidenceRequirement(tx, ctx, { kind: "loan_disbursement", publicId: event.publicId }, 1, {
+            attemptKey: input.requirementAttemptKey ?? `sha256:${sha256}`,
+            importIdempotencyKey: input.importIdempotencyKey,
+            sourceFileFingerprint: input.sourceFileFingerprint,
+            bindingKind: input.importIdempotencyKey ? "disbursement" : undefined,
+        });
+    });
     const existing = await db.query.loanDisbursementEvidenceIntents.findFirst({ where: and(
         eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId), eq(loanDisbursementEvidenceIntents.evidenceHash, sha256),
     ) });

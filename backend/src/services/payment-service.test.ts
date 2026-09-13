@@ -7,6 +7,8 @@ import {
     bankProfiles,
     borrowers,
     files,
+    financialEvidenceRequirementAttempts,
+    financialEvidenceRequirements,
     floatingPenaltyLedgerEntries,
     floatingTransactionAllocations,
     fundLedgerEntries,
@@ -45,6 +47,7 @@ import {
     previewEarlyLoanSettlement,
     type EvidenceStorageGateway,
 } from "./payment-service";
+import { assertFinancialEvidenceReady } from "./financial-evidence-requirement-service";
 import { accrueFloatingInterestThrough, correctFloatingInterestAccruals, floatingInterestDue } from "./floating-interest-service";
 
 const integrationEnabled = Boolean(process.env.TEST_DATABASE_URL);
@@ -1345,6 +1348,50 @@ describe("payment application service", () => {
         expect(JSON.stringify(await db.select().from(auditLogs))).not.toContain("signed");
     });
 
+    // Break caught: a pre-floor finalized evidence file is not a durable distinct-attempt identity.
+    integrationTest("seeds a legacy finalized payment evidence floor and keeps a failed distinct retry blocking", async () => {
+        const actor = await seedUser();
+        const intake = await createPaymentIntake(context(actor), { amount: "50.00", receivedAt: "2026-09-14T12:00:00.000Z" });
+        const checksumA = "a".repeat(64);
+        const checksumB = "b".repeat(64);
+        const intakeRow = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, intake.publicId) });
+        const legacyFile = await db.insert(files).values({
+            tenantId: actor.tenantId, ownerUserId: actor.id, bucket: "legacy-test", key: `legacy-${crypto.randomUUID()}`,
+            originalName: "legacy.png", mimeType: "image/png", size: 12, url: "storage:legacy-payment",
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(paymentEvidence).values({
+            tenantId: actor.tenantId, paymentIntakeId: intakeRow!.id, fileId: legacyFile.id, evidenceType: "slip",
+            status: "ready", evidenceHash: checksumA, mimeType: "image/png", declaredSize: 12, finalizedAt: new Date(),
+            createdByUserId: actor.id, updatedByUserId: actor.id,
+        });
+        const gateway = (checksum: string): EvidenceStorageGateway => ({
+            preparePut: async () => ({ uploadUrl: `https://storage.example.test/${checksum}`, expiresAt: new Date(Date.now() + 60_000) }),
+            head: async () => ({
+                exists: true, contentType: "image/png", contentLength: 12, checksumSha256: checksum,
+                metadata: { tenant: actor.tenantId, intake: intake.publicId },
+            }),
+        });
+
+        await expect(preparePaymentEvidence(context(actor), intake.publicId, { mimeType: "image/png", size: 12, sha256: checksumB }, {
+            preparePut: async () => { throw new Error("second signing unavailable"); },
+            head: async () => ({ exists: false, contentType: null, contentLength: null, checksumSha256: null, metadata: {} }),
+        })).rejects.toThrow("second signing unavailable");
+
+        const afterFailure = await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.paymentIntakeId, 1) });
+        expect(afterFailure).toMatchObject({ expectedCount: 2 });
+        expect(await db.select().from(financialEvidenceRequirementAttempts).where(eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, afterFailure!.id))).toHaveLength(2);
+        await expect(db.transaction((tx) => assertFinancialEvidenceReady(tx, context(actor), { kind: "payment_intake", publicId: intake.publicId })))
+            .rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+
+        const retried = await preparePaymentEvidence(context(actor), intake.publicId, { mimeType: "image/png", size: 12, sha256: checksumB }, gateway(checksumB));
+        await finalizePaymentEvidence(context(actor), intake.publicId, retried.publicId, gateway(checksumB));
+        const afterRetry = await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.paymentIntakeId, 1) });
+        expect(afterRetry).toMatchObject({ expectedCount: 2 });
+        expect(await db.select().from(financialEvidenceRequirementAttempts).where(eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, afterRetry!.id))).toHaveLength(2);
+        await expect(db.transaction((tx) => assertFinancialEvidenceReady(tx, context(actor), { kind: "payment_intake", publicId: intake.publicId })))
+            .resolves.toMatchObject({ allowed: true, code: "READY" });
+    });
+
     // Break caught: a duplicate-evidence prepare that races posting must never rewrite posted -> duplicate.
     integrationTest("rechecks evidence immutability under the intake row lock", async () => {
         const actor = await seedUser();
@@ -1430,8 +1477,9 @@ describe("payment application service", () => {
             .rejects.toMatchObject({ code: "EVIDENCE_UPLOAD_EXPIRED", status: 409 });
     });
 
-    // Break caught: a delayed signer can return a live upload capability after the intake becomes posted.
-    integrationTest("does not return a newly signed evidence capability after posting wins the race", async () => {
+    // A requirement is committed before the delayed signer is called, so the
+    // posting side of this interleaving must fail closed.
+    integrationTest("prepare wins the race and blocks posting before signing completes", async () => {
         const actor = await seedUser();
         const seeded = await seedLoan({ actor, borrowerName: "Signing race", schedules: [{ total: "10.00" }] });
         const intake = await createPaymentIntake(context(actor), { amount: "10.00", receivedAt: "2026-08-10T10:00:00.000Z" });
@@ -1455,9 +1503,32 @@ describe("payment application service", () => {
         }, gateway);
         const settled = preparing.then((value) => value, (error) => error);
         await entered;
-        await postPayment(context(actor), intake.publicId, { proposalPublicId: preview.publicId });
-        releaseSigner();
-        expect(await settled).toMatchObject({ code: "PAYMENT_INTAKE_IMMUTABLE", status: 409 });
+        try {
+            await expect(postPayment(context(actor), intake.publicId, { proposalPublicId: preview.publicId }))
+                .rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY", status: 409 });
+        } finally {
+            releaseSigner();
+        }
+        expect(await settled).toMatchObject({ uploadUrl: "https://storage.example.test/signed" });
+    });
+
+    integrationTest("rejects an old preview after a failed evidence upload without financial writes", async () => {
+        const actor = await seedUser();
+        const seeded = await seedLoan({ actor, borrowerName: "Failed evidence post", schedules: [{ total: "10.00" }] });
+        const intake = await createPaymentIntake(context(actor), { amount: "10.00", receivedAt: "2026-08-10T10:15:00.000Z" });
+        const preview = await previewPaymentMatch(context(actor), intake.publicId, { allocations: [{
+            borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "10.00",
+        }] });
+        await expect(preparePaymentEvidence(context(actor), intake.publicId, { mimeType: "image/png", size: 12, sha256: "9".repeat(64) }, {
+            preparePut: async () => { throw new Error("signing unavailable"); },
+            head: async () => ({ exists: false, contentType: null, contentLength: null, checksumSha256: null, metadata: {} }),
+        })).rejects.toThrow("signing unavailable");
+        await expect(postPayment(context(actor), intake.publicId, { proposalPublicId: preview.publicId }))
+            .rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY", status: 409 });
+        expect(await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, intake.publicId) })).toMatchObject({ status: "ready" });
+        expect(await db.select().from(transactions).where(eq(transactions.paymentIntakeId, (await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, intake.publicId) }))!.id))).toHaveLength(0);
+        expect(await db.select().from(fundLedgerEntries).where(eq(fundLedgerEntries.loanId, seeded.loan.id))).toHaveLength(0);
+        expect(await db.query.paymentMatchProposals.findFirst({ where: eq(paymentMatchProposals.publicId, preview.publicId) })).toMatchObject({ status: "ready" });
     });
 
     // Break caught: list/get leak numeric keys or records owned by another tenant.
@@ -1481,7 +1552,8 @@ describe("payment application service", () => {
         const allocations = [{ borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "10.00" }];
         await expect(previewPaymentMatch(context(actor), intake.publicId, { allocations })).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
 
-        await db.insert(paymentEvidence).values({ tenantId: actor.tenantId, paymentIntakeId: intakeRow!.id, evidenceType: "slip", status: "ready", finalizedAt: new Date(), createdByUserId: actor.id, updatedByUserId: actor.id });
+        const evidenceFile = await db.insert(files).values({ tenantId: actor.tenantId, ownerUserId: actor.id, bucket: "test", key: `required-${crypto.randomUUID()}`, originalName: "required.png", mimeType: "image/png", size: 12, url: "storage:required" }).returning().then((rows) => rows[0]!);
+        await db.insert(paymentEvidence).values({ tenantId: actor.tenantId, paymentIntakeId: intakeRow!.id, fileId: evidenceFile.id, evidenceType: "slip", status: "ready", finalizedAt: new Date(), createdByUserId: actor.id, updatedByUserId: actor.id });
         const proposal = await previewPaymentMatch(context(actor), intake.publicId, { allocations });
         expect(proposal.status).toBe("ready");
 

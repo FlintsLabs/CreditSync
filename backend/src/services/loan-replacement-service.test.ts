@@ -1131,6 +1131,27 @@ describe("loan replacement service database invariants", () => {
         ) })).toMatchObject({ status: "draft", postIdempotencyKey: null });
     });
 
+    integrationTest("stops replacement preview before activation when its draft already has a payout event", async () => {
+        const fixture = await seedReplacementFixture();
+        await createDisbursementDraft(
+            fixture.context("replacement-pending-payout-draft"),
+            fixture.replacementDraft.publicId,
+            {
+                grossAmount: "1.00",
+                loanAttributedAmount: "1.00",
+                channel: "bank_transfer",
+                sourceBankProfilePublicId: fixture.source.profile.publicId,
+                disbursedAt: "2026-08-17T00:00:00.000Z",
+                attachmentRequirement: { expectedCount: 1 },
+            },
+        );
+        const before = await fixture.counts();
+        await expect(fixture.preview()).rejects.toMatchObject({ code: "REPLACEMENT_DRAFT_DOWNSTREAM_ACTIVITY", status: 409 });
+        expect(await fixture.counts()).toEqual(before);
+        expect(await db.query.loans.findFirst({ where: eq(loans.id, fixture.replacementDraft.id) })).toMatchObject({ status: "draft", activationIdempotencyKey: null });
+        expect(await db.select().from(auditLogs).where(and(eq(auditLogs.tenantId, fixture.tenantId), eq(auditLogs.entityType, "loan_replacement"), eq(auditLogs.action, "executed")))).toHaveLength(0);
+    });
+
     // Break caught: replacement can commit while an existing disbursement draft waits on the
     // parent lock, after which the waiting command posts against the now-terminal old loan.
     integrationTest("serializes replacement execution against disbursement posting", async () => {

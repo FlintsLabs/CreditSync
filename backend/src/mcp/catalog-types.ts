@@ -28,7 +28,7 @@ export const MCP_TOOL_NAMES = [
     "intermediary.remittance.evidence.finalize", "intermediary.remittance.post", "renewal.preview", "renewal.execute", "renewal.reverse",
     "loan.restructure.preview", "loan.restructure.execute", "loan.restructure.reverse", "loan.waiver.preview", "loan.waiver.execute",
     "loan.waiver.reverse", "funding-source.list", "funding-allocation.preview", "funding-allocation.create", "funding-allocation.list",
-    "system.error-diagnostic.get", "system.error-diagnostic.list",
+    "system.error-diagnostic.get", "system.error-diagnostic.list", "workflow.resolve",
 ] as const;
 
 export type McpToolName = (typeof MCP_TOOL_NAMES)[number];

@@ -827,8 +827,8 @@ export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: st
     await assertBatchStagingComplete(ctx, batch, db);
     const intakes = await db.select().from(paymentIntakes).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.id, items.map((item) => item.paymentIntakeId))));
     const evidence = await db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, ctx.tenantId), inArray(paymentEvidence.paymentIntakeId, items.map((item) => item.paymentIntakeId))));
-    const evidenceReady = intakes.every((intake) => !intake.evidenceRequired || evidence.some((entry) => entry.paymentIntakeId === intake.id && entry.status === "ready" && entry.finalizedAt !== null));
-    if (!evidenceReady) throw new DomainError("EVIDENCE_REQUIRED_NOT_READY", "Required payment evidence is not ready", 409);
+    for (const intake of intakes) await assertPaymentEvidenceReady(db, ctx.tenantId, intake);
+    const evidenceReady = true;
     const loansForBorrower = await db.select().from(loans).where(and(eq(loans.tenantId, ctx.tenantId), inArray(loans.borrowerId, targetBorrowers.map((row) => row.id)), eq(loans.status, "active")));
     const schedules = loansForBorrower.length ? await db.select().from(loanSchedules).where(and(eq(loanSchedules.tenantId, ctx.tenantId), inArray(loanSchedules.loanId, loansForBorrower.map((loan) => loan.id)))) : [];
     const obligations: BatchObligation[] = schedules.filter((schedule) => schedule.status !== "paid" && schedule.remainingDue !== "0").map((schedule) => {
@@ -995,7 +995,7 @@ export async function executePaymentBatch(ctx: CommandContext, batchPublicId: st
         const lockedItems = await tx.select({ id: paymentBatchItems.id, paymentIntakeId: paymentBatchItems.paymentIntakeId }).from(paymentBatchItems).where(and(eq(paymentBatchItems.tenantId, ctx.tenantId), eq(paymentBatchItems.batchId, locked.id))).orderBy(asc(paymentBatchItems.id));
         const lockedIntakeIds = lockedItems.map((item) => item.paymentIntakeId).sort((a, b) => a - b);
         if (lockedIntakeIds.length) await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(lockedIntakeIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
-        const lockedIntakes = lockedIntakeIds.length ? await tx.select({ id: paymentIntakes.id, status: paymentIntakes.status, evidenceRequired: paymentIntakes.evidenceRequired }).from(paymentIntakes).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.id, lockedIntakeIds))) : [];
+        const lockedIntakes = lockedIntakeIds.length ? await tx.select({ id: paymentIntakes.id, publicId: paymentIntakes.publicId, status: paymentIntakes.status, evidenceRequired: paymentIntakes.evidenceRequired }).from(paymentIntakes).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.id, lockedIntakeIds))) : [];
         if (lockedIntakes.some((intake) => intake.status === "posted")) throw new DomainError("BATCH_EXECUTION_CONFLICT", "Some batch items were posted but the batch is not complete", 409);
         for (const intake of lockedIntakes) await assertPaymentEvidenceReady(tx, ctx.tenantId, intake);
         assertPaymentBatchPreviewFresh(preview, input);

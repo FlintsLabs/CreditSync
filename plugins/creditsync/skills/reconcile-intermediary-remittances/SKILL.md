@@ -5,6 +5,8 @@ description: Use when recording borrower payments held by a collector or interme
 
 # Reconcile intermediary remittances
 
+Call `workflow.resolve` before intermediary collection/remittance work. Attachment-bearing remittance paths without a supported pre-execution association are human-review-only; do not create a generic payment intake or infer a target. Re-resolve after stale state, evidence changes, or version changes, and keep explicit confirmation before posting.
+
 This skill covers borrower collections returned by an intermediary. For outbound loan disbursement transfer legs routed through an intermediary, use `manage-intermediated-disbursements`.
 
 1. Search the intermediary by canonical name before creating one. Never infer identity from a bank name alone.

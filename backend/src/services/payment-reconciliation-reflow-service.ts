@@ -10,7 +10,8 @@ import {
 import { createAuditLog } from "../lib/audit-log";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
-import { buildTemporalReflowPlanForLoan, executeTemporalReflow, type TemporalReflowPlan } from "./floating-allocation-reflow-service";
+import { assertFinancialEvidenceReady } from "./financial-evidence-requirement-service";
+import { assertTemporalReflowEvidenceReady, buildTemporalReflowPlanForLoan, executeTemporalReflow, type TemporalReflowPlan } from "./floating-allocation-reflow-service";
 import { lockPaymentBorrowers } from "./payment-chronology-service";
 import { bangkokBusinessDate } from "./payment-chronology-guard";
 
@@ -132,7 +133,11 @@ export async function previewPaymentReconciliationReflow(ctx: CommandContext, in
     if (!reason) throw new DomainError("RECONCILIATION_REASON_REQUIRED", "Temporal reflow repair requires a reason", 400);
     return db.transaction(async (tx) => {
         const context = await loadRepairContext(tx, ctx, input.reconciliationPublicId);
+        const consumedIntakeIds = [...new Set([context.intake.id, ...context.sourceTransactions.map((row) => row.paymentIntakeId).filter((id): id is number => id !== null)])].sort((left, right) => left - right);
         await lockPaymentBorrowers(tx, ctx.tenantId, context.borrowersForLocks);
+        await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(consumedIntakeIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
+        await assertFinancialEvidenceReady(tx, ctx, { kind: "payment_intake", publicId: context.intake.publicId });
+        await assertTemporalReflowEvidenceReady(tx, ctx, context.sourceTransactions.map((row) => ({ transactionId: row.id })));
         const { plan } = await buildRepairPlan(tx, ctx, context);
         const source = { reconciliationGroupPublicId: context.group.publicId, paymentIntakePublicId: context.intake.publicId, sourceTransactions: context.sourceTransactions.map((row) => ({ publicId: row.publicId, loanPublicId: context.loanRows.find((loan) => loan.id === row.loanId)?.publicId, transactionDate: row.transactionDate, amount: row.amount, principalComponent: row.principalComponent, interestComponent: row.interestComponent, feeComponent: row.feeComponent, penaltyComponent: row.penaltyComponent })), evidence: context.evidence.map((row: typeof context.evidence[number]) => ({ publicId: row.publicId, status: row.status, evidenceHash: row.evidenceHash, mimeType: row.mimeType, declaredSize: row.declaredSize, finalizedAt: row.finalizedAt })), plan };
         const expectedBalanceVersion = stableHash(source);
@@ -185,7 +190,11 @@ export async function executePaymentReconciliationReflow(ctx: CommandContext, in
         await tx.execute(sql`SELECT id FROM payment_reconciliation_reflow_proposals WHERE tenant_id = ${ctx.tenantId} AND id = ${initial.id} FOR UPDATE`);
         if (initial.status !== "ready" || initial.expiresAt.getTime() <= Date.now() || initial.previewHash !== input.previewHash || initial.expectedBalanceVersion !== input.expectedBalanceVersion || initial.reason !== reason) throw new DomainError("STALE_TEMPORAL_REFLOW_PREVIEW", "Temporal reflow preview is stale or expired", 409);
         const context = await loadRepairContext(tx, ctx, (initial.sourceSnapshot as { reconciliationGroupPublicId: string }).reconciliationGroupPublicId);
+        const consumedIntakeIds = [...new Set([context.intake.id, ...context.sourceTransactions.map((row) => row.paymentIntakeId).filter((id): id is number => id !== null)])].sort((left, right) => left - right);
         await lockPaymentBorrowers(tx, ctx.tenantId, context.borrowersForLocks);
+        await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(consumedIntakeIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
+        await assertFinancialEvidenceReady(tx, ctx, { kind: "payment_intake", publicId: context.intake.publicId });
+        await assertTemporalReflowEvidenceReady(tx, ctx, context.sourceTransactions.map((row) => ({ transactionId: row.id })));
         const { plan, results } = await buildRepairPlan(tx, ctx, context);
         const source = { reconciliationGroupPublicId: context.group.publicId, paymentIntakePublicId: context.intake.publicId, sourceTransactions: context.sourceTransactions.map((row) => ({ publicId: row.publicId, loanPublicId: context.loanRows.find((loan) => loan.id === row.loanId)?.publicId, transactionDate: row.transactionDate, amount: row.amount, principalComponent: row.principalComponent, interestComponent: row.interestComponent, feeComponent: row.feeComponent, penaltyComponent: row.penaltyComponent })), evidence: context.evidence.map((row: typeof context.evidence[number]) => ({ publicId: row.publicId, status: row.status, evidenceHash: row.evidenceHash, mimeType: row.mimeType, declaredSize: row.declaredSize, finalizedAt: row.finalizedAt })), plan };
         if (stableHash(source) !== initial.expectedBalanceVersion || stableHash({ source, reason }) !== initial.previewHash) throw new DomainError("STALE_TEMPORAL_REFLOW_PREVIEW", "Temporal reflow state changed after preview", 409);

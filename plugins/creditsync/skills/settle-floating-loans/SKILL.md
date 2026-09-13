@@ -5,6 +5,8 @@ description: Use when previewing, closing, or reversing a CreditSync floating lo
 
 # Settle floating loans
 
+Call `workflow.resolve` before close-out and after attachment, stale-state, expiry, or version changes. A floating close-out with an attachment but no supported evidence association returns human-review guidance; do not invent a payment intake or call execute. The resolver never confirms or authorizes settlement.
+
 Close-out is `inspect → preview → explain → explicit confirmation → execute`. CreditSync owns accrual materialization and every amount. Never calculate, prorate, round, refund, or rewrite the composition in conversation.
 
 ## Required workflow

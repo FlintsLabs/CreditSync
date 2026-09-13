@@ -1,8 +1,8 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "mcp-catalog-1e64cc54a23af03f",
+  "catalogVersion": "mcp-catalog-350933dd62d51246",
   "profile": "admin",
-  "toolCount": 34,
+  "toolCount": 35,
   "tools": [
     "system.error-diagnostic.get",
     "system.error-diagnostic.list",
@@ -37,6 +37,7 @@
     "loan.commission.preview",
     "loan.commission.list",
     "loan.commission.calculate",
-    "loan.commission.reverse"
+    "loan.commission.reverse",
+    "workflow.resolve"
   ]
 }

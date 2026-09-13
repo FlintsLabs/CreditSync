@@ -1,8 +1,8 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "mcp-catalog-1e64cc54a23af03f",
+  "catalogVersion": "mcp-catalog-350933dd62d51246",
   "profile": "payments",
-  "toolCount": 57,
+  "toolCount": 58,
   "tools": [
     "borrower.resolve-and-portfolio",
     "loan.inspect-context",
@@ -60,6 +60,7 @@
     "payment.restore.schedule-backfill",
     "payment.intermediary-attribution.list",
     "payment.intermediary-attribution.create",
-    "payment.intermediary-attribution.reverse"
+    "payment.intermediary-attribution.reverse",
+    "workflow.resolve"
   ]
 }

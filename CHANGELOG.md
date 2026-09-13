@@ -4,7 +4,25 @@
 
 ### Added
 
-- Recorded the owner-approved workflow resolver and sticky evidence-safety implementation plan, including isolated Luna high execution, independent verification and controlled deployment gates; implementation and mobile acceptance are not yet complete.
+- Introduced read-only `workflow.resolve`, catalog/workflow version guidance, generated 135-tool/profile snapshots, and CreditSync plugin 10.3.0 with resolver-first skills and executable safety scenarios.
+- Added typed, tenant-scoped evidence requirements, append-only attempt floors, and pre-download import bindings in additive migrations 0075–0077; failed uploads retain their requirements without backfilling posted financial records.
+- Added disposable service/REST, concurrency, exact-target historical-replay snapshots and intermediary post-time evidence rechecks, profile/runtime, and evidence-lineage regressions alongside an explicit financial entry-point inventory and separate backend, agent, host, and mobile acceptance evidence.
+
+### Changed
+
+- Integrated the independently verified Luna-high worktree implementation into `main`; artifact source remains `691dda7`, with only verification documentation added afterward and production rollout gated on a fresh recovery rehearsal.
+- Applied evidence readiness to payment/payout posting, activation, reconciliation/restore, allocation correction, temporal reflow, settlement, renewal, and restructure; pending evidence blocks the affected preview/execute paths while legitimate data-only workflows and successful idempotent replays remain supported.
+- Verified the combined release with the full disposable backend suite, separate cache coverage, frontend test/lint/build, plugin/typecheck gates, discovery benchmarking and pinned official conformance; documented host/mobile limits and separated synthetic tests from read-only real-data recovery. Production backup/restore and deployment remain gated separately.
+
+### Fixed
+
+- Require exact finalized tenant/file associations before counting evidence as ready; preserve failed prepare/import attempts across cleanup and reconcile proven ChatGPT/SHA aliases without double-counting one file.
+- Enforce existing portfolio authorization when registering evidence requirements and reject invalid runtime readiness counts instead of treating incomplete evidence as financial permission.
+- Surface localized evidence blockers in Web payout posting while preserving drafts, entered fields, and stable manual-retry keys; payment and payout errors use safe generic fallbacks even for nullish rejections, with EN/TH component regressions and no raw backend-message exposure.
+- Correct resolver target/argument mappings against named schemas, require authoritative observations, use aggregate evidence counts with non-ready overflow handling, and retain separate workflow/policy versions; scheduled close-out receives inspection guidance rather than a floating-only settlement tool.
+- Normalize concurrent evidence import bindings with a savepoint so conflicting attempts retain a single durable winner.
+- Restrict import-binding conflict normalization to the known unique index or a proven concurrent binding winner, preserving unrelated database errors.
+- Keep borrower-target resolver guidance compatible with the exactly-one-of-query-or-UUID schema, without requesting an already supplied identifier.
 
 ## v0.4.45 - 2026-09-13
 

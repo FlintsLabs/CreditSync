@@ -5,6 +5,8 @@ description: Use when recording, evidencing, previewing, posting, inspecting, or
 
 # Manage intermediated disbursements
 
+Call `workflow.resolve` before a new intermediary payout intent. It may guide inspection and named tools but cannot authorize the group, transfer legs, evidence, preview, or post. If the attachment transport is not supported for the exact leg/group, stop for human review instead of inventing a direct payout or payment intake.
+
 ## Overview
 
 An intermediated payout is one append-only group of actual cash-transfer legs. CreditSync derives the expected amounts from the active loan; the agent must preserve the exact identities, assignment, amounts, payees, evidence, retained balance, and backend preview.

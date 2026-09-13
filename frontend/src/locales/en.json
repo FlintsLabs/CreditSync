@@ -1090,6 +1090,7 @@
     },
     "domainErrors": {
         "INVALID_PAYMENT_AMOUNT": "Enter a valid payment amount.", "INVALID_PAYMENT_TARGET": "Select a valid payment target.",
+        "EVIDENCE_REQUIRED_NOT_READY": "Required evidence is not ready. Complete and verify all required evidence before posting.", "EVIDENCE_NOT_FINALIZED": "Required evidence is not ready. Complete and verify all required evidence before posting.",
         "STALE_PAYMENT_PROPOSAL": "This preview is stale. Preview the allocation again.", "PAYMENT_NOT_READY": "Resolve the review warnings before posting.",
         "REVERSAL_REASON_REQUIRED": "Enter a reason for the reversal.", "REVERSAL_NOT_LATEST": "Reverse later payments first.",
         "INVALID_ALIAS": "Enter a valid alias.", "ALIAS_ALREADY_EXISTS": "That alias already exists.",
