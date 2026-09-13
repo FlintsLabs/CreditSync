@@ -15,6 +15,7 @@
 
 ### Changed
 
+- Blocked false-ready reconciliation reflow, settlement, renewal, and restructure previews when consumed intake or source-loan payout evidence is pending; added activation/payout interleaving, replay, isolation, REST, intermediary, and replacement acceptance coverage.
 - Integrated the shared 0076 evidence-attempt floor and payout/activation enforcement with the alternate-transition guards in this branch; primary resolver/plugin work remains separate.
 
 ## v0.4.45 - 2026-09-13

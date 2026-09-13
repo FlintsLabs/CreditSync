@@ -436,6 +436,7 @@ export async function previewLoanRestructure(ctx: CommandContext, oldLoanPublicI
         await tx.execute(sql`SELECT id FROM loans WHERE tenant_id=${ctx.tenantId} AND id=${loan.id} FOR UPDATE`);
         const lockedLoan = await accessibleLoan(ctx, oldLoanPublicId, tx);
         if (lockedLoan.borrowerId !== loan.borrowerId) throw new DomainError("STALE_RESTRUCTURE_PREVIEW", "Loan borrower changed while acquiring restructure locks", 409);
+        await assertLoanFinancialEvidenceReady(tx, ctx, lockedLoan.id);
         await assertNoOlderPendingPayment(tx, ctx.tenantId, lockedLoan.borrowerId, new Date(`${input.settlementDate}T23:59:59.999+07:00`), []);
         const computed = await computePreview(tx, ctx, lockedLoan, input);
         const expiresAt = new Date(Date.now() + Math.max(60, Number(process.env.RESTRUCTURE_PREVIEW_TTL_SECONDS ?? 900)) * 1000);

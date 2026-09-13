@@ -427,6 +427,7 @@ export async function previewLoanRenewal(
         if (loan.repaymentType !== "daily" || !["active", "paid"].includes(loan.status ?? "")) {
             throw new DomainError("LOAN_NOT_RENEWABLE", "Only active or paid daily loans can be renewed", 409);
         }
+        await assertLoanFinancialEvidenceReady(tx, ctx, loan.id);
         const asOf = new Date();
         const { renewalDate, paymentStartDate } = resolveRenewalDates(input, loan, asOf);
         const renewalAsOf = renewalDate === bangkokDate(asOf) ? asOf : businessDateAsOf(renewalDate);

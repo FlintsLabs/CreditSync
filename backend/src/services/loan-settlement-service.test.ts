@@ -242,6 +242,30 @@ describe("loan settlement service", () => {
         expect(await db.select().from(auditLogs).where(eq(auditLogs.tenantId, seeded.actor.tenantId))).toEqual(before.audits);
     });
 
+    integrationTest("blocks settlement preview while a related payout requirement is pending", async () => {
+        setSystemTime(new Date("2026-08-21T12:00:00+07:00"));
+        const seeded = await seedWeeklyLoan({ tenantId: `settlement-preview-pending-payout-${crypto.randomUUID()}` });
+        const event = await db.insert(loanDisbursementEvents).values({ tenantId: seeded.actor.tenantId, loanId: seeded.loan.id, grossAmount: "100.00", loanAttributedAmount: "100.00", channel: "adjustment", status: "draft", createdByUserId: seeded.actor.id }).returning().then((rows) => rows[0]!);
+        const evidenceFiles = await db.insert(files).values([
+            { tenantId: seeded.actor.tenantId, ownerUserId: seeded.actor.id, bucket: "test", key: `settlement-preview-${crypto.randomUUID()}-a`, originalName: "payout-a.png", mimeType: "image/png", size: 128 },
+            { tenantId: seeded.actor.tenantId, ownerUserId: seeded.actor.id, bucket: "test", key: `settlement-preview-${crypto.randomUUID()}-b`, originalName: "payout-b.png", mimeType: "image/png", size: 128 },
+        ]).returning();
+        await db.insert(financialEvidenceRequirements).values({ tenantId: seeded.actor.tenantId, loanDisbursementEventId: event.id, expectedCount: 2, source: "test", requestId: "settlement-preview-payout-request", correlationId: "settlement-preview-payout-correlation", createdByUserId: seeded.actor.id });
+        await db.insert(loanDisbursementEvidenceIntents).values([
+            { tenantId: seeded.actor.tenantId, loanDisbursementEventId: event.id, fileId: evidenceFiles[0]!.id, status: "ready", evidenceHash: "a".repeat(64), mimeType: "image/png", declaredSize: 128, finalizedAt: new Date(), createdByUserId: seeded.actor.id, updatedByUserId: seeded.actor.id },
+            { tenantId: seeded.actor.tenantId, loanDisbursementEventId: event.id, fileId: evidenceFiles[1]!.id, status: "pending", evidenceHash: "b".repeat(64), mimeType: "image/png", declaredSize: 128, createdByUserId: seeded.actor.id, updatedByUserId: seeded.actor.id },
+        ]);
+        const before = {
+            previews: await db.select().from(loanSettlementPreviews).where(eq(loanSettlementPreviews.tenantId, seeded.actor.tenantId)),
+            audits: await db.select().from(auditLogs).where(eq(auditLogs.tenantId, seeded.actor.tenantId)),
+            transactions: await db.select().from(transactions).where(eq(transactions.tenantId, seeded.actor.tenantId)),
+        };
+        await expect(previewLoanSettlement(context(seeded.actor), seeded.loan.publicId, "2026-08-21")).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+        expect(await db.select().from(loanSettlementPreviews).where(eq(loanSettlementPreviews.tenantId, seeded.actor.tenantId))).toEqual(before.previews);
+        expect(await db.select().from(auditLogs).where(eq(auditLogs.tenantId, seeded.actor.tenantId))).toEqual(before.audits);
+        expect(await db.select().from(transactions).where(eq(transactions.tenantId, seeded.actor.tenantId))).toEqual(before.transactions);
+    });
+
     integrationTest("settles an overdue weekly fixed penalty with immutable allocation provenance", async () => {
         setSystemTime(new Date("2026-08-21T12:00:00+07:00"));
         const seeded = await seedWeeklyLoan({

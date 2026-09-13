@@ -136,6 +136,8 @@ export async function previewPaymentReconciliationReflow(ctx: CommandContext, in
         const consumedIntakeIds = [...new Set([context.intake.id, ...context.sourceTransactions.map((row) => row.paymentIntakeId).filter((id): id is number => id !== null)])].sort((left, right) => left - right);
         await lockPaymentBorrowers(tx, ctx.tenantId, context.borrowersForLocks);
         await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(consumedIntakeIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
+        await assertFinancialEvidenceReady(tx, ctx, { kind: "payment_intake", publicId: context.intake.publicId });
+        await assertTemporalReflowEvidenceReady(tx, ctx, context.sourceTransactions.map((row) => ({ transactionId: row.id })));
         const { plan } = await buildRepairPlan(tx, ctx, context);
         const source = { reconciliationGroupPublicId: context.group.publicId, paymentIntakePublicId: context.intake.publicId, sourceTransactions: context.sourceTransactions.map((row) => ({ publicId: row.publicId, loanPublicId: context.loanRows.find((loan) => loan.id === row.loanId)?.publicId, transactionDate: row.transactionDate, amount: row.amount, principalComponent: row.principalComponent, interestComponent: row.interestComponent, feeComponent: row.feeComponent, penaltyComponent: row.penaltyComponent })), evidence: context.evidence.map((row: typeof context.evidence[number]) => ({ publicId: row.publicId, status: row.status, evidenceHash: row.evidenceHash, mimeType: row.mimeType, declaredSize: row.declaredSize, finalizedAt: row.finalizedAt })), plan };
         const expectedBalanceVersion = stableHash(source);

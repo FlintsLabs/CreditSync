@@ -250,6 +250,31 @@ describe("daily-loan renewal service", () => {
         expect(await db.select().from(auditLogs).where(eq(auditLogs.tenantId, seeded.tenantId))).toEqual(before.audits);
     });
 
+    integrationTest("blocks renewal preview while a related payout requirement is pending", async () => {
+        const seeded = await seedDailyLoan({ paidInstallments: 0 });
+        const event = await db.insert(loanDisbursementEvents).values({ tenantId: seeded.tenantId, loanId: seeded.oldLoan.id, grossAmount: "100.00", loanAttributedAmount: "100.00", channel: "adjustment", status: "draft", createdByUserId: seeded.actor.id }).returning().then((rows) => rows[0]!);
+        const evidenceFiles = await db.insert(files).values([
+            { tenantId: seeded.tenantId, ownerUserId: seeded.actor.id, bucket: "test", key: `renewal-preview-${crypto.randomUUID()}-a`, originalName: "payout-a.png", mimeType: "image/png", size: 128 },
+            { tenantId: seeded.tenantId, ownerUserId: seeded.actor.id, bucket: "test", key: `renewal-preview-${crypto.randomUUID()}-b`, originalName: "payout-b.png", mimeType: "image/png", size: 128 },
+        ]).returning();
+        await db.insert(financialEvidenceRequirements).values({ tenantId: seeded.tenantId, loanDisbursementEventId: event.id, expectedCount: 2, source: "test", requestId: "renewal-preview-payout-request", correlationId: "renewal-preview-payout-correlation", createdByUserId: seeded.actor.id });
+        await db.insert(loanDisbursementEvidenceIntents).values([
+            { tenantId: seeded.tenantId, loanDisbursementEventId: event.id, fileId: evidenceFiles[0]!.id, status: "ready", evidenceHash: "a".repeat(64), mimeType: "image/png", declaredSize: 128, finalizedAt: new Date(), createdByUserId: seeded.actor.id, updatedByUserId: seeded.actor.id },
+            { tenantId: seeded.tenantId, loanDisbursementEventId: event.id, fileId: evidenceFiles[1]!.id, status: "pending", evidenceHash: "b".repeat(64), mimeType: "image/png", declaredSize: 128, createdByUserId: seeded.actor.id, updatedByUserId: seeded.actor.id },
+        ]);
+        const before = {
+            renewals: await db.select().from(loanRenewals).where(eq(loanRenewals.tenantId, seeded.tenantId)),
+            loans: await db.select().from(loans).where(eq(loans.tenantId, seeded.tenantId)),
+            schedules: await db.select().from(loanSchedules).where(eq(loanSchedules.tenantId, seeded.tenantId)),
+            audits: await db.select().from(auditLogs).where(eq(auditLogs.tenantId, seeded.tenantId)),
+        };
+        await expect(previewLoanRenewal(context(seeded.tenantId, seeded.actor.id), seeded.oldLoan.publicId, { requestedPrincipal: "2500.00" })).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+        expect(await db.select().from(loanRenewals).where(eq(loanRenewals.tenantId, seeded.tenantId))).toEqual(before.renewals);
+        expect(await db.select().from(loans).where(eq(loans.tenantId, seeded.tenantId))).toEqual(before.loans);
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.tenantId, seeded.tenantId))).toEqual(before.schedules);
+        expect(await db.select().from(auditLogs).where(eq(auditLogs.tenantId, seeded.tenantId))).toEqual(before.audits);
+    });
+
     integrationTest("persists exact renewal composition and enforces immutable tenant-safe adjustment lines", async () => {
         const seeded = await seedDailyLoan({ paidInstallments: 0 });
         const audit = await db.insert(auditLogs).values({

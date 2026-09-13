@@ -599,6 +599,31 @@ describe("loan restructure service", () => {
         expect(await db.select().from(loanDisbursementEvents).where(eq(loanDisbursementEvents.tenantId, tenantId))).toHaveLength(2);
     });
 
+    integrationTest("blocks restructure preview while a related payout requirement is pending", async () => {
+        const { loan, actor, tenantId, ctx } = await seed();
+        const event = await db.insert(loanDisbursementEvents).values({ tenantId, loanId: loan.id, grossAmount: "100.00", loanAttributedAmount: "100.00", channel: "adjustment", status: "draft", createdByUserId: actor.id }).returning().then((rows) => rows[0]!);
+        const filesForEvidence = await db.insert(files).values([
+            { tenantId, ownerUserId: actor.id, bucket: "test", key: `restructure-preview-${crypto.randomUUID()}-a`, originalName: "payout-a.png", mimeType: "image/png", size: 128 },
+            { tenantId, ownerUserId: actor.id, bucket: "test", key: `restructure-preview-${crypto.randomUUID()}-b`, originalName: "payout-b.png", mimeType: "image/png", size: 128 },
+        ]).returning();
+        await db.insert(financialEvidenceRequirements).values({ tenantId, loanDisbursementEventId: event.id, expectedCount: 2, source: "test", requestId: "restructure-preview-payout-request", correlationId: "restructure-preview-payout-correlation", createdByUserId: actor.id });
+        await db.insert(loanDisbursementEvidenceIntents).values([
+            { tenantId, loanDisbursementEventId: event.id, fileId: filesForEvidence[0]!.id, status: "ready", evidenceHash: "a".repeat(64), mimeType: "image/png", declaredSize: 128, finalizedAt: new Date(), createdByUserId: actor.id, updatedByUserId: actor.id },
+            { tenantId, loanDisbursementEventId: event.id, fileId: filesForEvidence[1]!.id, status: "pending", evidenceHash: "b".repeat(64), mimeType: "image/png", declaredSize: 128, createdByUserId: actor.id, updatedByUserId: actor.id },
+        ]);
+        const before = {
+            restructures: await db.select().from(loanRestructures).where(eq(loanRestructures.tenantId, tenantId)),
+            loans: await db.select().from(loans).where(eq(loans.tenantId, tenantId)),
+            schedules: await db.select().from(loanSchedules).where(eq(loanSchedules.tenantId, tenantId)),
+            audits: await db.select().from(auditLogs).where(eq(auditLogs.tenantId, tenantId)),
+        };
+        await expect(previewLoanRestructure(ctx(), loan.publicId, { settlementDate: "2026-08-15", replacementTerms, additionalPrincipal: "0.00", reason: "preview after payout evidence" })).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+        expect(await db.select().from(loanRestructures).where(eq(loanRestructures.tenantId, tenantId))).toEqual(before.restructures);
+        expect(await db.select().from(loans).where(eq(loans.tenantId, tenantId))).toEqual(before.loans);
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.tenantId, tenantId))).toEqual(before.schedules);
+        expect(await db.select().from(auditLogs).where(eq(auditLogs.tenantId, tenantId))).toEqual(before.audits);
+    });
+
     integrationTest("serializes different execution keys so exactly one wins", async () => {
         const { loan, ctx } = await seed();
         const preview = await previewLoanRestructure(ctx(), loan.publicId, { settlementDate: "2026-08-15", replacementTerms, additionalPrincipal: "0.00", reason: "replace" });

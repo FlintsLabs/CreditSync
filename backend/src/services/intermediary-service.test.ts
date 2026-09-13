@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, intermediaries, intermediaryCollections, intermediaryRemittanceEvidence, intermediaryRemittances, loans, paymentIntakes, transactions, users } from "../db/schema";
+import { auditLogs, borrowers, financialEvidenceRequirements, intermediaries, intermediaryCollections, intermediaryRemittanceEvidence, intermediaryRemittances, loans, paymentIntakes, paymentMatchProposals, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import { createIntermediary, createIntermediaryCollection, createIntermediaryRemittance, finalizeIntermediaryRemittanceEvidence, manualApproveIntermediaryCollection, normalizeIntermediaryText, postIntermediaryRemittance, prepareIntermediaryRemittanceEvidence, previewIntermediaryRemittance, reverseIntermediaryRemittance, saveRemittanceAllocations, sortIntermediaryCollectionsChronologically } from "./intermediary-service";
 
@@ -103,6 +103,41 @@ describe("intermediary collection service", () => {
         await expect(postIntermediaryRemittance({ ...base, idempotencyKey: "multi-post" }, remittance.publicId, { proposalPublicId: preview.publicId, confirmed: true })).resolves.toMatchObject({ status: "posted" });
         expect(await db.select().from(transactions).where(eq(transactions.loanId, floatingLoan.id))).toHaveLength(2);
         expect(await db.select().from(transactions).where(eq(transactions.loanId, scheduledLoan.id))).toHaveLength(1);
+    });
+
+    integrationTest("rechecks evidence for a linked ready payment before intermediary remittance posting", async () => {
+        await db.execute(sql`TRUNCATE TABLE audit_logs, intermediary_remittance_proposals,
+            intermediary_remittance_allocations, intermediary_remittances, intermediary_collections,
+            intermediaries, payment_match_proposals, transactions, payment_intakes,
+            financial_evidence_requirements, loans, borrowers, users RESTART IDENTITY CASCADE`);
+        const actor = await db.insert(users).values({ tenantId: "tenant-linked-pending-evidence", email: "linked-pending-evidence@example.test", role: "owner" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId: actor.tenantId, ownerUserId: actor.id, name: "Linked evidence borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({ tenantId: actor.tenantId, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "5000.00", interestRate: "0.00", repaymentType: "floating", outstandingPrincipal: "5000.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" }).returning().then((rows) => rows[0]!);
+        const receivedAt = new Date("2026-09-09T10:00:00.000Z");
+        const linkedIntake = await db.insert(paymentIntakes).values({ tenantId: actor.tenantId, ownerUserId: actor.id, status: "draft", amount: "10.00", receivedAt, createdByUserId: actor.id }).returning().then((rows) => rows[0]!);
+        await db.insert(financialEvidenceRequirements).values({ tenantId: actor.tenantId, paymentIntakeId: linkedIntake.id, expectedCount: 1, source: "test", requestId: "linked-pending-evidence-request", correlationId: "linked-pending-evidence-correlation", createdByUserId: actor.id });
+        // Synthetic historical fixture: declare the requirement while mutable, then expose the ready linked intake.
+        await db.update(paymentIntakes).set({ status: "ready" }).where(eq(paymentIntakes.id, linkedIntake.id));
+        const base: CommandContext = { tenantId: actor.tenantId, actorUserId: actor.id, actorSource: "mcp", requestId: "req-linked-pending-evidence", correlationId: "corr-linked-pending-evidence" };
+        const intermediary = await createIntermediary(base, { name: "Linked Payment Collector" });
+        const collection = await createIntermediaryCollection({ ...base, idempotencyKey: "linked-pending-collection" }, { intermediaryPublicId: intermediary.publicId, borrowerPublicId: borrower.publicId, loanPublicId: loan.publicId, amount: "10.00", borrowerPaidAt: receivedAt.toISOString(), paymentIntakePublicId: linkedIntake.publicId });
+        const remittance = await createIntermediaryRemittance({ ...base, idempotencyKey: "linked-pending-remittance" }, { intermediaryPublicId: intermediary.publicId, grossAmount: "10.00", receivedAt: "2026-09-11T10:00:00.000Z" });
+        await saveRemittanceAllocations(base, remittance.publicId, { collectionPublicIds: [collection.publicId] });
+        const preview = await previewIntermediaryRemittance(base, remittance.publicId);
+        expect(preview.status).toBe("ready");
+        const before = {
+            transactions: await db.select().from(transactions).where(eq(transactions.tenantId, actor.tenantId)),
+            collections: await db.select().from(intermediaryCollections).where(eq(intermediaryCollections.tenantId, actor.tenantId)),
+            remittances: await db.select().from(intermediaryRemittances).where(eq(intermediaryRemittances.tenantId, actor.tenantId)),
+            proposals: await db.select().from(paymentMatchProposals).where(eq(paymentMatchProposals.tenantId, actor.tenantId)),
+            audits: await db.select().from(auditLogs).where(eq(auditLogs.tenantId, actor.tenantId)),
+        };
+        await expect(postIntermediaryRemittance({ ...base, idempotencyKey: "linked-pending-post" }, remittance.publicId, { proposalPublicId: preview.publicId, confirmed: true })).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+        expect(await db.select().from(transactions).where(eq(transactions.tenantId, actor.tenantId))).toEqual(before.transactions);
+        expect(await db.select().from(intermediaryCollections).where(eq(intermediaryCollections.tenantId, actor.tenantId))).toEqual(before.collections);
+        expect(await db.select().from(intermediaryRemittances).where(eq(intermediaryRemittances.tenantId, actor.tenantId))).toEqual(before.remittances);
+        expect(await db.select().from(paymentMatchProposals).where(eq(paymentMatchProposals.tenantId, actor.tenantId))).toEqual(before.proposals);
+        expect(await db.select().from(auditLogs).where(eq(auditLogs.tenantId, actor.tenantId))).toEqual(before.audits);
     });
 
     integrationTest("keeps the genuine floating backdated reconciliation guard and atomic rollback", async () => {
