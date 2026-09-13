@@ -5,6 +5,7 @@
 ### Fixed
 
 - Made intermediary remittance Save, Preview, and Post use one deterministic chronological collection order, preventing valid floating-loan grouped remittances from depending on PostgreSQL `IN` result order; preserved the per-loan backdated reconciliation guard and added atomic/idempotent regression coverage.
+- Made the backend's standard test command run every database-backed test with the disposable PostgreSQL runner, preventing false MCP diagnostic persistence failures caused by the no-database `bun test` invocation.
 
 ## v0.4.42 - 2026-09-13
 

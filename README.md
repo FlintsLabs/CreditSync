@@ -566,8 +566,11 @@ Backend tests can be run with:
 
 ```bash
 cd backend
-bun test
+bun run test
+bun run typecheck
 ```
+
+`bun run test` uses the disposable PostgreSQL runner, which supplies the database URL required by database-backed service, migration, and MCP diagnostic tests. For a focused run, append test file paths, for example `bun run test src/services/mcp-diagnostic-service.test.ts`.
 
 Frontend verification uses both its Bun-native discovery gate and the configured Vitest suite:
 
