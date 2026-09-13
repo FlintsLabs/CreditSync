@@ -20,6 +20,7 @@
 - Surface localized evidence blockers in Web payout posting while preserving drafts, entered fields, and stable manual-retry keys; payment and payout errors use safe generic fallbacks even for nullish rejections, with EN/TH component regressions and no raw backend-message exposure.
 - Correct resolver target/argument mappings against named schemas, require authoritative observations, use aggregate evidence counts with non-ready overflow handling, and retain separate workflow/policy versions; scheduled close-out receives inspection guidance rather than a floating-only settlement tool.
 - Normalize concurrent evidence import bindings with a savepoint so conflicting attempts retain a single durable winner.
+- Restrict import-binding conflict normalization to the known unique index or a proven concurrent binding winner, preserving unrelated database errors.
 
 ## v0.4.45 - 2026-09-13
 

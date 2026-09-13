@@ -198,6 +198,29 @@ async function hasChatGptAliasForDisbursementHash(tx: DbExecutor, ctx: CommandCo
     return found.length > 0;
 }
 
+const financialEvidenceAttemptBindingIndex = "financial_evidence_requirement_attempts_tenant_kind_import_unique";
+const financialEvidenceAttemptBindingIndexTruncated = financialEvidenceAttemptBindingIndex.slice(0, 63);
+
+/**
+ * Classify only the binding unique violation that ensureAttempt can safely
+ * reconcile. A driver that omits the constraint name may still identify the
+ * insert as a candidate, but the caller must prove the binding winner exists
+ * before replacing the original database error.
+ */
+export function isFinancialEvidenceAttemptBindingUniqueViolation(error: unknown) {
+    const databaseError = error as { code?: string; constraint?: string; query?: string; cause?: { code?: string; constraint?: string; query?: string } };
+    const code = databaseError.code ?? databaseError.cause?.code;
+    if (code !== "23505") return false;
+
+    const constraint = databaseError.constraint ?? databaseError.cause?.constraint;
+    if (typeof constraint === "string" && constraint.length > 0) {
+        return constraint === financialEvidenceAttemptBindingIndex || constraint === financialEvidenceAttemptBindingIndexTruncated;
+    }
+
+    const query = databaseError.query ?? databaseError.cause?.query;
+    return typeof query === "string" && query.toLowerCase().includes('insert into "financial_evidence_requirement_attempts"');
+}
+
 async function ensureAttempt(
     tx: DbExecutor,
     ctx: CommandContext,
@@ -257,19 +280,14 @@ async function ensureAttempt(
             });
         });
     } catch (error) {
-        const databaseError = error as { code?: string; constraint?: string; query?: string; cause?: { code?: string; constraint?: string; query?: string } };
-        const code = databaseError.code ?? databaseError.cause?.code;
-        const constraint = databaseError.constraint ?? databaseError.cause?.constraint;
-        const query = databaseError.query ?? databaseError.cause?.query;
-        const isBindingConflict = constraint?.startsWith("financial_evidence_requirement_attempts_tenant_kind_import_")
-            || query?.includes('insert into "financial_evidence_requirement_attempts"');
-        if (code !== "23505" || !isBindingConflict) throw error;
+        if (!isFinancialEvidenceAttemptBindingUniqueViolation(error)) throw error;
         const winner = await tx.query.financialEvidenceRequirementAttempts.findFirst({ where: and(
             eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId),
             eq(financialEvidenceRequirementAttempts.importIdempotencyKey, binding.importIdempotencyKey!),
             eq(financialEvidenceRequirementAttempts.bindingKind, bindingKind),
         ) });
         if (winner?.financialEvidenceRequirementId === requirementId && winner.sourceFileFingerprint === binding.sourceFileFingerprint) return;
+        if (!winner) throw error;
         throw new DomainError("EVIDENCE_IDEMPOTENCY_CONFLICT", "Evidence import idempotency payload does not match", 409);
     }
 }
