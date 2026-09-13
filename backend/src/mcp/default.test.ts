@@ -1356,6 +1356,7 @@ describe("default MCP adapter integration", () => {
         });
         await call("borrower.portfolio", { borrowerPublicId });
         await call("borrower.resolve-and-portfolio", { borrowerPublicId });
+        await call("workflow.resolve", { intent: "inspect", target: { kind: "borrower", publicId: borrowerPublicId }, attachments: "none" });
         const borrower = await db.query.borrowers.findFirst({ where: eq(borrowers.publicId, borrowerPublicId) });
         const floatingLoan = await db.insert(loans).values({
             tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower!.id,

@@ -441,6 +441,75 @@ integrationTest("rejects target and source identity conflicts before a second do
     expect(counters.fetch).toBe(1);
 });
 
+integrationTest("normalizes a concurrent same-key payment target race without a second network fetch", async () => {
+    const { user } = await seededDraft();
+    const [firstIntake, secondIntake] = await db.insert(paymentIntakes).values([
+        { tenantId: user.tenantId, ownerUserId: user.id, amount: "50.00", status: "draft", source: "mcp" },
+        { tenantId: user.tenantId, ownerUserId: user.id, amount: "51.00", status: "draft", source: "mcp" },
+    ]).returning();
+    const counters = { fetch: 0, prepare: 0, put: 0, head: 0 };
+    let releaseFetch: ((response: Response) => void) | undefined;
+    const firstFetch = new Promise<Response>((resolve) => { releaseFetch = resolve; });
+    const deps = {
+        ...importerDependencies(counters),
+        fetch: async () => {
+            counters.fetch++;
+            if (counters.fetch === 1) return firstFetch;
+            return responseFor();
+        },
+    };
+    const operations = Promise.allSettled([
+        importChatGptPaymentEvidence(dbContext(user, "payment-race-key"), firstIntake!.publicId, file, "payment-race-key", { ...deps, storage: deps.disbursementStorage }),
+        importChatGptPaymentEvidence(dbContext(user, "payment-race-key"), secondIntake!.publicId, file, "payment-race-key", { ...deps, storage: deps.disbursementStorage }),
+    ]);
+    try {
+        for (let attempt = 0; attempt < 100 && counters.fetch === 0; attempt++) await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(counters.fetch).toBe(1);
+    } finally {
+        releaseFetch?.(responseFor());
+    }
+    const results = await operations;
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    expect(rejected?.reason).toMatchObject({ code: "EVIDENCE_IDEMPOTENCY_CONFLICT" });
+    expect(await db.select().from(financialEvidenceRequirements)).toHaveLength(1);
+    expect(await db.select().from(financialEvidenceRequirementAttempts)).toHaveLength(1);
+});
+
+integrationTest("normalizes a concurrent same-key payout target race without a second network fetch", async () => {
+    const { user, loan, draft } = await seededDraft();
+    const secondDraft = await createDisbursementDraft(dbContext(user, "race-second-draft"), loan.publicId, {
+        grossAmount: "1.00", loanAttributedAmount: "1.00", channel: "cash", disbursedAt: "2026-09-13T11:00:00.000Z",
+    });
+    const counters = { fetch: 0, prepare: 0, put: 0, head: 0 };
+    let releaseFetch: ((response: Response) => void) | undefined;
+    const firstFetch = new Promise<Response>((resolve) => { releaseFetch = resolve; });
+    const deps = {
+        ...importerDependencies(counters),
+        fetch: async () => {
+            counters.fetch++;
+            if (counters.fetch === 1) return firstFetch;
+            return responseFor();
+        },
+    };
+    const operations = Promise.allSettled([
+        importChatGptDisbursementEvidence(dbContext(user, "payout-race-key"), draft.publicId, file, { ...deps, storage: deps.disbursementStorage }),
+        importChatGptDisbursementEvidence(dbContext(user, "payout-race-key"), secondDraft.publicId, file, { ...deps, storage: deps.disbursementStorage }),
+    ]);
+    try {
+        for (let attempt = 0; attempt < 100 && counters.fetch === 0; attempt++) await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(counters.fetch).toBe(1);
+    } finally {
+        releaseFetch?.(responseFor());
+    }
+    const results = await operations;
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    expect(rejected?.reason).toMatchObject({ code: "EVIDENCE_IDEMPOTENCY_CONFLICT" });
+    expect(await db.select().from(financialEvidenceRequirements)).toHaveLength(1);
+    expect(await db.select().from(financialEvidenceRequirementAttempts)).toHaveLength(1);
+});
+
 integrationTest.each([false, true])("direct prepare preserves expired import reservation (different draft: %s)", async (differentDraft) => {
     const { user, loan, draft } = await seededDraft();
     const counters = { fetch: 0, prepare: 0, put: 0, head: 0 };
