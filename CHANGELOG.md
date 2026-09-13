@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.44 - 2026-09-13
+
+### Added
+
+- Documented the reviewed MCP safety, cached catalog, capability profiles, dual-era compatibility and ChatGPT Mobile evidence-ingestion implementation plan, including verification and staged rollout gates.
+
 ## v0.4.43 - 2026-09-13
 
 ### Fixed
