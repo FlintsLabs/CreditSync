@@ -1,5 +1,17 @@
 # MCP optimization verification report
 
+## Current deployment status — backend deployed
+
+On 2026-09-13 at approximately 21:53 Asia/Bangkok, the verified application artifact `creditsync-backend:mcp-f7eb631` was deployed using the protected `release-compose.yml` in the local backup directory. Image digest: `sha256:1eba617e21df093eb0dfd2cca4c75b5a548867557f76962dc34b06a12b810c79`; application revision: `f7eb631f136d797367c3ec0a101539151decf444`. Follow-up commit `00ffd7a` adds operational recovery scripts and documentation only; runtime source, migrations, dependencies and frontend are unchanged relative to that artifact. The frontend image was retained, not rebuilt. `main` was not merged or pushed.
+
+The renewed recovery point is `release-postgres.dump` plus `release-minio.tgz`, verified by `release-SHA256SUMS`, under `/home/flintstone/backups/creditsync/mcp-f7eb631-hjUy378g`. Writers and both tunnels were stopped during backup/migration. The fresh dump and full MinIO snapshot were restored into a separate internal network, migration 0074 rehearsed, archive extraction compared, and all existing public-table fingerprints verified unchanged. The lifecycle-aware checker passed on that fresh restore: 262 passing files and 50 pending warnings (46 absent uploads, 4 pending MIME mismatches). No warning was converted into ready evidence.
+
+The candidate app in the isolated restored environment and then the production app both passed authenticated read-only HTTP smoke checks: legacy full catalog 134; modern full/core-read/payments/loans/disbursements/admin counts 134/36/57/44/39/34 with complete pagination and no duplicates; unexpected Origin returned 403 and method-header mismatch returned 400. Production complete-traversal timings in this single sample were 615/43/57/54/65/49 ms respectively. These are smoke observations, not p50/p95 or a completed longitudinal canary study.
+
+Production migration journal advanced from 78 to 79 entries, with watermark `1789084800002`; all three import columns and the tenant import-key index were verified. Existing public-table fingerprints matched before/after migration. Backend MCP health and the retained frontend returned HTTP 200. Both public/private tunnel containers were restarted after the checks. The original payout remains `posted` with evidence count 0; no financial test records, compensations, or evidence writes were performed.
+
+Previous images, backups and stopped isolated rehearsal containers/volumes remain available for recovery. Local backup is an owner-approved exception and does not cover host loss. Real ChatGPT mobile attachment acceptance, connection-specific client selection and long-running canary metrics remain pending. Full `/mcp` remains enabled under the existing retention policy.
+
 ## Initial deployment hold and corrected recovery classification
 
 Follow-up inspection established that all 43 missing `intake` values belong to correctly linked batch staging evidence, which intentionally retains `tenant`/`staging` metadata. All 46 missing objects are pending expired upload reservations (39 payment, 4 payout, 3 intermediary transfer), not missing finalized evidence. The four JPEG objects labelled `binary/octet-stream` are also pending. Some associated payments are posted with `evidenceRequired=false`; they must not be presented as having complete evidence. This corrects the initial interpretation below, not the stored data.
