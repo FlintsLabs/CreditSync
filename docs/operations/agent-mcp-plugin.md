@@ -19,7 +19,7 @@ docker compose --env-file .env.production -f docker-compose.app.yml up --build -
 ```
 
 5. Route the Cloudflare public hostname to `http://frontend:80` on `creditsync_runtime`. Set `MCP_ALLOWED_HOSTS` to that external hostname without scheme or path.
-6. Verify `GET https://<host>/mcp/health` exposes status/schema only. Verify invalid bearer credentials fail, a legacy v1 client can initialize/list the frozen 134-tool `/mcp` catalog, and a modern client can discover/list the paginated catalog.
+6. Verify `GET https://<host>/mcp/health` exposes status/schema only. Verify invalid bearer credentials fail, a legacy v1 client can initialize/list the complete `/mcp` catalog matching the generated `plugins/creditsync/references/mcp-profiles/full.json` snapshot, and a modern client can discover/list the paginated catalog. Read current counts from the generated profile index, not a hardcoded historical count.
 7. Review backend logs for request/correlation/tool/status/duration only. Raw authorization, tool payloads, QR values, slip contents, identity fields, and signed URLs must not appear.
 
 ## MCP eras, profiles, and discovery
