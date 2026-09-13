@@ -4,9 +4,32 @@ import { db } from "../db";
 import { files, financialEvidenceRequirementAttempts, financialEvidenceRequirements, paymentEvidence, paymentIntakes, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import { createPaymentIntake } from "./payment-service";
-import { assertFinancialEvidenceReady, registerFinancialEvidenceRequirement } from "./financial-evidence-requirement-service";
+import { assertFinancialEvidenceReady, isFinancialEvidenceAttemptBindingUniqueViolation, registerFinancialEvidenceRequirement } from "./financial-evidence-requirement-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
+
+describe("financial evidence attempt binding conflict classification", () => {
+    const bindingIndex = "financial_evidence_requirement_attempts_tenant_kind_import_unique";
+    const truncatedBindingIndex = bindingIndex.slice(0, 63);
+
+    test.each([
+        [{ code: "23505", constraint: bindingIndex }, true],
+        [{ code: "23505", constraint: truncatedBindingIndex }, true],
+        [{ code: "23505", constraint: "financial_evidence_requirement_attempts_tenant_requirement_key_unique" }, false],
+        [{ code: "23505", constraint: "some_unrelated_unique_index" }, false],
+        [{ code: "23503", constraint: bindingIndex }, false],
+    ])("only classifies the known binding index: %j", (error, expected) => {
+        expect(isFinancialEvidenceAttemptBindingUniqueViolation(error)).toBe(expected);
+    });
+
+    test("treats a missing constraint as only an unnamed candidate for winner reread", () => {
+        expect(isFinancialEvidenceAttemptBindingUniqueViolation({
+            code: "23505",
+            query: 'insert into "financial_evidence_requirement_attempts" ("tenant_id") values ($1)',
+        })).toBe(true);
+        expect(isFinancialEvidenceAttemptBindingUniqueViolation({ code: "23505", query: 'insert into "other_unique_table" ("id") values ($1)' })).toBe(false);
+    });
+});
 
 async function reset() {
     await db.execute(sql`TRUNCATE TABLE financial_evidence_requirement_attempts, financial_evidence_requirements, files, payment_evidence, payment_intakes, users RESTART IDENTITY CASCADE`);
