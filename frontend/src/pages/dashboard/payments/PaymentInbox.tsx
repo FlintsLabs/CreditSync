@@ -87,7 +87,9 @@ export default function PaymentInbox() {
         dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Bangkok",
     }).format(new Date(value)), [i18n.language]);
     const localizedError = useCallback((error: unknown, fallbackKey: string) => {
-        const response = (error as { response?: { data?: { code?: string }; status?: number } }).response;
+        const response = error && typeof error === "object"
+            ? (error as { response?: { data?: { code?: string }; status?: number } }).response
+            : undefined;
         return response?.data?.code
             ? t(`payments.errors.${response.data.code}`, { defaultValue: t(`domainErrors.${response.data.code}`, { defaultValue: t(fallbackKey) }) })
             : t(fallbackKey);

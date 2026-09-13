@@ -33,9 +33,9 @@ describe("loan disbursement view", () => {
         });
     });
 
-    it("preserves a draft and surfaces a localized evidence blocker without retrying automatically", async () => {
+    it.each(["EVIDENCE_REQUIRED_NOT_READY", "EVIDENCE_NOT_FINALIZED"] as const)("preserves a draft and surfaces a localized evidence blocker for %s without retrying automatically", async (code) => {
         const draft = { ...ledger().events[0], status: "draft" as const, evidenceFilePublicIds: [] };
-        const backendError = { response: { status: 409, data: { code: "EVIDENCE_REQUIRED_NOT_READY", message: "Private backend details" } } };
+        const backendError = { response: { status: 409, data: { code, message: "Private backend details" } } };
         vi.mocked(api.get).mockResolvedValue({ data: ledger([draft]) });
         vi.mocked(api.post).mockRejectedValue(backendError);
         const user = userEvent.setup();
@@ -58,6 +58,21 @@ describe("loan disbursement view", () => {
         await user.click(screen.getByRole("button", { name: /post disbursement/i }));
         expect(api.post).toHaveBeenCalledTimes(2);
         expect(vi.mocked(api.post).mock.calls[1]?.[2]).toEqual(firstPostOptions);
+        expect(screen.getByRole("button", { name: /post disbursement/i })).toBeInTheDocument();
+    });
+
+    it.each([{ label: "null", error: null }, { label: "undefined", error: undefined }])("keeps the generic fallback when post rejects with $label", async ({ error }) => {
+        const draft = { ...ledger().events[0], status: "draft" as const, evidenceFilePublicIds: [] };
+        vi.mocked(api.get).mockResolvedValue({ data: ledger([draft]) });
+        vi.mocked(api.post).mockRejectedValue(error);
+        const user = userEvent.setup();
+
+        render(<LoanDisbursements loanPublicId={LOAN_ID} />);
+        await user.click(await screen.findByRole("button", { name: /bank transfer.*draft/i }));
+        await user.click(screen.getByRole("button", { name: /post disbursement/i }));
+
+        const alert = await screen.findByRole("alert");
+        expect(alert).toHaveTextContent("Unable to post the disbursement.");
         expect(screen.getByRole("button", { name: /post disbursement/i })).toBeInTheDocument();
     });
 

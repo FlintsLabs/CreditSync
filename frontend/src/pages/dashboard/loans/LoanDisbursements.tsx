@@ -23,6 +23,7 @@ class SupersededLedgerReadError extends Error { constructor() { super("Disbursem
 type ActiveLedgerRead = { controller: AbortController; supersede: () => void };
 
 function errorCode(error: unknown): string | undefined {
+    if (!error || typeof error !== "object") return undefined;
     const code = (error as { response?: { data?: { code?: unknown } } }).response?.data?.code;
     return typeof code === "string" ? code : undefined;
 }

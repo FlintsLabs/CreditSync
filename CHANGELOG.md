@@ -18,6 +18,7 @@
 ### Fixed
 
 - Surfaced localized, code-based evidence blockers in Web payout posting while preserving the draft, entered fields, and stable manual-retry idempotency key; unknown backend errors continue to use safe generic fallbacks.
+- Hardened Web payment and payout error localization against nullish rejected values while preserving safe generic fallbacks and evidence-blocker mappings without exposing backend messages.
 
 ## v0.4.45 - 2026-09-13
 
