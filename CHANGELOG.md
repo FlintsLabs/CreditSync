@@ -17,7 +17,7 @@
 
 - Require exact finalized tenant/file associations before counting evidence as ready; preserve failed prepare/import attempts across cleanup and reconcile proven ChatGPT/SHA aliases without double-counting one file.
 - Enforce existing portfolio authorization when registering evidence requirements and reject invalid runtime readiness counts instead of treating incomplete evidence as financial permission.
-- Surface localized evidence blockers in Web payout posting while preserving the draft, entered fields, and stable manual-retry idempotency key, with EN/TH component regressions.
+- Surface localized evidence blockers in Web payout posting while preserving drafts, entered fields, and stable manual-retry keys; payment and payout errors use safe generic fallbacks even for nullish rejections, with EN/TH component regressions and no raw backend-message exposure.
 
 ## v0.4.45 - 2026-09-13
 
