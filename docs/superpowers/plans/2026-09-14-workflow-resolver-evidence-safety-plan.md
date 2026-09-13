@@ -183,7 +183,7 @@ same versions but state changes → reevaluate from backend, never reuse permiss
 
 - [x] Add failing scripted cases before instruction edits: missing resolver in cached catalog, available importer but omitted file parameter, missing DNS access, prepare then post without resolving, two attachments with only one ready, stale workflow, posted intake with pending evidence and profile missing required importer.
 - [x] Require resolver at the start of a new financial intent and after errors/stale state/version changes; do not repeat it between every harmless read. Preserve full named tool schemas for actual calls.
-- [ ] The expected trace for unavailable attachment access is:
+- [x] The expected trace for unavailable attachment access is:
 
 ```text
 resolve → inspect exact mutable target → declare requirement/create target if authorized
@@ -200,6 +200,7 @@ resolve → inspect exact mutable target → declare requirement/create target i
 
 **Produces:** an acceptance matrix with independent backend, resolver, scripted-agent, real-host and real-device evidence columns.
 
+- [x] Create `docs/operations/workflow-resolver-acceptance.md` with independent backend, resolver, scripted-agent, host/profile, device, and operator rollout evidence columns. Keep host/device/deployment rows pending until observed by the supervisor/operator.
 - [ ] Test a client that never calls resolver: legacy prepare with false flag followed by post still blocks. Verify the same guard through direct service and REST entry points.
 - [ ] Assert legacy batch-ready lineage remains accepted; existing pending historical uploads stay warnings in the recovery scanner but do not become financial transition permissions. No blanket migration of old posted evidence flags.
 - [ ] Verify UI blocker handling preserves the current draft and displays the missing evidence state; no silent retry/post button workaround. Test both languages if UI changes.
