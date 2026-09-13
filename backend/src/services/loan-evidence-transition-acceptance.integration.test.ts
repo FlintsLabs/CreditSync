@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { auditLogs, borrowers, files, loanDisbursementEvidenceIntents, loanDisbursementEvents, loanSchedules, loans, paymentEvidence, paymentIntakes, paymentMatchProposals, transactions, users } from "../db/schema";
+import { auditLogs, borrowers, files, financialEvidenceRequirements, loanDisbursementEvidenceIntents, loanDisbursementEvents, loanSchedules, loans, paymentEvidence, paymentIntakes, paymentMatchProposals, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
+import { assertFinancialEvidenceReady, assertLoanFinancialEvidenceReady } from "./financial-evidence-requirement-service";
 import { createLoanDraft, activateLoan } from "./loan-application-service";
 import { createDisbursementDraft, postDisbursement, prepareDisbursementEvidence, type DisbursementEvidenceStorageGateway } from "./loan-disbursement-service";
 import { createPaymentIntake, postPayment, previewPaymentMatch } from "./payment-service";
@@ -180,22 +181,42 @@ describe("loan activation and payout evidence transition acceptance", () => {
     integrationTest("replays successful activation before a later related pending payout without effects", async () => {
         const seeded = await seedDraft();
         const first = await activateLoan(context(seeded.actor, "activation-replay"), seeded.draft.publicId);
-        await createDisbursementDraft(context(seeded.actor, "historical-pending-payout"), seeded.draft.publicId, {
+        const pendingPayout = await createDisbursementDraft(context(seeded.actor, "historical-pending-payout"), seeded.draft.publicId, {
             grossAmount: "1.00",
             loanAttributedAmount: "1.00",
             channel: "bank_transfer",
             disbursedAt: "2026-09-14T05:00:00.000Z",
             attachmentRequirement: { expectedCount: 1 },
         });
+        const pendingEvent = await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, pendingPayout.publicId) });
+        if (!pendingEvent) throw new Error("Activation replay pending payout fixture was not persisted");
+        const pendingFile = await db.insert(files).values({
+            tenantId: seeded.actor.tenantId, ownerUserId: seeded.actor.id, bucket: "historical-test",
+            key: `activation-replay-${crypto.randomUUID()}`, originalName: "historical-pending.png", mimeType: "image/png", size: 12,
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(loanDisbursementEvidenceIntents).values({
+            tenantId: seeded.actor.tenantId, loanDisbursementEventId: pendingEvent.id, fileId: pendingFile.id,
+            status: "pending", evidenceHash: "c".repeat(64), mimeType: "image/png", declaredSize: 12,
+            createdByUserId: seeded.actor.id, updatedByUserId: seeded.actor.id,
+        });
+        const targetLoan = await db.query.loans.findFirst({ where: eq(loans.publicId, seeded.draft.publicId) });
+        if (!targetLoan) throw new Error("Activation replay loan fixture was not persisted");
+        await expect(db.transaction((tx) => assertLoanFinancialEvidenceReady(tx, context(seeded.actor, "activation-replay-negative"), targetLoan.id))).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
         const before = {
             loans: await db.select().from(loans).where(eq(loans.tenantId, seeded.actor.tenantId)),
             schedules: await db.select().from(loanSchedules).where(eq(loanSchedules.tenantId, seeded.actor.tenantId)),
+            events: await db.select().from(loanDisbursementEvents).where(eq(loanDisbursementEvents.tenantId, seeded.actor.tenantId)),
+            intents: await db.select().from(loanDisbursementEvidenceIntents).where(eq(loanDisbursementEvidenceIntents.tenantId, seeded.actor.tenantId)),
+            requirements: await db.select().from(financialEvidenceRequirements).where(eq(financialEvidenceRequirements.tenantId, seeded.actor.tenantId)),
             audits: await db.select().from(auditLogs).where(eq(auditLogs.tenantId, seeded.actor.tenantId)),
         };
         const replay = await activateLoan(context(seeded.actor, "activation-replay"), seeded.draft.publicId);
         expect(replay).toEqual(first);
         expect(await db.select().from(loans).where(eq(loans.tenantId, seeded.actor.tenantId))).toEqual(before.loans);
         expect(await db.select().from(loanSchedules).where(eq(loanSchedules.tenantId, seeded.actor.tenantId))).toEqual(before.schedules);
+        expect(await db.select().from(loanDisbursementEvents).where(eq(loanDisbursementEvents.tenantId, seeded.actor.tenantId))).toEqual(before.events);
+        expect(await db.select().from(loanDisbursementEvidenceIntents).where(eq(loanDisbursementEvidenceIntents.tenantId, seeded.actor.tenantId))).toEqual(before.intents);
+        expect(await db.select().from(financialEvidenceRequirements).where(eq(financialEvidenceRequirements.tenantId, seeded.actor.tenantId))).toEqual(before.requirements);
         expect(await db.select().from(auditLogs).where(eq(auditLogs.tenantId, seeded.actor.tenantId))).toEqual(before.audits);
     });
 
@@ -208,14 +229,18 @@ describe("loan activation and payout evidence transition acceptance", () => {
         if (!postedEvent) throw new Error("Posted payout replay fixture was not persisted");
         const file = await db.insert(files).values({ tenantId: seeded.actor.tenantId, ownerUserId: seeded.actor.id, bucket: "historical-test", key: `payout-replay-${crypto.randomUUID()}`, originalName: "historical-pending.png", mimeType: "image/png", size: 12 }).returning().then((rows) => rows[0]!);
         await db.insert(loanDisbursementEvidenceIntents).values({ tenantId: seeded.actor.tenantId, loanDisbursementEventId: postedEvent.id, fileId: file.id, status: "pending", evidenceHash: "b".repeat(64), mimeType: "image/png", declaredSize: 12, createdByUserId: seeded.actor.id, updatedByUserId: seeded.actor.id });
+        await expect(db.transaction((tx) => assertFinancialEvidenceReady(tx, context(seeded.actor, "payout-replay-negative"), { kind: "loan_disbursement", publicId: posted.publicId }))).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
         const before = {
             events: await db.select().from(loanDisbursementEvents).where(eq(loanDisbursementEvents.tenantId, seeded.actor.tenantId)),
+            intents: await db.select().from(loanDisbursementEvidenceIntents).where(eq(loanDisbursementEvidenceIntents.tenantId, seeded.actor.tenantId)),
             loans: await db.select().from(loans).where(eq(loans.tenantId, seeded.actor.tenantId)),
             audits: await db.select().from(auditLogs).where(eq(auditLogs.tenantId, seeded.actor.tenantId)),
         };
         const replay = await postDisbursement(context(seeded.actor, "payout-replay"), posted.publicId);
-        expect(replay).toMatchObject({ publicId: first.publicId, status: "posted", duplicate: true });
+        expect(replay.duplicate).toBe(true);
+        expect({ ...replay, duplicate: first.duplicate, auditPublicId: first.auditPublicId, correlationId: first.correlationId }).toEqual(first);
         expect(await db.select().from(loanDisbursementEvents).where(eq(loanDisbursementEvents.tenantId, seeded.actor.tenantId))).toEqual(before.events);
+        expect(await db.select().from(loanDisbursementEvidenceIntents).where(eq(loanDisbursementEvidenceIntents.tenantId, seeded.actor.tenantId))).toEqual(before.intents);
         expect(await db.select().from(loans).where(eq(loans.tenantId, seeded.actor.tenantId))).toEqual(before.loans);
         expect(await db.select().from(auditLogs).where(eq(auditLogs.tenantId, seeded.actor.tenantId))).toEqual(before.audits);
     });
@@ -240,15 +265,18 @@ describe("loan activation and payout evidence transition acceptance", () => {
         const intakeRow = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, intake.publicId) });
         if (!intakeRow) throw new Error("Payment replay intake fixture was not persisted");
         await db.insert(paymentEvidence).values({ tenantId: seeded.actor.tenantId, paymentIntakeId: intakeRow.id, fileId: file.id, status: "pending", evidenceType: "slip", evidenceHash: "b".repeat(64), mimeType: "image/png", declaredSize: 12, createdByUserId: seeded.actor.id, updatedByUserId: seeded.actor.id });
+        await expect(db.transaction((tx) => assertFinancialEvidenceReady(tx, context(seeded.actor, "payment-replay-negative"), { kind: "payment_intake", publicId: intake.publicId }))).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
         const before = {
             intakes: await db.select().from(paymentIntakes).where(eq(paymentIntakes.tenantId, seeded.actor.tenantId)),
+            evidence: await db.select().from(paymentEvidence).where(eq(paymentEvidence.tenantId, seeded.actor.tenantId)),
             transactions: await db.select().from(transactions).where(eq(transactions.tenantId, seeded.actor.tenantId)),
             proposals: await db.select().from(paymentMatchProposals).where(eq(paymentMatchProposals.tenantId, seeded.actor.tenantId)),
             audits: await db.select().from(auditLogs).where(eq(auditLogs.tenantId, seeded.actor.tenantId)),
         };
         const replay = await postPayment(context(seeded.actor, "payment-replay"), intake.publicId, { proposalPublicId: proposal.publicId });
-        expect(replay).toMatchObject({ publicId: first.publicId, status: "posted" });
+        expect(replay).toEqual(first);
         expect(await db.select().from(paymentIntakes).where(eq(paymentIntakes.tenantId, seeded.actor.tenantId))).toEqual(before.intakes);
+        expect(await db.select().from(paymentEvidence).where(eq(paymentEvidence.tenantId, seeded.actor.tenantId))).toEqual(before.evidence);
         expect(await db.select().from(transactions).where(eq(transactions.tenantId, seeded.actor.tenantId))).toEqual(before.transactions);
         expect(await db.select().from(paymentMatchProposals).where(eq(paymentMatchProposals.tenantId, seeded.actor.tenantId))).toEqual(before.proposals);
         expect(await db.select().from(auditLogs).where(eq(auditLogs.tenantId, seeded.actor.tenantId))).toEqual(before.audits);

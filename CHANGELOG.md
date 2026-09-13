@@ -6,7 +6,7 @@
 
 - Introduced read-only `workflow.resolve`, catalog/workflow version guidance, generated 135-tool/profile snapshots, and CreditSync plugin 10.3.0 with resolver-first skills and executable safety scenarios.
 - Added typed, tenant-scoped evidence requirements, append-only attempt floors, and pre-download import bindings in additive migrations 0075–0077; failed uploads retain their requirements without backfilling posted financial records.
-- Added disposable service/REST, concurrency, historical-replay, profile/runtime, and evidence-lineage regressions alongside an explicit financial entry-point inventory and separate backend, agent, host, and mobile acceptance evidence.
+- Added disposable service/REST, concurrency, exact-target historical-replay snapshots and intermediary post-time evidence rechecks, profile/runtime, and evidence-lineage regressions alongside an explicit financial entry-point inventory and separate backend, agent, host, and mobile acceptance evidence.
 
 ### Changed
 

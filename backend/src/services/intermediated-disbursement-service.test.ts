@@ -298,6 +298,66 @@ describe("intermediated disbursement groups and exact preview", () => {
         });
     });
 
+    integrationTest("rechecks transfer evidence before posting a previously ready group", async () => {
+        const owner = await seed("tenant-post-time-evidence", "post-time-evidence");
+        const group = await createGroup(owner, "post-time-evidence");
+        await addExactEvents(owner, group.publicId, "post-time-evidence");
+        const preview = await previewIntermediatedDisbursement(context(owner.actor), group.publicId);
+        expect(preview).toMatchObject({ status: "ready", evidenceReady: true, variance: "0.00" });
+
+        const storedGroup = await db.query.intermediatedDisbursementGroups.findFirst({
+            where: eq(intermediatedDisbursementGroups.publicId, group.publicId),
+        });
+        const fundingEvent = await db.query.intermediatedTransferEvents.findFirst({
+            where: and(
+                eq(intermediatedTransferEvents.groupId, storedGroup!.id),
+                eq(intermediatedTransferEvents.role, "funding_to_intermediary"),
+            ),
+        });
+        if (!storedGroup || !fundingEvent) throw new Error("Post-time transfer evidence fixture was not persisted");
+        const file = await db.insert(files).values({
+            tenantId: owner.actor.tenantId,
+            ownerUserId: owner.actor.id,
+            bucket: "test-evidence",
+            key: `post-time-evidence/${crypto.randomUUID()}.png`,
+            originalName: "post-time-evidence.png",
+            mimeType: "image/png",
+            size: 128,
+        }).returning().then((rows) => rows[0]!);
+        await db.insert(intermediatedTransferEvidenceIntents).values({
+            tenantId: owner.actor.tenantId,
+            eventId: fundingEvent.id,
+            fileId: file.id,
+            status: "pending",
+            evidenceHash: "post-time-evidence-hash",
+            mimeType: "image/png",
+            declaredSize: 128,
+            uploadExpiresAt: new Date("2026-08-13T10:00:00.000Z"),
+            createdByUserId: owner.actor.id,
+            updatedByUserId: owner.actor.id,
+        });
+
+        const before = {
+            group: await db.select().from(intermediatedDisbursementGroups).where(eq(intermediatedDisbursementGroups.id, storedGroup.id)),
+            events: await db.select().from(intermediatedTransferEvents).where(eq(intermediatedTransferEvents.groupId, storedGroup.id)),
+            transferEvidence: await db.select().from(intermediatedTransferEvidenceIntents).where(eq(intermediatedTransferEvidenceIntents.eventId, fundingEvent.id)),
+            transactions: await db.select().from(transactions).where(eq(transactions.tenantId, owner.actor.tenantId)),
+            loanDisbursementEvents: await db.select().from(loanDisbursementEvents).where(eq(loanDisbursementEvents.tenantId, owner.actor.tenantId)),
+            audits: await db.select().from(auditLogs).where(eq(auditLogs.tenantId, owner.actor.tenantId)),
+        };
+
+        await expect(postGroup(context(owner.actor, "post-time-pending-transfer"), group.publicId, preview.publicId)).rejects.toMatchObject({
+            code: "STALE_INTERMEDIATED_DISBURSEMENT_PROPOSAL",
+            status: 409,
+        });
+        expect(await db.select().from(intermediatedDisbursementGroups).where(eq(intermediatedDisbursementGroups.id, storedGroup.id))).toEqual(before.group);
+        expect(await db.select().from(intermediatedTransferEvents).where(eq(intermediatedTransferEvents.groupId, storedGroup.id))).toEqual(before.events);
+        expect(await db.select().from(intermediatedTransferEvidenceIntents).where(eq(intermediatedTransferEvidenceIntents.eventId, fundingEvent.id))).toEqual(before.transferEvidence);
+        expect(await db.select().from(transactions).where(eq(transactions.tenantId, owner.actor.tenantId))).toEqual(before.transactions);
+        expect(await db.select().from(loanDisbursementEvents).where(eq(loanDisbursementEvents.tenantId, owner.actor.tenantId))).toEqual(before.loanDisbursementEvents);
+        expect(await db.select().from(auditLogs).where(eq(auditLogs.tenantId, owner.actor.tenantId))).toEqual(before.audits);
+    });
+
     // Break caught: a balanced-looking total hides role-level under/over funding, or retained
     // cash is accepted as unexplained variance instead of an explicit group target.
     integrationTest("reports under and over funding while allowing only explicit retained balance", async () => {

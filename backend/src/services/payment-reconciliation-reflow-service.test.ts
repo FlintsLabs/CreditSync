@@ -6,6 +6,7 @@ import { auditLogs, borrowers, files, financialEvidenceRequirements, floatingTra
 import { createAuditLog } from "../lib/audit-log";
 import { createBorrower } from "./borrower-service";
 import type { CommandContext } from "./command-context";
+import { assertFinancialEvidenceReady } from "./financial-evidence-requirement-service";
 import { createLoanDraft, activateLoan } from "./loan-application-service";
 import { createPaymentIntake, postPayment, previewPaymentMatch } from "./payment-service";
 import { executePaymentReconciliationReflow, previewPaymentReconciliationReflow } from "./payment-reconciliation-reflow-service";
@@ -83,7 +84,31 @@ describe("existing-data temporal reflow repair", () => {
         const result = await executePaymentReconciliationReflow(fixture.ctx, input);
         expect(result.reflowGroupPublicId).toBeTruthy();
         expect(result.compensatingTransactionPublicIds.length).toBeGreaterThan(0);
+        const sourceRow = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.id, fixture.reconciliation.paymentIntakeId) });
+        if (!sourceRow) throw new Error("Reflow replay source intake was not persisted");
+        const historicalFile = await db.insert(files).values({
+            tenantId: fixture.tenantId, ownerUserId: fixture.ctx.actorUserId, bucket: "historical-test",
+            key: `reflow-replay-${crypto.randomUUID()}`, originalName: "historical-pending.png", mimeType: "image/png", size: 12,
+        }).returning().then(rows => rows[0]!);
+        await db.insert(paymentEvidence).values({
+            tenantId: fixture.tenantId, paymentIntakeId: sourceRow.id, fileId: historicalFile.id, status: "pending",
+            evidenceType: "slip", evidenceHash: "b".repeat(64), mimeType: "image/png", declaredSize: 12,
+            createdByUserId: fixture.ctx.actorUserId, updatedByUserId: fixture.ctx.actorUserId,
+        });
+        await expect(db.transaction(tx => assertFinancialEvidenceReady(tx, fixture.ctx, { kind: "payment_intake", publicId: fixture.source.publicId }))).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+        const beforeReplay = {
+            evidence: await db.select().from(paymentEvidence).where(eq(paymentEvidence.tenantId, fixture.tenantId)),
+            groups: await db.select().from(paymentReconciliationReflowGroups).where(eq(paymentReconciliationReflowGroups.tenantId, fixture.tenantId)),
+            entries: await db.select().from(paymentReconciliationReflowEntries).where(eq(paymentReconciliationReflowEntries.tenantId, fixture.tenantId)),
+            transactions: await db.select().from(transactions).where(eq(transactions.tenantId, fixture.tenantId)),
+            audits: await db.select().from(auditLogs).where(eq(auditLogs.tenantId, fixture.tenantId)),
+        };
         expect(await executePaymentReconciliationReflow(fixture.ctx, input)).toEqual(result);
+        expect(await db.select().from(paymentEvidence).where(eq(paymentEvidence.tenantId, fixture.tenantId))).toEqual(beforeReplay.evidence);
+        expect(await db.select().from(paymentReconciliationReflowGroups).where(eq(paymentReconciliationReflowGroups.tenantId, fixture.tenantId))).toEqual(beforeReplay.groups);
+        expect(await db.select().from(paymentReconciliationReflowEntries).where(eq(paymentReconciliationReflowEntries.tenantId, fixture.tenantId))).toEqual(beforeReplay.entries);
+        expect(await db.select().from(transactions).where(eq(transactions.tenantId, fixture.tenantId))).toEqual(beforeReplay.transactions);
+        expect(await db.select().from(auditLogs).where(eq(auditLogs.tenantId, fixture.tenantId))).toEqual(beforeReplay.audits);
         await expect(executePaymentReconciliationReflow(fixture.ctx, { ...input, reason: "different repair" })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
         expect(await db.select().from(paymentReconciliationReflowGroups).where(eq(paymentReconciliationReflowGroups.tenantId, fixture.tenantId))).toHaveLength(1);
         expect(await db.select().from(paymentReconciliationReflowEntries).where(eq(paymentReconciliationReflowEntries.tenantId, fixture.tenantId))).toHaveLength(result.compensatingTransactionPublicIds.length);

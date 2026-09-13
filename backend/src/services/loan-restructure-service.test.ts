@@ -8,6 +8,7 @@ import {
     loanInterestAccruals, loanInterestRatePeriods, loanRenewals, loanRestructures, loanSchedules, loans, paymentIntakes, paymentMatchAllocations, paymentMatchProposals, transactions, users,
 } from "../db/schema";
 import type { CommandContext } from "./command-context";
+import { assertFinancialEvidenceReady } from "./financial-evidence-requirement-service";
 import { executeLoanRestructure, previewLoanRestructure, reverseLoanRestructure } from "./loan-restructure-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
@@ -398,8 +399,37 @@ describe("loan restructure service", () => {
             executeLoanRestructure(ctx("execute-1"), preview.publicId, input),
         ]);
         expect(concurrentReplay).toEqual(first);
+        const historicalDraft = await db.query.loanDisbursementEvents.findFirst({ where: and(
+            eq(loanDisbursementEvents.loanId, (await db.query.loans.findFirst({ where: eq(loans.publicId, first.newLoanPublicId!) }))!.id),
+            eq(loanDisbursementEvents.publicId, first.disbursementDraftPublicId!),
+        ) });
+        if (!historicalDraft) throw new Error("Restructure replay payout fixture was not persisted");
+        const historicalFile = await db.insert(files).values({
+            tenantId, ownerUserId: ctx().actorUserId, bucket: "historical-test",
+            key: `restructure-replay-${crypto.randomUUID()}`, originalName: "historical-pending.png", mimeType: "image/png", size: 12,
+        }).returning().then(rows => rows[0]!);
+        await db.insert(loanDisbursementEvidenceIntents).values({
+            tenantId, loanDisbursementEventId: historicalDraft.id, fileId: historicalFile.id, status: "pending",
+            evidenceHash: "c".repeat(64), mimeType: "image/png", declaredSize: 12,
+            createdByUserId: ctx().actorUserId, updatedByUserId: ctx().actorUserId,
+        });
+        await expect(db.transaction(tx => assertFinancialEvidenceReady(tx, ctx("replay-negative"), { kind: "loan_disbursement", publicId: first.disbursementDraftPublicId! }))).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+        const beforeReplay = {
+            events: await db.select().from(loanDisbursementEvents).where(eq(loanDisbursementEvents.tenantId, tenantId)),
+            intents: await db.select().from(loanDisbursementEvidenceIntents).where(eq(loanDisbursementEvidenceIntents.tenantId, tenantId)),
+            loans: await db.select().from(loans).where(eq(loans.tenantId, tenantId)),
+            schedules: await db.select().from(loanSchedules).where(eq(loanSchedules.tenantId, tenantId)),
+            transactions: await db.select().from(transactions).where(eq(transactions.tenantId, tenantId)),
+            audits: await db.select().from(auditLogs).where(eq(auditLogs.tenantId, tenantId)),
+        };
         const replay = await executeLoanRestructure(ctx("execute-1"), preview.publicId, input);
         expect(replay).toEqual(first);
+        expect(await db.select().from(loanDisbursementEvents).where(eq(loanDisbursementEvents.tenantId, tenantId))).toEqual(beforeReplay.events);
+        expect(await db.select().from(loanDisbursementEvidenceIntents).where(eq(loanDisbursementEvidenceIntents.tenantId, tenantId))).toEqual(beforeReplay.intents);
+        expect(await db.select().from(loans).where(eq(loans.tenantId, tenantId))).toEqual(beforeReplay.loans);
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.tenantId, tenantId))).toEqual(beforeReplay.schedules);
+        expect(await db.select().from(transactions).where(eq(transactions.tenantId, tenantId))).toEqual(beforeReplay.transactions);
+        expect(await db.select().from(auditLogs).where(eq(auditLogs.tenantId, tenantId))).toEqual(beforeReplay.audits);
         expect(first.oldLoanPublicId).toBe(loan.publicId);
         expect(first.newLoanPublicId).toMatch(/^[0-9a-f-]{36}$/);
         expect(first.disbursementDraftPublicId).toMatch(/^[0-9a-f-]{36}$/);
