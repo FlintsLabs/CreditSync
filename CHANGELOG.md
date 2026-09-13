@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.46 - 2026-09-14
+
+### Added
+
+- Recorded the owner-approved workflow resolver and sticky evidence-safety implementation plan, including isolated Luna high execution, independent verification and controlled deployment gates; implementation and mobile acceptance are not yet complete.
+
 ## v0.4.45 - 2026-09-13
 
 ### Added
