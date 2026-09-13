@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { resolveWorkflowPolicy, type ResolverInput, type ResolverObservation, type ResolverProfile } from "./workflow-resolver";
 import { MCP_TOOL_NAMES } from "./catalog-types";
 import { toolIsVisibleInProfile, WORKFLOW_REGISTRY, WORKFLOW_TOOL_INVENTORY, WORKFLOW_VERSION } from "./workflow-registry";
-import { advertisedMcpToolMetadata } from "./server";
+import { advertisedMcpToolMetadata, toolInputSchemas } from "./server";
 
 const catalogVersion = "mcp-catalog-test";
 const target = { kind: "payment_intake" as const, publicId: "0198c481-3e2b-7000-8000-000000000001" };
@@ -133,6 +133,24 @@ describe("workflow resolver policy", () => {
         expect(help.status).toBe("needs_input");
         expect(help.nextSteps).toHaveLength(0);
         expect(help.prohibitedTools).toContain("payment.post");
+    });
+
+    test("uses the target-bound borrower resolver input without a query", () => {
+        const borrowerTarget = { kind: "borrower" as const, publicId: target.publicId };
+        const cases = [
+            resolveWorkflowPolicy({ intent: "inspect", profile: "full", target: borrowerTarget, attachments: "none" }, { targetAvailable: true, identityResolved: true, state: "mutable" }, { ...base, profile: "full" }),
+            resolveWorkflowPolicy({ intent: "tool_help", profile: "full", target: borrowerTarget, toolName: "borrower.resolve-and-portfolio" }, { targetAvailable: true, identityResolved: true, state: "mutable" }, { ...base, profile: "full" }),
+        ];
+        for (const resolved of cases) {
+            const borrowerStep = resolved.nextSteps[0]!;
+            expect(borrowerStep.toolName).toBe("borrower.resolve-and-portfolio");
+            expect(borrowerStep.arguments).toEqual({ borrowerPublicId: borrowerTarget.publicId });
+            expect(Object.keys(borrowerStep.arguments)).toHaveLength(1);
+            expect(borrowerStep.requiredInputs).not.toContain("query");
+            expect(borrowerStep.requiredInputs).not.toContain("borrowerPublicId");
+            expect(toolInputSchemas["borrower.resolve-and-portfolio"].safeParse(borrowerStep.arguments).success).toBe(true);
+        }
+        expect(toolInputSchemas["borrower.resolve-and-portfolio"].safeParse({ query: "Alice", borrowerPublicId: borrowerTarget.publicId }).success).toBe(false);
     });
 
     test("refuses help for every non-inspection catalog tool and accepts payout evidence attachment targets", () => {

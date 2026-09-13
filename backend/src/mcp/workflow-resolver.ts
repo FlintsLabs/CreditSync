@@ -134,7 +134,10 @@ export function resolveWorkflowPolicy(input: ResolverInput, observation: Resolve
         if (targetRequired && (observation.targetAvailable !== true || observation.identityResolved !== true || (observation.state !== "mutable" && observation.state !== "posted"))) {
             return withObservation(result(input, profile, "needs_input", [], ["TARGET_REQUIRES_AUTHORITATIVE_READ"]), observation);
         }
-        const helpStep = step(input.toolName, input, requiredInputs[input.toolName] ?? []);
+        const helpInputs = input.toolName === "borrower.resolve-and-portfolio" && input.target?.kind === "borrower"
+            ? []
+            : requiredInputs[input.toolName] ?? [];
+        const helpStep = step(input.toolName, input, helpInputs);
         return withObservation(result(input, profile, helpStep ? "next_step" : "needs_input", [helpStep], helpStep ? [] : ["EXACT_TARGET_REQUIRED"]), observation);
     }
     const rule = workflowRule(input.intent);
@@ -149,7 +152,7 @@ export function resolveWorkflowPolicy(input: ResolverInput, observation: Resolve
     if (attachments === "unknown") return withObservation(result(input, profile, "needs_input", [], ["ATTACHMENT_AVAILABILITY_UNKNOWN"]), observation);
     if (input.expectedAttachmentCount !== undefined && (attachments !== "present" || !Number.isSafeInteger(input.expectedAttachmentCount) || input.expectedAttachmentCount < 1 || input.expectedAttachmentCount > 20)) return withObservation(result(input, profile, "needs_input", [], ["EXPECTED_ATTACHMENT_COUNT_REQUIRED"]), observation);
     if (input.intent === "inspect") {
-        const inspectStep = input.target?.kind === "borrower" ? step("borrower.resolve-and-portfolio", input) : input.target?.kind === "loan" ? step("loan.inspect-context", input) : input.target?.kind === "payment_intake" ? step("intake.get", input) : null;
+        const inspectStep = input.target?.kind === "borrower" ? step("borrower.resolve-and-portfolio", input, []) : input.target?.kind === "loan" ? step("loan.inspect-context", input) : input.target?.kind === "payment_intake" ? step("intake.get", input) : null;
         return withObservation(result(input, profile, inspectStep ? "next_step" : "needs_input", [inspectStep], inspectStep ? [] : ["TARGET_REQUIRES_PARENT_READ"]), observation);
     }
     if (input.target!.kind === "payment_intake" && observation.state === "posted" && (input.intent === "receive_payment" || input.intent === "attach_evidence")) {

@@ -25,6 +25,7 @@
 - Replaced bounded evidence materialization with authoritative aggregate counts plus overflow blocking, and added tenant/actor-authorized borrower observations with closed-schema and catalog-driven regressions.
 - Made overflow observations explicitly non-ready, prevented tool-help UUID echo before an authoritative read, routed ready existing payouts to confirmation, and added scheduled-close inspection plus existing-loan activation prerequisites without inventing a scheduled settlement tool.
 - Narrowed evidence-attempt binding conflict normalization to the exact full or PostgreSQL-truncated binding index, while rethrowing unrelated and winnerless unique violations.
+- Corrected target-bound borrower inspection and tool-help guidance to emit only the schema-valid borrower identifier input without requiring a query.
 
 ## v0.4.45 - 2026-09-13
 
