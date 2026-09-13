@@ -37,7 +37,7 @@ Unposted payment intakes can be explicitly cancelled from the Web inbox or MCP a
 
 ## Current Status
 
-Release `v0.4.46` includes the independently reviewed workflow resolver and sticky evidence guards. Combined backend/cache, frontend, plugin, typecheck and protocol verification is recorded in [the acceptance matrix](docs/operations/workflow-resolver-acceptance.md). Repository verification does not prove that an existing ChatGPT connection has refreshed its catalog or that a real mobile attachment reached the importer; those acceptance checks remain explicit.
+Release `v0.4.46` includes the independently reviewed workflow resolver and sticky evidence guards, deployed on 14 September 2026 after a verified PostgreSQL/MinIO backup and isolated restore rehearsal. Combined backend/cache, frontend, plugin, typecheck, protocol and production verification is recorded in [the acceptance matrix](docs/operations/workflow-resolver-acceptance.md). Existing ChatGPT connections must refresh/reconnect and verify tool visibility; server verification does not prove that a real mobile attachment reached the importer. Real-host/device and long-running canary acceptance remain explicit.
 
 The repo already contains a working MVP foundation:
 

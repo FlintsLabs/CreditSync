@@ -10,9 +10,9 @@
 
 ### Changed
 
-- Integrated the independently verified Luna-high worktree implementation into `main`; artifact source remains `691dda7`, with only verification documentation added afterward and production rollout gated on a fresh recovery rehearsal.
+- Integrated and deployed the independently verified Luna-high worktree implementation from artifact source `691dda7` after a fresh protected PostgreSQL/MinIO backup, isolated restore and read-only recovery rehearsal; production migration preserved all 94 existing public-table fingerprints and both application images plus ingress passed health/protocol checks.
 - Applied evidence readiness to payment/payout posting, activation, reconciliation/restore, allocation correction, temporal reflow, settlement, renewal, and restructure; pending evidence blocks the affected preview/execute paths while legitimate data-only workflows and successful idempotent replays remain supported.
-- Verified the combined release with the full disposable backend suite, separate cache coverage, frontend test/lint/build, plugin/typecheck gates, discovery benchmarking and pinned official conformance; documented host/mobile limits and separated synthetic tests from read-only real-data recovery. Production backup/restore and deployment remain gated separately.
+- Verified the combined release with the full disposable backend suite, separate cache coverage, frontend test/lint/build, plugin/typecheck gates, discovery benchmarking and pinned official conformance; documented retained pending evidence, rollback precautions and still-unverified host/mobile/long-running canary acceptance separately from the completed server rollout.
 
 ### Fixed
 

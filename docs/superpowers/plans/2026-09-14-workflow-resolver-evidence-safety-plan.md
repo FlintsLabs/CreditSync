@@ -25,6 +25,14 @@
 
 ## Sequence and review boundaries
 
+### Execution record — 2026-09-14
+
+Tasks 1–7 were implemented through supervised Codex CLI Luna high in isolated worktrees, independently reviewed, integrated and verified. The full final backend run passed 1,169 tests across 150 files; the three cache-conditional skips were covered separately by 16 passing cache-backed tests. Frontend 315 tests/lint/build, backend typecheck, plugin/recovery tests and validator, discovery benchmarking, and pinned official conformance passed. The detailed evidence and artifact revisions are in [the acceptance matrix](../../operations/workflow-resolver-acceptance.md).
+
+Task 8 server rollout is complete: `main` was merged/pushed; fresh PostgreSQL/MinIO backup and isolated restore/migration preserved every old public-table fingerprint; both application images were deployed and authenticated read-only protocol/recovery/health probes passed before ingress reopened. No production financial test records or historical remediation were performed. The design checkboxes below remain the original task breakdown; this execution record and the acceptance matrix are the verified completion record.
+
+Real ChatGPT catalog adoption, actual mobile attachment handoff and long-running canary acceptance are not claimed complete. They require operator/device observations and remain separate from the completed implementation/deployment, consistent with the approved requirement to report those limits honestly.
+
 Tasks 1–3 close the known safety gap and can ship independently. Tasks 4–6 add resolver and client adoption. Tasks 7–8 complete cross-channel acceptance and rollout. Do not postpone the service guard until agents adopt the new tool.
 
 ### Task 1: Define evidence-state policy and reproduce the incident
