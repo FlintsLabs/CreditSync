@@ -1,14 +1,14 @@
 import { MCP_TOOL_NAMES, type McpToolName, type ToolProfile } from "./catalog-types";
 import { TOOL_PROFILES } from "./tool-profiles";
+import { WORKFLOW_POLICY_REVISION, WORKFLOW_VERSION } from "./workflow-version";
+
+export { WORKFLOW_POLICY_REVISION, WORKFLOW_VERSION } from "./workflow-version";
 
 export type WorkflowIntent = "inspect" | "receive_payment" | "close_loan" | "originate_loan" | "disburse_loan" | "attach_evidence" | "renew_loan" | "intermediary_collection" | "tool_help";
 
 export const WORKFLOW_INTENTS = [
     "inspect", "receive_payment", "close_loan", "originate_loan", "disburse_loan", "attach_evidence", "renew_loan", "intermediary_collection", "tool_help",
 ] as const satisfies readonly WorkflowIntent[];
-
-export const WORKFLOW_VERSION = "workflow-resolver-1.0.0";
-export const WORKFLOW_POLICY_REVISION = "evidence-safety-2026-09-14";
 
 export type WorkflowRule = Readonly<{
     intent: WorkflowIntent;

@@ -19,6 +19,7 @@
 - Added modern full/curated runtime acceptance proving `workflow.resolve` is dispatched as a read-only tool while legacy protocol negotiation remains covered.
 - Added the workflow-resolver acceptance matrix, mobile resolver procedure, and backup-recovery clarification requiring synthetic disposable databases for reset suites and read-only probes on restored real data.
 - Fixed concurrent same-tenant evidence import-key races by normalizing only the attempt-binding unique conflict inside a savepoint and re-reading the committed winner; the loser performs no second download and returns `EVIDENCE_IDEMPOTENCY_CONFLICT`.
+- Separated workflow and policy version constants from the immutable registry so catalog hashes, workflow semantics, and policy revisions remain independently comparable at runtime.
 
 ## v0.4.45 - 2026-09-13
 
