@@ -24,6 +24,7 @@ import {
 } from "../lib/floating-interest-policy";
 import type { CommandContext } from "./command-context";
 import { getLoanReadPaymentHealth } from "./loan-payment-health-service";
+import { assertLoanFinancialEvidenceReady } from "./financial-evidence-requirement-service";
 import { DomainError } from "./domain-error";
 import {
     calculateDailyInterest,
@@ -1085,6 +1086,7 @@ export async function activateLoanInTransaction(
         if (current.termMonths === null && current.repaymentType !== "floating") {
             throw new DomainError("INVALID_LOAN_TERMS", "Draft term months are required", 400);
         }
+        await assertLoanFinancialEvidenceReady(tx, ctx, current.id);
 
         let fundingSource: typeof bankLoans.$inferSelect | null = null;
         let ownCapitalProfile: typeof bankProfiles.$inferSelect | null = null;

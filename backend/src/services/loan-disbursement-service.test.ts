@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { auditLogs, borrowers, files, loanDisbursementEvidence, loanDisbursementEvents, loanSchedules, loans, users } from "../db/schema";
+import { auditLogs, borrowers, files, financialEvidenceRequirements, loanDisbursementEvidence, loanDisbursementEvents, loanSchedules, loans, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import {
     createDisbursementDraft,
@@ -175,11 +175,30 @@ integrationTest("persists and verifies evidence readiness before a linked file c
     const event = await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, draft.publicId) });
     await db.insert(loanDisbursementEvidence).values({ tenantId: owner.tenantId, loanDisbursementEventId: event!.id, fileId: file!.id });
 
-    await expect(postDisbursement(context(owner, "evidence-post"), draft.publicId)).rejects.toMatchObject({ code: "EVIDENCE_NOT_FINALIZED", status: 409 });
+    await expect(postDisbursement(context(owner, "evidence-post"), draft.publicId)).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY", status: 409 });
     await expect(finalizeDisbursementEvidence(context(owner), draft.publicId, prepared.publicId, { ...gateway, head: async () => ({ exists: true, contentType: "image/png", contentLength: 12, checksumSha256: "b".repeat(64), metadata: { tenant: owner.tenantId, disbursement: draft.publicId } }) }))
         .rejects.toMatchObject({ code: "EVIDENCE_METADATA_MISMATCH", status: 409 });
     expect(await finalizeDisbursementEvidence(context(owner), draft.publicId, prepared.publicId, gateway)).toMatchObject({ status: "ready", sha256: checksum, filePublicId: prepared.filePublicId });
     await expect(postDisbursement(context(owner, "evidence-post"), draft.publicId)).resolves.toMatchObject({ status: "posted" });
+});
+
+// Break caught: a payout evidence signing failure releases the intent and lets
+// an old data-only post proceed without retaining the accepted requirement.
+integrationTest("retains a payout requirement after signing failure and blocks post", async () => {
+    const owner = await actor();
+    const loan = await loanFor(owner);
+    const draft = await createDisbursementDraft(context(owner), loan.publicId, {
+        grossAmount: "5.00", loanAttributedAmount: "5.00", channel: "cash", disbursedAt: "2026-09-14T05:00:00.000Z",
+    });
+    await expect(prepareDisbursementEvidence(context(owner), draft.publicId, { mimeType: "image/png", size: 12, sha256: "d".repeat(64) }, {
+        preparePut: async () => { throw new Error("signing unavailable"); },
+        head: async () => ({ exists: false, contentType: null, contentLength: null, checksumSha256: null, metadata: {} }),
+    })).rejects.toThrow("signing unavailable");
+    const event = await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, draft.publicId) });
+    expect(await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.loanDisbursementEventId, event!.id) }))
+        .toMatchObject({ expectedCount: 1 });
+    await expect(postDisbursement(context(owner, "payout-signing-failure-post"), draft.publicId))
+        .rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY", status: 409 });
 });
 
 // Break caught: retrying a pending upload creates a second intent/file instead of returning the same durable capability.

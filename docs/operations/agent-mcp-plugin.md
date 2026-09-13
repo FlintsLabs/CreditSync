@@ -53,6 +53,20 @@ Evidence is not required to create or post a payment intake. For image-first cap
 
 Keep `STORAGE_PROVIDER=s3`, `S3_ENDPOINT` reachable by the backend, and `S3_PUBLIC_URL` reachable by the uploading client through `/files` where applicable. Limit `EVIDENCE_UPLOAD_TTL_SECONDS` and `EVIDENCE_MAX_BYTES`; do not log raw QR payloads or signed URLs.
 
+## Evidence requirement enforcement matrix
+
+An attachment declaration or accepted prepare/import for a mutable payment intake or loan-disbursement event creates a sticky requirement before storage or signing work. Requirements are tenant-scoped, typed, append-only in intent, and can only increase while the parent is mutable. A pending or rejected required intent blocks the authoritative preview/post/activation check; a resolver response never substitutes for this check.
+
+| Entry point | Evidence target | Guard location | Supported transport | Terminal replay |
+| --- | --- | --- | --- | --- |
+| `intake.create`, `evidence.prepare`, ChatGPT payment import | payment intake | payment preview and payment posting kernel; batch and restore consumers recheck | direct signed PUT/finalize, supported ChatGPT import, batch staging | existing posted receipt is returned before new checks |
+| `payment.batch.preview`, `payment.batch.execute` and restore execute | linked payment intakes | preview readiness and locked execute path | existing intake/staging transports only | existing operation receipt is returned |
+| `loan.disbursement.draft`, `loan.disbursement.evidence.prepare`, ChatGPT payout import | loan-disbursement event | payout post under loan → event → evidence lock order; loan activation checks known draft payout requirements | direct signed PUT/finalize and supported ChatGPT import | existing posted payout receipt is returned |
+| `loan.activate` | known draft payout events for the loan | activation transaction before term/schedule effects | no implicit attachment transport | existing activation result is returned |
+| settlement, renewal, restructure and intermediary execute paths | service-specific records; no generic payment alias | existing service preview/execute checks; linked payment/payout targets must still pass their own guards | only the importer declared by that service | existing service receipt/idempotency behavior |
+
+Floating settlement/renewal and intermediary attachment-bearing paths without a supported pre-execution evidence association are human-review-only. Do not create a fake payment intake, infer a target from a name/amount, or invent a generic payment workflow. The backend cannot detect a file that the host never reports. Historical pending-recovery warnings remain warnings and never grant financial permission. Real mobile file transport, host catalog adoption, production migration and rollout checks remain operator-pending.
+
 ## Private app and plugin installation
 
 1. Register `https://<host>/mcp` as a private Codex app using bearer authentication.
