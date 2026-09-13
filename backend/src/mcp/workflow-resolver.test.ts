@@ -71,6 +71,14 @@ describe("workflow resolver policy", () => {
         expect(help.prohibitedTools).toContain("payment.post");
     });
 
+    test("refuses help for every non-inspection catalog tool and accepts payout evidence attachment targets", () => {
+        const mutatingHelp = resolveWorkflowPolicy({ intent: "tool_help", profile: "full", target, toolName: "borrower.create" }, { targetAvailable: true, identityResolved: true, state: "mutable" }, { ...base, profile: "full" });
+        expect(mutatingHelp.status).toBe("needs_input");
+        expect(mutatingHelp.blockers).toContain("TOOL_HELP_REQUIRES_WORKFLOW_RESOLUTION");
+        const payout = resolveWorkflowPolicy({ intent: "attach_evidence", profile: "disbursements", target: { kind: "loan_disbursement", publicId: target.publicId }, attachments: "none" }, { targetAvailable: true, identityResolved: true, state: "mutable", evidenceRequired: false, evidenceReady: true }, { ...base, profile: "disbursements" });
+        expect(payout).toMatchObject({ status: "next_step", nextSteps: [{ toolName: "loan.disbursement.evidence.prepare" }] });
+    });
+
     test("keeps unsupported or incomplete evidence states fail-closed", () => {
         const unsupported = resolveWorkflowPolicy({ intent: "receive_payment", ...base, target, attachments: "present", expectedAttachmentCount: 1 }, { targetAvailable: true, identityResolved: true, state: "mutable", evidenceRequired: true, evidenceReady: false, supportedAttachmentTransport: false }, base);
         expect(unsupported).toMatchObject({ status: "blocked", blockers: ["HUMAN_REVIEW_REQUIRED_UNSUPPORTED_ATTACHMENT_TRANSPORT"] });

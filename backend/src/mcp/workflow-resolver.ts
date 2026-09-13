@@ -1,5 +1,5 @@
 import { MCP_TOOL_NAMES, type ToolProfile } from "./catalog-types";
-import { toolIsVisibleInProfile, workflowRule, WORKFLOW_POLICY_REVISION, WORKFLOW_VERSION, type WorkflowIntent } from "./workflow-registry";
+import { toolIsVisibleInProfile, workflowRule, WORKFLOW_POLICY_REVISION, WORKFLOW_VERSION, WORKFLOW_TOOL_INVENTORY, type WorkflowIntent } from "./workflow-registry";
 
 const publicIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export type WorkflowTargetKind = "borrower" | "loan" | "payment_intake" | "loan_disbursement";
@@ -66,12 +66,6 @@ const requiredInputs: Readonly<Record<string, readonly string[]>> = Object.freez
     "loan.draft": ["principal", "interestRate", "termMonths", "repaymentType", "startDate"], "loan.activate": ["idempotencyKey"], "loan.settlement.preview": ["asOfDate"], "renewal.preview": ["requestedPrincipal"],
 });
 
-const financialTools = new Set([
-    "intake.create", "evidence.prepare", "evidence.finalize", "evidence.import-chatgpt-file", "payment.preview", "payment.post", "loan.preview", "loan.draft", "loan.activate",
-    "loan.disbursement.draft", "loan.disbursement.evidence.prepare", "loan.disbursement.evidence.finalize", "loan.disbursement.evidence.import-chatgpt-file", "loan.disbursement.post",
-    "loan.settlement.preview", "loan.settlement.execute", "renewal.preview", "renewal.execute", "intermediary.collection.create", "intermediary.remittance.preview", "intermediary.remittance.post",
-]);
-
 function step(toolName: string, input: ResolverInput, inputs: readonly string[] = requiredInputs[toolName] ?? [], requiresConfirmation = false): ResolverStep | null {
     if (!MCP_TOOL_NAMES.includes(toolName as never) || !toolIsVisibleInProfile(toolName, input.profile)) return null;
     const arguments_: Record<string, string> = {};
@@ -104,7 +98,7 @@ function validTarget(input: ResolverInput) {
 }
 
 function expectedTarget(intent: WorkflowIntent): WorkflowTargetKind | null {
-    if (["receive_payment", "attach_evidence"].includes(intent)) return "payment_intake";
+    if (intent === "receive_payment") return "payment_intake";
     if (["close_loan", "originate_loan", "renew_loan"].includes(intent)) return "loan";
     return intent === "disburse_loan" ? "loan_disbursement" : null;
 }
@@ -126,7 +120,8 @@ export function resolveWorkflowPolicy(input: ResolverInput, observation: Resolve
     if (input.intent === "tool_help") {
         if (!input.toolName || !MCP_TOOL_NAMES.includes(input.toolName as never)) return withObservation(result(input, profile, "needs_input", [], ["TOOL_NAME_REQUIRED"]), observation);
         if (!toolIsVisibleInProfile(input.toolName, profile.profile)) return withObservation(result(input, profile, "connection_required", [], ["TOOL_NOT_VISIBLE_ON_PROFILE"]), observation);
-        if (financialTools.has(input.toolName)) return withObservation(result(input, profile, "needs_input", [], ["TOOL_HELP_REQUIRES_WORKFLOW_RESOLUTION"], [input.toolName]), observation);
+        const inventory = WORKFLOW_TOOL_INVENTORY[input.toolName as keyof typeof WORKFLOW_TOOL_INVENTORY];
+        if (!inventory || inventory.workflow !== "inspect") return withObservation(result(input, profile, "needs_input", [], ["TOOL_HELP_REQUIRES_WORKFLOW_RESOLUTION"], [input.toolName]), observation);
         return withObservation(result(input, profile, "next_step", [step(input.toolName, input, requiredInputs[input.toolName] ?? ["toolArguments"])]), observation);
     }
     const rule = workflowRule(input.intent);
