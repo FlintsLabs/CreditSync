@@ -11,6 +11,8 @@
 - Added tenant-safe sticky financial-evidence requirements with typed payment/payout targets, additive migration 0075, immutable-parent locking, payment/batch/restore guards, and failure-retaining prepare declarations.
 - Added append-only hashed evidence-attempt floors in migration 0076, exact tenant/file/finalization/linkage checks, direct-service portfolio authorization, and download/signing/cleanup regressions that keep failed evidence attempts blocking financial transitions.
 - Added lock-scoped reconciliation of legacy payment and payout evidence into durable attempt floors using only provable SHA-256 or source-fingerprint identities; same-identity retries remain idempotent and ambiguous legacy rows are not guessed.
+- Fixed ChatGPT importer/source-hash alias reconciliation so one imported file cannot consume two sticky attempts; added payment and payout importer regressions for distinct files, retries, explicit registration, and direct-prepare reuse.
+- Added immutable operation bindings for ChatGPT evidence attempts so a failed download reserves the tenant/target/idempotency/source identity before network access; changed descriptors fail without another attempt, while same-key retries remain resumable and target/tenant scoped.
 - Added payout-post and loan-activation parity guards, signing-failure regression coverage, and an entry-point matrix documenting supported evidence transports and human-review-only paths.
 
 ### Changed

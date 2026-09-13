@@ -1,4 +1,4 @@
-import { and, eq, or, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { db, type DbExecutor } from "../db";
 import {
     files,
@@ -40,6 +40,34 @@ function validateAttemptKey(attemptKey: string | undefined) {
         throw new DomainError("INVALID_EVIDENCE_ATTEMPT", "Evidence attempt identity must be 1 to 512 characters", 400);
     }
     return attemptKey?.trim();
+}
+
+export interface FinancialEvidenceAttemptBinding {
+    attemptKey?: string;
+    importIdempotencyKey?: string | null;
+    sourceFileFingerprint?: string | null;
+    bindingKind?: "payment" | "disbursement";
+}
+
+function validateAttemptBinding(options: FinancialEvidenceAttemptBinding) {
+    const importIdempotencyKey = options.importIdempotencyKey?.trim() || null;
+    const sourceFileFingerprint = options.sourceFileFingerprint?.trim().toLowerCase() || null;
+    if ((importIdempotencyKey === null) !== (sourceFileFingerprint === null)) {
+        throw new DomainError("INVALID_EVIDENCE_ATTEMPT", "Evidence import bindings require both an idempotency key and source fingerprint", 400);
+    }
+    if ((importIdempotencyKey === null) !== (options.bindingKind === undefined)) {
+        throw new DomainError("INVALID_EVIDENCE_ATTEMPT", "Evidence import bindings require an evidence kind", 400);
+    }
+    if (importIdempotencyKey && (importIdempotencyKey.length > 512)) {
+        throw new DomainError("INVALID_EVIDENCE_ATTEMPT", "Evidence import idempotency key must be 1 to 512 characters", 400);
+    }
+    if (sourceFileFingerprint && !sha256IdentityPattern.test(sourceFileFingerprint)) {
+        throw new DomainError("INVALID_EVIDENCE_ATTEMPT", "Evidence source fingerprint must be a SHA-256 value", 400);
+    }
+    if (importIdempotencyKey && !options.attemptKey) {
+        throw new DomainError("INVALID_EVIDENCE_ATTEMPT", "Evidence import bindings require an attempt identity", 400);
+    }
+    return { importIdempotencyKey, sourceFileFingerprint };
 }
 
 function legacyAttemptKey(evidenceHash: string | null | undefined, sourceFileFingerprint: string | null | undefined) {
@@ -93,6 +121,11 @@ async function lockDisbursementTarget(tx: DbExecutor, ctx: CommandContext, publi
 }
 
 async function seedLegacyPaymentEvidenceAttempts(tx: DbExecutor, ctx: CommandContext, requirementId: number, intakeId: number) {
+    const existingAttempts = await tx.select({ attemptKey: financialEvidenceRequirementAttempts.attemptKey }).from(financialEvidenceRequirementAttempts).where(and(
+        eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId),
+        eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirementId),
+    ));
+    const existingKeys = new Set(existingAttempts.map((attempt) => attempt.attemptKey));
     const legacyEvidence = await tx.select({
         evidenceHash: paymentEvidence.evidenceHash,
         sourceFileFingerprint: paymentEvidence.sourceFileFingerprint,
@@ -103,6 +136,8 @@ async function seedLegacyPaymentEvidenceAttempts(tx: DbExecutor, ctx: CommandCon
     for (const evidence of legacyEvidence) {
         const attemptKey = legacyAttemptKey(evidence.evidenceHash, evidence.sourceFileFingerprint);
         if (!attemptKey) continue;
+        const sourceFingerprint = evidence.sourceFileFingerprint?.trim().toLowerCase();
+        if (sourceFingerprint && sha256IdentityPattern.test(sourceFingerprint) && existingKeys.has(`chatgpt:${sourceFingerprint}`)) continue;
         await tx.insert(financialEvidenceRequirementAttempts).values({
             tenantId: ctx.tenantId, financialEvidenceRequirementId: requirementId, attemptKey,
             createdByUserId: ctx.actorUserId, source: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId,
@@ -111,6 +146,11 @@ async function seedLegacyPaymentEvidenceAttempts(tx: DbExecutor, ctx: CommandCon
 }
 
 async function seedLegacyDisbursementEvidenceAttempts(tx: DbExecutor, ctx: CommandContext, requirementId: number, eventId: number) {
+    const existingAttempts = await tx.select({ attemptKey: financialEvidenceRequirementAttempts.attemptKey }).from(financialEvidenceRequirementAttempts).where(and(
+        eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId),
+        eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirementId),
+    ));
+    const existingKeys = new Set(existingAttempts.map((attempt) => attempt.attemptKey));
     const legacyIntents = await tx.select({
         evidenceHash: loanDisbursementEvidenceIntents.evidenceHash,
         sourceFileFingerprint: loanDisbursementEvidenceIntents.sourceFileFingerprint,
@@ -121,10 +161,111 @@ async function seedLegacyDisbursementEvidenceAttempts(tx: DbExecutor, ctx: Comma
     for (const intent of legacyIntents) {
         const attemptKey = legacyAttemptKey(intent.evidenceHash, intent.sourceFileFingerprint);
         if (!attemptKey) continue;
+        const sourceFingerprint = intent.sourceFileFingerprint?.trim().toLowerCase();
+        if (sourceFingerprint && sha256IdentityPattern.test(sourceFingerprint) && existingKeys.has(`chatgpt:${sourceFingerprint}`)) continue;
         await tx.insert(financialEvidenceRequirementAttempts).values({
             tenantId: ctx.tenantId, financialEvidenceRequirementId: requirementId, attemptKey,
             createdByUserId: ctx.actorUserId, source: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId,
         }).onConflictDoNothing({ target: [financialEvidenceRequirementAttempts.tenantId, financialEvidenceRequirementAttempts.financialEvidenceRequirementId, financialEvidenceRequirementAttempts.attemptKey] });
+    }
+}
+
+async function hasChatGptAliasForPaymentHash(tx: DbExecutor, ctx: CommandContext, requirementId: number, intakeId: number, attemptKey: string) {
+    if (!attemptKey.startsWith("sha256:")) return false;
+    const hash = attemptKey.slice("sha256:".length);
+    const sourceRows = await tx.select({ sourceFileFingerprint: paymentEvidence.sourceFileFingerprint }).from(paymentEvidence).where(and(
+        eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.paymentIntakeId, intakeId), eq(paymentEvidence.evidenceHash, hash),
+    ));
+    const aliases = sourceRows.map((row) => row.sourceFileFingerprint?.trim().toLowerCase()).filter((fingerprint): fingerprint is string => !!fingerprint && sha256IdentityPattern.test(fingerprint)).map((fingerprint) => `chatgpt:${fingerprint}`);
+    if (!aliases.length) return false;
+    const found = await tx.select({ id: financialEvidenceRequirementAttempts.id }).from(financialEvidenceRequirementAttempts).where(and(
+        eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId), eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirementId), inArray(financialEvidenceRequirementAttempts.attemptKey, aliases),
+    )).limit(1);
+    return found.length > 0;
+}
+
+async function hasChatGptAliasForDisbursementHash(tx: DbExecutor, ctx: CommandContext, requirementId: number, eventId: number, attemptKey: string) {
+    if (!attemptKey.startsWith("sha256:")) return false;
+    const hash = attemptKey.slice("sha256:".length);
+    const sourceRows = await tx.select({ sourceFileFingerprint: loanDisbursementEvidenceIntents.sourceFileFingerprint }).from(loanDisbursementEvidenceIntents).where(and(
+        eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId), eq(loanDisbursementEvidenceIntents.loanDisbursementEventId, eventId), eq(loanDisbursementEvidenceIntents.evidenceHash, hash),
+    ));
+    const aliases = sourceRows.map((row) => row.sourceFileFingerprint?.trim().toLowerCase()).filter((fingerprint): fingerprint is string => !!fingerprint && sha256IdentityPattern.test(fingerprint)).map((fingerprint) => `chatgpt:${fingerprint}`);
+    if (!aliases.length) return false;
+    const found = await tx.select({ id: financialEvidenceRequirementAttempts.id }).from(financialEvidenceRequirementAttempts).where(and(
+        eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId), eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirementId), inArray(financialEvidenceRequirementAttempts.attemptKey, aliases),
+    )).limit(1);
+    return found.length > 0;
+}
+
+async function ensureAttempt(
+    tx: DbExecutor,
+    ctx: CommandContext,
+    requirementId: number,
+    attemptKey: string,
+    binding: { importIdempotencyKey: string | null; sourceFileFingerprint: string | null },
+    bindingKind: "payment" | "disbursement",
+) {
+    const existingBinding = binding.importIdempotencyKey
+        ? await tx.query.financialEvidenceRequirementAttempts.findFirst({ where: and(
+            eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId),
+            eq(financialEvidenceRequirementAttempts.importIdempotencyKey, binding.importIdempotencyKey),
+            eq(financialEvidenceRequirementAttempts.bindingKind, bindingKind),
+        ) })
+        : null;
+    if (existingBinding) {
+        if (existingBinding.financialEvidenceRequirementId !== requirementId || existingBinding.sourceFileFingerprint !== binding.sourceFileFingerprint) {
+            throw new DomainError("EVIDENCE_IDEMPOTENCY_CONFLICT", "Evidence import idempotency payload does not match", 409);
+        }
+        return;
+    }
+
+    const existingAttempt = await tx.query.financialEvidenceRequirementAttempts.findFirst({ where: and(
+        eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId),
+        eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirementId),
+        eq(financialEvidenceRequirementAttempts.attemptKey, attemptKey),
+    ) });
+    if (existingAttempt && binding.importIdempotencyKey && (
+        existingAttempt.importIdempotencyKey !== binding.importIdempotencyKey
+        || existingAttempt.sourceFileFingerprint !== binding.sourceFileFingerprint
+        || existingAttempt.bindingKind !== bindingKind
+    )) {
+        throw new DomainError("EVIDENCE_IDEMPOTENCY_CONFLICT", "Evidence attempt identity is already bound to another import", 409);
+    }
+    if (existingAttempt) return;
+
+    await tx.insert(financialEvidenceRequirementAttempts).values({
+        tenantId: ctx.tenantId,
+        financialEvidenceRequirementId: requirementId,
+        attemptKey,
+        importIdempotencyKey: binding.importIdempotencyKey,
+        sourceFileFingerprint: binding.sourceFileFingerprint,
+        bindingKind: binding.importIdempotencyKey ? bindingKind : null,
+        createdByUserId: ctx.actorUserId,
+        source: ctx.actorSource,
+        requestId: ctx.requestId,
+        correlationId: ctx.correlationId,
+    }).onConflictDoNothing({ target: [financialEvidenceRequirementAttempts.tenantId, financialEvidenceRequirementAttempts.financialEvidenceRequirementId, financialEvidenceRequirementAttempts.attemptKey] });
+}
+
+async function assertImportBindingAvailable(
+    tx: DbExecutor,
+    ctx: CommandContext,
+    binding: { importIdempotencyKey: string | null; sourceFileFingerprint: string | null },
+    bindingKind: "payment" | "disbursement",
+    requirementId: number | null,
+) {
+    if (!binding.importIdempotencyKey) return;
+    const existing = await tx.query.financialEvidenceRequirementAttempts.findFirst({ where: and(
+        eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId),
+        eq(financialEvidenceRequirementAttempts.importIdempotencyKey, binding.importIdempotencyKey),
+        eq(financialEvidenceRequirementAttempts.bindingKind, bindingKind),
+    ) });
+    if (existing && (
+        existing.financialEvidenceRequirementId !== requirementId
+        || existing.sourceFileFingerprint !== binding.sourceFileFingerprint
+    )) {
+        throw new DomainError("EVIDENCE_IDEMPOTENCY_CONFLICT", "Evidence import idempotency payload does not match", 409);
     }
 }
 
@@ -134,24 +275,23 @@ export async function registerFinancialEvidenceRequirement(
     ctx: CommandContext,
     target: FinancialEvidenceTarget,
     expectedCount: number,
-    options: { attemptKey?: string } = {},
+    options: FinancialEvidenceAttemptBinding = {},
 ) {
     validateExpectedCount(expectedCount);
     const attemptKey = validateAttemptKey(options.attemptKey);
+    const binding = validateAttemptBinding(options);
     const source = ctx.actorSource;
     if (target.kind === "payment_intake") {
         const intake = await lockPaymentTarget(tx, ctx, target.publicId);
         const existing = await tx.query.financialEvidenceRequirements.findFirst({ where: and(eq(financialEvidenceRequirements.tenantId, ctx.tenantId), eq(financialEvidenceRequirements.paymentIntakeId, intake.id)) });
+        await assertImportBindingAvailable(tx, ctx, binding, "payment", existing?.id ?? null);
         let row = existing
             ? existing
             : await tx.insert(financialEvidenceRequirements).values({ tenantId: ctx.tenantId, paymentIntakeId: intake.id, expectedCount, createdByUserId: ctx.actorUserId, source, requestId: ctx.requestId, correlationId: ctx.correlationId }).returning().then((rows) => rows[0]!);
-        if (attemptKey) {
-            await tx.insert(financialEvidenceRequirementAttempts).values({
-                tenantId: ctx.tenantId, financialEvidenceRequirementId: row.id, attemptKey,
-                createdByUserId: ctx.actorUserId, source, requestId: ctx.requestId, correlationId: ctx.correlationId,
-            }).onConflictDoNothing({ target: [financialEvidenceRequirementAttempts.tenantId, financialEvidenceRequirementAttempts.financialEvidenceRequirementId, financialEvidenceRequirementAttempts.attemptKey] });
-        }
         await seedLegacyPaymentEvidenceAttempts(tx, ctx, row.id, intake.id);
+        if (attemptKey && !(await hasChatGptAliasForPaymentHash(tx, ctx, row.id, intake.id, attemptKey))) {
+            await ensureAttempt(tx, ctx, row.id, attemptKey, binding, "payment");
+        }
         const attempts = await tx.select({ id: financialEvidenceRequirementAttempts.id }).from(financialEvidenceRequirementAttempts).where(and(
             eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId),
             eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, row.id),
@@ -171,16 +311,14 @@ export async function registerFinancialEvidenceRequirement(
 
     const event = await lockDisbursementTarget(tx, ctx, target.publicId);
     const existing = await tx.query.financialEvidenceRequirements.findFirst({ where: and(eq(financialEvidenceRequirements.tenantId, ctx.tenantId), eq(financialEvidenceRequirements.loanDisbursementEventId, event.id)) });
+    await assertImportBindingAvailable(tx, ctx, binding, "disbursement", existing?.id ?? null);
     let row = existing
         ? existing
         : await tx.insert(financialEvidenceRequirements).values({ tenantId: ctx.tenantId, loanDisbursementEventId: event.id, expectedCount, createdByUserId: ctx.actorUserId, source, requestId: ctx.requestId, correlationId: ctx.correlationId }).returning().then((rows) => rows[0]!);
-    if (attemptKey) {
-        await tx.insert(financialEvidenceRequirementAttempts).values({
-            tenantId: ctx.tenantId, financialEvidenceRequirementId: row.id, attemptKey,
-            createdByUserId: ctx.actorUserId, source, requestId: ctx.requestId, correlationId: ctx.correlationId,
-        }).onConflictDoNothing({ target: [financialEvidenceRequirementAttempts.tenantId, financialEvidenceRequirementAttempts.financialEvidenceRequirementId, financialEvidenceRequirementAttempts.attemptKey] });
-    }
     await seedLegacyDisbursementEvidenceAttempts(tx, ctx, row.id, event.id);
+    if (attemptKey && !(await hasChatGptAliasForDisbursementHash(tx, ctx, row.id, event.id, attemptKey))) {
+        await ensureAttempt(tx, ctx, row.id, attemptKey, binding, "disbursement");
+    }
     const attempts = await tx.select({ id: financialEvidenceRequirementAttempts.id }).from(financialEvidenceRequirementAttempts).where(and(
         eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId),
         eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, row.id),
