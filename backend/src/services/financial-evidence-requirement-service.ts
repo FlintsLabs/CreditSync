@@ -23,6 +23,7 @@ export type FinancialEvidenceTarget =
     | { kind: "loan_disbursement"; publicId: string };
 
 const publicIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const sha256IdentityPattern = /^[0-9a-f]{64}$/i;
 
 function requirePublicId(value: string, field: string) {
     if (!publicIdPattern.test(value)) throw new DomainError("INVALID_PUBLIC_ID", `${field} must be a UUID`, 400, { field });
@@ -39,6 +40,14 @@ function validateAttemptKey(attemptKey: string | undefined) {
         throw new DomainError("INVALID_EVIDENCE_ATTEMPT", "Evidence attempt identity must be 1 to 512 characters", 400);
     }
     return attemptKey?.trim();
+}
+
+function legacyAttemptKey(evidenceHash: string | null | undefined, sourceFileFingerprint: string | null | undefined) {
+    const hash = evidenceHash?.trim().toLowerCase();
+    if (hash && sha256IdentityPattern.test(hash)) return `sha256:${hash}`;
+    const fingerprint = sourceFileFingerprint?.trim().toLowerCase();
+    if (fingerprint && sha256IdentityPattern.test(fingerprint)) return `fingerprint:${fingerprint}`;
+    return null;
 }
 
 function auditContext(ctx: CommandContext) {
@@ -83,6 +92,42 @@ async function lockDisbursementTarget(tx: DbExecutor, ctx: CommandContext, publi
     return current;
 }
 
+async function seedLegacyPaymentEvidenceAttempts(tx: DbExecutor, ctx: CommandContext, requirementId: number, intakeId: number) {
+    const legacyEvidence = await tx.select({
+        evidenceHash: paymentEvidence.evidenceHash,
+        sourceFileFingerprint: paymentEvidence.sourceFileFingerprint,
+    }).from(paymentEvidence).where(and(
+        eq(paymentEvidence.tenantId, ctx.tenantId),
+        eq(paymentEvidence.paymentIntakeId, intakeId),
+    ));
+    for (const evidence of legacyEvidence) {
+        const attemptKey = legacyAttemptKey(evidence.evidenceHash, evidence.sourceFileFingerprint);
+        if (!attemptKey) continue;
+        await tx.insert(financialEvidenceRequirementAttempts).values({
+            tenantId: ctx.tenantId, financialEvidenceRequirementId: requirementId, attemptKey,
+            createdByUserId: ctx.actorUserId, source: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId,
+        }).onConflictDoNothing({ target: [financialEvidenceRequirementAttempts.tenantId, financialEvidenceRequirementAttempts.financialEvidenceRequirementId, financialEvidenceRequirementAttempts.attemptKey] });
+    }
+}
+
+async function seedLegacyDisbursementEvidenceAttempts(tx: DbExecutor, ctx: CommandContext, requirementId: number, eventId: number) {
+    const legacyIntents = await tx.select({
+        evidenceHash: loanDisbursementEvidenceIntents.evidenceHash,
+        sourceFileFingerprint: loanDisbursementEvidenceIntents.sourceFileFingerprint,
+    }).from(loanDisbursementEvidenceIntents).where(and(
+        eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId),
+        eq(loanDisbursementEvidenceIntents.loanDisbursementEventId, eventId),
+    ));
+    for (const intent of legacyIntents) {
+        const attemptKey = legacyAttemptKey(intent.evidenceHash, intent.sourceFileFingerprint);
+        if (!attemptKey) continue;
+        await tx.insert(financialEvidenceRequirementAttempts).values({
+            tenantId: ctx.tenantId, financialEvidenceRequirementId: requirementId, attemptKey,
+            createdByUserId: ctx.actorUserId, source: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId,
+        }).onConflictDoNothing({ target: [financialEvidenceRequirementAttempts.tenantId, financialEvidenceRequirementAttempts.financialEvidenceRequirementId, financialEvidenceRequirementAttempts.attemptKey] });
+    }
+}
+
 /** Register or raise a sticky requirement under the target's lifecycle lock. */
 export async function registerFinancialEvidenceRequirement(
     tx: DbExecutor,
@@ -106,6 +151,7 @@ export async function registerFinancialEvidenceRequirement(
                 createdByUserId: ctx.actorUserId, source, requestId: ctx.requestId, correlationId: ctx.correlationId,
             }).onConflictDoNothing({ target: [financialEvidenceRequirementAttempts.tenantId, financialEvidenceRequirementAttempts.financialEvidenceRequirementId, financialEvidenceRequirementAttempts.attemptKey] });
         }
+        await seedLegacyPaymentEvidenceAttempts(tx, ctx, row.id, intake.id);
         const attempts = await tx.select({ id: financialEvidenceRequirementAttempts.id }).from(financialEvidenceRequirementAttempts).where(and(
             eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId),
             eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, row.id),
@@ -134,6 +180,7 @@ export async function registerFinancialEvidenceRequirement(
             createdByUserId: ctx.actorUserId, source, requestId: ctx.requestId, correlationId: ctx.correlationId,
         }).onConflictDoNothing({ target: [financialEvidenceRequirementAttempts.tenantId, financialEvidenceRequirementAttempts.financialEvidenceRequirementId, financialEvidenceRequirementAttempts.attemptKey] });
     }
+    await seedLegacyDisbursementEvidenceAttempts(tx, ctx, row.id, event.id);
     const attempts = await tx.select({ id: financialEvidenceRequirementAttempts.id }).from(financialEvidenceRequirementAttempts).where(and(
         eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId),
         eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, row.id),

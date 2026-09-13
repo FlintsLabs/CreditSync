@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { auditLogs, borrowers, files, financialEvidenceRequirements, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loanSchedules, loans, users } from "../db/schema";
+import { auditLogs, borrowers, files, financialEvidenceRequirementAttempts, financialEvidenceRequirements, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loanSchedules, loans, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import {
     createDisbursementDraft,
@@ -14,7 +14,7 @@ import {
     reverseDisbursement,
     updateDisbursementDraft,
 } from "./loan-disbursement-service";
-import { registerFinancialEvidenceRequirement } from "./financial-evidence-requirement-service";
+import { assertFinancialEvidenceReady, registerFinancialEvidenceRequirement } from "./financial-evidence-requirement-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
 
@@ -202,29 +202,48 @@ integrationTest("retains a payout requirement after signing failure and blocks p
         .rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY", status: 409 });
 });
 
-integrationTest("retains a distinct payout attempt floor after a ready file and failed second signing", async () => {
+integrationTest("seeds a legacy finalized payout evidence floor and keeps a failed distinct retry blocking", async () => {
     const owner = await actor();
     const loan = await loanFor(owner);
     const draft = await createDisbursementDraft(context(owner), loan.publicId, {
         grossAmount: "5.00", loanAttributedAmount: "5.00", channel: "cash", disbursedAt: "2026-08-10T05:30:00.000Z",
     });
-    const first = await prepareDisbursementEvidence(context(owner), draft.publicId, { mimeType: "image/png", size: 12, sha256: "e".repeat(64) }, {
-        preparePut: async () => ({ uploadUrl: "https://storage.example.test/first", expiresAt: new Date(Date.now() + 60_000) }),
-        head: async () => ({ exists: false, contentType: null, contentLength: null, checksumSha256: null, metadata: {} }),
-    });
-    const firstIntent = await db.query.loanDisbursementEvidenceIntents.findFirst({ where: eq(loanDisbursementEvidenceIntents.publicId, first.publicId) });
+    const checksumA = "e".repeat(64);
+    const checksumB = "f".repeat(64);
     const event = await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, draft.publicId) });
-    await db.update(loanDisbursementEvidenceIntents).set({ status: "ready", finalizedAt: new Date() }).where(eq(loanDisbursementEvidenceIntents.id, firstIntent!.id));
-    await db.insert(loanDisbursementEvidence).values({ tenantId: owner.tenantId, loanDisbursementEventId: event!.id, fileId: firstIntent!.fileId });
-
-    await expect(prepareDisbursementEvidence(context(owner), draft.publicId, { mimeType: "image/png", size: 12, sha256: "f".repeat(64) }, {
+    const legacyFile = await db.insert(files).values({
+        tenantId: owner.tenantId, ownerUserId: owner.id, bucket: "legacy-test", key: `legacy-${crypto.randomUUID()}`,
+        originalName: "legacy.png", mimeType: "image/png", size: 12, url: "storage:legacy-payout",
+    }).returning().then((rows) => rows[0]!);
+    await db.insert(loanDisbursementEvidenceIntents).values({
+        tenantId: owner.tenantId, loanDisbursementEventId: event!.id, fileId: legacyFile.id, status: "ready",
+        evidenceHash: checksumA, mimeType: "image/png", declaredSize: 12, finalizedAt: new Date(),
+        createdByUserId: owner.id, updatedByUserId: owner.id,
+    }).returning().then((rows) => rows[0]!);
+    await db.insert(loanDisbursementEvidence).values({ tenantId: owner.tenantId, loanDisbursementEventId: event!.id, fileId: legacyFile.id });
+    const gateway = (checksum: string) => ({
+        preparePut: async () => ({ uploadUrl: `https://storage.example.test/${checksum}`, expiresAt: new Date(Date.now() + 60_000) }),
+        head: async () => ({ exists: true, contentType: "image/png", contentLength: 12, checksumSha256: checksum, metadata: { tenant: owner.tenantId, disbursement: draft.publicId } }),
+    });
+    await expect(prepareDisbursementEvidence(context(owner), draft.publicId, { mimeType: "image/png", size: 12, sha256: checksumB }, {
         preparePut: async () => { throw new Error("second signing unavailable"); },
         head: async () => ({ exists: false, contentType: null, contentLength: null, checksumSha256: null, metadata: {} }),
     })).rejects.toThrow("second signing unavailable");
     const requirement = await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.loanDisbursementEventId, event!.id) });
     expect(requirement).toMatchObject({ expectedCount: 2 });
-    expect(await db.query.loanDisbursementEvidenceIntents.findFirst({ where: eq(loanDisbursementEvidenceIntents.evidenceHash, "f".repeat(64)) })).toBeUndefined();
-    await expect(postDisbursement(context(owner, "payout-distinct-attempt-post"), draft.publicId)).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+    expect(await db.select().from(financialEvidenceRequirementAttempts).where(eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirement!.id))).toHaveLength(2);
+    expect(await db.query.loanDisbursementEvidenceIntents.findFirst({ where: eq(loanDisbursementEvidenceIntents.evidenceHash, checksumB) })).toBeUndefined();
+    await expect(db.transaction((tx) => assertFinancialEvidenceReady(tx, context(owner), { kind: "loan_disbursement", publicId: draft.publicId })))
+        .rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+
+    const retried = await prepareDisbursementEvidence(context(owner), draft.publicId, { mimeType: "image/png", size: 12, sha256: checksumB }, gateway(checksumB));
+    await finalizeDisbursementEvidence(context(owner), draft.publicId, retried.publicId, gateway(checksumB));
+    const afterRetry = await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.loanDisbursementEventId, event!.id) });
+    expect(afterRetry).toMatchObject({ expectedCount: 2 });
+    expect(await db.select().from(financialEvidenceRequirementAttempts).where(eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, afterRetry!.id))).toHaveLength(2);
+    await expect(db.transaction((tx) => assertFinancialEvidenceReady(tx, context(owner), { kind: "loan_disbursement", publicId: draft.publicId })))
+        .resolves.toMatchObject({ allowed: true, code: "READY" });
+    await expect(postDisbursement(context(owner, "payout-distinct-attempt-post"), draft.publicId)).resolves.toMatchObject({ status: "posted" });
 });
 
 integrationTest("requires finalized payout intent, tenant file, and event association", async () => {
