@@ -17,6 +17,7 @@ import { toolsForProfile, toolNamesForProfile } from "./tool-profiles";
 import { MCP_TOOL_NAMES, type McpToolDefinition, type McpToolName, type ToolProfile } from "./catalog-types";
 import { createHash } from "node:crypto";
 import { decodeCatalogCursor, encodeCatalogCursor, MCP_PAGE_SIZE } from "./catalog-pagination";
+import { WORKFLOW_VERSION } from "./workflow-registry";
 
 export { MCP_TOOL_NAMES } from "./catalog-types";
 export type { McpToolName, ToolProfile } from "./catalog-types";
@@ -1158,6 +1159,37 @@ const diagnosticItemOutput = z.object({
     durationMs: z.number().int().nonnegative(), occurredAt: z.iso.datetime(), expiresAt: z.iso.datetime(),
     breadcrumbs: z.array(diagnosticBreadcrumbOutput).max(20), summary: z.string(), recommendedNextCheck: z.string(),
 }).strict();
+const workflowResolverStepOutput = z.object({
+    toolName: z.string().trim().min(1).max(120),
+    arguments: z.record(z.string(), z.string()),
+    requiredInputs: z.array(z.string().trim().min(1).max(120)).max(20),
+    requiresConfirmation: z.boolean(),
+}).strict();
+const workflowResolverOutput = z.object({
+    workflowId: z.string().trim().min(1).max(120),
+    workflowVersion: z.string().trim().min(1).max(120),
+    catalogVersion: z.string().trim().min(1).max(160),
+    policyRevision: z.string().trim().min(1).max(160),
+    observed: z.object({
+        state: z.enum(["unresolved", "mutable", "posted"]).nullable(),
+        loanType: z.enum(["scheduled", "floating"]).nullable(),
+        evidenceReady: z.boolean(),
+    }).strict(),
+    status: z.enum(["needs_input", "next_step", "confirmation_required", "blocked", "refresh_required", "connection_required"]),
+    nextSteps: z.array(workflowResolverStepOutput).max(3),
+    blockers: z.array(z.string().trim().min(1).max(160)).max(8),
+    prohibitedTools: z.array(z.string().trim().min(1).max(120)).max(8),
+    reevaluateOn: z.enum(["target_change", "evidence_change", "preview_expiry", "version_change"]),
+}).strict();
+const workflowResolverInput = z.object({
+    intent: z.enum(["inspect", "receive_payment", "close_loan", "originate_loan", "disburse_loan", "attach_evidence", "renew_loan", "intermediary_collection", "tool_help"]),
+    target: z.object({ kind: z.enum(["borrower", "loan", "payment_intake", "loan_disbursement"]), publicId: uuid }).strict().optional(),
+    attachments: z.enum(["none", "present", "unknown"]).optional(),
+    expectedAttachmentCount: z.number().int().min(1).max(20).optional(),
+    knownWorkflowVersion: z.string().trim().min(1).max(120).optional(),
+    knownCatalogVersion: z.string().trim().min(1).max(160).optional(),
+    toolName: z.string().trim().min(1).max(120).optional(),
+}).strict();
 
 export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
     "borrower.search": z.object({
@@ -1501,6 +1533,7 @@ export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unkno
     "funding-allocation.list": z.object({ items: z.array(fundingAllocationOutput) }).strict(),
     "system.error-diagnostic.get": z.object({ correlationId: uuid, items: z.array(diagnosticItemOutput).max(100) }).strict(),
     "system.error-diagnostic.list": z.object({ items: z.array(diagnosticItemOutput).max(100), nextCursor: z.string().nullable() }).strict(),
+    "workflow.resolve": workflowResolverOutput,
 };
 
 export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
@@ -2032,6 +2065,7 @@ export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unkn
         from: z.iso.datetime({ offset: true }).optional(), to: z.iso.datetime({ offset: true }).optional(),
         cursor: z.string().trim().min(1).max(300).optional(), limit: z.number().int().min(1).max(100).optional(),
     }).strict(),
+    "workflow.resolve": workflowResolverInput,
 };
 
 const safeErrorSchema = z.object({
@@ -2138,6 +2172,7 @@ const readOnlyTools = new Set<McpToolName>([
     "funding-allocation.list",
     "payment.reverse-with-accrual.preview",
     "payment.reconcile.preflight",
+    "workflow.resolve",
 ]);
 const destructiveTools = new Set<McpToolName>([
     "borrower.update",
@@ -2256,6 +2291,7 @@ const financialEnvelopeTools = new Set<McpToolName>([...financialTools].filter((
 const idempotentTools = new Set<McpToolName>([
     "system.error-diagnostic.get",
     "system.error-diagnostic.list",
+    "workflow.resolve",
     ...[...readOnlyTools].filter((toolName) => toolName !== "loan.commission.reverse"),
     "intake.create",
     "evidence.import-chatgpt-file",
@@ -2452,6 +2488,7 @@ const toolDescriptions: Record<McpToolName, string> = {
     "funding-allocation.list": "List append-only funding allocations for one loan read-only.",
     "system.error-diagnostic.get": "Inspect a safe tenant-scoped MCP diagnostic trace by correlation ID.",
     "system.error-diagnostic.list": "List recent safe tenant-scoped MCP diagnostics with bounded filters.",
+    "workflow.resolve": "Read-only workflow guidance from current authorized state; it never confirms, authorizes, previews, or executes a financial operation.",
 };
 
 function titleFor(toolName: McpToolName) {
@@ -2510,6 +2547,10 @@ export const MCP_CATALOG_VERSION = `mcp-catalog-${createHash("sha256")
     .update(JSON.stringify(TOOL_CATALOG))
     .digest("hex")
     .slice(0, 16)}`;
+
+export function modernCatalogVersion(catalog: readonly McpToolDefinition[] = TOOL_CATALOG) {
+    return `mcp-catalog-${createHash("sha256").update(JSON.stringify(catalog)).digest("hex").slice(0, 16)}`;
+}
 
 export function mcpCatalogVersion() {
     return MCP_CATALOG_VERSION;
@@ -2694,7 +2735,7 @@ export function createMcpProtocolServer(input: CreateMcpHttpPluginInput, ctx: Co
     const catalogVersion = input.catalog ? `mcp-fixture-${createHash("sha256").update(JSON.stringify(catalog)).digest("hex").slice(0, 16)}` : MCP_CATALOG_VERSION;
     const server = new Server({ name: "creditsync", version: "1.0.0" }, {
         capabilities: { tools: {} },
-        instructions: "CreditSync private tenant-scoped financial workflow tools. Preview before posting financial changes.",
+        instructions: "CreditSync private tenant-scoped financial workflow tools. Call workflow.resolve at the start of a new financial intent and after stale state, evidence, or version changes; it is read-only guidance, not authorization or confirmation. Inspect and preview before posting financial changes.",
     });
     server.setRequestHandler(ListToolsRequestSchema, (request) => {
         const paginated = profile !== "full";
@@ -2768,7 +2809,9 @@ export async function executeMcpToolCall(
             recordMcpBreadcrumb({ stage: "handler", outcome: "started" });
             const handler = input.handlers[toolName];
             if (!handler) throw new DomainError("UNKNOWN_TOOL", "The requested MCP tool is not available", 400);
-            const result = await handler(toolContext, handlerInput);
+            const result = await handler(toolContext, toolName === "workflow.resolve"
+                ? { ...handlerInput, __profile: input.profile ?? "full", __catalogVersion: input.catalog ? modernCatalogVersion(input.catalog) : MCP_CATALOG_VERSION, __workflowVersion: WORKFLOW_VERSION }
+                : handlerInput);
             recordMcpBreadcrumb({ stage: "handler", outcome: "succeeded" });
             const auditPublicIds = requiresAudit ? await input.findAuditPublicIds({ ctx: toolContext, toolName, result }) : undefined;
             if (requiresAudit && auditPublicIds?.length === 0) throw new DomainError("AUDIT_METADATA_UNAVAILABLE", "The financial command completed without retrievable public audit metadata", 503);

@@ -10,7 +10,7 @@ const readOnly = [
     "payment.intermediary-attribution.list", "intermediary.search", "intermediary.profile.get", "intermediary.managed-loan.list",
     "intermediary.disbursement.list", "intermediary.disbursement.get", "intermediary.collection.list", "intermediary.remittance.get",
     "funding-source.list", "funding-allocation.preview", "funding-allocation.list", "payment.reverse-with-accrual.preview",
-    "payment.reconcile.preflight",
+    "payment.reconcile.preflight", "workflow.resolve",
 ] as const satisfies readonly McpToolName[];
 
 const payments = [
@@ -26,7 +26,7 @@ const payments = [
     "payment.reconcile.execute", "payment.reconcile.reflow.preview", "payment.reconcile.reflow.execute", "payment.allocation-correction.preview",
     "payment.allocation-correction.execute", "payment.restore.create", "payment.restore.evidence.prepare", "payment.restore.evidence.finalize",
     "payment.restore.preview", "payment.restore.execute", "payment.restore.schedule-backfill", "payment.intermediary-attribution.list",
-    "payment.intermediary-attribution.create", "payment.intermediary-attribution.reverse",
+    "payment.intermediary-attribution.create", "payment.intermediary-attribution.reverse", "workflow.resolve",
 ] as const satisfies readonly McpToolName[];
 
 const loans = [
@@ -37,7 +37,7 @@ const loans = [
     "loan.disbursement.list", "loan.disbursement.draft", "loan.disbursement.update", "loan.disbursement.evidence.prepare", "loan.disbursement.evidence.finalize",
     "loan.disbursement.evidence.import-chatgpt-file", "loan.disbursement.post", "loan.disbursement.reverse", "renewal.preview", "renewal.execute", "renewal.reverse",
     "loan.restructure.preview", "loan.restructure.execute", "loan.restructure.reverse", "loan.waiver.preview", "loan.waiver.execute", "loan.waiver.reverse",
-    "funding-source.list", "funding-allocation.preview", "funding-allocation.create", "funding-allocation.list", "payment.evidence-supplement.import-chatgpt-file",
+    "funding-source.list", "funding-allocation.preview", "funding-allocation.create", "funding-allocation.list", "payment.evidence-supplement.import-chatgpt-file", "workflow.resolve",
 ] as const satisfies readonly McpToolName[];
 
 const disbursements = [
@@ -50,7 +50,7 @@ const disbursements = [
     "intermediary.collection.list", "intermediary.collection.create", "intermediary.remittance.get", "intermediary.remittance.create",
     "intermediary.remittance.allocations.save", "intermediary.remittance.preview", "intermediary.remittance.evidence.prepare",
     "intermediary.remittance.evidence.finalize", "intermediary.remittance.post",
-    "funding-source.list", "funding-allocation.preview", "funding-allocation.list",
+    "funding-source.list", "funding-allocation.preview", "funding-allocation.list", "workflow.resolve",
 ] as const satisfies readonly McpToolName[];
 
 const admin = [
@@ -60,7 +60,7 @@ const admin = [
     "intermediary.remittance.allocations.save", "intermediary.remittance.preview", "intermediary.remittance.evidence.prepare", "intermediary.remittance.evidence.finalize",
     "intermediary.remittance.post", "intermediary.collection.create", "funding-source.list", "funding-allocation.preview", "funding-allocation.create", "funding-allocation.list",
     "loan.commission-participant.list", "loan.commission-participant.add", "loan.commission-participant.update", "loan.commission-participant.end",
-    "loan.commission.preview", "loan.commission.list", "loan.commission.calculate", "loan.commission.reverse",
+    "loan.commission.preview", "loan.commission.list", "loan.commission.calculate", "loan.commission.reverse", "workflow.resolve",
 ] as const satisfies readonly McpToolName[];
 
 export const TOOL_PROFILES: Readonly<Record<ToolProfile, readonly McpToolName[]>> = Object.freeze({
