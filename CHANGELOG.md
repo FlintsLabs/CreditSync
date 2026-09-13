@@ -21,6 +21,9 @@
 - Fixed concurrent same-tenant evidence import-key races by normalizing only the attempt-binding unique conflict inside a savepoint and re-reading the committed winner; the loser performs no second download and returns `EVIDENCE_IDEMPOTENCY_CONFLICT`.
 - Separated workflow and policy version constants from the immutable registry so catalog hashes, workflow semantics, and policy revisions remain independently comparable at runtime.
 - Marked the plan’s unavailable-attachment trace and acceptance-matrix documentation complete while retaining alternate-owned cross-channel and operator/device rollout gates as pending.
+- Hardened resolver guidance against omitted authoritative target state, corrected borrower-originated loan and existing-payout routing, used `oldLoanPublicId` for renewal previews, refused scheduled close-out settlement suggestions, and made human-review attachment transports fail closed.
+- Replaced bounded evidence materialization with authoritative aggregate counts plus overflow blocking, and added tenant/actor-authorized borrower observations with closed-schema and catalog-driven regressions.
+- Made overflow observations explicitly non-ready, prevented tool-help UUID echo before an authoritative read, routed ready existing payouts to confirmation, and added scheduled-close inspection plus existing-loan activation prerequisites without inventing a scheduled settlement tool.
 
 ## v0.4.45 - 2026-09-13
 

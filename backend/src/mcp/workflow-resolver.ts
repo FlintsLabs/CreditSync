@@ -25,6 +25,8 @@ export type ResolverObservation = Readonly<{
     pendingEvidenceCount?: number;
     rejectedEvidenceCount?: number;
     supportedAttachmentTransport?: boolean;
+    /** The bounded backend read saw more evidence rows than it can safely summarize. */
+    evidenceOverflow?: boolean;
 }>;
 
 export type ResolverStep = Readonly<{
@@ -62,8 +64,14 @@ const requiredInputs: Readonly<Record<string, readonly string[]>> = Object.freez
     "evidence.prepare": ["mimeType", "size", "sha256"], "evidence.finalize": ["evidencePublicId"], "evidence.import-chatgpt-file": ["idempotencyKey", "chatgptFile"],
     "payment.evidence-supplement.import-chatgpt-file": ["idempotencyKey", "chatgptFile"], "payment.evidence-supplement.record": ["supplementPublicId", "confirmed", "reason", "idempotencyKey"],
     "loan.disbursement.evidence.prepare": ["mimeType", "size", "sha256"], "loan.disbursement.evidence.finalize": ["evidencePublicId"], "loan.disbursement.evidence.import-chatgpt-file": ["idempotencyKey", "chatgptFile"],
-    "loan.disbursement.draft": ["grossAmount", "loanAttributedAmount", "channel", "disbursedAt"], "loan.preview": ["principal", "interestRate", "termMonths", "repaymentType", "startDate"],
-    "loan.draft": ["principal", "interestRate", "termMonths", "repaymentType", "startDate"], "loan.activate": ["idempotencyKey"], "loan.settlement.preview": ["asOfDate"], "renewal.preview": ["requestedPrincipal"],
+    "loan.disbursement.draft": ["grossAmount", "loanAttributedAmount", "channel", "disbursedAt"], "loan.disbursement.post": ["idempotencyKey"],
+    "loan.preview": ["principal", "interestRate", "termMonths", "repaymentType", "startDate"],
+    "loan.draft": ["borrowerPublicId", "principal", "interestRate", "termMonths", "repaymentType", "startDate"], "loan.activate": ["idempotencyKey"], "loan.settlement.preview": ["asOfDate"], "renewal.preview": ["oldLoanPublicId", "requestedPrincipal"],
+    "borrower.resolve-and-portfolio": ["query", "borrowerPublicId"], "loan.inspect-context": ["loanPublicId"], "payment.match-context": ["paymentIntakePublicId"], "intake.get": ["paymentIntakePublicId"], "loan.disbursement.list": ["loanPublicId"],
+});
+
+const targetArgumentFields: Readonly<Record<string, string>> = Object.freeze({
+    "renewal.preview": "oldLoanPublicId",
 });
 
 function step(toolName: string, input: ResolverInput, inputs: readonly string[] = requiredInputs[toolName] ?? [], requiresConfirmation = false): ResolverStep | null {
@@ -76,7 +84,7 @@ function step(toolName: string, input: ResolverInput, inputs: readonly string[] 
             if (input.target.kind !== "loan") return null;
             arguments_.loanPublicId = input.target.publicId;
         } else if (input.target.kind !== targetKind) return null;
-        else arguments_[`${targetKind === "payment_intake" ? "paymentIntake" : targetKind === "loan_disbursement" ? "disbursement" : targetKind}PublicId`] = input.target.publicId;
+        else arguments_[targetArgumentFields[toolName] ?? `${targetKind === "payment_intake" ? "paymentIntake" : targetKind === "loan_disbursement" ? "disbursement" : targetKind}PublicId`] = input.target.publicId;
     }
     return { toolName, arguments: arguments_, requiredInputs: inputs, requiresConfirmation };
 }
@@ -99,8 +107,8 @@ function validTarget(input: ResolverInput) {
 
 function expectedTarget(intent: WorkflowIntent): WorkflowTargetKind | null {
     if (intent === "receive_payment") return "payment_intake";
-    if (["close_loan", "originate_loan", "renew_loan"].includes(intent)) return "loan";
-    return intent === "disburse_loan" ? "loan_disbursement" : null;
+    if (["close_loan", "renew_loan"].includes(intent)) return "loan";
+    return null;
 }
 
 function attachmentStep(input: ResolverInput): ResolverStep | null {
@@ -122,14 +130,21 @@ export function resolveWorkflowPolicy(input: ResolverInput, observation: Resolve
         if (!toolIsVisibleInProfile(input.toolName, profile.profile)) return withObservation(result(input, profile, "connection_required", [], ["TOOL_NOT_VISIBLE_ON_PROFILE"]), observation);
         const inventory = WORKFLOW_TOOL_INVENTORY[input.toolName as keyof typeof WORKFLOW_TOOL_INVENTORY];
         if (!inventory || inventory.workflow !== "inspect") return withObservation(result(input, profile, "needs_input", [], ["TOOL_HELP_REQUIRES_WORKFLOW_RESOLUTION"], [input.toolName]), observation);
-        return withObservation(result(input, profile, "next_step", [step(input.toolName, input, requiredInputs[input.toolName] ?? ["toolArguments"])]), observation);
+        const targetRequired = targetArguments[input.toolName] !== undefined;
+        if (targetRequired && (observation.targetAvailable !== true || observation.identityResolved !== true || (observation.state !== "mutable" && observation.state !== "posted"))) {
+            return withObservation(result(input, profile, "needs_input", [], ["TARGET_REQUIRES_AUTHORITATIVE_READ"]), observation);
+        }
+        const helpStep = step(input.toolName, input, requiredInputs[input.toolName] ?? []);
+        return withObservation(result(input, profile, helpStep ? "next_step" : "needs_input", [helpStep], helpStep ? [] : ["EXACT_TARGET_REQUIRED"]), observation);
     }
     const rule = workflowRule(input.intent);
     if (!rule.profiles.includes(profile.profile)) return withObservation(result(input, profile, "connection_required", [], ["WORKFLOW_REQUIRES_ANOTHER_CONNECTION"]), observation);
     if (!validTarget(input)) return withObservation(result(input, profile, "needs_input", [], ["EXACT_TARGET_REQUIRED"]), observation);
     if (expectedTarget(input.intent) && input.target!.kind !== expectedTarget(input.intent)) return withObservation(result(input, profile, "needs_input", [], ["TARGET_KIND_MISMATCH"]), observation);
-    if (observation.targetAvailable === false) return withObservation(result(input, profile, "needs_input", [], ["TARGET_UNAVAILABLE"]), observation);
-    if (observation.identityResolved === false) return withObservation(result(input, profile, "needs_input", [], ["IDENTITY_REQUIRES_REVIEW"]), observation);
+    if (input.intent === "originate_loan" && input.target!.kind !== "borrower" && input.target!.kind !== "loan") return withObservation(result(input, profile, "needs_input", [], ["TARGET_KIND_MISMATCH"]), observation);
+    if (observation.targetAvailable !== true) return withObservation(result(input, profile, "needs_input", [], [observation.targetAvailable === false ? "TARGET_UNAVAILABLE" : "TARGET_AVAILABILITY_REQUIRES_AUTHORITATIVE_READ"]), observation);
+    if (observation.identityResolved !== true) return withObservation(result(input, profile, "needs_input", [], [observation.identityResolved === false ? "IDENTITY_REQUIRES_REVIEW" : "IDENTITY_REQUIRES_AUTHORITATIVE_READ"]), observation);
+    if (observation.state !== "mutable" && observation.state !== "posted") return withObservation(result(input, profile, "needs_input", [], [observation.state === "unresolved" ? "TARGET_STATE_UNRESOLVED" : "TARGET_STATE_REQUIRES_AUTHORITATIVE_READ"]), observation);
     const attachments = input.attachments ?? "unknown";
     if (attachments === "unknown") return withObservation(result(input, profile, "needs_input", [], ["ATTACHMENT_AVAILABILITY_UNKNOWN"]), observation);
     if (input.expectedAttachmentCount !== undefined && (attachments !== "present" || !Number.isSafeInteger(input.expectedAttachmentCount) || input.expectedAttachmentCount < 1 || input.expectedAttachmentCount > 20)) return withObservation(result(input, profile, "needs_input", [], ["EXPECTED_ATTACHMENT_COUNT_REQUIRED"]), observation);
@@ -141,21 +156,44 @@ export function resolveWorkflowPolicy(input: ResolverInput, observation: Resolve
         const supplement = attachments === "present" ? step("payment.evidence-supplement.import-chatgpt-file", input, ["idempotencyKey", "chatgptFile"], true) : step("payment.evidence-supplement.record", input, undefined, true);
         return withObservation(result(input, profile, supplement ? "confirmation_required" : "connection_required", [supplement], ["POSTED_INTAKE_REQUIRES_SUPPLEMENT_WORKFLOW"]), observation);
     }
+    if (attachments === "present" && rule.attachmentTransport === "human_review") {
+        const blocker = input.intent === "close_loan" && observation.loanType === "floating" && observation.supportedAttachmentTransport === false
+            ? "HUMAN_REVIEW_REQUIRED_FLOATING_ATTACHMENT_TRANSPORT"
+            : "HUMAN_REVIEW_REQUIRED_UNSUPPORTED_ATTACHMENT_TRANSPORT";
+        return withObservation(result(input, profile, "blocked", [], [blocker], ["payment.post", "loan.settlement.execute", "renewal.execute", "intermediary.remittance.post"]), observation);
+    }
     if (input.intent === "close_loan" && observation.loanType === "floating" && attachments === "present" && observation.supportedAttachmentTransport === false) return withObservation(result(input, profile, "blocked", [], ["HUMAN_REVIEW_REQUIRED_FLOATING_ATTACHMENT_TRANSPORT"], ["loan.settlement.execute"]), observation);
     if (attachments === "present" && observation.supportedAttachmentTransport === false) return withObservation(result(input, profile, "blocked", [], ["HUMAN_REVIEW_REQUIRED_UNSUPPORTED_ATTACHMENT_TRANSPORT"], ["payment.post", "loan.settlement.execute", "renewal.execute", "intermediary.remittance.post"]), observation);
+    if (observation.evidenceOverflow === true) return withObservation(result(input, profile, "blocked", [], ["EVIDENCE_SUMMARY_OVERFLOW_REQUIRES_REVIEW"], ["payment.post", "payment.batch.execute", "loan.activate", "loan.disbursement.post", "loan.settlement.execute", "renewal.execute"]), observation);
     if ((observation.pendingEvidenceCount ?? 0) > 0 || (observation.rejectedEvidenceCount ?? 0) > 0) return withObservation(result(input, profile, "blocked", [], ["EVIDENCE_REQUIRED_NOT_READY"], ["payment.post", "payment.batch.execute", "loan.activate", "loan.disbursement.post", "loan.settlement.execute", "renewal.execute"]), observation);
     if (attachments === "present") {
         const imported = attachmentStep(input);
         if (imported) return withObservation(result(input, profile, "next_step", [imported], observation.evidenceRequired === false ? ["EVIDENCE_DECLARATION_REQUIRED"] : []), observation);
     }
     if (observation.evidenceRequired === true && observation.evidenceReady !== true) return withObservation(result(input, profile, "blocked", [], ["EVIDENCE_REQUIRED_NOT_READY"], ["payment.post", "payment.batch.execute", "loan.activate", "loan.disbursement.post", "loan.settlement.execute", "renewal.execute"]), observation);
-    if (input.intent === "close_loan") return withObservation(result(input, profile, "next_step", [step("loan.settlement.preview", input)]), observation);
+    if (input.intent === "close_loan") {
+        if (observation.loanType === "floating") return withObservation(result(input, profile, "next_step", [step("loan.settlement.preview", input)]), observation);
+        return withObservation(result(input, profile, "next_step", [step("loan.inspect-context", input)], ["SCHEDULED_CLOSEOUT_REQUIRES_SUPPORTED_PAYMENT_PATH"], ["loan.settlement.preview", "loan.settlement.execute"]), observation);
+    }
     if (input.intent === "attach_evidence") return withObservation(result(input, profile, "next_step", [attachmentStep(input)], observation.evidenceRequired ? [] : ["EVIDENCE_DECLARATION_REQUIRED"]), observation);
     if (input.intent === "receive_payment") return withObservation(result(input, profile, "next_step", [step("payment.preview", input)], [], ["payment.post"]), observation);
-    if (input.intent === "originate_loan") return withObservation(result(input, profile, "next_step", [step("loan.preview", input), step("loan.draft", input)]), observation);
+    if (input.intent === "originate_loan") {
+        if (input.target!.kind === "loan") {
+            return withObservation(result(input, profile, "confirmation_required", [step("loan.inspect-context", input), step("loan.activate", input, ["idempotencyKey"], true)], ["EXISTING_LOAN_REQUIRES_CURRENT_INSPECTION"], ["loan.draft"]), observation);
+        }
+        return withObservation(result(input, profile, "next_step", [step("loan.preview", input), step("loan.draft", input)]), observation);
+    }
     if (input.intent === "disburse_loan") {
-        const draft = input.target?.kind === "loan" ? step("loan.disbursement.draft", input) : step("loan.disbursement.evidence.prepare", input);
-        return withObservation(result(input, profile, draft ? "next_step" : "needs_input", [draft], draft ? [] : ["DISBURSEMENT_DRAFT_REQUIRED"], ["loan.disbursement.post"]), observation);
+        if (input.target?.kind === "loan") {
+            const draft = step("loan.disbursement.draft", input);
+            return withObservation(result(input, profile, draft ? "next_step" : "needs_input", [draft], draft ? [] : ["DISBURSEMENT_DRAFT_REQUIRED"], ["loan.disbursement.post"]), observation);
+        }
+        if (input.target?.kind === "loan_disbursement" && attachments === "none") {
+            const post = step("loan.disbursement.post", input, ["idempotencyKey"], true);
+            return withObservation(result(input, profile, post ? "confirmation_required" : "needs_input", [post], post ? [] : ["DISBURSEMENT_POST_REQUIRES_EXACT_TARGET"], ["loan.disbursement.evidence.prepare"]), observation);
+        }
+        const imported = step("loan.disbursement.evidence.import-chatgpt-file", input);
+        return withObservation(result(input, profile, imported ? "next_step" : "needs_input", [imported], imported ? [] : ["DISBURSEMENT_EVIDENCE_REQUIRED"], ["loan.disbursement.post"]), observation);
     }
     if (input.intent === "renew_loan") return withObservation(result(input, profile, "next_step", [step("renewal.preview", input)], [], ["renewal.execute"]), observation);
     if (input.intent === "intermediary_collection") return withObservation(result(input, profile, "next_step", [step("intermediary.collection.list", input)]), observation);
