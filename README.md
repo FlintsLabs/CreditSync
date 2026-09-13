@@ -432,6 +432,8 @@ Tool inputs use public UUIDs and two-decimal money strings. Results include conc
 
 ### Configure and rotate the bearer token
 
+Modern clients use the official `@modelcontextprotocol/server`/`client` 2.0.0 adapter with protocol revision `2026-07-28`; the legacy adapter remains on `@modelcontextprotocol/sdk` 1.30.0. Modern discovery is paginated in deterministic 25-tool pages and returns opaque profile/catalog-bound cursors plus cache hints. Curated connections are available at `/mcp/core-read`, `/mcp/payments`, `/mcp/loans`, `/mcp/disbursements`, and `/mcp/admin`; profile membership is generated from explicit allowlists and does not replace tenant authorization. See [`docs/operations/agent-mcp-plugin.md`](./docs/operations/agent-mcp-plugin.md) and the [verification report](./docs/operations/mcp-optimization-verification.md).
+
 Generate a high-entropy client token and calculate its SHA-256 hash locally. Keep the raw token only in the MCP client secret store; CreditSync receives only its hash:
 
 ```bash

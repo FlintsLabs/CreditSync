@@ -11,6 +11,7 @@
 
 ### Changed
 
+- Integrated the verified MCP feature history into `main`, preserved the local modern-client documentation, and revalidated the deployed runtime against the merged source without another production migration or restart.
 - Deployed the verified MCP backend artifact after a fresh owner-approved local PostgreSQL/MinIO backup, isolated restore/migration and lifecycle-aware recovery checks; production migration 0074 preserved existing data fingerprints, and legacy/profile discovery plus rejection/health smoke checks passed. Real-device mobile acceptance remains pending.
 - Recorded the production rollout hold after an owner-approved local backup and isolated restore rehearsal found pre-existing object/metadata inconsistencies; production remains on its previous image and migration watermark, with no financial record changes.
 - Recorded the independently verified MCP handoff: complete disposable backend suite, separate cache-dependent coverage, plugin/typecheck/conformance gates and discovery benchmark; documented legacy command-key compatibility and pending real-device/canary acceptance.

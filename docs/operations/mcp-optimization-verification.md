@@ -1,5 +1,11 @@
 # MCP optimization verification report
 
+## Main integration
+
+The owner subsequently authorized integration into `main`. The feature tip `b98c801` was fast-forwarded into `main` after a fresh complete disposable backend run: 144 files, 1,075 passes, zero failures, 7,701 assertions and three cache-dependent skips (separate cache coverage is recorded below). Backend tree identities matched across the feature and merged branch. The main checkout's missing SDK v2 packages were installed from the unchanged frozen lockfile before repeating plugin checks. Local README edits were preserved in stash commit `a79adb06f9a40ab2e04115e0415cb35afb6eb028` and a patch beside the backup; the modern-client paragraph was integrated, while the stale literal tool count was superseded by the generated source of truth. Unrelated untracked plans were left untouched.
+
+Runtime source, dependencies, migrations and frontend match the already deployed `f7eb631` artifact. Main integration therefore requires no additional production migration or restart; production health and revision are checked separately from Git integration. Earlier statements below about main not being merged describe the deployment chronology before this authorization.
+
 ## Current deployment status — backend deployed
 
 On 2026-09-13 at approximately 21:53 Asia/Bangkok, the verified application artifact `creditsync-backend:mcp-f7eb631` was deployed using the protected `release-compose.yml` in the local backup directory. Image digest: `sha256:1eba617e21df093eb0dfd2cca4c75b5a548867557f76962dc34b06a12b810c79`; application revision: `f7eb631f136d797367c3ec0a101539151decf444`. Follow-up commit `00ffd7a` adds operational recovery scripts and documentation only; runtime source, migrations, dependencies and frontend are unchanged relative to that artifact. The frontend image was retained, not rebuilt. `main` was not merged or pushed.
