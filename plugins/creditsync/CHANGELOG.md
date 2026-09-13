@@ -11,6 +11,7 @@
 ### Changed
 
 - Synchronized the frozen MCP contract and generated profile counts while preserving authorized service outputs, decimal strings, evidence states, and tenant boundaries.
+- Regenerated profile snapshots from the actual wire catalog, including intermediary collection/remittance dependencies, and documented the 134-tool full catalog with local stateless conformance and discovery verification boundaries.
 
 ## v10.1.0 - 2026-09-11
 

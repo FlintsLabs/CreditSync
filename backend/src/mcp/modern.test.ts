@@ -4,6 +4,7 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import { Elysia } from "elysia";
 import type { CommandContext } from "../services/command-context";
 import { createMcpHttpPlugin, MCP_CATALOG_VERSION, MCP_TOOL_NAMES, type CreateMcpHttpPluginInput, type McpToolHandler } from "./server";
+import { toolNamesForProfile } from "./tool-profiles";
 import type { McpRuntimeConfig } from "./security";
 
 const TOKEN = "modern-test-secret";
@@ -205,6 +206,31 @@ describe("MCP 2026 transport adapter", () => {
         });
         expect(origin.status).toBe(403);
         expect(await origin.json()).toMatchObject({ error: { code: "ORIGIN_NOT_ALLOWED" } });
+    });
+
+    test("legacy curated routes paginate while the full compatibility route remains unpaginated", async () => {
+        const baseUrl = startModernServer({}, ["full", "core-read"]);
+        const legacyRequest = async (path: string, cursor?: string) => {
+            const response = await fetch(`${baseUrl}${path}`, {
+                method: "POST",
+                headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+                body: JSON.stringify({ jsonrpc: "2.0", id: crypto.randomUUID(), method: "tools/list", params: cursor === undefined ? {} : { cursor } }),
+            });
+            return { response, body: await response.json() as Record<string, any> };
+        };
+        const first = await legacyRequest("/mcp/core-read");
+        expect(first.response.status).toBe(200);
+        expect(first.body.result.tools).toHaveLength(25);
+        expect(typeof first.body.result.nextCursor).toBe("string");
+        const second = await legacyRequest("/mcp/core-read", first.body.result.nextCursor);
+        expect(second.response.status).toBe(200);
+        expect(second.body.result.tools.map((tool: { name: string }) => tool.name)).toEqual(toolNamesForProfile("core-read").slice(25));
+        expect(second.body.result.nextCursor).toBeUndefined();
+
+        const full = await legacyRequest("/mcp");
+        expect(full.response.status).toBe(200);
+        expect(full.body.result.tools).toHaveLength(MCP_TOOL_NAMES.length);
+        expect(full.body.result.nextCursor).toBeUndefined();
     });
 
     test("modern envelope, version, and standard-header validation reject before dispatch", async () => {

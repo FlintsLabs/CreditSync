@@ -12,7 +12,7 @@ runner:
   validation: "The script requires an absolute MCP_CONFORMANCE_ROOT, verifies package name/version, and verifies git rev-parse HEAD before starting scenarios. It has no repository-specific default path."
 fixture:
   adapter: "CreditSync Elysia MCP boundary plus executeMcpToolCall shared dispatcher"
-  catalog: [test_simple_text, test_error_handling, json_schema_2020_12_tool]
+  catalog: [test_simple_text, test_error_handling, json_schema_2020_12_tool, test_missing_capability, test_streaming_elicitation, test_logging_tool]
   database: none
   side_effects: none
   authentication: "The local wrapper adds only a synthetic bearer token; request bodies, MCP headers, tool names, errors, and responses are not rewritten."
@@ -27,13 +27,16 @@ scenarios:
     status: required-and-passed
   - name: http-header-validation
     status: required-and-passed
+  - name: server-stateless
+    status: required-and-passed
+    checks: 28
 unsupported_or_deferred:
   - capability: public OAuth/authorization-server deployment
     reason: "CreditSync is a private bearer-token deployment; no public authorization server is claimed."
     disposition: documented-limitation
-  - capability: subscription/SSE server-to-client scenarios
-    reason: "The application is stateless POST-only and does not advertise subscriptions; no unsupported method/version/metadata is rewritten to make these scenarios pass."
-    disposition: not-implemented-and-not-scored
+  - capability: application list-change publication and cross-request subscription delivery
+    reason: "The application advertises tools.listChanged=false and does not publish catalog-change events. The official server-stateless checks exercised the SDK's subscription acknowledgment, subscription-ID and filtering envelopes over POST/SSE; they were not skipped. This is not a claim of application event delivery or mobile subscription support."
+    disposition: application-capability-not-advertised
   - capability: live tenant financial calls
     reason: "Conformance fixture must be side-effect free; DB-backed application paths are covered by separate disposable tests."
     disposition: excluded-from-fixture

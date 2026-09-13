@@ -2,11 +2,12 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { Elysia } from "elysia";
-import { fromJsonSchema } from "@modelcontextprotocol/server";
+import { fromJsonSchema, ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import { createMcpHttpPlugin, type McpToolHandler } from "../src/mcp/server";
 import type { CommandContext } from "../src/services/command-context";
 import type { McpRuntimeConfig } from "../src/mcp/security";
 import type { McpToolDefinition } from "../src/mcp/catalog-types";
+import { evaluateConformanceResult } from "../src/mcp/conformance-result";
 
 const CONFORMANCE_REVISION = "7169291ec0b68eb370fddcd9947313ab0d5e4156";
 const CONFORMANCE_VERSION = "0.2.0-alpha.11";
@@ -17,7 +18,10 @@ const SCENARIOS = [
     "tools-call-error",
     "json-schema-2020-12",
     "http-header-validation",
+    "server-stateless",
 ] as const;
+
+const emptyObjectSchema = { type: "object", properties: {}, additionalProperties: false } as const;
 
 const jsonSchemaFixture = {
     $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -36,13 +40,13 @@ const jsonSchemaFixture = {
 const conformanceTools: readonly McpToolDefinition<string>[] = [
     {
         name: "test_simple_text", description: "Conformance fixture simple text",
-        inputSchema: { type: "object", additionalProperties: false }, outputSchema: { type: "object" },
+        inputSchema: emptyObjectSchema, outputSchema: { type: "object" },
         annotations: { title: "Simple Text", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         policy: { kind: "read_only", requiresAudit: false },
     },
     {
         name: "test_error_handling", description: "Conformance fixture intentional tool error",
-        inputSchema: { type: "object", additionalProperties: false }, outputSchema: { type: "object" },
+        inputSchema: emptyObjectSchema, outputSchema: { type: "object" },
         annotations: { title: "Error Handling", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         policy: { kind: "read_only", requiresAudit: false },
     },
@@ -50,6 +54,24 @@ const conformanceTools: readonly McpToolDefinition<string>[] = [
         name: "json_schema_2020_12_tool", description: "Tool with JSON Schema 2020-12 features",
         inputSchema: jsonSchemaFixture, outputSchema: { type: "object" },
         annotations: { title: "JSON Schema 2020-12", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        policy: { kind: "read_only", requiresAudit: false },
+    },
+    {
+        name: "test_missing_capability", description: "Conformance fixture requiring declared sampling capability",
+        inputSchema: emptyObjectSchema, outputSchema: { type: "object" },
+        annotations: { title: "Missing Capability", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        policy: { kind: "read_only", requiresAudit: false },
+    },
+    {
+        name: "test_streaming_elicitation", description: "Conformance fixture response-stream probe",
+        inputSchema: emptyObjectSchema, outputSchema: { type: "object" },
+        annotations: { title: "Streaming Elicitation", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        policy: { kind: "read_only", requiresAudit: false },
+    },
+    {
+        name: "test_logging_tool", description: "Conformance fixture logging suppression probe",
+        inputSchema: emptyObjectSchema, outputSchema: { type: "object" },
+        annotations: { title: "Logging Tool", readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         policy: { kind: "read_only", requiresAudit: false },
     },
 ];
@@ -79,6 +101,9 @@ const fixtureHandlers: Record<string, McpToolHandler> = {
     test_simple_text: async () => { fixtureCalls.push("test_simple_text"); return { message: "This is a simple text response for testing." }; },
     test_error_handling: async () => { fixtureCalls.push("test_error_handling"); throw new Error("This tool intentionally returns an error for testing"); },
     json_schema_2020_12_tool: async (_ctx, input) => { fixtureCalls.push("json_schema_2020_12_tool"); return { echoed: input }; },
+    test_missing_capability: async () => { fixtureCalls.push("test_missing_capability"); return { accepted: true }; },
+    test_streaming_elicitation: async () => { fixtureCalls.push("test_streaming_elicitation"); return { streamed: true }; },
+    test_logging_tool: async () => { fixtureCalls.push("test_logging_tool"); return { logged: false }; },
 };
 const fixtureValidators = new Map(conformanceTools.map((tool) => [tool.name, fromJsonSchema(tool.inputSchema)]));
 const config: McpRuntimeConfig = {
@@ -98,6 +123,13 @@ const productApp = new Elysia().use(createMcpHttpPlugin({
         const data = (output as Record<string, unknown>).data;
         return data && typeof data === "object" && !Array.isArray(data)
             ? { success: true, data: data as Record<string, unknown> } : { success: false };
+    },
+    validateToolRequest: ({ toolName, requestMeta }) => {
+        if (toolName !== "test_missing_capability") return;
+        const clientCapabilities = requestMeta?.["io.modelcontextprotocol/clientCapabilities"];
+        if (!clientCapabilities || typeof clientCapabilities !== "object" || !("sampling" in clientCapabilities)) {
+            throw new ProtocolError(ProtocolErrorCode.MissingRequiredClientCapability, "Missing required client capability", { requiredCapabilities: { sampling: {} } });
+        }
     },
     resolvePrincipal: async ({ tenantId }) => ({ tenantId, actorUserId: 1 }),
     consumeRateLimit: async () => ({ allowed: true, remaining: 99_999, retryAfterSeconds: 0 }),
@@ -120,11 +152,11 @@ async function runScenario(root: string, scenario: string) {
     const child = Bun.spawn(["bun", ...args], { cwd: root, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
     const exitCode = await child.exited;
-    const match = stdout.match(/Passed:\s*(\d+)\/(\d+),\s*(\d+) failed,\s*(\d+) warnings/);
+    const evaluated = evaluateConformanceResult(stdout, exitCode);
     const failures = stdout.split("\n").filter((line) => /Error:|FAILURE/.test(line)).slice(-8);
     return {
         scenario, exitCode,
-        checks: match ? { passed: Number(match[1]), denominator: Number(match[2]), failed: Number(match[3]), warnings: Number(match[4]) } : null,
+        ...evaluated,
         failures, stderr: exitCode === 0 ? undefined : stderr.slice(-4000),
     };
 }
@@ -153,7 +185,7 @@ try {
     const fixtureDispatch = await verifyFixtureDispatch();
     const results = [];
     for (const scenario of SCENARIOS) results.push(await runScenario(root, scenario));
-    const failed = results.filter((result) => result.exitCode !== 0);
+    const failed = results.filter((result) => !result.passed);
     console.log(JSON.stringify({
         upstream: { revision: CONFORMANCE_REVISION, version: CONFORMANCE_VERSION, checkout: root },
         fixture: { tenant: "synthetic-only", adapter: "CreditSync Elysia boundary + shared dispatcher", catalogTools: conformanceTools.map((tool) => tool.name), noDatabaseSideEffects: true, dispatchCheck: fixtureDispatch },

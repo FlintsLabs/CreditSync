@@ -22,6 +22,8 @@ Use bounded, low-cardinality labels only: `era`, `profile`, `operation_class`, `
 
 Do not cache tool-call results. Public cache hints apply only to authorization-independent definition discovery. Export sanitized counters before rotating logs; retain the raw operational sample for at least one major release and 30 days after profiles launch.
 
+The backend's default MCP adapter emits one structured `event: "mcp_metric"` record per accepted/rejected request through the existing logger, plus an `evidence_stop` record when an evidence/import boundary returns a safe error. Use the bounded fields `profile`, `protocolEra`, `operationClass`, `statusClass`, `durationMs`, `responseBytes`, `schemaCacheHit`, `rejectionReason`, and `evidenceStopClass` to build counters and latency histograms. Finite JSON discovery/call responses report exact wire bytes; streaming responses omit `responseBytes` rather than consuming or truncating the stream. The adapter never emits payloads, names, public IDs, URLs, hashes, tokens, or evidence contents. A deployment collector must preserve these fields as metric labels only where low-cardinality and store the numeric measurements separately.
+
 ## Canary sequence and stop conditions
 
 1. Enable read-only canary traffic on one authorized route and compare complete discovery and validation measurements with baseline.

@@ -16,10 +16,24 @@ import { createModernMcpHandler, isLegacyRequest } from "./modern";
 import { toolsForProfile, toolNamesForProfile } from "./tool-profiles";
 import { MCP_TOOL_NAMES, type McpToolDefinition, type McpToolName, type ToolProfile } from "./catalog-types";
 import { createHash } from "node:crypto";
+import { decodeCatalogCursor, encodeCatalogCursor, MCP_PAGE_SIZE } from "./catalog-pagination";
 
 export { MCP_TOOL_NAMES } from "./catalog-types";
 export type { McpToolName, ToolProfile } from "./catalog-types";
 export type McpToolHandler = (ctx: CommandContext, input: Record<string, unknown>) => Promise<unknown>;
+export type McpMetric = Readonly<{
+    event: "mcp_metric";
+    metric: "request" | "rejection" | "evidence_stop";
+    profile: ToolProfile;
+    protocolEra: "legacy" | "modern" | "unknown";
+    operationClass: "discovery" | "tool_call" | "other";
+    statusClass: "2xx" | "4xx" | "5xx";
+    durationMs?: number;
+    responseBytes?: number;
+    schemaCacheHit?: boolean;
+    evidenceStopClass?: "validation" | "review_required" | "storage" | "retryable" | "unknown";
+    rejectionReason?: "origin" | "host" | "bearer" | "protocol_version" | "method" | "name" | "envelope" | "rate_limit" | "infrastructure";
+}>;
 
 export interface CreateMcpHttpPluginInput {
     config: McpRuntimeConfig;
@@ -46,7 +60,15 @@ export interface CreateMcpHttpPluginInput {
      */
     catalog?: readonly McpToolDefinition[];
     validateToolOutput?: (toolName: string, output: unknown) => { success: boolean; data?: Record<string, unknown> };
+    /** Optional adapter-owned request policy. Production dispatch stays
+     * tool-agnostic; isolated fixtures may enforce protocol capabilities. */
+    validateToolRequest?: (input: {
+        toolName: string;
+        arguments: unknown;
+        requestMeta?: Record<string, unknown>;
+    }) => void | Promise<void>;
     profile?: ToolProfile;
+    onMetric?: (metric: McpMetric) => void;
 }
 
 const uuid = z.uuid();
@@ -2054,7 +2076,11 @@ function transportOutputJsonSchema(toolName: McpToolName) {
 }
 
 function successOutputSchema(toolName: McpToolName) {
-    if (financialTools.has(toolName)) {
+    // Allocation correction is financially mutating and must go through the
+    // audit lookup/recovery gate, but its frozen legacy receipt already owns
+    // auditPublicId/correlationId inside data. Keep that closed wire shape for
+    // legacy clients while the policy remains financial for dispatch.
+    if (financialEnvelopeTools.has(toolName)) {
         return z.object({
             schemaVersion: z.literal("1.0"),
             data: toolDataSchemas[toolName],
@@ -2197,6 +2223,7 @@ const financialTools = new Set<McpToolName>([
     "payment.restore.schedule-backfill",
     "payment.restore.create",
     "payment.batch.execute",
+    "payment.allocation-correction.execute",
     "loan.activate",
     "loan.payment-start-date.update",
     "loan.interest-rate.execute",
@@ -2223,6 +2250,7 @@ const financialTools = new Set<McpToolName>([
     "loan.waiver.reverse",
     "funding-allocation.create",
 ]);
+const financialEnvelopeTools = new Set<McpToolName>([...financialTools].filter((toolName) => toolName !== "payment.allocation-correction.execute"));
 const idempotentTools = new Set<McpToolName>([
     "system.error-diagnostic.get",
     "system.error-diagnostic.list",
@@ -2516,6 +2544,13 @@ export function advertisedMcpToolMetadata() {
     return TOOL_CATALOG.map(cloneToolDefinition);
 }
 
+/** Return the definitions selected by a profile from the same immutable
+ * catalog used by the serving route. Snapshot generation must not infer
+ * membership from a separate unchecked name list. */
+export function advertisedMcpToolMetadataForProfile(profile: ToolProfile) {
+    return toolsForProfile(profile, TOOL_CATALOG).map(cloneToolDefinition);
+}
+
 function sanitizeDetails(details: Record<string, unknown> | undefined): Record<string, unknown> {
     if (!details) return {};
     const deniedKey = /(name|email|alias|phone|card|address|qr|reference|url|token|secret|hash)/i;
@@ -2654,12 +2689,19 @@ export function createMcpProtocolServer(input: CreateMcpHttpPluginInput, ctx: Co
     const profile = input.profile ?? "full";
     const catalog = input.catalog ?? LEGACY_TOOL_CATALOG;
     const visibleTools = input.catalog ? catalog : toolsForProfile(profile, catalog);
+    const catalogVersion = input.catalog ? `mcp-fixture-${createHash("sha256").update(JSON.stringify(catalog)).digest("hex").slice(0, 16)}` : MCP_CATALOG_VERSION;
     const server = new Server({ name: "creditsync", version: "1.0.0" }, {
         capabilities: { tools: {} },
         instructions: "CreditSync private tenant-scoped financial workflow tools. Preview before posting financial changes.",
     });
-    server.setRequestHandler(ListToolsRequestSchema, () => ({
-        tools: visibleTools.map((tool) => ({
+    server.setRequestHandler(ListToolsRequestSchema, (request) => {
+        const paginated = profile !== "full";
+        const offset = paginated && request.params?.cursor !== undefined
+            ? decodeCatalogCursor(profile, catalogVersion, request.params.cursor, visibleTools.length)
+            : 0;
+        const page = paginated ? visibleTools.slice(offset, offset + MCP_PAGE_SIZE) : visibleTools;
+        return {
+        tools: page.map((tool) => ({
             name: tool.name,
             title: tool.annotations.title,
             description: tool.description,
@@ -2668,12 +2710,17 @@ export function createMcpProtocolServer(input: CreateMcpHttpPluginInput, ctx: Co
             annotations: tool.annotations,
             ...((tool as { _meta?: Record<string, unknown> })._meta ? { _meta: (tool as { _meta?: Record<string, unknown> })._meta } : {}),
         })),
-    }));
+        ...(paginated && offset + page.length < visibleTools.length
+            ? { nextCursor: encodeCatalogCursor(profile, catalogVersion, offset + page.length) }
+            : {}),
+        };
+    });
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const toolName = request.params.name as McpToolName;
         if (!visibleTools.some((tool) => tool.name === toolName)) {
             throw new McpError(ErrorCode.InvalidParams, `Tool ${request.params.name} not found`);
         }
+        await input.validateToolRequest?.({ toolName, arguments: request.params.arguments ?? {} });
         return executeMcpToolCall(input, ctx, toolName, request.params.arguments ?? {});
     });
     return server;
@@ -2724,9 +2771,11 @@ export async function executeMcpToolCall(
             const auditPublicIds = requiresAudit ? await input.findAuditPublicIds({ ctx: toolContext, toolName, result }) : undefined;
             if (requiresAudit && auditPublicIds?.length === 0) throw new DomainError("AUDIT_METADATA_UNAVAILABLE", "The financial command completed without retrievable public audit metadata", 503);
             const publicData = input.catalog ? result : frozenToolData(toolName as McpToolName, result);
+            const includeAuditEnvelope = requiresAudit && financialEnvelopeTools.has(toolName as McpToolName);
+            const publicOutput = { schemaVersion: "1.0", data: publicData, ...(includeAuditEnvelope ? { correlationId: toolContext.correlationId, auditPublicIds: auditPublicIds ?? [] } : {}) };
             const structuredContent = input.validateToolOutput
-                ? input.validateToolOutput(toolName, { schemaVersion: "1.0", data: publicData, ...(requiresAudit ? { correlationId: toolContext.correlationId, auditPublicIds: auditPublicIds ?? [] } : {}) })
-                : successOutputSchema(toolName as McpToolName).safeParse({ schemaVersion: "1.0", data: publicData, ...(requiresAudit ? { correlationId: toolContext.correlationId, auditPublicIds: auditPublicIds ?? [] } : {}) });
+                ? input.validateToolOutput(toolName, publicOutput)
+                : successOutputSchema(toolName as McpToolName).safeParse(publicOutput);
             if (!structuredContent.success) throw new DomainError("INVALID_TOOL_OUTPUT", "The application service returned data outside the public MCP contract", 422);
             return { content: [{ type: "text" as const, text: completionText(toolName as McpToolName) }], structuredContent: structuredContent.data };
         } catch (error) {
@@ -2735,6 +2784,13 @@ export async function executeMcpToolCall(
             const activeBreadcrumb = [...(snapshot?.breadcrumbs ?? [])].reverse().find((breadcrumb) => breadcrumb.outcome === "started");
             const terminalStage = failedBreadcrumb?.stage ?? activeBreadcrumb?.stage ?? "handler";
             const presented = presentMcpError(error, toolContext.correlationId, policy, terminalStage);
+            if (/(evidence|import-chatgpt-file)/iu.test(toolName)) {
+                safeMcpMetric(input, {
+                    event: "mcp_metric", metric: "evidence_stop", profile: input.profile ?? "full", protocolEra: "unknown",
+                    operationClass: "tool_call", statusClass: presented.publicError.retryable ? "5xx" : "4xx",
+                    evidenceStopClass: evidenceStopClass(presented.publicError.code, presented.publicError),
+                });
+            }
             if (presented.persist && snapshot && !toolName.startsWith("system.error-diagnostic.")) {
                 const persist = input.persistDiagnostic ?? ((value: Parameters<typeof persistMcpDiagnosticBestEffort>[0]) => persistMcpDiagnosticBestEffort(value));
                 let pending: Promise<void>;
@@ -2761,6 +2817,63 @@ function httpError(status: number, code: string, message: string, retryable = fa
 
 function safeMcpLogger(logger: (entry: Record<string, unknown>) => void, entry: Record<string, unknown>) {
     try { logger(entry); } catch { /* observability must not change the MCP outcome */ }
+}
+
+function statusClass(status: number): McpMetric["statusClass"] {
+    return status >= 500 ? "5xx" : status >= 400 ? "4xx" : "2xx";
+}
+
+function operationClass(value: string | null): McpMetric["operationClass"] {
+    return value === "tools/list" ? "discovery" : value === "tools/call" ? "tool_call" : "other";
+}
+
+type MetricRequestDetails = { method?: string; name?: string };
+
+async function requestDetailsForMetric(request: Request, headerMethod: string | null): Promise<MetricRequestDetails> {
+    try {
+        const body = await request.clone().text();
+        if (body.length > 1_000_000) return { method: headerMethod ?? undefined };
+        const parsed = JSON.parse(body) as { method?: unknown; params?: { name?: unknown } };
+        return {
+            method: typeof parsed.method === "string" ? parsed.method : headerMethod ?? undefined,
+            name: typeof parsed.params?.name === "string" ? parsed.params.name : undefined,
+        };
+    } catch {
+        return { method: headerMethod ?? undefined };
+    }
+}
+
+function responseHasJsonRpcError(bytes: ArrayBuffer | null) {
+    if (!bytes) return false;
+    try {
+        const parsed = JSON.parse(new TextDecoder().decode(bytes)) as { error?: unknown };
+        return parsed.error !== undefined;
+    } catch {
+        return false;
+    }
+}
+
+function rejectionReasonForMetric(request: Request, details: MetricRequestDetails, jsonRpcError: boolean, modern: boolean): McpMetric["rejectionReason"] {
+    const headerMethod = request.headers.get("mcp-method");
+    const headerName = request.headers.get("mcp-name");
+    if (details.method && headerMethod && details.method !== headerMethod) return "method";
+    if (details.name && headerName && details.name !== headerName) return "name";
+    if (jsonRpcError && details.method === "unknown/method") return "method";
+    if (jsonRpcError && details.method === "tools/call" && headerName && headerName !== details.name) return "name";
+    if (modern && request.headers.get("mcp-protocol-version") !== "2026-07-28") return "protocol_version";
+    return "envelope";
+}
+
+function safeMcpMetric(input: CreateMcpHttpPluginInput, metric: McpMetric) {
+    try { input.onMetric?.(metric); } catch { /* observability must not change the MCP outcome */ }
+}
+
+function evidenceStopClass(code: string, error: { retryable: boolean; reviewRequired: boolean }): NonNullable<McpMetric["evidenceStopClass"]> {
+    if (/(STORAGE|UPLOAD|DOWNLOAD|EVIDENCE)/u.test(code) && error.retryable) return "storage";
+    if (error.reviewRequired || /(DUPLICATE|MISMATCH|REVIEW|STALE|UNAUTHORIZED)/u.test(code)) return "review_required";
+    if (error.retryable) return "retryable";
+    if (/(INVALID|MISSING|UNSUPPORTED|SIZE|MIME)/u.test(code)) return "validation";
+    return "unknown";
 }
 
 const publicUuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -2792,31 +2905,36 @@ export function createMcpHttpPlugin(input: CreateMcpHttpPluginInput, endpoint = 
             const requestIdValue = requestId(request.headers.get("x-request-id"));
             const correlationIdValue = requestId(request.headers.get("x-correlation-id"));
             if (!hostIsAllowed(request.headers.get("host"), input.config.allowedHosts)) {
+                safeMcpMetric(input, { event: "mcp_metric", metric: "rejection", profile: input.profile ?? "full", protocolEra: "unknown", operationClass: operationClass(request.headers.get("mcp-method")), statusClass: "4xx", rejectionReason: "host" });
                 return withRequestHeaders(httpError(403, "HOST_NOT_ALLOWED", "Host is not allowed"), requestIdValue, correlationIdValue);
             }
             if (!originIsAllowed(request.headers.get("origin"), input.config.allowedOrigins)) {
+                safeMcpMetric(input, { event: "mcp_metric", metric: "rejection", profile: input.profile ?? "full", protocolEra: "unknown", operationClass: operationClass(request.headers.get("mcp-method")), statusClass: "4xx", rejectionReason: "origin" });
                 return withRequestHeaders(httpError(403, "ORIGIN_NOT_ALLOWED", "Origin is not allowed"), requestIdValue, correlationIdValue);
             }
             if (request.method !== "POST") {
+                safeMcpMetric(input, { event: "mcp_metric", metric: "rejection", profile: input.profile ?? "full", protocolEra: "unknown", operationClass: operationClass(request.headers.get("mcp-method")), statusClass: "4xx", rejectionReason: "method" });
                 const response = httpError(405, "METHOD_NOT_ALLOWED", "Only MCP POST requests are supported");
                 response.headers.set("allow", "POST");
                 return withRequestHeaders(response, requestIdValue, correlationIdValue);
             }
             const auth = authenticateBearer(request.headers.get("authorization"), input.config.tokenHashes);
             if (!auth) {
+                safeMcpMetric(input, { event: "mcp_metric", metric: "rejection", profile: input.profile ?? "full", protocolEra: "unknown", operationClass: operationClass(request.headers.get("mcp-method")), statusClass: "4xx", rejectionReason: "bearer" });
                 return withRequestHeaders(httpError(401, "UNAUTHORIZED", "Unauthorized"), requestIdValue, correlationIdValue);
             }
-            const rate = await input.consumeRateLimit({
-                key: `${input.config.tenantId}:${auth.tokenFingerprint}`,
-                max: input.config.rateLimitMax,
-                windowSeconds: input.config.rateLimitWindowSeconds,
-            });
-            if (!rate.allowed) {
-                const response = httpError(429, "RATE_LIMITED", "MCP request rate limit exceeded", true);
-                response.headers.set("retry-after", String(rate.retryAfterSeconds));
-                return withRequestHeaders(response, requestIdValue, correlationIdValue);
-            }
             try {
+                const rate = await input.consumeRateLimit({
+                    key: `${input.config.tenantId}:${auth.tokenFingerprint}`,
+                    max: input.config.rateLimitMax,
+                    windowSeconds: input.config.rateLimitWindowSeconds,
+                });
+                if (!rate.allowed) {
+                    safeMcpMetric(input, { event: "mcp_metric", metric: "rejection", profile: input.profile ?? "full", protocolEra: "unknown", operationClass: operationClass(request.headers.get("mcp-method")), statusClass: "4xx", rejectionReason: "rate_limit", durationMs: Math.round(performance.now() - startedAt) });
+                    const response = httpError(429, "RATE_LIMITED", "MCP request rate limit exceeded", true);
+                    response.headers.set("retry-after", String(rate.retryAfterSeconds));
+                    return withRequestHeaders(response, requestIdValue, correlationIdValue);
+                }
                 const principal = await input.resolvePrincipal({
                     tenantId: input.config.tenantId,
                     actorEmail: input.config.actorEmail,
@@ -2833,10 +2951,24 @@ export function createMcpHttpPlugin(input: CreateMcpHttpPluginInput, endpoint = 
                 };
                 const modernCatalog = input.catalog ?? TOOL_CATALOG;
                 const modernVersion = input.catalog ? `mcp-fixture-${createHash("sha256").update(JSON.stringify(modernCatalog)).digest("hex").slice(0, 16)}` : mcpCatalogVersion();
+                const requestIsLegacy = await isLegacyRequest(request);
+                const metricDetails = await requestDetailsForMetric(request, request.headers.get("mcp-method"));
                 const modernHandler = createModernMcpHandler(input, ctx, modernCatalog, modernVersion);
-                if (!(await isLegacyRequest(request))) {
+                if (!requestIsLegacy) {
+                    let keepModernHandlerOpen = false;
                     try {
                         const modernResponse = await modernHandler.fetch(request);
+                        const streamingResponse = modernResponse.headers.get("content-type")?.includes("text/event-stream") === true;
+                        // Discovery and JSON tool calls are finite by contract,
+                        // so their exact wire bytes are safe to measure. Keep a
+                        // streaming response live and avoid consuming its body
+                        // before the client can receive its first frame.
+                        const responseBuffer = streamingResponse ? null : await modernResponse.clone().arrayBuffer();
+                        const responseBytes = responseBuffer?.byteLength;
+                        const modernMethod = metricDetails.method;
+                        const rpcError = responseHasJsonRpcError(responseBuffer);
+                        const rejected = modernResponse.status >= 400 || rpcError;
+                        safeMcpMetric(input, { event: "mcp_metric", metric: rejected ? "rejection" : "request", profile: input.profile ?? "full", protocolEra: "modern", operationClass: operationClass(modernMethod ?? null), statusClass: statusClass(modernResponse.status), durationMs: Math.round((performance.now() - startedAt) * 100) / 100, ...(responseBytes === undefined ? {} : { responseBytes }), ...(rejected ? { rejectionReason: rejectionReasonForMetric(request, metricDetails, rpcError, true) } : {}), ...(!rejected && modernMethod === "tools/list" ? { schemaCacheHit: true } : {}) });
                         safeMcpLogger(input.logger, {
                             event: "mcp_request",
                             method: request.method,
@@ -2845,10 +2977,16 @@ export function createMcpHttpPlugin(input: CreateMcpHttpPluginInput, endpoint = 
                             correlationId: correlationIdValue,
                             protocolEra: "modern",
                             durationMs: Math.round(performance.now() - startedAt),
+                            profile: input.profile ?? "full",
+                            ...(responseBytes === undefined ? {} : { responseBytes }),
                         });
+                        if (streamingResponse) {
+                            keepModernHandlerOpen = true;
+                            request.signal.addEventListener("abort", () => { void modernHandler.close().catch(() => undefined); }, { once: true });
+                        }
                         return withRequestHeaders(modernResponse, requestIdValue, correlationIdValue);
                     } finally {
-                        await modernHandler.close().catch(() => undefined);
+                        if (!keepModernHandlerOpen) await modernHandler.close().catch(() => undefined);
                     }
                 }
                 const server = createMcpProtocolServer(input, ctx);
@@ -2870,6 +3008,11 @@ export function createMcpHttpPlugin(input: CreateMcpHttpPluginInput, endpoint = 
                         statusText: handled.statusText,
                         headers: handled.headers,
                     });
+                    const legacyMethod = metricDetails.method;
+                    const responseBytes = body?.byteLength ?? 0;
+                    const rpcError = responseHasJsonRpcError(body);
+                    const rejected = response.status >= 400 || rpcError;
+                    safeMcpMetric(input, { event: "mcp_metric", metric: rejected ? "rejection" : "request", profile: input.profile ?? "full", protocolEra: "legacy", operationClass: operationClass(legacyMethod ?? null), statusClass: statusClass(response.status), durationMs: Math.round((performance.now() - startedAt) * 100) / 100, responseBytes, ...(rejected ? { rejectionReason: rejectionReasonForMetric(request, metricDetails, rpcError, false) } : {}), ...(!rejected && legacyMethod === "tools/list" ? { schemaCacheHit: true } : {}) });
                     safeMcpLogger(input.logger, {
                         event: "mcp_request",
                         method: request.method,
@@ -2877,12 +3020,16 @@ export function createMcpHttpPlugin(input: CreateMcpHttpPluginInput, endpoint = 
                         requestId: requestIdValue,
                         correlationId: correlationIdValue,
                         durationMs: Math.round(performance.now() - startedAt),
+                        profile: input.profile ?? "full",
+                        protocolEra: "legacy",
+                        responseBytes,
                     });
                     return withRequestHeaders(response, requestIdValue, correlationIdValue);
                 } finally {
                     await server.close().catch(() => undefined);
                 }
             } catch (error) {
+                safeMcpMetric(input, { event: "mcp_metric", metric: "rejection", profile: input.profile ?? "full", protocolEra: "unknown", operationClass: operationClass(request.headers.get("mcp-method")), statusClass: "5xx", rejectionReason: "infrastructure", durationMs: Math.round(performance.now() - startedAt) });
                 safeMcpLogger(input.logger, {
                     event: "mcp_request_failed",
                     method: request.method,

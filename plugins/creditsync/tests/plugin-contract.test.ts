@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { MCP_TOOL_NAMES } from "../../../backend/src/mcp/server";
 import type { FrozenMcpContract } from "../../../backend/src/mcp/contract-snapshot";
 import { canonicalContractJson, captureAdvertisedMcpContract } from "../scripts/mcp-contract";
+import { profileSnapshots } from "../scripts/mcp-profiles";
 import {
     classifyPrivateAppId,
     PRIVATE_APP_ID_PLACEHOLDER,
@@ -34,6 +35,19 @@ describe("CreditSync plugin 10.2.0 contract", () => {
         expect(manifest).not.toHaveProperty("mcpServers");
         expect(manifest).not.toHaveProperty("hooks");
         expect(manifest).not.toHaveProperty("ui");
+    });
+
+    test("frozen profile snapshots match the actual advertised catalog projection", async () => {
+        for (const expected of profileSnapshots()) {
+            const frozen = await json(`references/mcp-profiles/${expected.profile}.json`);
+            expect(frozen).toEqual(expected);
+        }
+        const index = await json("references/mcp-profiles/index.json");
+        expect(index).toMatchObject({
+            schemaVersion: "1.0",
+            catalogVersion: expect.any(String),
+            profiles: profileSnapshots().map(({ profile, toolCount }) => ({ profile, toolCount })),
+        });
     });
 
     test("private app ID supports the non-live placeholder and registered technical IDs without connection secrets", async () => {

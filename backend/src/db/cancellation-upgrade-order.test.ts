@@ -25,9 +25,16 @@ integrationTest("cancellation upgrades past the deployed service-account waterma
         const journalPath = join(folder, "meta/_journal.json");
         const fullJournal = readFileSync(journalPath, "utf8");
         const baseline = JSON.parse(fullJournal);
-        baseline.entries = baseline.entries.filter((entry: { tag: string }) => entry.tag !== "0073_payment_intake_cancellation");
+        const cancellation = baseline.entries.find((entry: { tag: string }) => entry.tag === "0073_payment_intake_cancellation");
+        expect(cancellation).toBeDefined();
+        // Model the deployed state before cancellation, not every migration
+        // except cancellation: later migrations would advance the watermark
+        // past the upgrade this regression is intended to exercise.
+        baseline.entries = baseline.entries.filter((entry: { idx: number }) => entry.idx < cancellation.idx);
         writeFileSync(journalPath, JSON.stringify(baseline));
         await migrate(drizzle(client), { migrationsFolder: folder });
+        const [beforeUpgrade] = await client`SELECT to_regclass('public.payment_intake_cancellations') AS name`;
+        expect(beforeUpgrade!.name).toBeNull();
         // Production has this exact hash/watermark from the independently deployed branch.
         const deployedHash = "b895f899062af260b56733d9e3db7fc133399b77b2f89738302a6d57034839c8";
         await client`INSERT INTO drizzle.__drizzle_migrations (hash, created_at) VALUES (${deployedHash}, 1789084800000)`;

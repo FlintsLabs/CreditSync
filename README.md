@@ -594,6 +594,17 @@ bun run test:e2e
 
 This browser harness is UI workflow evidence; backend financial invariants and real OCR runtime checks remain separate disposable/test-only gates.
 
+MCP local acceptance uses the backend-scoped commands (the repository has no root package):
+
+```bash
+bun run --cwd backend test src/mcp/contract-snapshot.test.ts src/mcp/server.test.ts src/mcp/modern.test.ts src/mcp/profiles.test.ts
+bun run --cwd backend typecheck
+bun run --cwd backend mcp:discovery:benchmark
+MCP_CONFORMANCE_ROOT=/tmp/verified-mcp-conformance bun run --cwd backend mcp:conformance
+```
+
+The [generated catalog](plugins/creditsync/references/mcp-tool-contract.json) and [profile index](plugins/creditsync/references/mcp-profiles/index.json) are the source of truth for tool membership and counts. Legacy full discovery remains unpaginated, curated/modern discovery is paginated, and real iOS/Android payment and payout attachment transport plus canary rollout remain pending. The targeted test command above uses disposable PostgreSQL; do not treat this targeted acceptance set as the full backend suite.
+
 The cancellation browser suite uses a separate local port (`5197`) and mocked API data. It checks explicit batch navigation, confirmation, retained history, and Bangkok timestamps from a browser outside Thailand:
 
 ```bash

@@ -47,6 +47,9 @@ const disbursements = [
     "intermediary.search", "intermediary.profile.get", "intermediary.managed-loan.list", "intermediary.assignment.create", "intermediary.assignment.end",
     "intermediary.disbursement.list", "intermediary.disbursement.get", "intermediary.disbursement.create", "intermediary.disbursement.event.create",
     "intermediary.disbursement.evidence.prepare", "intermediary.disbursement.evidence.finalize", "intermediary.disbursement.preview", "intermediary.disbursement.post", "intermediary.disbursement.reverse",
+    "intermediary.collection.list", "intermediary.collection.create", "intermediary.remittance.get", "intermediary.remittance.create",
+    "intermediary.remittance.allocations.save", "intermediary.remittance.preview", "intermediary.remittance.evidence.prepare",
+    "intermediary.remittance.evidence.finalize", "intermediary.remittance.post",
     "funding-source.list", "funding-allocation.preview", "funding-allocation.list",
 ] as const satisfies readonly McpToolName[];
 

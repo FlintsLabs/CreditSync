@@ -26,6 +26,42 @@ export type FrozenMcpContract = {
     tools: FrozenMcpTool[];
 };
 
+export type ToolListPage = {
+    tools: FrozenMcpTool[];
+    nextCursor?: string | null;
+};
+
+/** Collect a complete tools/list walk without treating an empty cursor as
+ * terminal. This is shared by snapshot clients and deliberately rejects a
+ * cyclic or duplicate page instead of silently producing an incomplete
+ * contract. */
+export async function collectToolListPages(
+    fetchPage: (cursor?: string) => Promise<ToolListPage>,
+): Promise<FrozenMcpTool[]> {
+    const seenCursors = new Set<string>();
+    const seenNames = new Set<string>();
+    const collected: FrozenMcpTool[] = [];
+    let cursor: string | undefined;
+    for (;;) {
+        const page = await fetchPage(cursor);
+        if (!page || !Array.isArray(page.tools)) throw new Error("tools/list page has no tools array");
+        for (const tool of page.tools) {
+            if (!tool || typeof tool.name !== "string" || seenNames.has(tool.name)) {
+                throw new Error(`tools/list contains a duplicate or invalid tool name: ${String(tool?.name)}`);
+            }
+            seenNames.add(tool.name);
+            collected.push(tool);
+        }
+        const nextCursor = page.nextCursor;
+        if (nextCursor === undefined || nextCursor === null) return collected;
+        if (typeof nextCursor !== "string" || seenCursors.has(nextCursor)) {
+            throw new Error("tools/list cursor repeated or malformed");
+        }
+        seenCursors.add(nextCursor);
+        cursor = nextCursor;
+    }
+}
+
 function canonicalValue(value: unknown): unknown {
     if (Array.isArray(value)) return value.map(canonicalValue);
     if (!value || typeof value !== "object") return value;
@@ -90,20 +126,26 @@ export async function captureAdvertisedMcpContract(): Promise<FrozenMcpContract>
     try {
         await server.connect(serverTransport);
         await client.connect(clientTransport);
-        const response = await client.listTools();
+        const tools = await collectToolListPages(async (cursor) => {
+            const response = await client.listTools(cursor === undefined ? undefined : { cursor });
+            return {
+                tools: response.tools.map((tool) => ({
+                    name: tool.name,
+                    ...(tool.title ? { title: tool.title } : {}),
+                    ...(tool.description ? { description: tool.description } : {}),
+                    inputSchema: tool.inputSchema as Record<string, unknown>,
+                    ...(tool.outputSchema ? { outputSchema: frozenOutputSchema(tool.outputSchema as Record<string, unknown>) } : {}),
+                    ...(tool.annotations ? { annotations: tool.annotations as Record<string, unknown> } : {}),
+                    ...(tool._meta ? { _meta: tool._meta as Record<string, unknown> } : {}),
+                })),
+                nextCursor: response.nextCursor,
+            };
+        });
         return {
             schemaVersion: "1.0",
             sourceOfTruth: "Local MCP SDK Client tools/list response from backend/src/mcp/server.ts",
             compatibility: "Tool names, full input/output schemas, descriptions, annotations, and file-parameter metadata are frozen for plugin 10.2.0; breaking changes require plugin 11.0.0.",
-            tools: response.tools.map((tool) => ({
-                name: tool.name,
-                ...(tool.title ? { title: tool.title } : {}),
-                ...(tool.description ? { description: tool.description } : {}),
-                inputSchema: tool.inputSchema as Record<string, unknown>,
-                ...(tool.outputSchema ? { outputSchema: frozenOutputSchema(tool.outputSchema as Record<string, unknown>) } : {}),
-                ...(tool.annotations ? { annotations: tool.annotations as Record<string, unknown> } : {}),
-                ...(tool._meta ? { _meta: tool._meta as Record<string, unknown> } : {}),
-            })),
+            tools,
         };
     } finally {
         await client.close().catch(() => undefined);

@@ -66,6 +66,22 @@ function intakeFixture(status: "draft" | "posted" = "draft") {
     };
 }
 
+function allocationCorrectionFixture() {
+    return {
+        correctionPublicId: BORROWER_ID,
+        paymentIntakePublicId: INTAKE_ID,
+        sourceTransactionPublicId: TRANSACTION_ID,
+        compensatingTransactionPublicId: DISBURSEMENT_ID,
+        replacementTransactionPublicId: SETTLEMENT_ID,
+        sourceSchedulePublicId: BORROWER_ID,
+        targetSchedulePublicId: TRANSACTION_ID,
+        amount: "100.00",
+        components: { principal: "80.00", interest: "20.00", fee: "0.00", penalty: "0.00" },
+        auditPublicId: AUDIT_ID,
+        correlationId: AUDIT_ID,
+    };
+}
+
 async function startServer(input: {
     toolHandlers?: Partial<Record<(typeof MCP_TOOL_NAMES)[number], McpToolHandler>>;
     preflightHandlers?: Partial<Record<(typeof MCP_TOOL_NAMES)[number], McpToolHandler>>;
@@ -75,19 +91,23 @@ async function startServer(input: {
     persistDiagnostic?: CreateMcpHttpPluginInput["persistDiagnostic"];
     parseToolInput?: CreateMcpHttpPluginInput["parseToolInput"];
     logger?: (entry: Record<string, unknown>) => void;
+    onMetric?: CreateMcpHttpPluginInput["onMetric"];
+    consumeRateLimit?: CreateMcpHttpPluginInput["consumeRateLimit"];
+    resolvePrincipal?: CreateMcpHttpPluginInput["resolvePrincipal"];
 }) {
     const pluginInput: CreateMcpHttpPluginInput = {
         config: input.runtimeConfig ?? config(),
         handlers: handlers(input.toolHandlers ?? {}),
         preflightHandlers: input.preflightHandlers,
-        resolvePrincipal: async ({ tenantId, actorEmail }) => {
+        resolvePrincipal: input.resolvePrincipal ?? (async ({ tenantId, actorEmail }) => {
             expect(tenantId).toBe("tenant-fixed");
             expect(actorEmail).toBe("mcp-agent@example.test");
             return { tenantId, actorUserId: 7 };
-        },
-        consumeRateLimit: async () => ({ allowed: true, remaining: 99, retryAfterSeconds: 0 }),
+        }),
+        consumeRateLimit: input.consumeRateLimit ?? (async () => ({ allowed: true, remaining: 99, retryAfterSeconds: 0 })),
         findAuditPublicIds: async () => input.auditPublicIds ?? [AUDIT_ID],
         logger: input.logger ?? ((entry) => input.logs?.push(entry)),
+        onMetric: input.onMetric,
         persistDiagnostic: input.persistDiagnostic,
         parseToolInput: input.parseToolInput,
     };
@@ -1685,6 +1705,40 @@ describe("CreditSync stateless MCP contract", () => {
         await client.close();
     });
 
+    test("classifies allocation correction as financial, enforces its audit receipt, and preserves the legacy wire envelope", async () => {
+        const fixture = allocationCorrectionFixture();
+        const baseUrl = await startServer({ toolHandlers: {
+            "payment.allocation-correction.execute": async () => fixture,
+        } });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const listed = await client.listTools();
+        const outputSchema = listed.tools.find((tool) => tool.name === "payment.allocation-correction.execute")?.outputSchema as Record<string, any>;
+        expect(outputSchema.properties).not.toHaveProperty("auditPublicIds");
+        expect(outputSchema.properties.data.required).toEqual(expect.arrayContaining(["auditPublicId", "correlationId"]));
+
+        const result = await client.callTool({ name: "payment.allocation-correction.execute", arguments: {
+            correctionPreviewPublicId: BORROWER_ID, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION,
+            confirmed: true, reason: "Correct the scheduled allocation", idempotencyKey: "correction-wire-1",
+        } });
+        expect(result.isError).not.toBe(true);
+        expect(result.structuredContent).toEqual({ schemaVersion: "1.0", data: fixture });
+        await client.close();
+
+        const unavailableBaseUrl = await startServer({ auditPublicIds: [], toolHandlers: {
+            "payment.allocation-correction.execute": async () => fixture,
+        } });
+        const unavailable = clientFor(unavailableBaseUrl);
+        await unavailable.client.connect(unavailable.transport);
+        const rejected = await unavailable.client.callTool({ name: "payment.allocation-correction.execute", arguments: {
+            correctionPreviewPublicId: BORROWER_ID, previewHash: PREVIEW_HASH, expectedBalanceVersion: BALANCE_VERSION,
+            confirmed: true, reason: "Correct the scheduled allocation", idempotencyKey: "correction-wire-2",
+        } });
+        expect(rejected.isError).toBe(true);
+        expect(rejected.structuredContent).toMatchObject({ error: { code: "AUDIT_METADATA_UNAVAILABLE" } });
+        await unavailable.client.close();
+    });
+
     test("preserves the original safe error when persistence and logging both fail synchronously", async () => {
         const baseUrl = await startServer({
             toolHandlers: { "borrower.search": async () => { throw new Error("private upstream payload"); } },
@@ -1703,6 +1757,62 @@ describe("CreditSync stateless MCP contract", () => {
         await client.close();
     });
 
+    test("emits low-cardinality discovery and rejection metrics without request payloads", async () => {
+        const metrics: Array<Record<string, unknown>> = [];
+        const baseUrl = await startServer({ onMetric: (metric) => metrics.push(metric) });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        await client.listTools();
+        await client.close();
+        const rejected = await fetch(`${baseUrl}/mcp`, { method: "POST", headers: { Authorization: `Bearer ${TOKEN}`, Origin: "https://not-allowed.example", "Content-Type": "application/json" }, body: "not-json" });
+        expect(rejected.status).toBe(403);
+        expect(metrics).toEqual(expect.arrayContaining([
+            expect.objectContaining({ metric: "request", operationClass: "discovery", protocolEra: "legacy", profile: "full", schemaCacheHit: true, responseBytes: expect.any(Number) }),
+            expect.objectContaining({ metric: "rejection", rejectionReason: "origin", statusClass: "4xx" }),
+        ]));
+        expect(JSON.stringify(metrics)).not.toContain("not-json");
+    });
+
+    test("rate-limit metrics cover rejected requests without dispatch", async () => {
+        const metrics: Array<Record<string, unknown>> = [];
+        let dispatched = false;
+        const baseUrl = await startServer({
+            onMetric: (metric) => metrics.push(metric),
+            consumeRateLimit: async () => ({ allowed: false, remaining: 0, retryAfterSeconds: 7 }),
+            resolvePrincipal: async () => { dispatched = true; return { tenantId: "tenant-fixed", actorUserId: 7 }; },
+        });
+        const response = await fetch(`${baseUrl}/mcp`, {
+            method: "POST", headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+        });
+        expect(response.status).toBe(429);
+        expect(response.headers.get("retry-after")).toBe("7");
+        expect(dispatched).toBe(false);
+        expect(metrics).toEqual([expect.objectContaining({
+            event: "mcp_metric", metric: "rejection", profile: "full", statusClass: "4xx", rejectionReason: "rate_limit",
+        })]);
+        expect(JSON.stringify(metrics)).not.toContain(TOKEN);
+    });
+
+    test.each(["principal", "rate_limiter"] as const)("infrastructure metrics cover safe 503 responses: %s", async (boundary) => {
+        const metrics: Array<Record<string, unknown>> = [];
+        const fail = async () => { throw new Error("private infrastructure details"); };
+        const baseUrl = await startServer({
+            onMetric: (metric) => metrics.push(metric),
+            ...(boundary === "principal" ? { resolvePrincipal: fail } : { consumeRateLimit: fail }),
+        });
+        const response = await fetch(`${baseUrl}/mcp`, {
+            method: "POST", headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+        });
+        expect(response.status).toBe(503);
+        expect(await response.text()).not.toContain("private infrastructure details");
+        expect(metrics).toEqual([expect.objectContaining({
+            event: "mcp_metric", metric: "rejection", profile: "full", statusClass: "5xx", rejectionReason: "infrastructure",
+        })]);
+        expect(JSON.stringify(metrics)).not.toContain("private infrastructure details");
+    });
+
     test("persists the latest nested integration boundary as terminal stage", async () => {
         let persisted: any;
         const baseUrl = await startServer({
@@ -1714,6 +1824,25 @@ describe("CreditSync stateless MCP contract", () => {
         const result = await client.callTool({ name: "borrower.search", arguments: { query: "safe" } });
         expect(result.isError).toBe(true);
         expect(persisted.classification.terminalStage).toBe("storage.put");
+        await client.close();
+    });
+
+    test("emits an actionable safe evidence-stop metric when an evidence boundary fails", async () => {
+        const metrics: any[] = [];
+        const baseUrl = await startServer({
+            onMetric: (metric) => metrics.push(metric),
+            toolHandlers: { "evidence.prepare": async () => { throw new DomainError("EVIDENCE_STORAGE_FAILED", "Synthetic evidence failure", 503); } },
+        });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+        const result = await client.callTool({ name: "evidence.prepare", arguments: {
+            paymentIntakePublicId: INTAKE_ID, mimeType: "image/png", size: 100, sha256: "a".repeat(64),
+        } });
+        expect(result.isError).toBe(true);
+        expect(metrics).toContainEqual(expect.objectContaining({
+            event: "mcp_metric", metric: "evidence_stop", profile: "full", operationClass: "tool_call", statusClass: "5xx", evidenceStopClass: "storage",
+        }));
+        expect(JSON.stringify(metrics)).not.toContain(INTAKE_ID);
         await client.close();
     });
 

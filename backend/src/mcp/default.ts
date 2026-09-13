@@ -754,6 +754,7 @@ export function createDefaultMcpHttpPlugin(
         handlers: createDefaultMcpToolHandlers(dependencies),
         consumeRateLimit: (input) => limiter.consume(input),
         logger: env.MCP_TEST_SILENT_LOGS === "1" ? () => undefined : structuredLog,
+        onMetric: env.MCP_TEST_SILENT_LOGS === "1" ? undefined : (metric) => structuredLog(metric),
         persistDiagnostic: persistMcpDiagnosticBestEffort,
         resolvePrincipal: async ({ tenantId, actorEmail }) => {
             const actor = await db.query.users.findFirst({ where: and(

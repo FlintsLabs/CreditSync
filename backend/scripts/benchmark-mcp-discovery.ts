@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { Elysia } from "elysia";
-import { createMcpHttpPlugin, MCP_TOOL_NAMES, legacyDiscoveryProjectionForBenchmark, mcpSchemaMetrics, type McpToolHandler } from "../src/mcp/server";
+import { createMcpHttpPlugin, MCP_TOOL_NAMES, legacyDiscoveryProjectionForBenchmark, mcpSchemaMetrics, type McpToolHandler, type ToolProfile } from "../src/mcp/server";
 import type { CommandContext } from "../src/services/command-context";
 import type { McpRuntimeConfig } from "../src/mcp/security";
+import { toolNamesForProfile } from "../src/mcp/tool-profiles";
 
 const token = "benchmark-only-token";
 const handlers = Object.fromEntries(MCP_TOOL_NAMES.map((name) => [
@@ -18,14 +19,17 @@ const config: McpRuntimeConfig = {
     rateLimitWindowSeconds: 60,
     allowedOrigins: [],
 };
-const app = new Elysia().use(createMcpHttpPlugin({
+const pluginInput = {
     config,
     handlers,
     resolvePrincipal: async ({ tenantId }) => ({ tenantId, actorUserId: 1 }),
     consumeRateLimit: async () => ({ allowed: true, remaining: 99_999, retryAfterSeconds: 0 }),
     findAuditPublicIds: async () => ["0198c481-3e2b-7000-8000-000000000001"],
     logger: () => undefined,
-}));
+};
+const profiles = ["full", "core-read", "payments", "loans", "disbursements", "admin"] as const satisfies readonly ToolProfile[];
+const app = new Elysia().use(createMcpHttpPlugin(pluginInput));
+for (const profile of profiles.slice(1)) app.use(createMcpHttpPlugin({ ...pluginInput, profile }, `/mcp/${profile}`));
 
 function modernListBody(cursor?: string) {
     return {
@@ -61,13 +65,13 @@ async function request(path: string, body: Record<string, unknown>, modern: bool
     return { response, bytes, body: await response.json() as Record<string, any> };
 }
 
-async function completeModernDiscovery() {
+async function completeModernDiscovery(profile: ToolProfile) {
     let cursor: string | undefined;
     let pages = 0;
     let bytes = 0;
     let tools = 0;
     do {
-        const result = await request("/mcp", modernListBody(cursor), true);
+        const result = await request(profile === "full" ? "/mcp" : `/mcp/${profile}`, modernListBody(cursor), true);
         if (result.response.status !== 200) throw new Error(`modern tools/list failed: ${result.response.status}`);
         pages += 1;
         bytes += result.bytes;
@@ -78,33 +82,41 @@ async function completeModernDiscovery() {
 }
 
 async function main() {
-    const uncachedStart = performance.now();
-    const uncachedProjection = legacyDiscoveryProjectionForBenchmark("full", true);
-    const uncachedMs = performance.now() - uncachedStart;
-    const cachedStart = performance.now();
-    const cachedProjection = legacyDiscoveryProjectionForBenchmark("full");
-    const cachedMs = performance.now() - cachedStart;
+    const schemaProjection = profiles.map((profile) => {
+        const uncachedStart = performance.now();
+        const uncached = legacyDiscoveryProjectionForBenchmark(profile, true);
+        const uncachedMs = performance.now() - uncachedStart;
+        const cachedStart = performance.now();
+        const cached = legacyDiscoveryProjectionForBenchmark(profile);
+        const cachedMs = performance.now() - cachedStart;
+        return {
+            profile,
+            uncachedMs: Math.round(uncachedMs * 100) / 100,
+            cachedMs: Math.round(cachedMs * 100) / 100,
+            uncachedBytes: Buffer.byteLength(JSON.stringify(uncached)),
+            cachedBytes: Buffer.byteLength(JSON.stringify(cached)),
+        };
+    });
     const before = mcpSchemaMetrics();
-    const coldStart = performance.now();
-    const cold = await completeModernDiscovery();
-    const coldMs = performance.now() - coldStart;
-    const warmStart = performance.now();
-    const warm = await completeModernDiscovery();
-    const warmMs = performance.now() - warmStart;
+    const discovery = [];
+    for (const profile of profiles) {
+        const coldStart = performance.now();
+        const cold = await completeModernDiscovery(profile);
+        const coldMs = performance.now() - coldStart;
+        const warmStart = performance.now();
+        const warm = await completeModernDiscovery(profile);
+        const warmMs = performance.now() - warmStart;
+        if (cold.tools !== warm.tools || cold.tools !== toolNamesForProfile(profile).length) throw new Error(`complete discovery did not collect the exact ${profile} profile`);
+        discovery.push({ profile, coldMs: Math.round(coldMs * 100) / 100, warmMs: Math.round(warmMs * 100) / 100, cold, warm });
+    }
     const legacy = await request("/mcp", { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }, false);
     const after = mcpSchemaMetrics();
-    if (cold.tools !== MCP_TOOL_NAMES.length || warm.tools !== MCP_TOOL_NAMES.length) throw new Error("complete discovery did not collect the full catalog");
     if (after.schemaGenerationCount !== before.schemaGenerationCount) throw new Error("tools/list caused schema generation");
     console.log(JSON.stringify({
         catalogTools: MCP_TOOL_NAMES.length,
-        modern: { coldMs: Math.round(coldMs * 100) / 100, warmMs: Math.round(warmMs * 100) / 100, cold, warm },
+        modern: discovery,
         legacy: { status: legacy.response.status, bytes: legacy.bytes, tools: legacy.body.result?.tools?.length ?? null },
-        schemaProjection: {
-            uncachedMs: Math.round(uncachedMs * 100) / 100,
-            cachedMs: Math.round(cachedMs * 100) / 100,
-            uncachedBytes: Buffer.byteLength(JSON.stringify(uncachedProjection)),
-            cachedBytes: Buffer.byteLength(JSON.stringify(cachedProjection)),
-        },
+        schemaProjection,
         schemaGenerationCount: { before: before.schemaGenerationCount, after: after.schemaGenerationCount, perRequestDelta: after.schemaGenerationCount - before.schemaGenerationCount },
     }, null, 2));
 }

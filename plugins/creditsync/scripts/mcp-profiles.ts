@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { MCP_CATALOG_VERSION, advertisedMcpToolMetadata } from "../../../backend/src/mcp/server";
+import { MCP_CATALOG_VERSION, advertisedMcpToolMetadataForProfile } from "../../../backend/src/mcp/server";
 import { TOOL_PROFILES } from "../../../backend/src/mcp/tool-profiles";
 
 const outputDirectory = resolve(import.meta.dir, "../references/mcp-profiles");
@@ -14,12 +14,12 @@ export type McpProfileSnapshot = {
 };
 
 export function profileSnapshots(): McpProfileSnapshot[] {
-    const catalogNames = new Set(advertisedMcpToolMetadata().map((tool) => tool.name));
     return (Object.keys(TOOL_PROFILES) as Array<keyof typeof TOOL_PROFILES>).map((profile) => {
-        const tools = [...TOOL_PROFILES[profile]];
+        const wireTools = advertisedMcpToolMetadataForProfile(profile);
+        const tools = wireTools.map((tool) => tool.name);
         if (new Set(tools).size !== tools.length) throw new Error(`Duplicate tool in ${profile} profile`);
-        if (tools.some((name) => !catalogNames.has(name))) throw new Error(`Unknown tool in ${profile} profile`);
-        return { schemaVersion: "1.0", catalogVersion: MCP_CATALOG_VERSION, profile, toolCount: tools.length, tools };
+        if (tools.length !== TOOL_PROFILES[profile].length) throw new Error(`Profile ${profile} is not represented by the serving catalog`);
+        return { schemaVersion: "1.0", catalogVersion: MCP_CATALOG_VERSION, profile, toolCount: wireTools.length, tools };
     });
 }
 

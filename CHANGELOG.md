@@ -12,9 +12,12 @@
 ### Changed
 
 - Kept legacy `/mcp` discovery full and unpaginated for compatibility while modern discovery uses closed schemas, per-request metadata, profile/catalog-bound cursors, and public definition cache hints; conformance uses an injected no-database fixture through the shared adapter and reports real check counts.
+- Classified `payment.allocation-correction.execute` as an audited financial operation without changing its established legacy receipt shape; curated legacy routes now follow the same bounded profile pagination contract, and runtime metrics include safe rejection/evidence-stop signals.
 
 ### Fixed
 
+- Made conformance completion fail closed on missing, empty or inconsistent check summaries, and included rate-limit/infrastructure failures in sanitized MCP metrics with safe failure handling.
+- Kept the cancellation upgrade regression's pre-upgrade fixture below its target migration so later evidence migrations cannot incorrectly advance its simulated deployment watermark.
 - Preserved original audit receipts on ready payment, supplemental, and payout evidence retries without another upload or audit write; legacy payout receipts resolve through exact tenant/event/evidence identity, and stale or foreign references fail closed.
 - Preserved imported evidence reservations across expired intents, signing failures, and concurrent direct uploads with consistent locking and conditional deletion; aligned the import-key schema index with its migration and added disposable database regressions.
 - Kept the direct-upload MCP finalize response backward-compatible while the new importer consumes the durable service audit receipt.
