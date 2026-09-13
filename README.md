@@ -607,7 +607,7 @@ The [generated catalog](plugins/creditsync/references/mcp-tool-contract.json) an
 
 The [MCP verification handoff](docs/operations/mcp-optimization-verification.md) records the tested implementation commit, complete disposable backend results, separate cache coverage, conformance evidence and remaining runtime acceptance gates.
 
-The 2026-09-13 production deployment attempt is held on a failed evidence-recovery gate; the previous production image remains in service. See the handoff report for the owner-approved local backup, restore results and pre-existing storage findings that require review before rollout.
+The initial 2026-09-13 recovery hold was traced to an overly broad checker: pending upload reservations and valid batch staging metadata must not be classified as lost finalized evidence. Run `bun run --cwd backend scripts/check-evidence-recovery.ts` with explicit database/storage configuration for the read-only, lifecycle-aware gate, and `bun test backend/scripts/evidence-recovery-policy.test.ts` for its regressions. Pending warnings never authorize posting or imply attached evidence. See the handoff report for deployment status and backup evidence.
 
 The cancellation browser suite uses a separate local port (`5197`) and mocked API data. It checks explicit batch navigation, confirmation, retained history, and Bangkok timestamps from a browser outside Thailand:
 

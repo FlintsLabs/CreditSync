@@ -1,6 +1,10 @@
 # MCP optimization verification report
 
-## Deployment attempt — held on recovery gate
+## Initial deployment hold and corrected recovery classification
+
+Follow-up inspection established that all 43 missing `intake` values belong to correctly linked batch staging evidence, which intentionally retains `tenant`/`staging` metadata. All 46 missing objects are pending expired upload reservations (39 payment, 4 payout, 3 intermediary transfer), not missing finalized evidence. The four JPEG objects labelled `binary/octet-stream` are also pending. Some associated payments are posted with `evidenceRequired=false`; they must not be presented as having complete evidence. This corrects the initial interpretation below, not the stored data.
+
+The new read-only checker streams checksums, validates each required evidence reference independently, accepts staging metadata only through exact tenant/file/hash/intake linkage, and fails closed on unsupported required provenance or storage errors. It retains 50 pending warnings separately from 262 passing file checks. Ten policy regressions and typecheck passed; the corrected gate also passed against the restored backup. A fresh quiesced backup is required before the renewed deployment attempt. No posted record or storage metadata was repaired to obtain this result.
 
 On 2026-09-13 the owner authorized deployment and explicitly approved storing the backup locally rather than off-host. The protected backup is outside Git at `/home/flintstone/backups/creditsync/mcp-f7eb631-hjUy378g` (directory mode 0700; dump/archive mode 0600). Local-only storage does not protect against loss of this host. The PostgreSQL dump and quiesced full MinIO archive have SHA-256 checksums; the restored archive compares byte-for-byte with its extraction. The original app images were retained as `creditsync-backend:before-mcp-f7eb631` and `creditsync-frontend:before-mcp-f7eb631`.
 

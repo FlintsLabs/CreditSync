@@ -1,0 +1,15 @@
+import {test,expect} from 'bun:test';
+import {inspectRecovery} from './evidence-recovery-policy';
+const file={mime:'image/jpeg',size:3};
+const object={exists:true,mime:'image/jpeg',size:3,hash:'a'.repeat(64),metadata:{tenant:'t',intake:'i'}};
+const direct={pending:false,hash:'a'.repeat(64),metadata:[{tenant:'t',intake:'i'}]};
+test('pending reservation is not asserted to be a stored ready object',()=>expect(inspectRecovery(file,[{pending:true}],{exists:false})).toBe('pending_warning'));
+test('pending MIME mismatch cannot become verified evidence',()=>expect(inspectRecovery(file,[{pending:true}],{...object,mime:'binary/octet-stream'})).toBe('pending_warning'));
+test('ready reference dominates another pending reference',()=>expect(inspectRecovery(file,[{pending:true},direct],{exists:false})).toBe('missing_object'));
+test('direct ready evidence verifies exact metadata',()=>expect(inspectRecovery(file,[direct],object)).toBe('pass'));
+test('batch evidence accepts only loader-verified alternative lineage',()=>expect(inspectRecovery(file,[{...direct,metadata:[{tenant:'t',intake:'i'},{tenant:'t',staging:'s'}]}],{...object,metadata:{tenant:'t',staging:'s'}})).toBe('pass'));
+test('wrong tenant or staging never passes',()=>expect(inspectRecovery(file,[direct],{...object,metadata:{tenant:'other',intake:'i'}})).toBe('metadata_mismatch'));
+test('ready checksum mismatch blocks release',()=>expect(inspectRecovery(file,[direct],{...object,hash:'b'.repeat(64)})).toBe('checksum_mismatch'));
+test('ready MIME and size remain required',()=>{expect(inspectRecovery(file,[direct],{...object,mime:'binary/octet-stream'})).toBe('mime_mismatch');expect(inspectRecovery(file,[direct],{...object,size:4})).toBe('size_mismatch')});
+test('unreferenced missing objects are not pending reservations',()=>expect(inspectRecovery(file,[],{exists:false})).toBe('missing_object'));
+test('unknown required provenance fails closed',()=>expect(inspectRecovery(file,[{pending:false,hash:'a'.repeat(64)}],object)).toBe('unsupported_provenance'));

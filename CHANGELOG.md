@@ -18,6 +18,7 @@
 
 ### Fixed
 
+- Corrected the read-only evidence recovery gate to distinguish pending upload reservations from finalized objects and verify batch staging lineage per evidence reference. Added regression tests; pending warnings remain visible and never become ready evidence.
 - Made conformance completion fail closed on missing, empty or inconsistent check summaries, and included rate-limit/infrastructure failures in sanitized MCP metrics with safe failure handling.
 - Kept the cancellation upgrade regression's pre-upgrade fixture below its target migration so later evidence migrations cannot incorrectly advance its simulated deployment watermark.
 - Preserved original audit receipts on ready payment, supplemental, and payout evidence retries without another upload or audit write; legacy payout receipts resolve through exact tenant/event/evidence identity, and stale or foreign references fail closed.
