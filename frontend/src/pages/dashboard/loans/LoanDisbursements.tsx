@@ -22,6 +22,11 @@ const hash = (bytes: ArrayBuffer) => Array.from(new Uint8Array(bytes), (byte) =>
 class SupersededLedgerReadError extends Error { constructor() { super("Disbursement ledger read was superseded"); } }
 type ActiveLedgerRead = { controller: AbortController; supersede: () => void };
 
+function errorCode(error: unknown): string | undefined {
+    const code = (error as { response?: { data?: { code?: unknown } } }).response?.data?.code;
+    return typeof code === "string" ? code : undefined;
+}
+
 export type LoanDisbursementsHandle = { refresh: () => Promise<void> };
 
 export const LoanDisbursements = forwardRef<LoanDisbursementsHandle, { loanPublicId: string; onSummaryChange?: (summary: DisbursementSummaryInput) => void }>(function LoanDisbursements({ loanPublicId, onSummaryChange }, ref) {
@@ -99,7 +104,12 @@ export const LoanDisbursements = forwardRef<LoanDisbursementsHandle, { loanPubli
         if (!selected) return;
         setBusy(true); setMessage("");
         try { await api.post(`/loans/${loanPublicId}/disbursements/${selected.publicId}/post`, {}, { headers: { "Idempotency-Key": actionKey("post", selected.publicId) } }); setDraft(null); await readLedger(); }
-        catch { setMessage(t("loanDetail.disbursements.errors.post")); } finally { setBusy(false); }
+        catch (error) {
+            const code = errorCode(error);
+            setMessage(code
+                ? t(`loanDetail.disbursements.errors.${code}`, { defaultValue: t(`domainErrors.${code}`, { defaultValue: t("loanDetail.disbursements.errors.post") }) })
+                : t("loanDetail.disbursements.errors.post"));
+        } finally { setBusy(false); }
     };
     const reverse = async () => {
         if (!selected || !reason.trim()) return;
