@@ -234,7 +234,7 @@ async function ensureAttempt(
     }
     if (existingAttempt) return;
 
-    await tx.insert(financialEvidenceRequirementAttempts).values({
+    const values = {
         tenantId: ctx.tenantId,
         financialEvidenceRequirementId: requirementId,
         attemptKey,
@@ -245,7 +245,33 @@ async function ensureAttempt(
         source: ctx.actorSource,
         requestId: ctx.requestId,
         correlationId: ctx.correlationId,
-    }).onConflictDoNothing({ target: [financialEvidenceRequirementAttempts.tenantId, financialEvidenceRequirementAttempts.financialEvidenceRequirementId, financialEvidenceRequirementAttempts.attemptKey] });
+    };
+    try {
+        // The attempt-key conflict is handled by the targeted upsert. The
+        // separate tenant/kind/import-key index can still win concurrently
+        // for a different target, so isolate that known unique violation in a
+        // savepoint before re-reading the committed binding.
+        await tx.transaction(async (savepoint) => {
+            await savepoint.insert(financialEvidenceRequirementAttempts).values(values).onConflictDoNothing({
+                target: [financialEvidenceRequirementAttempts.tenantId, financialEvidenceRequirementAttempts.financialEvidenceRequirementId, financialEvidenceRequirementAttempts.attemptKey],
+            });
+        });
+    } catch (error) {
+        const databaseError = error as { code?: string; constraint?: string; query?: string; cause?: { code?: string; constraint?: string; query?: string } };
+        const code = databaseError.code ?? databaseError.cause?.code;
+        const constraint = databaseError.constraint ?? databaseError.cause?.constraint;
+        const query = databaseError.query ?? databaseError.cause?.query;
+        const isBindingConflict = constraint?.startsWith("financial_evidence_requirement_attempts_tenant_kind_import_")
+            || query?.includes('insert into "financial_evidence_requirement_attempts"');
+        if (code !== "23505" || !isBindingConflict) throw error;
+        const winner = await tx.query.financialEvidenceRequirementAttempts.findFirst({ where: and(
+            eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId),
+            eq(financialEvidenceRequirementAttempts.importIdempotencyKey, binding.importIdempotencyKey!),
+            eq(financialEvidenceRequirementAttempts.bindingKind, bindingKind),
+        ) });
+        if (winner?.financialEvidenceRequirementId === requirementId && winner.sourceFileFingerprint === binding.sourceFileFingerprint) return;
+        throw new DomainError("EVIDENCE_IDEMPOTENCY_CONFLICT", "Evidence import idempotency payload does not match", 409);
+    }
 }
 
 async function assertImportBindingAvailable(
