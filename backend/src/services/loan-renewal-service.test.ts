@@ -24,6 +24,7 @@ import {
 import { generateLoanSchedule } from "../lib/loan-schedule";
 import type { CommandContext } from "./command-context";
 import { createPaymentIntake, postPayment, previewPaymentMatch } from "./payment-service";
+import { assertFinancialEvidenceReady } from "./financial-evidence-requirement-service";
 import {
     allocateFundingByLargestRemainder,
     executeLoanRenewal,
@@ -511,6 +512,47 @@ describe("daily-loan renewal service", () => {
             { type: "contract_interest_settlement", amount: "233.42" },
             { type: "cash_payout", amount: "600.00" },
         ]);
+    });
+
+    integrationTest("replays renewal before a historical pending payout guard without effects", async () => {
+        const seeded = await seedDailyLoan();
+        const preview = await previewLoanRenewal(
+            context(seeded.tenantId, seeded.actor.id), seeded.oldLoan.publicId, { requestedPrincipal: "2500.00" },
+        );
+        const executeContext = context(seeded.tenantId, seeded.actor.id, "renewal-historical-replay");
+        const input = { previewHash: preview.previewHash, confirmed: true as const, reason: "renew with historical replay" };
+        const first = await executeLoanRenewal(executeContext, preview.publicId, input);
+        const historicalEvent = await db.insert(loanDisbursementEvents).values({
+            tenantId: seeded.tenantId, loanId: seeded.oldLoan.id, grossAmount: "1.00", loanAttributedAmount: "1.00",
+            channel: "adjustment", status: "draft", disbursedAt: new Date("2026-08-30T03:00:00Z"), createdByUserId: seeded.actor.id,
+        }).returning().then(rows => rows[0]!);
+        const historicalFile = await db.insert(files).values({
+            tenantId: seeded.tenantId, ownerUserId: seeded.actor.id, bucket: "historical-test",
+            key: `renewal-replay-${crypto.randomUUID()}`, originalName: "historical-pending.png", mimeType: "image/png", size: 12,
+        }).returning().then(rows => rows[0]!);
+        await db.insert(loanDisbursementEvidenceIntents).values({
+            tenantId: seeded.tenantId, loanDisbursementEventId: historicalEvent.id, fileId: historicalFile.id, status: "pending",
+            evidenceHash: "d".repeat(64), mimeType: "image/png", declaredSize: 12,
+            createdByUserId: seeded.actor.id, updatedByUserId: seeded.actor.id,
+        });
+        await expect(db.transaction(tx => assertFinancialEvidenceReady(tx, executeContext, { kind: "loan_disbursement", publicId: historicalEvent.publicId }))).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+        const beforeReplay = {
+            events: await db.select().from(loanDisbursementEvents).where(eq(loanDisbursementEvents.tenantId, seeded.tenantId)),
+            intents: await db.select().from(loanDisbursementEvidenceIntents).where(eq(loanDisbursementEvidenceIntents.tenantId, seeded.tenantId)),
+            loans: await db.select().from(loans).where(eq(loans.tenantId, seeded.tenantId)),
+            schedules: await db.select().from(loanSchedules).where(eq(loanSchedules.tenantId, seeded.tenantId)),
+            adjustments: await db.select().from(loanAdjustments).where(eq(loanAdjustments.tenantId, seeded.tenantId)),
+            transactions: await db.select().from(transactions).where(eq(transactions.tenantId, seeded.tenantId)),
+            audits: await db.select().from(auditLogs).where(eq(auditLogs.tenantId, seeded.tenantId)),
+        };
+        expect(await executeLoanRenewal(executeContext, preview.publicId, input)).toEqual(first);
+        expect(await db.select().from(loanDisbursementEvents).where(eq(loanDisbursementEvents.tenantId, seeded.tenantId))).toEqual(beforeReplay.events);
+        expect(await db.select().from(loanDisbursementEvidenceIntents).where(eq(loanDisbursementEvidenceIntents.tenantId, seeded.tenantId))).toEqual(beforeReplay.intents);
+        expect(await db.select().from(loans).where(eq(loans.tenantId, seeded.tenantId))).toEqual(beforeReplay.loans);
+        expect(await db.select().from(loanSchedules).where(eq(loanSchedules.tenantId, seeded.tenantId))).toEqual(beforeReplay.schedules);
+        expect(await db.select().from(loanAdjustments).where(eq(loanAdjustments.tenantId, seeded.tenantId))).toEqual(beforeReplay.adjustments);
+        expect(await db.select().from(transactions).where(eq(transactions.tenantId, seeded.tenantId))).toEqual(beforeReplay.transactions);
+        expect(await db.select().from(auditLogs).where(eq(auditLogs.tenantId, seeded.tenantId))).toEqual(beforeReplay.audits);
     });
 
     integrationTest("posts every reasoned manual adjustment line and its linked accounting entry", async () => {
