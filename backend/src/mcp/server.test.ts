@@ -118,6 +118,45 @@ describe("CreditSync stateless MCP contract", () => {
         expect(handlerCalls).toBe(0);
     });
 
+    test("validates every composite-read boundary and advertises the bounded money/page contract", async () => {
+        const calls: string[] = [];
+        const baseUrl = await startServer({ toolHandlers: {
+            "borrower.resolve-and-portfolio": async () => { calls.push("borrower"); return {}; },
+            "loan.inspect-context": async () => { calls.push("loan"); return {}; },
+            "payment.match-context": async () => { calls.push("payment"); return {}; },
+        } });
+        const { client, transport } = clientFor(baseUrl);
+        await client.connect(transport);
+
+        const invalidInputs = [
+            ["borrower.resolve-and-portfolio", { borrowerPublicId: "not-a-uuid" }],
+            ["loan.inspect-context", { loanPublicId: "not-a-uuid" }],
+            ["payment.match-context", { paymentIntakePublicId: "not-a-uuid" }],
+            ["borrower.resolve-and-portfolio", { borrowerPublicId: BORROWER_ID, unexpected: true }],
+            ["loan.inspect-context", { loanPublicId: BORROWER_ID, unexpected: true }],
+            ["payment.match-context", { paymentIntakePublicId: INTAKE_ID, unexpected: true }],
+            ["borrower.resolve-and-portfolio", { borrowerPublicId: BORROWER_ID, limit: 101 }],
+            ["loan.inspect-context", { loanPublicId: BORROWER_ID, limit: 101 }],
+            ["payment.match-context", { paymentIntakePublicId: INTAKE_ID, limit: 101 }],
+        ] as const;
+        for (const [name, arguments_] of invalidInputs) {
+            const result = await client.callTool({ name, arguments: arguments_ });
+            expect(result.isError).toBe(true);
+            expect((result.structuredContent as Record<string, unknown> | undefined)?.error).toMatchObject({ code: "INVALID_TOOL_ARGUMENTS" });
+        }
+        expect(calls).toEqual([]);
+
+        const metadata = advertisedMcpToolMetadata();
+        for (const name of ["borrower.resolve-and-portfolio", "loan.inspect-context", "payment.match-context"] as const) {
+            const tool = metadata.find((candidate) => candidate.name === name)!;
+            const properties = tool.inputSchema.properties as Record<string, Record<string, unknown>>;
+            expect(properties.limit.maximum).toBe(100);
+        }
+        const paymentOutput = metadata.find((candidate) => candidate.name === "payment.match-context")!.outputSchema;
+        expect(JSON.stringify(paymentOutput)).toContain('"amount":{"type":"string","maxLength":32');
+        await client.close();
+    });
+
     test("advertises the complete closed batch staging workflow and accepts floating allocations", async () => {
         const baseUrl = await startServer({ toolHandlers: {
             "payment.batch.preview": async () => ({

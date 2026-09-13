@@ -111,7 +111,7 @@ function runtimeEnv() {
     };
 }
 
-async function startDefaultServer(options?: { evidenceGateway?: EvidenceStorageGateway; disbursementEvidenceGateway?: DisbursementEvidenceStorageGateway; intermediaryRemittanceEvidenceGateway?: IntermediaryRemittanceEvidenceGateway; transferEvidenceGateway?: TransferEvidenceStorageGateway }) {
+async function startDefaultServer(options?: import("./default").DefaultMcpDependencies) {
     const app = new Elysia().use(createDefaultMcpHttpPlugin(runtimeEnv(), options)).listen({ hostname: "127.0.0.1", port: 0 });
     runningApps.push(app);
     const client = new Client({ name: "creditsync-default-adapter-test", version: "1.0.0" });
@@ -1319,6 +1319,19 @@ describe("default MCP adapter integration", () => {
             disbursementEvidenceGateway: evidenceGateway,
             intermediaryRemittanceEvidenceGateway: evidenceGateway,
             transferEvidenceGateway: evidenceGateway,
+            chatgptEvidenceDependencies: {
+                allowedHosts: new Set(["files.example.test"]),
+                resolveHost: async () => ["93.184.216.34"],
+                fetch: async () => new Response(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]), { headers: { "content-type": "image/png" } }),
+                disbursementEvidenceGateway: evidenceGateway,
+                disbursementStorage: {
+                    put: async (request, bytes) => {
+                        expect(createHash("sha256").update(bytes).digest("hex")).toBe(request.checksumSha256);
+                    },
+                    head: evidenceGateway.head,
+                    delete: async () => undefined,
+                },
+            },
         });
         const listed = await client.listTools();
         expect(listed.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
@@ -1342,6 +1355,7 @@ describe("default MCP adapter integration", () => {
             source: "manual",
         });
         await call("borrower.portfolio", { borrowerPublicId });
+        await call("borrower.resolve-and-portfolio", { borrowerPublicId });
         const borrower = await db.query.borrowers.findFirst({ where: eq(borrowers.publicId, borrowerPublicId) });
         const floatingLoan = await db.insert(loans).values({
             tenantId: TENANT_ID, ownerUserId: actor.id, borrowerId: borrower!.id,
@@ -1486,10 +1500,12 @@ describe("default MCP adapter integration", () => {
             size: 4,
             sha256: "b".repeat(64),
         })).data;
-        await call("loan.disbursement.evidence.finalize", {
+        const finalizedDisbursementEvidence = await call("loan.disbursement.evidence.finalize", {
             disbursementPublicId,
             evidencePublicId: disbursementEvidence.publicId,
         });
+        expect(finalizedDisbursementEvidence.data.status).toBe("ready");
+        expect(finalizedDisbursementEvidence.data).not.toHaveProperty("auditPublicId");
         const updatedDisbursement = (await call("loan.disbursement.update", {
             disbursementPublicId,
             changes: { loanAttributedAmount: "95.00", note: "Corrected attributed amount" },
@@ -1512,6 +1528,16 @@ describe("default MCP adapter integration", () => {
         expect(refreshedDisbursements.events).toEqual(expect.arrayContaining([
             expect.objectContaining({ publicId: disbursementPublicId, loanAttributedAmount: "95.00", evidenceFilePublicIds: [disbursementEvidence.filePublicId] }),
         ]));
+        const importedPayoutEvidence = (await call("loan.disbursement.evidence.import-chatgpt-file", {
+            disbursementPublicId,
+            idempotencyKey: "mcp-all-tools-payout-import",
+            chatgptFile: {
+                download_url: "https://files.example.test/payout.png", file_id: "synthetic-payout-file",
+                mime_type: "image/png", file_name: "payout.png",
+            },
+        })).data;
+        expect(importedPayoutEvidence.status).toBe("ready");
+        expectWriteAuditMetadata(importedPayoutEvidence);
         await call("loan.disbursement.post", {
             disbursementPublicId,
             idempotencyKey: "mcp-all-tools-disbursement-post",
@@ -1537,6 +1563,7 @@ describe("default MCP adapter integration", () => {
         })).data;
         const intakePublicId = String(intake.publicId);
         await call("intake.list", { status: "draft" });
+        await call("payment.match-context", { paymentIntakePublicId: intakePublicId });
         const evidence = (await call("evidence.prepare", {
             paymentIntakePublicId: intakePublicId,
             mimeType: "image/png",
@@ -1653,6 +1680,7 @@ describe("default MCP adapter integration", () => {
             loanPublicId,
             items: expect.arrayContaining([expect.objectContaining({ publicId: intakePublicId, status: "posted" })]),
         });
+        await call("loan.inspect-context", { loanPublicId, view: "summary" });
         await call("intermediary.search", { query: "MCP all-tools collector" });
         const intermediary = (await call("intermediary.create", { name: "MCP all-tools collector" })).data;
         const attribution = (await call("payment.intermediary-attribution.create", {

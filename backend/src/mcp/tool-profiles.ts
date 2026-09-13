@@ -1,6 +1,7 @@
 import { MCP_TOOL_NAMES, type McpToolDefinition, type McpToolName, type ToolProfile } from "./catalog-types";
 
 const readOnly = [
+    "borrower.resolve-and-portfolio", "loan.inspect-context", "payment.match-context",
     "system.error-diagnostic.get", "system.error-diagnostic.list", "borrower.search", "borrower.portfolio",
     "intake.get", "intake.list", "payment.batch.get", "payment.batch.workspace", "payment.batch.candidates",
     "loan.preview", "loan.cancel.preview", "loan.interest-rate.list",
@@ -13,6 +14,7 @@ const readOnly = [
 ] as const satisfies readonly McpToolName[];
 
 const payments = [
+    "borrower.resolve-and-portfolio", "loan.inspect-context", "payment.match-context",
     "borrower.search", "borrower.portfolio", "intake.get", "intake.list", "intake.create", "evidence.prepare", "evidence.finalize",
     "evidence.import-chatgpt-file", "payment.evidence-supplement.import-chatgpt-file", "payment.evidence-supplement.record",
     "payment.preview", "payment.post", "payment.cancel", "payment.reverse", "payment.reverse-with-accrual.preview", "payment.reverse-with-accrual.execute",
@@ -28,6 +30,7 @@ const payments = [
 ] as const satisfies readonly McpToolName[];
 
 const loans = [
+    "borrower.resolve-and-portfolio", "loan.inspect-context",
     "borrower.search", "borrower.portfolio", "loan.preview", "loan.draft", "loan.draft.delete", "loan.activate", "loan.cancel.preview", "loan.cancel.execute",
     "loan.interest-rate.list", "loan.interest-rate.preview", "loan.interest-rate.execute", "loan.settlement.preview", "loan.settlement.execute", "loan.settlement.reverse",
     "loan.replacement.preview", "loan.replacement.execute", "loan.replacement.reverse", "loan.contract.get", "loan.payment-start-date.update", "loan.payment-history.list",
@@ -38,6 +41,7 @@ const loans = [
 ] as const satisfies readonly McpToolName[];
 
 const disbursements = [
+    "borrower.resolve-and-portfolio", "loan.inspect-context",
     "borrower.search", "borrower.portfolio", "loan.contract.get", "loan.disbursement.list", "loan.disbursement.draft", "loan.disbursement.update",
     "loan.disbursement.evidence.prepare", "loan.disbursement.evidence.finalize", "loan.disbursement.evidence.import-chatgpt-file", "loan.disbursement.post", "loan.disbursement.reverse",
     "intermediary.search", "intermediary.profile.get", "intermediary.managed-loan.list", "intermediary.assignment.create", "intermediary.assignment.end",

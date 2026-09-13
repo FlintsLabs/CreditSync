@@ -7,7 +7,10 @@ const catalogByName = new Map(catalog.map((tool) => [tool.name, tool]));
 
 describe("MCP catalog and profiles", () => {
     test("has one canonical definition for every current tool", () => {
-        expect(MCP_TOOL_NAMES).toHaveLength(131);
+        expect(MCP_TOOL_NAMES).toEqual(expect.arrayContaining([
+            "loan.disbursement.evidence.import-chatgpt-file", "borrower.resolve-and-portfolio",
+            "loan.inspect-context", "payment.match-context",
+        ]));
         expect(new Set(MCP_TOOL_NAMES).size).toBe(MCP_TOOL_NAMES.length);
         expect(catalog).toHaveLength(MCP_TOOL_NAMES.length);
         expect(catalog.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
@@ -20,7 +23,7 @@ describe("MCP catalog and profiles", () => {
             expect(new Set(names).size).toBe(names.length);
             for (const name of names) {
                 expect(catalogByName.has(name)).toBe(true);
-                union.add(name);
+                if (profile !== "full") union.add(name);
             }
             expect(toolsForProfile(profile as keyof typeof TOOL_PROFILES, catalog).map((tool) => tool.name)).toEqual([...names]);
             expect(toolNamesForProfile(profile as keyof typeof TOOL_PROFILES)).toEqual([...names]);

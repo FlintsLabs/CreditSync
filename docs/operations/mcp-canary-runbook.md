@@ -4,7 +4,7 @@ This runbook is a measurement and rollback procedure. Local tests and the offici
 
 ## Before enabling profiles
 
-1. Verify the generated 131-tool contract and profile snapshots at the deployed feature revision. `/mcp` remains the full legacy endpoint; profiles are discovery conveniences, not authorization scopes.
+1. Verify the generated tool contract, its count, and profile snapshots at the deployed feature revision. `/mcp` remains the full legacy endpoint; profiles are discovery conveniences, not authorization scopes.
 2. Keep `MCP_ALLOWED_ORIGINS` as exact origins. Confirm absent Origin is allowed for non-browser clients and unexpected, `null`, malformed, or configured-but-unlisted origins are rejected before body parsing. Confirm Host, bearer, and rate limits independently.
 3. Capture a baseline from the same host class and connection population: legacy full-list bytes/time/tool count; modern complete paginated bytes/time/page count/tool count; schema-generation count; and status-class counts. Timing is informational until compared with a matched baseline.
 4. Confirm the retention owner, alert destination, previous image/plugin snapshot, PostgreSQL/MinIO backups, and the endpoint kill switch before any canary writes.

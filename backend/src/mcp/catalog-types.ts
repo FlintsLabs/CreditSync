@@ -1,5 +1,5 @@
 export const MCP_TOOL_NAMES = [
-    "borrower.search", "borrower.portfolio", "borrower.create", "borrower.update", "borrower.alias",
+    "borrower.search", "borrower.portfolio", "borrower.resolve-and-portfolio", "borrower.create", "borrower.update", "borrower.alias",
     "intake.get", "intake.list", "payment.batch.get", "payment.batch.stage", "payment.batch.staging.evidence.prepare",
     "payment.batch.staging.evidence.finalize", "payment.batch.staging.extract", "payment.batch.workspace", "payment.batch.candidates",
     "payment.batch.staging.review", "payment.batch.staging.edit", "payment.batch.split", "payment.batch.decision", "payment.batch.cancel",
@@ -13,8 +13,8 @@ export const MCP_TOOL_NAMES = [
     "payment.restore.evidence.finalize", "payment.restore.preview", "payment.restore.execute", "payment.restore.schedule-backfill", "loan.preview",
     "loan.cancel.preview", "loan.draft", "loan.draft.delete", "loan.activate", "loan.interest-rate.list", "loan.interest-rate.preview",
     "loan.interest-rate.execute", "loan.settlement.preview", "loan.settlement.execute", "loan.settlement.reverse", "loan.cancel.execute",
-    "loan.replacement.preview", "loan.replacement.execute", "loan.replacement.reverse", "loan.disbursement.list", "loan.contract.get",
-    "loan.payment-start-date.update", "loan.payment-history.list", "loan.disbursement.draft", "loan.disbursement.update",
+    "loan.replacement.preview", "loan.replacement.execute", "loan.replacement.reverse", "loan.disbursement.list", "loan.contract.get", "loan.inspect-context",
+    "loan.payment-start-date.update", "loan.payment-history.list", "payment.match-context", "loan.disbursement.draft", "loan.disbursement.update",
     "loan.disbursement.evidence.prepare", "loan.disbursement.evidence.finalize", "loan.disbursement.post", "loan.disbursement.reverse",
     "loan.commission-participant.list", "loan.commission-participant.add", "loan.commission-participant.update", "loan.commission-participant.end",
     "loan.commission.preview", "loan.commission.list", "loan.commission.calculate", "loan.commission.reverse",

@@ -116,11 +116,13 @@ export async function validatePlugin() {
             "payment.batch.evidence.finalize", "payment.batch.evidence.prepare-many", "payment.batch.evidence.finalize-many", "payment.batch.get", "payment.batch.preview", "payment.batch.execute",
         ],
         "manage-loans": [
+            "loan.inspect-context",
             "loan.commission-participant.list", "loan.commission-participant.add", "loan.commission-participant.update",
             "loan.commission-participant.end", "loan.commission.preview", "loan.commission.list", "loan.commission.calculate",
             "loan.commission.reverse",
         ],
         "reconcile-payments": [
+            "payment.match-context",
             "loan.commission-participant.list", "loan.commission.preview", "loan.commission.reverse",
             "payment.intermediary-attribution.create", "payment.intermediary-attribution.list",
             "payment.intermediary-attribution.reverse",

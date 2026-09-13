@@ -13,9 +13,9 @@ Resolve identity before mutation. Canonical names and confirmed aliases are evid
 
 ### Find or create
 
-1. Call `borrower.search` with the supplied real name, nickname, or identifying text.
+1. Prefer `borrower.resolve-and-portfolio` for a bounded identity-plus-portfolio read with the supplied real name, nickname, or identifying text. Use `borrower.search` when only candidate search is needed.
 2. Interpret the backend resolution:
-   - `unique`: call `borrower.portfolio` for the returned public UUID before any update.
+   - `unique`: inspect the returned bounded portfolio and follow `nextCursor` for every child collection before claiming the portfolio is complete; use `borrower.portfolio` for the legacy unbounded detail shape when required.
    - `ambiguous` or multiple candidates: show canonical names and safe distinguishing portfolio context, then ask the operator to select one. Do not create or auto-select.
    - `none`: ask the operator to confirm that this is a new person, then call `borrower.create` using only supplied facts.
 3. Inspect the returned borrower after creation. Do not copy a candidate's personal details into a new record.

@@ -7,6 +7,7 @@
 - Added the audited payout-draft ChatGPT attachment importer with HTTPS/DNS/TLS and content verification, durable import identity, resumable storage failure handling, and no payment-intake, activation, or posting side effects.
 - Added disposable-PostgreSQL importer regressions, migration assertions, executable payout evidence stop/retry traces, and the ChatGPT mobile evidence runbook; actual-device transport acceptance remains pending.
 - Added cached MCP catalog projections, deterministic modern pagination, route-selected profile snapshots, official 2026-07-28 transport validation, pinned conformance-fixture verification, discovery benchmarking, and rollout/retention runbooks with generated catalog counts.
+- Added three bounded, read-only MCP composite reads for borrower resolution, loan inspection, and payment matching. They preserve authoritative ranking, decimal strings and every allocation, expose snapshot-bound child cursors, and never perform financial writes or calculations.
 
 ### Changed
 
@@ -16,6 +17,7 @@
 
 - Preserved original audit receipts on ready payment, supplemental, and payout evidence retries without another upload or audit write; legacy payout receipts resolve through exact tenant/event/evidence identity, and stale or foreign references fail closed.
 - Preserved imported evidence reservations across expired intents, signing failures, and concurrent direct uploads with consistent locking and conditional deletion; aligned the import-key schema index with its migration and added disposable database regressions.
+- Kept the direct-upload MCP finalize response backward-compatible while the new importer consumes the durable service audit receipt.
 
 ## v0.4.44 - 2026-09-13
 

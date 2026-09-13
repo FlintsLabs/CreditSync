@@ -22,6 +22,8 @@ CreditSync is designed for workflows like:
 - Capturing data-only or image-first repayments, reviewing matches, posting allocations, and reversing corrections
 - Importing verified ChatGPT attachments into an existing loan-payout draft without creating a payment intake or posting money; every required attachment is inspected before a separate payout transition, and real mobile-device transport acceptance remains pending
 
+MCP clients can use the bounded read-only composite tools `borrower.resolve-and-portfolio`, `loan.inspect-context`, and `payment.match-context` for summary-first context. Each collection reports `hasMore` and an opaque `nextCursor`; follow named child cursors before presenting a portfolio, schedule, or payment history as complete. Ambiguous borrower resolution remains a candidate set, and these tools do not write or calculate financial values.
+
 Payment-slip batches support an upload-first, human-review-only OCR step after staging evidence is finalized. The local OCR boundary returns candidate amount, Bangkok transfer time, payer/receiver, fee, and a hashed reference; it verifies downloaded bytes against the finalized evidence checksum, serializes extraction receipts by tenant/key, and does not create an intake, choose a borrower/loan, calculate accounting, or post money. Missing or ambiguous fields stay unresolved for manual review, and the existing evidence checksum/revision gates require a fresh preview after any change.
 
 Unposted payment intakes can be explicitly cancelled from the Web inbox or MCP after inspecting the server-derived capability and confirming a reason/state hash. Cancellation retains the original evidence and audit history, excludes the intake from processing, and is not a refund or debt waiver; posted records continue through the existing compensating reversal workflow.
@@ -378,7 +380,7 @@ CreditSync serves a private stateless Streamable HTTP MCP endpoint at `/mcp` in 
 
 All MCP requests are bound to the server-side `MCP_TENANT_ID` and `MCP_ACTOR_EMAIL`. A client cannot submit or override tenant or actor identity. The configured actor must already exist in that tenant, and its normal CreditSync role/portfolio permissions still apply. Funding sources are list-only; the MCP surface has no generic SQL, arbitrary fetch, or funding mutation tool.
 
-The backend schema-version `1.0` currently exposes 131 frozen tools. The generated contract at [`plugins/creditsync/references/mcp-tool-contract.json`](./plugins/creditsync/references/mcp-tool-contract.json) is authoritative; the list below is an illustrative excerpt:
+The backend schema-version `1.0` exposes the tools and count recorded in the generated contract at [`plugins/creditsync/references/mcp-tool-contract.json`](./plugins/creditsync/references/mcp-tool-contract.json); the list below is an illustrative excerpt:
 
 ```text
 borrower.search       borrower.portfolio    borrower.create

@@ -1,19 +1,19 @@
 # MCP optimization verification report
 
-Status at the uncommitted `codex/mcp-optimization` worktree. This is a branch handoff, not an integration, deployment, canary, or mobile acceptance report. Full backend verification is intentionally deferred until the independent composite branch is integrated; no full-suite pass is claimed here.
+Status during integration on `codex/mcp-optimization`. This is a feature-branch handoff, not a main-branch merge, deployment, canary, or mobile acceptance report. Evidence/transport checkpoint `5626032` and composite source commit `3875134` are now combined; final full-backend verification and the remaining profile/conformance acceptance checks are pending. No full-suite pass is claimed here.
 
 ## Implementation status
 
-- Catalog: current generated product catalog is 131 tools, including the payout importer. Contract and profile snapshots are generated from the catalog.
+- Catalog: the generated product contract and profile snapshots include the payout importer and three composite reads. The generated contract is the authority for membership and counts.
 - Transport: legacy v1 remains full/unpaginated; modern 2026-07-28 uses the installed official v2 SDK, closed schemas, per-request metadata, derived catalog-version cursors, 25-tool pages, final-page cursor omission, and profile-bound validation.
 - Profiles: full, core-read, payments, loans, disbursements, and admin have explicit allowlists. Profiles are discovery routing, not authorization. Core-read excludes mutations and the profile union covers the catalog.
 - Conformance: the fixture injects three named no-side-effect tools into the same Elysia adapter/shared dispatcher. It does not append tools to responses, rewrite aliases, overwrite incoming `Mcp-Name`, or convert unsupported requests into successes.
 - Evidence/mobile: preserve [`chatgpt-mobile-evidence.md`](./chatgpt-mobile-evidence.md); real iOS/Android and connection-specific transport remain pending. The supervisor’s read-only pre-canary check found evidence count 0 for the active loan and posted payout; no financial changes were made.
-- Composite reads: not integrated; supervisor owns independent review and later integration of three tools. This branch does not duplicate that work.
+- Composite reads: integrated from the independently reviewed helper commit, preserving service-ranked borrower candidates, exact decimals, all allocations, and bounded snapshot-bound child pages. Detail views retain the existing service-owned full reads used for authoritative calculations and cursor snapshots.
 
 ## Gates
 
-The exact results below must be refreshed at the final feature HEAD after any additional supervisor integration. Commands are shown with their working directory.
+The results below are the pre-integration transport checkpoint and must be refreshed at the final feature HEAD. They do not establish final combined acceptance. Commands are shown with their working directory.
 
 | Gate | Result | Notes |
 | --- | --- | --- |

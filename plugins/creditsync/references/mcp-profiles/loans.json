@@ -1,9 +1,11 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "mcp-catalog-992694fe7cf6bcdb",
+  "catalogVersion": "mcp-catalog-bc90b44789cdf626",
   "profile": "loans",
-  "toolCount": 42,
+  "toolCount": 44,
   "tools": [
+    "borrower.resolve-and-portfolio",
+    "loan.inspect-context",
     "borrower.search",
     "borrower.portfolio",
     "loan.preview",

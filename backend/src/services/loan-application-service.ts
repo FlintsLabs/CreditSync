@@ -529,7 +529,11 @@ export function previewLoan(input: PublicLoanCalculationParams) {
     }
 }
 
-export async function getLoanApplication(ctx: CommandContext, publicId: string) {
+export interface LoanApplicationReadOptions {
+    includeAccruals?: boolean;
+}
+
+export async function getLoanApplication(ctx: CommandContext, publicId: string, options: LoanApplicationReadOptions = {}) {
     const loan = await accessibleLoan(ctx, publicId);
     const base = await presentLoan(loan);
     const [inbound, outbound, replacementLineages] = await Promise.all([
@@ -537,16 +541,18 @@ export async function getLoanApplication(ctx: CommandContext, publicId: string) 
         db.query.loanRestructures.findFirst({ where: and(eq(loanRestructures.tenantId, ctx.tenantId), inArray(loanRestructures.status, ["executed", "reversed"]), eq(loanRestructures.oldLoanId, loan.id)), orderBy: [desc(loanRestructures.createdAt)] }),
         getLoanReplacementLineages(ctx.tenantId, [loan]),
     ]);
-    let accrualRows: typeof loanInterestAccruals.$inferSelect[];
-    try {
-        accrualRows = await db.select().from(loanInterestAccruals)
-            .where(and(eq(loanInterestAccruals.tenantId, ctx.tenantId), eq(loanInterestAccruals.loanId, loan.id)))
-            .orderBy(asc(loanInterestAccruals.accrualDate), asc(loanInterestAccruals.id));
-    } catch (error) {
-        const cause = error && typeof error === "object" && "cause" in error ? (error as { cause?: unknown }).cause : undefined;
-        const code = [error, cause].map((candidate) => candidate && typeof candidate === "object" && "code" in candidate ? (candidate as { code?: unknown }).code : undefined).find(Boolean);
-        if (code !== "42703" && code !== "42P01") throw error;
-        accrualRows = [];
+    let accrualRows: typeof loanInterestAccruals.$inferSelect[] = [];
+    if (options.includeAccruals !== false) {
+        try {
+            accrualRows = await db.select().from(loanInterestAccruals)
+                .where(and(eq(loanInterestAccruals.tenantId, ctx.tenantId), eq(loanInterestAccruals.loanId, loan.id)))
+                .orderBy(asc(loanInterestAccruals.accrualDate), asc(loanInterestAccruals.id));
+        } catch (error) {
+            const cause = error && typeof error === "object" && "cause" in error ? (error as { cause?: unknown }).cause : undefined;
+            const code = [error, cause].map((candidate) => candidate && typeof candidate === "object" && "code" in candidate ? (candidate as { code?: unknown }).code : undefined).find(Boolean);
+            if (code !== "42703" && code !== "42P01") throw error;
+            accrualRows = [];
+        }
     }
     const accruals = accrualRows.map((row) => ({
         publicId: row.publicId,
@@ -589,14 +595,30 @@ export async function getLoanApplication(ctx: CommandContext, publicId: string) 
     };
 }
 
-export async function getLoanContract(ctx: CommandContext, publicId: string) {
+export interface LoanContractReadOptions extends LoanApplicationReadOptions {
+    includeSchedule?: boolean;
+    scheduleLimit?: number;
+    scheduleOffset?: number;
+}
+
+export async function getLoanContract(ctx: CommandContext, publicId: string, options: LoanContractReadOptions = {}) {
     const loan = await accessibleLoan(ctx, publicId);
+    const scheduleRowsPromise = options.includeSchedule === false
+        ? Promise.resolve([] as typeof loanSchedules.$inferSelect[])
+        : (() => {
+            const where = and(
+                eq(loanSchedules.tenantId, ctx.tenantId),
+                eq(loanSchedules.loanId, loan.id),
+            );
+            const ordered = db.select().from(loanSchedules).where(where).orderBy(loanSchedules.installmentNo);
+            if (options.scheduleLimit !== undefined && options.scheduleOffset !== undefined) return ordered.limit(options.scheduleLimit).offset(options.scheduleOffset);
+            if (options.scheduleLimit !== undefined) return ordered.limit(options.scheduleLimit);
+            if (options.scheduleOffset !== undefined) return ordered.offset(options.scheduleOffset);
+            return ordered;
+        })();
     const [application, scheduleRows] = await Promise.all([
-        getLoanApplication(ctx, publicId),
-        db.select().from(loanSchedules).where(and(
-            eq(loanSchedules.tenantId, ctx.tenantId),
-            eq(loanSchedules.loanId, loan.id),
-        )).orderBy(loanSchedules.installmentNo),
+        getLoanApplication(ctx, publicId, options),
+        scheduleRowsPromise,
     ]);
     const { replacementLineage: _replacementLineage, restructureLineage: _restructureLineage, openingBalanceComponents: _openingBalanceComponents, restructureWaivers: _restructureWaivers, ...contract } = application;
     return {

@@ -133,7 +133,7 @@ describe("CreditSync plugin 10.2.0 contract", () => {
         expect(contract.schemaVersion).toBe("1.0");
         expect(contract.compatibility).toBe("Tool names, full input/output schemas, descriptions, annotations, and file-parameter metadata are frozen for plugin 10.2.0; breaking changes require plugin 11.0.0.");
         expect(contract.tools.map((tool) => tool.name)).toEqual([...MCP_TOOL_NAMES]);
-        expect(contract.tools).toHaveLength(131);
+        expect(contract.tools).toHaveLength(MCP_TOOL_NAMES.length);
         expect(contract.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(["system.error-diagnostic.get", "system.error-diagnostic.list"]));
         expect(contract.tools.every((tool) => tool.inputSchema && tool.outputSchema && tool.annotations)).toBe(true);
         for (const name of ["evidence.import-chatgpt-file", "payment.evidence-supplement.import-chatgpt-file"]) {

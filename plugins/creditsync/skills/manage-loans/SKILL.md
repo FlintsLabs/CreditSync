@@ -9,6 +9,8 @@ description: Use when previewing, drafting, or activating a CreditSync loan, or 
 
 Loan creation is `preview → draft → activate`. Terms become immutable after activation; the backend-generated schedule is the only accounting schedule to present or persist.
 
+For a bounded read before a loan detail workflow, call `loan.inspect-context` with the exact loan public UUID. Select `summary`, `schedule`, or `history`; follow the named child `nextCursor` until `hasMore` is false before claiming the schedule, payment history, or disbursement history is complete. This read composes authoritative services and performs no financial write or calculation.
+
 ## Create and activate
 
 1. Resolve the borrower with `borrower.search` and inspect `borrower.portfolio`. Stop for ambiguous identity. For the selected contract's exact terms, daily/weekly/monthly schedule, floating-interest policy, or single-payment conditions, call `loan.contract.get` before explaining the agreement.

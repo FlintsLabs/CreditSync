@@ -6,6 +6,11 @@
 
 - Added server-side `loan.disbursement.evidence.import-chatgpt-file` orchestration for verified ChatGPT attachments on payout drafts, including stable retry/concurrency identity, conflict stops, and evidence-before-post eval coverage.
 - Documented ChatGPT mobile evidence ingestion and the pending real-device acceptance gate; no device result is claimed by the local test suite.
+- Added the read-only `borrower.resolve-and-portfolio`, `loan.inspect-context`, and `payment.match-context` composite reads with bounded pages, opaque named cursors, stale-result protection, complete allocation decomposition, and explicit ambiguity candidates.
+
+### Changed
+
+- Synchronized the frozen MCP contract and generated profile counts while preserving authorized service outputs, decimal strings, evidence states, and tenant boundaries.
 
 ## v10.1.0 - 2026-09-11
 

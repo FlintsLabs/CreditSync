@@ -154,6 +154,7 @@ import { executeUnfundedLoanCancellation, previewUnfundedLoanCancellation } from
 import { executePaymentAllocationCorrection, previewPaymentAllocationCorrection } from "../services/payment-allocation-correction-service";
 import { importChatGptDisbursementEvidence, importChatGptPaymentEvidence, importChatGptSupplementEvidence, recordPaymentEvidenceSupplement } from "../services/chatgpt-file-evidence-service";
 import { extractPaymentBatchStagingItem } from "../services/payment-batch-ocr-service";
+import { inspectLoanContext, matchPaymentContext, resolveAndPortfolio } from "./composite-reads";
 
 type ToolInput = Record<string, unknown>;
 
@@ -200,6 +201,7 @@ export function createDefaultMcpToolHandlers(
     "system.error-diagnostic.list": (ctx, input) => listMcpDiagnostics(ctx, input as Parameters<typeof listMcpDiagnostics>[1]),
     "borrower.search": (ctx, input) => searchBorrowers(ctx, { query: asString(input, "query") }),
     "borrower.portfolio": (ctx, input) => getBorrowerPortfolio(ctx, asString(input, "borrowerPublicId")),
+    "borrower.resolve-and-portfolio": (ctx, input) => resolveAndPortfolio(ctx, input),
     "borrower.create": (ctx, input) => createBorrower(ctx, input as unknown as BorrowerInput),
     "borrower.update": (ctx, input) => updateBorrower(
         ctx,
@@ -493,6 +495,7 @@ export function createDefaultMcpToolHandlers(
     }),
     "loan.disbursement.list": (ctx, input) => listLoanDisbursements(ctx, asString(input, "loanPublicId")),
     "loan.contract.get": (ctx, input) => getLoanContract(ctx, asString(input, "loanPublicId")),
+    "loan.inspect-context": (ctx, input) => inspectLoanContext(ctx, input),
     "loan.payment-history.list": async (ctx, input) => {
         const loanPublicId = asString(input, "loanPublicId");
         return {
@@ -500,6 +503,7 @@ export function createDefaultMcpToolHandlers(
             items: await listLoanPaymentIntakes(ctx, loanPublicId),
         };
     },
+    "payment.match-context": (ctx, input) => matchPaymentContext(ctx, input),
     "loan.disbursement.draft": (ctx, input) => {
         const { loanPublicId, ...draft } = input;
         rejectDisbursementDraftEvidenceIds(draft);
@@ -514,7 +518,13 @@ export function createDefaultMcpToolHandlers(
         const { disbursementPublicId, ...evidence } = input;
         return prepareDisbursementEvidence(ctx, String(disbursementPublicId), evidence as unknown as PrepareDisbursementEvidenceInput, dependencies.disbursementEvidenceGateway);
     },
-    "loan.disbursement.evidence.finalize": (ctx, input) => finalizeDisbursementEvidence(ctx, asString(input, "disbursementPublicId"), asString(input, "evidencePublicId"), dependencies.disbursementEvidenceGateway),
+    "loan.disbursement.evidence.finalize": async (ctx, input) => {
+        const finalized = await finalizeDisbursementEvidence(ctx, asString(input, "disbursementPublicId"), asString(input, "evidencePublicId"), dependencies.disbursementEvidenceGateway);
+        // The importer consumes the new durable receipt internally; preserve
+        // the established closed DTO for existing direct-upload MCP clients.
+        const { auditPublicId: _auditPublicId, ...legacyEvidence } = finalized;
+        return legacyEvidence;
+    },
     "loan.disbursement.post": (ctx, input) => postDisbursement(ctx, asString(input, "disbursementPublicId")),
     "loan.disbursement.reverse": (ctx, input) => reverseDisbursement(ctx, asString(input, "disbursementPublicId"), asString(input, "reason")),
     "loan.commission-participant.list": async (ctx, input) => ({ items: await listLoanCommissionParticipants(ctx, asString(input, "loanPublicId")) }),

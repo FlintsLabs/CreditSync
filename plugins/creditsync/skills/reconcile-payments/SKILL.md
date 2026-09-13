@@ -13,6 +13,8 @@ For evidence received after an exact payment is already `posted`, do not alter o
 
 Treat intake, evidence, matching, posting, and reversal as separate stages. A slip is optional; only a current `ready` proposal can become a posted payment.
 
+For a bounded payment matching read, call `payment.match-context` with the exact payment-intake public UUID. Use `summary` first, preserve ambiguous borrower candidates, and select `schedule` or `history` only when linked loan context is needed. Follow every `hasMore`/`nextCursor` and named nested cursor before claiming allocations or history are complete. This read never previews, posts, or changes a payment.
+
 ## Capture
 
 1. Extract only the supplied amount, received time, payer/intermediary hint, bank reference, and QR payload. Preserve uncertainty; never invent missing text.

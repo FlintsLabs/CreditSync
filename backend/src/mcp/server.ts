@@ -275,6 +275,20 @@ const intakeOutput = z.object({
     repostedByIntakePublicId: uuid.nullable(),
     cancellationMetadata: z.object({ reason: z.string().nullable(), cancelledAt: nullableIsoDateTime, auditPublicId: uuid.nullable(), actorPublicId: uuid.nullable() }).nullable().optional(),
 }).strict();
+const paymentEvidenceOutput = z.object({
+    ...publicEntity,
+    status: z.string(),
+    mimeType: z.string(),
+    size: z.number().int(),
+    sha256: z.string().regex(/^[0-9a-f]{64}$/i).nullable(),
+    filePublicId: uuid.nullable(),
+}).strict();
+const paymentCancellationCapabilityOutput = z.object({
+    allowed: z.boolean(),
+    stateHash: z.string().regex(/^[0-9a-f]{64}$/i),
+    blockedReason: z.string().nullable(),
+    batchPublicId: uuid.nullable(),
+}).strict();
 const paymentCancellationOutput = z.object({
     paymentIntakePublicId: uuid, status: z.literal("cancelled"), reason: z.string(), cancelledAt: isoDateTime,
     cancellationPublicId: uuid, auditPublicId: uuid, correlationId: uuid,
@@ -395,6 +409,18 @@ const loanPaymentHistoryItemOutput = intakeOutput.extend({
         penalty: signedMoney,
     }).strict().nullable(),
 }).strict();
+const loanAccrualOutput = z.object({
+    publicId: uuid,
+    accrualDate: date,
+    periodStartDate: date.nullable(),
+    periodEndDate: date.nullable(),
+    periodUnit: z.enum(["day", "week", "month"]).nullable(),
+    periodDayIndex: z.number().int().nullable(),
+    interestAmount: money,
+    paidAmount: money,
+    remainingAmount: money,
+    status: z.string(),
+}).strict();
 const loanOutput = z.object({
     ...publicEntity,
     borrowerPublicId: uuid.nullable().optional(),
@@ -434,18 +460,7 @@ const loanOutput = z.object({
     outstandingInterest: money,
     outstandingFees: money,
     status: z.string().nullable(),
-    accruals: z.array(z.object({
-        publicId: uuid,
-        accrualDate: date,
-        periodStartDate: date.nullable(),
-        periodEndDate: date.nullable(),
-        periodUnit: z.enum(["day", "week", "month"]).nullable(),
-        periodDayIndex: z.number().int().nullable(),
-        interestAmount: money,
-        paidAmount: money,
-        remainingAmount: money,
-        status: z.string(),
-    }).strict()).optional(),
+    accruals: z.array(loanAccrualOutput).optional(),
     createdAt: nullableIsoDateTime.optional(),
     updatedAt: nullableIsoDateTime.optional(),
 }).strict();
@@ -472,6 +487,63 @@ const loanContractScheduleOutput = z.object({
     status: z.string(),
     createdAt: nullableIsoDateTime.optional(),
     updatedAt: nullableIsoDateTime.optional(),
+}).strict();
+const compositePageOutput = <T extends z.ZodTypeAny>(item: T) => z.object({
+    items: z.array(item),
+    limit: z.number().int().min(1).max(100),
+    hasMore: z.boolean(),
+    nextCursor: z.string().nullable(),
+}).strict();
+const compositeCursorInput = z.string().trim().min(1).max(4096);
+const compositeCursorsInput = z.object({
+    borrowerCandidates: compositeCursorInput.optional(),
+    aliases: compositeCursorInput.optional(),
+    loans: compositeCursorInput.optional(),
+    allocations: compositeCursorInput.optional(),
+    schedule: compositeCursorInput.optional(),
+    history: compositeCursorInput.optional(),
+    disbursements: compositeCursorInput.optional(),
+    accruals: compositeCursorInput.optional(),
+    allocationCursors: z.record(uuid, compositeCursorInput).optional(),
+    scheduleCursors: z.record(uuid, compositeCursorInput).optional(),
+    historyCursors: z.record(uuid, compositeCursorInput).optional(),
+    accrualCursors: z.record(uuid, compositeCursorInput).optional(),
+}).strict();
+const compositePortfolioLoanOutput = z.object({
+    ...publicEntity,
+    principal: money,
+    interestRate: money,
+    repaymentType: z.string(),
+    status: z.string().nullable(),
+    replacementLineage: replacementLineageOutput.nullable(),
+    startDate: date.nullable(),
+    createdAt: nullableIsoDateTime.optional(),
+}).strict();
+const loanPaymentHealthOutput = z.object({
+    status: z.enum(["current", "due_today", "overdue", "settled"]),
+    dueTodayAmount: money,
+    overdueAmount: money,
+    overdueItemCount: z.number().int().nonnegative(),
+    overdueObligationUnit: z.enum(["day", "week", "installment"]),
+    overdueObligationCount: z.number().int().nonnegative(),
+    maxOverdueDays: z.number().int().nonnegative(),
+    accruingInterestAmount: money.optional(),
+}).strict();
+const compositeLoanOutput = loanOutput.omit({ accruals: true }).extend({ paymentHealth: loanPaymentHealthOutput.optional() }).strict();
+const compositePaymentDetailOutput = intakeOutput.extend({
+    evidence: z.array(paymentEvidenceOutput),
+    cancellation: paymentCancellationCapabilityOutput,
+}).strict();
+const compositeProposalOutput = proposalOutput.omit({ allocations: true }).extend({
+    allocations: compositePageOutput(proposalAllocationOutput),
+}).strict();
+const compositeLoanContextOutput = z.object({
+    loanPublicId: uuid,
+    allocations: compositePageOutput(proposalAllocationOutput),
+    loan: compositeLoanOutput,
+    schedule: compositePageOutput(loanContractScheduleOutput).nullable(),
+    history: compositePageOutput(loanPaymentHistoryItemOutput).nullable(),
+    accruals: compositePageOutput(loanAccrualOutput).nullable(),
 }).strict();
 const disbursementEventOutput = z.object({
     ...publicEntity,
@@ -1085,21 +1157,37 @@ export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unkno
             createdAt: nullableIsoDateTime.optional(),
         }).strict()),
     }).strict(),
+    "borrower.resolve-and-portfolio": z.object({
+        resolution: z.enum(["none", "unique", "ambiguous", "candidates"]),
+        matchType: z.enum(["public_id", "canonical", "confirmed_alias", "fuzzy"]).nullable(),
+        selectedBorrowerPublicId: uuid.nullable(),
+        candidates: compositePageOutput(borrowerOutput),
+        portfolio: z.object({
+            borrower: borrowerOutput,
+            aliases: compositePageOutput(aliasOutput),
+            loans: compositePageOutput(compositePortfolioLoanOutput),
+        }).strict().nullable(),
+    }).strict(),
     "borrower.create": borrowerOutput,
     "borrower.update": borrowerOutput,
     "borrower.alias": aliasOutput,
     "intake.get": intakeOutput.extend({
-        evidence: z.array(z.object({
-            ...publicEntity,
-            status: z.string(),
-            mimeType: z.string(),
-            size: z.number().int(),
-            sha256: z.string().regex(/^[0-9a-f]{64}$/i).nullable(),
-            filePublicId: uuid.nullable(),
-        }).strict()),
+        evidence: z.array(paymentEvidenceOutput),
         latestProposal: proposalOutput.nullable(),
-        cancellation: z.object({ allowed: z.boolean(), stateHash: z.string().regex(/^[0-9a-f]{64}$/i), blockedReason: z.string().nullable(), batchPublicId: uuid.nullable() }).strict(),
+        cancellation: paymentCancellationCapabilityOutput,
     }),
+    "payment.match-context": z.object({
+        intake: compositePaymentDetailOutput,
+        proposal: compositeProposalOutput.nullable(),
+        borrowerResolution: z.object({
+            resolution: z.enum(["none", "unique", "ambiguous", "candidates"]),
+            matchType: z.enum(["canonical", "confirmed_alias", "fuzzy"]).nullable().optional(),
+            candidates: compositePageOutput(borrowerOutput),
+        }).strict(),
+        allocations: compositePageOutput(proposalAllocationOutput),
+        loanContexts: compositePageOutput(compositeLoanContextOutput).nullable(),
+        view: z.enum(["summary", "schedule", "history"]),
+    }).strict(),
     "intake.list": z.object({ items: z.array(intakeOutput) }).strict(),
     "intake.create": z.union([
         intakeOutput.extend({ duplicate: z.literal(false), duplicateReason: z.null(), warnings: z.array(warningSchema) }),
@@ -1304,17 +1392,16 @@ export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unkno
         events: z.array(disbursementEventOutput),
     }).strict(),
     "loan.contract.get": loanOutput.extend({
-        paymentHealth: z.object({
-            status: z.enum(["current", "due_today", "overdue", "settled"]),
-            dueTodayAmount: money,
-            overdueAmount: money,
-            overdueItemCount: z.number().int().nonnegative(),
-            overdueObligationUnit: z.enum(["day", "week", "installment"]),
-            overdueObligationCount: z.number().int().nonnegative(),
-            maxOverdueDays: z.number().int().nonnegative(),
-            accruingInterestAmount: money.optional(),
-        }).strict().optional(),
+        paymentHealth: loanPaymentHealthOutput.optional(),
         schedule: z.array(loanContractScheduleOutput),
+    }).strict(),
+    "loan.inspect-context": z.object({
+        loan: compositeLoanOutput,
+        view: z.enum(["summary", "schedule", "history"]),
+        schedule: compositePageOutput(loanContractScheduleOutput).nullable(),
+        history: compositePageOutput(loanPaymentHistoryItemOutput).nullable(),
+        disbursements: compositePageOutput(disbursementEventOutput).nullable(),
+        accruals: compositePageOutput(loanAccrualOutput).nullable(),
     }).strict(),
     "loan.payment-start-date.update": loanOutput.extend(writeAuditMetadata).strict(),
     "loan.payment-history.list": z.object({
@@ -1397,6 +1484,16 @@ export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unkno
 export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
     "borrower.search": z.object({ query: shortText }).strict(),
     "borrower.portfolio": z.object({ borrowerPublicId: uuid }).strict(),
+    "borrower.resolve-and-portfolio": z.object({
+        query: shortText.optional(),
+        borrowerPublicId: uuid.optional(),
+        limit: z.number().int().min(1).max(100).optional(),
+        cursors: compositeCursorsInput.optional(),
+    }).strict().superRefine((value, ctx) => {
+        if (Boolean(value.query) === Boolean(value.borrowerPublicId)) {
+            ctx.addIssue({ code: "custom", message: "Exactly one of query or borrowerPublicId is required" });
+        }
+    }),
     "borrower.create": z.object(borrowerFields).strict(),
     "borrower.update": z.object({
         borrowerPublicId: uuid,
@@ -1417,6 +1514,12 @@ export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unkn
         }
     }),
     "intake.get": z.object({ paymentIntakePublicId: uuid }).strict(),
+    "payment.match-context": z.object({
+        paymentIntakePublicId: uuid,
+        view: z.enum(["summary", "schedule", "history"]).optional(),
+        limit: z.number().int().min(1).max(100).optional(),
+        cursors: compositeCursorsInput.optional(),
+    }).strict(),
     "intake.list": z.object({
         status: z.enum(["draft", "needs_review", "ready", "posted", "reversed", "duplicate"]).optional(),
     }).strict(),
@@ -1637,6 +1740,12 @@ export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unkn
     }).strict(),
     "loan.disbursement.list": z.object({ loanPublicId: uuid }).strict(),
     "loan.contract.get": z.object({ loanPublicId: uuid }).strict(),
+    "loan.inspect-context": z.object({
+        loanPublicId: uuid,
+        view: z.enum(["summary", "schedule", "history"]).optional(),
+        limit: z.number().int().min(1).max(100).optional(),
+        cursors: compositeCursorsInput.optional(),
+    }).strict(),
     "loan.payment-start-date.update": z.object({
         loanPublicId: uuid,
         paymentStartDate: date,
@@ -1969,6 +2078,7 @@ const readOnlyTools = new Set<McpToolName>([
     "system.error-diagnostic.list",
     "borrower.search",
     "borrower.portfolio",
+    "borrower.resolve-and-portfolio",
     "intake.get",
     "intake.list",
     "payment.batch.get",
@@ -1979,7 +2089,9 @@ const readOnlyTools = new Set<McpToolName>([
     "loan.interest-rate.list",
     "loan.disbursement.list",
     "loan.contract.get",
+    "loan.inspect-context",
     "loan.payment-history.list",
+    "payment.match-context",
     "loan.commission-participant.list",
     "loan.commission.preview",
     "loan.commission.list",
@@ -2178,10 +2290,12 @@ const openWorldTools = new Set<McpToolName>([
 const toolDescriptions: Record<McpToolName, string> = {
     "borrower.search": "Search accessible borrowers by canonical name or confirmed alias.",
     "borrower.portfolio": "Get one accessible borrower portfolio by public UUID.",
+    "borrower.resolve-and-portfolio": "Resolve one borrower without auto-selecting ambiguity and return a bounded portfolio.",
     "borrower.create": "Create a borrower in the configured MCP tenant.",
     "borrower.update": "Update an accessible borrower by public UUID.",
     "borrower.alias": "Add, confirm, or deactivate a borrower alias.",
     "intake.get": "Get a payment intake, evidence, and latest proposal.",
+    "payment.match-context": "Get a bounded, read-only payment matching context with borrower candidates and linked loan context.",
     "intake.list": "List accessible payment intakes, optionally by status.",
     "intake.create": "Create an idempotent payment intake from supplied payment data.",
     "evidence.prepare": "Prepare a signed upload for payment evidence.",
@@ -2248,6 +2362,7 @@ const toolDescriptions: Record<McpToolName, string> = {
     "loan.replacement.reverse": "Reverse an executed loan replacement only when authoritative downstream checks allow compensation.",
     "loan.disbursement.list": "List actual loan disbursement events and variance read-only.",
     "loan.contract.get": "Get complete accessible loan terms and repayment schedule read-only.",
+    "loan.inspect-context": "Inspect one accessible loan with a bounded summary, schedule, or payment-history view.",
     "loan.payment-start-date.update": "Change the first repayment date while preserving posted payment history and auditing schedule amendments.",
     "loan.payment-history.list": "List payment intakes and posted components for one accessible loan read-only.",
     "loan.disbursement.draft": "Create an editable actual loan disbursement draft.",
