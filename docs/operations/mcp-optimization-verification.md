@@ -1,6 +1,6 @@
 # MCP optimization verification report
 
-Status on `codex/mcp-optimization` after local acceptance. This is a feature-branch handoff, not a main-branch merge, deployment, canary, or mobile acceptance report. No full-backend suite, production, or real-device result is claimed here.
+Verified implementation commit: `36aa7f5996eab07dc9c0db880b0a6c283ba7f9b8` on `codex/mcp-optimization`, 2026-09-13. This is a feature-branch handoff, not a main-branch merge, deployment, canary, or mobile acceptance report. The complete disposable backend suite passed; production and real-device acceptance remain pending. The subsequent handoff commit changes documentation only.
 
 ## Implementation status
 
@@ -14,7 +14,7 @@ Status on `codex/mcp-optimization` after local acceptance. This is a feature-bra
 
 ## Gates
 
-Results below distinguish worker-targeted checks from independent supervisor verification of the current feature code. The full disposable backend run is in progress; no full-suite success is claimed until it finishes.
+Results below distinguish targeted checks from independent supervisor verification. The full disposable backend run and final typecheck, plugin, conformance and benchmark checks completed on the implementation commit above. Three cache-dependent tests skipped by the default run were subsequently exercised with a separate disposable PostgreSQL database and temporary loopback-only Redis 8 instance; all passed. The temporary cache was removed afterward. This is not a production Dragonfly acceptance claim.
 
 | Gate | Result | Notes |
 | --- | --- | --- |
@@ -26,8 +26,9 @@ Results below distinguish worker-targeted checks from independent supervisor ver
 | `bun run plugins/creditsync/scripts/validate.ts` | supervisor pass | Synchronized 10.2.0 contract, 11 skills, 134 tools, no bundled MCP/secrets. Private app reference remains a non-live placeholder. |
 | `cd backend && bun run mcp:discovery:benchmark` | pass | Complete cold/warm modern discovery measured for all six profiles: full 6 pages/810,145 bytes/134 tools; core-read 2/295,884/36; payments 3/358,640/57; loans 2/362,567/44; disbursements 2/212,409/39; admin 2/118,295/34. Legacy full was 134 tools/2,335,871 bytes. Schema projection was compared uncached/cached for every profile and request schema-generation delta was 0. Bytes are wire bytes, not host-token estimates. |
 | `cd backend && MCP_CONFORMANCE_ROOT=/absolute/verified/checkout bun run mcp:conformance` | supervisor pass | Fresh-install checkout at SHA `7169291ec0b68eb370fddcd9947313ab0d5e4156`, package `0.2.0-alpha.11`; 6 scenarios, 58/58 checks, 0 failures, plus valid/invalid JSON Schema fixture dispatch. `server-stateless` passed 28/28, including transport/discovery/version/clientInfo/unknown-method/capability and SDK subscription envelopes. |
-| full `cd backend && bun run test` | final supervisor rerun pending | Initial 143-file run: 1,062 passed, one pre-upgrade fixture failed because it incorrectly included migration 0074 while excluding 0073. That fixture now passes without removing any upgrade/replay/sentinel assertions. The final rerun includes all 144 files and is not replaced by targeted passes. |
-| frontend tests/lint/build | not applicable to this backend/plugin transport change | Reassess if supervisor integration changes shared frontend setup. |
+| full `cd backend && bun run test` | supervisor pass | All 144 files: 1,075 passed, 0 failures, 7,701 assertions; 3 cache-dependent skips covered separately below. The corrected pre-upgrade fixture retains every upgrade/replay/sentinel assertion. |
+| disposable cache-dependent follow-up | supervisor pass | 3 passed, 0 failures, 12 assertions; borrower-label, loan-restructure and borrower-update cache invalidation. 13 unrelated tests filtered out in this scoped follow-up. |
+| frontend tests/lint/build | not applicable | No frontend files changed relative to implementation base `a5bb450`. |
 
 ## Benchmark/conformance interpretation
 
@@ -40,6 +41,18 @@ bash scripts/test-disposable-postgres.sh --timeout 15000 src/db/cancellation-upg
 ```
 
 A concurrent run had two 5-second catalog-test timeouts. The isolated run above passed; those tests completed in 2.7–2.9 seconds. No assertions were removed. The final full-suite run uses the normal runner and no concurrent heavy gates.
+
+The earlier full run exposed a pre-upgrade test fixture that excluded migration 0073 but included 0074, advancing its simulated watermark beyond the target. The fixture now includes only migrations before the target; production migration contents were not changed. The final full run above passed with the normal timeout.
+
+Cache follow-up, from `backend/`, with `CACHE_URL` pointing only to the temporary test cache:
+
+```bash
+bash scripts/test-disposable-postgres.sh --timeout 15000 src/modules/loan-list-borrower-labels.test.ts src/modules/loan-restructures.test.ts src/services/borrower-service.test.ts -t 'refreshes cached loan-list|invalidates a prewarmed loan-detail|invalidates tenant caches'
+```
+
+## Legacy financial command compatibility
+
+Financial tools require wire idempotency keys except these retained compatibility paths. `payment.post` derives a stable key from intake/proposal IDs, `payment.reverse` from intake ID, and `funding-allocation.create` from loan/decimal amount/allocation date in `backend/src/mcp/default.ts`. `loan.activate` accepts an explicit key or derives one from the loan ID in `backend/src/mcp/server.ts`. Existing legacy receipts remain unchanged; audited operations retain public audit and correlation IDs. Explicit human confirmation and attachment stops are agent workflow requirements and must not be represented as new backend enforcement against arbitrary callers.
 
 ## Plan coverage and boundaries
 

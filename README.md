@@ -605,6 +605,8 @@ MCP_CONFORMANCE_ROOT=/tmp/verified-mcp-conformance bun run --cwd backend mcp:con
 
 The [generated catalog](plugins/creditsync/references/mcp-tool-contract.json) and [profile index](plugins/creditsync/references/mcp-profiles/index.json) are the source of truth for tool membership and counts. Legacy full discovery remains unpaginated, curated/modern discovery is paginated, and real iOS/Android payment and payout attachment transport plus canary rollout remain pending. The targeted test command above uses disposable PostgreSQL; do not treat this targeted acceptance set as the full backend suite.
 
+The [MCP verification handoff](docs/operations/mcp-optimization-verification.md) records the tested implementation commit, complete disposable backend results, separate cache coverage, conformance evidence and remaining runtime acceptance gates.
+
 The cancellation browser suite uses a separate local port (`5197`) and mocked API data. It checks explicit batch navigation, confirmation, retained history, and Bangkok timestamps from a browser outside Thailand:
 
 ```bash
