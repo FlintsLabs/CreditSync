@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import LoanDetail from "../src/pages/dashboard/loans/LoanDetail";
 import { LoanDisbursements } from "../src/pages/dashboard/loans/LoanDisbursements";
 import { api, resolveFileAccess } from "../src/lib/api";
+import appI18n from "../src/lib/i18n";
 
 vi.mock("../src/lib/api", () => ({ api: { get: vi.fn(), post: vi.fn(), put: vi.fn() }, resolveFileAccess: vi.fn() }));
 
@@ -20,8 +21,9 @@ function ledger(events = [{ publicId: EVENT_ID, status: "posted", grossAmount: "
 function renderDetail() { return render(<MemoryRouter initialEntries={[`/loans/${LOAN_ID}`]}><Routes><Route path="/loans/:id" element={<LoanDetail />} /></Routes></MemoryRouter>); }
 
 describe("loan disbursement view", () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         vi.clearAllMocks();
+        await appI18n.changeLanguage("en");
         vi.mocked(api.get).mockImplementation(async (url) => {
             if (url === `/loans/${LOAN_ID}`) return { data: loan };
             if (url === `/loans/${LOAN_ID}/schedule` || url === `/loans/${LOAN_ID}/funding-allocations`) return { data: [] };
@@ -29,6 +31,67 @@ describe("loan disbursement view", () => {
             if (url === `/loans/${LOAN_ID}/disbursements`) return { data: ledger() };
             throw new Error(`Unexpected GET ${url}`);
         });
+    });
+
+    it("preserves a draft and surfaces a localized evidence blocker without retrying automatically", async () => {
+        const draft = { ...ledger().events[0], status: "draft" as const, evidenceFilePublicIds: [] };
+        const backendError = { response: { status: 409, data: { code: "EVIDENCE_REQUIRED_NOT_READY", message: "Private backend details" } } };
+        vi.mocked(api.get).mockResolvedValue({ data: ledger([draft]) });
+        vi.mocked(api.post).mockRejectedValue(backendError);
+        const user = userEvent.setup();
+
+        render(<LoanDisbursements loanPublicId={LOAN_ID} />);
+        await user.click(await screen.findByRole("button", { name: /bank transfer.*draft/i }));
+        await user.clear(screen.getByLabelText(/payee hint/i));
+        await user.type(screen.getByLabelText(/payee hint/i), "Updated wallet");
+        await user.click(screen.getByRole("button", { name: /post disbursement/i }));
+
+        const alert = await screen.findByRole("alert");
+        expect(alert).toHaveTextContent("Required evidence is not ready. Complete and verify all required evidence before posting.");
+        expect(alert).not.toHaveTextContent("Private backend details");
+        expect(screen.getByLabelText(/gross amount/i)).toHaveValue("700.00");
+        expect(screen.getByLabelText(/payee hint/i)).toHaveValue("Updated wallet");
+        expect(api.post).toHaveBeenCalledTimes(1);
+        expect(api.get.mock.calls.filter(([url]) => url === `/loans/${LOAN_ID}/disbursements`)).toHaveLength(1);
+
+        const firstPostOptions = vi.mocked(api.post).mock.calls[0]?.[2];
+        await user.click(screen.getByRole("button", { name: /post disbursement/i }));
+        expect(api.post).toHaveBeenCalledTimes(2);
+        expect(vi.mocked(api.post).mock.calls[1]?.[2]).toEqual(firstPostOptions);
+        expect(screen.getByRole("button", { name: /post disbursement/i })).toBeInTheDocument();
+    });
+
+    it("shows the evidence blocker in Thai while preserving the selected draft", async () => {
+        await appI18n.changeLanguage("th");
+        const draft = { ...ledger().events[0], status: "draft" as const, evidenceFilePublicIds: [] };
+        vi.mocked(api.get).mockResolvedValue({ data: ledger([draft]) });
+        vi.mocked(api.post).mockRejectedValue({ response: { status: 409, data: { code: "EVIDENCE_REQUIRED_NOT_READY", message: "Private backend details" } } });
+        const user = userEvent.setup();
+
+        render(<LoanDisbursements loanPublicId={LOAN_ID} />);
+        await user.click(await screen.findByRole("button", { name: /โอนผ่านธนาคาร.*ร่าง/i }));
+        await user.click(screen.getByRole("button", { name: /ลงบัญชีการจ่ายเงิน/i }));
+
+        expect(await screen.findByRole("alert")).toHaveTextContent("หลักฐานที่จำเป็นยังไม่พร้อม กรุณาอัปโหลดและตรวจสอบหลักฐานที่จำเป็นทั้งหมดให้เสร็จก่อนลงบัญชี");
+        expect(screen.getByLabelText(/ยอดรวม/i)).toHaveValue("700.00");
+        expect(screen.getByRole("button", { name: /ลงบัญชีการจ่ายเงิน/i })).toBeInTheDocument();
+        expect(api.post).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the generic localized fallback for unknown post errors", async () => {
+        const draft = { ...ledger().events[0], status: "draft" as const, evidenceFilePublicIds: [] };
+        vi.mocked(api.get).mockResolvedValue({ data: ledger([draft]) });
+        vi.mocked(api.post).mockRejectedValue({ response: { status: 409, data: { code: "PRIVATE_UNKNOWN_ERROR", message: "Private backend details" } } });
+        const user = userEvent.setup();
+
+        render(<LoanDisbursements loanPublicId={LOAN_ID} />);
+        await user.click(await screen.findByRole("button", { name: /bank transfer.*draft/i }));
+        await user.click(screen.getByRole("button", { name: /post disbursement/i }));
+
+        const alert = await screen.findByRole("alert");
+        expect(alert).toHaveTextContent("Unable to post the disbursement.");
+        expect(alert).not.toHaveTextContent("PRIVATE_UNKNOWN_ERROR");
+        expect(alert).not.toHaveTextContent("Private backend details");
     });
 
     it("resolves a public evidence UUID only after opening the in-page preview", async () => {

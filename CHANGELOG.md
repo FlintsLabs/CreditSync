@@ -15,6 +15,10 @@
 - Added the deterministic read-only `workflow.resolve` resolver with profile-bound typed tool mappings, authoritative tenant/file/finalization evidence reads, fail-closed unsupported transport guidance, stale catalog/workflow checks, and no speculative financial identifiers or writes.
 - Added payout-post and loan-activation parity guards, signing-failure regression coverage, and an entry-point matrix documenting supported evidence transports and human-review-only paths.
 
+### Fixed
+
+- Surfaced localized, code-based evidence blockers in Web payout posting while preserving the draft, entered fields, and stable manual-retry idempotency key; unknown backend errors continue to use safe generic fallbacks.
+
 ## v0.4.45 - 2026-09-13
 
 ### Added
