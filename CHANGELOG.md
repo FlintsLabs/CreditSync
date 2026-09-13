@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added owner-approved evidence guards to alternate reconciliation/restore, allocation-correction, temporal-reflow, restructure, settlement, and renewal execution paths; pending required evidence now rejects before financial or execution-audit writes while data-only flows and terminal idempotent replays remain valid, with scoped disposable-PostgreSQL regressions and an updated entry-point matrix.
 - Recorded the owner-approved workflow resolver and sticky evidence-safety implementation plan, including isolated Luna high execution, independent verification and controlled deployment gates; implementation and mobile acceptance are not yet complete.
 - Added the pure authoritative financial-evidence readiness policy and literal regressions; service-level enforcement follows in the next implementation checkpoint.
 - Made financial-evidence policy evaluation fail closed for invalid runtime counts/flags and added independent pending, rejected, required-minimum, and unknown-state regressions.

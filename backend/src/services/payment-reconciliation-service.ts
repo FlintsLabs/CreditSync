@@ -11,8 +11,9 @@ import { createAuditLog } from "../lib/audit-log";
 import { parseMoney, serializeMoney } from "../lib/money";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
+import { assertFinancialEvidenceReady } from "./financial-evidence-requirement-service";
 import { accrueFloatingInterestThrough, resolveFloatingInterestAllocationPlan, type FloatingInterestAllocationPlan, type FloatingPaymentProjection } from "./floating-interest-service";
-import { buildTemporalReflowPlanForLoan, executeTemporalReflow, type TemporalReflowPlan } from "./floating-allocation-reflow-service";
+import { assertTemporalReflowEvidenceReady, buildTemporalReflowPlanForLoan, executeTemporalReflow, type TemporalReflowPlan } from "./floating-allocation-reflow-service";
 import { assertPaymentEvidenceReady, postPayment } from "./payment-service";
 import { lockPaymentBorrowers, paymentIntakeBorrowerIds } from "./payment-chronology-service";
 
@@ -378,6 +379,7 @@ async function inspectReconciliationSource(executor: any, ctx: CommandContext, i
 
 async function restoreDraftEvidence(executor: any, ctx: CommandContext, draft: typeof paymentIntakes.$inferSelect | null) {
     if (!draft || draft.status !== "draft") throw new DomainError("RECONCILIATION_RESTORE_DRAFT_REQUIRED", "A restore draft is required before preview", 409);
+    await assertFinancialEvidenceReady(executor, ctx, { kind: "payment_intake", publicId: draft.publicId });
     const hasReadyEvidence = Boolean(await executor.query.paymentEvidence.findFirst({ where: and(
         eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.paymentIntakeId, draft.id), eq(paymentEvidence.status, "ready"), sql`${paymentEvidence.finalizedAt} IS NOT NULL`,
     ) }));
@@ -398,6 +400,7 @@ export async function createPaymentRestoreDraft(ctx: CommandContext, input: { pa
     return db.transaction(async (tx) => {
         const intake = await accessibleIntake(ctx, input.paymentIntakePublicId, tx);
         await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id = ${intake.id} FOR UPDATE`);
+        await assertFinancialEvidenceReady(tx, ctx, { kind: "payment_intake", publicId: intake.publicId });
         const inspected = await inspectReconciliationSource(tx, ctx, intake, { requireSourceEvidence: false, allowDraftChild: true });
         const existing = inspected.repostChild;
         if (existing) {
@@ -670,6 +673,7 @@ export async function previewPaymentReconciliation(ctx: CommandContext, input: {
         const intake = await accessibleIntake(ctx, input.paymentIntakePublicId, tx);
         if (input.allocations.some((item) => item.component !== "interest")) throw new DomainError("RECONCILIATION_COMPONENT_NOT_SUPPORTED", "Historical reconciliation supports interest-only allocations", 409);
         await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id = ${intake.id} FOR UPDATE`);
+        await assertFinancialEvidenceReady(tx, ctx, { kind: "payment_intake", publicId: intake.publicId });
         const inspected = await inspectReconciliationSource(tx, ctx, intake);
         const priorReconciliation = await tx.query.paymentReconciliationGroups.findFirst({ where: and(eq(paymentReconciliationGroups.tenantId, ctx.tenantId), eq(paymentReconciliationGroups.paymentIntakeId, intake.id)) });
         if (priorReconciliation) throw new DomainError("RECONCILIATION_SOURCE_ALREADY_COMPENSATED", "The payment intake has already been reconciled", 409);
@@ -683,6 +687,7 @@ export async function previewPaymentReconciliation(ctx: CommandContext, input: {
             if (!plan.provenanceReady) throw new DomainError("RECONCILIATION_INTEREST_PROVENANCE_UNAVAILABLE", "Historical floating interest has no complete accrual provenance", 409, { loanPublicId: item.loan.publicId, warnings: plan.warnings });
         }
         const temporalReflow = await buildTemporalReflowForAllocations(tx, ctx, allocations, provenancePlans, bangkokBusinessDate(intake.receivedAt));
+        await assertTemporalReflowEvidenceReady(tx, ctx, temporalReflow.sources);
         const source = {
             mode: inspected.mode, paymentIntakePublicId: intake.publicId, status: intake.status, amount: serializeMoney(intake.amount), receivedAt: intake.receivedAt,
             hasReadyEvidence: inspected.hasReadyEvidence,
@@ -753,11 +758,15 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
             ? await tx.select({ borrowerId: loans.borrowerId }).from(loans).where(and(eq(loans.tenantId, ctx.tenantId), inArray(loans.id, lockLoanIds))).then((rows: Array<{ borrowerId: number }>) => [...new Set(rows.map((row) => row.borrowerId))].sort((left, right) => left - right))
             : [];
         if (lockBorrowerIds.some((id) => !initialBorrowerIds.includes(id))) throw new DomainError("STALE_RECONCILIATION_PREVIEW", "Borrower mapping changed while acquiring locks", 409);
-        const intakeLockIds = [...new Set([intake.id, ...(inspectedBeforeLocks.repostChild ? [inspectedBeforeLocks.repostChild.id] : [])])].sort((a, b) => a - b);
+        const transactionPaymentIntakeIds = lockLoanIds.length
+            ? await tx.select({ paymentIntakeId: transactions.paymentIntakeId }).from(transactions).where(and(eq(transactions.tenantId, ctx.tenantId), inArray(transactions.loanId, lockLoanIds))).then((rows: Array<{ paymentIntakeId: number | null }>) => rows.map((row) => row.paymentIntakeId).filter((id): id is number => id !== null))
+            : [];
+        const intakeLockIds = [...new Set([intake.id, ...(inspectedBeforeLocks.repostChild ? [inspectedBeforeLocks.repostChild.id] : []), ...transactionPaymentIntakeIds])].sort((a, b) => a - b);
         await tx.execute(sql`SELECT id FROM payment_intakes WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(intakeLockIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
         if (lockLoanIds.length) await tx.execute(sql`SELECT id FROM loans WHERE tenant_id = ${ctx.tenantId} AND id IN (${sql.join(lockLoanIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY id FOR UPDATE`);
         if (lockLoanIds.length) await tx.execute(sql`SELECT id FROM loan_interest_accruals WHERE tenant_id = ${ctx.tenantId} AND loan_id IN (${sql.join(lockLoanIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY loan_id, id FOR UPDATE`);
         if (lockLoanIds.length) await tx.execute(sql`SELECT id FROM transactions WHERE tenant_id = ${ctx.tenantId} AND loan_id IN (${sql.join(lockLoanIds.map((id) => sql`${id}`), sql`, `)}) ORDER BY loan_id, id FOR UPDATE`);
+        await assertFinancialEvidenceReady(tx, ctx, { kind: "payment_intake", publicId: intake.publicId });
         const inspected = await inspectReconciliationSource(tx, ctx, intake, restoreMode ? { requireSourceEvidence: false, allowDraftChild: true } : undefined);
         const restoreDraft = restoreMode ? await restoreDraftEvidence(tx, ctx, inspected.repostChild) : null;
         const currentOriginals = inspected.originals;
@@ -774,6 +783,7 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
         const temporalReflow = restoreMode
             ? { plan: combineTemporalReflowPlans([]), sources: [], replacements: {} }
             : await buildTemporalReflowForAllocations(tx, ctx, allocations, currentProvenancePlans, bangkokBusinessDate(intake.receivedAt));
+        await assertTemporalReflowEvidenceReady(tx, ctx, temporalReflow.sources);
         const currentSource = {
             mode: restoreMode ? "exact_restore" : inspected.mode,
             ...(restoreMode ? { sourceMode: inspected.mode } : {}),

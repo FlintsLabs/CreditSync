@@ -19,6 +19,7 @@ import { parseMoney, serializeMoney } from "../lib/money";
 import { calculateSinglePaymentSettlement, type SinglePaymentExposure, type SinglePaymentTerms } from "../lib/single-payment";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
+import { assertLoanFinancialEvidenceReady } from "./financial-evidence-requirement-service";
 import { assertNoOlderPendingPayment, lockPaymentBorrowers } from "./payment-chronology-service";
 import { createDisbursementDraftInTransaction } from "./loan-disbursement-service";
 import { settlementSnapshot } from "./loan-settlement-service";
@@ -553,6 +554,7 @@ export async function executeLoanRestructure(ctx: CommandContext, restructurePub
             if (row.executeIdempotencyKey === required.idempotencyKey && row.executeRequestHash === required.requestHash) return { value: await presentExecution(tx, row, oldLoan) };
             throw new DomainError("IDEMPOTENCY_KEY_CONFLICT", "Restructure was executed with a different key or payload", 409);
         }
+        await assertLoanFinancialEvidenceReady(tx, ctx, oldLoan.id);
         await assertNoOlderPendingPayment(tx, ctx.tenantId, oldLoan.borrowerId, new Date(`${row.settlementDate}T23:59:59.999+07:00`), []);
         if (row.status !== "preview") throw new DomainError("RESTRUCTURE_NOT_EXECUTABLE", "Restructure preview is not executable", 409);
         if (row.expiresAt.getTime() <= Date.now() || row.previewHash !== input.previewHash || row.oldBalanceVersion !== input.expectedBalanceVersion) return { stale: true as const };

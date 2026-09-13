@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import Decimal from "decimal.js";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { auditLogs, borrowers, floatingTransactionAllocations, loans, paymentEvidence, paymentIntakes, paymentReconciliationEntries, paymentReconciliationGroups, paymentReconciliationProposals, paymentReconciliationReflowEntries, paymentReconciliationReflowGroups, paymentReconciliationReflowProposals, transactions, users } from "../db/schema";
+import { auditLogs, borrowers, financialEvidenceRequirements, floatingTransactionAllocations, loans, paymentEvidence, paymentIntakes, paymentReconciliationEntries, paymentReconciliationGroups, paymentReconciliationProposals, paymentReconciliationReflowEntries, paymentReconciliationReflowGroups, paymentReconciliationReflowProposals, transactions, users } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import { createBorrower } from "./borrower-service";
 import type { CommandContext } from "./command-context";
@@ -71,7 +71,6 @@ async function legacyTwoLoanFixture() {
 describe("existing-data temporal reflow repair", () => {
     integrationTest("previews without financial writes, executes once, replays exactly, and conflicts on changed key payload", async () => {
         const fixture = await legacyFixture();
-        await db.insert(paymentEvidence).values({ tenantId: fixture.tenantId, paymentIntakeId: fixture.reconciliation.paymentIntakeId, status: "pending", evidenceType: "slip", createdByUserId: fixture.ctx.actorUserId, updatedByUserId: fixture.ctx.actorUserId });
         const before = await db.select().from(transactions).where(eq(transactions.tenantId, fixture.tenantId));
         const preview = await previewPaymentReconciliationReflow(fixture.ctx, { reconciliationPublicId: fixture.reconciliation.publicId, reason: "Repair legacy chronological interest" });
         expect(preview.status).toBe("ready");
@@ -88,6 +87,35 @@ describe("existing-data temporal reflow repair", () => {
         await expect(executePaymentReconciliationReflow(fixture.ctx, { ...input, reason: "different repair" })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
         expect(await db.select().from(paymentReconciliationReflowGroups).where(eq(paymentReconciliationReflowGroups.tenantId, fixture.tenantId))).toHaveLength(1);
         expect(await db.select().from(paymentReconciliationReflowEntries).where(eq(paymentReconciliationReflowEntries.tenantId, fixture.tenantId))).toHaveLength(result.compensatingTransactionPublicIds.length);
+    });
+
+    integrationTest("previews without financial writes and rejects execution with one ready plus one pending required attachment", async () => {
+        const fixture = await legacyFixture();
+        await db.insert(financialEvidenceRequirements).values({
+            tenantId: fixture.tenantId,
+            paymentIntakeId: fixture.reconciliation.paymentIntakeId,
+            expectedCount: 2,
+            source: "test",
+            requestId: "reflow-evidence-request",
+            correlationId: "reflow-evidence-correlation",
+            createdByUserId: fixture.ctx.actorUserId,
+        });
+        await db.insert(paymentEvidence).values([
+            { tenantId: fixture.tenantId, paymentIntakeId: fixture.reconciliation.paymentIntakeId, status: "ready", evidenceType: "slip", evidenceHash: "c".repeat(64), mimeType: "image/png", declaredSize: 128, finalizedAt: new Date(), createdByUserId: fixture.ctx.actorUserId, updatedByUserId: fixture.ctx.actorUserId },
+            { tenantId: fixture.tenantId, paymentIntakeId: fixture.reconciliation.paymentIntakeId, status: "pending", evidenceType: "slip", evidenceHash: "d".repeat(64), mimeType: "image/png", declaredSize: 128, createdByUserId: fixture.ctx.actorUserId, updatedByUserId: fixture.ctx.actorUserId },
+        ]);
+        const before = await db.select().from(transactions).where(eq(transactions.tenantId, fixture.tenantId));
+        const preview = await previewPaymentReconciliationReflow(fixture.ctx, { reconciliationPublicId: fixture.reconciliation.publicId, reason: "Repair legacy chronological interest" });
+        expect(preview.status).toBe("ready");
+        expect(preview.plan.transactions.length).toBeGreaterThan(0);
+        expect(await db.select().from(transactions).where(eq(transactions.tenantId, fixture.tenantId))).toEqual(before);
+        const persistedProposal = await db.query.paymentReconciliationReflowProposals.findFirst({ where: eq(paymentReconciliationReflowProposals.publicId, preview.publicId) });
+        expect((persistedProposal?.sourceSnapshot as { evidence: unknown[] }).evidence).toHaveLength(1);
+        const input = { reflowPreviewPublicId: preview.publicId, previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true as const, reason: preview.reason, idempotencyKey: "legacy-repair-pending-evidence" };
+        await expect(executePaymentReconciliationReflow(fixture.ctx, input)).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+        expect(await db.select().from(transactions).where(eq(transactions.tenantId, fixture.tenantId))).toEqual(before);
+        expect(await db.select().from(paymentReconciliationReflowGroups).where(eq(paymentReconciliationReflowGroups.tenantId, fixture.tenantId))).toHaveLength(0);
+        expect(await db.select().from(paymentReconciliationReflowEntries).where(eq(paymentReconciliationReflowEntries.tenantId, fixture.tenantId))).toHaveLength(0);
     });
 
     integrationTest("rejects a second repair group after automatic or prior repair provenance exists", async () => {

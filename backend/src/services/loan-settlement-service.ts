@@ -21,6 +21,7 @@ import { FinancialDecimal } from "../lib/financial-decimal";
 import { serializeMoney } from "../lib/money";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
+import { assertLoanFinancialEvidenceReady } from "./financial-evidence-requirement-service";
 import { assertNoOlderPendingPayment, lockPaymentBorrowers } from "./payment-chronology-service";
 import {
     accrueFloatingInterestThrough,
@@ -482,6 +483,7 @@ export async function executeLoanSettlement(ctx: CommandContext, input: ExecuteL
             }
             throw new DomainError("SETTLEMENT_ALREADY_EXECUTED", "Loan settlement has already been executed", 409);
         }
+        await assertLoanFinancialEvidenceReady(tx, ctx, loan.id);
         await assertNoOlderPendingPayment(tx, ctx.tenantId, loan.borrowerId, new Date(`${settlement.asOfDate}T23:59:59.999+07:00`), []);
         const executedAt = new Date();
         if (settlement.status !== "ready"
