@@ -1,7 +1,8 @@
 import { FinancialDecimal } from "../lib/financial-decimal";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { floatingTransactionAllocations, loanInterestAccruals, loans, transactions } from "../db/schema";
+import { floatingTransactionAllocations, loanInterestAccruals, loans, paymentIntakes, transactions } from "../db/schema";
 import type { CommandContext } from "./command-context";
+import { assertFinancialEvidenceReady } from "./financial-evidence-requirement-service";
 import { resolveFloatingInterestAllocationPlan, type FloatingPaymentProjection } from "./floating-interest-service";
 
 export type ReflowTransactionComponents = {
@@ -151,6 +152,26 @@ export type ExecutableReflowSource = ReflowSourceAllocation & {
 
 export type ExecutableReflowReplacement = ReflowReplacement & { accrualId: number };
 
+export async function assertTemporalReflowEvidenceReady(tx: any, ctx: CommandContext, sources: Array<{ transactionId: number }>) {
+    const transactionIds = [...new Set(sources.map((source) => source.transactionId))].sort((left, right) => left - right);
+    if (!transactionIds.length) return;
+    const transactionRows: Array<{ id: number; paymentIntakeId: number | null }> = await tx.select({ id: transactions.id, paymentIntakeId: transactions.paymentIntakeId })
+        .from(transactions)
+        .where(and(eq(transactions.tenantId, ctx.tenantId), inArray(transactions.id, transactionIds)))
+        .orderBy(transactions.id);
+    if (transactionRows.length !== transactionIds.length) throw new Error("TEMPORAL_REFLOW_TRANSACTION_NOT_FOUND");
+    const paymentIntakeIds: number[] = [...new Set(transactionRows.map((row) => row.paymentIntakeId).filter((id): id is number => id !== null))].sort((left, right) => left - right);
+    if (!paymentIntakeIds.length) return;
+    const paymentIntakeRows: Array<{ id: number; publicId: string }> = await tx.select({ id: paymentIntakes.id, publicId: paymentIntakes.publicId })
+        .from(paymentIntakes)
+        .where(and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.id, paymentIntakeIds)))
+        .orderBy(paymentIntakes.id);
+    if (paymentIntakeRows.length !== paymentIntakeIds.length) throw new Error("TEMPORAL_REFLOW_PAYMENT_INTAKE_NOT_FOUND");
+    for (const paymentIntake of paymentIntakeRows) {
+        await assertFinancialEvidenceReady(tx, ctx, { kind: "payment_intake", publicId: paymentIntake.publicId });
+    }
+}
+
 export async function loadActiveInterestReflowSources(tx: any, tenantId: string, loanId: number, effectiveAfterDate: string): Promise<ExecutableReflowSource[]> {
     const rows = await tx.select({
         allocation: floatingTransactionAllocations,
@@ -237,6 +258,7 @@ export async function executeTemporalReflow(tx: any, ctx: CommandContext, input:
     reason: string;
     idempotencyPrefix: string;
 }) {
+    await assertTemporalReflowEvidenceReady(tx, ctx, input.sources);
     const sourceByPublicId = new Map(input.sources.map((source) => [source.allocationPublicId, source]));
     const touchedAccrualIds = new Set<number>();
     const executed: Array<{ sourceAllocationId: number; reversalAllocationId: number; replacementAllocationId: number; replacementTransactionId: number; transactionPublicId: string; displacedAmount: string; oldDueDate: string; newDueDate: string }> = [];

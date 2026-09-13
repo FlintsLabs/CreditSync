@@ -4,20 +4,19 @@
 
 ### Added
 
-- Recorded the owner-approved workflow resolver and sticky evidence-safety implementation plan, including isolated Luna high execution, independent verification and controlled deployment gates; implementation and mobile acceptance are not yet complete.
-- Added the pure authoritative financial-evidence readiness policy and literal regressions; service-level enforcement follows in the next implementation checkpoint.
-- Made financial-evidence policy evaluation fail closed for invalid runtime counts/flags and added independent pending, rejected, required-minimum, and unknown-state regressions.
-- Added tenant-safe sticky financial-evidence requirements with typed payment/payout targets, additive migration 0075, immutable-parent locking, payment/batch/restore guards, and failure-retaining prepare declarations.
-- Added append-only hashed evidence-attempt floors in migration 0076, exact tenant/file/finalization/linkage checks, direct-service portfolio authorization, and download/signing/cleanup regressions that keep failed evidence attempts blocking financial transitions.
-- Added lock-scoped reconciliation of legacy payment and payout evidence into durable attempt floors using only provable SHA-256 or source-fingerprint identities; same-identity retries remain idempotent and ambiguous legacy rows are not guessed.
-- Fixed ChatGPT importer/source-hash alias reconciliation so one imported file cannot consume two sticky attempts; added payment and payout importer regressions for distinct files, retries, explicit registration, and direct-prepare reuse.
-- Added immutable operation bindings for ChatGPT evidence attempts so a failed download reserves the tenant/target/idempotency/source identity before network access; changed descriptors fail without another attempt, while same-key retries remain resumable and target/tenant scoped.
-- Added the deterministic read-only `workflow.resolve` resolver with profile-bound typed tool mappings, authoritative tenant/file/finalization evidence reads, fail-closed unsupported transport guidance, stale catalog/workflow checks, and no speculative financial identifiers or writes.
-- Hardened resolver tool help to refuse every non-inspection catalog tool and added payout-target evidence attachment guidance without widening the closed target model.
-- Added payout-post and loan-activation parity guards, signing-failure regression coverage, and an entry-point matrix documenting supported evidence transports and human-review-only paths.
-- Added the 10.3.0 plugin contract/eval refresh with the generated 135-tool catalog, independent profile snapshots, resolver safety scenarios, and explicit non-live host/mobile acceptance limits.
-- Added modern full/curated runtime acceptance proving `workflow.resolve` is dispatched as a read-only tool while legacy protocol negotiation remains covered.
-- Added the workflow-resolver acceptance matrix, mobile resolver procedure, and backup-recovery clarification requiring synthetic disposable databases for reset suites and read-only probes on restored real data.
+- Introduced read-only `workflow.resolve`, catalog/workflow version guidance, generated 135-tool/profile snapshots, and CreditSync plugin 10.3.0 with resolver-first skills and executable safety scenarios.
+- Added typed, tenant-scoped evidence requirements, append-only attempt floors, and pre-download import bindings in additive migrations 0075–0077; failed uploads retain their requirements without backfilling posted financial records.
+- Added disposable service/REST, concurrency, historical-replay, profile/runtime, and evidence-lineage regressions alongside an explicit financial entry-point inventory and separate backend, agent, host, and mobile acceptance evidence.
+
+### Changed
+
+- Applied evidence readiness to payment/payout posting, activation, reconciliation/restore, allocation correction, temporal reflow, settlement, renewal, and restructure; pending evidence blocks the affected preview/execute paths while legitimate data-only workflows and successful idempotent replays remain supported.
+- Documented client refresh and real-device acceptance limits, and separated destructive synthetic-database tests from read-only recovery probes on restored real data. Combined release verification and deployment remain pending.
+
+### Fixed
+
+- Require exact finalized tenant/file associations before counting evidence as ready; preserve failed prepare/import attempts across cleanup and reconcile proven ChatGPT/SHA aliases without double-counting one file.
+- Enforce existing portfolio authorization when registering evidence requirements and reject invalid runtime readiness counts instead of treating incomplete evidence as financial permission.
 
 ## v0.4.45 - 2026-09-13
 

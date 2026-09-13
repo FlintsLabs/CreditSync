@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, fundLedgerEntries, loanSchedules, loans, paymentBatchAllocations, paymentBatchItems, paymentBatchPreviews, paymentBatches, paymentIntakes, transactions, users } from "../db/schema";
+import { borrowers, financialEvidenceRequirements, fundLedgerEntries, loanSchedules, loans, paymentBatchAllocations, paymentBatchItems, paymentBatchPreviews, paymentBatches, paymentIntakes, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import { addPaymentBatchItem, createPaymentBatch, decidePaymentBatch, executePaymentBatch, previewPaymentBatch, splitPaymentBatch } from "./payment-batch-service";
 import { postPayment, previewPaymentMatch, reversePayment } from "./payment-service";
@@ -78,6 +78,30 @@ integration("single posting cannot bypass the gate of an unposted batch", async 
     const proposal = await previewPaymentMatch(f.ctx, f.intakes[0]!.publicId, { allocations: [{ borrowerPublicId: f.borrower.publicId, loanPublicId: allocation.loanPublicId, schedulePublicId: allocation.schedulePublicId!, amount: "30.00" }] });
     await expect(postPayment(f.ctx, f.intakes[0]!.publicId, { proposalPublicId: proposal.publicId })).rejects.toThrow("batch");
     expect(await db.select().from(transactions).where(eq(transactions.tenantId, f.ctx.tenantId))).toHaveLength(0);
+});
+
+integration("a pending required batch member rejects the whole batch before any item writes", async () => {
+    const f = await fixture();
+    // The intake is still mutable, so this is the same declaration path used by
+    // a real accepted attachment attempt. The old ready preview must be
+    // rechecked against this newly known requirement during execute.
+    await db.insert(financialEvidenceRequirements).values({
+        tenantId: f.ctx.tenantId,
+        paymentIntakeId: f.intakes[1]!.id,
+        expectedCount: 2,
+        source: "test",
+        requestId: "batch-pending-member-request",
+        correlationId: "batch-pending-member-correlation",
+        createdByUserId: f.ctx.actorUserId,
+    });
+    const before = await db.select({ id: transactions.id, amount: transactions.amount }).from(transactions).where(eq(transactions.tenantId, f.ctx.tenantId));
+
+    await expect(executePaymentBatch(f.ctx, f.batch.publicId, f.command)).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+
+    expect(await db.select({ id: transactions.id, amount: transactions.amount }).from(transactions).where(eq(transactions.tenantId, f.ctx.tenantId))).toEqual(before);
+    expect(await db.select().from(fundLedgerEntries).where(eq(fundLedgerEntries.tenantId, f.ctx.tenantId))).toHaveLength(0);
+    expect((await db.select().from(paymentIntakes).where(eq(paymentIntakes.tenantId, f.ctx.tenantId))).every((intake) => intake.status === "draft")).toBe(true);
+    expect(await db.query.paymentBatches.findFirst({ where: eq(paymentBatches.publicId, f.batch.publicId) })).toMatchObject({ status: "ready" });
 });
 
 integration("a draft batch containing only a posted intake does not block a later batch", async () => {

@@ -3,7 +3,7 @@ import Decimal from "decimal.js";
 import postgres from "postgres";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { auditLogs, borrowers, commandReceipts, floatingTransactionAllocations, loanInterestAccruals, loanSchedules, loans, paymentEvidence, paymentIntakes, paymentMatchProposals, paymentReconciliationEntries, paymentReconciliationGroups, paymentReconciliationProposals, paymentReconciliationReflowEntries, paymentReconciliationReflowGroups, transactions, users } from "../db/schema";
+import { auditLogs, borrowers, commandReceipts, files, financialEvidenceRequirements, floatingTransactionAllocations, loanInterestAccruals, loanSchedules, loans, paymentEvidence, paymentIntakes, paymentMatchProposals, paymentReconciliationEntries, paymentReconciliationGroups, paymentReconciliationProposals, paymentReconciliationReflowEntries, paymentReconciliationReflowGroups, transactions, users } from "../db/schema";
 import { createBorrower } from "./borrower-service";
 import { createLoanDraft, activateLoan } from "./loan-application-service";
 import { createPaymentIntake, finalizePaymentEvidence, postPayment, preparePaymentEvidence, previewPaymentMatch, reviewPaymentIntake, type EvidenceStorageGateway } from "./payment-service";
@@ -487,7 +487,14 @@ describe("payment reconciliation persistence", () => {
         })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
         await expect(previewPaymentMatch(ctx, child!.publicId, {})).rejects.toMatchObject({ code: "PAYMENT_RESTORE_DRAFT_REQUIRES_RESTORE_WORKFLOW" });
         await expect(previewPaymentRestore(ctx, { paymentIntakePublicId: source.publicId, reason: "Restore mistakenly reversed payment exactly" })).rejects.toMatchObject({ code: "RECONCILIATION_RESTORE_DRAFT_EVIDENCE_REQUIRED" });
-        await db.insert(paymentEvidence).values({ tenantId, paymentIntakeId: child!.id, status: "ready", evidenceType: "legacy_slip", legacyReference: "new-slip-fixture", finalizedAt: new Date(), createdByUserId: actor.id });
+        const restoreReadyFile = await db.insert(files).values({ tenantId, ownerUserId: actor.id, bucket: "test-evidence", key: `restore-ready-${crypto.randomUUID()}`, originalName: "restore-ready.png", mimeType: "image/png", size: 128, url: "storage:test-restore-ready" }).returning().then((rows) => rows[0]!);
+        await db.insert(paymentEvidence).values({ tenantId, paymentIntakeId: child!.id, fileId: restoreReadyFile.id, status: "ready", evidenceType: "legacy_slip", legacyReference: "new-slip-fixture", evidenceHash: "2".repeat(64), mimeType: "image/png", declaredSize: 128, finalizedAt: new Date(), createdByUserId: actor.id });
+
+        await db.insert(financialEvidenceRequirements).values({ tenantId, paymentIntakeId: child!.id, expectedCount: 2, source: "test", requestId: "restore-evidence-request", correlationId: "restore-evidence-correlation", createdByUserId: actor.id });
+        const restorePendingFile = await db.insert(files).values({ tenantId, ownerUserId: actor.id, bucket: "test-evidence", key: `restore-pending-${crypto.randomUUID()}`, originalName: "restore-pending.png", mimeType: "image/png", size: 128, url: "storage:test-restore-pending" }).returning().then((rows) => rows[0]!);
+        const pendingRestoreEvidence = await db.insert(paymentEvidence).values({ tenantId, paymentIntakeId: child!.id, fileId: restorePendingFile.id, status: "pending", evidenceType: "slip", evidenceHash: "1".repeat(64), mimeType: "image/png", declaredSize: 128, createdByUserId: actor.id, updatedByUserId: actor.id }).returning().then((rows) => rows[0]!);
+        await expect(previewPaymentRestore(ctx, { paymentIntakePublicId: source.publicId, reason: "Restore mistakenly reversed payment exactly" })).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+        await db.update(paymentEvidence).set({ status: "ready", finalizedAt: new Date() }).where(eq(paymentEvidence.id, pendingRestoreEvidence.id));
 
         const preview = await previewPaymentRestore(ctx, { paymentIntakePublicId: source.publicId, reason: "Restore mistakenly reversed payment exactly" });
         expect(preview.sourcePayment).toMatchObject({ mode: "exact_restore", status: "reversed" });
@@ -502,7 +509,7 @@ describe("payment reconciliation persistence", () => {
         expect(balances).toMatchObject({ outstandingPrincipal: "916.67", outstandingInterest: "0.00" });
         const restoredSchedule = await db.query.loanSchedules.findFirst({ where: and(eq(loanSchedules.tenantId, tenantId), eq(loanSchedules.loanId, loan.id), eq(loanSchedules.dueDate, "2026-08-24")) });
         expect(restoredSchedule).toMatchObject({ paidTotal: "100.00", remainingDue: "0.00", status: "paid" });
-        expect(await db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, tenantId), eq(paymentEvidence.paymentIntakeId, postedChild!.id)))).toHaveLength(1);
+        expect(await db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, tenantId), eq(paymentEvidence.paymentIntakeId, postedChild!.id)))).toHaveLength(2);
         expect((await executePaymentReconciliation(ctx, preview.publicId, { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "exact-restore-once" })).postedPaymentPublicId).toBe(child!.publicId);
     });
 
@@ -663,18 +670,20 @@ describe("payment reconciliation persistence", () => {
         await activateLoan(ctx, draft.publicId);
         const loan = await db.query.loans.findFirst({ where: and(eq(loans.tenantId, tenantId), eq(loans.publicId, draft.publicId)) });
         const source = await db.insert(paymentIntakes).values({ tenantId, status: "reversed", amount: "45.00", receivedAt: new Date("2026-08-15T09:28:00.000Z"), payerName: borrower.name, createdByUserId: actor.id, postedByUserId: actor.id, postedAt: new Date() }).returning().then((rows) => rows[0]!);
+        const sourceReadyFile = await db.insert(files).values({ tenantId, ownerUserId: actor.id, bucket: "test-evidence", key: `repost-source-${crypto.randomUUID()}`, originalName: "repost-source.png", mimeType: "image/png", size: 128, url: "storage:test-repost-source" }).returning().then((rows) => rows[0]!);
         const original = await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan!.id, amount: "45.00", interestComponent: "45.00", paymentIntakeId: source.id, entryType: "repayment", transactionDate: source.receivedAt, recordedByUserId: actor.id }).returning().then((rows) => rows[0]!);
         await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan!.id, amount: "-45.00", interestComponent: "-45.00", paymentIntakeId: source.id, entryType: "reversal", reversedTransactionId: original.id, transactionDate: new Date(), recordedByUserId: actor.id });
         const request = { paymentIntakePublicId: source.publicId, allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: draft.publicId, amount: "45.00", component: "interest" as const }], reason: "Repost confirmed historical interest after full reversal" };
 
         await expect(previewPaymentReconciliation(ctx, request)).rejects.toMatchObject({ code: "RECONCILIATION_SOURCE_EVIDENCE_REQUIRED" });
-        await db.insert(paymentEvidence).values({ tenantId, paymentIntakeId: source.id, status: "ready", evidenceType: "legacy_slip", legacyReference: "fixture", finalizedAt: new Date(), createdByUserId: actor.id });
+        await db.insert(paymentEvidence).values({ tenantId, paymentIntakeId: source.id, fileId: sourceReadyFile.id, status: "ready", evidenceType: "legacy_slip", legacyReference: "fixture", evidenceHash: "3".repeat(64), mimeType: "image/png", declaredSize: 128, finalizedAt: new Date(), createdByUserId: actor.id });
         await expect(previewPaymentReconciliation(ctx, request)).rejects.toMatchObject({ code: "RECONCILIATION_INTEREST_PROVENANCE_UNAVAILABLE" });
         expect(await db.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, tenantId), eq(paymentIntakes.repostOfIntakeId, source.id)) })).toBeUndefined();
         expect((await db.query.loans.findFirst({ where: eq(loans.id, loan!.id) }))?.outstandingPrincipal).toBe("1000.00");
 
         const activeSource = await db.insert(paymentIntakes).values({ tenantId, status: "reversed", amount: "45.00", receivedAt: source.receivedAt, createdByUserId: actor.id }).returning().then((rows) => rows[0]!);
-        await db.insert(paymentEvidence).values({ tenantId, paymentIntakeId: activeSource.id, status: "ready", evidenceType: "legacy_slip", legacyReference: "active-fixture", finalizedAt: new Date(), createdByUserId: actor.id });
+        const activeReadyFile = await db.insert(files).values({ tenantId, ownerUserId: actor.id, bucket: "test-evidence", key: `repost-active-${crypto.randomUUID()}`, originalName: "repost-active.png", mimeType: "image/png", size: 128, url: "storage:test-repost-active" }).returning().then((rows) => rows[0]!);
+        await db.insert(paymentEvidence).values({ tenantId, paymentIntakeId: activeSource.id, fileId: activeReadyFile.id, status: "ready", evidenceType: "legacy_slip", legacyReference: "active-fixture", evidenceHash: "4".repeat(64), mimeType: "image/png", declaredSize: 128, finalizedAt: new Date(), createdByUserId: actor.id });
         await db.insert(transactions).values({ tenantId, ownerUserId: actor.id, loanId: loan!.id, amount: "45.00", interestComponent: "45.00", paymentIntakeId: activeSource.id, entryType: "repayment", recordedByUserId: actor.id });
         await expect(previewPaymentReconciliation(ctx, { ...request, paymentIntakePublicId: activeSource.publicId })).rejects.toMatchObject({ code: "RECONCILIATION_SOURCE_NOT_FULLY_REVERSED" });
     });
@@ -752,5 +761,32 @@ describe("payment reconciliation persistence", () => {
         await expect((async () => db.update(paymentReconciliationProposals).set({ reason: "tamper" }).where(eq(paymentReconciliationProposals.id, proposalRow!.id)).returning())()).rejects.toThrow();
 
         await expect(previewPaymentReconciliation(ctx, { paymentIntakePublicId: intake.publicId, allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: draft.publicId, amount: "10.00", component: "interest" }], reason: "Should reject a second reconciliation" })).rejects.toMatchObject({ code: "RECONCILIATION_INTAKE_INVALID" });
+    });
+
+    integrationTest("rejects a needs_review reconciliation when its source gains a pending required attachment", async () => {
+        const tenantId = `reconcile-pending-evidence-${crypto.randomUUID()}`;
+        const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+        const ctx: CommandContext = { tenantId, actorUserId: actor.id, actorSource: "mcp", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() };
+        const borrower = await createBorrower(ctx, { name: "Reconciliation Evidence Borrower" });
+        const draft = await createLoanDraft(ctx, { borrowerPublicId: borrower.publicId, principal: "1000.00", interestRate: "0.00", repaymentType: "floating", termMonths: 1, startDate: "2026-08-06", floatingDailyInterest: { mode: "percent", rate: "1.0000", firstDayTreatment: "start_next_day" } });
+        await activateLoan(ctx, draft.publicId);
+        const intake = await createPaymentIntake(ctx, { amount: "10.00", receivedAt: "2026-08-15T09:28:00.000Z", payerName: borrower.name });
+        await reviewPaymentIntake(ctx, intake.publicId, { status: "needs_review" });
+        const preview = await previewPaymentReconciliation(ctx, { paymentIntakePublicId: intake.publicId, allocations: [{ borrowerPublicId: borrower.publicId, loanPublicId: draft.publicId, amount: "10.00", component: "interest" }], reason: "Historical intake requires evidence" });
+        const intakeRow = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, intake.publicId) });
+        await db.insert(financialEvidenceRequirements).values({ tenantId, paymentIntakeId: intakeRow!.id, expectedCount: 2, source: "test", requestId: "reconciliation-evidence-request", correlationId: "reconciliation-evidence-correlation", createdByUserId: actor.id });
+        await db.insert(paymentEvidence).values([
+            { tenantId, paymentIntakeId: intakeRow!.id, status: "ready", evidenceType: "slip", evidenceHash: "e".repeat(64), mimeType: "image/png", declaredSize: 128, finalizedAt: new Date(), createdByUserId: actor.id, updatedByUserId: actor.id },
+            { tenantId, paymentIntakeId: intakeRow!.id, status: "pending", evidenceType: "slip", evidenceHash: "f".repeat(64), mimeType: "image/png", declaredSize: 128, createdByUserId: actor.id, updatedByUserId: actor.id },
+        ]);
+        const before = {
+            transactions: await db.select().from(transactions).where(eq(transactions.tenantId, tenantId)),
+            groups: await db.select().from(paymentReconciliationGroups).where(eq(paymentReconciliationGroups.tenantId, tenantId)),
+            audits: await db.select().from(auditLogs).where(eq(auditLogs.tenantId, tenantId)),
+        };
+        await expect(executePaymentReconciliation(ctx, preview.publicId, { previewHash: preview.previewHash, expectedBalanceVersion: preview.expectedBalanceVersion, confirmed: true, reason: preview.reason, idempotencyKey: "reconciliation-pending-evidence" })).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+        expect(await db.select().from(transactions).where(eq(transactions.tenantId, tenantId))).toEqual(before.transactions);
+        expect(await db.select().from(paymentReconciliationGroups).where(eq(paymentReconciliationGroups.tenantId, tenantId))).toEqual(before.groups);
+        expect(await db.select().from(auditLogs).where(eq(auditLogs.tenantId, tenantId))).toEqual(before.audits);
     });
 });

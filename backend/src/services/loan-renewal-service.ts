@@ -25,6 +25,7 @@ import {
 import { parseMoney, serializeMoney } from "../lib/money";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
+import { assertLoanFinancialEvidenceReady } from "./financial-evidence-requirement-service";
 import { assertNoOlderPendingPayment, lockPaymentBorrowers } from "./payment-chronology-service";
 
 type Executor = any;
@@ -426,6 +427,7 @@ export async function previewLoanRenewal(
         if (loan.repaymentType !== "daily" || !["active", "paid"].includes(loan.status ?? "")) {
             throw new DomainError("LOAN_NOT_RENEWABLE", "Only active or paid daily loans can be renewed", 409);
         }
+        await assertLoanFinancialEvidenceReady(tx, ctx, loan.id);
         const asOf = new Date();
         const { renewalDate, paymentStartDate } = resolveRenewalDates(input, loan, asOf);
         const renewalAsOf = renewalDate === bangkokDate(asOf) ? asOf : businessDateAsOf(renewalDate);
@@ -662,6 +664,7 @@ export async function executeLoanRenewal(
                 .where(and(eq(loanRenewals.id, renewal.id), eq(loanRenewals.tenantId, ctx.tenantId)));
             return { stale: true as const };
         }
+        await assertLoanFinancialEvidenceReady(tx, ctx, oldLoan.id);
         const frozenComposition = renewal.composition as RenewalComposition | null;
         const renewalDate = renewal.renewalDate ?? frozenComposition?.renewalDate ?? bangkokDate(effectiveAt);
         const snapshotAsOf = renewalDate === bangkokDate(effectiveAt) ? effectiveAt : businessDateAsOf(renewalDate);
