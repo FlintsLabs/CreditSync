@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { auditLogs, borrowers, files, financialEvidenceRequirements, loanDisbursementEvidence, loanDisbursementEvents, loanSchedules, loans, users } from "../db/schema";
+import { auditLogs, borrowers, files, financialEvidenceRequirements, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loanSchedules, loans, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import {
     createDisbursementDraft,
@@ -14,6 +14,7 @@ import {
     reverseDisbursement,
     updateDisbursementDraft,
 } from "./loan-disbursement-service";
+import { registerFinancialEvidenceRequirement } from "./financial-evidence-requirement-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
 
@@ -201,6 +202,51 @@ integrationTest("retains a payout requirement after signing failure and blocks p
         .rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY", status: 409 });
 });
 
+integrationTest("retains a distinct payout attempt floor after a ready file and failed second signing", async () => {
+    const owner = await actor();
+    const loan = await loanFor(owner);
+    const draft = await createDisbursementDraft(context(owner), loan.publicId, {
+        grossAmount: "5.00", loanAttributedAmount: "5.00", channel: "cash", disbursedAt: "2026-08-10T05:30:00.000Z",
+    });
+    const first = await prepareDisbursementEvidence(context(owner), draft.publicId, { mimeType: "image/png", size: 12, sha256: "e".repeat(64) }, {
+        preparePut: async () => ({ uploadUrl: "https://storage.example.test/first", expiresAt: new Date(Date.now() + 60_000) }),
+        head: async () => ({ exists: false, contentType: null, contentLength: null, checksumSha256: null, metadata: {} }),
+    });
+    const firstIntent = await db.query.loanDisbursementEvidenceIntents.findFirst({ where: eq(loanDisbursementEvidenceIntents.publicId, first.publicId) });
+    const event = await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, draft.publicId) });
+    await db.update(loanDisbursementEvidenceIntents).set({ status: "ready", finalizedAt: new Date() }).where(eq(loanDisbursementEvidenceIntents.id, firstIntent!.id));
+    await db.insert(loanDisbursementEvidence).values({ tenantId: owner.tenantId, loanDisbursementEventId: event!.id, fileId: firstIntent!.fileId });
+
+    await expect(prepareDisbursementEvidence(context(owner), draft.publicId, { mimeType: "image/png", size: 12, sha256: "f".repeat(64) }, {
+        preparePut: async () => { throw new Error("second signing unavailable"); },
+        head: async () => ({ exists: false, contentType: null, contentLength: null, checksumSha256: null, metadata: {} }),
+    })).rejects.toThrow("second signing unavailable");
+    const requirement = await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.loanDisbursementEventId, event!.id) });
+    expect(requirement).toMatchObject({ expectedCount: 2 });
+    expect(await db.query.loanDisbursementEvidenceIntents.findFirst({ where: eq(loanDisbursementEvidenceIntents.evidenceHash, "f".repeat(64)) })).toBeUndefined();
+    await expect(postDisbursement(context(owner, "payout-distinct-attempt-post"), draft.publicId)).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+});
+
+integrationTest("requires finalized payout intent, tenant file, and event association", async () => {
+    const owner = await actor();
+    const loan = await loanFor(owner);
+    const draft = await createDisbursementDraft(context(owner), loan.publicId, {
+        grossAmount: "5.00", loanAttributedAmount: "5.00", channel: "cash", disbursedAt: "2026-08-10T05:45:00.000Z",
+    });
+    const prepared = await prepareDisbursementEvidence(context(owner), draft.publicId, { mimeType: "image/png", size: 12, sha256: "1".repeat(64) }, {
+        preparePut: async () => ({ uploadUrl: "https://storage.example.test/association", expiresAt: new Date(Date.now() + 60_000) }),
+        head: async () => ({ exists: false, contentType: null, contentLength: null, checksumSha256: null, metadata: {} }),
+    });
+    const intent = await db.query.loanDisbursementEvidenceIntents.findFirst({ where: eq(loanDisbursementEvidenceIntents.publicId, prepared.publicId) });
+    const event = await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, draft.publicId) });
+    await db.update(loanDisbursementEvidenceIntents).set({ status: "ready" }).where(eq(loanDisbursementEvidenceIntents.id, intent!.id));
+    await expect(postDisbursement(context(owner, "missing-finalized-post"), draft.publicId)).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+    await db.update(loanDisbursementEvidenceIntents).set({ finalizedAt: new Date() }).where(eq(loanDisbursementEvidenceIntents.id, intent!.id));
+    await expect(postDisbursement(context(owner, "missing-association-post"), draft.publicId)).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+    await db.insert(loanDisbursementEvidence).values({ tenantId: owner.tenantId, loanDisbursementEventId: event!.id, fileId: intent!.fileId });
+    await expect(postDisbursement(context(owner, "association-complete-post"), draft.publicId)).resolves.toMatchObject({ status: "posted" });
+});
+
 // Break caught: retrying a pending upload creates a second intent/file instead of returning the same durable capability.
 integrationTest("reuses a pending evidence intent when prepare is retried", async () => {
     const owner = await actor();
@@ -268,4 +314,16 @@ integrationTest("does not expose another tenant's loan or draft", async () => {
 
     await expect(listLoanDisbursements(context(outsider), loan.publicId)).rejects.toMatchObject({ code: "LOAN_NOT_FOUND", status: 404 });
     await expect(updateDisbursementDraft(context(outsider), draft.publicId, { note: "steal" })).rejects.toMatchObject({ code: "DISBURSEMENT_NOT_FOUND", status: 404 });
+});
+
+integrationTest("does not let a restricted actor register a requirement on another payout target", async () => {
+    const owner = await actor();
+    const restricted = await db.insert(users).values({ tenantId: owner.tenantId, email: `${crypto.randomUUID()}@example.test`, role: "viewer" }).returning().then((rows) => rows[0]!);
+    const loan = await loanFor(owner);
+    const draft = await createDisbursementDraft(context(owner), loan.publicId, {
+        grossAmount: "5.00", loanAttributedAmount: "5.00", channel: "cash", disbursedAt: "2026-08-10T06:00:00.000Z",
+    });
+    await expect(db.transaction((tx) => registerFinancialEvidenceRequirement(tx, context(restricted), { kind: "loan_disbursement", publicId: draft.publicId }, 1)))
+        .rejects.toMatchObject({ code: "DISBURSEMENT_NOT_FOUND", status: 404 });
+    expect(await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.loanDisbursementEventId, 1) })).toBeUndefined();
 });

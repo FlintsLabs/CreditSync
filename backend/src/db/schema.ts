@@ -1643,6 +1643,33 @@ export const financialEvidenceRequirements = pgTable("financial_evidence_require
     check("financial_evidence_requirements_request_context_check", sql`length(btrim(${table.requestId})) > 0 AND length(btrim(${table.correlationId})) > 0`),
 ]);
 
+/**
+ * Append-only identities for distinct evidence attempts. The key is a
+ * service-generated hash/fingerprint, never a raw file id, URL, or payload.
+ * Keeping this floor separate from removable upload intents prevents a failed
+ * signing/storage attempt from erasing a previously committed requirement.
+ */
+export const financialEvidenceRequirementAttempts = pgTable("financial_evidence_requirement_attempts", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    financialEvidenceRequirementId: integer("financial_evidence_requirement_id").notNull(),
+    attemptKey: text("attempt_key").notNull(),
+    createdByUserId: integer("created_by_user_id"),
+    source: text("source").notNull(),
+    requestId: text("request_id").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("financial_evidence_requirement_attempts_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("financial_evidence_requirement_attempts_tenant_requirement_key_unique").on(table.tenantId, table.financialEvidenceRequirementId, table.attemptKey),
+    foreignKey({ name: "financial_evidence_requirement_attempts_tenant_requirement_fk", columns: [table.tenantId, table.financialEvidenceRequirementId], foreignColumns: [financialEvidenceRequirements.tenantId, financialEvidenceRequirements.id] }),
+    foreignKey({ name: "financial_evidence_requirement_attempts_tenant_creator_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+    check("financial_evidence_requirement_attempts_key_check", sql`length(btrim(${table.attemptKey})) BETWEEN 1 AND 512`),
+    check("financial_evidence_requirement_attempts_source_check", sql`length(btrim(${table.source})) > 0`),
+    check("financial_evidence_requirement_attempts_request_context_check", sql`length(btrim(${table.requestId})) > 0 AND length(btrim(${table.correlationId})) > 0`),
+]);
+
 export const paymentMatchProposals = pgTable("payment_match_proposals", {
     id: serial("id").primaryKey(),
     publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),

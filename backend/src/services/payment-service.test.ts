@@ -1456,10 +1456,32 @@ describe("payment application service", () => {
         }, gateway);
         const settled = preparing.then((value) => value, (error) => error);
         await entered;
+        try {
+            await expect(postPayment(context(actor), intake.publicId, { proposalPublicId: preview.publicId }))
+                .rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY", status: 409 });
+        } finally {
+            releaseSigner();
+        }
+        expect(await settled).toMatchObject({ uploadUrl: "https://storage.example.test/signed" });
+    });
+
+    integrationTest("rejects an old preview after a failed evidence upload without financial writes", async () => {
+        const actor = await seedUser();
+        const seeded = await seedLoan({ actor, borrowerName: "Failed evidence post", schedules: [{ total: "10.00" }] });
+        const intake = await createPaymentIntake(context(actor), { amount: "10.00", receivedAt: "2026-08-10T10:15:00.000Z" });
+        const preview = await previewPaymentMatch(context(actor), intake.publicId, { allocations: [{
+            borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "10.00",
+        }] });
+        await expect(preparePaymentEvidence(context(actor), intake.publicId, { mimeType: "image/png", size: 12, sha256: "9".repeat(64) }, {
+            preparePut: async () => { throw new Error("signing unavailable"); },
+            head: async () => ({ exists: false, contentType: null, contentLength: null, checksumSha256: null, metadata: {} }),
+        })).rejects.toThrow("signing unavailable");
         await expect(postPayment(context(actor), intake.publicId, { proposalPublicId: preview.publicId }))
             .rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY", status: 409 });
-        releaseSigner();
-        expect(await settled).toMatchObject({ uploadUrl: "https://storage.example.test/signed" });
+        expect(await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, intake.publicId) })).toMatchObject({ status: "ready" });
+        expect(await db.select().from(transactions).where(eq(transactions.paymentIntakeId, (await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, intake.publicId) }))!.id))).toHaveLength(0);
+        expect(await db.select().from(fundLedgerEntries).where(eq(fundLedgerEntries.loanId, seeded.loan.id))).toHaveLength(0);
+        expect(await db.query.paymentMatchProposals.findFirst({ where: eq(paymentMatchProposals.publicId, preview.publicId) })).toMatchObject({ status: "ready" });
     });
 
     // Break caught: list/get leak numeric keys or records owned by another tenant.
@@ -1483,7 +1505,8 @@ describe("payment application service", () => {
         const allocations = [{ borrowerPublicId: seeded.borrower.publicId, loanPublicId: seeded.loan.publicId, amount: "10.00" }];
         await expect(previewPaymentMatch(context(actor), intake.publicId, { allocations })).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
 
-        await db.insert(paymentEvidence).values({ tenantId: actor.tenantId, paymentIntakeId: intakeRow!.id, evidenceType: "slip", status: "ready", finalizedAt: new Date(), createdByUserId: actor.id, updatedByUserId: actor.id });
+        const evidenceFile = await db.insert(files).values({ tenantId: actor.tenantId, ownerUserId: actor.id, bucket: "test", key: `required-${crypto.randomUUID()}`, originalName: "required.png", mimeType: "image/png", size: 12, url: "storage:required" }).returning().then((rows) => rows[0]!);
+        await db.insert(paymentEvidence).values({ tenantId: actor.tenantId, paymentIntakeId: intakeRow!.id, fileId: evidenceFile.id, evidenceType: "slip", status: "ready", finalizedAt: new Date(), createdByUserId: actor.id, updatedByUserId: actor.id });
         const proposal = await previewPaymentMatch(context(actor), intake.publicId, { allocations });
         expect(proposal.status).toBe("ready");
 

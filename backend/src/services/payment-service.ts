@@ -653,10 +653,10 @@ export async function preparePaymentEvidence(
     validateEvidenceInput(input);
     const intake = await accessibleIntake(ctx, intakePublicId);
     if (["posted", "reversed", "duplicate", "cancelled"].includes(intake.status)) throw new DomainError("PAYMENT_INTAKE_IMMUTABLE", "Evidence cannot be added to this intake", 409);
-    await db.transaction(async (tx) => {
-        await registerFinancialEvidenceRequirement(tx, ctx, { kind: "payment_intake", publicId: intake.publicId }, 1);
-    });
     const sha256 = input.sha256.toLocaleLowerCase();
+    await db.transaction(async (tx) => {
+        await registerFinancialEvidenceRequirement(tx, ctx, { kind: "payment_intake", publicId: intake.publicId }, 1, { attemptKey: `sha256:${sha256}` });
+    });
     const existing = await db.query.paymentEvidence.findFirst({
         where: and(eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.evidenceHash, sha256)),
     });
