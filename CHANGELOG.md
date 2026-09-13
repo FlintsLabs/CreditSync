@@ -15,6 +15,7 @@
 - Added the deterministic read-only `workflow.resolve` resolver with profile-bound typed tool mappings, authoritative tenant/file/finalization evidence reads, fail-closed unsupported transport guidance, stale catalog/workflow checks, and no speculative financial identifiers or writes.
 - Hardened resolver tool help to refuse every non-inspection catalog tool and added payout-target evidence attachment guidance without widening the closed target model.
 - Added payout-post and loan-activation parity guards, signing-failure regression coverage, and an entry-point matrix documenting supported evidence transports and human-review-only paths.
+- Added the 10.3.0 plugin contract/eval refresh with the generated 135-tool catalog, independent profile snapshots, resolver safety scenarios, and explicit non-live host/mobile acceptance limits.
 
 ## v0.4.45 - 2026-09-13
 

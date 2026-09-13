@@ -1,16 +1,18 @@
-# CreditSync Plugin 10.2.0
+# CreditSync Plugin 10.3.0
 
 This private Codex plugin orchestrates the CreditSync MCP app for borrower and intermediary identity, payments, intermediary remittances and multi-leg disbursements, generalized floating-interest origination and settlement, effective-dated rate changes, direct loan disbursements, renewals, and append-only reversal.
 
 ## Package contract
 
-- Plugin version: `10.2.0`
+- Plugin version: `10.3.0`
 - MCP schema version: `1.0`
 - 11 orchestration skills: `creditsync`, `manage-borrowers`, `reconcile-payments`, `reconcile-intermediary-remittances`, `manage-loans`, `manage-floating-interest-rates`, `settle-floating-loans`, `manage-disbursements`, `manage-intermediated-disbursements`, `renew-daily-loan`, `restructure-loan`
 - App manifest: `.app.json`
 - Remote endpoint: registered private app pointing to `https://<creditsync-host>/mcp`
 
 The package does not contain an MCP URL, bearer token, `.mcp.json`, OAuth configuration, hooks, plugin UI, or funding mutation capability. It references a private registered app so credentials remain in Codex/server secret storage.
+
+At the start of each supported financial intent, call the read-only `workflow.resolve` tool with the exact public target when known, attachment availability, and known independent workflow/catalog versions. Re-resolve after target, evidence, preview-expiry, or version changes. Its result is bounded guidance only: it never calculates money, persists a preview, confirms, authorizes, invents future identifiers, or replaces authoritative inspect/preview/confirmation/post services. Missing or unsupported attachment transport routes to human review; the local scripted evals do not claim host or mobile adoption.
 
 For two or more slips belonging to one resolved borrower, use `payment.batch.capture` once, then prepare/finalize the complete evidence set with `payment.batch.evidence.prepare-many` and `payment.batch.evidence.finalize-many`. Preview the complete allocation set once, stop on ambiguity or duplicates, obtain one explicit confirmation, execute with stable idempotency, and verify every posted item. Never continue a partial batch.
 

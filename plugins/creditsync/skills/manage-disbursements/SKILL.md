@@ -5,6 +5,8 @@ description: Use when listing, drafting, editing, evidencing, posting, reviewing
 
 # Manage CreditSync Loan Disbursements
 
+Call `workflow.resolve` before a new payout intent and after any evidence/import or version change. Use the exact draft/event UUID once known; `workflow.resolve` only guides the named draft/evidence/post sequence and never authorizes a payout. Missing or inaccessible file transport is a hard stop for attachment-bearing writes, and every requirement must be ready before activation or post.
+
 For a payout routed through an intermediary with funding, borrower-payout, or advance-interest-return legs, use `manage-intermediated-disbursements` instead of this direct-loan event workflow.
 
 ## Overview

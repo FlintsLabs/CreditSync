@@ -5,6 +5,8 @@ description: Use when previewing, confirming, executing, or reversing a CreditSy
 
 # Renew a CreditSync Daily Loan
 
+Call `workflow.resolve` before renewal and after a stale preview, evidence change, or version change. It is guidance, not approval: retain the inspect → preview → explicit confirmation → execute boundary. Attachment-bearing renewal without a supported transport is human-review-only.
+
 ## Overview
 
 A renewal is always `inspect → preview → explain → explicit confirmation → execute`. CreditSync computes recovered principal, settlement, waiver, and cash movement; its returned `composition` is authoritative and agents must never reproduce those formulas in the conversation.

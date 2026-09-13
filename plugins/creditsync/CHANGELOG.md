@@ -1,5 +1,16 @@
 # CreditSync Plugin Changelog
 
+## v10.3.0 - 2026-09-14
+
+### Added
+
+- Added deterministic `workflow.resolve` guidance across the profile contracts, with stale-version, exact-target, evidence-readiness, unsupported-transport, and no-fabricated-ID safety boundaries.
+- Added executable resolver eval coverage for missing/unknown attachments, stale versions, pending evidence, posted-payment supplements, unsupported payout transport, and profile isolation.
+
+### Changed
+
+- Regenerated the frozen 135-tool contract and independent profile snapshots from the local backend catalog; mobile/host adoption and live private-app authentication remain operator-pending.
+
 ## v10.2.0 - 2026-09-13
 
 ### Added
