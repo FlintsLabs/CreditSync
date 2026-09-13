@@ -475,6 +475,30 @@ describe("CreditSync executable orchestration evals", () => {
         ]);
     });
 
+    test("ChatGPT payout imports require every attachment and stop before unsafe transitions", async () => {
+        const ready = await runEvalScenario("disbursement-chatgpt-file-import");
+        expect(ready.outcome).toBe("completed");
+        expect(ready.calls.map((call) => call.name)).toEqual([
+            "loan.disbursement.draft",
+            "loan.disbursement.evidence.import-chatgpt-file",
+            "loan.disbursement.evidence.import-chatgpt-file",
+            "loan.disbursement.list",
+            "loan.disbursement.post",
+        ]);
+        expect(ready.calls.some((call) => call.name === "loan.activate")).toBe(false);
+
+        const retry = await runEvalScenario("disbursement-chatgpt-file-retry");
+        expect(retry).toMatchObject({ outcome: "completed", effects: [] });
+        expect(retry.calls.filter((call) => call.name === "loan.disbursement.evidence.import-chatgpt-file")).toHaveLength(2);
+        expect(retry.calls.some((call) => call.name === "loan.disbursement.post")).toBe(false);
+
+        for (const id of ["disbursement-chatgpt-file-unavailable", "disbursement-chatgpt-file-recipient-mismatch"] as const) {
+            const stopped = await runEvalScenario(id);
+            expect(stopped.outcome).toBe("stopped");
+            expect(stopped.calls.some((call) => ["loan.activate", "loan.disbursement.post"].includes(call.name))).toBe(false);
+        }
+    });
+
     test("duplicate evidence stops before finalize, preview, and financial posting", async () => {
         const result = await runEvalScenario("duplicate-evidence-hash");
         expect(result.outcome).toBe("stopped");

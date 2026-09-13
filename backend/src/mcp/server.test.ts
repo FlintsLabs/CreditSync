@@ -38,6 +38,7 @@ function config(overrides: Partial<McpRuntimeConfig> = {}): McpRuntimeConfig {
         actorEmail: "mcp-agent@example.test",
         rateLimitMax: 100,
         rateLimitWindowSeconds: 60,
+        allowedOrigins: [],
         ...overrides,
     };
 }
@@ -917,7 +918,8 @@ describe("CreditSync stateless MCP contract", () => {
             const properties = tool.inputSchema.properties as Record<string, unknown> | undefined;
             return properties?.tenantId === undefined && properties?.actorEmail === undefined;
         })).toBe(true);
-        expect(listed.tools.every((tool) => tool.annotations?.openWorldHint === false)).toBe(true);
+        const externalImportTools = new Set(["evidence.import-chatgpt-file", "loan.disbursement.evidence.import-chatgpt-file", "payment.evidence-supplement.import-chatgpt-file", "payment.evidence-supplement.record"]);
+        expect(listed.tools.every((tool) => tool.annotations?.openWorldHint === externalImportTools.has(tool.name))).toBe(true);
         expect(listed.tools.every((tool) => {
             const properties = tool.outputSchema?.properties as Record<string, { const?: unknown }> | undefined;
             return properties?.schemaVersion?.const === "1.0";
@@ -951,6 +953,7 @@ describe("CreditSync stateless MCP contract", () => {
             "evidence.finalize",
             "payment.cancel",
             "evidence.import-chatgpt-file",
+            "loan.disbursement.evidence.import-chatgpt-file",
             "payment.evidence-supplement.import-chatgpt-file",
             "payment.evidence-supplement.record",
             "payment.preview",
@@ -976,6 +979,7 @@ describe("CreditSync stateless MCP contract", () => {
             "payment.batch.preview",
             "payment.batch.execute",
             "payment.reconcile.preview",
+            "payment.reconcile.reflow.execute",
             "payment.allocation-correction.execute",
             "payment.reconcile.mark-review",
             "payment.reconcile.execute",
@@ -1761,10 +1765,10 @@ describe("CreditSync stateless MCP contract", () => {
 
     test("advertises strict top-level ChatGPT file parameters without unsafe output fields", () => {
         const tools = advertisedMcpToolMetadata();
-        for (const name of ["evidence.import-chatgpt-file", "payment.evidence-supplement.import-chatgpt-file"] as const) {
+        for (const name of ["evidence.import-chatgpt-file", "loan.disbursement.evidence.import-chatgpt-file", "payment.evidence-supplement.import-chatgpt-file"] as const) {
             const tool = tools.find((candidate) => candidate.name === name);
             expect(tool?._meta).toEqual({ "openai/fileParams": ["chatgptFile"] });
-            expect(tool?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false });
+            expect(tool?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true });
             const input = tool?.inputSchema as any;
             expect(input.required).toContain("chatgptFile");
             expect(input.properties.chatgptFile.required.sort()).toEqual(["download_url", "file_id"]);

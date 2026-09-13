@@ -15,6 +15,8 @@ type EventRow = typeof loanDisbursementEvents.$inferSelect;
 export interface DisbursementEvidenceStorageGateway {
     preparePut(request: SignedPutRequest): Promise<{ uploadUrl: string; expiresAt: Date; requiredHeaders?: Record<string, string> }>;
     head(key: string, bucket?: string): Promise<StoredObjectHead>;
+    /** Optional coordination hook used by deterministic concurrency tests. */
+    beforeExpiredIntentCleanup?: (intent: { id: number }) => Promise<void>;
 }
 
 const defaultEvidenceGateway: DisbursementEvidenceStorageGateway = { preparePut: createSignedPutUrl, head: headStoredObject };
@@ -33,7 +35,7 @@ export interface CreateDisbursementDraftInput {
 }
 
 export type UpdateDisbursementDraftInput = Partial<CreateDisbursementDraftInput>;
-export interface PrepareDisbursementEvidenceInput { mimeType: string; size: number; sha256: string; originalName?: string | null }
+export interface PrepareDisbursementEvidenceInput { mimeType: string; size: number; sha256: string; originalName?: string | null; importIdempotencyKey?: string | null; sourceFileFingerprint?: string | null }
 
 export function rejectDisbursementDraftEvidenceIds(input: unknown) {
     if (input && typeof input === "object" && "evidenceFilePublicIds" in input) {
@@ -127,6 +129,12 @@ async function accessibleEvent(ctx: CommandContext, publicId: string, executor: 
     return { event, loan };
 }
 
+export async function assertDisbursementEvidenceImportTarget(ctx: CommandContext, publicId: string) {
+    const { event } = await accessibleEvent(ctx, publicId);
+    if (event.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Evidence can only be imported for a draft", 409);
+    return event;
+}
+
 export async function assertDisbursementParentLoan(ctx: CommandContext, loanPublicId: string, disbursementPublicId: string) {
     const [loan, resolved] = await Promise.all([
         accessibleLoan(ctx, loanPublicId),
@@ -199,6 +207,76 @@ async function lockLoanAndEvent(tx: Executor, ctx: CommandContext, eventId: numb
 
 async function writeAudit(executor: Executor, ctx: CommandContext, event: EventRow, action: string, payload: unknown) {
     return executor.insert(auditLogs).values({ ...auditContext(ctx), entityType: "loan_disbursement", entityId: event.publicId, action, payload }).returning().then((rows: Array<typeof auditLogs.$inferSelect>) => rows[0]!);
+}
+
+/**
+ * Resolve the original finalize receipt for evidence created before migration
+ * 0074 added finalized_audit_public_id. The evidence UUID is part of the
+ * predicate so an unrelated event audit can never be adopted as the receipt.
+ */
+export async function disbursementEvidenceFinalizedAuditPublicId(
+    ctx: CommandContext,
+    eventPublicId: string,
+    evidencePublicId: string,
+    storedAuditPublicId: string | null = null,
+    executor: Executor = db,
+) {
+    const audit = await executor.query.auditLogs.findFirst({
+        columns: { publicId: true },
+        where: and(
+            eq(auditLogs.tenantId, ctx.tenantId),
+            eq(auditLogs.entityType, "loan_disbursement"),
+            eq(auditLogs.entityId, eventPublicId),
+            eq(auditLogs.action, "evidence_finalized"),
+            sql`${auditLogs.payload}->>'evidencePublicId' = ${evidencePublicId}`,
+            ...(storedAuditPublicId ? [eq(auditLogs.publicId, storedAuditPublicId)] : []),
+        ),
+    });
+    return audit?.publicId ?? null;
+}
+
+async function deleteFileIfUnreferenced(tx: Executor, ctx: CommandContext, fileId: number) {
+    // The intent is the owner of this temporary file. Keep the file if any
+    // evidence/intention ledger has retained a reference, even if an older
+    // schema or a concurrent workflow did not expose that reference here.
+    await tx.delete(files).where(and(
+        eq(files.tenantId, ctx.tenantId),
+        eq(files.id, fileId),
+        sql`NOT EXISTS (SELECT 1 FROM loan_disbursement_evidence WHERE tenant_id = ${ctx.tenantId} AND file_id = ${fileId})`,
+        sql`NOT EXISTS (SELECT 1 FROM loan_disbursement_evidence_intents WHERE tenant_id = ${ctx.tenantId} AND file_id = ${fileId})`,
+        sql`NOT EXISTS (SELECT 1 FROM borrower_id_card_upload_intents WHERE tenant_id = ${ctx.tenantId} AND file_id = ${fileId})`,
+        sql`NOT EXISTS (SELECT 1 FROM bot_uploads WHERE tenant_id = ${ctx.tenantId} AND file_id = ${fileId})`,
+        sql`NOT EXISTS (SELECT 1 FROM payment_evidence WHERE tenant_id = ${ctx.tenantId} AND file_id = ${fileId})`,
+        sql`NOT EXISTS (SELECT 1 FROM payment_evidence_supplements WHERE tenant_id = ${ctx.tenantId} AND file_id = ${fileId})`,
+        sql`NOT EXISTS (SELECT 1 FROM payment_batch_staging_evidence WHERE tenant_id = ${ctx.tenantId} AND file_id = ${fileId})`,
+        sql`NOT EXISTS (SELECT 1 FROM intermediary_remittance_evidence WHERE tenant_id = ${ctx.tenantId} AND file_id = ${fileId})`,
+        sql`NOT EXISTS (SELECT 1 FROM intermediary_remittance_evidence_intents WHERE tenant_id = ${ctx.tenantId} AND file_id = ${fileId})`,
+        sql`NOT EXISTS (SELECT 1 FROM intermediated_transfer_evidence_intents WHERE tenant_id = ${ctx.tenantId} AND file_id = ${fileId})`,
+        sql`NOT EXISTS (SELECT 1 FROM intermediated_transfer_evidence WHERE tenant_id = ${ctx.tenantId} AND file_id = ${fileId})`,
+    ));
+}
+
+async function deleteExpiredUnclaimedEvidenceIntent(ctx: CommandContext, eventId: number, intentId: number) {
+    return db.transaction(async (tx) => {
+        // All evidence claim/finalize paths lock loan -> event -> intent. Keep
+        // this cleanup in the same order so a late importer can either claim
+        // the reservation first or observe that it was removed, never both.
+        await lockLoanAndEvent(tx, ctx, eventId);
+        await tx.execute(sql`SELECT id FROM loan_disbursement_evidence_intents WHERE tenant_id = ${ctx.tenantId} AND id = ${intentId} FOR UPDATE`);
+        const current = await tx.query.loanDisbursementEvidenceIntents.findFirst({
+            where: and(eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId), eq(loanDisbursementEvidenceIntents.id, intentId)),
+        });
+        if (!current || current.status !== "pending" || current.importIdempotencyKey || !evidenceIntentExpired(current)) return false;
+        const removed = await tx.delete(loanDisbursementEvidenceIntents).where(and(
+            eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId),
+            eq(loanDisbursementEvidenceIntents.id, current.id),
+            eq(loanDisbursementEvidenceIntents.status, "pending"),
+            sql`${loanDisbursementEvidenceIntents.importIdempotencyKey} IS NULL`,
+        )).returning({ id: loanDisbursementEvidenceIntents.id, fileId: loanDisbursementEvidenceIntents.fileId });
+        if (!removed.length) return false;
+        await deleteFileIfUnreferenced(tx, ctx, removed[0]!.fileId);
+        return true;
+    });
 }
 
 export interface IntermediatedLoanPayoutProjectionInput {
@@ -533,38 +611,63 @@ export async function prepareDisbursementEvidence(ctx: CommandContext, disbursem
     ) });
     if (existing) {
         if (existing.loanDisbursementEventId !== event.id) {
-            if (existing.status === "pending" && evidenceIntentExpired(existing)) {
-                await db.transaction(async (tx) => {
-                    await tx.execute(sql`SELECT id FROM loan_disbursement_evidence_intents WHERE tenant_id = ${ctx.tenantId} AND id = ${existing.id} FOR UPDATE`);
-                    const current = await tx.query.loanDisbursementEvidenceIntents.findFirst({ where: and(eq(loanDisbursementEvidenceIntents.id, existing.id), eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId)) });
-                    if (current?.status === "pending" && evidenceIntentExpired(current)) {
-                        await tx.delete(loanDisbursementEvidenceIntents).where(eq(loanDisbursementEvidenceIntents.id, current.id));
-                        await tx.delete(files).where(and(eq(files.id, current.fileId), eq(files.tenantId, ctx.tenantId)));
-                    }
-                });
-                return prepareDisbursementEvidence(ctx, disbursementPublicId, input, gateway);
+            if (existing.status === "pending" && evidenceIntentExpired(existing) && !input.importIdempotencyKey && !existing.importIdempotencyKey) {
+                await gateway.beforeExpiredIntentCleanup?.({ id: existing.id });
+                if (await deleteExpiredUnclaimedEvidenceIntent(ctx, existing.loanDisbursementEventId, existing.id)) {
+                    return prepareDisbursementEvidence(ctx, disbursementPublicId, input, gateway);
+                }
             }
             throw new DomainError("EVIDENCE_HASH_CONFLICT", "Evidence checksum belongs to another disbursement", 409);
         }
         const file = await db.query.files.findFirst({ where: and(eq(files.id, existing.fileId), eq(files.tenantId, ctx.tenantId)) });
         if (!file) throw new DomainError("EVIDENCE_FILE_NOT_FOUND", "Evidence file not found", 404);
-        if (existing.status === "ready") return { id: existing.publicId, publicId: existing.publicId, filePublicId: file.publicId, status: "ready" as const };
-        if (existing.mimeType !== input.mimeType || existing.declaredSize !== input.size) throw new DomainError("EVIDENCE_HASH_CONFLICT", "Existing evidence intent has different metadata", 409);
-        if (evidenceIntentExpired(existing)) {
-            await db.transaction(async (tx) => {
-                const current = await tx.query.loanDisbursementEvidenceIntents.findFirst({ where: and(eq(loanDisbursementEvidenceIntents.id, existing.id), eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId)) });
-                if (current?.status === "pending" && evidenceIntentExpired(current)) {
-                    await tx.delete(loanDisbursementEvidenceIntents).where(eq(loanDisbursementEvidenceIntents.id, current.id));
-                    await tx.delete(files).where(and(eq(files.id, current.fileId), eq(files.tenantId, ctx.tenantId)));
-                }
+        if (input.importIdempotencyKey && existing.importIdempotencyKey && existing.importIdempotencyKey !== input.importIdempotencyKey) throw new DomainError("EVIDENCE_IDEMPOTENCY_CONFLICT", "Evidence import idempotency payload does not match", 409);
+        if (input.sourceFileFingerprint && existing.sourceFileFingerprint && existing.sourceFileFingerprint !== input.sourceFileFingerprint) throw new DomainError("EVIDENCE_IDEMPOTENCY_CONFLICT", "Evidence file identity does not match", 409);
+        if (existing.status === "ready") {
+            const locked = await db.transaction(async (tx) => {
+                const currentEvent = await lockLoanAndEvent(tx, ctx, event.id);
+                const current = await tx.query.loanDisbursementEvidenceIntents.findFirst({ where: and(
+                    eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId),
+                    eq(loanDisbursementEvidenceIntents.id, existing.id),
+                ) });
+                if (!current || current.loanDisbursementEventId !== currentEvent.id || current.status !== "ready") throw new DomainError("EVIDENCE_NOT_FOUND", "Disbursement evidence not found", 404);
+                if (input.importIdempotencyKey && current.importIdempotencyKey && current.importIdempotencyKey !== input.importIdempotencyKey) throw new DomainError("EVIDENCE_IDEMPOTENCY_CONFLICT", "Evidence import idempotency payload does not match", 409);
+                if (input.sourceFileFingerprint && current.sourceFileFingerprint && current.sourceFileFingerprint !== input.sourceFileFingerprint) throw new DomainError("EVIDENCE_IDEMPOTENCY_CONFLICT", "Evidence file identity does not match", 409);
+                if (!input.importIdempotencyKey && !input.sourceFileFingerprint) return current;
+                return await tx.update(loanDisbursementEvidenceIntents).set({
+                    importIdempotencyKey: input.importIdempotencyKey ?? current.importIdempotencyKey,
+                    sourceFileFingerprint: input.sourceFileFingerprint ?? current.sourceFileFingerprint,
+                    updatedByUserId: ctx.actorUserId,
+                    updatedAt: new Date(),
+                }).where(and(
+                    eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId),
+                    eq(loanDisbursementEvidenceIntents.id, current.id),
+                    eq(loanDisbursementEvidenceIntents.status, "ready"),
+                )).returning().then((rows) => rows[0] ?? current);
             });
-            return prepareDisbursementEvidence(ctx, disbursementPublicId, input, gateway);
+            return { id: locked.publicId, publicId: locked.publicId, filePublicId: file.publicId, status: "ready" as const };
+        }
+        if (existing.mimeType !== input.mimeType || existing.declaredSize !== input.size) throw new DomainError("EVIDENCE_HASH_CONFLICT", "Existing evidence intent has different metadata", 409);
+        if (evidenceIntentExpired(existing) && !input.importIdempotencyKey && !existing.importIdempotencyKey) {
+            await gateway.beforeExpiredIntentCleanup?.({ id: existing.id });
+            const removed = await deleteExpiredUnclaimedEvidenceIntent(ctx, event.id, existing.id);
+            if (removed) return prepareDisbursementEvidence(ctx, disbursementPublicId, input, gateway);
         }
         const signed = await gateway.preparePut({ bucket: file.bucket, key: file.key, contentType: input.mimeType, contentLength: input.size, checksumSha256: sha256, metadata: { tenant: ctx.tenantId, disbursement: event.publicId } });
         await db.transaction(async (tx) => {
             const current = await lockLoanAndEvent(tx, ctx, event.id);
             if (current.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Evidence can only be prepared for a draft", 409);
-            await tx.update(loanDisbursementEvidenceIntents).set({ uploadExpiresAt: signed.expiresAt, updatedByUserId: ctx.actorUserId, updatedAt: new Date() })
+            const currentIntent = await tx.query.loanDisbursementEvidenceIntents.findFirst({ where: and(
+                eq(loanDisbursementEvidenceIntents.id, existing.id), eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId),
+            ) });
+            if (!currentIntent) throw new DomainError("EVIDENCE_NOT_FOUND", "Disbursement evidence not found", 404);
+            if (input.importIdempotencyKey && currentIntent.importIdempotencyKey && input.importIdempotencyKey !== currentIntent.importIdempotencyKey) {
+                throw new DomainError("EVIDENCE_IDEMPOTENCY_CONFLICT", "Evidence import idempotency payload does not match", 409);
+            }
+            if (input.sourceFileFingerprint && currentIntent.sourceFileFingerprint && input.sourceFileFingerprint !== currentIntent.sourceFileFingerprint) {
+                throw new DomainError("EVIDENCE_IDEMPOTENCY_CONFLICT", "Evidence file identity does not match", 409);
+            }
+            await tx.update(loanDisbursementEvidenceIntents).set({ uploadExpiresAt: signed.expiresAt, importIdempotencyKey: input.importIdempotencyKey ?? currentIntent.importIdempotencyKey, sourceFileFingerprint: input.sourceFileFingerprint ?? currentIntent.sourceFileFingerprint, updatedByUserId: ctx.actorUserId, updatedAt: new Date() })
                 .where(and(eq(loanDisbursementEvidenceIntents.id, existing.id), eq(loanDisbursementEvidenceIntents.status, "pending")));
         });
         return { id: existing.publicId, publicId: existing.publicId, filePublicId: file.publicId, objectKey: file.key, uploadUrl: signed.uploadUrl, expiresAt: signed.expiresAt, requiredHeaders: signed.requiredHeaders ?? { "content-type": input.mimeType, "x-amz-checksum-sha256": Buffer.from(sha256, "hex").toString("base64"), "x-amz-meta-tenant": ctx.tenantId, "x-amz-meta-disbursement": event.publicId } };
@@ -576,7 +679,7 @@ export async function prepareDisbursementEvidence(ctx: CommandContext, disbursem
             const current = await lockLoanAndEvent(tx, ctx, event.id);
             if (current.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Evidence can only be prepared for a draft", 409);
             const file = await tx.insert(files).values({ tenantId: ctx.tenantId, ownerUserId: ctx.actorUserId, bucket: BUCKET_NAME, key, originalName: normalizedText(input.originalName), mimeType: input.mimeType, size: input.size, url: toStorageReference({ provider: "s3", bucket: BUCKET_NAME, key }) }).returning().then((rows) => rows[0]!);
-            const intent = await tx.insert(loanDisbursementEvidenceIntents).values({ tenantId: ctx.tenantId, loanDisbursementEventId: event.id, fileId: file.id, status: "pending", evidenceHash: sha256, mimeType: input.mimeType, declaredSize: input.size, createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((rows) => rows[0]!);
+            const intent = await tx.insert(loanDisbursementEvidenceIntents).values({ tenantId: ctx.tenantId, loanDisbursementEventId: event.id, fileId: file.id, status: "pending", evidenceHash: sha256, importIdempotencyKey: input.importIdempotencyKey ?? null, sourceFileFingerprint: input.sourceFileFingerprint ?? null, mimeType: input.mimeType, declaredSize: input.size, createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((rows) => rows[0]!);
             return { file, intent };
         });
     } catch (error) {
@@ -597,8 +700,15 @@ export async function prepareDisbursementEvidence(ctx: CommandContext, disbursem
         });
     } catch (error) {
         await db.transaction(async (tx) => {
-            await tx.delete(loanDisbursementEvidenceIntents).where(and(eq(loanDisbursementEvidenceIntents.id, created.intent.id), eq(loanDisbursementEvidenceIntents.status, "pending")));
-            await tx.delete(files).where(and(eq(files.id, created.file.id), eq(files.tenantId, ctx.tenantId)));
+            await lockLoanAndEvent(tx, ctx, event.id);
+            await tx.execute(sql`SELECT id FROM loan_disbursement_evidence_intents WHERE tenant_id = ${ctx.tenantId} AND id = ${created.intent.id} FOR UPDATE`);
+            const removed = await tx.delete(loanDisbursementEvidenceIntents).where(and(
+                eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId),
+                eq(loanDisbursementEvidenceIntents.id, created.intent.id),
+                eq(loanDisbursementEvidenceIntents.status, "pending"),
+                sql`${loanDisbursementEvidenceIntents.importIdempotencyKey} IS NULL`,
+            )).returning({ id: loanDisbursementEvidenceIntents.id, fileId: loanDisbursementEvidenceIntents.fileId });
+            if (removed.length) await deleteFileIfUnreferenced(tx, ctx, removed[0]!.fileId);
         });
         throw error;
     }
@@ -612,7 +722,11 @@ export async function finalizeDisbursementEvidence(ctx: CommandContext, disburse
     if (!intent) throw new DomainError("EVIDENCE_NOT_FOUND", "Disbursement evidence not found", 404);
     const file = await db.query.files.findFirst({ where: and(eq(files.id, intent.fileId), eq(files.tenantId, ctx.tenantId)) });
     if (!file) throw new DomainError("EVIDENCE_FILE_NOT_FOUND", "Evidence file not found", 404);
-    if (intent.status === "ready") return { id: intent.publicId, publicId: intent.publicId, filePublicId: file.publicId, status: "ready" as const, sha256: intent.evidenceHash };
+    if (intent.status === "ready") {
+        const auditPublicId = await disbursementEvidenceFinalizedAuditPublicId(ctx, event.publicId, intent.publicId, intent.finalizedAuditPublicId);
+        if (!auditPublicId) throw new DomainError("EVIDENCE_AUDIT_NOT_FOUND", "Ready evidence audit metadata is unavailable", 503);
+        return { id: intent.publicId, publicId: intent.publicId, filePublicId: file.publicId, status: "ready" as const, sha256: intent.evidenceHash, auditPublicId };
+    }
     const head = await gateway.head(file.key, file.bucket);
     if (!head.exists || head.contentType !== intent.mimeType || head.contentLength !== intent.declaredSize || head.checksumSha256?.toLowerCase() !== intent.evidenceHash || head.metadata.tenant !== ctx.tenantId || head.metadata.disbursement !== event.publicId) {
         throw new DomainError("EVIDENCE_METADATA_MISMATCH", "Stored evidence metadata, size, type, or ownership does not match", 409);
@@ -622,13 +736,19 @@ export async function finalizeDisbursementEvidence(ctx: CommandContext, disburse
         if (current.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Evidence can only be finalized for a draft", 409);
         const locked = await tx.query.loanDisbursementEvidenceIntents.findFirst({ where: and(eq(loanDisbursementEvidenceIntents.id, intent.id), eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId)) });
         if (!locked) throw new DomainError("EVIDENCE_NOT_FOUND", "Disbursement evidence not found", 404);
-        if (locked.status === "ready") return { id: locked.publicId, publicId: locked.publicId, filePublicId: file.publicId, status: "ready" as const, sha256: locked.evidenceHash };
+        if (locked.status === "ready") {
+            const auditPublicId = await disbursementEvidenceFinalizedAuditPublicId(ctx, current.publicId, locked.publicId, locked.finalizedAuditPublicId, tx);
+            if (!auditPublicId) throw new DomainError("EVIDENCE_AUDIT_NOT_FOUND", "Ready evidence audit metadata is unavailable", 503);
+            return { id: locked.publicId, publicId: locked.publicId, filePublicId: file.publicId, status: "ready" as const, sha256: locked.evidenceHash, auditPublicId };
+        }
         if (evidenceIntentExpired(locked)) throw new DomainError("EVIDENCE_UPLOAD_EXPIRED", "Evidence upload intent has expired", 409);
         const updated = await tx.update(loanDisbursementEvidenceIntents).set({ status: "ready", finalizedAt: new Date(), updatedByUserId: ctx.actorUserId, updatedAt: new Date() })
             .where(and(eq(loanDisbursementEvidenceIntents.id, locked.id), eq(loanDisbursementEvidenceIntents.status, "pending"))).returning().then((rows) => rows[0]);
         if (!updated) throw new DomainError("EVIDENCE_FINALIZE_CONFLICT", "Evidence can no longer be finalized", 409);
         await tx.insert(loanDisbursementEvidence).values({ tenantId: ctx.tenantId, loanDisbursementEventId: current.id, fileId: file.id }).onConflictDoNothing();
-        await writeAudit(tx, ctx, current, "evidence_finalized", { evidencePublicId: updated.publicId, filePublicId: file.publicId, sha256: updated.evidenceHash });
-        return { id: updated.publicId, publicId: updated.publicId, filePublicId: file.publicId, status: "ready" as const, sha256: updated.evidenceHash };
+        const audit = await writeAudit(tx, ctx, current, "evidence_finalized", { evidencePublicId: updated.publicId, filePublicId: file.publicId, sha256: updated.evidenceHash });
+        await tx.update(loanDisbursementEvidenceIntents).set({ finalizedAuditPublicId: audit.publicId, updatedByUserId: ctx.actorUserId, updatedAt: new Date() })
+            .where(eq(loanDisbursementEvidenceIntents.id, updated.id));
+        return { id: updated.publicId, publicId: updated.publicId, filePublicId: file.publicId, status: "ready" as const, sha256: updated.evidenceHash, auditPublicId: audit.publicId };
     });
 }

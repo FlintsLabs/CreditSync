@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
     authenticateBearer,
     hostIsAllowed,
+    originIsAllowed,
     parseMcpRuntimeConfig,
 } from "./security";
 
@@ -52,5 +53,23 @@ describe("MCP edge security", () => {
         expect(hostIsAllowed("evil-mcp.example.test", allowed)).toBe(false);
         expect(hostIsAllowed("mcp.example.test.evil", allowed)).toBe(false);
         expect(hostIsAllowed(null, allowed)).toBe(false);
+    });
+
+    test("allows absent Origin for non-browser clients and exact configured origins only", () => {
+        const config = parseMcpRuntimeConfig({
+            MCP_API_TOKEN_HASHES: digest("secret"),
+            MCP_ALLOWED_HOSTS: "mcp.example.test",
+            MCP_ALLOWED_ORIGINS: "https://app.example.test,http://localhost:5173",
+            MCP_TENANT_ID: "tenant-a",
+            MCP_ACTOR_EMAIL: "agent@example.test",
+        });
+        expect(originIsAllowed(null, config.allowedOrigins)).toBe(true);
+        expect(originIsAllowed("https://app.example.test", config.allowedOrigins)).toBe(true);
+        expect(originIsAllowed("https://app.example.test.evil", config.allowedOrigins)).toBe(false);
+        expect(originIsAllowed("null", config.allowedOrigins)).toBe(false);
+        expect(() => parseMcpRuntimeConfig({
+            MCP_API_TOKEN_HASHES: digest("secret"), MCP_ALLOWED_HOSTS: "mcp.example.test",
+            MCP_ALLOWED_ORIGINS: "*", MCP_TENANT_ID: "tenant-a", MCP_ACTOR_EMAIL: "agent@example.test",
+        })).toThrow("MCP_ALLOWED_ORIGINS");
     });
 });

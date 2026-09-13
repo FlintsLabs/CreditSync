@@ -50,14 +50,16 @@ test("declares disbursement events and tenant-scoped evidence links", async () =
     const intentConfig = getTableConfig(loanDisbursementEvidenceIntents);
     expect(intentConfig.columns.map((column) => column.name)).toEqual(expect.arrayContaining([
         "public_id", "tenant_id", "loan_disbursement_event_id", "file_id", "status", "evidence_hash",
-        "mime_type", "declared_size", "upload_expires_at", "finalized_at",
+        "mime_type", "declared_size", "upload_expires_at", "finalized_at", "import_idempotency_key",
+        "source_file_fingerprint", "finalized_audit_public_id",
     ]));
     expect(intentConfig.indexes.some((index) => index.config.name === "loan_disbursement_evidence_intents_tenant_hash_unique" && index.config.unique)).toBe(true);
+    expect(intentConfig.indexes.some((index) => index.config.name === "loan_disbursement_evidence_intents_tenant_import_key_unique" && index.config.unique)).toBe(true);
     for (const [columnName, foreignTableName] of [
         ["loan_disbursement_event_id", "loan_disbursement_events"],
         ["file_id", "files"],
     ]) {
-        const foreignKey = evidenceConfig.foreignKeys.find((candidate) => {
+        const foreignKey = intentConfig.foreignKeys.find((candidate) => {
             const reference = candidate.reference();
             return reference.columns.some((column) => column.name === columnName)
                 && getTableConfig(reference.foreignTable).name === foreignTableName;
@@ -67,6 +69,18 @@ test("declares disbursement events and tenant-scoped evidence links", async () =
         expect(reference.columns.map((column) => column.name)).toEqual(["tenant_id", columnName]);
         expect(reference.foreignColumns.map((column) => column.name)).toEqual(["tenant_id", "id"]);
     }
+});
+
+test("registers the ChatGPT payout attachment import identity columns", async () => {
+    const [journal, sql] = await Promise.all([
+        Bun.file(`${backendRoot}drizzle/meta/_journal.json`).json(),
+        Bun.file(`${backendRoot}drizzle/0074_disbursement_chatgpt_imports.sql`).text(),
+    ]);
+    expect(sql).toContain('ADD COLUMN "import_idempotency_key" text');
+    expect(sql).toContain('ADD COLUMN "source_file_fingerprint" text');
+    expect(sql).toContain('ADD COLUMN "finalized_audit_public_id" uuid');
+    expect(sql).toContain('loan_disbursement_evidence_intents_tenant_import_key_unique');
+    expect(journal.entries.some((entry: { tag: string }) => entry.tag === "0074_disbursement_chatgpt_imports")).toBe(true);
 });
 
 test("registers durable disbursement request keys and evidence readiness migration", async () => {

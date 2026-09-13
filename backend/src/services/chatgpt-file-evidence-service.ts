@@ -1,21 +1,25 @@
 import { createHash } from "node:crypto";
-import { lookup } from "node:dns/promises";
+import { Resolver } from "node:dns/promises";
 import { isIP } from "node:net";
+import { request as httpsRequest } from "node:https";
+import { Readable } from "node:stream";
 import { and, eq, sql } from "drizzle-orm";
 
 import { db } from "../db";
-import { files, paymentEvidence, paymentEvidenceSupplements, paymentIntakes, users } from "../db/schema";
+import { auditLogs, files, loanDisbursementEvidenceIntents, paymentEvidence, paymentEvidenceSupplements, paymentIntakes, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
 import {
     BUCKET_NAME,
     deleteStoredObject,
     headStoredObject,
+    createSignedPutUrl,
+    type SignedPutRequest,
     putStoredObject,
     toStorageReference,
-    type SignedPutRequest,
     type StoredObjectHead,
 } from "../lib/storage";
+import { assertDisbursementEvidenceImportTarget, disbursementEvidenceFinalizedAuditPublicId, finalizeDisbursementEvidence, prepareDisbursementEvidence, type DisbursementEvidenceStorageGateway } from "./loan-disbursement-service";
 import { recordMcpBreadcrumb } from "../mcp/diagnostic-context";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
@@ -34,7 +38,8 @@ export type ChatGptDownloadDependencies = {
     allowedHosts?: Set<string>;
     maxBytes?: number;
     fetch?: FetchLike;
-    resolveHost?: (hostname: string) => Promise<string[]>;
+    resolveHost?: (hostname: string, signal?: AbortSignal) => Promise<string[]>;
+    timeoutMs?: number;
 };
 
 export interface ChatGptEvidenceStorageGateway {
@@ -43,7 +48,12 @@ export interface ChatGptEvidenceStorageGateway {
     delete(key: string, bucket?: string): Promise<void>;
 }
 
-export type ChatGptEvidenceDependencies = ChatGptDownloadDependencies & { storage?: ChatGptEvidenceStorageGateway };
+export type ChatGptEvidenceDependencies = ChatGptDownloadDependencies & {
+    storage?: ChatGptEvidenceStorageGateway;
+    disbursementStorage?: ChatGptEvidenceStorageGateway;
+    disbursementEvidenceGateway?: DisbursementEvidenceStorageGateway;
+    authorizeDisbursement?: (ctx: CommandContext, disbursementPublicId: string) => Promise<unknown>;
+};
 
 const allowedMimeTypes = new Set(["image/jpeg", "image/png", "application/pdf"]);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -53,17 +63,63 @@ function configuredHosts() {
         .split(",").map((value) => value.trim().toLocaleLowerCase("und")).filter(Boolean));
 }
 
+function ipv4Number(address: string) {
+    const octets = address.split(".").map((part) => Number(part));
+    if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return null;
+    return (((octets[0]! * 256 + octets[1]!) * 256 + octets[2]!) * 256 + octets[3]!);
+}
+
+function ipv6Words(address: string) {
+    const withoutZone = address.split("%", 1)[0]!;
+    const halves = withoutZone.split("::");
+    if (halves.length > 2) return null;
+    const parseHalf = (value: string) => {
+        if (!value) return [] as number[];
+        const words: number[] = [];
+        for (const part of value.split(":")) {
+            if (part.includes(".")) {
+                const ipv4 = ipv4Number(part);
+                if (ipv4 === null) return null;
+                words.push(ipv4 >>> 16, ipv4 & 0xffff);
+            } else {
+                if (!/^[0-9a-f]{1,4}$/iu.test(part)) return null;
+                words.push(Number.parseInt(part, 16));
+            }
+        }
+        return words;
+    };
+    const left = parseHalf(halves[0]!);
+    const right = parseHalf(halves[1] ?? "");
+    if (!left || !right || halves.length === 1 && left.length !== 8 || halves.length === 2 && left.length + right.length >= 8) return null;
+    return halves.length === 2 ? [...left, ...Array.from({ length: 8 - left.length - right.length }, () => 0), ...right] : left;
+}
+
 function privateAddress(address: string) {
     if (isIP(address) === 4) {
-        const [a, b] = address.split(".").map(Number);
-        return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254)
-            || (a === 172 && b! >= 16 && b! <= 31) || (a === 192 && b === 168)
-            || a! >= 224;
+        const value = ipv4Number(address)!;
+        const first = value >>> 24;
+        const second = (value >>> 16) & 255;
+        return first === 0 || first === 10 || first === 127 || first >= 224
+            || (first === 100 && second >= 64 && second <= 127)
+            || (first === 169 && second === 254)
+            || (first === 172 && second >= 16 && second <= 31)
+            || (first === 192 && second === 168)
+            || (first === 192 && second === 0)
+            || (first === 198 && second >= 18 && second <= 19);
     }
     if (isIP(address) === 6) {
-        const normalized = address.toLocaleLowerCase("und");
-        return normalized === "::" || normalized === "::1" || normalized.startsWith("fc")
-            || normalized.startsWith("fd") || /^fe[89ab]/.test(normalized) || normalized.startsWith("ff");
+        const words = ipv6Words(address);
+        if (!words) return true;
+        if (words.slice(0, 5).every((word) => word === 0) && words[5] === 0xffff) {
+            const mapped = (words[6]! << 16) | words[7]!;
+            return privateAddress(`${mapped >>> 24}.${(mapped >>> 16) & 255}.${(mapped >>> 8) & 255}.${mapped & 255}`);
+        }
+        return words.every((word) => word === 0)
+            || words.slice(0, 7).every((word) => word === 0) && words[7] === 1
+            || (words[0]! & 0xfe00) === 0xfc00
+            || (words[0]! & 0xffc0) === 0xfe80
+            || (words[0]! & 0xff00) === 0xff00
+            || words[0] === 0x2001 && words[1] === 0xdb8;
     }
     return true;
 }
@@ -81,6 +137,63 @@ function safeOriginalName(name?: string | null) {
     return base ? base.slice(0, 200) : null;
 }
 
+function pinnedHttpsFetch(url: URL, init: RequestInit, address: string): Promise<Response> {
+    return new Promise((resolve, reject) => {
+        const externalSignal = init.signal;
+        if (externalSignal?.aborted) return reject(new DOMException("The operation was aborted", "AbortError"));
+        const req = httpsRequest({
+            protocol: "https:", hostname: address, port: 443, path: `${url.pathname}${url.search}`,
+            method: "GET", servername: url.hostname, headers: { host: url.host },
+            rejectUnauthorized: true,
+            lookup: (_hostname, _options, callback) => callback(null, address, isIP(address) as 4 | 6),
+            signal: externalSignal ?? undefined,
+        }, (response) => {
+            const headers = new Headers();
+            for (const [key, value] of Object.entries(response.headers)) if (value !== undefined) headers.set(key, Array.isArray(value) ? value.join(", ") : value);
+            resolve(new Response(Readable.toWeb(response) as unknown as ReadableStream, { status: response.statusCode ?? 502, headers }));
+        });
+        req.once("error", (error) => {
+            reject(error);
+        });
+        req.end();
+    });
+}
+
+async function resolveHostAddresses(hostname: string, signal?: AbortSignal) {
+    const resolver = new Resolver();
+    const abort = () => resolver.cancel();
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+        const results = await Promise.allSettled([resolver.resolve4(hostname), resolver.resolve6(hostname)]);
+        if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
+        const addresses = results.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+        if (!addresses.length) throw results.find((result) => result.status === "rejected")?.reason ?? new Error("DNS resolution returned no addresses");
+        return addresses;
+    } finally {
+        signal?.removeEventListener("abort", abort);
+        resolver.cancel();
+    }
+}
+
+async function readWithDeadline<T>(operation: Promise<T>, deadline: number, onTimeout?: () => void): Promise<T> {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new DOMException("The operation timed out", "TimeoutError");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        return await Promise.race([
+            operation,
+            new Promise<T>((_, reject) => {
+                timer = setTimeout(() => {
+                    onTimeout?.();
+                    reject(new DOMException("The operation timed out", "TimeoutError"));
+                }, remaining);
+            }),
+        ]);
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+}
+
 export async function downloadChatGptFile(file: ChatGptFileParam, dependencies: ChatGptDownloadDependencies = {}): Promise<VerifiedDownload> {
     let url: URL;
     try { url = new URL(file.downloadUrl); } catch { throw new DomainError("CHATGPT_FILE_INVALID_URL", "ChatGPT file is unavailable", 400); }
@@ -88,16 +201,38 @@ export async function downloadChatGptFile(file: ChatGptFileParam, dependencies: 
     const hosts = dependencies.allowedHosts ?? configuredHosts();
     if (url.protocol !== "https:") throw new DomainError("CHATGPT_FILE_INVALID_URL", "ChatGPT file is unavailable", 400);
     if (!hosts.has(host) || url.username || url.password || url.port) throw new DomainError("CHATGPT_FILE_UNTRUSTED_HOST", "ChatGPT file host is not trusted", 400);
-    const resolveHost = dependencies.resolveHost ?? (async (hostname: string) => (await lookup(hostname, { all: true, verbatim: true })).map((item) => item.address));
+    const timeoutMs = Math.max(250, Math.min(120_000, dependencies.timeoutMs ?? Number(process.env.EVIDENCE_DOWNLOAD_TIMEOUT_MS ?? 15_000)));
+    const deadline = Date.now() + timeoutMs;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), Math.max(0, deadline - Date.now()));
+    const resolveHost = dependencies.resolveHost ?? resolveHostAddresses;
     let addresses: string[];
     recordMcpBreadcrumb({ stage: "chatgpt_file.dns", outcome: "started" });
-    try { addresses = await resolveHost(host); recordMcpBreadcrumb({ stage: "chatgpt_file.dns", outcome: "succeeded" }); } catch { recordMcpBreadcrumb({ stage: "chatgpt_file.dns", outcome: "failed" }); throw new DomainError("CHATGPT_FILE_UNAVAILABLE", "ChatGPT file is temporarily unavailable", 409); }
-    if (!addresses.length || addresses.some(privateAddress)) throw new DomainError("CHATGPT_FILE_UNTRUSTED_HOST", "ChatGPT file host is not trusted", 400);
+    try {
+        addresses = await readWithDeadline(resolveHost(host, controller.signal), deadline, () => controller.abort());
+        recordMcpBreadcrumb({ stage: "chatgpt_file.dns", outcome: "succeeded" });
+    } catch (error) {
+        recordMcpBreadcrumb({ stage: "chatgpt_file.dns", outcome: "failed", metadata: { timeout: error instanceof DOMException && error.name === "TimeoutError" } });
+        clearTimeout(timeout);
+        throw new DomainError(controller.signal.aborted || error instanceof DOMException && error.name === "TimeoutError" ? "CHATGPT_FILE_TIMEOUT" : "CHATGPT_FILE_UNAVAILABLE", controller.signal.aborted || error instanceof DOMException && error.name === "TimeoutError" ? "ChatGPT file download timed out" : "ChatGPT file is temporarily unavailable", 409);
+    }
+    if (!addresses.length || addresses.some((address) => privateAddress(address))) {
+        clearTimeout(timeout);
+        throw new DomainError("CHATGPT_FILE_UNTRUSTED_HOST", "ChatGPT file host is not trusted", 400);
+    }
 
     let response: Response;
     recordMcpBreadcrumb({ stage: "chatgpt_file.download", outcome: "started" });
-    try { response = await (dependencies.fetch ?? globalThis.fetch)(url.toString(), { redirect: "error" }); recordMcpBreadcrumb({ stage: "chatgpt_file.download", outcome: "succeeded" }); }
-    catch { recordMcpBreadcrumb({ stage: "chatgpt_file.download", outcome: "failed" }); throw new DomainError("CHATGPT_FILE_UNAVAILABLE", "ChatGPT file is temporarily unavailable", 409); }
+    try {
+        const fetcher = dependencies.fetch ?? ((value: string, init: RequestInit) => pinnedHttpsFetch(new URL(value), init, addresses[0]!));
+        response = await readWithDeadline(fetcher(url.toString(), { redirect: "error", signal: controller.signal }), deadline, () => controller.abort());
+        recordMcpBreadcrumb({ stage: "chatgpt_file.download", outcome: "succeeded" });
+    } catch {
+        recordMcpBreadcrumb({ stage: "chatgpt_file.download", outcome: "failed", metadata: { timeout: controller.signal.aborted } });
+        clearTimeout(timeout);
+        throw new DomainError(controller.signal.aborted ? "CHATGPT_FILE_TIMEOUT" : "CHATGPT_FILE_UNAVAILABLE", controller.signal.aborted ? "ChatGPT file download timed out" : "ChatGPT file is temporarily unavailable", 409);
+    }
+    try {
     if (response.status >= 300 && response.status < 400) throw new DomainError("CHATGPT_FILE_REDIRECT", "ChatGPT file redirects are not allowed", 400);
     if (!response.ok || !response.body) throw new DomainError("CHATGPT_FILE_UNAVAILABLE", "ChatGPT file is temporarily unavailable", 409);
     const responseMime = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLocaleLowerCase("und") ?? "";
@@ -112,14 +247,22 @@ export async function downloadChatGptFile(file: ChatGptFileParam, dependencies: 
     let size = 0;
     const reader = response.body.getReader();
     while (true) {
-        const item = await reader.read();
-        if (item.done) break;
-        size += item.value.byteLength;
-        if (size > maxBytes) {
-            await reader.cancel();
-            throw new DomainError("CHATGPT_FILE_TOO_LARGE", "ChatGPT file exceeds the evidence size limit", 413);
+        try {
+            const item = await readWithDeadline(reader.read(), deadline, () => controller.abort());
+            if (item.done) break;
+            size += item.value.byteLength;
+            if (size > maxBytes) {
+                controller.abort();
+                void reader.cancel().catch(() => undefined);
+                throw new DomainError("CHATGPT_FILE_TOO_LARGE", "ChatGPT file exceeds the evidence size limit", 413);
+            }
+            chunks.push(item.value);
+        } catch (error) {
+            if (error instanceof DomainError) throw error;
+            controller.abort();
+            void reader.cancel().catch(() => undefined);
+            throw new DomainError(controller.signal.aborted ? "CHATGPT_FILE_TIMEOUT" : "CHATGPT_FILE_UNAVAILABLE", controller.signal.aborted ? "ChatGPT file download timed out" : "ChatGPT file is temporarily unavailable", 409);
         }
-        chunks.push(item.value);
     }
     if (size === 0) throw new DomainError("CHATGPT_FILE_EMPTY", "ChatGPT file is empty", 400);
     const bytes = new Uint8Array(size);
@@ -128,6 +271,9 @@ export async function downloadChatGptFile(file: ChatGptFileParam, dependencies: 
     if (detectedMimeType(bytes) !== responseMime) throw new DomainError("CHATGPT_FILE_SIGNATURE_MISMATCH", "ChatGPT file contents do not match its type", 400);
     recordMcpBreadcrumb({ stage: "chatgpt_file.validate", outcome: "succeeded" });
     return { bytes, mimeType: responseMime, size, sha256: createHash("sha256").update(bytes).digest("hex"), fileName: safeOriginalName(file.fileName) };
+    } finally {
+        clearTimeout(timeout);
+    }
 }
 
 async function accessibleIntake(ctx: CommandContext, publicId: string) {
@@ -163,7 +309,19 @@ async function importEvidence(ctx: CommandContext, intakePublicId: string, sourc
         if (existing.paymentIntakeId !== intake.id || existing.sourceFileFingerprint !== fingerprint || existing.status === "draft") throw new DomainError("EVIDENCE_IDEMPOTENCY_CONFLICT", "Evidence import idempotency payload does not match", 409);
         const storedFile = existing.fileId ? await db.query.files.findFirst({ where: and(eq(files.tenantId, ctx.tenantId), eq(files.id, existing.fileId)) }) : null;
         if (!storedFile) throw new DomainError("PAYMENT_EVIDENCE_NOT_FOUND", "Evidence file record not found", 404);
-        return safeResult(existing, storedFile.publicId, "auditPublicId" in existing ? existing.auditPublicId : null, ctx.correlationId);
+        const storedAuditPublicId = "auditPublicId" in existing ? existing.auditPublicId : null;
+        const importAudit = storedAuditPublicId ? null : await db.query.auditLogs.findFirst({
+            columns: { publicId: true },
+            where: and(
+                eq(auditLogs.tenantId, ctx.tenantId),
+                eq(auditLogs.entityType, supplement ? "payment_evidence_supplement" : "payment_evidence"),
+                eq(auditLogs.entityId, existing.publicId),
+                eq(auditLogs.action, "chatgpt_file_imported"),
+            ),
+        });
+        const auditPublicId = storedAuditPublicId ?? importAudit?.publicId;
+        if (!auditPublicId) throw new DomainError("EVIDENCE_AUDIT_NOT_FOUND", "Ready evidence audit metadata is unavailable", 503);
+        return safeResult(existing, storedFile.publicId, auditPublicId, ctx.correlationId);
     }
     if (!supplement) {
         await db.transaction(async (tx) => {
@@ -205,6 +363,94 @@ export function importChatGptPaymentEvidence(ctx: CommandContext, intakePublicId
 
 export function importChatGptSupplementEvidence(ctx: CommandContext, intakePublicId: string, file: ChatGptFileParam, idempotencyKey: string, dependencies: ChatGptEvidenceDependencies = {}) {
     return importEvidence(ctx, intakePublicId, file, idempotencyKey, true, dependencies);
+}
+
+/**
+ * Import a ChatGPT attachment into an existing payout draft. This deliberately
+ * composes the payout evidence lifecycle: it never creates a payment intake,
+ * activates a loan, or posts a disbursement.
+ */
+export async function importChatGptDisbursementEvidence(
+    ctx: CommandContext,
+    disbursementPublicId: string,
+    source: ChatGptFileParam,
+    dependencies: ChatGptEvidenceDependencies = {},
+) {
+    if (!source.fileId.trim()) throw new DomainError("CHATGPT_FILE_INVALID", "ChatGPT file is unavailable", 400);
+    const idempotencyKey = ctx.idempotencyKey?.trim();
+    if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "A stable idempotency key is required", 400);
+    const event = await (dependencies.authorizeDisbursement
+        ? dependencies.authorizeDisbursement(ctx, disbursementPublicId)
+        : assertDisbursementEvidenceImportTarget(ctx, disbursementPublicId));
+    const sourceFileFingerprint = createHash("sha256").update(source.fileId).digest("hex");
+    const existing = await db.query.loanDisbursementEvidenceIntents.findFirst({ where: and(
+        eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId),
+        eq(loanDisbursementEvidenceIntents.importIdempotencyKey, idempotencyKey),
+    ) });
+    if (existing) {
+        if (existing.loanDisbursementEventId !== (event as { id: number }).id || existing.sourceFileFingerprint !== sourceFileFingerprint) throw new DomainError("EVIDENCE_IDEMPOTENCY_CONFLICT", "Evidence import idempotency payload does not match", 409);
+        if (existing.status === "ready") {
+            const file = await db.query.files.findFirst({ where: and(eq(files.tenantId, ctx.tenantId), eq(files.id, existing.fileId)) });
+            if (!file) throw new DomainError("EVIDENCE_FILE_NOT_FOUND", "Evidence file not found", 404);
+            const auditPublicId = await disbursementEvidenceFinalizedAuditPublicId(ctx, (event as { publicId: string }).publicId, existing.publicId, existing.finalizedAuditPublicId);
+            if (!auditPublicId) throw new DomainError("EVIDENCE_AUDIT_NOT_FOUND", "Ready evidence audit metadata is unavailable", 503);
+            return { publicId: existing.publicId, filePublicId: file.publicId, status: "ready" as const, sha256: existing.evidenceHash, auditPublicId, correlationId: ctx.correlationId };
+        }
+    }
+    const existingSourceIdentity = await db.query.loanDisbursementEvidenceIntents.findFirst({ where: and(
+        eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId),
+        eq(loanDisbursementEvidenceIntents.loanDisbursementEventId, (event as { id: number }).id),
+        eq(loanDisbursementEvidenceIntents.sourceFileFingerprint, sourceFileFingerprint),
+    ) });
+    if (existingSourceIdentity?.importIdempotencyKey && existingSourceIdentity.importIdempotencyKey !== idempotencyKey) {
+        throw new DomainError("EVIDENCE_IDEMPOTENCY_CONFLICT", "Evidence file identity is already bound to another import", 409);
+    }
+    const verified = await downloadChatGptFile(source, dependencies);
+    const evidenceGateway = dependencies.disbursementEvidenceGateway ?? { preparePut: createSignedPutUrl, head: headStoredObject };
+    const prepareInput = {
+        mimeType: verified.mimeType,
+        size: verified.size,
+        sha256: verified.sha256,
+        originalName: verified.fileName,
+        importIdempotencyKey: idempotencyKey,
+        sourceFileFingerprint,
+    } as const;
+    let intent;
+    try {
+        intent = await prepareDisbursementEvidence(ctx, disbursementPublicId, prepareInput, evidenceGateway);
+    } catch (error) {
+        if (!(error instanceof DomainError) || error.code !== "EVIDENCE_HASH_CONFLICT") throw error;
+        const raced = await db.query.loanDisbursementEvidenceIntents.findFirst({ where: and(eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId), eq(loanDisbursementEvidenceIntents.importIdempotencyKey, idempotencyKey)) });
+        if (!raced || raced.loanDisbursementEventId !== (event as { id: number }).id || raced.sourceFileFingerprint !== sourceFileFingerprint) throw new DomainError("EVIDENCE_IDEMPOTENCY_CONFLICT", "Evidence import idempotency payload does not match", 409);
+        if (raced.evidenceHash !== verified.sha256 || raced.mimeType !== verified.mimeType || raced.declaredSize !== verified.size) throw new DomainError("EVIDENCE_IDEMPOTENCY_CONFLICT", "Evidence import content does not match the original request", 409);
+        intent = await prepareDisbursementEvidence(ctx, disbursementPublicId, prepareInput, evidenceGateway);
+    }
+    if (intent.status === "ready") {
+        const readyIntent = await db.query.loanDisbursementEvidenceIntents.findFirst({ where: and(
+            eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId),
+            eq(loanDisbursementEvidenceIntents.publicId, intent.publicId),
+        ) });
+        const auditPublicId = readyIntent ? await disbursementEvidenceFinalizedAuditPublicId(ctx, (event as { publicId: string }).publicId, intent.publicId, readyIntent.finalizedAuditPublicId) : null;
+        if (!readyIntent || !auditPublicId) throw new DomainError("EVIDENCE_AUDIT_NOT_FOUND", "Ready evidence audit metadata is unavailable", 503);
+        return { publicId: intent.publicId, filePublicId: intent.filePublicId, status: "ready" as const, sha256: verified.sha256, auditPublicId, correlationId: ctx.correlationId };
+    }
+    if (!intent.objectKey) throw new DomainError("EVIDENCE_IMPORT_NOT_RESUMABLE", "Payout evidence storage progress cannot be resumed", 503);
+    const storage = dependencies.disbursementStorage ?? defaultStorage;
+    const request: SignedPutRequest = {
+        bucket: BUCKET_NAME,
+        key: intent.objectKey,
+        contentType: verified.mimeType,
+        contentLength: verified.size,
+        checksumSha256: verified.sha256,
+        metadata: { tenant: ctx.tenantId, disbursement: disbursementPublicId, sha256: verified.sha256 },
+    };
+    await storage.put(request, verified.bytes);
+    const finalized = await finalizeDisbursementEvidence(ctx, disbursementPublicId, intent.publicId, {
+        preparePut: evidenceGateway.preparePut,
+        head: storage.head,
+    });
+    if (!finalized.auditPublicId) throw new DomainError("EVIDENCE_AUDIT_NOT_FOUND", "Ready evidence audit metadata is unavailable", 503);
+    return { publicId: finalized.publicId, filePublicId: finalized.filePublicId, status: "ready" as const, sha256: finalized.sha256, auditPublicId: finalized.auditPublicId, correlationId: ctx.correlationId };
 }
 
 export type PaymentEvidenceSupplementReason = "upload_channel_unavailable" | "operator_omission" | "evidence_recovered" | "other";

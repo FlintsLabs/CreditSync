@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.4.45 - 2026-09-13
+
+### Added
+
+- Added the audited payout-draft ChatGPT attachment importer with HTTPS/DNS/TLS and content verification, durable import identity, resumable storage failure handling, and no payment-intake, activation, or posting side effects.
+- Added disposable-PostgreSQL importer regressions, migration assertions, executable payout evidence stop/retry traces, and the ChatGPT mobile evidence runbook; actual-device transport acceptance remains pending.
+- Added cached MCP catalog projections, deterministic modern pagination, route-selected profile snapshots, official 2026-07-28 transport validation, pinned conformance-fixture verification, discovery benchmarking, and rollout/retention runbooks with generated catalog counts.
+
+### Changed
+
+- Kept legacy `/mcp` discovery full and unpaginated for compatibility while modern discovery uses closed schemas, per-request metadata, profile/catalog-bound cursors, and public definition cache hints; conformance uses an injected no-database fixture through the shared adapter and reports real check counts.
+
+### Fixed
+
+- Preserved original audit receipts on ready payment, supplemental, and payout evidence retries without another upload or audit write; legacy payout receipts resolve through exact tenant/event/evidence identity, and stale or foreign references fail closed.
+- Preserved imported evidence reservations across expired intents, signing failures, and concurrent direct uploads with consistent locking and conditional deletion; aligned the import-key schema index with its migration and added disposable database regressions.
+
 ## v0.4.44 - 2026-09-13
 
 ### Added

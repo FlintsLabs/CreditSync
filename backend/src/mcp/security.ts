@@ -7,6 +7,7 @@ export interface McpRuntimeConfig {
     actorEmail: string;
     rateLimitMax: number;
     rateLimitWindowSeconds: number;
+    allowedOrigins: string[];
 }
 
 const sha256Pattern = /^[0-9a-f]{64}$/i;
@@ -39,6 +40,16 @@ function normalizeHost(host: string): string | null {
     return withoutPort.replace(/\.$/, "");
 }
 
+function normalizeOrigin(origin: string): string | null {
+    try {
+        const parsed = new URL(origin.trim());
+        if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) return null;
+        return parsed.origin;
+    } catch {
+        return null;
+    }
+}
+
 export function parseMcpRuntimeConfig(env: Record<string, string | undefined>): McpRuntimeConfig {
     const tokenHashes = requiredValue(env, "MCP_API_TOKEN_HASHES")
         .split(",")
@@ -62,6 +73,11 @@ export function parseMcpRuntimeConfig(env: Record<string, string | undefined>): 
     if (allowedHosts.length === 0) throw new Error("MCP_ALLOWED_HOSTS must contain at least one valid hostname");
     const tenantId = requiredValue(env, "MCP_TENANT_ID");
     const actorEmail = requiredValue(env, "MCP_ACTOR_EMAIL").toLocaleLowerCase("en-US");
+    const configuredOrigins = (env.MCP_ALLOWED_ORIGINS ?? "").split(",").map((value) => value.trim()).filter(Boolean);
+    const normalizedOrigins = configuredOrigins.map(normalizeOrigin);
+    if (normalizedOrigins.some((value) => value === null) || configuredOrigins.some((value) => value === "*")) {
+        throw new Error("MCP_ALLOWED_ORIGINS must contain exact http(s) origins, not wildcards or paths");
+    }
     if (tenantId.length > 128) throw new Error("MCP_TENANT_ID is too long");
     if (actorEmail.length > 320 || !actorEmail.includes("@")) throw new Error("MCP_ACTOR_EMAIL must be a valid email address");
     return {
@@ -71,6 +87,7 @@ export function parseMcpRuntimeConfig(env: Record<string, string | undefined>): 
         actorEmail,
         rateLimitMax: positiveInteger(env.MCP_RATE_LIMIT_MAX, 60, "MCP_RATE_LIMIT_MAX"),
         rateLimitWindowSeconds: positiveInteger(env.MCP_RATE_LIMIT_WINDOW_SECONDS, 60, "MCP_RATE_LIMIT_WINDOW_SECONDS"),
+        allowedOrigins: [...new Set(normalizedOrigins as string[])],
     };
 }
 
@@ -91,4 +108,10 @@ export function hostIsAllowed(host: string | null, allowedHosts: string[]) {
     if (!host) return false;
     const normalized = normalizeHost(host);
     return normalized !== null && allowedHosts.includes(normalized);
+}
+
+export function originIsAllowed(origin: string | null, allowedOrigins: string[]) {
+    if (origin === null) return true;
+    const normalized = normalizeOrigin(origin);
+    return normalized !== null && allowedOrigins.includes(normalized);
 }

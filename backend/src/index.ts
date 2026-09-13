@@ -34,7 +34,10 @@ const app = new Elysia()
     .use(cors({
         origin: isProd ? corsOrigins : true,
         credentials: true,
-        allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Request-ID', 'X-Correlation-ID'],
+        allowedHeaders: [
+            'Content-Type', 'Authorization', 'Idempotency-Key', 'X-Request-ID', 'X-Correlation-ID',
+            'MCP-Protocol-Version', 'Mcp-Method', 'Mcp-Name',
+        ],
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']
     }))
     .use(swagger())
@@ -46,6 +49,11 @@ const app = new Elysia()
     })
     .get("/", () => "Hello CreditSync")
     .use(createDefaultMcpHttpPlugin())
+    .use(createDefaultMcpHttpPlugin(process.env, {}, "core-read", "/mcp/core-read"))
+    .use(createDefaultMcpHttpPlugin(process.env, {}, "payments", "/mcp/payments"))
+    .use(createDefaultMcpHttpPlugin(process.env, {}, "loans", "/mcp/loans"))
+    .use(createDefaultMcpHttpPlugin(process.env, {}, "disbursements", "/mcp/disbursements"))
+    .use(createDefaultMcpHttpPlugin(process.env, {}, "admin", "/mcp/admin"))
     .use(authPlugin)
     .use(authRoute)
     .use(webhookRoute) // Webhook has its own signature verification

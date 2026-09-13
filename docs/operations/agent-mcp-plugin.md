@@ -19,8 +19,16 @@ docker compose --env-file .env.production -f docker-compose.app.yml up --build -
 ```
 
 5. Route the Cloudflare public hostname to `http://frontend:80` on `creditsync_runtime`. Set `MCP_ALLOWED_HOSTS` to that external hostname without scheme or path.
-6. Verify `GET https://<host>/mcp/health` exposes status/schema only. Verify invalid bearer credentials fail and an authenticated MCP client can initialize/list the frozen 57 tools.
+6. Verify `GET https://<host>/mcp/health` exposes status/schema only. Verify invalid bearer credentials fail, a legacy v1 client can initialize/list the frozen 131-tool `/mcp` catalog, and a modern client can discover/list the paginated catalog.
 7. Review backend logs for request/correlation/tool/status/duration only. Raw authorization, tool payloads, QR values, slip contents, identity fields, and signed URLs must not appear.
+
+## MCP eras, profiles, and discovery
+
+`/mcp` remains the compatibility route: legacy v1 requests retain the full unpaginated `tools/list` response and their legacy envelope. The modern 2026-07-28 route uses the official v2 envelope, per-request protocol/client metadata, deterministic 25-tool pages, opaque cursors bound to profile and catalog version, and `ttlMs: 300000` with `cacheScope: "public"` for definition discovery only. Empty-string cursors are not treated as falsey; malformed, stale, out-of-bounds, or cross-profile cursors are invalid parameters.
+
+Curated routes are `/mcp/core-read`, `/mcp/payments`, `/mcp/loans`, `/mcp/disbursements`, and `/mcp/admin`. They reduce discovery context but are not bearer authorization scopes; the same tenant, actor, Origin, Host, authentication, and rate-limit protections apply. The generated catalog and profile snapshots under `plugins/creditsync/references/` are the source of tool counts.
+
+Browser access must allow `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name` in addition to the existing authorization/request headers. Configure `MCP_ALLOWED_ORIGINS` as exact origins only; wildcard, `null`, malformed, and unexpected origins are rejected before request-body parsing. See [`mcp-conformance-baseline.yml`](./mcp-conformance-baseline.yml), [`mcp-canary-runbook.md`](./mcp-canary-runbook.md), and [`mcp-optimization-verification.md`](./mcp-optimization-verification.md) for pinned verification and rollout evidence.
 
 ## Bearer token creation and rotation
 

@@ -1,5 +1,5 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { toJsonSchemaCompat } from "@modelcontextprotocol/sdk/server/zod-json-schema-compat.js";
 import { normalizeObjectSchema } from "@modelcontextprotocol/sdk/server/zod-compat.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
@@ -7,152 +7,24 @@ import { Elysia } from "elysia";
 import { z } from "zod";
 import type { CommandContext } from "../services/command-context";
 import { DomainError } from "../services/domain-error";
-import { authenticateBearer, hostIsAllowed, type McpRuntimeConfig } from "./security";
+import { authenticateBearer, hostIsAllowed, originIsAllowed, type McpRuntimeConfig } from "./security";
 import { currentMcpDiagnosticSnapshot, recordMcpBreadcrumb, withMcpDiagnosticScope } from "./diagnostic-context";
 import { presentMcpError, type OperationRecoveryPolicy } from "./error-presentation";
 import { persistMcpDiagnosticBestEffort } from "../services/mcp-diagnostic-service";
 import { mcpDiagnosticCategories, mcpDiagnosticStages, safeDiagnosticRuntimeCategories } from "../lib/mcp-diagnostic-types";
+import { createModernMcpHandler, isLegacyRequest } from "./modern";
+import { toolsForProfile, toolNamesForProfile } from "./tool-profiles";
+import { MCP_TOOL_NAMES, type McpToolDefinition, type McpToolName, type ToolProfile } from "./catalog-types";
+import { createHash } from "node:crypto";
 
-export const MCP_TOOL_NAMES = [
-    "borrower.search",
-    "borrower.portfolio",
-    "borrower.create",
-    "borrower.update",
-    "borrower.alias",
-    "intake.get",
-    "intake.list",
-    "payment.batch.get",
-    "payment.batch.stage",
-    "payment.batch.staging.evidence.prepare",
-    "payment.batch.staging.evidence.finalize",
-    "payment.batch.staging.extract",
-    "payment.batch.workspace",
-    "payment.batch.candidates",
-    "payment.batch.staging.review",
-    "payment.batch.staging.edit",
-    "payment.batch.split",
-    "payment.batch.decision",
-    "payment.batch.cancel",
-    "intake.create",
-    "evidence.prepare",
-    "evidence.finalize",
-    "evidence.import-chatgpt-file",
-    "payment.evidence-supplement.import-chatgpt-file",
-    "payment.evidence-supplement.record",
-    "payment.preview",
-    "payment.cancel",
-    "payment.post",
-    "payment.reverse",
-    "payment.reverse-with-accrual.preview",
-    "payment.reverse-with-accrual.execute",
-    "payment.batch.create",
-    "payment.batch.capture",
-    "payment.batch.evidence.prepare-many",
-    "payment.batch.evidence.finalize-many",
-    "payment.batch.item.add",
-    "payment.batch.evidence.prepare",
-    "payment.batch.evidence.finalize",
-    "payment.batch.preview",
-    "payment.batch.execute",
-    "payment.reconcile.preview",
-    "payment.reconcile.reflow.preview",
-    "payment.reconcile.reflow.execute",
-    "payment.allocation-correction.preview",
-    "payment.reconcile.preflight",
-    "payment.reconcile.mark-review",
-    "payment.reconcile.execute",
-    "payment.allocation-correction.execute",
-    "payment.restore.create",
-    "payment.restore.evidence.prepare",
-    "payment.restore.evidence.finalize",
-    "payment.restore.preview",
-    "payment.restore.execute",
-    "payment.restore.schedule-backfill",
-    "loan.preview",
-    "loan.cancel.preview",
-    "loan.draft",
-    "loan.draft.delete",
-    "loan.activate",
-    "loan.interest-rate.list",
-    "loan.interest-rate.preview",
-    "loan.interest-rate.execute",
-    "loan.settlement.preview",
-    "loan.settlement.execute",
-    "loan.settlement.reverse",
-    "loan.cancel.execute",
-    "loan.replacement.preview",
-    "loan.replacement.execute",
-    "loan.replacement.reverse",
-    "loan.disbursement.list",
-    "loan.contract.get",
-    "loan.payment-start-date.update",
-    "loan.payment-history.list",
-    "loan.disbursement.draft",
-    "loan.disbursement.update",
-    "loan.disbursement.evidence.prepare",
-    "loan.disbursement.evidence.finalize",
-    "loan.disbursement.post",
-    "loan.disbursement.reverse",
-    "loan.commission-participant.list",
-    "loan.commission-participant.add",
-    "loan.commission-participant.update",
-    "loan.commission-participant.end",
-    "loan.commission.preview",
-    "loan.commission.list",
-    "loan.commission.calculate",
-    "loan.commission.reverse",
-    "payment.intermediary-attribution.create",
-    "payment.intermediary-attribution.list",
-    "payment.intermediary-attribution.reverse",
-    "intermediary.search",
-    "intermediary.create",
-    "intermediary.profile.get",
-    "intermediary.bank-account.save",
-    "intermediary.managed-loan.list",
-    "intermediary.assignment.create",
-    "intermediary.assignment.end",
-    "intermediary.disbursement.list",
-    "intermediary.disbursement.get",
-    "intermediary.disbursement.create",
-    "intermediary.disbursement.event.create",
-    "intermediary.disbursement.evidence.prepare",
-    "intermediary.disbursement.evidence.finalize",
-    "intermediary.disbursement.preview",
-    "intermediary.disbursement.post",
-    "intermediary.disbursement.reverse",
-    "intermediary.collection.list",
-    "intermediary.collection.create",
-    "intermediary.remittance.get",
-    "intermediary.remittance.create",
-    "intermediary.remittance.allocations.save",
-    "intermediary.remittance.preview",
-    "intermediary.remittance.evidence.prepare",
-    "intermediary.remittance.evidence.finalize",
-    "intermediary.remittance.post",
-    "renewal.preview",
-    "renewal.execute",
-    "renewal.reverse",
-    "loan.restructure.preview",
-    "loan.restructure.execute",
-    "loan.restructure.reverse",
-    "loan.waiver.preview",
-    "loan.waiver.execute",
-    "loan.waiver.reverse",
-    "funding-source.list",
-    "funding-allocation.preview",
-    "funding-allocation.create",
-    "funding-allocation.list",
-    "system.error-diagnostic.get",
-    "system.error-diagnostic.list",
-] as const;
-
-export type McpToolName = (typeof MCP_TOOL_NAMES)[number];
+export { MCP_TOOL_NAMES } from "./catalog-types";
+export type { McpToolName, ToolProfile } from "./catalog-types";
 export type McpToolHandler = (ctx: CommandContext, input: Record<string, unknown>) => Promise<unknown>;
 
 export interface CreateMcpHttpPluginInput {
     config: McpRuntimeConfig;
-    handlers: Record<McpToolName, McpToolHandler>;
-    preflightHandlers?: Partial<Record<McpToolName, McpToolHandler>>;
+    handlers: Record<string, McpToolHandler>;
+    preflightHandlers?: Partial<Record<string, McpToolHandler>>;
     resolvePrincipal: (input: { tenantId: string; actorEmail: string }) => Promise<{ tenantId: string; actorUserId: number }>;
     consumeRateLimit: (input: { key: string; max: number; windowSeconds: number }) => Promise<{
         allowed: boolean;
@@ -161,12 +33,20 @@ export interface CreateMcpHttpPluginInput {
     }>;
     findAuditPublicIds: (input: {
         ctx: CommandContext;
-        toolName: McpToolName;
+        toolName: string;
         result: unknown;
     }) => Promise<string[]>;
     logger: (entry: Record<string, unknown>) => void;
     persistDiagnostic?: (input: Parameters<typeof persistMcpDiagnosticBestEffort>[0]) => Promise<void>;
-    parseToolInput?: (toolName: McpToolName, input: unknown) => Promise<{ success: boolean; data?: Record<string, unknown> }>;
+    parseToolInput?: (toolName: string, input: unknown) => Promise<{ success: boolean; data?: Record<string, unknown> }>;
+    /**
+     * Test-only or isolated-adapter catalog injection. Production routes use
+     * the immutable product catalog; conformance uses this to register named
+     * no-side-effect fixture tools through the same HTTP and dispatch paths.
+     */
+    catalog?: readonly McpToolDefinition[];
+    validateToolOutput?: (toolName: string, output: unknown) => { success: boolean; data?: Record<string, unknown> };
+    profile?: ToolProfile;
 }
 
 const uuid = z.uuid();
@@ -623,6 +503,14 @@ const disbursementEvidenceIntentOutput = z.object({
     expiresAt: nullableIsoDateTime.optional(),
     requiredHeaders: z.record(z.string(), z.string()).optional(),
     sha256: z.string().regex(/^[0-9a-f]{64}$/i).optional(),
+}).strict();
+const chatgptDisbursementEvidenceOutput = z.object({
+    publicId: uuid,
+    filePublicId: uuid,
+    status: z.literal("ready"),
+    sha256: z.string().regex(/^[0-9a-f]{64}$/i),
+    auditPublicId: uuid,
+    correlationId: uuid,
 }).strict();
 const renewalSettlementPolicy = z.enum(["full_contract_interest", "accrued_to_date"]);
 const renewalAdjustment = z.object({
@@ -1177,7 +1065,7 @@ const diagnosticItemOutput = z.object({
     breadcrumbs: z.array(diagnosticBreadcrumbOutput).max(20), summary: z.string(), recommendedNextCheck: z.string(),
 }).strict();
 
-const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
+export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
     "borrower.search": z.object({
         resolution: z.enum(["none", "unique", "ambiguous", "candidates"]),
         matchType: z.enum(["canonical", "confirmed_alias", "fuzzy"]).nullable().optional(),
@@ -1220,6 +1108,7 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "evidence.prepare": evidenceIntentOutput,
     "evidence.finalize": evidenceFinalOutput,
     "evidence.import-chatgpt-file": evidenceFinalOutput.extend(writeAuditMetadata).strict(),
+    "loan.disbursement.evidence.import-chatgpt-file": chatgptDisbursementEvidenceOutput,
     "payment.evidence-supplement.import-chatgpt-file": evidenceFinalOutput.extend(writeAuditMetadata).strict(),
     "payment.evidence-supplement.record": evidenceFinalOutput.extend(writeAuditMetadata).strict(),
     "payment.preview": proposalOutput,
@@ -1505,7 +1394,7 @@ const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> =
     "system.error-diagnostic.list": z.object({ items: z.array(diagnosticItemOutput).max(100), nextCursor: z.string().nullable() }).strict(),
 };
 
-const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
+export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> = {
     "borrower.search": z.object({ query: shortText }).strict(),
     "borrower.portfolio": z.object({ borrowerPublicId: uuid }).strict(),
     "borrower.create": z.object(borrowerFields).strict(),
@@ -1555,6 +1444,16 @@ const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unknown>>> 
             download_url: z.string().url(), file_id: z.string().min(1),
             mime_type: z.enum(["image/jpeg", "image/png", "application/pdf"]).optional(),
             file_name: z.string().max(500).optional(),
+        }).strict(),
+    }).strict(),
+    "loan.disbursement.evidence.import-chatgpt-file": z.object({
+        disbursementPublicId: uuid,
+        idempotencyKey: z.string().trim().min(1).max(200),
+        chatgptFile: z.object({
+            download_url: z.url(),
+            file_id: z.string().trim().min(1).max(500),
+            mime_type: z.enum(["image/jpeg", "image/png", "application/pdf"]).optional(),
+            file_name: z.string().trim().max(500).optional(),
         }).strict(),
     }).strict(),
     "payment.evidence-supplement.import-chatgpt-file": z.object({
@@ -2025,13 +1924,13 @@ function advertisedOutputSchema(toolName: McpToolName) {
     return successOutputSchema(toolName);
 }
 
-function transportOutputSchema(toolName: McpToolName) {
+export function transportOutputSchema(toolName: McpToolName) {
     return z.union([successOutputSchema(toolName), errorOutputSchema]);
 }
 
 function transportOutputJsonSchema(toolName: McpToolName) {
-    const success = z.toJSONSchema(successOutputSchema(toolName)) as Record<string, unknown>;
-    const error = z.toJSONSchema(errorOutputSchema) as Record<string, unknown>;
+    const success = generatedJsonSchema(successOutputSchema(toolName));
+    const error = generatedJsonSchema(errorOutputSchema);
     delete success.$schema;
     delete error.$schema;
     return {
@@ -2072,13 +1971,14 @@ const readOnlyTools = new Set<McpToolName>([
     "borrower.portfolio",
     "intake.get",
     "intake.list",
+    "payment.batch.get",
+    "payment.batch.workspace",
     "payment.batch.candidates",
     "loan.preview",
     "loan.cancel.preview",
     "loan.interest-rate.list",
     "loan.disbursement.list",
     "loan.contract.get",
-    "loan.payment-start-date.update",
     "loan.payment-history.list",
     "loan.commission-participant.list",
     "loan.commission.preview",
@@ -2105,6 +2005,7 @@ const destructiveTools = new Set<McpToolName>([
     "evidence.prepare",
     "evidence.finalize",
     "evidence.import-chatgpt-file",
+    "loan.disbursement.evidence.import-chatgpt-file",
     "payment.evidence-supplement.import-chatgpt-file",
     "payment.evidence-supplement.record",
     "payment.preview",
@@ -2120,6 +2021,7 @@ const destructiveTools = new Set<McpToolName>([
     "payment.batch.evidence.finalize",
     "payment.batch.preview",
     "payment.reconcile.preview",
+    "payment.reconcile.reflow.execute",
     "payment.allocation-correction.execute",
     "payment.reconcile.mark-review",
     "payment.reconcile.execute",
@@ -2178,6 +2080,7 @@ const financialTools = new Set<McpToolName>([
     "payment.reverse",
     "payment.reverse-with-accrual.execute",
     "payment.reconcile.execute",
+    "payment.reconcile.reflow.execute",
     "payment.restore.execute",
     "payment.restore.schedule-backfill",
     "payment.restore.create",
@@ -2214,12 +2117,15 @@ const idempotentTools = new Set<McpToolName>([
     ...[...readOnlyTools].filter((toolName) => toolName !== "loan.commission.reverse"),
     "intake.create",
     "evidence.import-chatgpt-file",
+    "loan.disbursement.evidence.import-chatgpt-file",
     "payment.evidence-supplement.import-chatgpt-file",
     "payment.evidence-supplement.record",
     "payment.post",
     "payment.cancel",
     "payment.reverse",
+    "payment.reverse-with-accrual.execute",
     "payment.reconcile.execute",
+    "payment.reconcile.reflow.execute",
     "payment.allocation-correction.execute",
     "payment.reconcile.mark-review",
     "payment.restore.execute",
@@ -2260,6 +2166,14 @@ const idempotentTools = new Set<McpToolName>([
     "loan.waiver.reverse",
     "funding-allocation.create",
 ]);
+const openWorldTools = new Set<McpToolName>([
+    "evidence.import-chatgpt-file",
+    "loan.disbursement.evidence.import-chatgpt-file",
+    "payment.evidence-supplement.import-chatgpt-file",
+    // This confirmation-bound write records evidence originating outside the
+    // MCP service, so retain the external-world annotation on the final link.
+    "payment.evidence-supplement.record",
+]);
 
 const toolDescriptions: Record<McpToolName, string> = {
     "borrower.search": "Search accessible borrowers by canonical name or confirmed alias.",
@@ -2273,6 +2187,7 @@ const toolDescriptions: Record<McpToolName, string> = {
     "evidence.prepare": "Prepare a signed upload for payment evidence.",
     "evidence.finalize": "Verify and finalize uploaded payment evidence.",
     "evidence.import-chatgpt-file": "Import one attached ChatGPT file as verified payment evidence.",
+    "loan.disbursement.evidence.import-chatgpt-file": "Import one attached ChatGPT file as ready evidence for an exact loan disbursement draft.",
     "payment.evidence-supplement.import-chatgpt-file": "Import one attached ChatGPT file as ready supplemental evidence for an exact posted payment.",
     "payment.evidence-supplement.record": "Record ready supplemental evidence after explicit operator confirmation.",
     "payment.preview": "Preview and persist a versioned payment match proposal.",
@@ -2404,24 +2319,86 @@ function completionText(toolName: McpToolName) {
     return `${words[0]!.toUpperCase()}${words.slice(1)} completed.`;
 }
 
+function deepFreeze<T>(value: T): T {
+    if (value && typeof value === "object" && !Object.isFrozen(value)) {
+        Object.freeze(value);
+        for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+    }
+    return value;
+}
+
+let schemaGenerationCount = 0;
+function generatedJsonSchema(schema: z.ZodType) {
+    schemaGenerationCount += 1;
+    return z.toJSONSchema(schema) as Record<string, unknown>;
+}
+
+const TOOL_CATALOG = deepFreeze(MCP_TOOL_NAMES.map((name) => ({
+    name,
+    description: toolDescriptions[name],
+    inputSchema: generatedJsonSchema(toolInputSchemas[name]),
+    outputSchema: generatedJsonSchema(advertisedOutputSchema(name)),
+    annotations: {
+        title: titleFor(name),
+        readOnlyHint: readOnlyTools.has(name),
+        destructiveHint: destructiveTools.has(name),
+        idempotentHint: idempotentTools.has(name),
+        openWorldHint: openWorldTools.has(name),
+    },
+    policy: {
+        kind: financialTools.has(name) ? "financial" : readOnlyTools.has(name) ? "read_only" : "mutating",
+        requiresAudit: financialTools.has(name),
+    },
+    ...(name === "evidence.import-chatgpt-file" || name === "loan.disbursement.evidence.import-chatgpt-file" || name === "payment.evidence-supplement.import-chatgpt-file"
+        ? { _meta: { "openai/fileParams": ["chatgptFile"] } }
+        : {}),
+} satisfies McpToolDefinition))) as readonly McpToolDefinition[];
+export { TOOL_CATALOG };
+
+const LEGACY_TOOL_CATALOG = deepFreeze(TOOL_CATALOG.map((tool) => ({
+    ...tool,
+    inputSchema: toJsonSchemaCompat(normalizeObjectSchema(toolInputSchemas[tool.name])!, { strictUnions: true, pipeStrategy: "input" }) as Record<string, unknown>,
+    outputSchema: transportOutputJsonSchema(tool.name),
+})));
+
+export const MCP_CATALOG_VERSION = `mcp-catalog-${createHash("sha256")
+    .update(JSON.stringify(TOOL_CATALOG))
+    .digest("hex")
+    .slice(0, 16)}`;
+
+export function mcpCatalogVersion() {
+    return MCP_CATALOG_VERSION;
+}
+
+export function mcpSchemaMetrics() {
+    return { schemaGenerationCount };
+}
+
+function cloneToolDefinition(tool: McpToolDefinition): McpToolDefinition {
+    return structuredClone(tool);
+}
+
+function legacyToolsForProfile(profile: ToolProfile, catalog = LEGACY_TOOL_CATALOG) {
+    return toolsForProfile(profile, catalog).map(cloneToolDefinition);
+}
+
+/** Benchmark-only projection comparison. Request handlers always use the
+ * module-load cache; the uncached branch is intentionally callable only by the
+ * local benchmark and is never used by tools/list. */
+export function legacyDiscoveryProjectionForBenchmark(profile: ToolProfile = "full", uncached = false) {
+    if (!uncached) return legacyToolsForProfile(profile);
+    return toolsForProfile(profile, TOOL_CATALOG).map((tool) => ({
+        ...tool,
+        inputSchema: toJsonSchemaCompat(normalizeObjectSchema(toolInputSchemas[tool.name as McpToolName])!, { strictUnions: true, pipeStrategy: "input" }) as Record<string, unknown>,
+        outputSchema: transportOutputJsonSchema(tool.name as McpToolName),
+    }));
+}
+
 /** Test/validator view of the exact schemas and annotations used by registerTool. */
 export function advertisedMcpToolMetadata() {
-    return MCP_TOOL_NAMES.map((name) => ({
-        name,
-        description: toolDescriptions[name],
-        inputSchema: z.toJSONSchema(toolInputSchemas[name]) as Record<string, unknown>,
-        outputSchema: z.toJSONSchema(advertisedOutputSchema(name)) as Record<string, unknown>,
-        annotations: {
-            title: titleFor(name),
-            readOnlyHint: readOnlyTools.has(name),
-            destructiveHint: destructiveTools.has(name),
-            idempotentHint: idempotentTools.has(name),
-            openWorldHint: false,
-        },
-        ...(name === "evidence.import-chatgpt-file" || name === "payment.evidence-supplement.import-chatgpt-file"
-            ? { _meta: { "openai/fileParams": ["chatgptFile"] } }
-            : {}),
-    }));
+    // Keep the canonical catalog immutable while returning a caller-owned
+    // projection for validators and SDK adapters.
+    return TOOL_CATALOG.map(cloneToolDefinition);
 }
 
 function sanitizeDetails(details: Record<string, unknown> | undefined): Record<string, unknown> {
@@ -2477,7 +2454,7 @@ function dataRecord(value: unknown): Record<string, unknown> {
     return { value: json };
 }
 
-function frozenToolData(toolName: McpToolName, value: unknown): Record<string, unknown> {
+export function frozenToolData(toolName: McpToolName, value: unknown): Record<string, unknown> {
     const data = dataRecord(value);
     if ([
         "loan.commission-participant.add",
@@ -2559,73 +2536,105 @@ function frozenToolData(toolName: McpToolName, value: unknown): Record<string, u
 }
 
 export function createMcpProtocolServer(input: CreateMcpHttpPluginInput, ctx: CommandContext) {
+    const profile = input.profile ?? "full";
+    const catalog = input.catalog ?? LEGACY_TOOL_CATALOG;
+    const visibleTools = input.catalog ? catalog : toolsForProfile(profile, catalog);
     const server = new Server({ name: "creditsync", version: "1.0.0" }, {
         capabilities: { tools: {} },
         instructions: "CreditSync private tenant-scoped financial workflow tools. Preview before posting financial changes.",
     });
     server.setRequestHandler(ListToolsRequestSchema, () => ({
-        tools: advertisedMcpToolMetadata().map((tool) => ({
+        tools: visibleTools.map((tool) => ({
             name: tool.name,
             title: tool.annotations.title,
             description: tool.description,
-            inputSchema: toJsonSchemaCompat(normalizeObjectSchema(toolInputSchemas[tool.name as McpToolName])!, { strictUnions: true, pipeStrategy: "input" }),
-            outputSchema: transportOutputJsonSchema(tool.name as McpToolName),
+            inputSchema: tool.inputSchema,
+            outputSchema: tool.outputSchema,
             annotations: tool.annotations,
             ...((tool as { _meta?: Record<string, unknown> })._meta ? { _meta: (tool as { _meta?: Record<string, unknown> })._meta } : {}),
         })),
     }));
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const toolName = request.params.name as McpToolName;
-        const toolContext = { ...ctx };
-        const policy: OperationRecoveryPolicy = financialTools.has(toolName) ? "financial" : readOnlyTools.has(toolName) ? "read_only" : "mutating";
-        return withMcpDiagnosticScope(toolContext, toolName, async () => {
-            try {
-                if (!MCP_TOOL_NAMES.includes(toolName)) throw new DomainError("UNKNOWN_TOOL", "The requested MCP tool is not available", 400);
-                recordMcpBreadcrumb({ stage: "validation", outcome: "started" });
-                const parsedInput = await (input.parseToolInput ?? ((name, args) => toolInputSchemas[name].safeParseAsync(args) as Promise<{ success: boolean; data?: Record<string, unknown> }>))(toolName, request.params.arguments ?? {});
-                if (!parsedInput.success) {
-                    recordMcpBreadcrumb({ stage: "validation", outcome: "failed" });
-                    throw new DomainError("INVALID_TOOL_ARGUMENTS", "The MCP tool arguments are invalid", 422);
-                }
-                recordMcpBreadcrumb({ stage: "validation", outcome: "succeeded" });
-                const parsed = parsedInput.data as Record<string, unknown>;
-                const idempotencyKey = typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey : undefined;
-                const { idempotencyKey: _removed, ...handlerInput } = parsed;
-                toolContext.idempotencyKey = idempotencyKey ?? (toolName === "loan.activate" ? `mcp:loan.activate:${String(handlerInput.loanPublicId)}` : undefined);
-                recordMcpBreadcrumb({ stage: "preflight", outcome: "started" });
-                await input.preflightHandlers?.[toolName]?.(toolContext, handlerInput);
-                recordMcpBreadcrumb({ stage: "preflight", outcome: "succeeded" });
-                recordMcpBreadcrumb({ stage: "handler", outcome: "started" });
-                const result = await input.handlers[toolName](toolContext, handlerInput);
-                recordMcpBreadcrumb({ stage: "handler", outcome: "succeeded" });
-                const auditPublicIds = financialTools.has(toolName) ? await input.findAuditPublicIds({ ctx: toolContext, toolName, result }) : undefined;
-                if (financialTools.has(toolName) && auditPublicIds?.length === 0) throw new DomainError("AUDIT_METADATA_UNAVAILABLE", "The financial command completed without retrievable public audit metadata", 503);
-                const structuredContent = successOutputSchema(toolName).safeParse({ schemaVersion: "1.0", data: frozenToolData(toolName, result), ...(financialTools.has(toolName) ? { correlationId: toolContext.correlationId, auditPublicIds: auditPublicIds ?? [] } : {}) });
-                if (!structuredContent.success) throw new DomainError("INVALID_TOOL_OUTPUT", "The application service returned data outside the public MCP contract", 422);
-                return { content: [{ type: "text" as const, text: completionText(toolName) }], structuredContent: structuredContent.data };
-            } catch (error) {
-                const snapshot = currentMcpDiagnosticSnapshot();
-                const failedBreadcrumb = [...(snapshot?.breadcrumbs ?? [])].reverse().find((breadcrumb) => breadcrumb.outcome === "failed" || breadcrumb.outcome === "rejected");
-                const activeBreadcrumb = [...(snapshot?.breadcrumbs ?? [])].reverse().find((breadcrumb) => breadcrumb.outcome === "started");
-                const terminalStage = failedBreadcrumb?.stage ?? activeBreadcrumb?.stage ?? "handler";
-                const presented = presentMcpError(error, toolContext.correlationId, policy, terminalStage);
-                if (presented.persist && snapshot && !toolName.startsWith("system.error-diagnostic.")) {
-                    const persist = input.persistDiagnostic ?? ((value: Parameters<typeof persistMcpDiagnosticBestEffort>[0]) => persistMcpDiagnosticBestEffort(value));
-                    let pending: Promise<void>;
-                    try {
-                        pending = Promise.resolve(persist({ ctx: toolContext, toolName, publicError: presented.publicError, classification: presented.diagnostic, snapshot, logger: input.logger }));
-                    } catch {
-                        pending = Promise.resolve();
-                    }
-                    pending.catch(() => undefined);
-                    await Promise.race([pending, new Promise<void>((resolve) => setTimeout(resolve, 500))]).catch(() => undefined);
-                }
-                try { input.logger({ event: "mcp_tool_error", tool: toolName, requestId: toolContext.requestId, correlationId: toolContext.correlationId, code: presented.publicError.code }); } catch { /* preserve error response */ }
-                return { isError: true, content: [{ type: "text" as const, text: `${presented.publicError.code}: ${presented.publicError.message}` }], structuredContent: errorOutputSchema.parse({ schemaVersion: "1.0", error: presented.publicError }) };
-            }
-        });
+        if (!visibleTools.some((tool) => tool.name === toolName)) {
+            throw new McpError(ErrorCode.InvalidParams, `Tool ${request.params.name} not found`);
+        }
+        return executeMcpToolCall(input, ctx, toolName, request.params.arguments ?? {});
     });
     return server;
+}
+
+/**
+ * The application-level execution boundary shared by both protocol adapters.
+ * The v2 SDK validates registered schemas outside callbacks, so its adapter
+ * deliberately registers metadata-only handlers and delegates here. This
+ * keeps validation, policy, diagnostics, audit requirements, and public
+ * output validation identical across the legacy and modern transports.
+ */
+export async function executeMcpToolCall(
+    input: CreateMcpHttpPluginInput,
+    ctx: CommandContext,
+    toolName: string,
+    rawArguments: unknown,
+) {
+    const catalog = input.catalog ?? TOOL_CATALOG;
+    const metadata = catalog.find((tool) => tool.name === toolName);
+    const availableNames = new Set<string>(input.catalog ? catalog.map((tool) => tool.name) : toolNamesForProfile(input.profile ?? "full"));
+    const toolContext = { ...ctx };
+    const policy: OperationRecoveryPolicy = metadata?.policy.kind === "financial" || financialTools.has(toolName as McpToolName)
+        ? "financial" : metadata?.policy.kind === "read_only" || readOnlyTools.has(toolName as McpToolName) ? "read_only" : "mutating";
+    const requiresAudit = metadata?.policy.requiresAudit ?? financialTools.has(toolName as McpToolName);
+    return withMcpDiagnosticScope(toolContext, toolName, async () => {
+        try {
+            if (!availableNames.has(toolName)) throw new DomainError("UNKNOWN_TOOL", "The requested MCP tool is not available", 400);
+            recordMcpBreadcrumb({ stage: "validation", outcome: "started" });
+            const parsedInput = await (input.parseToolInput ?? ((name, args) => toolInputSchemas[name as McpToolName].safeParseAsync(args) as Promise<{ success: boolean; data?: Record<string, unknown> }>))(toolName, rawArguments);
+            if (!parsedInput.success) {
+                recordMcpBreadcrumb({ stage: "validation", outcome: "failed" });
+                throw new DomainError("INVALID_TOOL_ARGUMENTS", "The MCP tool arguments are invalid", 422);
+            }
+            recordMcpBreadcrumb({ stage: "validation", outcome: "succeeded" });
+            const parsed = parsedInput.data as Record<string, unknown>;
+            const idempotencyKey = typeof parsed.idempotencyKey === "string" ? parsed.idempotencyKey : undefined;
+            const { idempotencyKey: _removed, ...handlerInput } = parsed;
+            toolContext.idempotencyKey = idempotencyKey ?? (toolName === "loan.activate" ? `mcp:loan.activate:${String(handlerInput.loanPublicId)}` : undefined);
+            recordMcpBreadcrumb({ stage: "preflight", outcome: "started" });
+            await input.preflightHandlers?.[toolName]?.(toolContext, handlerInput);
+            recordMcpBreadcrumb({ stage: "preflight", outcome: "succeeded" });
+            recordMcpBreadcrumb({ stage: "handler", outcome: "started" });
+            const handler = input.handlers[toolName];
+            if (!handler) throw new DomainError("UNKNOWN_TOOL", "The requested MCP tool is not available", 400);
+            const result = await handler(toolContext, handlerInput);
+            recordMcpBreadcrumb({ stage: "handler", outcome: "succeeded" });
+            const auditPublicIds = requiresAudit ? await input.findAuditPublicIds({ ctx: toolContext, toolName, result }) : undefined;
+            if (requiresAudit && auditPublicIds?.length === 0) throw new DomainError("AUDIT_METADATA_UNAVAILABLE", "The financial command completed without retrievable public audit metadata", 503);
+            const publicData = input.catalog ? result : frozenToolData(toolName as McpToolName, result);
+            const structuredContent = input.validateToolOutput
+                ? input.validateToolOutput(toolName, { schemaVersion: "1.0", data: publicData, ...(requiresAudit ? { correlationId: toolContext.correlationId, auditPublicIds: auditPublicIds ?? [] } : {}) })
+                : successOutputSchema(toolName as McpToolName).safeParse({ schemaVersion: "1.0", data: publicData, ...(requiresAudit ? { correlationId: toolContext.correlationId, auditPublicIds: auditPublicIds ?? [] } : {}) });
+            if (!structuredContent.success) throw new DomainError("INVALID_TOOL_OUTPUT", "The application service returned data outside the public MCP contract", 422);
+            return { content: [{ type: "text" as const, text: completionText(toolName as McpToolName) }], structuredContent: structuredContent.data };
+        } catch (error) {
+            const snapshot = currentMcpDiagnosticSnapshot();
+            const failedBreadcrumb = [...(snapshot?.breadcrumbs ?? [])].reverse().find((breadcrumb) => breadcrumb.outcome === "failed" || breadcrumb.outcome === "rejected");
+            const activeBreadcrumb = [...(snapshot?.breadcrumbs ?? [])].reverse().find((breadcrumb) => breadcrumb.outcome === "started");
+            const terminalStage = failedBreadcrumb?.stage ?? activeBreadcrumb?.stage ?? "handler";
+            const presented = presentMcpError(error, toolContext.correlationId, policy, terminalStage);
+            if (presented.persist && snapshot && !toolName.startsWith("system.error-diagnostic.")) {
+                const persist = input.persistDiagnostic ?? ((value: Parameters<typeof persistMcpDiagnosticBestEffort>[0]) => persistMcpDiagnosticBestEffort(value));
+                let pending: Promise<void>;
+                try {
+                    pending = Promise.resolve(persist({ ctx: toolContext, toolName, publicError: presented.publicError, classification: presented.diagnostic, snapshot, logger: input.logger }));
+                } catch {
+                    pending = Promise.resolve();
+                }
+                pending.catch(() => undefined);
+                await Promise.race([pending, new Promise<void>((resolve) => setTimeout(resolve, 500))]).catch(() => undefined);
+            }
+            try { input.logger({ event: "mcp_tool_error", tool: toolName, requestId: toolContext.requestId, correlationId: toolContext.correlationId, code: presented.publicError.code }); } catch { /* preserve error response */ }
+            return { isError: true, content: [{ type: "text" as const, text: `${presented.publicError.code}: ${presented.publicError.message}` }], structuredContent: errorOutputSchema.parse({ schemaVersion: "1.0", error: presented.publicError }) };
+        }
+    });
 }
 
 function httpError(status: number, code: string, message: string, retryable = false) {
@@ -2653,9 +2662,9 @@ function withRequestHeaders(response: Response, requestIdValue: string, correlat
     return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-export function createMcpHttpPlugin(input: CreateMcpHttpPluginInput) {
+export function createMcpHttpPlugin(input: CreateMcpHttpPluginInput, endpoint = "/mcp") {
     return new Elysia({ name: "creditsync-mcp" })
-        .get("/mcp/health", ({ request }) => {
+        .get(`${endpoint}/health`, ({ request }) => {
             if (!hostIsAllowed(request.headers.get("host"), input.config.allowedHosts)) {
                 return httpError(403, "HOST_NOT_ALLOWED", "Host is not allowed");
             }
@@ -2663,12 +2672,15 @@ export function createMcpHttpPlugin(input: CreateMcpHttpPluginInput) {
                 headers: { "cache-control": "no-store" },
             });
         })
-        .all("/mcp", async ({ request }) => {
+        .all(endpoint, async ({ request }) => {
             const startedAt = performance.now();
             const requestIdValue = requestId(request.headers.get("x-request-id"));
             const correlationIdValue = requestId(request.headers.get("x-correlation-id"));
             if (!hostIsAllowed(request.headers.get("host"), input.config.allowedHosts)) {
                 return withRequestHeaders(httpError(403, "HOST_NOT_ALLOWED", "Host is not allowed"), requestIdValue, correlationIdValue);
+            }
+            if (!originIsAllowed(request.headers.get("origin"), input.config.allowedOrigins)) {
+                return withRequestHeaders(httpError(403, "ORIGIN_NOT_ALLOWED", "Origin is not allowed"), requestIdValue, correlationIdValue);
             }
             if (request.method !== "POST") {
                 const response = httpError(405, "METHOD_NOT_ALLOWED", "Only MCP POST requests are supported");
@@ -2704,7 +2716,27 @@ export function createMcpHttpPlugin(input: CreateMcpHttpPluginInput) {
                     requestId: requestIdValue,
                     correlationId: correlationIdValue,
                 };
-            const server = createMcpProtocolServer(input, ctx);
+                const modernCatalog = input.catalog ?? TOOL_CATALOG;
+                const modernVersion = input.catalog ? `mcp-fixture-${createHash("sha256").update(JSON.stringify(modernCatalog)).digest("hex").slice(0, 16)}` : mcpCatalogVersion();
+                const modernHandler = createModernMcpHandler(input, ctx, modernCatalog, modernVersion);
+                if (!(await isLegacyRequest(request))) {
+                    try {
+                        const modernResponse = await modernHandler.fetch(request);
+                        safeMcpLogger(input.logger, {
+                            event: "mcp_request",
+                            method: request.method,
+                            status: modernResponse.status,
+                            requestId: requestIdValue,
+                            correlationId: correlationIdValue,
+                            protocolEra: "modern",
+                            durationMs: Math.round(performance.now() - startedAt),
+                        });
+                        return withRequestHeaders(modernResponse, requestIdValue, correlationIdValue);
+                    } finally {
+                        await modernHandler.close().catch(() => undefined);
+                    }
+                }
+                const server = createMcpProtocolServer(input, ctx);
                 const transport = new WebStandardStreamableHTTPServerTransport({
                     sessionIdGenerator: undefined,
                     enableJsonResponse: true,

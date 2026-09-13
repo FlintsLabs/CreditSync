@@ -34,6 +34,10 @@ const FILE_HASH = createHash("sha256").update(PAYMENT_EVIDENCE_BYTES).digest("he
 const CHATGPT_FILE = { download_url: "https://files.oaiusercontent.com/file-fixture", file_id: "file-fixture", mime_type: "image/jpeg", file_name: "slip.jpg" };
 const SUPPLEMENT = "0198c481-3e2b-7000-8000-000000000026";
 const DISBURSEMENT_FILE_HASH = createHash("sha256").update(DISBURSEMENT_EVIDENCE_BYTES).digest("hex");
+const CHATGPT_PAYOUT_FILE_A = { download_url: "https://files.oaiusercontent.com/payout-fixture-a", file_id: "payout-file-a", mime_type: "image/jpeg", file_name: "payout-front.jpg" };
+const CHATGPT_PAYOUT_FILE_B = { download_url: "https://files.oaiusercontent.com/payout-fixture-b", file_id: "payout-file-b", mime_type: "image/jpeg", file_name: "payout-receipt.jpg" };
+const CHATGPT_PAYOUT_HASH_A = createHash("sha256").update("payout-file-a-bytes").digest("hex");
+const CHATGPT_PAYOUT_HASH_B = createHash("sha256").update("payout-file-b-bytes").digest("hex");
 const SETTLEMENT_BALANCE_VERSION = `v1:${"c".repeat(64)}`;
 const SETTLEMENT_PREVIEW_HASH = `v1:${"d".repeat(64)}`;
 const SETTLEMENT_EXPIRES_AT = "2026-08-15T06:15:00.000Z";
@@ -856,6 +860,62 @@ async function disbursementIdempotencyConflict(mcp: ScriptedMcp) {
         }
         throw error;
     }
+}
+
+function chatGptPayoutImportStep(file: typeof CHATGPT_PAYOUT_FILE_A, key: string, evidencePublicId: string, filePublicId: string, sha256: string): ScriptStep {
+    return {
+        name: "loan.disbursement.evidence.import-chatgpt-file",
+        arguments: { disbursementPublicId: DISBURSEMENT, idempotencyKey: key, chatgptFile: file },
+        result: { publicId: evidencePublicId, filePublicId, status: "ready", sha256, auditPublicId: COMMISSION_AUDIT, correlationId: COMMISSION_CORRELATION },
+    };
+}
+
+function chatGptPayoutDraftStep(): ScriptStep {
+    return {
+        name: "loan.disbursement.draft",
+        arguments: disbursementDraftArgs,
+        result: {
+            publicId: DISBURSEMENT, grossAmount: "2500.00", loanAttributedAmount: "2500.00", channel: "bank_transfer", status: "draft",
+            restructurePublicId: null, sourceBankProfilePublicId: null, payeeHint: "Borrower verified payout account", note: null,
+            disbursedAt: "2026-08-10T11:00:00+07:00", postedAt: null, reversedAt: null, evidenceFilePublicIds: [],
+        },
+    };
+}
+
+function chatGptPayoutListStep(evidenceFilePublicIds: string[], payeeHint = "Borrower verified payout account"): ScriptStep {
+    return {
+        name: "loan.disbursement.list",
+        arguments: { loanPublicId: LOAN_A },
+        result: {
+            loanPublicId: LOAN_A,
+            summary: { approvedPrincipal: "2500.00", netDisbursed: "2500.00", variance: "0.00", status: "matched" },
+            events: [{ publicId: DISBURSEMENT, grossAmount: "2500.00", loanAttributedAmount: "2500.00", channel: "bank_transfer", status: "draft", restructurePublicId: null, sourceBankProfilePublicId: null, payeeHint, note: null, disbursedAt: "2026-08-10T11:00:00+07:00", postedAt: null, reversedAt: null, evidenceFilePublicIds }],
+        },
+    };
+}
+
+async function chatGptPayoutEvidenceFlow(mcp: ScriptedMcp, options: { retry?: boolean; post?: boolean; recipientMismatch?: boolean } = {}) {
+    const draft = await mcp.call("loan.disbursement.draft", disbursementDraftArgs);
+    const importArgs = { disbursementPublicId: draft.publicId as string, idempotencyKey: "payout-import-a", chatgptFile: CHATGPT_PAYOUT_FILE_A };
+    try {
+        await mcp.call("loan.disbursement.evidence.import-chatgpt-file", importArgs);
+        if (options.retry) await mcp.call("loan.disbursement.evidence.import-chatgpt-file", importArgs);
+        if (!options.retry) await mcp.call("loan.disbursement.evidence.import-chatgpt-file", { disbursementPublicId: draft.publicId as string, idempotencyKey: "payout-import-b", chatgptFile: CHATGPT_PAYOUT_FILE_B });
+    } catch (error) {
+        if (error instanceof ScriptedMcpError) return { outcome: "stopped", stopReason: "chatgpt-payout-evidence-review-required" } as const;
+        throw error;
+    }
+    const inspected = await mcp.call("loan.disbursement.list", { loanPublicId: LOAN_A });
+    const event = (inspected.events as Array<{ publicId?: unknown; evidenceFilePublicIds?: unknown; payeeHint?: unknown }>).find((candidate) => candidate.publicId === draft.publicId);
+    if (!event || !Array.isArray(event.evidenceFilePublicIds) || event.evidenceFilePublicIds.length !== (options.retry ? 1 : 2)) {
+        return { outcome: "stopped", stopReason: "chatgpt-payout-evidence-incomplete" } as const;
+    }
+    if (options.recipientMismatch || event.payeeHint !== "Borrower verified payout account") {
+        return { outcome: "stopped", stopReason: "chatgpt-payout-recipient-review-required" } as const;
+    }
+    if (!options.post) return { outcome: "completed" } as const;
+    await mcp.call("loan.disbursement.post", { disbursementPublicId: draft.publicId as string, idempotencyKey: "payout-post-after-evidence" });
+    return { outcome: "completed" } as const;
 }
 
 async function renewalExecute(mcp: ScriptedMcp, operatorConfirmed = true, settlementPolicy?: "accrued_to_date") {
@@ -1795,6 +1855,41 @@ const SCENARIOS: Record<string, Scenario> = {
             { name: "payment.evidence-supplement.import-chatgpt-file", arguments: { paymentIntakePublicId: INTAKE, idempotencyKey: "chatgpt-supplement-import-1", chatgptFile: CHATGPT_FILE }, result: { publicId: SUPPLEMENT, status: "ready", sha256: FILE_HASH, filePublicId: EVIDENCE_FILE, auditPublicId: COMMISSION_AUDIT, correlationId: COMMISSION_CORRELATION } },
             { name: "payment.evidence-supplement.record", arguments: { paymentIntakePublicId: INTAKE, supplementPublicId: SUPPLEMENT, confirmed: true, reason: "evidence_recovered", note: "Recovered after payment review", idempotencyKey: "chatgpt-supplement-record-1" }, result: { publicId: SUPPLEMENT, status: "recorded", sha256: FILE_HASH, filePublicId: EVIDENCE_FILE, auditPublicId: COMMISSION_AUDIT, correlationId: COMMISSION_CORRELATION } },
         ], run: async (mcp) => { await mcp.call("payment.evidence-supplement.import-chatgpt-file", { paymentIntakePublicId: INTAKE, idempotencyKey: "chatgpt-supplement-import-1", chatgptFile: CHATGPT_FILE }); await mcp.call("payment.evidence-supplement.record", { paymentIntakePublicId: INTAKE, supplementPublicId: SUPPLEMENT, confirmed: true, reason: "evidence_recovered", note: "Recovered after payment review", idempotencyKey: "chatgpt-supplement-record-1" }); return { outcome: "completed" } as const; },
+    },
+    "disbursement-chatgpt-file-import": {
+        script: [
+            chatGptPayoutDraftStep(),
+            chatGptPayoutImportStep(CHATGPT_PAYOUT_FILE_A, "payout-import-a", DISBURSEMENT_EVIDENCE, EVIDENCE_FILE, CHATGPT_PAYOUT_HASH_A),
+            chatGptPayoutImportStep(CHATGPT_PAYOUT_FILE_B, "payout-import-b", `${DISBURSEMENT_EVIDENCE.slice(0, -1)}3`, `${EVIDENCE_FILE.slice(0, -1)}4`, CHATGPT_PAYOUT_HASH_B),
+            chatGptPayoutListStep([EVIDENCE_FILE, `${EVIDENCE_FILE.slice(0, -1)}4`]),
+            { name: "loan.disbursement.post", arguments: { disbursementPublicId: DISBURSEMENT, idempotencyKey: "payout-post-after-evidence" }, result: { publicId: DISBURSEMENT, grossAmount: "2500.00", loanAttributedAmount: "2500.00", channel: "bank_transfer", status: "posted", restructurePublicId: null, sourceBankProfilePublicId: null, payeeHint: "Borrower verified payout account", note: null, disbursedAt: "2026-08-10T11:00:00+07:00", postedAt: "2026-08-10T11:00:00+07:00", reversedAt: null, evidenceFilePublicIds: [EVIDENCE_FILE, `${EVIDENCE_FILE.slice(0, -1)}4`], duplicate: false, auditPublicId: COMMISSION_AUDIT, correlationId: COMMISSION_CORRELATION } },
+        ],
+        run: (mcp) => chatGptPayoutEvidenceFlow(mcp, { post: true }),
+    },
+    "disbursement-chatgpt-file-retry": {
+        script: [
+            chatGptPayoutDraftStep(),
+            chatGptPayoutImportStep(CHATGPT_PAYOUT_FILE_A, "payout-import-a", DISBURSEMENT_EVIDENCE, EVIDENCE_FILE, CHATGPT_PAYOUT_HASH_A),
+            chatGptPayoutImportStep(CHATGPT_PAYOUT_FILE_A, "payout-import-a", DISBURSEMENT_EVIDENCE, EVIDENCE_FILE, CHATGPT_PAYOUT_HASH_A),
+            chatGptPayoutListStep([EVIDENCE_FILE]),
+        ],
+        run: (mcp) => chatGptPayoutEvidenceFlow(mcp, { retry: true }),
+    },
+    "disbursement-chatgpt-file-unavailable": {
+        script: [
+            chatGptPayoutDraftStep(),
+            { name: "loan.disbursement.evidence.import-chatgpt-file", arguments: { disbursementPublicId: DISBURSEMENT, idempotencyKey: "payout-import-a", chatgptFile: CHATGPT_PAYOUT_FILE_A }, error: { code: "CHATGPT_FILE_UNAVAILABLE", message: "Attached payout file is unavailable", retryable: true, reviewRequired: true, details: {} } },
+        ],
+        run: (mcp) => chatGptPayoutEvidenceFlow(mcp),
+    },
+    "disbursement-chatgpt-file-recipient-mismatch": {
+        script: [
+            chatGptPayoutDraftStep(),
+            chatGptPayoutImportStep(CHATGPT_PAYOUT_FILE_A, "payout-import-a", DISBURSEMENT_EVIDENCE, EVIDENCE_FILE, CHATGPT_PAYOUT_HASH_A),
+            chatGptPayoutImportStep(CHATGPT_PAYOUT_FILE_B, "payout-import-b", `${DISBURSEMENT_EVIDENCE.slice(0, -1)}3`, `${EVIDENCE_FILE.slice(0, -1)}4`, CHATGPT_PAYOUT_HASH_B),
+            chatGptPayoutListStep([EVIDENCE_FILE, `${EVIDENCE_FILE.slice(0, -1)}4`], "Unverified recipient"),
+        ],
+        run: (mcp) => chatGptPayoutEvidenceFlow(mcp, { recipientMismatch: true }),
     },
     "payment-preflight-review-stops": {
         script: [

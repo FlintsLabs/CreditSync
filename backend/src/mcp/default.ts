@@ -80,7 +80,7 @@ import {
     previewReverseWithInterestAccrual,
 } from "../services/payment-reverse-with-accrual-service";
 import { createMcpRateLimiter } from "./rate-limit";
-import { createMcpHttpPlugin, type McpToolHandler, type McpToolName } from "./server";
+import { createMcpHttpPlugin, type McpToolHandler, type McpToolName, type ToolProfile } from "./server";
 import { parseMcpRuntimeConfig } from "./security";
 import {
     createDisbursementDraft,
@@ -152,7 +152,7 @@ import { addPaymentBatchItem, cancelPaymentBatch, capturePaymentBatch, createPay
 import { discoverPaymentBatchCandidates } from "../services/payment-batch-candidate-service";
 import { executeUnfundedLoanCancellation, previewUnfundedLoanCancellation } from "../services/loan-cancellation-service";
 import { executePaymentAllocationCorrection, previewPaymentAllocationCorrection } from "../services/payment-allocation-correction-service";
-import { importChatGptPaymentEvidence, importChatGptSupplementEvidence, recordPaymentEvidenceSupplement } from "../services/chatgpt-file-evidence-service";
+import { importChatGptDisbursementEvidence, importChatGptPaymentEvidence, importChatGptSupplementEvidence, recordPaymentEvidenceSupplement } from "../services/chatgpt-file-evidence-service";
 import { extractPaymentBatchStagingItem } from "../services/payment-batch-ocr-service";
 
 type ToolInput = Record<string, unknown>;
@@ -162,6 +162,7 @@ export interface DefaultMcpDependencies {
     disbursementEvidenceGateway?: DisbursementEvidenceStorageGateway;
     intermediaryRemittanceEvidenceGateway?: IntermediaryRemittanceEvidenceGateway;
     transferEvidenceGateway?: TransferEvidenceStorageGateway;
+    chatgptEvidenceDependencies?: import("../services/chatgpt-file-evidence-service").ChatGptEvidenceDependencies;
 }
 
 function asString(input: ToolInput, field: string) {
@@ -240,7 +241,11 @@ export function createDefaultMcpToolHandlers(
     ),
     "evidence.import-chatgpt-file": (ctx, input) => {
         const file = input.chatgptFile as Record<string, unknown>;
-        return importChatGptPaymentEvidence(ctx, asString(input, "paymentIntakePublicId"), { downloadUrl: String(file.download_url), fileId: String(file.file_id), mimeType: file.mime_type as string | undefined, fileName: file.file_name as string | undefined }, ctx.idempotencyKey!);
+        return importChatGptPaymentEvidence(ctx, asString(input, "paymentIntakePublicId"), { downloadUrl: String(file.download_url), fileId: String(file.file_id), mimeType: file.mime_type as string | undefined, fileName: file.file_name as string | undefined }, ctx.idempotencyKey!, dependencies.chatgptEvidenceDependencies);
+    },
+    "loan.disbursement.evidence.import-chatgpt-file": (ctx, input) => {
+        const file = input.chatgptFile as Record<string, unknown>;
+        return importChatGptDisbursementEvidence(ctx, asString(input, "disbursementPublicId"), { downloadUrl: String(file.download_url), fileId: String(file.file_id), mimeType: file.mime_type as string | undefined, fileName: file.file_name as string | undefined }, dependencies.chatgptEvidenceDependencies);
     },
     "payment.evidence-supplement.import-chatgpt-file": (ctx, input) => {
         const file = input.chatgptFile as Record<string, unknown>;
@@ -673,6 +678,7 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "payment.reverse-with-accrual.execute": { entityType: "payment_intake", action: "reversed_with_interest_accruals_materialized" },
     "payment.batch.execute": { entityType: "payment_batch", action: "posted" },
     "payment.reconcile.execute": { entityType: "payment_reconciliation", action: "executed" },
+    "payment.reconcile.reflow.execute": { entityType: "payment_reconciliation_reflow", action: "executed" },
     "payment.restore.execute": { entityType: "payment_reconciliation", action: "executed" },
     "payment.restore.create": { entityType: "payment_intake", action: "restore_draft_created" },
     "payment.restore.schedule-backfill": { entityType: "loan_schedule", action: "restore_schedule_backfilled" },
@@ -724,6 +730,8 @@ function structuredLog(entry: Record<string, unknown>) {
 export function createDefaultMcpHttpPlugin(
     env: Record<string, string | undefined> = process.env,
     dependencies: DefaultMcpDependencies = {},
+    profile: ToolProfile = "full",
+    endpoint = "/mcp",
 ) {
     const config = parseMcpRuntimeConfig(env);
     const limiter = createMcpRateLimiter({
@@ -732,6 +740,7 @@ export function createDefaultMcpHttpPlugin(
     });
     return createMcpHttpPlugin({
         config,
+        profile,
         handlers: createDefaultMcpToolHandlers(dependencies),
         consumeRateLimit: (input) => limiter.consume(input),
         logger: env.MCP_TEST_SILENT_LOGS === "1" ? () => undefined : structuredLog,
@@ -745,7 +754,16 @@ export function createDefaultMcpHttpPlugin(
             return { tenantId: actor.tenantId, actorUserId: actor.id };
         },
         findAuditPublicIds: async ({ ctx, toolName, result }) => {
-            const target = auditTarget[toolName];
+            const target = auditTarget[toolName as McpToolName];
+            if (toolName === "payment.reconcile.reflow.execute" && target) {
+                const rows = await db.select({ publicId: auditLogs.publicId }).from(auditLogs).where(and(
+                    eq(auditLogs.tenantId, ctx.tenantId),
+                    eq(auditLogs.correlationId, ctx.correlationId),
+                    eq(auditLogs.entityType, target.entityType),
+                    eq(auditLogs.action, target.action),
+                )).orderBy(desc(auditLogs.id)).limit(1);
+                return rows.map((row) => row.publicId);
+            }
             const entityId = result && typeof result === "object" && toolName === "payment.restore.create"
                 ? (result as Record<string, unknown>).restoreDraftPublicId as string | undefined
                 : result && typeof result === "object" && toolName === "payment.restore.schedule-backfill"
@@ -776,5 +794,5 @@ export function createDefaultMcpHttpPlugin(
             )).orderBy(desc(auditLogs.id)).limit(1);
             return rows.map((row) => row.publicId);
         },
-    });
+    }, endpoint);
 }

@@ -9,8 +9,10 @@
         "schema:check:loan-origination": "bun run scripts/check-loan-origination-schema.ts",
         "schema:reconcile:production-mixed-lineage": "bun run scripts/reconcile-production-mixed-lineage.ts",
         "generate": "drizzle-kit generate",
-        "migrate": "drizzle-kit migrate"
-        ,"diagnostics:cleanup": "bun run scripts/cleanup-mcp-diagnostics.ts"
+        "migrate": "drizzle-kit migrate",
+        "mcp:discovery:benchmark": "bun run scripts/benchmark-mcp-discovery.ts",
+        "mcp:conformance": "bun run scripts/mcp-conformance.ts",
+        "diagnostics:cleanup": "bun run scripts/cleanup-mcp-diagnostics.ts"
     },
     "dependencies": {
         "@aws-sdk/client-s3": "^3.1106.0",
@@ -20,7 +22,9 @@
         "@elysiajs/jwt": "^1.4.2",
         "@elysiajs/swagger": "^1.3.1",
         "@line/bot-sdk": "^11.2.0",
+        "@modelcontextprotocol/client": "2.0.0",
         "@modelcontextprotocol/sdk": "1.30.0",
+        "@modelcontextprotocol/server": "2.0.0",
         "dayjs": "^1.11.21",
         "decimal.js": "^10.6.0",
         "drizzle-orm": "^0.45.2",

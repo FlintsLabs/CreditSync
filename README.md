@@ -20,6 +20,7 @@ CreditSync is designed for workflows like:
 - Generating installment schedules before confirming a loan
 - Supporting weekly or monthly schedules with a borrower-agreed installment count: the backend derives the rate-based amount when no amount is supplied, while an explicit count-plus-amount pair creates a fixed-total schedule whose amount above principal is scheduled interest
 - Capturing data-only or image-first repayments, reviewing matches, posting allocations, and reversing corrections
+- Importing verified ChatGPT attachments into an existing loan-payout draft without creating a payment intake or posting money; every required attachment is inspected before a separate payout transition, and real mobile-device transport acceptance remains pending
 
 Payment-slip batches support an upload-first, human-review-only OCR step after staging evidence is finalized. The local OCR boundary returns candidate amount, Bangkok transfer time, payer/receiver, fee, and a hashed reference; it verifies downloaded bytes against the finalized evidence checksum, serializes extraction receipts by tenant/key, and does not create an intake, choose a borrower/loan, calculate accounting, or post money. Missing or ambiguous fields stay unresolved for manual review, and the existing evidence checksum/revision gates require a fresh preview after any change.
 
@@ -377,7 +378,7 @@ CreditSync serves a private stateless Streamable HTTP MCP endpoint at `/mcp` in 
 
 All MCP requests are bound to the server-side `MCP_TENANT_ID` and `MCP_ACTOR_EMAIL`. A client cannot submit or override tenant or actor identity. The configured actor must already exist in that tenant, and its normal CreditSync role/portfolio permissions still apply. Funding sources are list-only; the MCP surface has no generic SQL, arbitrary fetch, or funding mutation tool.
 
-The backend schema-version `1.0` exposes 112 frozen tools, including:
+The backend schema-version `1.0` currently exposes 131 frozen tools. The generated contract at [`plugins/creditsync/references/mcp-tool-contract.json`](./plugins/creditsync/references/mcp-tool-contract.json) is authoritative; the list below is an illustrative excerpt:
 
 ```text
 borrower.search       borrower.portfolio    borrower.create
@@ -447,7 +448,7 @@ For rotation, put the old and new hashes in `MCP_API_TOKEN_HASHES` separated by 
 
 ## Private CreditSync Plugin
 
-The repository includes CreditSync Plugin `10.0.0` under [`plugins/creditsync`](./plugins/creditsync). It combines 11 orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI.
+The repository includes CreditSync Plugin `10.2.0` under [`plugins/creditsync`](./plugins/creditsync). It combines 11 orchestration skills with a private app reference to the HTTPS MCP endpoint; it does not bundle a local MCP process, URL, bearer token, OAuth, hooks, or plugin UI. Its payout evidence importer accepts the top-level ChatGPT file parameter only for an existing draft and leaves activation/posting to the separately confirmed workflow.
 
 Before installation, register the deployed MCP endpoint as a private Codex app and replace the conspicuous `plugin_asdk_app_REPLACE_AFTER_PRIVATE_REGISTRATION` value in `plugins/creditsync/.app.json` with the returned `plugin_asdk_app...` technical ID. Then validate the package, add this Git repository as the marketplace that tracks `main`, and install the plugin:
 

@@ -1217,16 +1217,22 @@ export const loanDisbursementEvidenceIntents = pgTable("loan_disbursement_eviden
     fileId: integer("file_id").notNull(),
     status: text("status").default("pending").notNull(),
     evidenceHash: text("evidence_hash").notNull(),
+    importIdempotencyKey: text("import_idempotency_key"),
+    sourceFileFingerprint: text("source_file_fingerprint"),
     mimeType: text("mime_type").notNull(),
     declaredSize: integer("declared_size").notNull(),
     uploadExpiresAt: timestamp("upload_expires_at"),
     finalizedAt: timestamp("finalized_at"),
+    finalizedAuditPublicId: uuid("finalized_audit_public_id"),
     createdByUserId: integer("created_by_user_id").references(() => users.id),
     updatedByUserId: integer("updated_by_user_id").references(() => users.id),
     createdAt: timestamp("created_at").defaultNow(),
     updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
     uniqueIndex("loan_disbursement_evidence_intents_tenant_hash_unique").on(table.tenantId, table.evidenceHash),
+    uniqueIndex("loan_disbursement_evidence_intents_tenant_import_key_unique")
+        .on(table.tenantId, table.importIdempotencyKey)
+        .where(sql`${table.importIdempotencyKey} IS NOT NULL`),
     check("loan_disbursement_evidence_intents_status_check", sql`${table.status} IN ('pending', 'ready')`),
     foreignKey({
         name: "loan_disbursement_evidence_intents_tenant_event_fk",
