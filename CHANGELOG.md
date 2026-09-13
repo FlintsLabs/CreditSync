@@ -9,7 +9,13 @@
 - Added the pure authoritative financial-evidence readiness policy and literal regressions; service-level enforcement follows in the next implementation checkpoint.
 - Made financial-evidence policy evaluation fail closed for invalid runtime counts/flags and added independent pending, rejected, required-minimum, and unknown-state regressions.
 - Added tenant-safe sticky financial-evidence requirements with typed payment/payout targets, additive migration 0075, immutable-parent locking, payment/batch/restore guards, and failure-retaining prepare declarations.
+- Added append-only hashed evidence-attempt floors in migration 0076, exact tenant/file/finalization/linkage checks, direct-service portfolio authorization, and download/signing/cleanup regressions that keep failed evidence attempts blocking financial transitions.
+- Added lock-scoped reconciliation of legacy payment and payout evidence into durable attempt floors using only provable SHA-256 or source-fingerprint identities; same-identity retries remain idempotent and ambiguous legacy rows are not guessed.
 - Added payout-post and loan-activation parity guards, signing-failure regression coverage, and an entry-point matrix documenting supported evidence transports and human-review-only paths.
+
+### Changed
+
+- Integrated the shared 0076 evidence-attempt floor and payout/activation enforcement with the alternate-transition guards in this branch; primary resolver/plugin work remains separate.
 
 ## v0.4.45 - 2026-09-13
 

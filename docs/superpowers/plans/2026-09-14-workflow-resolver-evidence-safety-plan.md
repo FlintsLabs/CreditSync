@@ -45,7 +45,7 @@ type EvidenceDecision = { allowed: boolean; code: 'READY' | 'EVIDENCE_REQUIRED_N
 // export function evaluateFinancialEvidence(state: FinancialEvidenceState): EvidenceDecision
 ```
 
-- [ ] Add a failing pure regression with literal values, including a false legacy flag with a known pending intent:
+- [x] Add a failing pure regression with literal values, including a false legacy flag with a known pending intent:
 
 ```ts
 expect(evaluateFinancialEvidence({required:false,expectedCount:0,readyCount:0,pendingCount:1,rejectedCount:0}))
@@ -54,9 +54,9 @@ expect(evaluateFinancialEvidence({required:true,expectedCount:2,readyCount:1,pen
 expect(evaluateFinancialEvidence({required:false,expectedCount:0,readyCount:0,pendingCount:0,rejectedCount:0}).allowed).toBe(true);
 ```
 
-- [ ] Run `bun test backend/src/services/financial-evidence-policy.test.ts`; capture the intended red assertions, not an import/fixture failure. These tests are pure and do not access a database.
-- [ ] Implement the pure policy: required minimum is at least one for required/known evidence; any unresolved required intent blocks; unknown readiness is not ready. Run the same tests and require green.
-- [ ] Commit the pure policy, green tests and CHANGELOG. Explicitly state that service enforcement is delivered in Task 2, not by this policy-only checkpoint.
+- [x] Run `bun test backend/src/services/financial-evidence-policy.test.ts`; capture the intended red assertions, not an import/fixture failure. These tests are pure and do not access a database.
+- [x] Implement the pure policy: required minimum is at least one for required/known evidence; any unresolved required intent blocks; unknown readiness is not ready. Run the same tests and require green.
+- [x] Commit the pure policy, green tests and CHANGELOG. Explicitly state that service enforcement is delivered in Task 2, not by this policy-only checkpoint.
 
 ### Task 2: Sticky requirements, locking and payment enforcement
 
@@ -64,23 +64,23 @@ expect(evaluateFinancialEvidence({required:false,expectedCount:0,readyCount:0,pe
 
 **Interfaces produced:** `registerFinancialEvidenceRequirement(tx, ctx, target, expectedCount)` and `assertFinancialEvidenceReady(tx, ctx, target)`. `target` is `{kind:'payment_intake'|'loan_disbursement', publicId:string}`; transaction and context use existing `DbTransaction`/`CommandContext`. The assertion uses Task 1 policy, authorized joins and exact finalized associations.
 
-- [ ] Extend the existing payment database fixture to create a false-flag intake, preview, prepare evidence, simulate PUT failure, then post the old proposal. Assert rejection, unchanged schedule/loan/transaction/funding totals and no posted audit. Keep all IDs/data synthetic. Run `bun run --cwd backend test src/services/payment-service.test.ts` to capture the expected failure before wiring the guard.
+- [x] Extend the existing payment database fixture to create a false-flag intake, preview, prepare evidence, simulate PUT failure, then post the old proposal. Assert rejection, unchanged schedule/loan/transaction/funding totals and no posted audit. Keep all IDs/data synthetic. Run `bun run --cwd backend test src/services/payment-service.test.ts` to capture the expected failure before wiring the guard.
 
-- [ ] Confirm next migration slot against current journal; if 0075 is already taken, allocate the next monotonically ordered entry and update this plan's migration references before implementation.
-- [ ] Add migration tests for XOR typed parents, tenant FKs, one requirement per target, expected count 1–20 and no retroactive posted-record update. Use explicit typed parent columns, not an unchecked polymorphic public ID.
-- [ ] Add `attachmentRequirement: {expectedCount: integer 1..20}` as an optional closed property on mutable intake and payout creation. Omitted means legacy behavior, not proof there was no attachment.
-- [ ] Implement declaration with context/audit and conflict-safe upsert under parent lock; only mutable parents permit increasing counts. Mirror the payment flag only on mutable rows. Use this sequence:
+- [x] Confirm next migration slot against current journal; migration 0075 was already present, so the append-only distinct-attempt floor uses migration 0076.
+- [x] Add migration tests for XOR typed parents, tenant FKs, one requirement per target, expected count 1–20 and no retroactive posted-record update. Use explicit typed parent columns, not an unchecked polymorphic public ID.
+- [x] Add `attachmentRequirement: {expectedCount: integer 1..20}` as an optional closed property on mutable intake and payout creation. Omitted means legacy behavior, not proof there was no attachment.
+- [x] Implement declaration with context/audit and conflict-safe upsert under parent lock; only mutable parents permit increasing counts. Mirror the payment flag only on mutable rows. Use this sequence:
 
 ```text
 authorize exact target → lock parent → confirm mutable → register/increase requirement
 → create or reuse evidence intent → commit → storage work → finalize under parent lock
 ```
 
-- [ ] Register requirements before accepted prepare/import can fail in DNS, signer, download or storage. Retry cleanup must retain the requirement; repeated import keys must not increase count.
-- [ ] Wire guards into preview readiness and the payment kernel, including batch/restore consumers; recheck after locking, never rely on a resolver result or old proposal.
-- [ ] Keep terminal successful post replay ahead of new mutable-state requirements, returning the original receipt; normal new writes with unresolved evidence reject.
-- [ ] Test both prepare/post interleavings with existing barrier patterns, ready+pending attachments, multiple declared attachments, same-file retries, expired cleanup, cancelled retention, tenant isolation, and direct service/REST bypass attempts. Assert no financial writes on rejection.
-- [ ] Run `bun run --cwd backend test src/services/payment-service.test.ts src/services/financial-evidence-requirement-service.test.ts src/services/payment-batch-staging.integration.test.ts src/services/payment-batch-atomic.integration.test.ts src/services/payment-restore-floating.integration.test.ts` and typecheck. Commit with CHANGELOG and updated workflow documentation.
+- [x] Register requirements before accepted prepare/import can fail in DNS, signer, download or storage. Retry cleanup retains the requirement; repeated attempt identities do not increase count.
+- [x] Wire guards into preview readiness and the payment kernel, including batch/restore consumers; recheck after locking, never rely on a resolver result or old proposal.
+- [x] Keep terminal successful post replay ahead of new mutable-state requirements, returning the original receipt; normal new writes with unresolved evidence reject.
+- [x] Test both prepare/post interleavings with existing barrier patterns, ready+pending attachments, multiple declared attachments, same-file retries, expired cleanup, cancelled retention, tenant isolation, and direct service/REST bypass attempts. Assert no financial writes on rejection.
+- [x] Run the scoped disposable payment, requirement, batch staging/atomic, restore-floating, payout, loan-application, and ChatGPT importer suites. Backend typecheck has no backend errors; the existing frontend `decimal.js` dependency resolution error remains documented.
 
 ### Task 3: Payout/activation parity and other financial entry points
 
@@ -88,8 +88,8 @@ authorize exact target → lock parent → confirm mutable → register/increase
 
 **Consumes:** Task 2 register/assert functions. **Produces:** a checked-in enforcement matrix in the operations guide: entry point, target relation, guard location, supported attachment transport, terminal replay behavior.
 
-- [ ] Add payout regression: optional-evidence draft → prepare → signing/PUT failure → post must reject. Ready evidence plus a second pending intent must also reject.
-- [ ] Guard `postDisbursement` under the existing loan→event→intent locking order. Known associated payout requirements block loan activation; do not infer target relationships from borrower names or transfer amounts.
+- [x] Add payout regression: optional-evidence draft → prepare → signing/PUT failure → post must reject. Ready evidence plus a second pending intent must also reject.
+- [x] Guard `postDisbursement` under the existing loan→event→intent locking order. Known associated payout requirements block loan activation; do not infer target relationships from borrower names or transfer amounts.
 - [ ] Inventory every financial tool from catalog policy. For each alternate execute path, test consumption of a guarded target cannot bypass the assertion. Distinguish a path that has no pre-execution evidence target from one that consumes an existing payment/payout.
 - [ ] Preserve old batch `tenant/staging` lineage, current intermediary checks and typed evidence scopes. Do not impose `intake` metadata on every storage object.
 - [ ] For attachment-bearing floating settlement/renewal/intermediary paths without a supported importer, record human-review-only routing. Do not introduce fake payment intakes or generic financial execution. This scope does not claim backend awareness of unreported files.

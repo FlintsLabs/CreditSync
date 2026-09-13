@@ -324,7 +324,7 @@ async function importEvidence(ctx: CommandContext, intakePublicId: string, sourc
         if (!auditPublicId) throw new DomainError("EVIDENCE_AUDIT_NOT_FOUND", "Ready evidence audit metadata is unavailable", 503);
         return safeResult(existing, storedFile.publicId, auditPublicId, ctx.correlationId);
     }
-    if (!supplement) await db.transaction(async (tx) => registerFinancialEvidenceRequirement(tx, ctx, { kind: "payment_intake", publicId: intake.publicId }, 1));
+    if (!supplement) await db.transaction(async (tx) => registerFinancialEvidenceRequirement(tx, ctx, { kind: "payment_intake", publicId: intake.publicId }, 1, { attemptKey: `chatgpt:${fingerprint}` }));
     const verified = await downloadChatGptFile(source, dependencies);
     const key = `payment-evidence/${ctx.tenantId}/${intake.publicId}/${crypto.randomUUID()}`;
     const request: SignedPutRequest = { bucket: BUCKET_NAME, key, contentType: verified.mimeType, contentLength: verified.size, checksumSha256: verified.sha256, metadata: { tenant: ctx.tenantId, intake: intake.publicId, sha256: verified.sha256 } };
@@ -401,6 +401,13 @@ export async function importChatGptDisbursementEvidence(
     if (existingSourceIdentity?.importIdempotencyKey && existingSourceIdentity.importIdempotencyKey !== idempotencyKey) {
         throw new DomainError("EVIDENCE_IDEMPOTENCY_CONFLICT", "Evidence file identity is already bound to another import", 409);
     }
+    await db.transaction(async (tx) => registerFinancialEvidenceRequirement(
+        tx,
+        ctx,
+        { kind: "loan_disbursement", publicId: (event as { publicId: string }).publicId },
+        1,
+        { attemptKey: `chatgpt:${sourceFileFingerprint}` },
+    ));
     const verified = await downloadChatGptFile(source, dependencies);
     const evidenceGateway = dependencies.disbursementEvidenceGateway ?? { preparePut: createSignedPutUrl, head: headStoredObject };
     const prepareInput = {
@@ -410,6 +417,7 @@ export async function importChatGptDisbursementEvidence(
         originalName: verified.fileName,
         importIdempotencyKey: idempotencyKey,
         sourceFileFingerprint,
+        requirementAttemptKey: `chatgpt:${sourceFileFingerprint}`,
     } as const;
     let intent;
     try {

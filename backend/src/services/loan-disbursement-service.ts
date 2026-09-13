@@ -37,7 +37,7 @@ export interface CreateDisbursementDraftInput {
 }
 
 export type UpdateDisbursementDraftInput = Partial<CreateDisbursementDraftInput>;
-export interface PrepareDisbursementEvidenceInput { mimeType: string; size: number; sha256: string; originalName?: string | null; importIdempotencyKey?: string | null; sourceFileFingerprint?: string | null }
+export interface PrepareDisbursementEvidenceInput { mimeType: string; size: number; sha256: string; originalName?: string | null; importIdempotencyKey?: string | null; sourceFileFingerprint?: string | null; requirementAttemptKey?: string }
 
 export function rejectDisbursementDraftEvidenceIds(input: unknown) {
     if (input && typeof input === "object" && "evidenceFilePublicIds" in input) {
@@ -614,10 +614,10 @@ export async function prepareDisbursementEvidence(ctx: CommandContext, disbursem
     }
     const { event } = await accessibleEvent(ctx, disbursementPublicId);
     if (event.status !== "draft") throw new DomainError("DISBURSEMENT_LOCKED", "Evidence can only be prepared for a draft", 409);
-    await db.transaction(async (tx) => {
-        await registerFinancialEvidenceRequirement(tx, ctx, { kind: "loan_disbursement", publicId: event.publicId }, 1);
-    });
     const sha256 = input.sha256.toLowerCase();
+    await db.transaction(async (tx) => {
+        await registerFinancialEvidenceRequirement(tx, ctx, { kind: "loan_disbursement", publicId: event.publicId }, 1, { attemptKey: input.requirementAttemptKey ?? `sha256:${sha256}` });
+    });
     const existing = await db.query.loanDisbursementEvidenceIntents.findFirst({ where: and(
         eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId), eq(loanDisbursementEvidenceIntents.evidenceHash, sha256),
     ) });

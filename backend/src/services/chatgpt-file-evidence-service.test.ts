@@ -3,10 +3,10 @@ import { createHash } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 import { db } from "../db";
-import { auditLogs, borrowers, files, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loanDisbursements, loanSchedules, loans, paymentIntakes, users } from "../db/schema";
+import { auditLogs, borrowers, files, financialEvidenceRequirements, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loanDisbursements, loanSchedules, loans, paymentIntakes, users } from "../db/schema";
 import type { SignedPutRequest, StoredObjectHead } from "../lib/storage";
 import { DomainError } from "./domain-error";
-import { createDisbursementDraft, prepareDisbursementEvidence } from "./loan-disbursement-service";
+import { createDisbursementDraft, postDisbursement, prepareDisbursementEvidence } from "./loan-disbursement-service";
 import { importChatGptDisbursementEvidence, importChatGptPaymentEvidence, importChatGptSupplementEvidence, downloadChatGptFile, type ChatGptEvidenceDependencies, type ChatGptFileParam } from "./chatgpt-file-evidence-service";
 
 const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
@@ -218,6 +218,22 @@ integrationTest("imports payout evidence into a draft without creating or postin
     expect(await db.select().from(auditLogs).where(eq(auditLogs.publicId, resultAuditPublicId))).toHaveLength(1);
     expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, loan.id))).toHaveLength(0);
     expect(await db.select().from(loanDisbursements).where(eq(loanDisbursements.loanId, loan.id))).toHaveLength(0);
+});
+
+integrationTest("commits the payout requirement before a ChatGPT download failure", async () => {
+    const { user, loan, draft } = await seededDraft();
+    const counters = { fetch: 0, prepare: 0, put: 0, head: 0 };
+    await expect(importChatGptDisbursementEvidence(dbContext(user, "download-failure"), draft.publicId, file, {
+        ...importerDependencies(counters),
+        fetch: async () => { counters.fetch++; throw new Error("download unavailable"); },
+    })).rejects.toMatchObject({ code: "CHATGPT_FILE_UNAVAILABLE" });
+    const event = await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, draft.publicId) });
+    expect(await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.loanDisbursementEventId, event!.id) })).toMatchObject({ expectedCount: 1 });
+    await db.update(loans).set({ status: "active" }).where(eq(loans.id, loan.id));
+    await expect(postDisbursement(dbContext(user, "download-failure-post"), draft.publicId)).rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY" });
+    expect(await db.query.loans.findFirst({ where: eq(loans.id, loan.id) })).toMatchObject({ status: "active" });
+    expect(await db.select().from(loanDisbursementEvidenceIntents)).toHaveLength(0);
+    expect(await db.select().from(loanDisbursementEvidence)).toHaveLength(0);
 });
 
 integrationTest("retries ready evidence by stable key without fetching an expired ChatGPT URL", async () => {
