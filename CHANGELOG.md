@@ -7,6 +7,7 @@
 - Recorded the owner-approved workflow resolver and sticky evidence-safety implementation plan, including isolated Luna high execution, independent verification and controlled deployment gates; implementation and mobile acceptance are not yet complete.
 - Added the pure authoritative financial-evidence readiness policy and literal regressions; service-level enforcement follows in the next implementation checkpoint.
 - Made financial-evidence policy evaluation fail closed for invalid runtime counts/flags and added independent pending, rejected, required-minimum, and unknown-state regressions.
+- Added tenant-safe sticky financial-evidence requirements with typed payment/payout targets, additive migration 0075, immutable-parent locking, payment/batch/restore guards, and failure-retaining prepare declarations.
 
 ## v0.4.45 - 2026-09-13
 

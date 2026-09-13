@@ -88,6 +88,7 @@ export const paymentIntakesRoute = new Elysia({ prefix: "/payment-intakes" })
             qrPayload: t.Optional(t.Nullable(t.String())),
             notes: t.Optional(t.Nullable(t.String())),
             originLoanPublicId: t.Optional(t.Nullable(t.String({ format: "uuid" }))),
+            attachmentRequirement: t.Optional(t.Object({ expectedCount: t.Integer({ minimum: 1, maximum: 20 }) })),
         }),
     })
     .get("/:id", async ({ params, user, request, set }) => {

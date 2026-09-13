@@ -1552,6 +1552,7 @@ export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unkn
         bankReference: optionalNullableText,
         qrPayload: optionalNullableText,
         notes: optionalNullableText,
+        attachmentRequirement: z.object({ expectedCount: z.number().int().min(1).max(20) }).strict().optional(),
         idempotencyKey: z.string().trim().min(1).max(200),
     }).strict(),
     "evidence.prepare": z.object({
@@ -1784,6 +1785,7 @@ export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unkn
         payeeHint: optionalNullableText,
         note: optionalNullableText,
         disbursedAt: dateTime,
+        attachmentRequirement: z.object({ expectedCount: z.number().int().min(1).max(20) }).strict().optional(),
         evidenceFilePublicIds: z.array(uuid).max(100).optional(),
     }).strict(),
     "loan.disbursement.update": z.object({

@@ -526,6 +526,13 @@
       "when": 1789084800002,
       "tag": "0074_disbursement_chatgpt_imports",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1789084800003,
+      "tag": "0075_financial_evidence_requirements",
+      "breakpoints": true
     }
   ]
 }

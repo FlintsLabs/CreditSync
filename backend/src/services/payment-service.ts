@@ -44,6 +44,7 @@ import {
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import { getPaymentCancellationCapability } from "./payment-cancellation-service";
+import { assertFinancialEvidenceReady, registerFinancialEvidenceRequirement } from "./financial-evidence-requirement-service";
 import { assertNoLaterFloatingPayment, assertNoOlderPendingPayment, lockPaymentBorrowers, paymentIntakeBorrowerIds } from "./payment-chronology-service";
 import { normalizeBorrowerText } from "./borrower-service";
 import { executeLoanWaiver, getLoanWaiverAvailability, previewLoanWaiver } from "./loan-waiver-service";
@@ -79,13 +80,8 @@ const sha256Pattern = /^[0-9a-f]{64}$/i;
 const allowedEvidenceTypes = new Set(["image/jpeg", "image/png", "application/pdf"]);
 const semanticDuplicateWindowMs = 5 * 60 * 1000;
 
-export async function assertPaymentEvidenceReady(executor: Executor, tenantId: string, intake: Pick<IntakeRow, "id" | "evidenceRequired">) {
-    if (!intake.evidenceRequired) return;
-    const ready = await executor.query.paymentEvidence.findFirst({ where: and(
-        eq(paymentEvidence.tenantId, tenantId), eq(paymentEvidence.paymentIntakeId, intake.id),
-        eq(paymentEvidence.status, "ready"), sql`${paymentEvidence.finalizedAt} IS NOT NULL`,
-    ) });
-    if (!ready) throw new DomainError("EVIDENCE_REQUIRED_NOT_READY", "Required payment evidence is not ready", 409);
+export async function assertPaymentEvidenceReady(executor: Executor, tenantId: string, intake: Pick<IntakeRow, "id" | "publicId"> & { evidenceRequired?: boolean }) {
+    return assertFinancialEvidenceReady(executor, { tenantId, actorUserId: null, actorSource: "system", requestId: "payment-evidence-guard", correlationId: "payment-evidence-guard" }, { kind: "payment_intake", publicId: intake.publicId });
 }
 
 function hash(value: string) {
@@ -240,6 +236,7 @@ export interface CreatePaymentIntakeInput {
     qrPayload?: string | null;
     notes?: string | null;
     originLoanPublicId?: string | null;
+    attachmentRequirement?: { expectedCount: number };
 }
 
 export async function createPaymentIntake(ctx: CommandContext, input: CreatePaymentIntakeInput) {
@@ -295,6 +292,9 @@ export async function createPaymentIntake(ctx: CommandContext, input: CreatePaym
                 createdByUserId: ctx.actorUserId,
                 updatedByUserId: ctx.actorUserId,
             }).returning().then((rows) => rows[0]!);
+            if (input.attachmentRequirement) {
+                await registerFinancialEvidenceRequirement(tx, ctx, { kind: "payment_intake", publicId: created.publicId }, input.attachmentRequirement.expectedCount);
+            }
             await createAuditLog(tx, {
                 ...auditContext(ctx), entityType: "payment_intake", entityId: created.publicId,
                 action: "created",
@@ -653,6 +653,9 @@ export async function preparePaymentEvidence(
     validateEvidenceInput(input);
     const intake = await accessibleIntake(ctx, intakePublicId);
     if (["posted", "reversed", "duplicate", "cancelled"].includes(intake.status)) throw new DomainError("PAYMENT_INTAKE_IMMUTABLE", "Evidence cannot be added to this intake", 409);
+    await db.transaction(async (tx) => {
+        await registerFinancialEvidenceRequirement(tx, ctx, { kind: "payment_intake", publicId: intake.publicId }, 1);
+    });
     const sha256 = input.sha256.toLocaleLowerCase();
     const existing = await db.query.paymentEvidence.findFirst({
         where: and(eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.evidenceHash, sha256)),

@@ -1430,8 +1430,9 @@ describe("payment application service", () => {
             .rejects.toMatchObject({ code: "EVIDENCE_UPLOAD_EXPIRED", status: 409 });
     });
 
-    // Break caught: a delayed signer can return a live upload capability after the intake becomes posted.
-    integrationTest("does not return a newly signed evidence capability after posting wins the race", async () => {
+    // A requirement is committed before the delayed signer is called, so the
+    // posting side of this interleaving must fail closed.
+    integrationTest("prepare wins the race and blocks posting before signing completes", async () => {
         const actor = await seedUser();
         const seeded = await seedLoan({ actor, borrowerName: "Signing race", schedules: [{ total: "10.00" }] });
         const intake = await createPaymentIntake(context(actor), { amount: "10.00", receivedAt: "2026-08-10T10:00:00.000Z" });
@@ -1455,9 +1456,10 @@ describe("payment application service", () => {
         }, gateway);
         const settled = preparing.then((value) => value, (error) => error);
         await entered;
-        await postPayment(context(actor), intake.publicId, { proposalPublicId: preview.publicId });
+        await expect(postPayment(context(actor), intake.publicId, { proposalPublicId: preview.publicId }))
+            .rejects.toMatchObject({ code: "EVIDENCE_REQUIRED_NOT_READY", status: 409 });
         releaseSigner();
-        expect(await settled).toMatchObject({ code: "PAYMENT_INTAKE_IMMUTABLE", status: 409 });
+        expect(await settled).toMatchObject({ uploadUrl: "https://storage.example.test/signed" });
     });
 
     // Break caught: list/get leak numeric keys or records owned by another tenant.
