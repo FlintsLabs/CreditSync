@@ -11,7 +11,7 @@
 ### Changed
 
 - Applied evidence readiness to payment/payout posting, activation, reconciliation/restore, allocation correction, temporal reflow, settlement, renewal, and restructure; pending evidence blocks the affected preview/execute paths while legitimate data-only workflows and successful idempotent replays remain supported.
-- Documented client refresh and real-device acceptance limits, and separated destructive synthetic-database tests from read-only recovery probes on restored real data. Combined release verification and deployment remain pending.
+- Verified the combined release with the full disposable backend suite, separate cache coverage, frontend test/lint/build, plugin/typecheck gates, discovery benchmarking and pinned official conformance; documented host/mobile limits and separated synthetic tests from read-only real-data recovery. Production backup/restore and deployment remain gated separately.
 
 ### Fixed
 
