@@ -1,4 +1,4 @@
-import { and, eq, or, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { db, type DbExecutor } from "../db";
 import {
     files,
@@ -93,6 +93,11 @@ async function lockDisbursementTarget(tx: DbExecutor, ctx: CommandContext, publi
 }
 
 async function seedLegacyPaymentEvidenceAttempts(tx: DbExecutor, ctx: CommandContext, requirementId: number, intakeId: number) {
+    const existingAttempts = await tx.select({ attemptKey: financialEvidenceRequirementAttempts.attemptKey }).from(financialEvidenceRequirementAttempts).where(and(
+        eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId),
+        eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirementId),
+    ));
+    const existingKeys = new Set(existingAttempts.map((attempt) => attempt.attemptKey));
     const legacyEvidence = await tx.select({
         evidenceHash: paymentEvidence.evidenceHash,
         sourceFileFingerprint: paymentEvidence.sourceFileFingerprint,
@@ -103,6 +108,8 @@ async function seedLegacyPaymentEvidenceAttempts(tx: DbExecutor, ctx: CommandCon
     for (const evidence of legacyEvidence) {
         const attemptKey = legacyAttemptKey(evidence.evidenceHash, evidence.sourceFileFingerprint);
         if (!attemptKey) continue;
+        const sourceFingerprint = evidence.sourceFileFingerprint?.trim().toLowerCase();
+        if (sourceFingerprint && sha256IdentityPattern.test(sourceFingerprint) && existingKeys.has(`chatgpt:${sourceFingerprint}`)) continue;
         await tx.insert(financialEvidenceRequirementAttempts).values({
             tenantId: ctx.tenantId, financialEvidenceRequirementId: requirementId, attemptKey,
             createdByUserId: ctx.actorUserId, source: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId,
@@ -111,6 +118,11 @@ async function seedLegacyPaymentEvidenceAttempts(tx: DbExecutor, ctx: CommandCon
 }
 
 async function seedLegacyDisbursementEvidenceAttempts(tx: DbExecutor, ctx: CommandContext, requirementId: number, eventId: number) {
+    const existingAttempts = await tx.select({ attemptKey: financialEvidenceRequirementAttempts.attemptKey }).from(financialEvidenceRequirementAttempts).where(and(
+        eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId),
+        eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirementId),
+    ));
+    const existingKeys = new Set(existingAttempts.map((attempt) => attempt.attemptKey));
     const legacyIntents = await tx.select({
         evidenceHash: loanDisbursementEvidenceIntents.evidenceHash,
         sourceFileFingerprint: loanDisbursementEvidenceIntents.sourceFileFingerprint,
@@ -121,11 +133,41 @@ async function seedLegacyDisbursementEvidenceAttempts(tx: DbExecutor, ctx: Comma
     for (const intent of legacyIntents) {
         const attemptKey = legacyAttemptKey(intent.evidenceHash, intent.sourceFileFingerprint);
         if (!attemptKey) continue;
+        const sourceFingerprint = intent.sourceFileFingerprint?.trim().toLowerCase();
+        if (sourceFingerprint && sha256IdentityPattern.test(sourceFingerprint) && existingKeys.has(`chatgpt:${sourceFingerprint}`)) continue;
         await tx.insert(financialEvidenceRequirementAttempts).values({
             tenantId: ctx.tenantId, financialEvidenceRequirementId: requirementId, attemptKey,
             createdByUserId: ctx.actorUserId, source: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId,
         }).onConflictDoNothing({ target: [financialEvidenceRequirementAttempts.tenantId, financialEvidenceRequirementAttempts.financialEvidenceRequirementId, financialEvidenceRequirementAttempts.attemptKey] });
     }
+}
+
+async function hasChatGptAliasForPaymentHash(tx: DbExecutor, ctx: CommandContext, requirementId: number, intakeId: number, attemptKey: string) {
+    if (!attemptKey.startsWith("sha256:")) return false;
+    const hash = attemptKey.slice("sha256:".length);
+    const sourceRows = await tx.select({ sourceFileFingerprint: paymentEvidence.sourceFileFingerprint }).from(paymentEvidence).where(and(
+        eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.paymentIntakeId, intakeId), eq(paymentEvidence.evidenceHash, hash),
+    ));
+    const aliases = sourceRows.map((row) => row.sourceFileFingerprint?.trim().toLowerCase()).filter((fingerprint): fingerprint is string => !!fingerprint && sha256IdentityPattern.test(fingerprint)).map((fingerprint) => `chatgpt:${fingerprint}`);
+    if (!aliases.length) return false;
+    const found = await tx.select({ id: financialEvidenceRequirementAttempts.id }).from(financialEvidenceRequirementAttempts).where(and(
+        eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId), eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirementId), inArray(financialEvidenceRequirementAttempts.attemptKey, aliases),
+    )).limit(1);
+    return found.length > 0;
+}
+
+async function hasChatGptAliasForDisbursementHash(tx: DbExecutor, ctx: CommandContext, requirementId: number, eventId: number, attemptKey: string) {
+    if (!attemptKey.startsWith("sha256:")) return false;
+    const hash = attemptKey.slice("sha256:".length);
+    const sourceRows = await tx.select({ sourceFileFingerprint: loanDisbursementEvidenceIntents.sourceFileFingerprint }).from(loanDisbursementEvidenceIntents).where(and(
+        eq(loanDisbursementEvidenceIntents.tenantId, ctx.tenantId), eq(loanDisbursementEvidenceIntents.loanDisbursementEventId, eventId), eq(loanDisbursementEvidenceIntents.evidenceHash, hash),
+    ));
+    const aliases = sourceRows.map((row) => row.sourceFileFingerprint?.trim().toLowerCase()).filter((fingerprint): fingerprint is string => !!fingerprint && sha256IdentityPattern.test(fingerprint)).map((fingerprint) => `chatgpt:${fingerprint}`);
+    if (!aliases.length) return false;
+    const found = await tx.select({ id: financialEvidenceRequirementAttempts.id }).from(financialEvidenceRequirementAttempts).where(and(
+        eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId), eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirementId), inArray(financialEvidenceRequirementAttempts.attemptKey, aliases),
+    )).limit(1);
+    return found.length > 0;
 }
 
 /** Register or raise a sticky requirement under the target's lifecycle lock. */
@@ -145,13 +187,13 @@ export async function registerFinancialEvidenceRequirement(
         let row = existing
             ? existing
             : await tx.insert(financialEvidenceRequirements).values({ tenantId: ctx.tenantId, paymentIntakeId: intake.id, expectedCount, createdByUserId: ctx.actorUserId, source, requestId: ctx.requestId, correlationId: ctx.correlationId }).returning().then((rows) => rows[0]!);
-        if (attemptKey) {
+        await seedLegacyPaymentEvidenceAttempts(tx, ctx, row.id, intake.id);
+        if (attemptKey && !(await hasChatGptAliasForPaymentHash(tx, ctx, row.id, intake.id, attemptKey))) {
             await tx.insert(financialEvidenceRequirementAttempts).values({
                 tenantId: ctx.tenantId, financialEvidenceRequirementId: row.id, attemptKey,
                 createdByUserId: ctx.actorUserId, source, requestId: ctx.requestId, correlationId: ctx.correlationId,
             }).onConflictDoNothing({ target: [financialEvidenceRequirementAttempts.tenantId, financialEvidenceRequirementAttempts.financialEvidenceRequirementId, financialEvidenceRequirementAttempts.attemptKey] });
         }
-        await seedLegacyPaymentEvidenceAttempts(tx, ctx, row.id, intake.id);
         const attempts = await tx.select({ id: financialEvidenceRequirementAttempts.id }).from(financialEvidenceRequirementAttempts).where(and(
             eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId),
             eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, row.id),
@@ -174,13 +216,13 @@ export async function registerFinancialEvidenceRequirement(
     let row = existing
         ? existing
         : await tx.insert(financialEvidenceRequirements).values({ tenantId: ctx.tenantId, loanDisbursementEventId: event.id, expectedCount, createdByUserId: ctx.actorUserId, source, requestId: ctx.requestId, correlationId: ctx.correlationId }).returning().then((rows) => rows[0]!);
-    if (attemptKey) {
+    await seedLegacyDisbursementEvidenceAttempts(tx, ctx, row.id, event.id);
+    if (attemptKey && !(await hasChatGptAliasForDisbursementHash(tx, ctx, row.id, event.id, attemptKey))) {
         await tx.insert(financialEvidenceRequirementAttempts).values({
             tenantId: ctx.tenantId, financialEvidenceRequirementId: row.id, attemptKey,
             createdByUserId: ctx.actorUserId, source, requestId: ctx.requestId, correlationId: ctx.correlationId,
         }).onConflictDoNothing({ target: [financialEvidenceRequirementAttempts.tenantId, financialEvidenceRequirementAttempts.financialEvidenceRequirementId, financialEvidenceRequirementAttempts.attemptKey] });
     }
-    await seedLegacyDisbursementEvidenceAttempts(tx, ctx, row.id, event.id);
     const attempts = await tx.select({ id: financialEvidenceRequirementAttempts.id }).from(financialEvidenceRequirementAttempts).where(and(
         eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId),
         eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, row.id),

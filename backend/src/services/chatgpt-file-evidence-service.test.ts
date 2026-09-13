@@ -3,11 +3,12 @@ import { createHash } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 import { db } from "../db";
-import { auditLogs, borrowers, files, financialEvidenceRequirements, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loanDisbursements, loanSchedules, loans, paymentIntakes, users } from "../db/schema";
+import { auditLogs, borrowers, files, financialEvidenceRequirementAttempts, financialEvidenceRequirements, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loanDisbursements, loanSchedules, loans, paymentIntakes, users } from "../db/schema";
 import type { SignedPutRequest, StoredObjectHead } from "../lib/storage";
 import { DomainError } from "./domain-error";
 import { createDisbursementDraft, postDisbursement, prepareDisbursementEvidence } from "./loan-disbursement-service";
 import { importChatGptDisbursementEvidence, importChatGptPaymentEvidence, importChatGptSupplementEvidence, downloadChatGptFile, type ChatGptEvidenceDependencies, type ChatGptFileParam } from "./chatgpt-file-evidence-service";
+import { registerFinancialEvidenceRequirement } from "./financial-evidence-requirement-service";
 
 const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
 const file: ChatGptFileParam = {
@@ -159,7 +160,7 @@ function responseFor(bytes: Uint8Array = png) {
     return new Response(Buffer.from(bytes), { status: 200, headers: { "content-type": "image/png", "content-length": String(bytes.byteLength) } });
 }
 
-function importerDependencies(counters: { fetch: number; prepare: number; put: number; head: number }, options: { failPut?: boolean; failPrepare?: boolean } = {}): ChatGptEvidenceDependencies {
+function importerDependencies(counters: { fetch: number; prepare: number; put: number; head: number }, options: { failPut?: boolean; failPrepare?: boolean; bytes?: Uint8Array } = {}): ChatGptEvidenceDependencies {
     const objects = new Map<string, { request: SignedPutRequest; body: Uint8Array }>();
     const storage = {
         put: async (request: SignedPutRequest, body: Uint8Array) => {
@@ -177,7 +178,7 @@ function importerDependencies(counters: { fetch: number; prepare: number; put: n
     };
     return {
         ...dependencies(responseFor()),
-        fetch: async (_url: string, _init: RequestInit) => { counters.fetch++; return responseFor(); },
+        fetch: async (_url: string, _init: RequestInit) => { counters.fetch++; return responseFor(options.bytes ?? png); },
         disbursementEvidenceGateway: {
             preparePut: async (request: SignedPutRequest) => {
                 counters.prepare++;
@@ -218,6 +219,61 @@ integrationTest("imports payout evidence into a draft without creating or postin
     expect(await db.select().from(auditLogs).where(eq(auditLogs.publicId, resultAuditPublicId))).toHaveLength(1);
     expect(await db.select().from(loanSchedules).where(eq(loanSchedules.loanId, loan.id))).toHaveLength(0);
     expect(await db.select().from(loanDisbursements).where(eq(loanDisbursements.loanId, loan.id))).toHaveLength(0);
+});
+
+integrationTest("keeps payment ChatGPT source aliases at two attempts across distinct imports and retries", async () => {
+    const { user } = await seededDraft();
+    const intake = await db.insert(paymentIntakes).values({
+        tenantId: user.tenantId, ownerUserId: user.id, amount: "50.00", status: "draft", source: "mcp",
+    }).returning().then((rows) => rows[0]!);
+    const secondBytes = new Uint8Array([...png, 4]);
+    const counters = { fetch: 0, prepare: 0, put: 0, head: 0 };
+    const firstDeps = importerDependencies(counters);
+    const first = await importChatGptPaymentEvidence(dbContext(user, "payment-import-a"), intake.publicId, file, "payment-import-a", { ...firstDeps, storage: firstDeps.disbursementStorage });
+    const secondFile = { ...file, fileId: "platform-file-id-b" };
+    const secondDeps = importerDependencies(counters, { bytes: secondBytes });
+    const second = await importChatGptPaymentEvidence(dbContext(user, "payment-import-b"), intake.publicId, secondFile, "payment-import-b", { ...secondDeps, storage: secondDeps.disbursementStorage });
+    expect(first.status).toBe("ready");
+    expect(second.status).toBe("ready");
+    const requirement = await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.paymentIntakeId, intake.id) });
+    expect(requirement).toMatchObject({ expectedCount: 2 });
+    expect(await db.select().from(financialEvidenceRequirementAttempts).where(eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirement!.id))).toHaveLength(2);
+
+    const retry = await importChatGptPaymentEvidence(dbContext(user, "payment-import-a"), intake.publicId, { ...file, downloadUrl: "https://files.openai.test/expired" }, "payment-import-a", { fetch: async () => { throw new Error("ready retry must not download"); } });
+    expect(retry.publicId).toBe(first.publicId);
+    await db.transaction(async (tx) => {
+        await registerFinancialEvidenceRequirement(tx, dbContext(user, "payment-explicit-retry"), { kind: "payment_intake", publicId: intake.publicId }, 1, { attemptKey: `chatgpt:${createHash("sha256").update(file.fileId).digest("hex")}` });
+        await registerFinancialEvidenceRequirement(tx, dbContext(user, "payment-direct-alias"), { kind: "payment_intake", publicId: intake.publicId }, 1, { attemptKey: `sha256:${first.sha256}` });
+    });
+    const afterAliases = await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.paymentIntakeId, intake.id) });
+    expect(afterAliases).toMatchObject({ expectedCount: 2 });
+    expect(await db.select().from(financialEvidenceRequirementAttempts).where(eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, afterAliases!.id))).toHaveLength(2);
+});
+
+integrationTest("keeps payout ChatGPT source aliases at two attempts and reuses the same file for direct prepare", async () => {
+    const { user, draft } = await seededDraft();
+    const secondBytes = new Uint8Array([...png, 5]);
+    const counters = { fetch: 0, prepare: 0, put: 0, head: 0 };
+    const first = await importChatGptDisbursementEvidence(dbContext(user, "payout-import-a"), draft.publicId, file, importerDependencies(counters));
+    const second = await importChatGptDisbursementEvidence(dbContext(user, "payout-import-b"), draft.publicId, { ...file, fileId: "platform-file-id-b" }, importerDependencies(counters, { bytes: secondBytes }));
+    expect(first.status).toBe("ready");
+    expect(second.status).toBe("ready");
+    const event = await db.query.loanDisbursementEvents.findFirst({ where: eq(loanDisbursementEvents.publicId, draft.publicId) });
+    const requirement = await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.loanDisbursementEventId, event!.id) });
+    expect(requirement).toMatchObject({ expectedCount: 2 });
+    expect(await db.select().from(financialEvidenceRequirementAttempts).where(eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirement!.id))).toHaveLength(2);
+
+    const retry = await importChatGptDisbursementEvidence(dbContext(user, "payout-import-a"), draft.publicId, { ...file, downloadUrl: "https://files.openai.test/expired" }, importerDependencies(counters));
+    expect(retry.publicId).toBe(first.publicId);
+    await db.transaction(async (tx) => {
+        await registerFinancialEvidenceRequirement(tx, dbContext(user, "payout-explicit-retry"), { kind: "loan_disbursement", publicId: draft.publicId }, 1, { attemptKey: `chatgpt:${createHash("sha256").update(file.fileId).digest("hex")}` });
+        await registerFinancialEvidenceRequirement(tx, dbContext(user, "payout-direct-alias"), { kind: "loan_disbursement", publicId: draft.publicId }, 1, { attemptKey: `sha256:${first.sha256}` });
+    });
+    const direct = await prepareDisbursementEvidence(dbContext(user, "payout-direct-prepare"), draft.publicId, { mimeType: "image/png", size: png.byteLength, sha256: first.sha256 }, importerDependencies(counters).disbursementEvidenceGateway);
+    expect(direct).toMatchObject({ publicId: first.publicId, status: "ready" });
+    const afterAliases = await db.query.financialEvidenceRequirements.findFirst({ where: eq(financialEvidenceRequirements.loanDisbursementEventId, event!.id) });
+    expect(afterAliases).toMatchObject({ expectedCount: 2 });
+    expect(await db.select().from(financialEvidenceRequirementAttempts).where(eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, afterAliases!.id))).toHaveLength(2);
 });
 
 integrationTest("commits the payout requirement before a ChatGPT download failure", async () => {
