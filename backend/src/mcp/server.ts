@@ -312,6 +312,11 @@ const paymentCancellationCapabilityOutput = z.object({
     blockedReason: z.string().nullable(),
     batchPublicId: uuid.nullable(),
 }).strict();
+const paymentRestoreCancellationCapabilityOutput = z.object({
+    allowed: z.boolean(),
+    stateHash: z.string().regex(/^[0-9a-f]{64}$/i),
+    blockedReason: z.string().nullable(),
+}).strict();
 const paymentCancellationOutput = z.object({
     paymentIntakePublicId: uuid, status: z.literal("cancelled"), reason: z.string(), cancelledAt: isoDateTime,
     cancellationPublicId: uuid, auditPublicId: uuid, correlationId: uuid,
@@ -556,6 +561,7 @@ const compositeLoanOutput = loanOutput.omit({ accruals: true }).extend({ payment
 const compositePaymentDetailOutput = intakeOutput.extend({
     evidence: z.array(paymentEvidenceOutput),
     cancellation: paymentCancellationCapabilityOutput,
+    restoreCancellation: paymentRestoreCancellationCapabilityOutput.nullable(),
 }).strict();
 const compositeProposalOutput = proposalOutput.omit({ allocations: true }).extend({
     allocations: compositePageOutput(proposalAllocationOutput),
@@ -1174,6 +1180,9 @@ const workflowResolverOutput = z.object({
         state: z.enum(["unresolved", "mutable", "posted"]).nullable(),
         loanType: z.enum(["scheduled", "floating"]).nullable(),
         evidenceReady: z.boolean(),
+        restoreCancellationAllowed: z.boolean().nullable(),
+        restoreCancellationBlockedReason: z.string().nullable(),
+        restoreCancellationStateHash: z.string().regex(/^[0-9a-f]{64}$/i).nullable(),
     }).strict(),
     status: z.enum(["needs_input", "next_step", "confirmation_required", "blocked", "refresh_required", "connection_required"]),
     nextSteps: z.array(workflowResolverStepOutput).max(3),
@@ -1182,7 +1191,7 @@ const workflowResolverOutput = z.object({
     reevaluateOn: z.enum(["target_change", "evidence_change", "preview_expiry", "version_change"]),
 }).strict();
 const workflowResolverInput = z.object({
-    intent: z.enum(["inspect", "receive_payment", "close_loan", "originate_loan", "disburse_loan", "attach_evidence", "renew_loan", "intermediary_collection", "tool_help"]),
+    intent: z.enum(["inspect", "receive_payment", "close_loan", "originate_loan", "disburse_loan", "attach_evidence", "renew_loan", "intermediary_collection", "cancel_payment_restore", "tool_help"]),
     target: z.object({ kind: z.enum(["borrower", "loan", "payment_intake", "loan_disbursement"]), publicId: uuid }).strict().optional(),
     attachments: z.enum(["none", "present", "unknown"]).optional(),
     expectedAttachmentCount: z.number().int().min(1).max(20).optional(),
@@ -1229,7 +1238,8 @@ export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unkno
         evidence: z.array(paymentEvidenceOutput),
         latestProposal: proposalOutput.nullable(),
         cancellation: paymentCancellationCapabilityOutput,
-    }),
+        restoreCancellation: paymentRestoreCancellationCapabilityOutput.nullable(),
+    }).strict(),
     "payment.match-context": z.object({
         intake: compositePaymentDetailOutput,
         proposal: compositeProposalOutput.nullable(),
@@ -1255,6 +1265,7 @@ export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unkno
     "payment.evidence-supplement.record": evidenceFinalOutput.extend(writeAuditMetadata).strict(),
     "payment.preview": proposalOutput,
     "payment.cancel": paymentCancellationOutput,
+    "payment.restore.cancel": paymentCancellationOutput,
     "payment.post": intakeOutput.extend({ transactions: z.array(transactionOutput) }),
     "payment.reverse": intakeOutput.extend({ transactions: z.array(transactionOutput) }),
     "payment.reverse-with-accrual.preview": z.object({
@@ -1511,6 +1522,7 @@ export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unkno
     "intermediary.disbursement.reverse": intermediatedReverseOutput,
     "intermediary.collection.list": z.object({ items: z.array(z.record(z.string(), z.unknown())) }).strict(),
     "intermediary.collection.create": z.record(z.string(), z.unknown()),
+    "intermediary.collection.cancel": z.record(z.string(), z.unknown()),
     "intermediary.remittance.get": z.record(z.string(), z.unknown()),
     "intermediary.remittance.create": z.record(z.string(), z.unknown()),
     "intermediary.remittance.allocations.save": z.record(z.string(), z.unknown()),
@@ -1636,6 +1648,7 @@ export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unkn
         allocations: z.array(explicitAllocation).max(1_000).optional(),
     }).strict(),
     "payment.cancel": z.object({ paymentIntakePublicId: uuid, reason: cancellationReason, idempotencyKey: z.string().trim().min(1).max(200), expectedStateHash: z.string().regex(/^[0-9a-f]{64}$/i) }).strict(),
+    "payment.restore.cancel": z.object({ restoreDraftPublicId: uuid, expectedStateHash: z.string().regex(/^[0-9a-f]{64}$/i), reason: cancellationReason, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
     "payment.post": z.object({ paymentIntakePublicId: uuid, proposalPublicId: uuid }).strict(),
     "payment.reverse": z.object({
         paymentIntakePublicId: uuid,
@@ -1958,6 +1971,7 @@ export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unkn
     }).strict(),
     "intermediary.collection.list": z.object({ intermediaryPublicId: uuid.optional(), status: z.string().optional() }).strict(),
     "intermediary.collection.create": z.object({ intermediaryPublicId: uuid, borrowerPublicId: uuid, loanPublicId: uuid, amount: money, borrowerPaidAt: dateTime, bankReference: optionalNullableText, note: optionalNullableText, paymentIntakePublicId: uuid.nullable().optional(), idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
+    "intermediary.collection.cancel": z.object({ collectionPublicId: uuid, expectedStateHash: z.string().regex(/^[0-9a-f]{64}$/iu), reason: z.string().trim().min(1).max(2000), idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
     "intermediary.remittance.get": z.object({ remittancePublicId: uuid }).strict(),
     "intermediary.remittance.create": z.object({ intermediaryPublicId: uuid, grossAmount: money, receivedAt: dateTime, bankReference: optionalNullableText, destinationHint: optionalNullableText, note: optionalNullableText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
     "intermediary.remittance.allocations.save": z.object({ remittancePublicId: uuid, collectionPublicIds: z.array(uuid).min(1) }).strict(),
@@ -2186,6 +2200,7 @@ const destructiveTools = new Set<McpToolName>([
     "payment.preview",
     "payment.post",
     "payment.cancel",
+    "payment.restore.cancel",
     "payment.reverse",
     "payment.batch.create",
     "payment.batch.capture",
@@ -2240,6 +2255,7 @@ const destructiveTools = new Set<McpToolName>([
     "intermediary.disbursement.evidence.finalize",
     "intermediary.disbursement.post",
     "intermediary.disbursement.reverse",
+    "intermediary.collection.cancel",
     "intermediary.remittance.post",
     "renewal.preview",
     "renewal.execute",
@@ -2258,6 +2274,7 @@ const financialTools = new Set<McpToolName>([
     "payment.reconcile.reflow.execute",
     "payment.restore.execute",
     "payment.restore.schedule-backfill",
+    "payment.restore.cancel",
     "payment.restore.create",
     "payment.batch.execute",
     "payment.allocation-correction.execute",
@@ -2278,6 +2295,7 @@ const financialTools = new Set<McpToolName>([
     "payment.intermediary-attribution.reverse",
     "intermediary.disbursement.post",
     "intermediary.disbursement.reverse",
+    "intermediary.collection.cancel",
     "intermediary.remittance.post",
     "renewal.execute",
     "renewal.reverse",
@@ -2308,6 +2326,7 @@ const idempotentTools = new Set<McpToolName>([
     "payment.reconcile.mark-review",
     "payment.restore.execute",
     "payment.restore.schedule-backfill",
+    "payment.restore.cancel",
     "payment.restore.create",
     "payment.batch.execute",
     "loan.draft.delete",
@@ -2334,6 +2353,7 @@ const idempotentTools = new Set<McpToolName>([
     "intermediary.disbursement.post",
     "intermediary.disbursement.reverse",
     "intermediary.collection.create",
+    "intermediary.collection.cancel",
     "intermediary.remittance.create",
     "intermediary.remittance.post",
     "renewal.execute",
@@ -2411,6 +2431,7 @@ const toolDescriptions: Record<McpToolName, string> = {
     "payment.restore.evidence.finalize": "Verify and finalize uploaded slip evidence for one linked payment restore draft.",
     "payment.restore.execute": "Execute a confirmed, idempotent exact restoration of a reversed payment as a linked child intake.",
     "payment.restore.schedule-backfill": "Repair derived schedule aggregates for one verified posted exact-payment restore without creating a payment.",
+    "payment.restore.cancel": "Cancel an eligible unposted restore draft with an immutable audited receipt without changing the reversed source or balances.",
     "loan.preview": "Preview an exact loan schedule without persistence.",
     "loan.draft": "Create an editable loan draft.",
     "loan.draft.delete": "Permanently delete an unactivated draft loan after dependency checks and audit logging.",
@@ -2466,6 +2487,7 @@ const toolDescriptions: Record<McpToolName, string> = {
     "intermediary.disbursement.reverse": "Create a reasoned compensating reversal for one posted intermediated group.",
     "intermediary.collection.list": "List borrower payments held by an intermediary.",
     "intermediary.collection.create": "Record a borrower payment held by an intermediary without posting cash receipt twice.",
+    "intermediary.collection.cancel": "Cancel an exact unposted intermediary collection with a current state hash and audit receipt.",
     "intermediary.remittance.get": "Inspect a remittance, allocations, and exact remaining balance.",
     "intermediary.remittance.create": "Create an idempotent intermediary remittance draft.",
     "intermediary.remittance.allocations.save": "Select exact intermediary collections for a remittance.",

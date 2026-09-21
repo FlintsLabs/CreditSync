@@ -1,5 +1,5 @@
 {
-  "compatibility": "Tool names, full input/output schemas, descriptions, annotations, and file-parameter metadata are frozen for plugin 10.3.0; breaking changes require plugin 11.0.0.",
+  "compatibility": "Tool names, full input/output schemas, descriptions, annotations, and file-parameter metadata are frozen for plugin 10.5.0; breaking changes require plugin 11.0.0.",
   "schemaVersion": "1.0",
   "sourceOfTruth": "Local MCP SDK Client tools/list response from backend/src/mcp/server.ts",
   "tools": [
@@ -3069,6 +3069,41 @@
                   }
                 ]
               },
+              "restoreCancellation": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "allowed": {
+                        "type": "boolean"
+                      },
+                      "blockedReason": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "stateHash": {
+                        "pattern": "^[0-9a-f]{64}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "allowed",
+                      "stateHash",
+                      "blockedReason"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "source": {
                 "type": "string"
               },
@@ -3105,7 +3140,8 @@
               "repostedByIntakePublicId",
               "evidence",
               "latestProposal",
-              "cancellation"
+              "cancellation",
+              "restoreCancellation"
             ],
             "type": "object"
           },
@@ -13953,6 +13989,128 @@
         "type": "object"
       },
       "title": "Payment Restore Execute"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Payment Restore Cancel"
+      },
+      "description": "Cancel an eligible unposted restore draft with an immutable audited receipt without changing the reversed source or balances.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "expectedStateHash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "idempotencyKey": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          },
+          "restoreDraftPublicId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "restoreDraftPublicId",
+          "expectedStateHash",
+          "reason",
+          "idempotencyKey"
+        ],
+        "type": "object"
+      },
+      "name": "payment.restore.cancel",
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "auditPublicIds": {
+            "items": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "correlationId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "data": {
+            "additionalProperties": false,
+            "properties": {
+              "auditPublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "cancellationPublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "cancelledAt": {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "type": "string"
+              },
+              "correlationId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "paymentIntakePublicId": {
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "status": {
+                "const": "cancelled",
+                "type": "string"
+              }
+            },
+            "required": [
+              "paymentIntakePublicId",
+              "status",
+              "reason",
+              "cancelledAt",
+              "cancellationPublicId",
+              "auditPublicId",
+              "correlationId"
+            ],
+            "type": "object"
+          },
+          "schemaVersion": {
+            "const": "1.0",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "data",
+          "correlationId",
+          "auditPublicIds"
+        ],
+        "type": "object"
+      },
+      "title": "Payment Restore Cancel"
     },
     {
       "annotations": {
@@ -26429,6 +26587,41 @@
                       }
                     ]
                   },
+                  "restoreCancellation": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "allowed": {
+                            "type": "boolean"
+                          },
+                          "blockedReason": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "stateHash": {
+                            "pattern": "^[0-9a-f]{64}$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "allowed",
+                          "stateHash",
+                          "blockedReason"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "source": {
                     "type": "string"
                   },
@@ -26464,7 +26657,8 @@
                   "repostOfIntakePublicId",
                   "repostedByIntakePublicId",
                   "evidence",
-                  "cancellation"
+                  "cancellation",
+                  "restoreCancellation"
                 ],
                 "type": "object"
               },
@@ -34978,6 +35172,88 @@
     },
     {
       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": false,
+        "title": "Intermediary Collection Cancel"
+      },
+      "description": "Cancel an exact unposted intermediary collection with a current state hash and audit receipt.",
+      "inputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "collectionPublicId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "expectedStateHash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "idempotencyKey": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "collectionPublicId",
+          "expectedStateHash",
+          "reason",
+          "idempotencyKey"
+        ],
+        "type": "object"
+      },
+      "name": "intermediary.collection.cancel",
+      "outputSchema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "auditPublicIds": {
+            "items": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "correlationId": {
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+            "type": "string"
+          },
+          "data": {
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "schemaVersion": {
+            "const": "1.0",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "data",
+          "correlationId",
+          "auditPublicIds"
+        ],
+        "type": "object"
+      },
+      "title": "Intermediary Collection Cancel"
+    },
+    {
+      "annotations": {
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false,
@@ -40688,6 +40964,7 @@
               "attach_evidence",
               "renew_loan",
               "intermediary_collection",
+              "cancel_payment_restore",
               "tool_help"
             ],
             "type": "string"
@@ -40821,6 +41098,37 @@
                       }
                     ]
                   },
+                  "restoreCancellationAllowed": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "restoreCancellationBlockedReason": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "restoreCancellationStateHash": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[0-9a-f]{64}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "state": {
                     "anyOf": [
                       {
@@ -40840,7 +41148,10 @@
                 "required": [
                   "state",
                   "loanType",
-                  "evidenceReady"
+                  "evidenceReady",
+                  "restoreCancellationAllowed",
+                  "restoreCancellationBlockedReason",
+                  "restoreCancellationStateHash"
                 ],
                 "type": "object"
               },

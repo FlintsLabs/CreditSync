@@ -256,6 +256,7 @@ class ScriptedMcp {
                 evidence: [],
                 latestProposal: null,
                 cancellation: { allowed: false, stateHash: "c".repeat(64), blockedReason: null, batchPublicId: null },
+                restoreCancellation: null,
                 ...(step.result ?? {}),
             }
             : (step.result ?? {});
@@ -287,8 +288,8 @@ const ALLOCATION_REVERSAL_TRANSACTION = "0198c481-3e2b-7000-8000-000000000416";
 const ALLOCATION_REPLACEMENT_TRANSACTION = "0198c481-3e2b-7000-8000-000000000417";
 
 const resolverFixture = (status: string, extras: Record<string, unknown> = {}) => ({
-    workflowId: "creditsync.synthetic", workflowVersion: "workflow-resolver-1.0.0", catalogVersion: "mcp-catalog-synthetic",
-    policyRevision: "evidence-safety-2026-09-14", observed: { state: "mutable", loanType: null, evidenceReady: false },
+    workflowId: "creditsync.synthetic", workflowVersion: "workflow-resolver-1.1.0", catalogVersion: "mcp-catalog-synthetic",
+    policyRevision: "restore-cancellation-2026-09-21", observed: { state: "mutable", loanType: null, evidenceReady: false, restoreCancellationAllowed: null, restoreCancellationBlockedReason: null, restoreCancellationStateHash: null },
     status, nextSteps: [], blockers: [], prohibitedTools: [], reevaluateOn: "evidence_change", ...extras,
 });
 

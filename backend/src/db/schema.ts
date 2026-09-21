@@ -1429,7 +1429,7 @@ export const paymentIntakes = pgTable("payment_intakes", {
         .where(sql`${table.qrPayloadHash} IS NOT NULL`),
     uniqueIndex("payment_intakes_tenant_repost_of_unique")
         .on(table.tenantId, table.repostOfIntakeId)
-        .where(sql`${table.repostOfIntakeId} IS NOT NULL`),
+        .where(sql`${table.repostOfIntakeId} IS NOT NULL AND ${table.status} <> 'cancelled'`),
     index("payment_intakes_tenant_origin_loan_received_at_idx")
         .on(table.tenantId, table.originLoanId, table.receivedAt),
     check(

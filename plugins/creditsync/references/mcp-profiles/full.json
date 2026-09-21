@@ -1,8 +1,8 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "mcp-catalog-350933dd62d51246",
+  "catalogVersion": "mcp-catalog-709d150df779f218",
   "profile": "full",
-  "toolCount": 135,
+  "toolCount": 137,
   "tools": [
     "borrower.search",
     "borrower.portfolio",
@@ -59,6 +59,7 @@
     "payment.restore.evidence.finalize",
     "payment.restore.preview",
     "payment.restore.execute",
+    "payment.restore.cancel",
     "payment.restore.schedule-backfill",
     "loan.preview",
     "loan.cancel.preview",
@@ -116,6 +117,7 @@
     "intermediary.disbursement.reverse",
     "intermediary.collection.list",
     "intermediary.collection.create",
+    "intermediary.collection.cancel",
     "intermediary.remittance.get",
     "intermediary.remittance.create",
     "intermediary.remittance.allocations.save",

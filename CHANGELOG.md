@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.4.48 - 2026-09-21
+
+### Added
+
+- Added an audited, idempotent `intermediary.collection.cancel` workflow for exact unposted collections, including stale-state checks, release of editable remittance allocations, and MCP/plugin contract support.
+
+## v0.4.47 - 2026-09-21
+
+### Added
+
+- Added audited cancellation for eligible unposted payment-restore drafts through `payment.restore.cancel`; cancellation preserves the reversed source, restore evidence, and append-only history without creating transactions or changing balances, while allowing a later restore attempt with a new key.
+
 ## v0.4.46 - 2026-09-14
 
 ### Added

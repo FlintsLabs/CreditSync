@@ -1,10 +1,10 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "mcp-catalog-350933dd62d51246",
+  "catalogVersion": "mcp-catalog-709d150df779f218",
   "profiles": [
     {
       "profile": "full",
-      "toolCount": 135
+      "toolCount": 137
     },
     {
       "profile": "core-read",
@@ -12,7 +12,7 @@
     },
     {
       "profile": "payments",
-      "toolCount": 58
+      "toolCount": 59
     },
     {
       "profile": "loans",
@@ -20,11 +20,11 @@
     },
     {
       "profile": "disbursements",
-      "toolCount": 40
+      "toolCount": 41
     },
     {
       "profile": "admin",
-      "toolCount": 35
+      "toolCount": 36
     }
   ]
 }

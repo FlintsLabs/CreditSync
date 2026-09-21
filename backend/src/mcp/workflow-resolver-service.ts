@@ -3,6 +3,7 @@ import { db } from "../db";
 import { borrowers, files, financialEvidenceRequirementAttempts, financialEvidenceRequirements, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loans, paymentEvidence, paymentIntakes, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import type { CommandContext } from "../services/command-context";
+import { getPaymentRestoreCancellationCapability } from "../services/payment-reconciliation-service";
 import { resolveWorkflowPolicy, type ResolverInput, type ResolverObservation, type ResolverProfile } from "./workflow-resolver";
 import type { ToolProfile } from "./catalog-types";
 
@@ -42,11 +43,17 @@ async function paymentObservation(ctx: CommandContext, publicId: string): Promis
     const expected = Math.max(requirement?.expectedCount ?? 0, evidenceTotal, attemptTotal);
     const required = intake.evidenceRequired || !!requirement || evidenceTotal > 0;
     const ready = countValue(evidence.ready);
+    const restoreCancellation = intake.repostOfIntakeId === null
+        ? null
+        : await getPaymentRestoreCancellationCapability(ctx, publicId);
     return {
         targetAvailable: true, identityResolved: true, state: ["posted", "reversed", "duplicate", "cancelled"].includes(intake.status) ? "posted" : "mutable",
         evidenceRequired: required, evidenceReady: evidenceTotal <= 20 && attemptTotal <= 20 && (!required || (expected > 0 && ready >= expected && evidenceTotal === ready)),
         pendingEvidenceCount: countValue(evidence.pending), rejectedEvidenceCount: countValue(evidence.rejected),
         evidenceOverflow: evidenceTotal > 20 || attemptTotal > 20,
+        restoreCancellationAllowed: restoreCancellation?.allowed,
+        restoreCancellationBlockedReason: restoreCancellation?.blockedReason,
+        restoreCancellationStateHash: restoreCancellation?.stateHash,
     };
 }
 

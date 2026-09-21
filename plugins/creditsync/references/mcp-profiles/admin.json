@@ -1,8 +1,8 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "mcp-catalog-350933dd62d51246",
+  "catalogVersion": "mcp-catalog-709d150df779f218",
   "profile": "admin",
-  "toolCount": 35,
+  "toolCount": 36,
   "tools": [
     "system.error-diagnostic.get",
     "system.error-diagnostic.list",
@@ -26,6 +26,7 @@
     "intermediary.remittance.evidence.finalize",
     "intermediary.remittance.post",
     "intermediary.collection.create",
+    "intermediary.collection.cancel",
     "funding-source.list",
     "funding-allocation.preview",
     "funding-allocation.create",

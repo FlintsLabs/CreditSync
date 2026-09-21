@@ -9,6 +9,8 @@ Call `workflow.resolve` before intermediary collection/remittance work. Attachme
 
 This skill covers borrower collections returned by an intermediary. For outbound loan disbursement transfer legs routed through an intermediary, use `manage-intermediated-disbursements`.
 
+To cancel an incorrect, unposted collection, inspect `intermediary.collection.list` and confirm its exact public ID and `cancellation.allowed` state hash. Only cancel collections still pending remittance or allocated to an editable draft remittance. Call `intermediary.collection.cancel` with that current hash, a reason, and a stable idempotency key. The operation releases only the active draft allocation, marks its remittance for review, and preserves the collection as a reversed record. It cannot cancel a settled or payment-linked collection; use the applicable payment reversal workflow instead.
+
 1. Search the intermediary by canonical name before creating one. Never infer identity from a bank name alone.
 2. Inspect the borrower and active loan. Create one collection for each borrower payment with its actual borrower-paid timestamp and amount. A collection is non-financial until remittance posting.
 3. If that borrower payment is already posted, pass its `paymentIntakePublicId`; CreditSync validates timestamp, loan, and exact amount and will not post it twice.

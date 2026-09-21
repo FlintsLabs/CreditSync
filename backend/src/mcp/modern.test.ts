@@ -31,8 +31,8 @@ function startModernServer(
                 createdAt: "2026-08-10T00:00:00.000Z", updatedAt: "2026-08-10T00:00:00.000Z" };
         }
         if (name === "workflow.resolve") return {
-            workflowId: "creditsync.inspect", workflowVersion: "workflow-resolver-1.0.0", catalogVersion: MCP_CATALOG_VERSION,
-            policyRevision: "evidence-safety-2026-09-14", observed: { state: "mutable", loanType: null, evidenceReady: false },
+            workflowId: "creditsync.inspect", workflowVersion: "workflow-resolver-1.1.0", catalogVersion: MCP_CATALOG_VERSION,
+            policyRevision: "restore-cancellation-2026-09-21", observed: { state: "mutable", loanType: null, evidenceReady: false, restoreCancellationAllowed: null, restoreCancellationBlockedReason: null, restoreCancellationStateHash: null },
             status: "next_step", nextSteps: [], blockers: [], prohibitedTools: [], reevaluateOn: "target_change",
         };
         return name === "borrower.search" ? { resolution: "none", matchType: null, candidates: [] } : { ok: true };
@@ -110,7 +110,7 @@ describe("MCP 2026 transport adapter", () => {
         const full = await rawRequest(baseUrl, request);
         expect(full.response.status).toBe(200);
         expect(full.body.result.isError).not.toBe(true);
-        expect(full.body.result.structuredContent.data).toMatchObject({ status: "next_step", workflowVersion: "workflow-resolver-1.0.0" });
+        expect(full.body.result.structuredContent.data).toMatchObject({ status: "next_step", workflowVersion: "workflow-resolver-1.1.0" });
         const curated = await rawRequestAt(baseUrl, "/mcp/core-read", request);
         expect(curated.response.status).toBe(200);
         expect(curated.body.result.isError).not.toBe(true);

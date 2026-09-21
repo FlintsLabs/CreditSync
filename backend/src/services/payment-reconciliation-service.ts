@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { db } from "../db";
+import { db, type DbExecutor } from "../db";
 import {
     auditLogs, borrowers, loans, loanSchedules, paymentEvidence, paymentIntakes, paymentReconciliationEntries,
     paymentReconciliationGroups, paymentReconciliationProposals, paymentReconciliationReflowEntries, paymentReconciliationReflowGroups, transactions, commandReceipts,
@@ -16,6 +16,7 @@ import { accrueFloatingInterestThrough, resolveFloatingInterestAllocationPlan, t
 import { assertTemporalReflowEvidenceReady, buildTemporalReflowPlanForLoan, executeTemporalReflow, type TemporalReflowPlan } from "./floating-allocation-reflow-service";
 import { assertPaymentEvidenceReady, postPayment } from "./payment-service";
 import { lockPaymentBorrowers, paymentIntakeBorrowerIds } from "./payment-chronology-service";
+import { cancelPaymentRestoreIntake, getPaymentRestoreCancellationCapability as restoreCancellationCapability } from "./payment-cancellation-service";
 
 export type ReconciliationComponent = "interest" | "principal" | "fee" | "penalty";
 export interface ReconciliationAllocation {
@@ -365,7 +366,7 @@ async function inspectReconciliationSource(executor: any, ctx: CommandContext, i
     const evidenceSnapshot = await readyEvidenceSnapshot(executor, ctx, intake.id);
     const hasReadyEvidence = evidenceSnapshot.length > 0;
     const child = await executor.query.paymentIntakes.findFirst({ where: and(
-        eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.repostOfIntakeId, intake.id),
+        eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.repostOfIntakeId, intake.id), sql`${paymentIntakes.status} <> 'cancelled'`,
     ) });
     const reversalByOriginal = new Map(reversals.map((row) => [row.reversedTransactionId, row]));
     if (!originals.length || reversals.length !== originals.length || originals.some((row) => {
@@ -409,6 +410,10 @@ export async function createPaymentRestoreDraft(ctx: CommandContext, input: { pa
             }
             return { sourcePaymentPublicId: intake.publicId, restoreDraftPublicId: existing.publicId, status: existing.status, correlationId: ctx.correlationId };
         }
+        const reusedKey = await tx.query.paymentIntakes.findFirst({ where: and(
+            eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.idempotencyKey, input.idempotencyKey),
+        ) });
+        if (reusedKey) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was already used for a different payment intake", 409);
         const draft = await tx.insert(paymentIntakes).values({
             tenantId: ctx.tenantId, ownerUserId: intake.ownerUserId, source: intake.source, status: "draft", amount: serializeMoney(intake.amount), receivedAt: intake.receivedAt,
             payerName: intake.payerName, originLoanId: intake.originLoanId, repostOfIntakeId: intake.id,
@@ -418,6 +423,34 @@ export async function createPaymentRestoreDraft(ctx: CommandContext, input: { pa
         const audit = await createAuditLog(tx, { ...contextPayload(ctx), entityType: "payment_intake", entityId: draft.publicId, action: "restore_draft_created", payload: { sourcePaymentPublicId: intake.publicId, reason: input.reason.trim(), idempotencyKey: input.idempotencyKey } });
         return { sourcePaymentPublicId: intake.publicId, restoreDraftPublicId: draft.publicId, status: draft.status, auditPublicId: audit.publicId, correlationId: ctx.correlationId };
     });
+}
+
+async function restoreCancellationGuard(tx: DbExecutor, ctx: CommandContext, child: typeof paymentIntakes.$inferSelect): Promise<number> {
+    if (child.repostOfIntakeId === null || child.status !== "draft") {
+        throw new DomainError("PAYMENT_RESTORE_CANCEL_NOT_ALLOWED", "Only an unposted restore draft can be cancelled", 409);
+    }
+    const transaction = await tx.query.transactions.findFirst({ where: and(eq(transactions.tenantId, ctx.tenantId), eq(transactions.paymentIntakeId, child.id)) });
+    if (transaction) throw new DomainError("PAYMENT_RESTORE_CANCEL_DEPENDENCY", "The restore draft has a transaction dependency", 409);
+    const membership = await tx.execute(sql`SELECT 1 FROM payment_batch_items WHERE tenant_id = ${ctx.tenantId} AND payment_intake_id = ${child.id} LIMIT 1`);
+    if (membership.length) throw new DomainError("PAYMENT_RESTORE_CANCEL_BATCH_REQUIRED", "Remove the restore draft from its batch before cancelling it", 409);
+    const source = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, child.repostOfIntakeId)) });
+    if (!source || source.status !== "reversed") throw new DomainError("PAYMENT_RESTORE_CANCEL_SOURCE_INVALID", "The restore source must remain reversed", 409);
+    const inspected = await inspectReconciliationSource(tx, ctx, source, { requireSourceEvidence: false, allowDraftChild: true });
+    if (inspected.repostChild?.id !== child.id) throw new DomainError("PAYMENT_RESTORE_CANCEL_LINEAGE_INVALID", "The restore draft is not the active child of its source", 409);
+    return source.id;
+}
+
+export async function getPaymentRestoreCancellationCapability(ctx: CommandContext, publicId: string) {
+    return restoreCancellationCapability(ctx, publicId, restoreCancellationGuard);
+}
+
+export async function cancelPaymentRestoreDraft(ctx: CommandContext, publicId: string, input: { expectedStateHash: string; reason: string; idempotencyKey: string }) {
+    const reason = input.reason.replace(/[\u0000-\u001f\u007f]/gu, " ").trim();
+    const key = input.idempotencyKey.trim();
+    if (!reason || reason.length > 2000 || !key || key.length > 200 || !/^[0-9a-f]{64}$/iu.test(input.expectedStateHash)) {
+        throw new DomainError("PAYMENT_RESTORE_CANCEL_REQUEST_INVALID", "A normalized reason, idempotency key, and current state hash are required", 400);
+    }
+    return cancelPaymentRestoreIntake(ctx, publicId, { expectedStateHash: input.expectedStateHash, reason, idempotencyKey: key }, restoreCancellationGuard);
 }
 
 export async function backfillPostedRestoreSchedule(ctx: CommandContext, input: { paymentIntakePublicId: string; reason: string; idempotencyKey: string }) {

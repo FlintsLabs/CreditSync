@@ -1,5 +1,26 @@
 # CreditSync Plugin Changelog
 
+## v10.5.0 - 2026-09-21
+
+### Added
+
+- Added inspected cancellation for exact eligible unposted intermediary collections, with current state hashes, stable idempotency keys, audited reversal history, and draft-remittance invalidation.
+
+### Changed
+
+- Regenerated the frozen MCP contract and profile snapshots for intermediary collection cancellation.
+
+## v10.4.0 - 2026-09-21
+
+### Added
+
+- Added the audited `intake.get` → explicit confirmation → `payment.restore.cancel` → `intake.get` workflow for cancelling an unposted restore draft without changing the reversed source, evidence, transactions, or balances.
+- Documented cancelled restore history, retry keys, and the distinction between cancellation and refund.
+
+### Changed
+
+- Regenerated the frozen MCP contract and profile snapshots for the restore-cancellation tool.
+
 ## v10.3.0 - 2026-09-14
 
 ### Added

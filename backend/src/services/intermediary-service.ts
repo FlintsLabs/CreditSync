@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db, type DbExecutor } from "../db";
-import { auditLogs, borrowers, files, intermediaries, intermediaryCollections, intermediaryRemittanceAllocations, intermediaryRemittanceEvidence, intermediaryRemittanceEvidenceIntents, intermediaryRemittanceProposals, intermediaryRemittances, intermediatedDisbursementGroups, intermediatedTransferEvents, loans, paymentIntakes, transactions, users } from "../db/schema";
+import { auditLogs, borrowers, commandReceipts, files, intermediaries, intermediaryCollections, intermediaryRemittanceAllocations, intermediaryRemittanceEvidence, intermediaryRemittanceEvidenceIntents, intermediaryRemittanceProposals, intermediaryRemittances, intermediatedDisbursementGroups, intermediatedTransferEvents, loans, paymentIntakes, transactions, users } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import { canAccessTenantWideData } from "../lib/access";
 import { FinancialDecimal } from "../lib/financial-decimal";
@@ -268,7 +268,79 @@ export async function listIntermediaryCollections(ctx: CommandContext, filters: 
         if (!intermediary) return [];
         conditions.push(eq(intermediaryCollections.intermediaryId, intermediary.id));
     }
-    return (await db.select().from(intermediaryCollections).where(and(...conditions))).map(presentCollection);
+    return Promise.all((await db.select().from(intermediaryCollections).where(and(...conditions))).map(async (row) => ({
+        ...presentCollection(row),
+        cancellation: await getIntermediaryCollectionCancellationCapability(ctx, row.publicId),
+    })));
+}
+
+type CollectionExecutor = DbExecutor;
+async function collectionCancellationSnapshot(executor: CollectionExecutor, tenantId: string, row: typeof intermediaryCollections.$inferSelect) {
+    const allocation = await executor.query.intermediaryRemittanceAllocations.findFirst({ where: and(eq(intermediaryRemittanceAllocations.tenantId, tenantId), eq(intermediaryRemittanceAllocations.collectionId, row.id), sql`${intermediaryRemittanceAllocations.releasedAt} IS NULL`) });
+    const remittance = allocation ? await executor.query.intermediaryRemittances.findFirst({ where: and(eq(intermediaryRemittances.tenantId, tenantId), eq(intermediaryRemittances.id, allocation.remittanceId)) }) : null;
+    const value = { publicId: row.publicId, ownerUserId: row.ownerUserId, intermediaryId: row.intermediaryId, borrowerId: row.borrowerId, loanId: row.loanId, status: row.status, amount: serializeMoney(row.amount), borrowerPaidAt: row.borrowerPaidAt.toISOString(), bankReferenceHash: row.bankReferenceHash, postedPaymentIntakeId: row.postedPaymentIntakeId, updatedAt: row.updatedAt.toISOString(), allocation: allocation ? { publicId: allocation.publicId, allocationOrder: allocation.allocationOrder, remittancePublicId: remittance?.publicId, remittanceStatus: remittance?.status, remittanceGrossAmount: remittance ? serializeMoney(remittance.grossAmount) : null, remittanceReceivedAt: remittance?.receivedAt.toISOString() ?? null, remittanceUpdatedAt: remittance?.updatedAt.toISOString() ?? null } : null };
+    return { hash: createHash("sha256").update(JSON.stringify(value)).digest("hex"), allocation, remittance };
+}
+
+async function accessibleCollection(ctx: CommandContext, publicId: string, executor: CollectionExecutor = db) {
+    const actor = ctx.actorUserId === null ? null : await executor.query.users.findFirst({ where: and(eq(users.id, ctx.actorUserId), eq(users.tenantId, ctx.tenantId)) });
+    if (!actor) throw new DomainError("UNAUTHORIZED", "Unauthorized", 401);
+    const row = await executor.query.intermediaryCollections.findFirst({ where: and(eq(intermediaryCollections.tenantId, ctx.tenantId), eq(intermediaryCollections.publicId, publicId)) });
+    if (!row || (!canAccessTenantWideData({ role: actor.role ?? "viewer" }) && row.ownerUserId !== actor.id)) throw new DomainError("INTERMEDIARY_COLLECTION_NOT_FOUND", "Intermediary collection not found", 404);
+    return { actor, row };
+}
+
+export async function getIntermediaryCollectionCancellationCapability(ctx: CommandContext, publicId: string, executor: CollectionExecutor = db) {
+    const { actor, row } = await accessibleCollection(ctx, publicId, executor);
+    const snapshot = await collectionCancellationSnapshot(executor, ctx.tenantId, row);
+    const role = actor.role ?? "viewer";
+    const allowedRole = ["owner", "manager", "collector"].includes(role) && (canAccessTenantWideData({ role }) || row.ownerUserId === actor.id);
+    let blockedReason: string | null = null;
+    if (!allowedRole) blockedReason = "INTERMEDIARY_COLLECTION_CANCEL_FORBIDDEN";
+    else if (row.status !== "pending_remittance" && row.status !== "allocated") blockedReason = row.status === "settled" || row.status === "manual_approved" ? "INTERMEDIARY_COLLECTION_PAYMENT_REVERSE_REQUIRED" : "INTERMEDIARY_COLLECTION_CANCEL_NOT_ALLOWED";
+    else if (row.postedPaymentIntakeId !== null) blockedReason = "INTERMEDIARY_COLLECTION_PAYMENT_DEPENDENCY";
+    else if (snapshot.allocation && (!snapshot.remittance || !["draft", "needs_review", "ready"].includes(snapshot.remittance.status))) blockedReason = "INTERMEDIARY_COLLECTION_REMITTANCE_NOT_EDITABLE";
+    return { allowed: !blockedReason, stateHash: snapshot.hash, blockedReason };
+}
+
+export async function cancelIntermediaryCollection(ctx: CommandContext, publicId: string, input: { expectedStateHash: string; reason: string }) {
+    const reason = String(input.reason ?? "").replace(/[\u0000-\u001f\u007f]/gu, " ").trim();
+    const key = ctx.idempotencyKey?.trim();
+    if (!reason || reason.length > 2000) throw new DomainError("INTERMEDIARY_COLLECTION_CANCEL_REASON_INVALID", "Cancellation reason must be between 1 and 2000 characters", 400);
+    if (!key || key.length > 200) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Cancellation requires an idempotency key", 400);
+    if (!/^[0-9a-f]{64}$/iu.test(input.expectedStateHash ?? "")) throw new DomainError("INTERMEDIARY_COLLECTION_CANCEL_STALE", "A current cancellation state hash is required", 409);
+    const requestHash = createHash("sha256").update(JSON.stringify({ publicId, reason, key, expectedStateHash: input.expectedStateHash })).digest("hex");
+    const result = await db.transaction(async (tx) => {
+        const { actor, row } = await accessibleCollection(ctx, publicId, tx);
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`intermediary-collection-cancel:${ctx.tenantId}:${key}`}, 0))`);
+        const prior = await tx.query.commandReceipts.findFirst({ where: and(eq(commandReceipts.tenantId, ctx.tenantId), eq(commandReceipts.operationType, "intermediary_collection_cancel"), eq(commandReceipts.operationKey, key)) });
+        if (prior) {
+            if (prior.requestHash !== requestHash) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was used with a different cancellation request", 409);
+            return prior.result;
+        }
+        const observed = await collectionCancellationSnapshot(tx, ctx.tenantId, row);
+        if (observed.remittance) await tx.execute(sql`SELECT id FROM intermediary_remittances WHERE tenant_id = ${ctx.tenantId} AND id = ${observed.remittance.id} FOR UPDATE`);
+        await tx.execute(sql`SELECT id FROM intermediary_collections WHERE tenant_id = ${ctx.tenantId} AND id = ${row.id} FOR UPDATE`);
+        const current = await tx.query.intermediaryCollections.findFirst({ where: and(eq(intermediaryCollections.tenantId, ctx.tenantId), eq(intermediaryCollections.id, row.id)) });
+        if (!current) throw new DomainError("INTERMEDIARY_COLLECTION_NOT_FOUND", "Intermediary collection not found", 404);
+        const capability = await getIntermediaryCollectionCancellationCapability(ctx, current.publicId, tx);
+        if (capability.stateHash !== input.expectedStateHash) throw new DomainError("INTERMEDIARY_COLLECTION_CANCEL_STALE", "Collection changed; inspect it again before cancelling", 409);
+        if (!capability.allowed) throw new DomainError(capability.blockedReason!, "This intermediary collection cannot be cancelled in its current state", 409);
+        const snapshot = await collectionCancellationSnapshot(tx, ctx.tenantId, current);
+        const now = new Date();
+        if (snapshot.allocation && snapshot.remittance) {
+            await tx.update(intermediaryRemittanceAllocations).set({ releasedAt: now }).where(and(eq(intermediaryRemittanceAllocations.tenantId, ctx.tenantId), eq(intermediaryRemittanceAllocations.id, snapshot.allocation.id), sql`${intermediaryRemittanceAllocations.releasedAt} IS NULL`));
+            await tx.update(intermediaryRemittances).set({ status: "needs_review", updatedByUserId: actor.id, updatedAt: now }).where(and(eq(intermediaryRemittances.tenantId, ctx.tenantId), eq(intermediaryRemittances.id, snapshot.remittance.id), sql`${intermediaryRemittances.status} IN ('draft', 'needs_review', 'ready')`));
+            await tx.update(intermediaryRemittanceProposals).set({ status: "stale" }).where(and(eq(intermediaryRemittanceProposals.tenantId, ctx.tenantId), eq(intermediaryRemittanceProposals.remittanceId, snapshot.remittance.id), sql`${intermediaryRemittanceProposals.status} IN ('ready', 'needs_review')`));
+        }
+        const audit = await createAuditLog(tx, { ...auditContext(ctx), entityType: "intermediary_collection", entityId: current.publicId, action: "reversed", payload: { reason, originalStatus: current.status, cancellationRequestHash: requestHash, remittancePublicId: snapshot.remittance?.publicId ?? null } });
+        const reversed = await tx.update(intermediaryCollections).set({ status: "reversed", reversedAt: now, updatedByUserId: actor.id, updatedAt: now }).where(and(eq(intermediaryCollections.tenantId, ctx.tenantId), eq(intermediaryCollections.id, current.id))).returning().then((rows) => rows[0]!);
+        const response = { publicId: reversed.publicId, status: reversed.status, reason, reversedAt: now.toISOString(), auditPublicId: audit.publicId, correlationId: ctx.correlationId };
+        await tx.insert(commandReceipts).values({ tenantId: ctx.tenantId, operationType: "intermediary_collection_cancel", operationKey: key, requestHash, result: response, auditPublicId: audit.publicId, correlationId: ctx.correlationId, createdByUserId: ctx.actorUserId });
+        return response;
+    });
+    await invalidateTenantCache(ctx.tenantId);
+    return result;
 }
 
 function presentRemittance(row: typeof intermediaryRemittances.$inferSelect, selected = new Decimal(0)) {

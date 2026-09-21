@@ -4,10 +4,10 @@ import { WORKFLOW_POLICY_REVISION, WORKFLOW_VERSION } from "./workflow-version";
 
 export { WORKFLOW_POLICY_REVISION, WORKFLOW_VERSION } from "./workflow-version";
 
-export type WorkflowIntent = "inspect" | "receive_payment" | "close_loan" | "originate_loan" | "disburse_loan" | "attach_evidence" | "renew_loan" | "intermediary_collection" | "tool_help";
+export type WorkflowIntent = "inspect" | "receive_payment" | "close_loan" | "originate_loan" | "disburse_loan" | "attach_evidence" | "renew_loan" | "intermediary_collection" | "cancel_payment_restore" | "tool_help";
 
 export const WORKFLOW_INTENTS = [
-    "inspect", "receive_payment", "close_loan", "originate_loan", "disburse_loan", "attach_evidence", "renew_loan", "intermediary_collection", "tool_help",
+    "inspect", "receive_payment", "close_loan", "originate_loan", "disburse_loan", "attach_evidence", "renew_loan", "intermediary_collection", "cancel_payment_restore", "tool_help",
 ] as const satisfies readonly WorkflowIntent[];
 
 export type WorkflowRule = Readonly<{
@@ -20,13 +20,14 @@ export type WorkflowRule = Readonly<{
 
 const workflowRules: readonly WorkflowRule[] = [
     { intent: "inspect", description: "Inspect authoritative borrower, loan, payment, or payout state.", profiles: ["full", "core-read", "payments", "loans", "disbursements", "admin"], tools: ["borrower.resolve-and-portfolio", "loan.inspect-context", "payment.match-context", "intake.get", "loan.disbursement.list"], attachmentTransport: "none" },
+    { intent: "cancel_payment_restore", description: "Inspect an exact restore draft, require explicit confirmation, and cancel only that unposted child.", profiles: ["full", "payments"], tools: ["intake.get", "payment.restore.cancel"], attachmentTransport: "human_review" },
     { intent: "receive_payment", description: "Create and reconcile a payment intake through the existing payment workflow.", profiles: ["full", "payments"], tools: ["intake.create", "evidence.prepare", "evidence.finalize", "evidence.import-chatgpt-file", "payment.preview", "payment.post"], attachmentTransport: "payment" },
     { intent: "close_loan", description: "Preview and execute the applicable scheduled or floating close-out.", profiles: ["full", "loans"], tools: ["loan.inspect-context", "loan.settlement.preview", "loan.settlement.execute", "payment.preview", "payment.post"], attachmentTransport: "human_review" },
     { intent: "originate_loan", description: "Preview, create, and activate a new loan with immutable terms.", profiles: ["full", "loans"], tools: ["loan.preview", "loan.draft", "loan.activate"], attachmentTransport: "none" },
     { intent: "disburse_loan", description: "Create, evidence, inspect, confirm, and post an actual payout.", profiles: ["full", "loans", "disbursements"], tools: ["loan.disbursement.draft", "loan.disbursement.evidence.prepare", "loan.disbursement.evidence.finalize", "loan.disbursement.evidence.import-chatgpt-file", "loan.disbursement.post"], attachmentTransport: "payout" },
     { intent: "attach_evidence", description: "Prepare or record evidence for an exact mutable target, or a supported posted supplement.", profiles: ["full", "payments", "loans", "disbursements"], tools: ["evidence.prepare", "evidence.finalize", "evidence.import-chatgpt-file", "loan.disbursement.evidence.prepare", "loan.disbursement.evidence.finalize", "loan.disbursement.evidence.import-chatgpt-file", "payment.evidence-supplement.import-chatgpt-file", "payment.evidence-supplement.record"], attachmentTransport: "supplement" },
     { intent: "renew_loan", description: "Preview, confirm, and execute a renewal with explicit cash direction.", profiles: ["full", "loans"], tools: ["renewal.preview", "renewal.execute"], attachmentTransport: "human_review" },
-    { intent: "intermediary_collection", description: "Review intermediary collection/remittance records using their dedicated workflow.", profiles: ["full", "disbursements", "admin"], tools: ["intermediary.collection.list", "intermediary.collection.create", "intermediary.remittance.preview", "intermediary.remittance.post"], attachmentTransport: "human_review" },
+    { intent: "intermediary_collection", description: "Review, cancel an eligible unposted collection, or reconcile intermediary remittances.", profiles: ["full", "disbursements", "admin"], tools: ["intermediary.collection.list", "intermediary.collection.cancel", "intermediary.collection.create", "intermediary.remittance.preview", "intermediary.remittance.post"], attachmentTransport: "human_review" },
     { intent: "tool_help", description: "Explain a named tool visible on the selected connection.", profiles: ["full", "core-read", "payments", "loans", "disbursements", "admin"], tools: [], attachmentTransport: "none" },
 ];
 

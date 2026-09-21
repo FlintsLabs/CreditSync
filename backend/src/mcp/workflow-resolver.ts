@@ -27,6 +27,9 @@ export type ResolverObservation = Readonly<{
     supportedAttachmentTransport?: boolean;
     /** The bounded backend read saw more evidence rows than it can safely summarize. */
     evidenceOverflow?: boolean;
+    restoreCancellationAllowed?: boolean;
+    restoreCancellationBlockedReason?: string | null;
+    restoreCancellationStateHash?: string | null;
 }>;
 
 export type ResolverStep = Readonly<{
@@ -41,7 +44,7 @@ export type ResolverResult = Readonly<{
     workflowVersion: string;
     catalogVersion: string;
     policyRevision: string;
-    observed: Readonly<{ state: ResolverObservation["state"] | null; loanType: ResolverObservation["loanType"] | null; evidenceReady: boolean }>;
+    observed: Readonly<{ state: ResolverObservation["state"] | null; loanType: ResolverObservation["loanType"] | null; evidenceReady: boolean; restoreCancellationAllowed: boolean | null; restoreCancellationBlockedReason: string | null; restoreCancellationStateHash: string | null }>;
     status: "needs_input" | "next_step" | "confirmation_required" | "blocked" | "refresh_required" | "connection_required";
     nextSteps: readonly ResolverStep[];
     blockers: readonly string[];
@@ -57,7 +60,7 @@ const targetArguments: Readonly<Record<string, TargetArgumentKind>> = Object.fre
     "payment.preview": "payment_intake", "payment.post": "payment_intake", "evidence.prepare": "payment_intake", "evidence.finalize": "payment_intake", "evidence.import-chatgpt-file": "payment_intake",
     "payment.evidence-supplement.import-chatgpt-file": "payment_intake", "payment.evidence-supplement.record": "payment_intake", "loan.disbursement.list": "loan_for_disbursement",
     "loan.disbursement.draft": "loan", "loan.disbursement.evidence.prepare": "loan_disbursement", "loan.disbursement.evidence.finalize": "loan_disbursement", "loan.disbursement.evidence.import-chatgpt-file": "loan_disbursement",
-    "loan.disbursement.post": "loan_disbursement", "loan.settlement.preview": "loan", "loan.activate": "loan", "loan.draft": "borrower", "renewal.preview": "loan",
+    "loan.disbursement.post": "loan_disbursement", "loan.settlement.preview": "loan", "loan.activate": "loan", "loan.draft": "borrower", "renewal.preview": "loan", "payment.restore.cancel": "payment_intake",
 });
 
 const requiredInputs: Readonly<Record<string, readonly string[]>> = Object.freeze({
@@ -68,10 +71,12 @@ const requiredInputs: Readonly<Record<string, readonly string[]>> = Object.freez
     "loan.preview": ["principal", "interestRate", "termMonths", "repaymentType", "startDate"],
     "loan.draft": ["borrowerPublicId", "principal", "interestRate", "termMonths", "repaymentType", "startDate"], "loan.activate": ["idempotencyKey"], "loan.settlement.preview": ["asOfDate"], "renewal.preview": ["oldLoanPublicId", "requestedPrincipal"],
     "borrower.resolve-and-portfolio": ["query", "borrowerPublicId"], "loan.inspect-context": ["loanPublicId"], "payment.match-context": ["paymentIntakePublicId"], "intake.get": ["paymentIntakePublicId"], "loan.disbursement.list": ["loanPublicId"],
+    "payment.restore.cancel": ["expectedStateHash", "reason", "idempotencyKey"],
 });
 
 const targetArgumentFields: Readonly<Record<string, string>> = Object.freeze({
     "renewal.preview": "oldLoanPublicId",
+    "payment.restore.cancel": "restoreDraftPublicId",
 });
 
 function step(toolName: string, input: ResolverInput, inputs: readonly string[] = requiredInputs[toolName] ?? [], requiresConfirmation = false): ResolverStep | null {
@@ -92,13 +97,13 @@ function step(toolName: string, input: ResolverInput, inputs: readonly string[] 
 function result(input: ResolverInput, profile: ResolverProfile, status: ResolverResult["status"], nextSteps: readonly (ResolverStep | null)[], blockers: readonly string[] = [], prohibitedTools: readonly string[] = []): ResolverResult {
     return {
         workflowId: `creditsync.${input.intent}`, workflowVersion: WORKFLOW_VERSION, catalogVersion: profile.catalogVersion, policyRevision: WORKFLOW_POLICY_REVISION,
-        observed: { state: null, loanType: null, evidenceReady: false }, status, nextSteps: nextSteps.filter((value): value is ResolverStep => value !== null).slice(0, 3), blockers: blockers.slice(0, 8), prohibitedTools: prohibitedTools.slice(0, 8),
+        observed: { state: null, loanType: null, evidenceReady: false, restoreCancellationAllowed: null, restoreCancellationBlockedReason: null, restoreCancellationStateHash: null }, status, nextSteps: nextSteps.filter((value): value is ResolverStep => value !== null).slice(0, 3), blockers: blockers.slice(0, 8), prohibitedTools: prohibitedTools.slice(0, 8),
         reevaluateOn: input.intent === "tool_help" ? "version_change" : input.attachments && input.attachments !== "none" ? "evidence_change" : "target_change",
     };
 }
 
 function withObservation(value: ResolverResult, observation: ResolverObservation): ResolverResult {
-    return { ...value, observed: { state: observation.state ?? null, loanType: observation.loanType ?? null, evidenceReady: observation.evidenceReady === true } };
+    return { ...value, observed: { state: observation.state ?? null, loanType: observation.loanType ?? null, evidenceReady: observation.evidenceReady === true, restoreCancellationAllowed: observation.restoreCancellationAllowed ?? null, restoreCancellationBlockedReason: observation.restoreCancellationBlockedReason ?? null, restoreCancellationStateHash: observation.restoreCancellationStateHash ?? null } };
 }
 
 function validTarget(input: ResolverInput) {
@@ -106,7 +111,7 @@ function validTarget(input: ResolverInput) {
 }
 
 function expectedTarget(intent: WorkflowIntent): WorkflowTargetKind | null {
-    if (intent === "receive_payment") return "payment_intake";
+    if (intent === "receive_payment" || intent === "cancel_payment_restore") return "payment_intake";
     if (["close_loan", "renew_loan"].includes(intent)) return "loan";
     return null;
 }
@@ -148,12 +153,30 @@ export function resolveWorkflowPolicy(input: ResolverInput, observation: Resolve
     if (observation.targetAvailable !== true) return withObservation(result(input, profile, "needs_input", [], [observation.targetAvailable === false ? "TARGET_UNAVAILABLE" : "TARGET_AVAILABILITY_REQUIRES_AUTHORITATIVE_READ"]), observation);
     if (observation.identityResolved !== true) return withObservation(result(input, profile, "needs_input", [], [observation.identityResolved === false ? "IDENTITY_REQUIRES_REVIEW" : "IDENTITY_REQUIRES_AUTHORITATIVE_READ"]), observation);
     if (observation.state !== "mutable" && observation.state !== "posted") return withObservation(result(input, profile, "needs_input", [], [observation.state === "unresolved" ? "TARGET_STATE_UNRESOLVED" : "TARGET_STATE_REQUIRES_AUTHORITATIVE_READ"]), observation);
+    if (input.intent === "cancel_payment_restore") {
+        if (input.target!.kind !== "payment_intake") return withObservation(result(input, profile, "needs_input", [], ["TARGET_KIND_MISMATCH"]), observation);
+        if (observation.state !== "mutable") return withObservation(result(input, profile, "blocked", [], ["RESTORE_DRAFT_MUST_BE_UNPOSTED"], ["payment.restore.cancel"]), observation);
+        if (observation.restoreCancellationAllowed !== true) return withObservation(result(input, profile, "blocked", [], [observation.restoreCancellationBlockedReason ?? "RESTORE_CANCELLATION_NOT_ALLOWED"], ["payment.restore.cancel"]), observation);
+        if (!observation.restoreCancellationStateHash) return withObservation(result(input, profile, "refresh_required", [], ["RESTORE_CANCELLATION_STATE_HASH_REQUIRED"]), observation);
+        const cancel = step("payment.restore.cancel", input, ["reason", "idempotencyKey"], true);
+        if (!cancel) return withObservation(result(input, profile, "connection_required", [], ["RESTORE_CANCELLATION_TOOL_UNAVAILABLE"]), observation);
+        return withObservation(result(input, profile, "confirmation_required", [{
+            ...cancel,
+            arguments: { restoreDraftPublicId: input.target!.publicId, expectedStateHash: observation.restoreCancellationStateHash },
+        }], [], ["payment.restore.execute", "payment.cancel"]), observation);
+    }
     const attachments = input.attachments ?? "unknown";
     if (attachments === "unknown") return withObservation(result(input, profile, "needs_input", [], ["ATTACHMENT_AVAILABILITY_UNKNOWN"]), observation);
     if (input.expectedAttachmentCount !== undefined && (attachments !== "present" || !Number.isSafeInteger(input.expectedAttachmentCount) || input.expectedAttachmentCount < 1 || input.expectedAttachmentCount > 20)) return withObservation(result(input, profile, "needs_input", [], ["EXPECTED_ATTACHMENT_COUNT_REQUIRED"]), observation);
     if (input.intent === "inspect") {
         const inspectStep = input.target?.kind === "borrower" ? step("borrower.resolve-and-portfolio", input, []) : input.target?.kind === "loan" ? step("loan.inspect-context", input) : input.target?.kind === "payment_intake" ? step("intake.get", input) : null;
-        return withObservation(result(input, profile, inspectStep ? "next_step" : "needs_input", [inspectStep], inspectStep ? [] : ["TARGET_REQUIRES_PARENT_READ"]), observation);
+        const restoreCancelStep = input.target?.kind === "payment_intake" && observation.restoreCancellationAllowed === true
+            ? step("payment.restore.cancel", input, ["reason", "idempotencyKey"], true)
+            : null;
+        const restoreCancelNextStep = restoreCancelStep && observation.restoreCancellationStateHash
+            ? { ...restoreCancelStep, arguments: { restoreDraftPublicId: input.target!.publicId, expectedStateHash: observation.restoreCancellationStateHash } }
+            : null;
+        return withObservation(result(input, profile, restoreCancelNextStep ? "confirmation_required" : inspectStep ? "next_step" : "needs_input", [inspectStep, restoreCancelNextStep], inspectStep ? [] : ["TARGET_REQUIRES_PARENT_READ"]), observation);
     }
     if (input.target!.kind === "payment_intake" && observation.state === "posted" && (input.intent === "receive_payment" || input.intent === "attach_evidence")) {
         const supplement = attachments === "present" ? step("payment.evidence-supplement.import-chatgpt-file", input, ["idempotencyKey", "chatgptFile"], true) : step("payment.evidence-supplement.record", input, undefined, true);

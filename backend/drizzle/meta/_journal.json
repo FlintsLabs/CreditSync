@@ -547,6 +547,13 @@
       "when": 1789084800005,
       "tag": "0077_financial_evidence_attempt_bindings",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1789929124993,
+      "tag": "0078_cancelled_restore_attempts",
+      "breakpoints": true
     }
   ]
 }

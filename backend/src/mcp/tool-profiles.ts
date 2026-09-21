@@ -25,7 +25,7 @@ const payments = [
     "payment.batch.decision", "payment.batch.cancel", "payment.reconcile.preview", "payment.reconcile.preflight", "payment.reconcile.mark-review",
     "payment.reconcile.execute", "payment.reconcile.reflow.preview", "payment.reconcile.reflow.execute", "payment.allocation-correction.preview",
     "payment.allocation-correction.execute", "payment.restore.create", "payment.restore.evidence.prepare", "payment.restore.evidence.finalize",
-    "payment.restore.preview", "payment.restore.execute", "payment.restore.schedule-backfill", "payment.intermediary-attribution.list",
+    "payment.restore.preview", "payment.restore.execute", "payment.restore.cancel", "payment.restore.schedule-backfill", "payment.intermediary-attribution.list",
     "payment.intermediary-attribution.create", "payment.intermediary-attribution.reverse", "workflow.resolve",
 ] as const satisfies readonly McpToolName[];
 
@@ -47,7 +47,7 @@ const disbursements = [
     "intermediary.search", "intermediary.profile.get", "intermediary.managed-loan.list", "intermediary.assignment.create", "intermediary.assignment.end",
     "intermediary.disbursement.list", "intermediary.disbursement.get", "intermediary.disbursement.create", "intermediary.disbursement.event.create",
     "intermediary.disbursement.evidence.prepare", "intermediary.disbursement.evidence.finalize", "intermediary.disbursement.preview", "intermediary.disbursement.post", "intermediary.disbursement.reverse",
-    "intermediary.collection.list", "intermediary.collection.create", "intermediary.remittance.get", "intermediary.remittance.create",
+    "intermediary.collection.list", "intermediary.collection.create", "intermediary.collection.cancel", "intermediary.remittance.get", "intermediary.remittance.create",
     "intermediary.remittance.allocations.save", "intermediary.remittance.preview", "intermediary.remittance.evidence.prepare",
     "intermediary.remittance.evidence.finalize", "intermediary.remittance.post",
     "funding-source.list", "funding-allocation.preview", "funding-allocation.list", "workflow.resolve",
@@ -58,7 +58,7 @@ const admin = [
     "intermediary.search", "intermediary.create", "intermediary.profile.get", "intermediary.bank-account.save", "intermediary.managed-loan.list",
     "intermediary.assignment.create", "intermediary.assignment.end", "intermediary.collection.list", "intermediary.remittance.get", "intermediary.remittance.create",
     "intermediary.remittance.allocations.save", "intermediary.remittance.preview", "intermediary.remittance.evidence.prepare", "intermediary.remittance.evidence.finalize",
-    "intermediary.remittance.post", "intermediary.collection.create", "funding-source.list", "funding-allocation.preview", "funding-allocation.create", "funding-allocation.list",
+    "intermediary.remittance.post", "intermediary.collection.create", "intermediary.collection.cancel", "funding-source.list", "funding-allocation.preview", "funding-allocation.create", "funding-allocation.list",
     "loan.commission-participant.list", "loan.commission-participant.add", "loan.commission-participant.update", "loan.commission-participant.end",
     "loan.commission.preview", "loan.commission.list", "loan.commission.calculate", "loan.commission.reverse", "workflow.resolve",
 ] as const satisfies readonly McpToolName[];

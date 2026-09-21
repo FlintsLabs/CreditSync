@@ -191,7 +191,12 @@ async function loadIntakeLineage(ctx: CommandContext, rows: IntakeRow[], executo
         ),
     ));
     const parentById = new Map(related.map((row: IntakeRow) => [row.id, row]));
-    const childByParentId = new Map(related.filter((row: IntakeRow) => row.repostOfIntakeId !== null).map((row: IntakeRow) => [row.repostOfIntakeId!, row]));
+    const childByParentId = new Map<number, IntakeRow>();
+    const children = related.filter((row: IntakeRow) => row.repostOfIntakeId !== null).sort((left, right) => {
+        const cancelledOrder = Number(left.status === "cancelled") - Number(right.status === "cancelled");
+        return cancelledOrder || right.createdAt.getTime() - left.createdAt.getTime();
+    });
+    for (const child of children) if (!childByParentId.has(child.repostOfIntakeId!)) childByParentId.set(child.repostOfIntakeId!, child);
     for (const row of rows) {
         const parent = row.repostOfIntakeId === null ? undefined : parentById.get(row.repostOfIntakeId);
         const child = childByParentId.get(row.id);
@@ -527,6 +532,9 @@ export async function listPaymentReviewQueue(ctx: CommandContext) {
 export async function getPaymentIntake(ctx: CommandContext, publicId: string) {
     const row = await accessibleIntake(ctx, publicId);
     const cancellation = await getPaymentCancellationCapability(ctx, publicId);
+    const restoreCancellation = row.repostOfIntakeId === null
+        ? null
+        : await (await import("./payment-reconciliation-service")).getPaymentRestoreCancellationCapability(ctx, publicId);
     const [evidenceRows, proposals, lineage, cancellationActor] = await Promise.all([
         db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.paymentIntakeId, row.id))),
         db.select().from(paymentMatchProposals).where(and(eq(paymentMatchProposals.tenantId, ctx.tenantId), eq(paymentMatchProposals.paymentIntakeId, row.id))).orderBy(desc(paymentMatchProposals.version)),
@@ -572,6 +580,7 @@ export async function getPaymentIntake(ctx: CommandContext, publicId: string) {
         })),
         latestProposal: latest ? presentProposal(latest, latestAllocations) : null,
         cancellation,
+        restoreCancellation,
         cancellationMetadata: row.status === "cancelled" ? { reason: row.cancellationReason, cancelledAt: row.cancelledAt, auditPublicId: row.cancellationAuditPublicId, actorPublicId: cancellationActor?.publicId ?? null } : null,
     };
 }

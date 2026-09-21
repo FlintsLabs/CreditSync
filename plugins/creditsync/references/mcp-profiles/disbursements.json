@@ -1,8 +1,8 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "mcp-catalog-350933dd62d51246",
+  "catalogVersion": "mcp-catalog-709d150df779f218",
   "profile": "disbursements",
-  "toolCount": 40,
+  "toolCount": 41,
   "tools": [
     "borrower.resolve-and-portfolio",
     "loan.inspect-context",
@@ -33,6 +33,7 @@
     "intermediary.disbursement.reverse",
     "intermediary.collection.list",
     "intermediary.collection.create",
+    "intermediary.collection.cancel",
     "intermediary.remittance.get",
     "intermediary.remittance.create",
     "intermediary.remittance.allocations.save",

@@ -97,7 +97,7 @@ import {
     type UpdateDisbursementDraftInput,
 } from "../services/loan-disbursement-service";
 import {
-    createIntermediary, createIntermediaryCollection, createIntermediaryRemittance,
+    cancelIntermediaryCollection, createIntermediary, createIntermediaryCollection, createIntermediaryRemittance,
     finalizeIntermediaryRemittanceEvidence, getIntermediaryRemittance, listIntermediaryCollections,
     postIntermediaryRemittance, prepareIntermediaryRemittanceEvidence, previewIntermediaryRemittance,
     saveRemittanceAllocations, searchIntermediaries, type IntermediaryRemittanceEvidenceGateway,
@@ -146,7 +146,7 @@ import {
     reversePaymentAttribution,
     type CreatePaymentAttributionInput,
 } from "../services/payment-attribution-service";
-import { backfillPostedRestoreSchedule, createPaymentRestoreDraft, executePaymentReconciliation, markPaymentReconciliationReview, preflightPaymentExecution, previewPaymentReconciliation, previewPaymentRestore, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
+import { backfillPostedRestoreSchedule, cancelPaymentRestoreDraft, createPaymentRestoreDraft, executePaymentReconciliation, markPaymentReconciliationReview, preflightPaymentExecution, previewPaymentReconciliation, previewPaymentRestore, type ReconciliationAllocation } from "../services/payment-reconciliation-service";
 import { executePaymentReconciliationReflow, previewPaymentReconciliationReflow } from "../services/payment-reconciliation-reflow-service";
 import { addPaymentBatchItem, cancelPaymentBatch, capturePaymentBatch, createPaymentBatch, decidePaymentBatch, editPaymentBatchStagingItem, executePaymentBatch, finalizePaymentBatchEvidenceMany, finalizePaymentBatchStagingEvidence, getPaymentBatch, getPaymentBatchWorkspace, preparePaymentBatchEvidenceMany, preparePaymentBatchStagingEvidence, previewPaymentBatch, reviewPaymentBatchStagingItem, splitPaymentBatch, stagePaymentBatchItems } from "../services/payment-batch-service";
 import { discoverPaymentBatchCandidates } from "../services/payment-batch-candidate-service";
@@ -400,6 +400,17 @@ export function createDefaultMcpToolHandlers(
             idempotencyKey,
         });
     },
+    "payment.restore.cancel": (ctx, input) => {
+        const inputKey = asString(input, "idempotencyKey");
+        if (ctx.idempotencyKey && inputKey && ctx.idempotencyKey.trim() !== inputKey.trim()) {
+            throw new DomainError("IDEMPOTENCY_CONFLICT", "Command and transport idempotency keys differ", 409);
+        }
+        const idempotencyKey = ctx.idempotencyKey ?? inputKey;
+        if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Payment restore cancellation requires an idempotency key", 400);
+        return cancelPaymentRestoreDraft(ctx, asString(input, "restoreDraftPublicId"), {
+            expectedStateHash: asString(input, "expectedStateHash"), reason: asString(input, "reason"), idempotencyKey,
+        });
+    },
     "payment.restore.evidence.prepare": (ctx, input) => {
         const { restoreDraftPublicId, ...evidence } = input;
         return preparePaymentRestoreEvidence(
@@ -625,6 +636,7 @@ export function createDefaultMcpToolHandlers(
     ),
     "intermediary.collection.list": async (ctx, input) => ({ items: await listIntermediaryCollections(ctx, { intermediaryPublicId: input.intermediaryPublicId as string | undefined, status: input.status as string | undefined }) }),
     "intermediary.collection.create": (ctx, input) => createIntermediaryCollection(ctx, input as any),
+    "intermediary.collection.cancel": (ctx, input) => cancelIntermediaryCollection(ctx, asString(input, "collectionPublicId"), { expectedStateHash: asString(input, "expectedStateHash"), reason: asString(input, "reason") }),
     "intermediary.remittance.get": (ctx, input) => getIntermediaryRemittance(ctx, asString(input, "remittancePublicId")),
     "intermediary.remittance.create": (ctx, input) => createIntermediaryRemittance(ctx, input as any),
     "intermediary.remittance.allocations.save": (ctx, input) => saveRemittanceAllocations(ctx, asString(input, "remittancePublicId"), { collectionPublicIds: input.collectionPublicIds as string[] }),
@@ -693,6 +705,7 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "payment.allocation-correction.preview": { entityType: "payment_allocation_correction", action: "previewed" },
     "payment.allocation-correction.execute": { entityType: "payment_allocation_correction", action: "executed" },
     "payment.post": { entityType: "payment_intake", action: "posted" },
+    "payment.cancel": { entityType: "payment_intake", action: "cancelled" },
     "payment.reverse": { entityType: "payment_intake", action: "reversed" },
     "payment.reverse-with-accrual.execute": { entityType: "payment_intake", action: "reversed_with_interest_accruals_materialized" },
     "payment.batch.execute": { entityType: "payment_batch", action: "posted" },
@@ -700,6 +713,7 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "payment.reconcile.reflow.execute": { entityType: "payment_reconciliation_reflow", action: "executed" },
     "payment.restore.execute": { entityType: "payment_reconciliation", action: "executed" },
     "payment.restore.create": { entityType: "payment_intake", action: "restore_draft_created" },
+    "payment.restore.cancel": { entityType: "payment_intake", action: "cancelled" },
     "payment.restore.schedule-backfill": { entityType: "loan_schedule", action: "restore_schedule_backfilled" },
     "loan.activate": { entityType: "loan", action: "activated" },
     "loan.payment-start-date.update": { entityType: "loan", action: "payment_start_date_changed" },
@@ -716,6 +730,7 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "loan.commission-participant.end": { entityType: "loan_commission_participant", action: "ended" },
     "payment.intermediary-attribution.create": { entityType: "payment_intermediary_attribution", action: "created" },
     "payment.intermediary-attribution.reverse": { entityType: "payment_intermediary_attribution", action: "reversed" },
+    "intermediary.collection.cancel": { entityType: "intermediary_collection", action: "reversed" },
     "intermediary.disbursement.post": { entityType: "intermediated_disbursement_group", action: "posted" },
     "intermediary.disbursement.reverse": { entityType: "intermediated_disbursement_group", action: "reversed" },
     "intermediary.remittance.post": { entityType: "intermediary_remittance", action: "posted" },
@@ -733,6 +748,7 @@ function resultPublicId(result: unknown) {
     const record = result as Record<string, unknown>;
     const value = record.publicId
         ?? record.id
+        ?? record.paymentIntakePublicId
         ?? record.loanPublicId
         ?? record.settlementPublicId
         ?? record.replacementPublicId

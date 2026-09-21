@@ -1841,7 +1841,20 @@ describe("default MCP adapter integration", () => {
             borrowerPaidAt: "2026-08-10T01:00:00.000Z", bankReference: "MCP-COLLECTION-1",
             idempotencyKey: "mcp-all-tools-collection",
         })).data;
-        await call("intermediary.collection.list", { intermediaryPublicId: intermediary.publicId, status: "pending_remittance" });
+        const cancelCandidate = (await call("intermediary.collection.create", {
+            intermediaryPublicId: intermediary.publicId, borrowerPublicId, loanPublicId, amount: "10.00",
+            borrowerPaidAt: "2026-08-11T01:00:00.000Z", bankReference: "MCP-COLLECTION-CANCEL-1",
+            idempotencyKey: "mcp-all-tools-collection-cancel-candidate",
+        })).data;
+        const pendingCollections = (await call("intermediary.collection.list", { intermediaryPublicId: intermediary.publicId, status: "pending_remittance" })).data.items as Array<Record<string, any>>;
+        const cancellation = pendingCollections.find((item) => item.publicId === cancelCandidate.publicId)?.cancellation as { allowed: boolean; stateHash: string };
+        expect(cancellation.allowed).toBe(true);
+        const cancelledCollection = (await call("intermediary.collection.cancel", {
+            collectionPublicId: cancelCandidate.publicId, expectedStateHash: cancellation.stateHash,
+            reason: "Explicit synthetic cancellation confirmation", idempotencyKey: "mcp-all-tools-collection-cancel",
+        })).data;
+        expect(cancelledCollection).toMatchObject({ publicId: cancelCandidate.publicId, status: "reversed" });
+        expectWriteAuditMetadata(cancelledCollection);
         const remittance = (await call("intermediary.remittance.create", {
             intermediaryPublicId: intermediary.publicId, grossAmount: "40.00", receivedAt: "2026-08-10T02:00:00.000Z",
             bankReference: "MCP-REMITTANCE-1", idempotencyKey: "mcp-all-tools-remittance",
@@ -2077,13 +2090,14 @@ describe("default MCP adapter integration", () => {
             "payment.batch.split", "payment.batch.decision", "payment.batch.cancel", "payment.batch.staging.extract",
         ]);
         const separatelyCoveredReflowTools = new Set<McpToolName>([
-            "payment.reconcile.reflow.preview", "payment.reconcile.reflow.execute",
+            "payment.reconcile.reflow.preview", "payment.reconcile.reflow.execute", "payment.restore.cancel",
         ]);
         expect([...new Set(called)].sort()).toEqual(MCP_TOOL_NAMES.filter((name) => !resumableBatchTools.has(name) && !separatelyCoveredReflowTools.has(name)).sort());
         expect(new Set(called).size).toBe(MCP_TOOL_NAMES.length - resumableBatchTools.size - separatelyCoveredReflowTools.size);
         expect(called.filter((name) => name === "intermediary.disbursement.event.create")).toHaveLength(2);
+        expect(called.filter((name) => name === "intermediary.collection.cancel")).toHaveLength(1);
         expect(called.filter((name) => name === "loan.restructure.execute")).toHaveLength(2);
-        expect(called).toHaveLength(MCP_TOOL_NAMES.length - resumableBatchTools.size - separatelyCoveredReflowTools.size + 9);
+        expect(called).toHaveLength(MCP_TOOL_NAMES.length - resumableBatchTools.size - separatelyCoveredReflowTools.size + 10);
 
         await client.close();
 
