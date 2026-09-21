@@ -805,7 +805,19 @@ export async function executePaymentReconciliation(ctx: CommandContext, previewP
         const currentOriginals = inspected.originals;
         if (restoreMode) await deriveRestoreAllocations(ctx, tx, currentOriginals);
         const previewPlans = ((proposal.sourceSnapshot as { provenancePlans?: FloatingInterestAllocationPlan[] }).provenancePlans ?? []);
-        const currentProvenancePlans: FloatingInterestAllocationPlan[] = restoreMode ? await deriveRestoreFloatingProvenance(tx, currentOriginals, intake.receivedAt) : [];
+        const currentProvenancePlans: FloatingInterestAllocationPlan[] = [];
+        if (restoreMode) {
+            try {
+                currentProvenancePlans.push(...await deriveRestoreFloatingProvenance(tx, currentOriginals, intake.receivedAt));
+            } catch (error) {
+                // A ready restore already proved this provenance. Lost capacity
+                // at execution invalidates that preview and requires review again.
+                if (error instanceof DomainError && error.code === "RECONCILIATION_INTEREST_PROVENANCE_UNAVAILABLE") {
+                    throw new DomainError("STALE_RECONCILIATION_PREVIEW", "Floating interest provenance or capacity changed after preview", 409);
+                }
+                throw error;
+            }
+        }
         if (!restoreMode) {
             for (const item of allocations.filter((candidate) => candidate.loan.repaymentType === "floating")) {
                 const plan = await resolveFloatingInterestAllocationPlan(tx, item.loan, intake.receivedAt, item.amount, ctx, "execute");

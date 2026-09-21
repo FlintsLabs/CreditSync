@@ -33,14 +33,21 @@ export type FloatingAllocationIssue = {
     dueDate?: string;
 };
 
+/** Current obligations exclude compensated sources even when their reversal was
+ * recorded after the requested business date. Apply date cutoffs only after
+ * resolving the complete reversal lineage; the ledger remains append-only. */
+export function activeFloatingPaymentAllocations<T extends Pick<FloatingIntegrityAllocation, "id" | "entryType" | "reversedAllocationId">>(rows: T[]): T[] {
+    const reversedIds = new Set(rows.filter((row) => row.reversedAllocationId !== null).map((row) => row.reversedAllocationId!));
+    return rows.filter((row) => row.entryType === "payment" && !reversedIds.has(row.id));
+}
+
 export function findFloatingAllocationIssues(input: {
     accruals: FloatingIntegrityAccrual[];
     allocations: FloatingIntegrityAllocation[];
 }): FloatingAllocationIssue[] {
     const issues: FloatingAllocationIssue[] = [];
     const accrualById = new Map(input.accruals.map((row) => [row.id, row]));
-    const reversedIds = new Set(input.allocations.filter((row) => row.reversedAllocationId !== null).map((row) => row.reversedAllocationId!));
-    const active = input.allocations.filter((row) => row.entryType === "payment" && !reversedIds.has(row.id))
+    const active = activeFloatingPaymentAllocations(input.allocations)
         .sort((left, right) => left.effectiveDate.localeCompare(right.effectiveDate) || left.id - right.id);
     const totals = new Map<number, Decimal>();
     for (const row of active) {

@@ -12,6 +12,7 @@ import {
 } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import { FinancialDecimal } from "../lib/financial-decimal";
+import { activeFloatingPaymentAllocations } from "../lib/floating-allocation-integrity";
 import {
     calculateDailyInterest,
     interestDatesThrough,
@@ -832,7 +833,7 @@ async function projectFloatingAccrualRows(
     }
     const allByAccrual = new Map<number, Decimal>();
     const asOfByAccrual = new Map<number, Decimal>();
-    for (const allocation of allocations as Array<typeof floatingTransactionAllocations.$inferSelect>) {
+    for (const allocation of activeFloatingPaymentAllocations(allocations as Array<typeof floatingTransactionAllocations.$inferSelect>)) {
         if (!allocation.interestAccrualId) continue;
         allByAccrual.set(allocation.interestAccrualId, (allByAccrual.get(allocation.interestAccrualId) ?? new FinancialDecimal(0)).plus(allocation.amount));
         if (allocation.effectiveDate <= throughDate) {
@@ -886,10 +887,11 @@ async function projectFloatingPenaltyGroups(
         const dueDate = accrualDueDate(row);
         grouped.set(dueDate, [...(grouped.get(dueDate) ?? []), row]);
     }
-    const allocations = await tx.select().from(floatingTransactionAllocations).where(and(
+    const storedAllocations = await tx.select().from(floatingTransactionAllocations).where(and(
         eq(floatingTransactionAllocations.tenantId, loan.tenantId),
         eq(floatingTransactionAllocations.loanId, loan.id),
     ));
+    const allocations: Array<Pick<typeof floatingTransactionAllocations.$inferSelect, "dueDate" | "effectiveDate" | "component" | "amount">> = activeFloatingPaymentAllocations(storedAllocations as Array<typeof floatingTransactionAllocations.$inferSelect>);
     if (projection) allocations.push(...projection.allocations);
     const ledger = await tx.select().from(floatingPenaltyLedgerEntries).where(and(
         eq(floatingPenaltyLedgerEntries.tenantId, loan.tenantId),
@@ -907,11 +909,11 @@ async function projectFloatingPenaltyGroups(
     for (const [dueDate, groupRows] of [...grouped.entries()].sort(([left], [right]) => left.localeCompare(right))) {
         const baseInterest = groupRows.reduce((sum, row) => sum.plus(row.interestAmount), new FinancialDecimal(0));
         const currentInterest = groupRows.reduce((sum, row) => sum.plus(FinancialDecimal.max(new FinancialDecimal(row.interestAmount).minus(row.paidAmount), 0)), new FinancialDecimal(0));
-        const currentGroupAllocations = allocations.filter((row: typeof floatingTransactionAllocations.$inferSelect) =>
+        const currentGroupAllocations = allocations.filter((row) =>
             row.dueDate === dueDate && row.effectiveDate <= throughDate);
         const interestAllocatedThrough = currentGroupAllocations
-            .filter((row: typeof floatingTransactionAllocations.$inferSelect) => row.component === "interest")
-            .reduce((sum: Decimal, row: typeof floatingTransactionAllocations.$inferSelect) => sum.plus(row.amount), new FinancialDecimal(0));
+            .filter((row) => row.component === "interest")
+            .reduce((sum: Decimal, row) => sum.plus(row.amount), new FinancialDecimal(0));
         const baselinePaid = FinancialDecimal.max(baseInterest.minus(currentInterest).minus(interestAllocatedThrough), 0);
         const firstPenaltyDate = new Date(`${dueDate}T00:00:00Z`);
         firstPenaltyDate.setUTCDate(firstPenaltyDate.getUTCDate() + graceDays + 1);
@@ -920,9 +922,9 @@ async function projectFloatingPenaltyGroups(
         if (eligibleStart <= throughDate) {
             for (const penaltyDate of datesBetweenInclusive(eligibleStart, throughDate)) {
                 const paidBeforeDate = allocations
-                    .filter((row: typeof floatingTransactionAllocations.$inferSelect) =>
+                    .filter((row) =>
                         row.dueDate === dueDate && row.component === "interest" && row.effectiveDate < penaltyDate)
-                    .reduce((sum: Decimal, row: typeof floatingTransactionAllocations.$inferSelect) => sum.plus(row.amount), new FinancialDecimal(0));
+                    .reduce((sum: Decimal, row) => sum.plus(row.amount), new FinancialDecimal(0));
                 const openingInterestBasis = FinancialDecimal.max(baseInterest.minus(baselinePaid).minus(paidBeforeDate), 0);
                 if (openingInterestBasis.lte(0)) continue;
                 if (!fixedAssessmentProjected && (loan.lateFeeMode === "fixed" || loan.lateFeeMode === "fixed_plus_percent") && feeValue.gt(0)) {
@@ -977,8 +979,8 @@ async function projectFloatingPenaltyGroups(
                 .reduce((sum: Decimal, entry: typeof floatingPenaltyLedgerEntries.$inferSelect) => sum.plus(entry.amount), new FinancialDecimal(0)));
         }
         const paidPenalty = currentGroupAllocations
-            .filter((row: typeof floatingTransactionAllocations.$inferSelect) => row.component === "penalty")
-            .reduce((sum: Decimal, row: typeof floatingTransactionAllocations.$inferSelect) => sum.plus(row.amount), new FinancialDecimal(0));
+            .filter((row) => row.component === "penalty")
+            .reduce((sum: Decimal, row) => sum.plus(row.amount), new FinancialDecimal(0));
         if (projection && accruedPenalty.lt(paidPenalty)) throw new DomainError("FLOATING_PENALTY_COMPENSATION_EXCEEDS_UNPAID", "Projected penalty compensation would fall below paid penalty", 409);
         groups.push({ dueDate, accruedPenalty, paidPenalty, penaltyDue: FinancialDecimal.max(accruedPenalty.minus(paidPenalty), 0), interestDue: currentInterest });
     }

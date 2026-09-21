@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.49 - 2026-09-22
+
+### Fixed
+
+- Resolve compensated floating payment allocations before applying business-date cutoffs in interest and penalty projections. Backdated grouped payments after a reversal/repost no longer count voided receipts, while original ledger history and genuine over-allocation guards remain intact. Restore execution reports a stale preview when intervening payments consume previously available accrual capacity. Added disposable PostgreSQL regressions for grouped posting, missing-accrual materialization, retry idempotency, and restored unpaid interest/penalties.
+
 ## v0.4.48 - 2026-09-21
 
 ### Added
