@@ -23,6 +23,7 @@ import {
     paymentIntermediaryAttributions,
     paymentMatchAllocations,
     paymentMatchProposals,
+    paymentReplacementLineages,
     transactions,
     users,
 } from "../db/schema";
@@ -44,6 +45,8 @@ import {
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import { getPaymentCancellationCapability } from "./payment-cancellation-service";
+import { effectivePaymentEvidenceWithFiles } from "./payment-effective-evidence-service";
+import { assertPaymentReplacementDuplicateSafe, duplicateIdentityLock } from "./payment-duplicate-guard";
 import { assertFinancialEvidenceReady, registerFinancialEvidenceRequirement } from "./financial-evidence-requirement-service";
 import { assertNoLaterFloatingPayment, assertNoOlderPendingPayment, lockPaymentBorrowers, paymentIntakeBorrowerIds } from "./payment-chronology-service";
 import { normalizeBorrowerText } from "./borrower-service";
@@ -63,7 +66,7 @@ type Executor = DbExecutor;
 type IntakeRow = typeof paymentIntakes.$inferSelect;
 type ProposalRow = typeof paymentMatchProposals.$inferSelect;
 type AllocationRow = typeof paymentMatchAllocations.$inferSelect;
-type IntakeLineage = { repostOfIntakePublicId: string | null; repostedByIntakePublicId: string | null };
+type IntakeLineage = { repostOfIntakePublicId: string | null; repostedByIntakePublicId: string | null; replacementOfIntakePublicId?: string | null; replacedByIntakePublicId?: string | null };
 
 export interface EvidenceStorageGateway {
     preparePut(request: SignedPutRequest): Promise<{ uploadUrl: string; expiresAt: Date; requiredHeaders?: Record<string, string> }>;
@@ -158,7 +161,7 @@ async function accessibleIntake(ctx: CommandContext, publicId: string, executor:
     return row;
 }
 
-function presentIntake(row: IntakeRow, lineage: IntakeLineage = { repostOfIntakePublicId: null, repostedByIntakePublicId: null }) {
+function presentIntake(row: IntakeRow, lineage: IntakeLineage = { repostOfIntakePublicId: null, repostedByIntakePublicId: null, replacementOfIntakePublicId: null, replacedByIntakePublicId: null }) {
     return {
         id: row.publicId,
         publicId: row.publicId,
@@ -182,22 +185,27 @@ async function loadIntakeLineage(ctx: CommandContext, rows: IntakeRow[], executo
     const result = new Map<number, IntakeLineage>();
     if (!rows.length) return result;
     const rowIds = rows.map((row) => row.id);
-    const parentIds = rows.map((row) => row.repostOfIntakeId).filter((id): id is number => id !== null);
+    const parentIds = rows.flatMap((row) => [row.repostOfIntakeId, row.replacementOfIntakeId]).filter((id): id is number => id !== null);
     const related: IntakeRow[] = await executor.select().from(paymentIntakes).where(and(
         eq(paymentIntakes.tenantId, ctx.tenantId),
         or(
             parentIds.length ? inArray(paymentIntakes.id, parentIds) : sql`false`,
             inArray(paymentIntakes.repostOfIntakeId, rowIds),
+            inArray(paymentIntakes.replacementOfIntakeId, rowIds),
         ),
     ));
     const parentById = new Map(related.map((row: IntakeRow) => [row.id, row]));
     const childByParentId = new Map(related.filter((row: IntakeRow) => row.repostOfIntakeId !== null).map((row: IntakeRow) => [row.repostOfIntakeId!, row]));
     for (const row of rows) {
         const parent = row.repostOfIntakeId === null ? undefined : parentById.get(row.repostOfIntakeId);
+        const replacementParent = row.replacementOfIntakeId === null ? undefined : parentById.get(row.replacementOfIntakeId);
         const child = childByParentId.get(row.id);
+        const replacementChild = related.find((candidate) => candidate.replacementOfIntakeId === row.id);
         result.set(row.id, {
             repostOfIntakePublicId: parent?.ownerUserId === row.ownerUserId ? parent.publicId : null,
             repostedByIntakePublicId: child?.ownerUserId === row.ownerUserId ? child.publicId : null,
+            replacementOfIntakePublicId: replacementParent?.ownerUserId === row.ownerUserId ? replacementParent.publicId : null,
+            replacedByIntakePublicId: replacementChild?.ownerUserId === row.ownerUserId ? replacementChild.publicId : null,
         });
     }
     return result;
@@ -213,17 +221,22 @@ async function findHardDuplicate(ctx: CommandContext, input: {
     qrPayloadHash?: string | null;
 }, executor: Executor = db) {
     const rows = await executor.select().from(paymentIntakes).where(eq(paymentIntakes.tenantId, ctx.tenantId));
+    const lineageRows = await executor.select().from(paymentReplacementLineages).where(eq(paymentReplacementLineages.tenantId, ctx.tenantId));
+    const replacementFor = (row: IntakeRow) => {
+        const lineage = lineageRows.find((candidate) => candidate.sourcePaymentIntakeId === row.id || candidate.replacementPaymentIntakeId === row.id);
+        return lineage ? rows.find((candidate) => candidate.id === lineage.replacementPaymentIntakeId) ?? row : row;
+    };
     if (input.idempotencyKey) {
         const row = rows.find((candidate: IntakeRow) => candidate.idempotencyKey === input.idempotencyKey);
-        if (row) return { row, reason: "idempotency_key" };
+        if (row) return { row: replacementFor(row), reason: row.status === "cancelled" ? "cancelled_payment_requires_replacement" : "idempotency_key" };
     }
     if (input.bankReferenceHash) {
         const row = rows.find((candidate: IntakeRow) => candidate.bankReferenceHash === input.bankReferenceHash);
-        if (row) return { row, reason: "bank_reference" };
+        if (row) return { row: replacementFor(row), reason: row.status === "cancelled" ? "cancelled_payment_requires_replacement" : "bank_reference" };
     }
     if (input.qrPayloadHash) {
         const row = rows.find((candidate: IntakeRow) => candidate.qrPayloadHash === input.qrPayloadHash);
-        if (row) return { row, reason: "qr_payload" };
+        if (row) return { row: replacementFor(row), reason: row.status === "cancelled" ? "cancelled_payment_requires_replacement" : "qr_payload" };
     }
     return null;
 }
@@ -527,17 +540,15 @@ export async function listPaymentReviewQueue(ctx: CommandContext) {
 export async function getPaymentIntake(ctx: CommandContext, publicId: string) {
     const row = await accessibleIntake(ctx, publicId);
     const cancellation = await getPaymentCancellationCapability(ctx, publicId);
+    const replacementEligibility = row.status === "cancelled" ? await (async () => {
+        try { return (await import("./payment-replacement-service")).inspectPaymentReplacement(ctx, publicId); } catch { return null; }
+    })() : null;
     const [evidenceRows, proposals, lineage, cancellationActor] = await Promise.all([
-        db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.paymentIntakeId, row.id))),
+        effectivePaymentEvidenceWithFiles(ctx.tenantId, row.id),
         db.select().from(paymentMatchProposals).where(and(eq(paymentMatchProposals.tenantId, ctx.tenantId), eq(paymentMatchProposals.paymentIntakeId, row.id))).orderBy(desc(paymentMatchProposals.version)),
         loadIntakeLineage(ctx, [row]),
         row.cancelledByUserId === null ? Promise.resolve(null) : db.query.users.findFirst({ where: and(eq(users.tenantId, ctx.tenantId), eq(users.id, row.cancelledByUserId)) }),
     ]);
-    const evidenceFileIds = evidenceRows.flatMap((item) => item.fileId ? [item.fileId] : []);
-    const evidenceFiles = evidenceFileIds.length ? await db.select().from(files).where(and(
-        eq(files.tenantId, ctx.tenantId), inArray(files.id, evidenceFileIds),
-    )) : [];
-    const evidenceFileById = new Map(evidenceFiles.map((file) => [file.id, file]));
     const latest = proposals[0];
     let latestAllocations: Array<AllocationRow & { borrowerPublicId: string; loanPublicId: string; schedulePublicId: string | null }> = [];
     if (latest) {
@@ -567,11 +578,12 @@ export async function getPaymentIntake(ctx: CommandContext, publicId: string) {
             status: item.status,
             mimeType: item.mimeType,
             size: item.declaredSize,
-            sha256: item.evidenceHash,
-            filePublicId: item.fileId ? evidenceFileById.get(item.fileId)?.publicId ?? null : null,
+            sha256: null,
+            filePublicId: item.filePublicId,
         })),
         latestProposal: latest ? presentProposal(latest, latestAllocations) : null,
         cancellation,
+        replacementEligibility,
         cancellationMetadata: row.status === "cancelled" ? { reason: row.cancellationReason, cancelledAt: row.cancelledAt, auditPublicId: row.cancellationAuditPublicId, actorPublicId: cancellationActor?.publicId ?? null } : null,
     };
 }
@@ -717,6 +729,12 @@ export async function preparePaymentEvidence(
         };
     }
     if (existing && existing.paymentIntakeId !== intake.id) {
+        const inheritedLineage = await db.query.paymentReplacementLineages.findFirst({ where: and(
+            eq(paymentReplacementLineages.tenantId, ctx.tenantId),
+            eq(paymentReplacementLineages.replacementPaymentIntakeId, intake.id),
+            eq(paymentReplacementLineages.sourcePaymentIntakeId, existing.paymentIntakeId),
+        ) });
+        if (inheritedLineage) throw new DomainError("PAYMENT_EVIDENCE_INHERITED", "This replacement already has immutable evidence lineage; use the inherited evidence for preview and posting", 409);
         if (existing.status !== "ready") {
             if (evidenceIntentExpired(existing)) {
                 await db.transaction(async (tx) => {
@@ -1223,6 +1241,8 @@ export async function previewPaymentMatch(
             throw new DomainError("PAYMENT_INTAKE_IMMUTABLE", "This intake cannot be matched", 409);
         }
         if (intake.repostOfIntakeId !== null) throw new DomainError("PAYMENT_RESTORE_DRAFT_REQUIRES_RESTORE_WORKFLOW", "Restore drafts must use payment.restore workflow", 409);
+        await duplicateIdentityLock(ctx, intake, tx);
+        await assertPaymentReplacementDuplicateSafe(ctx, intake, tx);
         await assertPaymentEvidenceReady(tx, ctx.tenantId, intake);
         const actor = await actorFor(ctx, tx);
         const requested = input.allocations;
@@ -1716,7 +1736,9 @@ async function postPaymentKernel(ctx: CommandContext, intakePublicId: string, in
         if (intake.status !== "ready") {
             throw new DomainError("PAYMENT_NOT_READY", "Payment intake must be ready before posting", 409);
         }
+        await duplicateIdentityLock(ctx, intake, tx);
         await assertPaymentEvidenceReady(tx, ctx.tenantId, intake);
+        await assertPaymentReplacementDuplicateSafe(ctx, intake, tx);
         const proposal = await tx.query.paymentMatchProposals.findFirst({ where: and(
             eq(paymentMatchProposals.publicId, input.proposalPublicId),
             eq(paymentMatchProposals.paymentIntakeId, intake.id),

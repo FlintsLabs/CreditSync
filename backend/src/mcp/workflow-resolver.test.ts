@@ -29,6 +29,23 @@ describe("workflow resolver policy", () => {
         expect(resolved.prohibitedTools).not.toContain("payment.post");
     });
 
+    test.each(["duplicate", "reversed"] as const)("does not route %s payment back into posting", (state) => {
+        const resolved = resolveWorkflowPolicy({ intent: "receive_payment", ...base, target, attachments: "none" }, { targetAvailable: true, identityResolved: true, state, evidenceReady: true }, base);
+        expect(resolved.status).toBe("needs_input");
+        expect(resolved.nextSteps).toHaveLength(0);
+        expect(resolved.prohibitedTools).not.toContain("payment.evidence-supplement.record");
+    });
+
+    test("routes a cancelled intake to replacement inspection, including a replacement child target safely", () => {
+        const cancelled = resolveWorkflowPolicy({ intent: "receive_payment", ...base, target, attachments: "none" }, { targetAvailable: true, identityResolved: true, state: "cancelled", evidenceReady: true }, base);
+        expect(cancelled).toMatchObject({ status: "next_step", nextSteps: [{ toolName: "payment.replacement.inspect" }] });
+        const cancelledWithUpload = resolveWorkflowPolicy({ intent: "receive_payment", ...base, target, attachments: "present", expectedAttachmentCount: 1 }, { targetAvailable: true, identityResolved: true, state: "cancelled", evidenceReady: true }, base);
+        expect(cancelledWithUpload).toMatchObject({ status: "next_step", nextSteps: [{ toolName: "payment.replacement.inspect" }] });
+        const child = resolveWorkflowPolicy({ intent: "receive_payment", ...base, target, attachments: "none" }, { targetAvailable: true, identityResolved: true, state: "mutable", evidenceRequired: true, evidenceReady: true }, base);
+        expect(child.nextSteps.some((step) => step.toolName === "payment.preview")).toBe(true);
+        expect(child.nextSteps.some((step) => step.toolName === "evidence.prepare")).toBe(false);
+    });
+
     test("fails closed for unavailable attachment or missing identity", () => {
         const missingFile = resolveWorkflowPolicy({ intent: "receive_payment", ...base, target, attachments: "unknown" }, { targetAvailable: true, identityResolved: true, state: "mutable" }, base);
         expect(missingFile.status).toBe("needs_input");

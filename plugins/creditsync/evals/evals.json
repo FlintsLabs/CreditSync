@@ -1986,6 +1986,15 @@
       "humanBoundary": "Profile isolation is fail-closed; reconnect with the authorized profile instead of guessing a tool."
     },
     {
+      "id": "cancelled-payment-replacement",
+      "kind": "positive",
+      "skill": "reconcile-payments",
+      "prompt": "A cancelled never-posted payment has one finalized slip and is eligible for correction. Reuse the immutable evidence through a replacement draft, inspect the current schedules, preview a synthetic 200.00 allocation of 100.00 to each of two exact installments, and post only after explicit confirmation of the fresh ready preview.",
+      "expectedCalls": ["intake.get", "payment.replacement.inspect", "payment.replacement.create", "payment.preview", "payment.post"],
+      "forbiddenCalls": ["payment.restore.create", "payment.evidence-supplement.record"],
+      "humanBoundary": "Creation is a no-money audited draft; never post from OCR or inherited evidence alone. Confirm the fresh current zero-variance preview before payment.post. A cancelled successor may be replaced again, but an ancestor cannot fork."
+    },
+    {
       "id": "workflow-resolve-unsupported-transport",
       "kind": "negative",
       "skill": "settle-floating-loans",

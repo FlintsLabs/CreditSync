@@ -20,6 +20,7 @@ import { assertPaymentEvidenceReady, finalizePaymentEvidence, normalizeBankRefer
 import { emptyFloatingBatchState, projectFloatingBatchPayment, type FloatingBatchState } from "./payment-batch-accounting-planner";
 import { BUCKET_NAME, createSignedPutUrl, headStoredObject, toStorageReference } from "../lib/storage";
 import { cancelLockedPaymentIntake } from "./payment-cancellation-service";
+import { effectivePaymentEvidence, effectiveReadyPaymentEvidence } from "./payment-effective-evidence-service";
 
 type BatchRow = typeof paymentBatches.$inferSelect;
 type ItemRow = typeof paymentBatchItems.$inferSelect;
@@ -80,7 +81,9 @@ async function batchSnapshot(executor: DbExecutor, tenantId: string, batchId: nu
         SELECT jsonb_build_object(
             'items', (SELECT coalesce(jsonb_agg(to_jsonb(i) ORDER BY i.id), '[]') FROM payment_batch_items i WHERE i.tenant_id = ${tenantId} AND i.batch_id = ${batchId}),
             'intakes', (SELECT coalesce(jsonb_agg(to_jsonb(i) ORDER BY i.id), '[]') FROM payment_intakes i WHERE i.tenant_id = ${tenantId} AND i.id IN (SELECT payment_intake_id FROM payment_batch_items WHERE tenant_id = ${tenantId} AND batch_id = ${batchId})),
-            'evidence', (SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY e.id), '[]') FROM payment_evidence e WHERE e.tenant_id = ${tenantId} AND e.payment_intake_id IN (SELECT payment_intake_id FROM payment_batch_items WHERE tenant_id = ${tenantId} AND batch_id = ${batchId}))
+            'evidence', (SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY e.id), '[]') FROM payment_evidence e WHERE e.tenant_id = ${tenantId} AND e.payment_intake_id IN (SELECT payment_intake_id FROM payment_batch_items WHERE tenant_id = ${tenantId} AND batch_id = ${batchId})),
+            'effectiveEvidence', (SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY e.id), '[]') FROM payment_evidence e WHERE e.tenant_id = ${tenantId} AND e.id IN (SELECT source_evidence_id FROM payment_replacement_evidence_references r WHERE r.tenant_id = ${tenantId} AND r.replacement_payment_intake_id IN (SELECT payment_intake_id FROM payment_batch_items WHERE tenant_id = ${tenantId} AND batch_id = ${batchId}))),
+            'supplements', (SELECT coalesce(jsonb_agg(to_jsonb(e) ORDER BY e.id), '[]') FROM payment_evidence_supplements e WHERE e.tenant_id = ${tenantId} AND e.payment_intake_id IN (SELECT payment_intake_id FROM payment_batch_items WHERE tenant_id = ${tenantId} AND batch_id = ${batchId}))
         ) AS snapshot`);
     const loanRows = await executor.select().from(loans).where(and(eq(loans.tenantId, tenantId), inArray(loans.borrowerId, borrowerIds))).orderBy(asc(loans.id));
     const history: unknown[] = [];
@@ -161,7 +164,7 @@ async function inspectBatchChronology(
     borrowerPublicId: string,
     currentItems: Array<typeof paymentBatchItems.$inferSelect>,
     currentIntakes: Array<typeof paymentIntakes.$inferSelect>,
-    evidence: Array<typeof paymentEvidence.$inferSelect>,
+    evidence: Array<{ paymentIntakeId: number; status: string; finalizedAt: Date | null; fileId: number | null }>,
     executor: DbExecutor,
 ) {
     const borrower = await executor.query.borrowers.findFirst({ where: and(eq(borrowers.tenantId, ctx.tenantId), eq(borrowers.publicId, borrowerPublicId)) });
@@ -201,7 +204,7 @@ async function inspectBatchChronology(
     }), ...standalone.map(({ intake }) => ({ itemId: intake.publicId, borrowerId: borrower.publicId, receivedAt: intake.receivedAt?.toISOString() ?? null, status: intake.status }))];
     const incoming: ChronologyItem[] = currentItems.flatMap((item) => {
         const intake = currentIntakes.find((candidate) => candidate.id === item.paymentIntakeId);
-        return intake ? [{ itemId: item.publicId, borrowerId: borrower.publicId, receivedAt: intake.receivedAt.toISOString(), evidenceReady: !intake.evidenceRequired || evidence.some((entry) => entry.paymentIntakeId === intake.id && entry.status === "ready" && entry.finalizedAt !== null) }] : [];
+        return intake ? [{ itemId: item.publicId, borrowerId: borrower.publicId, receivedAt: intake.receivedAt.toISOString(), evidenceReady: !intake.evidenceRequired || evidence.some((entry) => entry.paymentIntakeId === intake.id && entry.status === "ready" && entry.finalizedAt !== null && entry.fileId !== null) }] : [];
     });
     return evaluatePaymentChronology({ now: new Date().toISOString(), borrowerId: borrower.publicId, pending, incoming });
 }
@@ -709,8 +712,8 @@ export async function finalizePaymentBatchEvidenceMany(ctx: CommandContext, batc
     const results = await Promise.all(items.map(async (item) => ({ batchItemPublicId: item.batchItemPublicId, paymentIntakePublicId: item.paymentIntakePublicId, ...(await finalizePaymentEvidence(ctx, item.paymentIntakePublicId, item.evidencePublicId, gateway)) })));
     const batch = await accessibleBatch(ctx, batchPublicId);
     const members = await db.select().from(paymentBatchItems).where(and(eq(paymentBatchItems.tenantId, ctx.tenantId), eq(paymentBatchItems.batchId, batch.id)));
-    const evidence = members.length ? await db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, ctx.tenantId), inArray(paymentEvidence.paymentIntakeId, members.map((member) => member.paymentIntakeId)))) : [];
-    return { batchPublicId, allEvidenceReady: members.every((member) => evidence.some((entry) => entry.paymentIntakeId === member.paymentIntakeId && entry.status === "ready")), items: results };
+    const effective = await Promise.all(members.map(async (member) => [member.paymentIntakeId, await effectiveReadyPaymentEvidence(ctx.tenantId, member.paymentIntakeId)] as const));
+    return { batchPublicId, allEvidenceReady: members.every((member) => (effective.find(([id]) => id === member.paymentIntakeId)?.[1].length ?? 0) > 0), items: results };
 }
 export async function cancelPaymentBatch(ctx: CommandContext, batchPublicId: string, input: { reason: string; revision: number; idempotencyKey: string } = { reason: "legacy cancellation", revision: -1, idempotencyKey: `legacy-cancel:${batchPublicId}` }) {
     const batch = await accessibleBatch(ctx, batchPublicId);
@@ -826,8 +829,11 @@ export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: st
     if (!items.length) throw new DomainError("BATCH_ITEMS_REQUIRED", "Payment batch must contain at least one item", 409);
     await assertBatchStagingComplete(ctx, batch, db);
     const intakes = await db.select().from(paymentIntakes).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.id, items.map((item) => item.paymentIntakeId))));
-    const evidence = await db.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, ctx.tenantId), inArray(paymentEvidence.paymentIntakeId, items.map((item) => item.paymentIntakeId))));
     for (const intake of intakes) await assertPaymentEvidenceReady(db, ctx.tenantId, intake);
+    const evidence = (await Promise.all(items.map(async (item) => {
+        const rows = (await effectivePaymentEvidence(ctx.tenantId, [item.paymentIntakeId], db)).get(item.paymentIntakeId) ?? [];
+        return rows.map((row) => ({ paymentIntakeId: item.paymentIntakeId, status: row.status, finalizedAt: row.finalizedAt, fileId: row.fileId }));
+    }))).flat();
     const evidenceReady = true;
     const loansForBorrower = await db.select().from(loans).where(and(eq(loans.tenantId, ctx.tenantId), inArray(loans.borrowerId, targetBorrowers.map((row) => row.id)), eq(loans.status, "active")));
     const schedules = loansForBorrower.length ? await db.select().from(loanSchedules).where(and(eq(loanSchedules.tenantId, ctx.tenantId), inArray(loanSchedules.loanId, loansForBorrower.map((loan) => loan.id)))) : [];
@@ -1014,7 +1020,11 @@ export async function executePaymentBatch(ctx: CommandContext, batchPublicId: st
             tx.select().from(loanSchedules).where(and(eq(loanSchedules.tenantId, ctx.tenantId), inArray(loanSchedules.id, scheduleIds))),
             tx.select().from(paymentIntakes).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.id, items.map((item) => item.paymentIntakeId)))),
         ]);
-        const evidenceRows = await tx.select().from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, ctx.tenantId), inArray(paymentEvidence.paymentIntakeId, items.map((item) => item.paymentIntakeId))));
+        const effectiveRows = await Promise.all(items.map(async (item) => {
+            const rows = (await effectivePaymentEvidence(ctx.tenantId, [item.paymentIntakeId], tx)).get(item.paymentIntakeId) ?? [];
+            return rows.map((row) => ({ paymentIntakeId: item.paymentIntakeId, status: row.status, finalizedAt: row.finalizedAt, fileId: row.fileId }));
+        }));
+        const evidenceRows = effectiveRows.flat();
         const chronologyResults = await Promise.all(borrowerRows.map(async (borrower) => {
             const borrowerItems = items.filter((item) => allocationRows.some((allocation) => allocation.itemId === item.id && allocation.borrowerId === borrower.id));
             if (!borrowerItems.length) return null;

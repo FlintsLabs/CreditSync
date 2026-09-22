@@ -1,8 +1,8 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "mcp-catalog-350933dd62d51246",
+  "catalogVersion": "mcp-catalog-a338937b7d0a5d3c",
   "profile": "full",
-  "toolCount": 135,
+  "toolCount": 137,
   "tools": [
     "borrower.search",
     "borrower.portfolio",
@@ -33,6 +33,8 @@
     "payment.evidence-supplement.record",
     "payment.preview",
     "payment.cancel",
+    "payment.replacement.inspect",
+    "payment.replacement.create",
     "payment.post",
     "payment.reverse",
     "payment.reverse-with-accrual.preview",

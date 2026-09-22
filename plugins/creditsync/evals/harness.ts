@@ -2651,6 +2651,23 @@ const SCENARIOS: Record<string, Scenario> = {
         ],
         run: async (mcp) => { const detail = await mcp.call("intake.get", { paymentIntakePublicId: INTAKE }); try { await mcp.call("payment.cancel", { paymentIntakePublicId: INTAKE, reason: "Entered in error", idempotencyKey: "cancel-stale", expectedStateHash: detail.cancellation.stateHash }); } catch (error) { if (error instanceof ScriptedMcpError && error.code === "PAYMENT_CANCEL_STALE") return { outcome: "stopped", stopReason: "stale-cancellation-state" } as const; throw error; } return { outcome: "completed" } as const; },
     },
+    "cancelled-payment-replacement": {
+        script: [
+            { name: "intake.get", arguments: { paymentIntakePublicId: INTAKE }, result: { publicId: INTAKE, status: "cancelled", receivedAt: "2026-09-21T12:05:00.000Z", amount: "200.00", evidence: [], cancellation: { allowed: true, stateHash: "c".repeat(64), blockedReason: null, batchPublicId: null } } },
+            { name: "payment.replacement.inspect", arguments: { paymentIntakePublicId: INTAKE }, result: { sourcePaymentIntakePublicId: INTAKE, allowed: true, blockers: [], stateHash: "c".repeat(64), replacementPaymentIntakePublicId: null, lineagePublicId: null } },
+            { name: "payment.replacement.create", arguments: { paymentIntakePublicId: INTAKE, reason: "Correct contract mapping", idempotencyKey: "replacement-1", expectedStateHash: "c".repeat(64) }, result: { sourcePaymentIntakePublicId: INTAKE, replacementPaymentIntakePublicId: REPLACEMENT, status: "draft", auditPublicId: REPLACEMENT_AUDIT, correlationId: REPLACEMENT_AUDIT, lineagePublicId: REPLACEMENT_AUDIT } },
+            { name: "payment.preview", arguments: { paymentIntakePublicId: REPLACEMENT, allocations: [{ borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: LOAN_B, amount: "100.00" }, { borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: LOAN_C, amount: "100.00" }] }, result: { publicId: PROPOSAL, version: 1, status: "ready", warnings: [], totalAllocated: "200.00", allocations: [{ publicId: PROPOSAL, amount: "100.00", borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: LOAN_B }, { publicId: REPLACEMENT_AUDIT, amount: "100.00", borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: LOAN_C }] } },
+            { name: "payment.post", arguments: { paymentIntakePublicId: REPLACEMENT, proposalPublicId: PROPOSAL }, result: { publicId: REPLACEMENT, status: "posted", repostOfIntakePublicId: null, repostedByIntakePublicId: null, transactions: [{ publicId: REPLACEMENT_AUDIT, amount: "200.00", principalComponent: "200.00", interestComponent: "0.00", feeComponent: "0.00", penaltyComponent: "0.00", entryType: "payment", postedAt: "2026-09-21T12:05:00.000Z" }] } },
+        ],
+        run: async (mcp) => {
+            await mcp.call("intake.get", { paymentIntakePublicId: INTAKE });
+            const inspection = await mcp.call("payment.replacement.inspect", { paymentIntakePublicId: INTAKE });
+            await mcp.call("payment.replacement.create", { paymentIntakePublicId: INTAKE, reason: "Correct contract mapping", idempotencyKey: "replacement-1", expectedStateHash: inspection.stateHash });
+            const preview = await mcp.call("payment.preview", { paymentIntakePublicId: REPLACEMENT, allocations: [{ borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: LOAN_B, amount: "100.00" }, { borrowerPublicId: BORROWER_A, loanPublicId: LOAN_A, schedulePublicId: LOAN_C, amount: "100.00" }] });
+            await mcp.call("payment.post", { paymentIntakePublicId: REPLACEMENT, proposalPublicId: preview.publicId });
+            return { outcome: "completed" } as const;
+        },
+    },
 };
 
 export const EVAL_SCENARIO_IDS = Object.freeze(Object.keys(SCENARIOS));

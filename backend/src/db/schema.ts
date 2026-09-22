@@ -1398,6 +1398,7 @@ export const paymentIntakes = pgTable("payment_intakes", {
     originLoanId: integer("origin_loan_id"),
     duplicateOfIntakeId: integer("duplicate_of_intake_id"),
     repostOfIntakeId: integer("repost_of_intake_id"),
+    replacementOfIntakeId: integer("replacement_of_intake_id"),
     warnings: jsonb("warnings").$type<Array<Record<string, unknown>>>(),
     evidenceRequired: boolean("evidence_required").default(false).notNull(),
     notes: text("notes"),
@@ -1430,6 +1431,9 @@ export const paymentIntakes = pgTable("payment_intakes", {
     uniqueIndex("payment_intakes_tenant_repost_of_unique")
         .on(table.tenantId, table.repostOfIntakeId)
         .where(sql`${table.repostOfIntakeId} IS NOT NULL`),
+    uniqueIndex("payment_intakes_tenant_replacement_of_unique")
+        .on(table.tenantId, table.replacementOfIntakeId)
+        .where(sql`${table.replacementOfIntakeId} IS NOT NULL`),
     index("payment_intakes_tenant_origin_loan_received_at_idx")
         .on(table.tenantId, table.originLoanId, table.receivedAt),
     check(
@@ -1455,6 +1459,11 @@ export const paymentIntakes = pgTable("payment_intakes", {
     foreignKey({
         name: "payment_intakes_tenant_repost_of_fk",
         columns: [table.tenantId, table.repostOfIntakeId],
+        foreignColumns: [table.tenantId, table.id],
+    }),
+    foreignKey({
+        name: "payment_intakes_tenant_replacement_of_fk",
+        columns: [table.tenantId, table.replacementOfIntakeId],
         foreignColumns: [table.tenantId, table.id],
     }),
     foreignKey({
@@ -1523,6 +1532,7 @@ export const paymentEvidence = pgTable("payment_evidence", {
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
+    uniqueIndex("payment_evidence_tenant_id_id_unique").on(table.tenantId, table.id),
     uniqueIndex("payment_evidence_tenant_evidence_hash_unique")
         .on(table.tenantId, table.evidenceHash)
         .where(sql`${table.evidenceHash} IS NOT NULL`),
@@ -1550,6 +1560,55 @@ export const paymentEvidence = pgTable("payment_evidence", {
         columns: [table.tenantId, table.updatedByUserId],
         foreignColumns: [users.tenantId, users.id],
     }),
+]);
+
+export const paymentReplacementLineages = pgTable("payment_replacement_lineages", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    sourcePaymentIntakeId: integer("source_payment_intake_id").notNull(),
+    replacementPaymentIntakeId: integer("replacement_payment_intake_id").notNull(),
+    reason: text("reason").notNull(),
+    requestHash: text("request_hash").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestId: text("request_id").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    auditPublicId: uuid("audit_public_id").notNull(),
+    bankReferenceHash: text("bank_reference_hash"),
+    qrPayloadHash: text("qr_payload_hash"),
+    createdByUserId: integer("created_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_replacement_lineages_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("payment_replacement_lineages_tenant_source_unique").on(table.tenantId, table.sourcePaymentIntakeId),
+    uniqueIndex("payment_replacement_lineages_tenant_child_unique").on(table.tenantId, table.replacementPaymentIntakeId),
+    uniqueIndex("payment_replacement_lineages_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
+    foreignKey({ name: "payment_replacement_lineages_tenant_source_fk", columns: [table.tenantId, table.sourcePaymentIntakeId], foreignColumns: [paymentIntakes.tenantId, paymentIntakes.id] }),
+    foreignKey({ name: "payment_replacement_lineages_tenant_child_fk", columns: [table.tenantId, table.replacementPaymentIntakeId], foreignColumns: [paymentIntakes.tenantId, paymentIntakes.id] }),
+    foreignKey({ name: "payment_replacement_lineages_tenant_audit_fk", columns: [table.tenantId, table.auditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
+    foreignKey({ name: "payment_replacement_lineages_tenant_actor_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+    check("payment_replacement_lineages_reason_check", sql`length(trim(${table.reason})) BETWEEN 1 AND 2000`),
+]);
+
+export const paymentReplacementEvidenceReferences = pgTable("payment_replacement_evidence_references", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    lineageId: integer("lineage_id").notNull(),
+    replacementPaymentIntakeId: integer("replacement_payment_intake_id").notNull(),
+    sourcePaymentIntakeId: integer("source_payment_intake_id").notNull(),
+    sourceEvidenceId: integer("source_evidence_id"),
+    sourceSupplementId: integer("source_supplement_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_replacement_evidence_refs_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("payment_replacement_evidence_refs_tenant_child_evidence_unique").on(table.tenantId, table.replacementPaymentIntakeId, table.sourceEvidenceId).where(sql`${table.sourceEvidenceId} IS NOT NULL`),
+    uniqueIndex("payment_replacement_evidence_refs_tenant_child_supplement_unique").on(table.tenantId, table.replacementPaymentIntakeId, table.sourceSupplementId).where(sql`${table.sourceSupplementId} IS NOT NULL`),
+    foreignKey({ name: "payment_replacement_evidence_refs_tenant_lineage_fk", columns: [table.tenantId, table.lineageId], foreignColumns: [paymentReplacementLineages.tenantId, paymentReplacementLineages.id] }),
+    foreignKey({ name: "payment_replacement_evidence_refs_tenant_child_fk", columns: [table.tenantId, table.replacementPaymentIntakeId], foreignColumns: [paymentIntakes.tenantId, paymentIntakes.id] }),
+    foreignKey({ name: "payment_replacement_evidence_refs_tenant_source_fk", columns: [table.tenantId, table.sourcePaymentIntakeId], foreignColumns: [paymentIntakes.tenantId, paymentIntakes.id] }),
+    foreignKey({ name: "payment_replacement_evidence_refs_tenant_evidence_fk", columns: [table.tenantId, table.sourceEvidenceId], foreignColumns: [paymentEvidence.tenantId, paymentEvidence.id] }),
+    check("payment_replacement_evidence_refs_exact_source_check", sql`(${table.sourceEvidenceId} IS NOT NULL AND ${table.sourceSupplementId} IS NULL) OR (${table.sourceEvidenceId} IS NULL AND ${table.sourceSupplementId} IS NOT NULL)`),
 ]);
 
 export const paymentEvidenceSupplements = pgTable("payment_evidence_supplements", {

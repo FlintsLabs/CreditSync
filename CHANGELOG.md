@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.47 - 2026-09-22
+
+### Added
+
+- Added append-only cancelled-payment replacement lineage, immutable inherited-evidence references, locked idempotent draft creation, effective-evidence resolution, safe MCP inspection/creation tools, resolver guidance, plugin contract/evals, and disposable-DB coverage.
+- Added lineage-aware bank/QR and semantic duplicate guards at replacement creation, preview, and post time; authoritative evidence floors; direct-SQL lifecycle/reference protections; and standalone/batch concurrent financial acceptance coverage.
+
+### Changed
+
+- Updated payment intake reads and financial evidence readiness to resolve direct and inherited evidence without exposing raw hashes or evidence content; released the synchronized CreditSync plugin catalog as 10.4.0.
+
 ## v0.4.46 - 2026-09-14
 
 ### Added
@@ -1631,3 +1642,12 @@
 
 - Create the tenant-scoped replacement parent unique key before child foreign keys and preserve all legacy loan statuses alongside `replaced`.
 - Preserve every loan lifecycle status used by application workflows, including `closed`, `renewed`, `restructured`, `cancelled`, `settled`, and `reversed`.
+## v0.4.47 - 2026-09-22
+
+### Added
+
+- Added append-only cancelled-payment replacement lineage, immutable evidence references, concurrency-safe idempotent replacement drafts, and safe MCP/plugin workflow guidance.
+
+### Changed
+
+- Resolved effective payment evidence across direct, supplement, and replacement lineage reads while keeping public responses limited to safe UUID and metadata fields.
