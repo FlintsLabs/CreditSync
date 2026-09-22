@@ -1,5 +1,5 @@
 {
-  "compatibility": "Tool names, full input/output schemas, descriptions, annotations, and file-parameter metadata are frozen for plugin 10.7.0; breaking changes require plugin 11.0.0.",
+  "compatibility": "Tool names, full input/output schemas, descriptions, annotations, and file-parameter metadata are frozen for plugin 10.8.0; breaking changes require plugin 11.0.0.",
   "schemaVersion": "1.0",
   "sourceOfTruth": "Local MCP SDK Client tools/list response from backend/src/mcp/server.ts",
   "tools": [
@@ -8317,6 +8317,15 @@
             "minItems": 1,
             "type": "array"
           },
+          "canonicalEvidenceCandidatePublicIds": {
+            "items": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
           "canonicalPaymentIntakePublicId": {
             "format": "uuid",
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
@@ -8361,6 +8370,14 @@
                   "type": "string"
                 },
                 "minItems": 1,
+                "type": "array"
+              },
+              "canonicalEvidenceCandidatePublicIds": {
+                "items": {
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                  "type": "string"
+                },
                 "type": "array"
               },
               "canonicalPaymentIntakePublicId": {
@@ -8409,6 +8426,7 @@
               "status",
               "canonicalPaymentIntakePublicId",
               "candidatePaymentIntakePublicIds",
+              "canonicalEvidenceCandidatePublicIds",
               "previewHash",
               "canonicalStateHash",
               "evidenceHash",

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db";
 import { files, paymentEvidence, paymentIntakes, users } from "../db/schema";
@@ -32,6 +33,18 @@ async function preview(owner: Actor, source: { publicId: string }, candidates: A
 function execution(p: Awaited<ReturnType<typeof preview>>, key = crypto.randomUUID()) { return { duplicateReviewPublicId: p.duplicateReviewPublicId, previewHash: p.previewHash, confirmed: true as const, reason: "synthetic explicit confirmation", idempotencyKey: key }; }
 
 describe("reviewed cancelled duplicate safety regressions", () => {
+    integration("preserves the historical evidence hash when canonical-evidence selection is empty", async () => {
+        await reset(); const owner = await actor(); const source = await cancelled(owner, "a"); const candidate = await cancelled(owner);
+        const sourceEvidence = (await db.select().from(paymentEvidence).where(eq(paymentEvidence.paymentIntakeId, source.id)))[0]!;
+        const legacyEvidenceHash = (expected: number, attempts: number, rows: Array<{ id: number; status: string; evidenceHash: string | null; finalizedAt: Date | null; fileId: number | null }>) => createHash("sha256").update(JSON.stringify({ expected, attempts, evidence: rows.map((row) => ({ id: row.id, status: row.status, hash: row.evidenceHash ?? null, finalizedAt: row.finalizedAt?.toISOString() ?? null, fileId: row.fileId })).sort((a, b) => a.id - b.id) })).digest("hex");
+        const expected = createHash("sha256").update(JSON.stringify({ canonical: legacyEvidenceHash(1, 0, [{ id: sourceEvidence.id, status: "ready", evidenceHash: sourceEvidence.evidenceHash, finalizedAt: sourceEvidence.finalizedAt, fileId: sourceEvidence.fileId }]), candidates: [legacyEvidenceHash(0, 0, [])] })).digest("hex");
+        const previewResult = await preview(owner, source, [candidate]);
+        expect(previewResult.canonicalEvidenceCandidatePublicIds).toEqual([]);
+        expect(previewResult.evidenceHash).toBe(expected);
+        const command = execution(previewResult, crypto.randomUUID());
+        const first = await executePaymentDuplicateReview(ctx(owner), command);
+        expect(await executePaymentDuplicateReview(ctx(owner), command)).toEqual(first);
+    });
     integration("rejects a candidate with conflicting finalized evidence", async () => {
         await reset(); const owner = await actor(); const source = await cancelled(owner, "a"); const candidate = await cancelled(owner, "b");
         await expect(preview(owner, source, [candidate])).rejects.toMatchObject({ code: "PAYMENT_DUPLICATE_REVIEW_HARD_IDENTITY_CONFLICT" });

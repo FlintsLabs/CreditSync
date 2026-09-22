@@ -2076,7 +2076,7 @@ describe("default MCP adapter integration", () => {
         })).data;
         await call("evidence.finalize", { paymentIntakePublicId: cancellationDraft.publicId, evidencePublicId: cancellationEvidence.publicId });
         const cancelledDuplicate = (await call("intake.create", {
-            amount: "1.00", receivedAt: "2026-08-10T10:00:00.000Z", payerName: "Synthetic cancellation contract draft", idempotencyKey: "mcp-contract-cancellation-duplicate",
+            amount: "1.00", receivedAt: "2026-08-10T10:00:00.000Z", payerName: "Synthetic cancellation contract draft", idempotencyKey: "mcp-contract-cancellation-duplicate", attachmentRequirement: { expectedCount: 1 },
         })).data;
         const duplicateCapability = (await call("intake.get", { paymentIntakePublicId: cancelledDuplicate.publicId })).data.cancellation as { stateHash: string };
         await call("payment.cancel", {
@@ -2097,10 +2097,11 @@ describe("default MCP adapter integration", () => {
         expect(cancellationResult).toMatchObject({ status: "cancelled", paymentIntakePublicId: cancellationDraft.publicId });
         expectWriteAuditMetadata(cancellationResult);
         const duplicateReview = (await call("payment.replacement.duplicate-review.preview", {
-            canonicalPaymentIntakePublicId: cancellationDraft.publicId, candidatePaymentIntakePublicIds: [cancelledDuplicate.publicId],
+            canonicalPaymentIntakePublicId: cancellationDraft.publicId, candidatePaymentIntakePublicIds: [cancelledDuplicate.publicId], canonicalEvidenceCandidatePublicIds: [cancelledDuplicate.publicId],
             reason: "MCP contract duplicate review", idempotencyKey: "mcp-contract-duplicate-review-preview",
         })).data;
         expectWriteAuditMetadata(duplicateReview);
+        expect(duplicateReview.canonicalEvidenceCandidatePublicIds).toEqual([cancelledDuplicate.publicId]);
         const duplicateExecution = (await call("payment.replacement.duplicate-review.execute", {
             duplicateReviewPublicId: duplicateReview.duplicateReviewPublicId, previewHash: duplicateReview.previewHash,
             confirmed: true, reason: "MCP contract duplicate review confirmation", idempotencyKey: "mcp-contract-duplicate-review-execute",

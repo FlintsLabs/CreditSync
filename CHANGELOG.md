@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.4.52 - 2026-09-23
+
+### Added
+
+- Added migration 0081 and an audited, explicit canonical-evidence selection for the one-requirement/no-attempt/no-evidence cancelled duplicate case, with immutable source history, stale guards, unchanged legacy review hashes, and regressions for selection, evidence drift, and MCP audit metadata.
+- Synchronized the CreditSync plugin to 10.8.0 and regenerated the 141-tool MCP contract and profile snapshots.
+
 ## v0.4.51 - 2026-09-22
 
 ### Added

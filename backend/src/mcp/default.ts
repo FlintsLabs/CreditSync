@@ -288,7 +288,7 @@ export function createDefaultMcpToolHandlers(
         return createPaymentReplacement(ctx, { paymentIntakePublicId: asString(input, "paymentIntakePublicId"), reason: asString(input, "reason"), idempotencyKey, expectedStateHash: asString(input, "expectedStateHash") });
     },
     "payment.replacement.duplicate-review.preview": (ctx, input) => previewPaymentDuplicateReview(ctx, {
-        canonicalPaymentIntakePublicId: asString(input, "canonicalPaymentIntakePublicId"), candidatePaymentIntakePublicIds: input.candidatePaymentIntakePublicIds as string[], reason: asString(input, "reason"), idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"),
+        canonicalPaymentIntakePublicId: asString(input, "canonicalPaymentIntakePublicId"), candidatePaymentIntakePublicIds: input.candidatePaymentIntakePublicIds as string[], canonicalEvidenceCandidatePublicIds: input.canonicalEvidenceCandidatePublicIds as string[] | undefined, reason: asString(input, "reason"), idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"),
     }),
     "payment.replacement.duplicate-review.execute": (ctx, input) => executePaymentDuplicateReview(ctx, {
         duplicateReviewPublicId: asString(input, "duplicateReviewPublicId"), previewHash: asString(input, "previewHash"), confirmed: true, reason: asString(input, "reason"), idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"),
