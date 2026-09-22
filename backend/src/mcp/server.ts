@@ -298,7 +298,7 @@ const intakeOutput = z.object({
     repostedByIntakePublicId: uuid.nullable(),
     replacementOfIntakePublicId: uuid.nullable().optional(),
     replacedByIntakePublicId: uuid.nullable().optional(),
-    replacementEligibility: z.object({ allowed: z.boolean(), stateHash: z.string().regex(/^[0-9a-f]{64}$/i), blockers: z.array(z.string()), replacementPaymentIntakePublicId: uuid.nullable(), lineagePublicId: uuid.nullable().optional() }).nullable().optional(),
+    replacementEligibility: z.object({ allowed: z.boolean(), stateHash: z.string().regex(/^[0-9a-f]{64}$/i), blockers: z.array(z.string()), blockerPublicIds: z.array(uuid).optional(), replacementPaymentIntakePublicId: uuid.nullable(), lineagePublicId: uuid.nullable().optional() }).nullable().optional(),
     cancellationMetadata: z.object({ reason: z.string().nullable(), cancelledAt: nullableIsoDateTime, auditPublicId: uuid.nullable(), actorPublicId: uuid.nullable() }).nullable().optional(),
 }).strict();
 const paymentEvidenceOutput = z.object({
@@ -1269,8 +1269,10 @@ export const toolDataSchemas: Record<McpToolName, z.ZodType<Record<string, unkno
     "payment.preview": proposalOutput,
     "payment.cancel": paymentCancellationOutput,
     "payment.restore.cancel": paymentCancellationOutput,
-    "payment.replacement.inspect": z.object({ sourcePaymentIntakePublicId: uuid, allowed: z.boolean(), blockers: z.array(z.string()), stateHash: z.string().regex(/^[0-9a-f]{64}$/i), replacementPaymentIntakePublicId: uuid.nullable(), lineagePublicId: uuid.nullable().optional() }).strict(),
+    "payment.replacement.inspect": z.object({ sourcePaymentIntakePublicId: uuid, allowed: z.boolean(), blockers: z.array(z.string()), blockerPublicIds: z.array(uuid).optional(), stateHash: z.string().regex(/^[0-9a-f]{64}$/i), replacementPaymentIntakePublicId: uuid.nullable(), lineagePublicId: uuid.nullable().optional() }).strict(),
     "payment.replacement.create": z.object({ sourcePaymentIntakePublicId: uuid, replacementPaymentIntakePublicId: uuid, status: z.literal("draft"), auditPublicId: uuid, correlationId: uuid, lineagePublicId: uuid }).strict(),
+    "payment.replacement.duplicate-review.preview": z.object({ duplicateReviewPublicId: uuid, status: z.literal("previewed"), canonicalPaymentIntakePublicId: uuid, candidatePaymentIntakePublicIds: z.array(uuid).min(1), previewHash: z.string().regex(/^[0-9a-f]{64}$/i), canonicalStateHash: z.string().regex(/^[0-9a-f]{64}$/i), evidenceHash: z.string().regex(/^[0-9a-f]{64}$/i), dependencyHash: z.string().regex(/^[0-9a-f]{64}$/i), expiresAt: isoDateTime, auditPublicId: uuid, correlationId: uuid }).strict(),
+    "payment.replacement.duplicate-review.execute": z.object({ duplicateReviewPublicId: uuid, status: z.literal("executed"), auditPublicId: uuid, correlationId: uuid, executionPublicId: uuid }).strict(),
     "payment.post": intakeOutput.extend({ transactions: z.array(transactionOutput) }),
     "payment.reverse": intakeOutput.extend({ transactions: z.array(transactionOutput) }),
     "payment.reverse-with-accrual.preview": z.object({
@@ -1656,6 +1658,8 @@ export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unkn
     "payment.restore.cancel": z.object({ restoreDraftPublicId: uuid, expectedStateHash: z.string().regex(/^[0-9a-f]{64}$/i), reason: cancellationReason, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
     "payment.replacement.inspect": z.object({ paymentIntakePublicId: uuid }).strict(),
     "payment.replacement.create": z.object({ paymentIntakePublicId: uuid, reason: shortText, idempotencyKey: z.string().trim().min(1).max(200), expectedStateHash: z.string().regex(/^[0-9a-f]{64}$/i) }).strict(),
+    "payment.replacement.duplicate-review.preview": z.object({ canonicalPaymentIntakePublicId: uuid, candidatePaymentIntakePublicIds: z.array(uuid).min(1).max(50), reason: shortText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
+    "payment.replacement.duplicate-review.execute": z.object({ duplicateReviewPublicId: uuid, previewHash: z.string().regex(/^[0-9a-f]{64}$/i), confirmed: z.literal(true), reason: shortText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
     "payment.post": z.object({ paymentIntakePublicId: uuid, proposalPublicId: uuid }).strict(),
     "payment.reverse": z.object({
         paymentIntakePublicId: uuid,
@@ -2210,6 +2214,8 @@ const destructiveTools = new Set<McpToolName>([
     "payment.cancel",
     "payment.restore.cancel",
     "payment.replacement.create",
+    "payment.replacement.duplicate-review.preview",
+    "payment.replacement.duplicate-review.execute",
     "payment.reverse",
     "payment.batch.create",
     "payment.batch.capture",
@@ -2276,6 +2282,7 @@ const destructiveTools = new Set<McpToolName>([
     "funding-allocation.create",
 ]);
 const financialTools = new Set<McpToolName>([
+    "payment.replacement.duplicate-review.execute",
     "payment.replacement.create",
     "payment.post",
     "payment.reverse",
@@ -2329,6 +2336,8 @@ const idempotentTools = new Set<McpToolName>([
     "payment.post",
     "payment.cancel",
     "payment.replacement.create",
+    "payment.replacement.duplicate-review.preview",
+    "payment.replacement.duplicate-review.execute",
     "payment.reverse",
     "payment.reverse-with-accrual.execute",
     "payment.reconcile.execute",
@@ -2406,6 +2415,8 @@ const toolDescriptions: Record<McpToolName, string> = {
     "payment.cancel": "Cancel an authorized unposted payment intake with an immutable receipt.",
     "payment.replacement.inspect": "Inspect whether an accessible cancelled payment can receive one append-only replacement draft.",
     "payment.replacement.create": "Create one audited draft replacement for an eligible cancelled payment without posting money.",
+    "payment.replacement.duplicate-review.preview": "Preview and durably record an exact, tenant-scoped human review for cancelled semantic payment duplicates without changing money.",
+    "payment.replacement.duplicate-review.execute": "Execute a confirmed, fresh, idempotent duplicate review that authorizes only its exact cancelled candidates for replacement lineage.",
     "payment.reverse": "Reverse a posted payment with compensating entries.",
     "payment.reverse-with-accrual.preview": "Preview reversing a floating-loan payment and materializing missing interest accruals through the original payment date.",
     "payment.reverse-with-accrual.execute": "Execute a confirmed atomic payment reversal with floating interest accrual materialization.",

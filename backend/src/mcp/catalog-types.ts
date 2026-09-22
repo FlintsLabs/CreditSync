@@ -4,7 +4,7 @@ export const MCP_TOOL_NAMES = [
     "payment.batch.staging.evidence.finalize", "payment.batch.staging.extract", "payment.batch.workspace", "payment.batch.candidates",
     "payment.batch.staging.review", "payment.batch.staging.edit", "payment.batch.split", "payment.batch.decision", "payment.batch.cancel",
     "intake.create", "evidence.prepare", "evidence.finalize", "evidence.import-chatgpt-file", "loan.disbursement.evidence.import-chatgpt-file",
-    "payment.evidence-supplement.import-chatgpt-file", "payment.evidence-supplement.record", "payment.preview", "payment.cancel", "payment.replacement.inspect", "payment.replacement.create", "payment.post",
+    "payment.evidence-supplement.import-chatgpt-file", "payment.evidence-supplement.record", "payment.preview", "payment.cancel", "payment.replacement.inspect", "payment.replacement.create", "payment.replacement.duplicate-review.preview", "payment.replacement.duplicate-review.execute", "payment.post",
     "payment.reverse", "payment.reverse-with-accrual.preview", "payment.reverse-with-accrual.execute", "payment.batch.create", "payment.batch.capture",
     "payment.batch.evidence.prepare-many", "payment.batch.evidence.finalize-many", "payment.batch.item.add", "payment.batch.evidence.prepare",
     "payment.batch.evidence.finalize", "payment.batch.preview", "payment.batch.execute", "payment.reconcile.preview", "payment.reconcile.reflow.preview",

@@ -1,5 +1,11 @@
 # CreditSync Plugin Changelog
 
+## v10.7.0 - 2026-09-22
+
+### Added
+
+- Added tenant-scoped, append-only duplicate-review preview/execute guidance for exact cancelled payment duplicates, including expiry, evidence/dependency rechecks, and safe blocker reporting.
+
 ## v10.6.0 - 2026-09-22
 
 ### Added

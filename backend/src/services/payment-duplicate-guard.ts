@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import Decimal from "decimal.js";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db, type DbExecutor } from "../db";
 import { paymentIntakes, paymentReplacementLineages } from "../db/schema";
+import { reviewAuthorizesPair } from "./payment-duplicate-review-service";
 import { normalizeBorrowerText } from "./borrower-service";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
@@ -31,22 +32,22 @@ function ancestorChain(current: typeof paymentIntakes.$inferSelect, rows: Array<
     return ids;
 }
 
-function warningReferencesOnlyKnownChain(warnings: unknown, chain: Set<number>, rows: Array<typeof paymentIntakes.$inferSelect>) {
+function warningReferencesOnlyKnownChain(warnings: unknown, chain: Set<number>, rows: Array<typeof paymentIntakes.$inferSelect>, acceptedReviewedIds: Set<string>) {
     if (!Array.isArray(warnings)) return true;
     const publicToId = new Map(rows.map((row) => [row.publicId, row.id]));
     return warnings.every((warning) => {
         if (!warning || typeof warning !== "object") return false;
         const ids = (warning as { intakePublicIds?: unknown }).intakePublicIds;
         if (!Array.isArray(ids) || ids.length === 0) return false;
-        return ids.every((id) => typeof id === "string" && publicToId.has(id) && chain.has(publicToId.get(id)!));
+        return ids.every((id) => typeof id === "string" && ((publicToId.has(id) && chain.has(publicToId.get(id)!)) || acceptedReviewedIds.has(id)));
     });
 }
 
-export async function assertPaymentReplacementDuplicateSafe(ctx: CommandContext, intake: typeof paymentIntakes.$inferSelect, executor: DbExecutor = db, forceReplacement = false) {
+export async function assessPaymentReplacementDuplicates(ctx: CommandContext, intake: typeof paymentIntakes.$inferSelect, executor: DbExecutor = db, forceReplacement = false) {
     const rows = await executor.select().from(paymentIntakes).where(eq(paymentIntakes.tenantId, ctx.tenantId));
     const lineages = await executor.select().from(paymentReplacementLineages).where(eq(paymentReplacementLineages.tenantId, ctx.tenantId));
     const isReplacement = intake.replacementOfIntakeId !== null || lineages.some((lineage) => lineage.sourcePaymentIntakeId === intake.id || lineage.replacementPaymentIntakeId === intake.id);
-    if (!isReplacement && !forceReplacement) return;
+    if (!isReplacement && !forceReplacement) return { blockerPublicIds: [] as string[] };
     const chain = ancestorChain(intake, rows, lineages);
     const identities = lineages.filter((lineage) => chain.has(lineage.sourcePaymentIntakeId) || chain.has(lineage.replacementPaymentIntakeId));
     const bankHashes = new Set(identities.map((lineage) => lineage.bankReferenceHash).filter((value): value is string => !!value));
@@ -54,18 +55,35 @@ export async function assertPaymentReplacementDuplicateSafe(ctx: CommandContext,
     if (intake.bankReferenceHash) bankHashes.add(intake.bankReferenceHash);
     if (intake.qrPayloadHash) qrHashes.add(intake.qrPayloadHash);
     const own = rows.filter((row) => chain.has(row.id));
+    const blockerPublicIds: string[] = [];
     for (const row of rows) {
         if (chain.has(row.id)) continue;
+        const reviewedByChain = await Promise.any([...chain].map(async (canonicalId) => await reviewAuthorizesPair(ctx, canonicalId, row.id, executor).then((authorized) => authorized ? true : Promise.reject(false)))).catch(() => false);
+        if (reviewedByChain) continue;
         if ((row.bankReferenceHash && bankHashes.has(row.bankReferenceHash)) || (row.qrPayloadHash && qrHashes.has(row.qrPayloadHash))) {
-            throw new DomainError("PAYMENT_DUPLICATE_REQUIRES_REVIEW", "An unrelated payment has the same bank or QR identity", 409, { blockerPublicIds: [row.publicId] });
+            blockerPublicIds.push(row.publicId);
         }
         if (row.amount === intake.amount && row.payerName && intake.payerName && normalizeBorrowerText(row.payerName) === normalizeBorrowerText(intake.payerName) && Math.abs(row.receivedAt.getTime() - intake.receivedAt.getTime()) <= duplicateWindowMs) {
-            throw new DomainError("PAYMENT_DUPLICATE_REQUIRES_REVIEW", "An unrelated payment matches amount, payer, and received time", 409, { blockerPublicIds: [row.publicId] });
+            blockerPublicIds.push(row.publicId);
         }
     }
-    if (!warningReferencesOnlyKnownChain(intake.warnings, chain, rows)) {
-        throw new DomainError("PAYMENT_DUPLICATE_REQUIRES_REVIEW", "The payment has an unresolved duplicate warning", 409, { blockerPublicIds: own.map((row) => row.publicId) });
+    const acceptedReviewedIds = new Set<string>();
+    for (const row of rows) {
+        for (const canonicalId of chain) if (await reviewAuthorizesPair(ctx, canonicalId, row.id, executor)) acceptedReviewedIds.add(row.publicId);
     }
+    if (!warningReferencesOnlyKnownChain(intake.warnings, chain, rows, acceptedReviewedIds)) {
+        blockerPublicIds.push(...own.map((row) => row.publicId));
+    }
+    return { blockerPublicIds: [...new Set(blockerPublicIds)] };
+}
+
+export async function assertPaymentReplacementDuplicateSafe(ctx: CommandContext, intake: typeof paymentIntakes.$inferSelect, executor: DbExecutor = db, forceReplacement = false) {
+    const rows = await executor.select().from(paymentIntakes).where(eq(paymentIntakes.tenantId, ctx.tenantId));
+    const lineages = await executor.select().from(paymentReplacementLineages).where(eq(paymentReplacementLineages.tenantId, ctx.tenantId));
+    const isReplacement = intake.replacementOfIntakeId !== null || lineages.some((lineage) => lineage.sourcePaymentIntakeId === intake.id || lineage.replacementPaymentIntakeId === intake.id);
+    if (!isReplacement && !forceReplacement) return;
+    const result = await assessPaymentReplacementDuplicates(ctx, intake, executor, forceReplacement);
+    if (result.blockerPublicIds.length) throw new DomainError("PAYMENT_DUPLICATE_REQUIRES_REVIEW", "An unrelated payment requires explicit duplicate review", 409, { blockerPublicIds: result.blockerPublicIds });
 }
 
 export async function duplicateIdentityLock(ctx: CommandContext, input: { bankReferenceHash?: string | null; qrPayloadHash?: string | null; amount: string; payerName?: string | null; receivedAt: Date }, executor: DbExecutor = db) {

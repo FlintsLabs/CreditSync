@@ -76,6 +76,7 @@ import {
 } from "../services/payment-service";
 import { cancelPaymentIntake } from "../services/payment-cancellation-service";
 import { createPaymentReplacement, inspectPaymentReplacement } from "../services/payment-replacement-service";
+import { executePaymentDuplicateReview, previewPaymentDuplicateReview } from "../services/payment-duplicate-review-service";
 import {
     executeReverseWithInterestAccrual,
     previewReverseWithInterestAccrual,
@@ -286,6 +287,12 @@ export function createDefaultMcpToolHandlers(
         if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Payment replacement requires an idempotency key", 400);
         return createPaymentReplacement(ctx, { paymentIntakePublicId: asString(input, "paymentIntakePublicId"), reason: asString(input, "reason"), idempotencyKey, expectedStateHash: asString(input, "expectedStateHash") });
     },
+    "payment.replacement.duplicate-review.preview": (ctx, input) => previewPaymentDuplicateReview(ctx, {
+        canonicalPaymentIntakePublicId: asString(input, "canonicalPaymentIntakePublicId"), candidatePaymentIntakePublicIds: input.candidatePaymentIntakePublicIds as string[], reason: asString(input, "reason"), idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"),
+    }),
+    "payment.replacement.duplicate-review.execute": (ctx, input) => executePaymentDuplicateReview(ctx, {
+        duplicateReviewPublicId: asString(input, "duplicateReviewPublicId"), previewHash: asString(input, "previewHash"), confirmed: true, reason: asString(input, "reason"), idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"),
+    }),
     "payment.post": (ctx, input) => postPayment(
         paymentPostCommandContext(ctx, input),
         asString(input, "paymentIntakePublicId"),
@@ -722,6 +729,8 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "payment.restore.create": { entityType: "payment_intake", action: "restore_draft_created" },
     "payment.restore.cancel": { entityType: "payment_intake", action: "cancelled" },
     "payment.replacement.create": { entityType: "payment_intake", action: "replacement_draft_created" },
+    "payment.replacement.duplicate-review.preview": { entityType: "payment_duplicate_review", action: "previewed" },
+    "payment.replacement.duplicate-review.execute": { entityType: "payment_duplicate_review", action: "executed" },
     "payment.restore.schedule-backfill": { entityType: "loan_schedule", action: "restore_schedule_backfilled" },
     "loan.activate": { entityType: "loan", action: "activated" },
     "loan.payment-start-date.update": { entityType: "loan", action: "payment_start_date_changed" },
@@ -760,6 +769,8 @@ function resultPublicId(result: unknown) {
         ?? record.loanPublicId
         ?? record.settlementPublicId
         ?? record.replacementPublicId
+        ?? record.duplicateReviewPublicId
+        ?? record.executionPublicId
         ?? record.reconciliationPublicId
         ?? record.correctionPublicId
         ?? record.batchPublicId;
@@ -814,7 +825,9 @@ export function createDefaultMcpHttpPlugin(
                 ? (result as Record<string, unknown>).restoreDraftPublicId as string | undefined
                 : result && typeof result === "object" && toolName === "payment.restore.schedule-backfill"
                     ? (result as Record<string, unknown>).schedulePublicId as string | undefined
-                    : resultPublicId(result);
+            : (toolName === "payment.replacement.duplicate-review.preview" || toolName === "payment.replacement.duplicate-review.execute")
+                ? (result as Record<string, unknown>).duplicateReviewPublicId as string | undefined
+                : resultPublicId(result);
             if (!target || !entityId) return [];
             if (result && typeof result === "object") {
                 const record = result as Record<string, unknown>;
