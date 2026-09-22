@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.4.51 - 2026-09-22
+
+### Added
+
+- Added audited, append-only duplicate-review previews and executions for exact cancelled payment duplicates, preserving ordinary replacement/posting guards and immutable payment history.
+- Synchronized the CreditSync plugin to 10.7.0 and its generated MCP contract/profile snapshots.
+
 ## v0.4.50 - 2026-09-22
 
 ### Added

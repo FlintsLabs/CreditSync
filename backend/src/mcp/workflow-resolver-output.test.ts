@@ -2,6 +2,13 @@ import { expect, test } from "bun:test";
 import { toolDataSchemas } from "./server";
 import { resolveWorkflowPolicy } from "./workflow-resolver";
 
+test("cancelled duplicate review resolver uses the canonical input field", () => {
+    const publicId = "00000000-0000-4000-8000-000000000001";
+    const result = resolveWorkflowPolicy({ intent: "receive_payment", profile: "full", target: { kind: "payment_intake", publicId }, attachments: "none" }, { targetAvailable: true, identityResolved: true, state: "cancelled", evidenceReady: true, duplicateReviewRequired: true }, { profile: "full", catalogVersion: "test-catalog" });
+    expect(result.nextSteps[0]?.toolName).toBe("payment.replacement.duplicate-review.preview");
+    expect(result.nextSteps[0]?.arguments).toEqual({ canonicalPaymentIntakePublicId: publicId });
+});
+
 for (const state of ["cancelled", "duplicate", "reversed"] as const) {
     test(`workflow.resolve accepts the public ${state} observation at its MCP boundary`, () => {
         const result = resolveWorkflowPolicy({ intent: "receive_payment", profile: "full", target: { kind: "payment_intake", publicId: "00000000-0000-4000-8000-000000000001" }, attachments: "none" }, { targetAvailable: true, identityResolved: true, state, evidenceReady: true }, { profile: "full", catalogVersion: "test-catalog" });

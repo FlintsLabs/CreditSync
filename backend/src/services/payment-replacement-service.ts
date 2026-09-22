@@ -8,7 +8,7 @@ import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import { countAuthoritativeEvidenceAttempts, registerFinancialEvidenceRequirement } from "./financial-evidence-requirement-service";
 import { effectivePaymentEvidence } from "./payment-effective-evidence-service";
-import { assertPaymentReplacementDuplicateSafe, duplicateIdentityLock } from "./payment-duplicate-guard";
+import { assessPaymentReplacementDuplicates, assertPaymentReplacementDuplicateSafe, duplicateIdentityLock } from "./payment-duplicate-guard";
 
 type Executor = DbExecutor;
 type Intake = typeof paymentIntakes.$inferSelect;
@@ -43,7 +43,7 @@ async function snapshot(ctx: CommandContext, source: Intake, executor: Executor)
     return { allEvidence, ready, expectedCount, child, batch: membership[0] ?? null, hash: stateHash(source, allEvidence.map((row) => ({ id: row.sourceEvidenceId, status: row.status, finalizedAt: row.finalizedAt, fileId: row.fileId })), child?.replacementPaymentIntakeId ? String(child.replacementPaymentIntakeId) : null, membership[0] ?? null, expectedCount) };
 }
 
-export type ReplacementInspection = { sourcePaymentIntakePublicId: string; allowed: boolean; blockers: string[]; stateHash: string; replacementPaymentIntakePublicId: string | null; lineagePublicId?: string | null };
+export type ReplacementInspection = { sourcePaymentIntakePublicId: string; allowed: boolean; blockers: string[]; blockerPublicIds?: string[]; stateHash: string; replacementPaymentIntakePublicId: string | null; lineagePublicId?: string | null };
 
 export async function inspectPaymentReplacement(ctx: CommandContext, sourcePublicId: string, executor: Executor = db): Promise<ReplacementInspection> {
     const { row } = await accessible(ctx, sourcePublicId, executor);
@@ -62,7 +62,9 @@ export async function inspectPaymentReplacement(ctx: CommandContext, sourcePubli
         UNION ALL SELECT 1 FROM payment_reconciliation_groups WHERE tenant_id = ${ctx.tenantId} AND posted_intake_id = ${row.id}
         UNION ALL SELECT 1 FROM payment_allocation_correction_groups WHERE tenant_id = ${ctx.tenantId} AND payment_intake_id = ${row.id} LIMIT 1`);
     if (dependency.length) blockers.push("PAYMENT_REPLACEMENT_SOURCE_HAS_FINANCIAL_DEPENDENCY");
-    return { sourcePaymentIntakePublicId: row.publicId, allowed: blockers.length === 0 && !snap.child, blockers, stateHash: snap.hash, replacementPaymentIntakePublicId: snap.child ? (await executor.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, snap.child.replacementPaymentIntakeId)) }))?.publicId ?? null : null, lineagePublicId: snap.child?.publicId ?? null };
+    const duplicateAssessment = await assessPaymentReplacementDuplicates(ctx, row, executor, true);
+    if (duplicateAssessment.blockerPublicIds.length) blockers.push("PAYMENT_DUPLICATE_REQUIRES_REVIEW");
+    return { sourcePaymentIntakePublicId: row.publicId, allowed: blockers.length === 0 && !snap.child, blockers, blockerPublicIds: duplicateAssessment.blockerPublicIds.length ? duplicateAssessment.blockerPublicIds : undefined, stateHash: snap.hash, replacementPaymentIntakePublicId: snap.child ? (await executor.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, snap.child.replacementPaymentIntakeId)) }))?.publicId ?? null : null, lineagePublicId: snap.child?.publicId ?? null };
 }
 
 export async function createPaymentReplacement(ctx: CommandContext, input: { paymentIntakePublicId: string; reason: string; idempotencyKey: string; expectedStateHash: string }, executor?: Executor) {

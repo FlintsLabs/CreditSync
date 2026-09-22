@@ -1,18 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, files, financialEvidenceRequirements, loanSchedules, loans, paymentEvidence, paymentIntakes, paymentReplacementEvidenceReferences, paymentReplacementLineages, transactions, users } from "../db/schema";
+import { borrowers, files, financialEvidenceRequirements, loanSchedules, loans, paymentDuplicateReviewCandidates, paymentDuplicateReviewExecutions, paymentDuplicateReviewMemberships, paymentDuplicateReviews, paymentEvidence, paymentIntakes, paymentReplacementEvidenceReferences, paymentReplacementLineages, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import { createPaymentIntake, getPaymentIntake, postPayment, previewPaymentMatch } from "./payment-service";
 import { preparePaymentEvidence } from "./payment-service";
 import { cancelPaymentIntake, getPaymentCancellationCapability } from "./payment-cancellation-service";
 import { createPaymentReplacement, inspectPaymentReplacement } from "./payment-replacement-service";
+import { executePaymentDuplicateReview, previewPaymentDuplicateReview } from "./payment-duplicate-review-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
 const tenantId = "replacement-test";
 function ctx(user: { id: number }): CommandContext { return { tenantId, actorUserId: user.id, actorSource: "web", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID() }; }
 
-async function reset() { await db.execute(sql`TRUNCATE TABLE payment_replacement_evidence_references, payment_replacement_lineages, payment_evidence, payment_intakes, audit_logs, files, users CASCADE`); }
+async function reset() { await db.execute(sql`TRUNCATE TABLE payment_duplicate_review_memberships, payment_duplicate_review_executions, payment_duplicate_review_candidates, payment_duplicate_reviews, payment_replacement_evidence_references, payment_replacement_lineages, payment_evidence, payment_intakes, audit_logs, files, users CASCADE`); }
 async function user(role: "owner" | "viewer" = "owner") { return db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@test.invalid`, role }).returning().then((rows) => rows[0]!); }
 
 describe("cancelled payment replacement", () => {
@@ -213,5 +214,51 @@ describe("cancelled payment replacement", () => {
         expect(await db.select().from(transactions).where(and(eq(transactions.tenantId, tenantId), eq(transactions.paymentIntakeId, child!.id), eq(transactions.entryType, "repayment")))).toHaveLength(2);
         expect(await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.id, schedules[0]!.id) })).toMatchObject({ paidTotal: "100.00", remainingDue: "0.00", status: "paid" });
         expect(await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.id, schedules[1]!.id) })).toMatchObject({ paidTotal: "100.00", remainingDue: "0.00", status: "paid" });
+    });
+
+    integrationTest("reviews one cancelled semantic duplicate then posts exactly two 100.00 allocations without touching cancelled history", async () => {
+        await reset();
+        const owner = await user();
+        const borrower = await db.insert(borrowers).values({ tenantId, ownerUserId: owner.id, name: "Reviewed duplicate borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({ tenantId, ownerUserId: owner.id, borrowerId: borrower.id, principalAmount: "200.00", interestRate: "0.00", repaymentType: "monthly", outstandingPrincipal: "200.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" }).returning().then((rows) => rows[0]!);
+        const schedules = await db.insert(loanSchedules).values([
+            { tenantId, loanId: loan.id, installmentNo: 1, dueDate: "2026-09-20", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "100.00", status: "pending" },
+            { tenantId, loanId: loan.id, installmentNo: 2, dueDate: "2026-09-21", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "100.00", status: "pending" },
+        ]).returning();
+        const receivedAt = "2026-09-21T12:05:00.000Z";
+        const source = await createPaymentIntake(ctx(owner), { amount: "200.00", receivedAt, payerName: "Exact Payer" });
+        const duplicate = await createPaymentIntake(ctx(owner), { amount: "200.00", receivedAt, payerName: " exact   payer " });
+        const sourceRow = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, source.publicId) });
+        const duplicateRow = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, duplicate.publicId) });
+        const file = await db.insert(files).values({ tenantId, ownerUserId: owner.id, bucket: "test", key: `reviewed-duplicate-${crypto.randomUUID()}`, originalName: "receipt.png", mimeType: "image/png", size: 20, url: "storage:test" }).returning().then((rows) => rows[0]!);
+        await db.insert(paymentEvidence).values({ tenantId, paymentIntakeId: sourceRow!.id, fileId: file.id, status: "ready", evidenceType: "slip", evidenceHash: "2".repeat(64), mimeType: "image/png", declaredSize: 20, finalizedAt: new Date(), createdByUserId: owner.id, updatedByUserId: owner.id });
+        const sourceCapability = await getPaymentCancellationCapability(ctx(owner), source.publicId);
+        const duplicateCapability = await getPaymentCancellationCapability(ctx(owner), duplicate.publicId);
+        await cancelPaymentIntake(ctx(owner), source.publicId, { reason: "source entered twice", idempotencyKey: crypto.randomUUID(), expectedStateHash: sourceCapability.stateHash });
+        await cancelPaymentIntake(ctx(owner), duplicate.publicId, { reason: "duplicate entry", idempotencyKey: crypto.randomUUID(), expectedStateHash: duplicateCapability.stateHash });
+        const beforeSource = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, source.publicId) });
+        const beforeEvidence = await db.select().from(paymentEvidence).where(eq(paymentEvidence.paymentIntakeId, sourceRow!.id));
+        const inspection = await inspectPaymentReplacement(ctx(owner), source.publicId);
+        expect(inspection.blockers).toContain("PAYMENT_DUPLICATE_REQUIRES_REVIEW");
+        await expect(createPaymentReplacement(ctx(owner), { paymentIntakePublicId: source.publicId, reason: "must review exact duplicate", idempotencyKey: crypto.randomUUID(), expectedStateHash: inspection.stateHash })).rejects.toMatchObject({ code: "PAYMENT_DUPLICATE_REQUIRES_REVIEW" });
+        const review = await previewPaymentDuplicateReview(ctx(owner), { canonicalPaymentIntakePublicId: source.publicId, candidatePaymentIntakePublicIds: [duplicate.publicId], reason: "Owner confirmed the two cancelled drafts are one receipt", idempotencyKey: "reviewed-duplicate-preview-1" });
+        const executed = await executePaymentDuplicateReview(ctx(owner), { duplicateReviewPublicId: review.duplicateReviewPublicId, previewHash: review.previewHash, confirmed: true, reason: "Owner confirmed the two cancelled drafts are one receipt", idempotencyKey: "reviewed-duplicate-execute-1" });
+        expect(executed.status).toBe("executed");
+        expect(await executePaymentDuplicateReview(ctx(owner), { duplicateReviewPublicId: review.duplicateReviewPublicId, previewHash: review.previewHash, confirmed: true, reason: "Owner confirmed the two cancelled drafts are one receipt", idempotencyKey: "reviewed-duplicate-execute-1" })).toEqual(executed);
+        const replacement = await createPaymentReplacement(ctx(owner), { paymentIntakePublicId: source.publicId, reason: "create reviewed replacement", idempotencyKey: "reviewed-replacement-1", expectedStateHash: (await inspectPaymentReplacement(ctx(owner), source.publicId)).stateHash });
+        const proposal = await previewPaymentMatch(ctx(owner), replacement.replacementPaymentIntakePublicId, { allocations: schedules.map((schedule) => ({ borrowerPublicId: borrower.publicId, loanPublicId: loan.publicId, schedulePublicId: schedule.publicId, amount: "100.00" })) });
+        expect(proposal.status).toBe("ready");
+        await postPayment(ctx(owner), replacement.replacementPaymentIntakePublicId, { proposalPublicId: proposal.publicId });
+        expect(await db.select().from(transactions).where(eq(transactions.paymentIntakeId, sourceRow!.id))).toHaveLength(0);
+        expect(await db.select().from(transactions).where(eq(transactions.paymentIntakeId, duplicateRow!.id))).toHaveLength(0);
+        expect(await db.select().from(transactions).where(eq(transactions.paymentIntakeId, (await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, replacement.replacementPaymentIntakePublicId) }))!.id))).toHaveLength(2);
+        expect(await db.select().from(paymentDuplicateReviews)).toHaveLength(1);
+        expect(await db.select().from(paymentDuplicateReviewCandidates)).toHaveLength(1);
+        expect(await db.select().from(paymentDuplicateReviewExecutions)).toHaveLength(1);
+        expect(await db.select().from(paymentDuplicateReviewMemberships)).toHaveLength(1);
+        await expect(db.update(paymentDuplicateReviewMemberships).set({ candidatePaymentIntakeId: sourceRow!.id }).where(eq(paymentDuplicateReviewMemberships.id, (await db.select().from(paymentDuplicateReviewMemberships))[0]!.id)).then(() => undefined)).rejects.toThrow();
+        await expect(db.delete(paymentDuplicateReviewMemberships).where(eq(paymentDuplicateReviewMemberships.id, (await db.select().from(paymentDuplicateReviewMemberships))[0]!.id)).then(() => undefined)).rejects.toThrow();
+        expect(await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, source.publicId) })).toMatchObject({ status: "cancelled", amount: beforeSource!.amount, receivedAt: beforeSource!.receivedAt, payerName: beforeSource!.payerName });
+        expect(await db.select().from(paymentEvidence).where(eq(paymentEvidence.paymentIntakeId, sourceRow!.id))).toEqual(beforeEvidence);
     });
 });

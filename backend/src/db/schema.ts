@@ -1611,6 +1611,91 @@ export const paymentReplacementEvidenceReferences = pgTable("payment_replacement
     check("payment_replacement_evidence_refs_exact_source_check", sql`(${table.sourceEvidenceId} IS NOT NULL AND ${table.sourceSupplementId} IS NULL) OR (${table.sourceEvidenceId} IS NULL AND ${table.sourceSupplementId} IS NOT NULL)`),
 ]);
 
+export const paymentDuplicateReviews = pgTable("payment_duplicate_reviews", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    canonicalPaymentIntakeId: integer("canonical_payment_intake_id").notNull(),
+    reason: text("reason").notNull(),
+    requestId: text("request_id").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestHash: text("request_hash").notNull(),
+    previewHash: text("preview_hash").notNull(),
+    canonicalStateHash: text("canonical_state_hash").notNull(),
+    evidenceHash: text("evidence_hash").notNull(),
+    dependencyHash: text("dependency_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    auditPublicId: uuid("audit_public_id").notNull(),
+    createdByUserId: integer("created_by_user_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_duplicate_reviews_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("payment_duplicate_reviews_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
+    foreignKey({ name: "payment_duplicate_reviews_tenant_canonical_fk", columns: [table.tenantId, table.canonicalPaymentIntakeId], foreignColumns: [paymentIntakes.tenantId, paymentIntakes.id] }),
+    foreignKey({ name: "payment_duplicate_reviews_tenant_audit_fk", columns: [table.tenantId, table.auditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
+    foreignKey({ name: "payment_duplicate_reviews_tenant_actor_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+    check("payment_duplicate_reviews_reason_check", sql`length(trim(${table.reason})) BETWEEN 1 AND 2000`),
+]);
+
+export const paymentDuplicateReviewCandidates = pgTable("payment_duplicate_review_candidates", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    reviewId: integer("review_id").notNull(),
+    candidatePaymentIntakeId: integer("candidate_payment_intake_id").notNull(),
+    candidateStateHash: text("candidate_state_hash").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_duplicate_review_candidates_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("payment_duplicate_review_candidates_tenant_review_candidate_unique").on(table.tenantId, table.reviewId, table.candidatePaymentIntakeId),
+    foreignKey({ name: "payment_duplicate_review_candidates_tenant_review_fk", columns: [table.tenantId, table.reviewId], foreignColumns: [paymentDuplicateReviews.tenantId, paymentDuplicateReviews.id] }),
+    foreignKey({ name: "payment_duplicate_review_candidates_tenant_candidate_fk", columns: [table.tenantId, table.candidatePaymentIntakeId], foreignColumns: [paymentIntakes.tenantId, paymentIntakes.id] }),
+]);
+
+export const paymentDuplicateReviewExecutions = pgTable("payment_duplicate_review_executions", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    reviewId: integer("review_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestHash: text("request_hash").notNull(),
+    auditPublicId: uuid("audit_public_id").notNull(),
+    requestId: text("request_id").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }).defaultNow().notNull(),
+    createdByUserId: integer("created_by_user_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_duplicate_review_executions_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("payment_duplicate_review_executions_tenant_review_unique").on(table.tenantId, table.reviewId),
+    uniqueIndex("payment_duplicate_review_executions_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
+    foreignKey({ name: "payment_duplicate_review_executions_tenant_review_fk", columns: [table.tenantId, table.reviewId], foreignColumns: [paymentDuplicateReviews.tenantId, paymentDuplicateReviews.id] }),
+    foreignKey({ name: "payment_duplicate_review_executions_tenant_audit_fk", columns: [table.tenantId, table.auditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
+    foreignKey({ name: "payment_duplicate_review_executions_tenant_actor_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+]);
+
+export const paymentDuplicateReviewMemberships = pgTable("payment_duplicate_review_memberships", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    reviewId: integer("review_id").notNull(),
+    executionId: integer("execution_id").notNull(),
+    canonicalPaymentIntakeId: integer("canonical_payment_intake_id").notNull(),
+    candidatePaymentIntakeId: integer("candidate_payment_intake_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_duplicate_review_memberships_tenant_id_id_unique").on(table.tenantId, table.id),
+    index("payment_duplicate_review_memberships_tenant_canonical_idx").on(table.tenantId, table.canonicalPaymentIntakeId),
+    uniqueIndex("payment_duplicate_review_memberships_tenant_candidate_unique").on(table.tenantId, table.candidatePaymentIntakeId),
+    uniqueIndex("payment_duplicate_review_memberships_tenant_review_candidate_unique").on(table.tenantId, table.reviewId, table.candidatePaymentIntakeId),
+    foreignKey({ name: "payment_duplicate_review_memberships_tenant_review_fk", columns: [table.tenantId, table.reviewId], foreignColumns: [paymentDuplicateReviews.tenantId, paymentDuplicateReviews.id] }),
+    foreignKey({ name: "payment_duplicate_review_memberships_tenant_execution_fk", columns: [table.tenantId, table.executionId], foreignColumns: [paymentDuplicateReviewExecutions.tenantId, paymentDuplicateReviewExecutions.id] }),
+    foreignKey({ name: "payment_duplicate_review_memberships_tenant_canonical_fk", columns: [table.tenantId, table.canonicalPaymentIntakeId], foreignColumns: [paymentIntakes.tenantId, paymentIntakes.id] }),
+    foreignKey({ name: "payment_duplicate_review_memberships_tenant_candidate_fk", columns: [table.tenantId, table.candidatePaymentIntakeId], foreignColumns: [paymentIntakes.tenantId, paymentIntakes.id] }),
+    check("payment_duplicate_review_memberships_distinct_check", sql`${table.canonicalPaymentIntakeId} <> ${table.candidatePaymentIntakeId}`),
+]);
+
 export const paymentEvidenceSupplements = pgTable("payment_evidence_supplements", {
     id: serial("id").primaryKey(),
     publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),

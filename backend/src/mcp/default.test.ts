@@ -2075,6 +2075,14 @@ describe("default MCP adapter integration", () => {
             mimeType: "image/png", size: 4, sha256: createHash("sha256").update("mcp-cancellation-replacement-evidence").digest("hex"), evidenceType: "slip",
         })).data;
         await call("evidence.finalize", { paymentIntakePublicId: cancellationDraft.publicId, evidencePublicId: cancellationEvidence.publicId });
+        const cancelledDuplicate = (await call("intake.create", {
+            amount: "1.00", receivedAt: "2026-08-10T10:00:00.000Z", payerName: "Synthetic cancellation contract draft", idempotencyKey: "mcp-contract-cancellation-duplicate",
+        })).data;
+        const duplicateCapability = (await call("intake.get", { paymentIntakePublicId: cancelledDuplicate.publicId })).data.cancellation as { stateHash: string };
+        await call("payment.cancel", {
+            paymentIntakePublicId: cancelledDuplicate.publicId, reason: "Explicit synthetic duplicate cancellation confirmation",
+            idempotencyKey: "mcp-contract-cancel-duplicate", expectedStateHash: duplicateCapability.stateHash,
+        });
         const cancellationDetail = (await call("intake.get", {
             paymentIntakePublicId: cancellationDraft.publicId,
         })).data;
@@ -2088,6 +2096,20 @@ describe("default MCP adapter integration", () => {
         })).data;
         expect(cancellationResult).toMatchObject({ status: "cancelled", paymentIntakePublicId: cancellationDraft.publicId });
         expectWriteAuditMetadata(cancellationResult);
+        const duplicateReview = (await call("payment.replacement.duplicate-review.preview", {
+            canonicalPaymentIntakePublicId: cancellationDraft.publicId, candidatePaymentIntakePublicIds: [cancelledDuplicate.publicId],
+            reason: "MCP contract duplicate review", idempotencyKey: "mcp-contract-duplicate-review-preview",
+        })).data;
+        expectWriteAuditMetadata(duplicateReview);
+        const duplicateExecution = (await call("payment.replacement.duplicate-review.execute", {
+            duplicateReviewPublicId: duplicateReview.duplicateReviewPublicId, previewHash: duplicateReview.previewHash,
+            confirmed: true, reason: "MCP contract duplicate review confirmation", idempotencyKey: "mcp-contract-duplicate-review-execute",
+        })).data;
+        expectWriteAuditMetadata(duplicateExecution);
+        expect(await call("payment.replacement.duplicate-review.execute", {
+            duplicateReviewPublicId: duplicateReview.duplicateReviewPublicId, previewHash: duplicateReview.previewHash,
+            confirmed: true, reason: "MCP contract duplicate review confirmation", idempotencyKey: "mcp-contract-duplicate-review-execute",
+        })).toMatchObject({ data: duplicateExecution });
         const replacementInspection = (await call("payment.replacement.inspect", { paymentIntakePublicId: cancellationDraft.publicId })).data;
         const replacement = (await call("payment.replacement.create", {
             paymentIntakePublicId: cancellationDraft.publicId,
@@ -2110,7 +2132,7 @@ describe("default MCP adapter integration", () => {
         expect(called.filter((name) => name === "intermediary.disbursement.event.create")).toHaveLength(2);
         expect(called.filter((name) => name === "intermediary.collection.cancel")).toHaveLength(1);
         expect(called.filter((name) => name === "loan.restructure.execute")).toHaveLength(2);
-        expect(called).toHaveLength(MCP_TOOL_NAMES.length - resumableBatchTools.size - separatelyCoveredReflowTools.size + 12);
+        expect(called).toHaveLength(MCP_TOOL_NAMES.length - resumableBatchTools.size - separatelyCoveredReflowTools.size + 16);
 
         await client.close();
 

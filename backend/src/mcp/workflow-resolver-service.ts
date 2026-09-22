@@ -8,6 +8,7 @@ import { resolveWorkflowPolicy, type ResolverInput, type ResolverObservation, ty
 import type { ToolProfile } from "./catalog-types";
 import { effectivePaymentEvidence } from "../services/payment-effective-evidence-service";
 import { countAuthoritativeEvidenceAttempts } from "../services/financial-evidence-requirement-service";
+import { inspectPaymentReplacement } from "../services/payment-replacement-service";
 
 type ResolverWireInput = Omit<ResolverInput, "profile"> & { profile?: never };
 
@@ -39,6 +40,9 @@ async function paymentObservation(ctx: CommandContext, publicId: string): Promis
         ? null
         : await getPaymentRestoreCancellationCapability(ctx, publicId);
     const ready = evidenceRows.filter((row) => row.status === "ready" && row.finalizedAt !== null && row.fileId !== null).length;
+    const duplicateReview = intake.status === "cancelled"
+        ? await inspectPaymentReplacement(ctx, publicId).catch(() => null)
+        : null;
     return {
         targetAvailable: true, identityResolved: true, state: intake.status === "cancelled" ? "cancelled" : intake.status === "duplicate" ? "duplicate" : intake.status === "reversed" ? "reversed" : intake.status === "posted" ? "posted" : "mutable",
         evidenceRequired: required, evidenceReady: evidenceTotal <= 20 && attemptTotal <= 20 && (!required || (expected > 0 && ready >= expected && evidenceTotal === ready)),
@@ -47,6 +51,8 @@ async function paymentObservation(ctx: CommandContext, publicId: string): Promis
         restoreCancellationAllowed: restoreCancellation?.allowed,
         restoreCancellationBlockedReason: restoreCancellation?.blockedReason,
         restoreCancellationStateHash: restoreCancellation?.stateHash,
+        duplicateReviewRequired: !!duplicateReview?.blockerPublicIds?.length,
+        duplicateBlockerPublicIds: duplicateReview?.blockerPublicIds ?? [],
     };
 }
 
