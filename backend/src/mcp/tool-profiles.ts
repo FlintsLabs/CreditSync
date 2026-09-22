@@ -3,7 +3,7 @@ import { MCP_TOOL_NAMES, type McpToolDefinition, type McpToolName, type ToolProf
 const readOnly = [
     "borrower.resolve-and-portfolio", "loan.inspect-context", "payment.match-context",
     "system.error-diagnostic.get", "system.error-diagnostic.list", "borrower.search", "borrower.portfolio",
-    "intake.get", "intake.list", "payment.batch.get", "payment.batch.workspace", "payment.batch.candidates",
+    "intake.get", "intake.list", "payment.replacement.inspect", "payment.batch.get", "payment.batch.workspace", "payment.batch.candidates",
     "loan.preview", "loan.cancel.preview", "loan.interest-rate.list",
     "loan.disbursement.list", "loan.contract.get", "loan.payment-history.list", "loan.commission-participant.list",
     "loan.commission.preview", "loan.commission.list", "loan.commission.calculate", "loan.commission.reverse",
@@ -17,7 +17,7 @@ const payments = [
     "borrower.resolve-and-portfolio", "loan.inspect-context", "payment.match-context",
     "borrower.search", "borrower.portfolio", "intake.get", "intake.list", "intake.create", "evidence.prepare", "evidence.finalize",
     "evidence.import-chatgpt-file", "payment.evidence-supplement.import-chatgpt-file", "payment.evidence-supplement.record",
-    "payment.preview", "payment.post", "payment.cancel", "payment.reverse", "payment.reverse-with-accrual.preview", "payment.reverse-with-accrual.execute",
+    "payment.preview", "payment.post", "payment.cancel", "payment.replacement.inspect", "payment.replacement.create", "payment.reverse", "payment.reverse-with-accrual.preview", "payment.reverse-with-accrual.execute",
     "payment.batch.get", "payment.batch.create", "payment.batch.capture", "payment.batch.evidence.prepare-many", "payment.batch.evidence.finalize-many",
     "payment.batch.item.add", "payment.batch.evidence.prepare", "payment.batch.evidence.finalize", "payment.batch.preview", "payment.batch.execute",
     "payment.batch.stage", "payment.batch.staging.evidence.prepare", "payment.batch.staging.evidence.finalize", "payment.batch.staging.extract",

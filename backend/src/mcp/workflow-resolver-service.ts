@@ -1,11 +1,13 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, files, financialEvidenceRequirementAttempts, financialEvidenceRequirements, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loans, paymentEvidence, paymentIntakes, users } from "../db/schema";
+import { borrowers, files, financialEvidenceRequirementAttempts, financialEvidenceRequirements, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loans, paymentIntakes, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import type { CommandContext } from "../services/command-context";
 import { getPaymentRestoreCancellationCapability } from "../services/payment-reconciliation-service";
 import { resolveWorkflowPolicy, type ResolverInput, type ResolverObservation, type ResolverProfile } from "./workflow-resolver";
 import type { ToolProfile } from "./catalog-types";
+import { effectivePaymentEvidence } from "../services/payment-effective-evidence-service";
+import { countAuthoritativeEvidenceAttempts } from "../services/financial-evidence-requirement-service";
 
 type ResolverWireInput = Omit<ResolverInput, "profile"> & { profile?: never };
 
@@ -24,32 +26,23 @@ async function paymentObservation(ctx: CommandContext, publicId: string): Promis
     const intake = await db.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.publicId, publicId)) });
     if (!intake || !(await actorCanRead(ctx, intake.ownerUserId))) return { targetAvailable: false };
     const requirement = await db.query.financialEvidenceRequirements.findFirst({ where: and(eq(financialEvidenceRequirements.tenantId, ctx.tenantId), eq(financialEvidenceRequirements.paymentIntakeId, intake.id)) });
-    const [evidenceCounts, attemptCounts] = await Promise.all([
-        db.select({
-            total: sql<number>`count(${paymentEvidence.id})`,
-            ready: sql<number>`count(${paymentEvidence.id}) FILTER (WHERE ${paymentEvidence.status} = 'ready' AND ${paymentEvidence.finalizedAt} IS NOT NULL AND ${paymentEvidence.fileId} IS NOT NULL AND ${files.id} IS NOT NULL)`,
-            pending: sql<number>`count(${paymentEvidence.id}) FILTER (WHERE ${paymentEvidence.status} = 'pending')`,
-            rejected: sql<number>`count(${paymentEvidence.id}) FILTER (WHERE ${paymentEvidence.status} = 'rejected')`,
-        }).from(paymentEvidence)
-            .leftJoin(files, and(eq(files.tenantId, ctx.tenantId), eq(files.id, paymentEvidence.fileId)))
-            .where(and(eq(paymentEvidence.tenantId, ctx.tenantId), eq(paymentEvidence.paymentIntakeId, intake.id))),
-        requirement ? db.select({ total: sql<number>`count(${financialEvidenceRequirementAttempts.id})` }).from(financialEvidenceRequirementAttempts)
-            .where(and(eq(financialEvidenceRequirementAttempts.tenantId, ctx.tenantId), eq(financialEvidenceRequirementAttempts.financialEvidenceRequirementId, requirement.id))) : Promise.resolve([{ total: 0 }]),
+    const [effective, attemptCount] = await Promise.all([
+        effectivePaymentEvidence(ctx.tenantId, [intake.id]),
+        requirement ? countAuthoritativeEvidenceAttempts(db, ctx.tenantId, requirement.id, { kind: "payment", paymentIntakeId: intake.id }) : Promise.resolve(0),
     ]);
-    const evidence = evidenceCounts[0]!;
-    const attempts = attemptCounts[0]!;
-    const evidenceTotal = countValue(evidence.total);
-    const attemptTotal = countValue(attempts.total);
+    const evidenceRows = effective.get(intake.id) ?? [];
+    const evidenceTotal = evidenceRows.length;
+    const attemptTotal = countValue(attemptCount);
     const expected = Math.max(requirement?.expectedCount ?? 0, evidenceTotal, attemptTotal);
     const required = intake.evidenceRequired || !!requirement || evidenceTotal > 0;
-    const ready = countValue(evidence.ready);
     const restoreCancellation = intake.repostOfIntakeId === null
         ? null
         : await getPaymentRestoreCancellationCapability(ctx, publicId);
+    const ready = evidenceRows.filter((row) => row.status === "ready" && row.finalizedAt !== null && row.fileId !== null).length;
     return {
-        targetAvailable: true, identityResolved: true, state: ["posted", "reversed", "duplicate", "cancelled"].includes(intake.status) ? "posted" : "mutable",
+        targetAvailable: true, identityResolved: true, state: intake.status === "cancelled" ? "cancelled" : intake.status === "duplicate" ? "duplicate" : intake.status === "reversed" ? "reversed" : intake.status === "posted" ? "posted" : "mutable",
         evidenceRequired: required, evidenceReady: evidenceTotal <= 20 && attemptTotal <= 20 && (!required || (expected > 0 && ready >= expected && evidenceTotal === ready)),
-        pendingEvidenceCount: countValue(evidence.pending), rejectedEvidenceCount: countValue(evidence.rejected),
+        pendingEvidenceCount: evidenceRows.filter((row) => row.status === "pending").length, rejectedEvidenceCount: evidenceRows.filter((row) => row.status === "rejected").length,
         evidenceOverflow: evidenceTotal > 20 || attemptTotal > 20,
         restoreCancellationAllowed: restoreCancellation?.allowed,
         restoreCancellationBlockedReason: restoreCancellation?.blockedReason,

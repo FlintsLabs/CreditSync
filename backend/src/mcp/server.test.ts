@@ -1011,6 +1011,7 @@ describe("CreditSync stateless MCP contract", () => {
             "evidence.prepare",
             "evidence.finalize",
             "payment.cancel",
+            "payment.replacement.create",
             "evidence.import-chatgpt-file",
             "loan.disbursement.evidence.import-chatgpt-file",
             "payment.evidence-supplement.import-chatgpt-file",

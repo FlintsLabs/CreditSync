@@ -1,8 +1,8 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "mcp-catalog-709d150df779f218",
+  "catalogVersion": "mcp-catalog-6cad884a0810b36e",
   "profile": "core-read",
-  "toolCount": 37,
+  "toolCount": 38,
   "tools": [
     "borrower.resolve-and-portfolio",
     "loan.inspect-context",
@@ -13,6 +13,7 @@
     "borrower.portfolio",
     "intake.get",
     "intake.list",
+    "payment.replacement.inspect",
     "payment.batch.get",
     "payment.batch.workspace",
     "payment.batch.candidates",

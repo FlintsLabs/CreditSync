@@ -18,7 +18,7 @@ export type ResolverInput = Readonly<{
 export type ResolverObservation = Readonly<{
     targetAvailable?: boolean;
     identityResolved?: boolean;
-    state?: "unresolved" | "mutable" | "posted";
+    state?: "unresolved" | "mutable" | "posted" | "cancelled" | "duplicate" | "reversed";
     loanType?: "scheduled" | "floating";
     evidenceRequired?: boolean;
     evidenceReady?: boolean;
@@ -57,7 +57,7 @@ type TargetArgumentKind = WorkflowTargetKind | "loan_for_disbursement";
 
 const targetArguments: Readonly<Record<string, TargetArgumentKind>> = Object.freeze({
     "borrower.resolve-and-portfolio": "borrower", "loan.inspect-context": "loan", "payment.match-context": "payment_intake", "intake.get": "payment_intake",
-    "payment.preview": "payment_intake", "payment.post": "payment_intake", "evidence.prepare": "payment_intake", "evidence.finalize": "payment_intake", "evidence.import-chatgpt-file": "payment_intake",
+    "payment.preview": "payment_intake", "payment.post": "payment_intake", "payment.replacement.inspect": "payment_intake", "payment.replacement.create": "payment_intake", "evidence.prepare": "payment_intake", "evidence.finalize": "payment_intake", "evidence.import-chatgpt-file": "payment_intake",
     "payment.evidence-supplement.import-chatgpt-file": "payment_intake", "payment.evidence-supplement.record": "payment_intake", "loan.disbursement.list": "loan_for_disbursement",
     "loan.disbursement.draft": "loan", "loan.disbursement.evidence.prepare": "loan_disbursement", "loan.disbursement.evidence.finalize": "loan_disbursement", "loan.disbursement.evidence.import-chatgpt-file": "loan_disbursement",
     "loan.disbursement.post": "loan_disbursement", "loan.settlement.preview": "loan", "loan.activate": "loan", "loan.draft": "borrower", "renewal.preview": "loan", "payment.restore.cancel": "payment_intake",
@@ -70,7 +70,7 @@ const requiredInputs: Readonly<Record<string, readonly string[]>> = Object.freez
     "loan.disbursement.draft": ["grossAmount", "loanAttributedAmount", "channel", "disbursedAt"], "loan.disbursement.post": ["idempotencyKey"],
     "loan.preview": ["principal", "interestRate", "termMonths", "repaymentType", "startDate"],
     "loan.draft": ["borrowerPublicId", "principal", "interestRate", "termMonths", "repaymentType", "startDate"], "loan.activate": ["idempotencyKey"], "loan.settlement.preview": ["asOfDate"], "renewal.preview": ["oldLoanPublicId", "requestedPrincipal"],
-    "borrower.resolve-and-portfolio": ["query", "borrowerPublicId"], "loan.inspect-context": ["loanPublicId"], "payment.match-context": ["paymentIntakePublicId"], "intake.get": ["paymentIntakePublicId"], "loan.disbursement.list": ["loanPublicId"],
+    "borrower.resolve-and-portfolio": ["query", "borrowerPublicId"], "loan.inspect-context": ["loanPublicId"], "payment.match-context": ["paymentIntakePublicId"], "intake.get": ["paymentIntakePublicId"], "payment.replacement.inspect": ["paymentIntakePublicId"], "payment.replacement.create": ["paymentIntakePublicId", "reason", "idempotencyKey", "expectedStateHash"], "loan.disbursement.list": ["loanPublicId"],
     "payment.restore.cancel": ["expectedStateHash", "reason", "idempotencyKey"],
 });
 
@@ -152,7 +152,6 @@ export function resolveWorkflowPolicy(input: ResolverInput, observation: Resolve
     if (input.intent === "originate_loan" && input.target!.kind !== "borrower" && input.target!.kind !== "loan") return withObservation(result(input, profile, "needs_input", [], ["TARGET_KIND_MISMATCH"]), observation);
     if (observation.targetAvailable !== true) return withObservation(result(input, profile, "needs_input", [], [observation.targetAvailable === false ? "TARGET_UNAVAILABLE" : "TARGET_AVAILABILITY_REQUIRES_AUTHORITATIVE_READ"]), observation);
     if (observation.identityResolved !== true) return withObservation(result(input, profile, "needs_input", [], [observation.identityResolved === false ? "IDENTITY_REQUIRES_REVIEW" : "IDENTITY_REQUIRES_AUTHORITATIVE_READ"]), observation);
-    if (observation.state !== "mutable" && observation.state !== "posted") return withObservation(result(input, profile, "needs_input", [], [observation.state === "unresolved" ? "TARGET_STATE_UNRESOLVED" : "TARGET_STATE_REQUIRES_AUTHORITATIVE_READ"]), observation);
     if (input.intent === "cancel_payment_restore") {
         if (input.target!.kind !== "payment_intake") return withObservation(result(input, profile, "needs_input", [], ["TARGET_KIND_MISMATCH"]), observation);
         if (observation.state !== "mutable") return withObservation(result(input, profile, "blocked", [], ["RESTORE_DRAFT_MUST_BE_UNPOSTED"], ["payment.restore.cancel"]), observation);
@@ -165,6 +164,7 @@ export function resolveWorkflowPolicy(input: ResolverInput, observation: Resolve
             arguments: { restoreDraftPublicId: input.target!.publicId, expectedStateHash: observation.restoreCancellationStateHash },
         }], [], ["payment.restore.execute", "payment.cancel"]), observation);
     }
+    if (observation.state !== "mutable" && observation.state !== "posted" && observation.state !== "cancelled") return withObservation(result(input, profile, "needs_input", [], [observation.state === "unresolved" ? "TARGET_STATE_UNRESOLVED" : "TARGET_STATE_REQUIRES_AUTHORITATIVE_READ"]), observation);
     const attachments = input.attachments ?? "unknown";
     if (attachments === "unknown") return withObservation(result(input, profile, "needs_input", [], ["ATTACHMENT_AVAILABILITY_UNKNOWN"]), observation);
     if (input.expectedAttachmentCount !== undefined && (attachments !== "present" || !Number.isSafeInteger(input.expectedAttachmentCount) || input.expectedAttachmentCount < 1 || input.expectedAttachmentCount > 20)) return withObservation(result(input, profile, "needs_input", [], ["EXPECTED_ATTACHMENT_COUNT_REQUIRED"]), observation);
@@ -177,6 +177,9 @@ export function resolveWorkflowPolicy(input: ResolverInput, observation: Resolve
             ? { ...restoreCancelStep, arguments: { restoreDraftPublicId: input.target!.publicId, expectedStateHash: observation.restoreCancellationStateHash } }
             : null;
         return withObservation(result(input, profile, restoreCancelNextStep ? "confirmation_required" : inspectStep ? "next_step" : "needs_input", [inspectStep, restoreCancelNextStep], inspectStep ? [] : ["TARGET_REQUIRES_PARENT_READ"]), observation);
+    }
+    if (input.target!.kind === "payment_intake" && observation.state === "cancelled" && input.intent === "receive_payment") {
+        return withObservation(result(input, profile, "next_step", [step("payment.replacement.inspect", input)], ["CANCELLED_PAYMENT_REQUIRES_REPLACEMENT_INSPECTION"], ["payment.post", "evidence.prepare", "evidence.finalize"]), observation);
     }
     if (input.target!.kind === "payment_intake" && observation.state === "posted" && (input.intent === "receive_payment" || input.intent === "attach_evidence")) {
         const supplement = attachments === "present" ? step("payment.evidence-supplement.import-chatgpt-file", input, ["idempotencyKey", "chatgptFile"], true) : step("payment.evidence-supplement.record", input, undefined, true);

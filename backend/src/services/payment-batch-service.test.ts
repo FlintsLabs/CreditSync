@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, loanInterestRatePeriods, loanSchedules, loans, paymentBatchAllocations, paymentBatchItems, paymentBatchPreviews, paymentBatches, paymentBatchStagingItems, paymentIntakes, transactions, users } from "../db/schema";
+import { borrowers, files, loanInterestRatePeriods, loanSchedules, loans, paymentBatchAllocations, paymentBatchItems, paymentBatchPreviews, paymentBatches, paymentBatchStagingItems, paymentEvidence, paymentIntakes, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import { capturePaymentBatch, createPaymentBatch, finalizePaymentBatchStagingEvidence, preparePaymentBatchStagingEvidence, previewPaymentBatch, reviewPaymentBatchStagingItem, stagePaymentBatchItems } from "./payment-batch-service";
 import type { PreviewPaymentBatchInput } from "./payment-batch-service";
 import { executePaymentBatch } from "./payment-batch-service";
+import { cancelPaymentBatch } from "./payment-batch-service";
+import { cancelPaymentIntake, getPaymentCancellationCapability } from "./payment-cancellation-service";
+import { createPaymentReplacement, inspectPaymentReplacement } from "./payment-replacement-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
 
@@ -101,5 +104,37 @@ describe("payment batch service contract", () => {
             { calculatedComponents: { principal: "0.00", interest: "75.00", fee: "0.00", penalty: "0.00" } },
         ]);
         expect(await db.select().from(transactions).where(eq(transactions.tenantId, tenantId))).toHaveLength(0);
+    });
+
+    integrationTest("replaces a cancelled batch receipt and allocates 200.00 across two 100.00 schedules exactly once", async () => {
+        const tenantId = `cancelled-replacement-batch-${crypto.randomUUID()}`;
+        const actor = await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+        const borrower = await db.insert(borrowers).values({ tenantId, ownerUserId: actor.id, name: "Cancelled replacement borrower" }).returning().then((rows) => rows[0]!);
+        const loan = await db.insert(loans).values({ tenantId, ownerUserId: actor.id, borrowerId: borrower.id, principalAmount: "200.00", interestRate: "0.00", repaymentType: "monthly", outstandingPrincipal: "200.00", outstandingInterest: "0.00", outstandingFees: "0.00", status: "active" }).returning().then((rows) => rows[0]!);
+        const schedules = await db.insert(loanSchedules).values([
+            { tenantId, loanId: loan.id, installmentNo: 1, dueDate: "2026-09-20", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "100.00", status: "pending" },
+            { tenantId, loanId: loan.id, installmentNo: 2, dueDate: "2026-09-21", scheduledPrincipal: "100.00", scheduledInterest: "0.00", scheduledFee: "0.00", scheduledTotal: "100.00", paidTotal: "0.00", paidPenalty: "0.00", remainingDue: "100.00", status: "pending" },
+        ]).returning();
+        const intake = await db.insert(paymentIntakes).values({ tenantId, ownerUserId: actor.id, amount: "200.00", receivedAt: new Date("2026-09-21T05:00:00.000Z"), status: "draft", createdByUserId: actor.id, updatedByUserId: actor.id }).returning().then((rows) => rows[0]!);
+        const file = await db.insert(files).values({ tenantId, ownerUserId: actor.id, bucket: "test", key: `replacement-batch-${crypto.randomUUID()}`, originalName: "receipt.png", mimeType: "image/png", size: 20, url: "storage:test" }).returning().then((rows) => rows[0]!);
+        await db.insert(paymentEvidence).values({ tenantId, paymentIntakeId: intake.id, fileId: file.id, status: "ready", evidenceType: "slip", evidenceHash: "d".repeat(64), mimeType: "image/png", declaredSize: 20, finalizedAt: new Date(), createdByUserId: actor.id, updatedByUserId: actor.id });
+        const batch = await db.insert(paymentBatches).values({ tenantId, borrowerId: borrower.id, status: "draft", version: 1, stateHash: "v1:cancelled-source", createIdempotencyKey: "cancelled-source-batch", createdByUserId: actor.id, updatedByUserId: actor.id }).returning().then((rows) => rows[0]!);
+        await db.insert(paymentBatchItems).values({ tenantId, batchId: batch.id, paymentIntakeId: intake.id, itemOrder: 1 });
+        const ctx: CommandContext = { tenantId, actorUserId: actor.id, actorSource: "web", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() };
+        await cancelPaymentBatch(ctx, batch.publicId, { reason: "cancelled source batch", revision: batch.version, idempotencyKey: "cancel-source-batch" });
+        const inspection = await inspectPaymentReplacement(ctx, intake.publicId);
+        const replacement = await createPaymentReplacement(ctx, { paymentIntakePublicId: intake.publicId, reason: "correct schedule mapping", idempotencyKey: "replacement-batch-child", expectedStateHash: inspection.stateHash });
+        const child = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, replacement.replacementPaymentIntakePublicId) });
+        const targetBatch = await db.insert(paymentBatches).values({ tenantId, borrowerId: borrower.id, status: "draft", version: 0, stateHash: "v1:new-batch", createIdempotencyKey: "replacement-target-batch", createdByUserId: actor.id, updatedByUserId: actor.id }).returning().then((rows) => rows[0]!);
+        const item = await db.insert(paymentBatchItems).values({ tenantId, batchId: targetBatch.id, paymentIntakeId: child!.id, itemOrder: 1 }).returning().then((rows) => rows[0]!);
+        const preview = await previewPaymentBatch(ctx, targetBatch.publicId, { borrowerPublicId: borrower.publicId, allocations: schedules.map((schedule) => ({ itemPublicId: item.publicId, loanPublicId: loan.publicId, schedulePublicId: schedule.publicId, amount: "100.00", targetDueDate: schedule.dueDate, intent: "on_time" })) });
+        expect(preview.status).toBe("ready");
+        const posted = await executePaymentBatch(ctx, targetBatch.publicId, { previewPublicId: preview.publicId, previewHash: preview.previewHash, confirmationHash: preview.confirmationHash, confirmed: true, idempotencyKey: "post-replacement-batch" });
+        expect(posted.status).toBe("posted");
+        const retry = await executePaymentBatch({ ...ctx, requestId: crypto.randomUUID(), correlationId: crypto.randomUUID() }, targetBatch.publicId, { previewPublicId: preview.publicId, previewHash: preview.previewHash, confirmationHash: preview.confirmationHash, confirmed: true, idempotencyKey: "post-replacement-batch" });
+        expect(retry).toEqual(posted);
+        expect(await db.select().from(transactions).where(and(eq(transactions.tenantId, tenantId), eq(transactions.paymentIntakeId, child!.id), eq(transactions.entryType, "repayment")))).toHaveLength(2);
+        expect(await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.id, schedules[0]!.id) })).toMatchObject({ paidTotal: "100.00", remainingDue: "0.00", status: "paid" });
+        expect(await db.query.loanSchedules.findFirst({ where: eq(loanSchedules.id, schedules[1]!.id) })).toMatchObject({ paidTotal: "100.00", remainingDue: "0.00", status: "paid" });
     });
 });

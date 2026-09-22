@@ -1,8 +1,8 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "mcp-catalog-709d150df779f218",
+  "catalogVersion": "mcp-catalog-6cad884a0810b36e",
   "profile": "payments",
-  "toolCount": 59,
+  "toolCount": 61,
   "tools": [
     "borrower.resolve-and-portfolio",
     "loan.inspect-context",
@@ -20,6 +20,8 @@
     "payment.preview",
     "payment.post",
     "payment.cancel",
+    "payment.replacement.inspect",
+    "payment.replacement.create",
     "payment.reverse",
     "payment.reverse-with-accrual.preview",
     "payment.reverse-with-accrual.execute",

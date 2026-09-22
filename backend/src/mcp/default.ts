@@ -75,6 +75,7 @@ import {
     type PrepareEvidenceInput,
 } from "../services/payment-service";
 import { cancelPaymentIntake } from "../services/payment-cancellation-service";
+import { createPaymentReplacement, inspectPaymentReplacement } from "../services/payment-replacement-service";
 import {
     executeReverseWithInterestAccrual,
     previewReverseWithInterestAccrual,
@@ -278,6 +279,12 @@ export function createDefaultMcpToolHandlers(
         return cancelPaymentIntake({ ...ctx, idempotencyKey }, asString(input, "paymentIntakePublicId"), {
             reason: asString(input, "reason"), idempotencyKey, expectedStateHash: asString(input, "expectedStateHash"),
         });
+    },
+    "payment.replacement.inspect": (ctx, input) => inspectPaymentReplacement(ctx, asString(input, "paymentIntakePublicId")),
+    "payment.replacement.create": (ctx, input) => {
+        const idempotencyKey = ctx.idempotencyKey ?? asString(input, "idempotencyKey");
+        if (!idempotencyKey) throw new DomainError("IDEMPOTENCY_KEY_REQUIRED", "Payment replacement requires an idempotency key", 400);
+        return createPaymentReplacement(ctx, { paymentIntakePublicId: asString(input, "paymentIntakePublicId"), reason: asString(input, "reason"), idempotencyKey, expectedStateHash: asString(input, "expectedStateHash") });
     },
     "payment.post": (ctx, input) => postPayment(
         paymentPostCommandContext(ctx, input),
@@ -714,6 +721,7 @@ const auditTarget: Partial<Record<McpToolName, { entityType: string; action: str
     "payment.restore.execute": { entityType: "payment_reconciliation", action: "executed" },
     "payment.restore.create": { entityType: "payment_intake", action: "restore_draft_created" },
     "payment.restore.cancel": { entityType: "payment_intake", action: "cancelled" },
+    "payment.replacement.create": { entityType: "payment_intake", action: "replacement_draft_created" },
     "payment.restore.schedule-backfill": { entityType: "loan_schedule", action: "restore_schedule_backfilled" },
     "loan.activate": { entityType: "loan", action: "activated" },
     "loan.payment-start-date.update": { entityType: "loan", action: "payment_start_date_changed" },
@@ -800,7 +808,9 @@ export function createDefaultMcpHttpPlugin(
                 )).orderBy(desc(auditLogs.id)).limit(1);
                 return rows.map((row) => row.publicId);
             }
-            const entityId = result && typeof result === "object" && toolName === "payment.restore.create"
+            const entityId = result && typeof result === "object" && toolName === "payment.replacement.create"
+                ? (result as Record<string, unknown>).sourcePaymentIntakePublicId as string | undefined
+                : result && typeof result === "object" && toolName === "payment.restore.create"
                 ? (result as Record<string, unknown>).restoreDraftPublicId as string | undefined
                 : result && typeof result === "object" && toolName === "payment.restore.schedule-backfill"
                     ? (result as Record<string, unknown>).schedulePublicId as string | undefined

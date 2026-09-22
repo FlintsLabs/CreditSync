@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.50 - 2026-09-22
+
+### Added
+
+- Added append-only cancelled-payment replacement lineage with immutable inherited-evidence references, locked idempotent draft creation, effective-evidence resolution, safe MCP inspection/creation tools, resolver guidance, plugin contract/evals, and disposable-DB coverage. Replacements retain the original cancelled record and require a fresh ordinary preview and explicit post.
+
+### Changed
+
+- Released the synchronized CreditSync plugin contract and catalog as 10.6.0, preserving existing restore-cancellation and floating-reversal behavior.
+
 ## v0.4.49 - 2026-09-22
 
 ### Fixed
@@ -17,7 +27,6 @@
 ### Added
 
 - Added audited cancellation for eligible unposted payment-restore drafts through `payment.restore.cancel`; cancellation preserves the reversed source, restore evidence, and append-only history without creating transactions or changing balances, while allowing a later restore attempt with a new key.
-
 ## v0.4.46 - 2026-09-14
 
 ### Added
@@ -1649,3 +1658,12 @@
 
 - Create the tenant-scoped replacement parent unique key before child foreign keys and preserve all legacy loan statuses alongside `replaced`.
 - Preserve every loan lifecycle status used by application workflows, including `closed`, `renewed`, `restructured`, `cancelled`, `settled`, and `reversed`.
+## v0.4.47 - 2026-09-22
+
+### Added
+
+- Added append-only cancelled-payment replacement lineage, immutable evidence references, concurrency-safe idempotent replacement drafts, and safe MCP/plugin workflow guidance.
+
+### Changed
+
+- Resolved effective payment evidence across direct, supplement, and replacement lineage reads while keeping public responses limited to safe UUID and metadata fields.

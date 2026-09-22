@@ -26,10 +26,10 @@ test("defines a tenant-safe typed sticky evidence requirement", async () => {
         Bun.file(`${root}drizzle/meta/_journal.json`).json(),
         import("./schema"),
     ]);
-    expect(journal.entries.at(-4)).toMatchObject({ idx: 75, tag: "0075_financial_evidence_requirements" });
-    expect(journal.entries.at(-3)).toMatchObject({ idx: 76, tag: "0076_financial_evidence_attempt_floor" });
-    expect(journal.entries.at(-2)).toMatchObject({ idx: 77, tag: "0077_financial_evidence_attempt_bindings" });
-    expect(journal.entries.at(-1)).toMatchObject({ idx: 78, tag: "0078_cancelled_restore_attempts" });
+    expect(journal.entries.find((entry: { idx: number }) => entry.idx === 75)).toMatchObject({ idx: 75, tag: "0075_financial_evidence_requirements" });
+    expect(journal.entries.find((entry: { idx: number }) => entry.idx === 76)).toMatchObject({ idx: 76, tag: "0076_financial_evidence_attempt_floor" });
+    expect(journal.entries.find((entry: { idx: number }) => entry.idx === 77)).toMatchObject({ idx: 77, tag: "0077_financial_evidence_attempt_bindings" });
+    expect(journal.entries.find((entry: { idx: number }) => entry.idx === 78)).toMatchObject({ idx: 78, tag: "0078_cancelled_restore_attempts" });
     expect(migration).toContain('CREATE TABLE "financial_evidence_requirements"');
     expect(migration).toContain("financial_evidence_requirements_target_xor_check");
     expect(migration).toContain("financial_evidence_requirements_expected_count_check");

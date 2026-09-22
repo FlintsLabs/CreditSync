@@ -554,6 +554,13 @@
       "when": 1789929124993,
       "tag": "0078_cancelled_restore_attempts",
       "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1789929124994,
+      "tag": "0079_cancelled_payment_replacement",
+      "breakpoints": true
     }
   ]
 }

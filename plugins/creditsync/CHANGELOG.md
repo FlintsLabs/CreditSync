@@ -1,5 +1,15 @@
 # CreditSync Plugin Changelog
 
+## v10.6.0 - 2026-09-22
+
+### Added
+
+- Added cancelled-payment replacement inspection and audited draft creation with immutable evidence lineage, ordinary preview/post handoff, resolver safety guidance, and executable evaluation coverage.
+
+### Changed
+
+- Regenerated the frozen MCP contract and profile snapshots from the merged backend tool inventory.
+
 ## v10.5.0 - 2026-09-21
 
 ### Added
@@ -343,3 +353,6 @@
 - Corrected token-byte hashing, metadata-preserving MinIO recovery, and MCP-only rollback guidance.
 - Corrected renewal-reversal provenance: the borrower UUID is retained before execution rather than read from `renewal.execute`, portfolio inspection is limited to exposed loan states, and `renewal.reverse` is the authoritative atomic blocker check.
 - Aligned the blocked-reversal eval and instructions with the backend's sanitized `RENEWAL_REVERSE_BLOCKED` contract: backend message plus aggregate `downstreamEntryCount`, with no invented blocker records.
+# v10.4.0 - 2026-09-22
+
+- Added cancelled-payment replacement inspection and audited draft creation with inherited evidence lineage.
