@@ -1645,6 +1645,7 @@ export const paymentDuplicateReviewCandidates = pgTable("payment_duplicate_revie
     reviewId: integer("review_id").notNull(),
     candidatePaymentIntakeId: integer("candidate_payment_intake_id").notNull(),
     candidateStateHash: text("candidate_state_hash").notNull(),
+    usesCanonicalEvidence: boolean("uses_canonical_evidence").default(false).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
     uniqueIndex("payment_duplicate_review_candidates_tenant_id_id_unique").on(table.tenantId, table.id),

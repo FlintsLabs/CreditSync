@@ -234,6 +234,7 @@ describe("cancelled payment replacement", () => {
         await db.insert(paymentEvidence).values({ tenantId, paymentIntakeId: sourceRow!.id, fileId: file.id, status: "ready", evidenceType: "slip", evidenceHash: "2".repeat(64), mimeType: "image/png", declaredSize: 20, finalizedAt: new Date(), createdByUserId: owner.id, updatedByUserId: owner.id });
         const sourceCapability = await getPaymentCancellationCapability(ctx(owner), source.publicId);
         const duplicateCapability = await getPaymentCancellationCapability(ctx(owner), duplicate.publicId);
+        await db.insert(financialEvidenceRequirements).values({ tenantId, paymentIntakeId: duplicateRow!.id, expectedCount: 1, source: "test-cancelled-duplicate", requestId: "cancelled-duplicate-requirement", correlationId: "cancelled-duplicate-requirement", createdByUserId: owner.id });
         await cancelPaymentIntake(ctx(owner), source.publicId, { reason: "source entered twice", idempotencyKey: crypto.randomUUID(), expectedStateHash: sourceCapability.stateHash });
         await cancelPaymentIntake(ctx(owner), duplicate.publicId, { reason: "duplicate entry", idempotencyKey: crypto.randomUUID(), expectedStateHash: duplicateCapability.stateHash });
         const beforeSource = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, source.publicId) });
@@ -241,7 +242,7 @@ describe("cancelled payment replacement", () => {
         const inspection = await inspectPaymentReplacement(ctx(owner), source.publicId);
         expect(inspection.blockers).toContain("PAYMENT_DUPLICATE_REQUIRES_REVIEW");
         await expect(createPaymentReplacement(ctx(owner), { paymentIntakePublicId: source.publicId, reason: "must review exact duplicate", idempotencyKey: crypto.randomUUID(), expectedStateHash: inspection.stateHash })).rejects.toMatchObject({ code: "PAYMENT_DUPLICATE_REQUIRES_REVIEW" });
-        const review = await previewPaymentDuplicateReview(ctx(owner), { canonicalPaymentIntakePublicId: source.publicId, candidatePaymentIntakePublicIds: [duplicate.publicId], reason: "Owner confirmed the two cancelled drafts are one receipt", idempotencyKey: "reviewed-duplicate-preview-1" });
+        const review = await previewPaymentDuplicateReview(ctx(owner), { canonicalPaymentIntakePublicId: source.publicId, candidatePaymentIntakePublicIds: [duplicate.publicId], canonicalEvidenceCandidatePublicIds: [duplicate.publicId], reason: "Owner confirmed the two cancelled drafts are one receipt", idempotencyKey: "reviewed-duplicate-preview-1" });
         const executed = await executePaymentDuplicateReview(ctx(owner), { duplicateReviewPublicId: review.duplicateReviewPublicId, previewHash: review.previewHash, confirmed: true, reason: "Owner confirmed the two cancelled drafts are one receipt", idempotencyKey: "reviewed-duplicate-execute-1" });
         expect(executed.status).toBe("executed");
         expect(await executePaymentDuplicateReview(ctx(owner), { duplicateReviewPublicId: review.duplicateReviewPublicId, previewHash: review.previewHash, confirmed: true, reason: "Owner confirmed the two cancelled drafts are one receipt", idempotencyKey: "reviewed-duplicate-execute-1" })).toEqual(executed);

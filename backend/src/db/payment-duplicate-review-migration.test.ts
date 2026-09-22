@@ -5,6 +5,14 @@ import { getTableConfig } from "drizzle-orm/pg-core";
 import { paymentDuplicateReviewCandidates, paymentDuplicateReviewExecutions, paymentDuplicateReviewMemberships, paymentDuplicateReviews } from "./schema";
 
 describe("cancelled duplicate review migration contract", () => {
+    test("0081 adds a default-false immutable canonical evidence selection flag", () => {
+        const migration = readFileSync(join(import.meta.dir, "../../drizzle/0081_cancelled_duplicate_canonical_evidence.sql"), "utf8");
+        const journal = readFileSync(join(import.meta.dir, "../../drizzle/meta/_journal.json"), "utf8");
+        expect(journal).toContain('"tag": "0081_cancelled_duplicate_canonical_evidence"');
+        expect(migration).toContain('"uses_canonical_evidence" boolean NOT NULL DEFAULT false');
+        expect(getTableConfig(paymentDuplicateReviewCandidates).columns.map((column) => column.name)).toContain("uses_canonical_evidence");
+    });
+
     test("adds the next append-only tenant-scoped review ledger", () => {
         const migration = readFileSync(join(import.meta.dir, "../../drizzle/0080_cancelled_payment_duplicate_reviews.sql"), "utf8");
         const journal = readFileSync(join(import.meta.dir, "../../drizzle/meta/_journal.json"), "utf8");

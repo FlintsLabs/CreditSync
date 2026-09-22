@@ -1,5 +1,11 @@
 # CreditSync Plugin Changelog
 
+## v10.8.0 - 2026-09-23
+
+### Added
+
+- Added explicit, bounded canonical-evidence selection for the cancelled duplicate review workflow. Selection is persisted per candidate, rechecked at execute/authorization, and keeps legacy review hashes unchanged.
+
 ## v10.7.0 - 2026-09-22
 
 ### Added
