@@ -10,6 +10,7 @@ import { countAuthoritativeEvidenceAttempts, registerFinancialEvidenceRequiremen
 import { effectivePaymentEvidence } from "./payment-effective-evidence-service";
 import { assessPaymentReplacementDuplicates, assertPaymentReplacementDuplicateSafe, duplicateIdentityLock } from "./payment-duplicate-guard";
 import { classifyPaymentWorkflowBlocker } from "./payment-workflow-blockers";
+import { withPaymentWorkflowTransaction } from "./payment-workflow-locks";
 
 type Executor = DbExecutor;
 type Intake = typeof paymentIntakes.$inferSelect;
@@ -105,5 +106,5 @@ export async function createPaymentReplacement(ctx: CommandContext, input: { pay
             : { tenantId: ctx.tenantId, lineageId: lineage.id, replacementPaymentIntakeId: child.id, sourcePaymentIntakeId: item.sourceIntakeId, sourceEvidenceId: null, sourceSupplementId: -item.sourceEvidenceId }));
         return { sourcePaymentIntakePublicId: current.publicId, replacementPaymentIntakePublicId: child.publicId, status: "draft" as const, auditPublicId: audit.publicId, correlationId: ctx.correlationId, lineagePublicId: lineage.publicId };
     };
-    return executor ? run(executor) : db.transaction(run);
+    return executor ? run(executor) : withPaymentWorkflowTransaction(run);
 }

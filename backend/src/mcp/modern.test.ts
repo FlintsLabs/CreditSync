@@ -32,7 +32,7 @@ function startModernServer(
         }
         if (name === "workflow.resolve") return {
             workflowId: "creditsync.inspect", workflowVersion: "workflow-resolver-1.1.0", catalogVersion: MCP_CATALOG_VERSION,
-            policyRevision: "restore-cancellation-2026-09-21", observed: { state: "mutable", loanType: null, evidenceReady: false, restoreCancellationAllowed: null, restoreCancellationBlockedReason: null, restoreCancellationStateHash: null },
+            policyRevision: "restore-cancellation-2026-09-21", observed: { state: "mutable", loanType: null, evidenceReady: false, restoreCancellationAllowed: null, restoreCancellationBlockedReason: null, restoreCancellationStateHash: null, paymentBlockers: [] },
             status: "next_step", nextSteps: [], blockers: [], prohibitedTools: [], reevaluateOn: "target_change",
         };
         return name === "borrower.search" ? { resolution: "none", matchType: null, candidates: [] } : { ok: true };

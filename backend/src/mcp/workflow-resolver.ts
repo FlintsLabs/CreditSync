@@ -61,7 +61,7 @@ type TargetArgumentKind = WorkflowTargetKind | "loan_for_disbursement";
 
 const targetArguments: Readonly<Record<string, TargetArgumentKind>> = Object.freeze({
     "borrower.resolve-and-portfolio": "borrower", "loan.inspect-context": "loan", "payment.match-context": "payment_intake", "intake.get": "payment_intake",
-    "payment.preview": "payment_intake", "payment.post": "payment_intake", "payment.replacement.inspect": "payment_intake", "payment.replacement.create": "payment_intake", "payment.replacement.duplicate-review.preview": "payment_intake", "evidence.prepare": "payment_intake", "evidence.finalize": "payment_intake", "evidence.import-chatgpt-file": "payment_intake",
+    "payment.preview": "payment_intake", "payment.post": "payment_intake", "payment.replacement.inspect": "payment_intake", "payment.replacement.create": "payment_intake", "payment.replacement.duplicate-review.preview": "payment_intake", "payment.evidence-recovery.preview": "payment_intake", "payment.evidence-recovery.execute": "payment_intake", "evidence.prepare": "payment_intake", "evidence.finalize": "payment_intake", "evidence.import-chatgpt-file": "payment_intake",
     "payment.evidence-supplement.import-chatgpt-file": "payment_intake", "payment.evidence-supplement.record": "payment_intake", "loan.disbursement.list": "loan_for_disbursement",
     "loan.disbursement.draft": "loan", "loan.disbursement.evidence.prepare": "loan_disbursement", "loan.disbursement.evidence.finalize": "loan_disbursement", "loan.disbursement.evidence.import-chatgpt-file": "loan_disbursement",
     "loan.disbursement.post": "loan_disbursement", "loan.settlement.preview": "loan", "loan.activate": "loan", "loan.draft": "borrower", "renewal.preview": "loan", "payment.restore.cancel": "payment_intake",
@@ -74,14 +74,14 @@ const requiredInputs: Readonly<Record<string, readonly string[]>> = Object.freez
     "loan.disbursement.draft": ["grossAmount", "loanAttributedAmount", "channel", "disbursedAt"], "loan.disbursement.post": ["idempotencyKey"],
     "loan.preview": ["principal", "interestRate", "termMonths", "repaymentType", "startDate"],
     "loan.draft": ["borrowerPublicId", "principal", "interestRate", "termMonths", "repaymentType", "startDate"], "loan.activate": ["idempotencyKey"], "loan.settlement.preview": ["asOfDate"], "renewal.preview": ["oldLoanPublicId", "requestedPrincipal"],
-    "borrower.resolve-and-portfolio": ["query", "borrowerPublicId"], "loan.inspect-context": ["loanPublicId"], "payment.match-context": ["paymentIntakePublicId"], "intake.get": ["paymentIntakePublicId"], "payment.replacement.inspect": ["paymentIntakePublicId"], "payment.replacement.create": ["paymentIntakePublicId", "reason", "idempotencyKey", "expectedStateHash"], "payment.replacement.duplicate-review.preview": ["canonicalPaymentIntakePublicId", "candidatePaymentIntakePublicIds", "reason", "idempotencyKey"], "loan.disbursement.list": ["loanPublicId"],
+    "borrower.resolve-and-portfolio": ["query", "borrowerPublicId"], "loan.inspect-context": ["loanPublicId"], "payment.match-context": ["paymentIntakePublicId"], "intake.get": ["paymentIntakePublicId"], "payment.replacement.inspect": ["paymentIntakePublicId"], "payment.replacement.create": ["paymentIntakePublicId", "reason", "idempotencyKey", "expectedStateHash"], "payment.replacement.duplicate-review.preview": ["canonicalPaymentIntakePublicId", "candidatePaymentIntakePublicIds", "reason", "idempotencyKey"], "payment.evidence-recovery.preview": ["sourcePaymentIntakePublicId", "reason", "expectedCount", "reuseEvidence", "idempotencyKey"], "loan.disbursement.list": ["loanPublicId"],
     "payment.restore.cancel": ["expectedStateHash", "reason", "idempotencyKey"],
 });
 
 const targetArgumentFields: Readonly<Record<string, string>> = Object.freeze({
     "renewal.preview": "oldLoanPublicId",
     "payment.restore.cancel": "restoreDraftPublicId",
-    "payment.replacement.duplicate-review.preview": "canonicalPaymentIntakePublicId",
+    "payment.replacement.duplicate-review.preview": "canonicalPaymentIntakePublicId", "payment.evidence-recovery.preview": "sourcePaymentIntakePublicId",
 });
 
 function step(toolName: string, input: ResolverInput, inputs: readonly string[] = requiredInputs[toolName] ?? [], requiresConfirmation = false): ResolverStep | null {
@@ -185,6 +185,7 @@ export function resolveWorkflowPolicy(input: ResolverInput, observation: Resolve
     }
     if (input.target!.kind === "payment_intake" && observation.state === "cancelled" && input.intent === "receive_payment") {
         if (observation.duplicateReviewRequired === true) return withObservation(result(input, profile, "next_step", [step("payment.replacement.duplicate-review.preview", input)], ["PAYMENT_DUPLICATE_REQUIRES_REVIEW"], ["payment.post", "payment.replacement.create"]), observation);
+        if (observation.evidenceRequired === true && observation.evidenceReady !== true) return withObservation(result(input, profile, "next_step", [step("payment.evidence-recovery.preview", input)], ["PAYMENT_REPLACEMENT_EVIDENCE_NOT_READY"], ["payment.post", "payment.replacement.create"]), observation);
         return withObservation(result(input, profile, "next_step", [step("payment.replacement.inspect", input)], ["CANCELLED_PAYMENT_REQUIRES_REPLACEMENT_INSPECTION"], ["payment.post", "evidence.prepare", "evidence.finalize"]), observation);
     }
     if (input.target!.kind === "payment_intake" && observation.state === "posted" && (input.intent === "receive_payment" || input.intent === "attach_evidence")) {

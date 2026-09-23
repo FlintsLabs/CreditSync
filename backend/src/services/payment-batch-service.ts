@@ -21,6 +21,7 @@ import { emptyFloatingBatchState, projectFloatingBatchPayment, type FloatingBatc
 import { BUCKET_NAME, createSignedPutUrl, headStoredObject, toStorageReference } from "../lib/storage";
 import { cancelLockedPaymentIntake } from "./payment-cancellation-service";
 import { effectivePaymentEvidence, effectiveReadyPaymentEvidence } from "./payment-effective-evidence-service";
+import { withPaymentWorkflowTransaction } from "./payment-workflow-locks";
 
 type BatchRow = typeof paymentBatches.$inferSelect;
 type ItemRow = typeof paymentBatchItems.$inferSelect;
@@ -1057,7 +1058,7 @@ export async function executePaymentBatch(ctx: CommandContext, batchPublicId: st
         await options.afterStage?.("all");
         return presentExecutionReceipt(await recordOperation(tx, ctx, updated, null, "batch.execute", input.idempotencyKey, requestHash, { batchPublicId: updated.publicId, status: "posted", posted, auditPublicIds: [audit.publicId] }));
     };
-    return db.transaction(run);
+    return withPaymentWorkflowTransaction(run);
 }
 
 export type { BatchObligation, BatchSlip };

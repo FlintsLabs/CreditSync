@@ -1021,6 +1021,8 @@
         "confirmReverse": "Confirm reversal",
         "lineage": { "repostedAfterReversal": "Posted again after reversal", "repostedBy": "A replacement payment was posted after this reversal", "viewOriginal": "View original payment", "viewRepost": "View reposted payment" },
         "semanticReviewConfirmation": "I reviewed the possible duplicate matches and confirmed this is a separate payment.",
+        "identity": { "distinct": "Distinct payment", "same": "Same payment", "preview": "Review exact pair", "confirm": "Confirm {{decision}} for this exact participant pair.", "confirmCheckbox": "I reviewed the current evidence and participant snapshots.", "execute": "Record decision" },
+        "recovery": { "title": "Recover cancelled evidence", "description": "Create an immutable successor without changing the cancelled source or lowering its evidence requirement.", "reason": "Recovery reason", "preview": "Preview recovery", "requirement": "Required evidence slots: {{count}}", "successor": "Existing successor: {{id}}", "confirm": "I reviewed the source history and required evidence.", "execute": "Create recovery draft" },
         "audit": "Audit trail",
         "auditId": "Audit ID",
         "correlationId": "Correlation ID",
@@ -1040,7 +1042,7 @@
             "POSSIBLE_SEMANTIC_DUPLICATE": "Possible semantic duplicate found. Review the matching payments before posting.",
             "UNKNOWN": "Review this allocation warning before continuing."
         },
-        "errors": { "load": "Unable to load payment inbox.", "loadDetail": "Unable to load payment detail.", "action": "Payment action failed.", "PAYMENT_CANCEL_BATCH_REQUIRED": "Cancel this intake through its batch workflow.", "PAYMENT_CANCEL_FORBIDDEN": "You are not authorized to cancel this intake.", "PAYMENT_CANCEL_STALE": "This intake changed. Review it again before cancelling.", "PAYMENT_REVERSE_REQUIRED": "Posted payments must use reversal.", "PAYMENT_CANCEL_NOT_ALLOWED": "This intake cannot be cancelled.", "PAYMENT_CANCEL_DEPENDENCY_REQUIRED": "A linked workflow must handle this cancellation.", "PAYMENT_BATCH_MUTATION_FORBIDDEN": "You are not authorized to change this batch." }
+        "errors": { "load": "Unable to load payment inbox.", "loadDetail": "Unable to load payment detail.", "action": "Payment action failed.", "PAYMENT_CANCEL_BATCH_REQUIRED": "Cancel this intake through its batch workflow.", "PAYMENT_CANCEL_FORBIDDEN": "You are not authorized to cancel this intake.", "PAYMENT_CANCEL_STALE": "This intake changed. Review it again before cancelling.", "PAYMENT_REVERSE_REQUIRED": "Posted payments must use reversal.", "PAYMENT_CANCEL_NOT_ALLOWED": "This intake cannot be cancelled.", "PAYMENT_CANCEL_DEPENDENCY_REQUIRED": "A linked workflow must handle this cancellation.", "PAYMENT_BATCH_MUTATION_FORBIDDEN": "You are not authorized to change this batch.", "PAYMENT_EVIDENCE_RECOVERY_REQUIREMENT_FLOOR": "Recovery cannot lower the source evidence requirement.", "PAYMENT_EVIDENCE_RECOVERY_SUCCESSOR_EXISTS": "Inspect and continue the existing recovery successor.", "PAYMENT_IDENTITY_HARD_CONFLICT": "Matching bank or QR identity requires human investigation." }
     },
     "renewal": {
         "title": "Daily Loan Renewal",

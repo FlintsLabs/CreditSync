@@ -7,6 +7,7 @@ import { createAuditLog } from "../lib/audit-log";
 import { lockPaymentBorrowers, paymentIntakeBorrowerIds } from "./payment-chronology-service";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
+import { withPaymentWorkflowTransaction } from "./payment-workflow-locks";
 
 type Executor = DbExecutor;
 type Intake = typeof paymentIntakes.$inferSelect;
@@ -225,7 +226,7 @@ async function cancelPaymentIntakeInternal(
             : async (guardTx, guardCtx, guardRow) => assertCancellationDependencies(guardTx, guardCtx, guardRow);
         return cancelLockedPaymentIntake(ctx, tx, current, { reason, idempotencyKey: key, expectedStateHash: input.expectedStateHash, requestHash: expectedHash }, null, guard);
     };
-    return executor ? run(executor) : db.transaction(run);
+    return executor ? run(executor) : withPaymentWorkflowTransaction(run);
 }
 
 export async function cancelPaymentIntake(ctx: CommandContext, publicId: string, input: { reason: string; idempotencyKey: string; expectedStateHash: string }, executor?: Executor) {

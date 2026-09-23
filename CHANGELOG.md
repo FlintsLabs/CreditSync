@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.54 - 2026-09-23
+
+### Added
+
+- Added exact participant-scoped identity decision preview/execute receipts, confirmed cancelled-evidence recovery preview/execute receipts, authenticated REST routes, MCP tools, and Payment Inbox actions with preserved requirement floors and legal successor handling.
+
+### Changed
+
+- Revalidated identity snapshots and active postings before duplicate authorization, enforced request-hash idempotency conflicts, synchronized five-minute duplicate locks across minute boundaries, and applied bounded transaction retry to replay-safe payment writers.
+- Regenerated the CreditSync 10.8.0 MCP contract and profile inventory at 145 tools.
+
 ## v0.4.53 - 2026-09-23
 
 ### Added

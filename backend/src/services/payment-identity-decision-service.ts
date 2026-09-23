@@ -5,10 +5,23 @@ import { paymentIdentityDecisionPreviews, paymentIdentityDecisions, paymentIntak
 import { createAuditLog } from "../lib/audit-log";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
-import { lockPaymentWorkflowIdentity } from "./payment-workflow-locks";
+import { lockPaymentWorkflowIdentity, withPaymentWorkflowTransaction } from "./payment-workflow-locks";
+import { canAccessTenantWideData } from "../lib/access";
 
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const operators = new Set(["owner", "manager", "collector"]);
+
+type PaymentSnapshot = { publicId: string; amount: string; payerName: string | null; receivedAt: string; bankReferenceHash: string | null; qrPayloadHash: string | null; status: string };
+function paymentSnapshot(row: typeof paymentIntakes.$inferSelect): PaymentSnapshot {
+    return { publicId: row.publicId, amount: row.amount, payerName: row.payerName, receivedAt: row.receivedAt.toISOString(), bankReferenceHash: row.bankReferenceHash, qrPayloadHash: row.qrPayloadHash, status: row.status };
+}
+function snapshotsHash(rows: Array<typeof paymentIntakes.$inferSelect>) { return digest(rows.map(paymentSnapshot).sort((a, b) => a.publicId.localeCompare(b.publicId))); }
+function hardIdentityConflicts(rows: Array<typeof paymentIntakes.$inferSelect>) {
+    const bank = rows.map((row) => row.bankReferenceHash).filter((value): value is string => !!value);
+    const qr = rows.map((row) => row.qrPayloadHash).filter((value): value is string => !!value);
+    return new Set(bank).size !== bank.length || new Set(qr).size !== qr.length;
+}
+function exactPair(participants: string[], first: string, second: string) { return participants.length === 2 && participants[0] === first && participants[1] === second; }
 
 async function requireOperator(ctx: CommandContext, tx: DbExecutor) {
     const user = ctx.actorUserId === null ? null : await tx.query.users.findFirst({ where: and(eq(users.tenantId, ctx.tenantId), eq(users.id, ctx.actorUserId)) });
@@ -16,24 +29,32 @@ async function requireOperator(ctx: CommandContext, tx: DbExecutor) {
     return user;
 }
 
+function requireParticipantAccess(user: typeof users.$inferSelect, rows: Array<typeof paymentIntakes.$inferSelect>) {
+    if (canAccessTenantWideData({ role: user.role ?? "viewer" })) return;
+    if (rows.some((row) => row.ownerUserId !== user.id)) throw new DomainError("PAYMENT_IDENTITY_DECISION_FORBIDDEN", "Collector access is limited to owned payment participants", 403);
+}
+
 export async function previewPaymentIdentityDecision(ctx: CommandContext, input: { participantPaymentIntakePublicIds: string[]; decision: "same_payment" | "distinct_payment"; reason: string; idempotencyKey: string }, executor?: DbExecutor) {
     const run = async (tx: DbExecutor) => {
-        await requireOperator(ctx, tx);
+        const user = await requireOperator(ctx, tx);
         const participantPublicIds = [...new Set(input.participantPaymentIntakePublicIds)].sort();
         if (participantPublicIds.length < 2 || !input.reason?.trim() || !input.idempotencyKey?.trim()) throw new DomainError("PAYMENT_IDENTITY_DECISION_INVALID", "At least two participants, a reason, and an idempotency key are required", 400);
         await lockPaymentWorkflowIdentity(ctx, tx, participantPublicIds);
         const rows = await tx.query.paymentIntakes.findMany({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.publicId, participantPublicIds)) });
         if (rows.length !== participantPublicIds.length) throw new DomainError("PAYMENT_INTAKE_NOT_FOUND", "Every payment participant must belong to the tenant", 404);
-        const snapshots = rows.map((row) => ({ publicId: row.publicId, amount: row.amount, payerName: row.payerName, receivedAt: row.receivedAt.toISOString(), bankReferenceHash: row.bankReferenceHash, qrPayloadHash: row.qrPayloadHash, status: row.status })).sort((a, b) => a.publicId.localeCompare(b.publicId));
-        if (input.decision === "distinct_payment" && snapshots.some((row) => row.bankReferenceHash || row.qrPayloadHash)) throw new DomainError("PAYMENT_IDENTITY_HARD_CONFLICT", "Hard payment identity prevents a distinct decision", 409);
+        requireParticipantAccess(user, rows);
+        const snapshots = rows.map(paymentSnapshot).sort((a, b) => a.publicId.localeCompare(b.publicId));
+        if (input.decision === "distinct_payment" && hardIdentityConflicts(rows)) throw new DomainError("PAYMENT_IDENTITY_HARD_CONFLICT", "Matching bank or QR identity prevents a distinct decision", 409);
         const participantSnapshotHash = digest(snapshots);
-        const previewHash = digest({ participantPublicIds, participantSnapshotHash, decision: input.decision, reason: input.reason.trim() });
+        const requestHash = digest({ participantPublicIds, decision: input.decision, reason: input.reason.trim(), idempotencyKey: input.idempotencyKey.trim() });
+        const previewHash = digest({ participantPublicIds, participantSnapshotHash, decision: input.decision, reason: input.reason.trim(), requestHash });
         const existing = await tx.query.paymentIdentityDecisionPreviews.findFirst({ where: and(eq(paymentIdentityDecisionPreviews.tenantId, ctx.tenantId), eq(paymentIdentityDecisionPreviews.idempotencyKey, input.idempotencyKey.trim())) });
-        if (existing) { if (existing.previewHash !== previewHash) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was used for a different identity preview", 409); return { identityDecisionPreviewPublicId: existing.publicId, previewHash: existing.previewHash, participantSnapshotHash: existing.participantSnapshotHash, participantPaymentIntakePublicIds: participantPublicIds, decision: existing.decision as typeof input.decision, expiresAt: existing.expiresAt.toISOString(), correlationId: existing.correlationId }; }
-        const preview = await tx.insert(paymentIdentityDecisionPreviews).values({ tenantId: ctx.tenantId, participantPublicIds, participantSnapshotHash, decision: input.decision, reason: input.reason.trim(), previewHash, expiresAt: new Date(Date.now() + 15 * 60 * 1000), requestId: ctx.requestId, correlationId: ctx.correlationId, idempotencyKey: input.idempotencyKey.trim(), createdByUserId: ctx.actorUserId! }).returning().then((rows) => rows[0]!);
-        return { identityDecisionPreviewPublicId: preview.publicId, previewHash, participantSnapshotHash, participantPaymentIntakePublicIds: participantPublicIds, decision: input.decision, expiresAt: preview.expiresAt.toISOString(), correlationId: ctx.correlationId };
+        if (existing) { if (existing.requestHash !== requestHash) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was used for a different identity preview", 409); return { identityDecisionPreviewPublicId: existing.publicId, previewHash: existing.previewHash, participantSnapshotHash: existing.participantSnapshotHash, participantPaymentIntakePublicIds: participantPublicIds, decision: existing.decision as typeof input.decision, expiresAt: existing.expiresAt.toISOString(), auditPublicId: existing.auditPublicId, correlationId: existing.correlationId }; }
+        const audit = await createAuditLog(tx, { tenantId: ctx.tenantId, actorUserId: ctx.actorUserId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, entityType: "payment_identity_decision_preview", entityId: participantPublicIds.join(","), action: "previewed", payload: { participantPaymentIntakePublicIds: participantPublicIds, decision: input.decision, previewHash, requestHash } });
+        const preview = await tx.insert(paymentIdentityDecisionPreviews).values({ tenantId: ctx.tenantId, participantPublicIds, participantSnapshotHash, decision: input.decision, reason: input.reason.trim(), previewHash, requestHash, auditPublicId: audit.publicId, expiresAt: new Date(Date.now() + 15 * 60 * 1000), requestId: ctx.requestId, correlationId: ctx.correlationId, idempotencyKey: input.idempotencyKey.trim(), createdByUserId: ctx.actorUserId! }).returning().then((rows) => rows[0]!);
+        return { identityDecisionPreviewPublicId: preview.publicId, previewHash, participantSnapshotHash, participantPaymentIntakePublicIds: participantPublicIds, decision: input.decision, expiresAt: preview.expiresAt.toISOString(), auditPublicId: audit.publicId, correlationId: ctx.correlationId };
     };
-    return executor ? run(executor) : db.transaction(run);
+    return executor ? run(executor) : withPaymentWorkflowTransaction(run);
 }
 
 export async function executePaymentIdentityDecision(ctx: CommandContext, input: { identityDecisionPreviewPublicId: string; previewHash: string; confirmed: true; reason: string; idempotencyKey: string }, executor?: DbExecutor) {
@@ -44,20 +65,36 @@ export async function executePaymentIdentityDecision(ctx: CommandContext, input:
         await lockPaymentWorkflowIdentity(ctx, tx, preview.participantPublicIds);
         const requestHash = digest({ preview: input.identityDecisionPreviewPublicId, previewHash: input.previewHash, reason: input.reason.trim(), idempotencyKey: input.idempotencyKey.trim() });
         const existing = await tx.query.paymentIdentityDecisions.findFirst({ where: and(eq(paymentIdentityDecisions.tenantId, ctx.tenantId), eq(paymentIdentityDecisions.idempotencyKey, input.idempotencyKey.trim())) });
-        if (existing) return { decisionPublicId: existing.publicId, auditPublicId: existing.auditPublicId, correlationId: existing.correlationId, decision: existing.decision };
+        if (existing) { if (existing.requestHash !== requestHash) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key was used for a different identity decision", 409); return { decisionPublicId: existing.publicId, auditPublicId: existing.auditPublicId, correlationId: existing.correlationId, decision: existing.decision }; }
         if (input.confirmed !== true || preview.previewHash !== input.previewHash || preview.expiresAt.getTime() <= Date.now() || preview.reason !== input.reason.trim()) throw new DomainError("PAYMENT_IDENTITY_PREVIEW_STALE", "Fresh identity preview confirmation is required", 409);
         const current = await tx.query.paymentIntakes.findMany({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.publicId, preview.participantPublicIds)) });
-        const snapshotHash = digest(current.map((row) => ({ publicId: row.publicId, amount: row.amount, payerName: row.payerName, receivedAt: row.receivedAt.toISOString(), bankReferenceHash: row.bankReferenceHash, qrPayloadHash: row.qrPayloadHash, status: row.status })).sort((a, b) => a.publicId.localeCompare(b.publicId)));
+        if (current.length !== preview.participantPublicIds.length) throw new DomainError("PAYMENT_INTAKE_NOT_FOUND", "Every payment participant must belong to the tenant", 404);
+        requireParticipantAccess(user, current);
+        const snapshotHash = snapshotsHash(current);
         if (snapshotHash !== preview.participantSnapshotHash) throw new DomainError("PAYMENT_IDENTITY_PREVIEW_STALE", "Payment participants changed; preview again", 409);
+        if (preview.decision === "distinct_payment" && hardIdentityConflicts(current)) throw new DomainError("PAYMENT_IDENTITY_HARD_CONFLICT", "Matching bank or QR identity prevents a distinct decision", 409);
+        const previous = (await tx.select().from(paymentIdentityDecisions).where(eq(paymentIdentityDecisions.tenantId, ctx.tenantId)))
+            .filter((row) => JSON.stringify([...row.participantPublicIds].sort()) === JSON.stringify([...preview.participantPublicIds].sort()))
+            .sort((a, b) => b.id - a.id)[0];
         const audit = await createAuditLog(tx, { tenantId: ctx.tenantId, actorUserId: user.id, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, entityType: "payment_identity_decision", entityId: preview.publicId, action: "executed", payload: { decision: preview.decision, participantPaymentIntakePublicIds: preview.participantPublicIds, previewHash: preview.previewHash, requestHash } });
-        const decision = await tx.insert(paymentIdentityDecisions).values({ tenantId: ctx.tenantId, decision: preview.decision, reason: input.reason.trim(), participantPublicIds: preview.participantPublicIds, participantSnapshotHash: preview.participantSnapshotHash, requestId: ctx.requestId, correlationId: ctx.correlationId, idempotencyKey: input.idempotencyKey.trim(), auditPublicId: audit.publicId, createdByUserId: user.id }).returning().then((rows) => rows[0]!);
+        const decision = await tx.insert(paymentIdentityDecisions).values({ tenantId: ctx.tenantId, decision: preview.decision, reason: input.reason.trim(), participantPublicIds: preview.participantPublicIds, participantSnapshotHash: preview.participantSnapshotHash, requestHash, requestId: ctx.requestId, correlationId: ctx.correlationId, idempotencyKey: input.idempotencyKey.trim(), auditPublicId: audit.publicId, createdByUserId: user.id, supersedesDecisionId: previous?.id ?? null }).returning().then((rows) => rows[0]!);
         return { decisionPublicId: decision.publicId, auditPublicId: audit.publicId, correlationId: ctx.correlationId, decision: decision.decision };
     };
-    return executor ? run(executor) : db.transaction(run);
+    return executor ? run(executor) : withPaymentWorkflowTransaction(run);
 }
 
 /** Compatibility reader used by duplicate detection; historical duplicate-review rows remain authoritative too. */
 export async function identityDecisionAuthorizesPair(ctx: CommandContext, firstPublicId: string, secondPublicId: string, executor: DbExecutor = db) {
-    const rows = await executor.select({ decision: paymentIdentityDecisions.decision, participants: paymentIdentityDecisions.participantPublicIds }).from(paymentIdentityDecisions).where(eq(paymentIdentityDecisions.tenantId, ctx.tenantId));
-    return rows.some((row) => row.participants.includes(firstPublicId) && row.participants.includes(secondPublicId));
+    if (firstPublicId === secondPublicId) return false;
+    const rows = await executor.select().from(paymentIdentityDecisions).where(eq(paymentIdentityDecisions.tenantId, ctx.tenantId));
+    const pairRows = rows.filter((row) => row.participantPublicIds.includes(firstPublicId) && row.participantPublicIds.includes(secondPublicId)).sort((a, b) => b.id - a.id);
+    const latest = pairRows[0];
+    if (!latest) return false;
+    const participantIds = [...new Set(latest.participantPublicIds)].sort();
+    if (latest.decision === "distinct_payment" && !exactPair(participantIds, ...[firstPublicId, secondPublicId].sort() as [string, string])) return false;
+    const current = await executor.query.paymentIntakes.findMany({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.publicId, participantIds)) });
+    if (current.length !== participantIds.length || snapshotsHash(current) !== latest.participantSnapshotHash) return false;
+    if (latest.decision === "distinct_payment") return !hardIdentityConflicts(current);
+    const activePosted = current.filter((row) => row.status === "posted").length;
+    return activePosted <= 1;
 }

@@ -96,6 +96,8 @@ export async function assertPaymentReplacementDuplicateSafe(ctx: CommandContext,
 }
 
 export async function duplicateIdentityLock(ctx: CommandContext, input: { bankReferenceHash?: string | null; qrPayloadHash?: string | null; amount: string; payerName?: string | null; receivedAt: Date }, executor: DbExecutor = db) {
-    const keys = [input.bankReferenceHash, input.qrPayloadHash, hash(`${new Decimal(input.amount).toFixed(2)}:${normalizeBorrowerText(input.payerName ?? "")}:${Math.floor(input.receivedAt.getTime() / 60_000)}`)].filter((value): value is string => !!value);
-    for (const key of keys.sort()) await executor.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`payment-duplicate:${ctx.tenantId}:${key}`}, 0))`);
+    const minute = Math.floor(input.receivedAt.getTime() / 60_000);
+    const semanticKeys = Array.from({ length: 9 }, (_, index) => hash(`${new Decimal(input.amount).toFixed(2)}:${normalizeBorrowerText(input.payerName ?? "")}:${minute + index - 4}`));
+    const keys = ["tenant-identity", input.bankReferenceHash, input.qrPayloadHash, ...semanticKeys].filter((value): value is string => !!value);
+    for (const key of [...new Set(keys)].sort()) await executor.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`payment-duplicate:${ctx.tenantId}:${key}`}, 0))`);
 }

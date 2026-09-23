@@ -15,6 +15,8 @@ import {
     reviewPaymentIntake,
 } from "../services/payment-service";
 import { cancelPaymentIntake } from "../services/payment-cancellation-service";
+import { executePaymentIdentityDecision, previewPaymentIdentityDecision } from "../services/payment-identity-decision-service";
+import { executePaymentEvidenceRecovery, previewPaymentEvidenceRecovery } from "../services/payment-evidence-recovery-service";
 
 type RouteUser = { id: number; tenantId: string };
 
@@ -162,6 +164,28 @@ export const paymentIntakesRoute = new Elysia({ prefix: "/payment-intakes" })
         params: t.Object({ id: t.String() }),
         body: t.Object({ allocations: t.Optional(t.Array(explicitAllocation)) }),
     })
+    .post("/:id/identity-decision/preview", async ({ params, body, user, request, set }) => {
+        if (!user) return unauthorized(set);
+        try {
+            const idempotencyKey = request.headers.get("idempotency-key") ?? body.idempotencyKey;
+            return await previewPaymentIdentityDecision(commandContext(user, request), { ...body, participantPaymentIntakePublicIds: [...new Set([params.id, ...body.participantPaymentIntakePublicIds])], idempotencyKey });
+        } catch (error) { return domainFailure(error, set); }
+    }, { params: t.Object({ id: t.String({ format: "uuid" }) }), body: t.Object({ participantPaymentIntakePublicIds: t.Array(t.String({ format: "uuid" }), { minItems: 1, maxItems: 50 }), decision: t.Union([t.Literal("same_payment"), t.Literal("distinct_payment")]), reason: t.String(), idempotencyKey: t.String() }) })
+    .post("/:id/identity-decision/execute", async ({ body, user, request, set }) => {
+        if (!user) return unauthorized(set);
+        try { return await executePaymentIdentityDecision(commandContext(user, request), { ...body, confirmed: true, idempotencyKey: request.headers.get("idempotency-key") ?? body.idempotencyKey }); }
+        catch (error) { return domainFailure(error, set); }
+    }, { body: t.Object({ identityDecisionPreviewPublicId: t.String({ format: "uuid" }), previewHash: t.String(), confirmed: t.Literal(true), reason: t.String(), idempotencyKey: t.String() }) })
+    .post("/:id/evidence-recovery/preview", async ({ params, body, user, request, set }) => {
+        if (!user) return unauthorized(set);
+        try { return await previewPaymentEvidenceRecovery(commandContext(user, request), { ...body, sourcePaymentIntakePublicId: params.id, idempotencyKey: request.headers.get("idempotency-key") ?? body.idempotencyKey }); }
+        catch (error) { return domainFailure(error, set); }
+    }, { params: t.Object({ id: t.String({ format: "uuid" }) }), body: t.Object({ reason: t.String(), expectedCount: t.Integer({ minimum: 1, maximum: 20 }), reuseEvidence: t.Boolean(), idempotencyKey: t.String() }) })
+    .post("/:id/evidence-recovery/execute", async ({ body, user, request, set }) => {
+        if (!user) return unauthorized(set);
+        try { return await executePaymentEvidenceRecovery(commandContext(user, request), { ...body, confirmed: true, idempotencyKey: request.headers.get("idempotency-key") ?? body.idempotencyKey }); }
+        catch (error) { return domainFailure(error, set); }
+    }, { body: t.Object({ recoveryPreviewPublicId: t.String({ format: "uuid" }), previewHash: t.String(), confirmed: t.Literal(true), reason: t.String(), idempotencyKey: t.String() }) })
     .post("/:id/post", async ({ params, body, user, request, set }) => {
         if (!user) return unauthorized(set);
         try {

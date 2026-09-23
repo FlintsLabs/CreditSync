@@ -47,6 +47,7 @@ import { DomainError } from "./domain-error";
 import { getPaymentCancellationCapability } from "./payment-cancellation-service";
 import { effectivePaymentEvidenceWithFiles } from "./payment-effective-evidence-service";
 import { assertPaymentReplacementDuplicateSafe, duplicateIdentityLock } from "./payment-duplicate-guard";
+import { withPaymentWorkflowTransaction } from "./payment-workflow-locks";
 import { assertFinancialEvidenceReady, registerFinancialEvidenceRequirement } from "./financial-evidence-requirement-service";
 import { assertNoLaterFloatingPayment, assertNoOlderPendingPayment, lockPaymentBorrowers, paymentIntakeBorrowerIds } from "./payment-chronology-service";
 import { normalizeBorrowerText } from "./borrower-service";
@@ -1995,7 +1996,7 @@ async function postPaymentKernel(ctx: CommandContext, intakePublicId: string, in
         });
         return { ...presentIntake(posted), transactions: createdTransactions.map(presentTransaction) };
     };
-    const result = executor ? await run(executor) : await db.transaction(run);
+    const result = executor ? await run(executor) : await withPaymentWorkflowTransaction(run);
     if ("stale" in result) {
         throw new DomainError("STALE_PAYMENT_PROPOSAL", "Payment proposal no longer matches current balances", 409);
     }

@@ -44,6 +44,8 @@ interface PaymentIntake extends PaymentIntakeSummary {
 interface LoanOption { publicId: string; borrowerPublicId: string; borrowerName: string; status: string }
 interface AuditEntry { id: number; action: string; requestId?: string | null; correlationId?: string | null; createdAt: string }
 interface EvidenceIntent { publicId: string; status?: string; uploadUrl?: string; requiredHeaders?: Record<string, string>; duplicate?: boolean }
+interface RecoveryPreview { recoveryPreviewPublicId: string; previewHash: string; requirementFloor: number; expectedCount: number; reusableEvidenceCount: number; existingSuccessorPaymentIntakePublicId: string | null; expiresAt: string }
+interface IdentityPreview { identityDecisionPreviewPublicId: string; previewHash: string; decision: "same_payment" | "distinct_payment"; participantPaymentIntakePublicIds: string[]; expiresAt: string }
 type AuditState = { status: "idle" | "loading" | "empty" | "forbidden" | "error" } | { status: "ready"; entries: AuditEntry[] };
 
 function newAllocation(amount = ""): AllocationDraft {
@@ -75,6 +77,11 @@ export default function PaymentInbox() {
     const [reversalReason, setReversalReason] = useState("");
     const [cancelOpen, setCancelOpen] = useState(false);
     const [cancelIntent, setCancelIntent] = useState<{ targetId: string; stateHash: string; idempotencyKey: string; submittedReason: string } | null>(null);
+    const [recoveryPreview, setRecoveryPreview] = useState<RecoveryPreview | null>(null);
+    const [recoveryReason, setRecoveryReason] = useState("");
+    const [recoveryConfirmed, setRecoveryConfirmed] = useState(false);
+    const [identityPreview, setIdentityPreview] = useState<IdentityPreview | null>(null);
+    const [identityDecision, setIdentityDecision] = useState<"same_payment" | "distinct_payment">("distinct_payment");
     const [editorRevision, setEditorRevision] = useState(0);
     const [proposalRevision, setProposalRevision] = useState<number | null>(null);
     const selectionToken = useRef(0);
@@ -130,6 +137,7 @@ export default function PaymentInbox() {
         setReversalReason("");
         setCancelOpen(false);
         setCancelIntent(null);
+        setRecoveryPreview(null); setRecoveryReason(""); setRecoveryConfirmed(false); setIdentityPreview(null); setIdentityDecision("distinct_payment");
         setDetailLoading(true);
         setMessage("");
         setAudit({ status: "loading" });
@@ -235,6 +243,26 @@ export default function PaymentInbox() {
         await api.post(`/payment-intakes/${detail!.publicId}/evidence/${intent.publicId}/finalize`);
     });
 
+    const previewRecovery = () => void mutate(async () => {
+        const expectedCount = Math.max(1, detail?.evidence?.length ?? 1);
+        const response = await api.post(`/payment-intakes/${detail!.publicId}/evidence-recovery/preview`, { reason: recoveryReason.trim(), expectedCount, reuseEvidence: false, idempotencyKey: crypto.randomUUID() });
+        setRecoveryPreview(response.data); setRecoveryConfirmed(false);
+    }, false);
+    const executeRecovery = () => void mutate(async () => {
+        if (!recoveryPreview) return;
+        await api.post(`/payment-intakes/${detail!.publicId}/evidence-recovery/execute`, { recoveryPreviewPublicId: recoveryPreview.recoveryPreviewPublicId, previewHash: recoveryPreview.previewHash, confirmed: true, reason: recoveryReason.trim(), idempotencyKey: crypto.randomUUID() });
+        setRecoveryPreview(null); setRecoveryConfirmed(false);
+    });
+    const previewIdentity = (candidatePublicId: string) => void mutate(async () => {
+        const response = await api.post(`/payment-intakes/${detail!.publicId}/identity-decision/preview`, { participantPaymentIntakePublicIds: [candidatePublicId], decision: identityDecision, reason: "Operator reviewed the exact payment pair", idempotencyKey: crypto.randomUUID() });
+        setIdentityPreview(response.data);
+    }, false);
+    const executeIdentity = () => void mutate(async () => {
+        if (!identityPreview) return;
+        await api.post(`/payment-intakes/${detail!.publicId}/identity-decision/execute`, { identityDecisionPreviewPublicId: identityPreview.identityDecisionPreviewPublicId, previewHash: identityPreview.previewHash, confirmed: true, reason: "Operator reviewed the exact payment pair", idempotencyKey: crypto.randomUUID() });
+        setIdentityPreview(null);
+    });
+
     if (searchParams.get("batch") === "1") return <div className="space-y-6"><PaymentBatchEditor initialBatchPublicId={searchParams.get("batchId")} onPreview={() => undefined} onExecute={() => undefined} /></div>;
     return <div className="space-y-6" aria-busy={listLoading || detailLoading || busy}>
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -260,7 +288,9 @@ export default function PaymentInbox() {
                     {detail.repostOfIntakePublicId && <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-sky-300/50 bg-sky-50 p-3 text-sm dark:bg-sky-950/30"><span>{t("payments.lineage.repostedAfterReversal")}</span><Button size="sm" variant="outline" onClick={() => void selectIntake(detail.repostOfIntakePublicId!)}>{t("payments.lineage.viewOriginal")}</Button></div>}
                     {detail.repostedByIntakePublicId && <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-sky-300/50 bg-sky-50 p-3 text-sm dark:bg-sky-950/30"><span>{t("payments.lineage.repostedBy")}</span><Button size="sm" variant="outline" onClick={() => void selectIntake(detail.repostedByIntakePublicId!)}>{t("payments.lineage.viewRepost")}</Button></div>}
                     {detail.status === "duplicate" && <div role="alert" className="flex gap-2 rounded border border-amber-400/40 bg-amber-400/10 p-3 text-sm"><AlertTriangle className="h-4 w-4" />{t("payments.duplicateWarning")}</div>}
-                    {semanticWarnings.map((warning) => <div role="alert" key={warning.code} className="rounded border border-amber-400/40 bg-amber-400/10 p-3 text-sm"><div className="flex gap-2 font-medium"><AlertTriangle className="h-4 w-4" />{t("payments.warnings.POSSIBLE_SEMANTIC_DUPLICATE")}</div><div className="mt-1 break-all font-mono text-xs">{warning.intakePublicIds?.join(", ")}</div><label className="mt-2 flex gap-2"><input type="checkbox" checked={semanticReviewed} onChange={(event) => setSemanticReviewed(event.target.checked)} />{t("payments.semanticReviewConfirmation")}</label></div>)}
+                    {semanticWarnings.map((warning) => <div role="alert" key={warning.code} className="rounded border border-amber-400/40 bg-amber-400/10 p-3 text-sm"><div className="flex gap-2 font-medium"><AlertTriangle className="h-4 w-4" />{t("payments.warnings.POSSIBLE_SEMANTIC_DUPLICATE")}</div><div className="mt-1 break-all font-mono text-xs">{warning.intakePublicIds?.join(", ")}</div><label className="mt-2 flex gap-2"><input type="checkbox" checked={semanticReviewed} onChange={(event) => setSemanticReviewed(event.target.checked)} />{t("payments.semanticReviewConfirmation")}</label>{warning.intakePublicIds?.filter((id) => id !== detail.publicId).map((candidate) => <div className="mt-3 flex flex-wrap items-center gap-2" key={candidate}><select className="h-9 rounded border bg-background px-2" value={identityDecision} onChange={(event) => { setIdentityDecision(event.target.value as typeof identityDecision); setIdentityPreview(null); }}><option value="distinct_payment">{t("payments.identity.distinct")}</option><option value="same_payment">{t("payments.identity.same")}</option></select><Button size="sm" variant="outline" disabled={busy || !semanticReviewed} onClick={() => previewIdentity(candidate)}>{t("payments.identity.preview")}</Button></div>)}</div>)}
+                    {identityPreview && <div className="rounded border border-sky-300/50 bg-sky-50 p-3 text-sm dark:bg-sky-950/30"><p>{t("payments.identity.confirm", { decision: t(`payments.identity.${identityPreview.decision === "same_payment" ? "same" : "distinct"}`) })}</p><label className="mt-2 flex gap-2"><input type="checkbox" checked={recoveryConfirmed} onChange={(event) => setRecoveryConfirmed(event.target.checked)} />{t("payments.identity.confirmCheckbox")}</label><Button className="mt-2" size="sm" disabled={busy || !recoveryConfirmed} onClick={() => executeIdentity()}>{t("payments.identity.execute")}</Button></div>}
+                    {detail.status === "cancelled" && <div className="rounded border border-amber-400/40 bg-amber-400/10 p-3 text-sm"><p className="font-medium">{t("payments.recovery.title")}</p><p className="mt-1 text-muted-foreground">{t("payments.recovery.description")}</p><div className="mt-3 flex flex-wrap gap-2"><Input aria-label={t("payments.recovery.reason")} placeholder={t("payments.recovery.reason")} value={recoveryReason} onChange={(event) => { setRecoveryReason(event.target.value); setRecoveryPreview(null); }} /><Button size="sm" variant="outline" disabled={busy || !recoveryReason.trim()} onClick={previewRecovery}>{t("payments.recovery.preview")}</Button></div>{recoveryPreview && <div className="mt-3 rounded border bg-background p-3"><p>{t("payments.recovery.requirement", { count: recoveryPreview.requirementFloor })}</p>{recoveryPreview.existingSuccessorPaymentIntakePublicId && <p className="mt-1 font-mono text-xs">{t("payments.recovery.successor", { id: recoveryPreview.existingSuccessorPaymentIntakePublicId })}</p>}<label className="mt-2 flex gap-2"><input type="checkbox" checked={recoveryConfirmed} onChange={(event) => setRecoveryConfirmed(event.target.checked)} />{t("payments.recovery.confirm")}</label><Button className="mt-2" size="sm" disabled={busy || !recoveryConfirmed || Boolean(recoveryPreview.existingSuccessorPaymentIntakePublicId)} onClick={executeRecovery}>{t("payments.recovery.execute")}</Button></div>}</div>}
                     <dl className="grid gap-3 text-sm sm:grid-cols-2"><div><dt className="text-muted-foreground">{t("payments.amount")}</dt><dd>{money(detail.amount)}</dd></div><div><dt className="text-muted-foreground">{t("payments.reference")}</dt><dd>{detail.bankReference || "—"}</dd></div><div className="sm:col-span-2"><dt className="text-muted-foreground">{t("payments.intakeId")}</dt><dd className="break-all font-mono text-xs">{detail.publicId}</dd></div></dl>
                     {canEdit && <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={busy} onClick={() => void mutate(async () => { await api.post(`/payment-intakes/${detail.publicId}/review`, { status: "needs_review", notes: detail.notes ?? null }); })}>{t("payments.markReview")}</Button><label className="inline-flex cursor-pointer items-center rounded border px-3 py-1.5 text-sm"><FileUp className="mr-2 h-4 w-4" />{t("payments.addEvidence")}<input type="file" accept="image/jpeg,image/png,application/pdf" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadEvidence(file); }} /></label>{canCancel && <Button variant="destructive" onClick={() => { if (!cancelIntent || cancelIntent.targetId !== detail.publicId || !cancelIntent.submittedReason) setCancelIntent({ targetId: detail.publicId, stateHash: detail.cancellation.stateHash, idempotencyKey: crypto.randomUUID(), submittedReason: "" }); setCancelOpen(true); }}>{t("payments.cancel.button")}</Button>}</div>}
                     {detail.cancellation?.blockedReason && !canCancel && detail.status !== "cancelled" && <div role="status" className="rounded border border-amber-400/40 bg-amber-400/10 p-3 text-sm">{t(`payments.errors.${detail.cancellation.blockedReason}`, { defaultValue: detail.cancellation.blockedReason })}{detail.cancellation.batchPublicId && <a className="ml-2 underline" href={`?batch=1&batchId=${detail.cancellation.batchPublicId}`}>{t("payments.cancel.openBatch")}</a>}</div>}

@@ -2111,6 +2111,16 @@ describe("default MCP adapter integration", () => {
             duplicateReviewPublicId: duplicateReview.duplicateReviewPublicId, previewHash: duplicateReview.previewHash,
             confirmed: true, reason: "MCP contract duplicate review confirmation", idempotencyKey: "mcp-contract-duplicate-review-execute",
         })).toMatchObject({ data: duplicateExecution });
+        const identityPreview = (await call("payment.identity-decision.preview", {
+            participantPaymentIntakePublicIds: [cancellationDraft.publicId, cancelledDuplicate.publicId],
+            decision: "distinct_payment", reason: "MCP contract exact distinct receipts", idempotencyKey: "mcp-contract-identity-preview",
+        })).data;
+        expectWriteAuditMetadata(identityPreview);
+        await call("payment.identity-decision.execute", {
+            identityDecisionPreviewPublicId: identityPreview.identityDecisionPreviewPublicId,
+            previewHash: identityPreview.previewHash, confirmed: true,
+            reason: "MCP contract exact distinct receipts", idempotencyKey: "mcp-contract-identity-execute",
+        });
         const replacementInspection = (await call("payment.replacement.inspect", { paymentIntakePublicId: cancellationDraft.publicId })).data;
         const replacement = (await call("payment.replacement.create", {
             paymentIntakePublicId: cancellationDraft.publicId,
@@ -2119,6 +2129,17 @@ describe("default MCP adapter integration", () => {
             expectedStateHash: replacementInspection.stateHash,
         })).data;
         expect(replacement).toMatchObject({ status: "draft", sourcePaymentIntakePublicId: cancellationDraft.publicId });
+        const recoveryPreview = (await call("payment.evidence-recovery.preview", {
+            sourcePaymentIntakePublicId: cancelledDuplicate.publicId,
+            reason: "MCP contract evidence recovery", expectedCount: 1, reuseEvidence: false,
+            idempotencyKey: "mcp-contract-recovery-preview",
+        })).data;
+        expectWriteAuditMetadata(recoveryPreview);
+        await call("payment.evidence-recovery.execute", {
+            recoveryPreviewPublicId: recoveryPreview.recoveryPreviewPublicId,
+            previewHash: recoveryPreview.previewHash, confirmed: true,
+            reason: "MCP contract evidence recovery", idempotencyKey: "mcp-contract-recovery-execute",
+        });
 
         const resumableBatchTools = new Set<McpToolName>([
             "payment.batch.stage", "payment.batch.staging.evidence.prepare", "payment.batch.staging.evidence.finalize",

@@ -9,6 +9,7 @@ import { DomainError } from "./domain-error";
 import { countAuthoritativeEvidenceAttempts } from "./financial-evidence-requirement-service";
 import { effectivePaymentEvidence } from "./payment-effective-evidence-service";
 import { normalizeBorrowerText } from "./borrower-service";
+import { withPaymentWorkflowTransaction } from "./payment-workflow-locks";
 
 type Executor = DbExecutor;
 const operatorRoles = new Set(["owner", "manager", "collector"]);
@@ -151,7 +152,7 @@ export async function previewPaymentDuplicateReview(ctx: CommandContext, input: 
         await tx.insert(paymentDuplicateReviewCandidates).values(candidates.map((candidate) => ({ tenantId: ctx.tenantId, reviewId: review.id, candidatePaymentIntakeId: candidate.id, candidateStateHash: candidateSnapshot(candidate), usesCanonicalEvidence: canonicalEvidenceCandidateIds.includes(candidate.publicId) })));
         return { duplicateReviewPublicId: review.publicId, status: "previewed" as const, canonicalPaymentIntakePublicId: canonical.publicId, candidatePaymentIntakePublicIds: candidateIds, canonicalEvidenceCandidatePublicIds: canonicalEvidenceCandidateIds, previewHash, canonicalStateHash, evidenceHash: participantEvidence.hash, dependencyHash, expiresAt: expiresAt.toISOString(), auditPublicId: audit.publicId, correlationId: ctx.correlationId };
     };
-    return executor ? run(executor) : db.transaction(run);
+    return executor ? run(executor) : withPaymentWorkflowTransaction(run);
 }
 
 export async function executePaymentDuplicateReview(ctx: CommandContext, input: { duplicateReviewPublicId: string; previewHash: string; confirmed: true; reason: string; idempotencyKey: string }, executor?: Executor) {
@@ -214,7 +215,7 @@ export async function executePaymentDuplicateReview(ctx: CommandContext, input: 
         await tx.insert(paymentDuplicateReviewMemberships).values(currentCandidates.map((candidate) => ({ tenantId: ctx.tenantId, reviewId: review.id, executionId: execution.id, canonicalPaymentIntakeId: canonical.id, candidatePaymentIntakeId: candidate.id })));
         return { duplicateReviewPublicId: review.publicId, status: "executed" as const, auditPublicId: audit.publicId, correlationId: ctx.correlationId, executionPublicId: execution.publicId };
     };
-    return executor ? run(executor) : db.transaction(run);
+    return executor ? run(executor) : withPaymentWorkflowTransaction(run);
 }
 
 export async function reviewedDuplicateCandidateIds(ctx: CommandContext, intakeId: number, executor: Executor) {
