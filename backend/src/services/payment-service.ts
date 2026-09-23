@@ -946,7 +946,7 @@ export async function finalizePaymentEvidence(
         && head.metadata.tenant === ctx.tenantId
         && head.metadata.intake === intake.publicId;
     if (!valid) throw new DomainError("EVIDENCE_METADATA_MISMATCH", "Stored evidence metadata, size, type, ownership, or checksum does not match", 409);
-    return db.transaction(async (tx) => {
+    return withPaymentWorkflowTransaction(async (tx) => {
         await lockPaymentWorkflowIdentity(ctx, tx, [intake.publicId]);
         await lockMutableEvidenceIntake(tx, ctx, intake.id);
         await tx.execute(sql`SELECT id FROM payment_evidence WHERE tenant_id = ${ctx.tenantId} AND id = ${evidence.id} FOR UPDATE`);
@@ -1321,7 +1321,7 @@ export async function previewPaymentMatch(
         });
         return presentProposal(proposal, rows.map((row: AllocationRow, index: number) => ({ ...row, ...match.expanded[index] })), serializeMoney(requestedTotal));
     };
-    return executor ? run(executor) : db.transaction(run);
+    return executor ? run(executor) : withPaymentWorkflowTransaction(run);
 }
 
 function signed(value: Decimal.Value) {

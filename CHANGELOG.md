@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.55 - 2026-09-24
+
+### Added
+
+- Added disposable PostgreSQL concurrency regressions for cancel/post, evidence finalize/cancel, batch posting, overlapping identity groups, adjacent-minute identity creation, replacement/group extension, and committed-response replay.
+
+### Changed
+
+- Applied replay-safe transient transaction retry to payment matching previews and evidence finalization so serialization/deadlock failures replay the complete operation.
+
 ## v0.4.54 - 2026-09-23
 
 ### Added
