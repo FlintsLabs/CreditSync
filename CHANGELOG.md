@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.53 - 2026-09-23
+
+### Added
+
+- Added typed payment recovery blockers, append-only tenant-scoped identity decision previews/executions, immutable participant snapshots, evidence-recovery draft creation, deterministic workflow mutex helpers, and bounded retry classification for supported transient PostgreSQL contention.
+
+### Changed
+
+- Extended replacement inspection with closed structured next-action blockers and synchronized the frozen MCP contract; recovery drafts preserve cancelled-source history and evidence requirements.
+
 ## v0.4.52 - 2026-09-23
 
 ### Added

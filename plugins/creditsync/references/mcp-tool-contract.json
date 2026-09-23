@@ -8106,6 +8106,46 @@
               "allowed": {
                 "type": "boolean"
               },
+              "blockerDetails": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "intakePublicIds": {
+                      "items": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "nextAction": {
+                      "enum": [
+                        "identity_review",
+                        "evidence_recovery",
+                        "continue_successor",
+                        "refresh_preview",
+                        "reconciliation",
+                        "human_investigation"
+                      ],
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "intakePublicIds",
+                    "nextAction",
+                    "retryable"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
               "blockerPublicIds": {
                 "items": {
                   "format": "uuid",
@@ -8158,6 +8198,7 @@
               "sourcePaymentIntakePublicId",
               "allowed",
               "blockers",
+              "blockerDetails",
               "stateHash",
               "replacementPaymentIntakePublicId"
             ],

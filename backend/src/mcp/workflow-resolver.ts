@@ -1,5 +1,6 @@
 import { MCP_TOOL_NAMES, type ToolProfile } from "./catalog-types";
 import { toolIsVisibleInProfile, workflowRule, WORKFLOW_POLICY_REVISION, WORKFLOW_VERSION, WORKFLOW_TOOL_INVENTORY, type WorkflowIntent } from "./workflow-registry";
+import type { PaymentWorkflowBlocker } from "../services/payment-workflow-blockers";
 
 const publicIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export type WorkflowTargetKind = "borrower" | "loan" | "payment_intake" | "loan_disbursement";
@@ -32,6 +33,7 @@ export type ResolverObservation = Readonly<{
     restoreCancellationStateHash?: string | null;
     duplicateReviewRequired?: boolean;
     duplicateBlockerPublicIds?: readonly string[];
+    paymentBlockers?: readonly PaymentWorkflowBlocker[];
 }>;
 
 export type ResolverStep = Readonly<{
@@ -46,7 +48,7 @@ export type ResolverResult = Readonly<{
     workflowVersion: string;
     catalogVersion: string;
     policyRevision: string;
-    observed: Readonly<{ state: ResolverObservation["state"] | null; loanType: ResolverObservation["loanType"] | null; evidenceReady: boolean; restoreCancellationAllowed: boolean | null; restoreCancellationBlockedReason: string | null; restoreCancellationStateHash: string | null }>;
+    observed: Readonly<{ state: ResolverObservation["state"] | null; loanType: ResolverObservation["loanType"] | null; evidenceReady: boolean; restoreCancellationAllowed: boolean | null; restoreCancellationBlockedReason: string | null; restoreCancellationStateHash: string | null; paymentBlockers: readonly PaymentWorkflowBlocker[] }>;
     status: "needs_input" | "next_step" | "confirmation_required" | "blocked" | "refresh_required" | "connection_required";
     nextSteps: readonly ResolverStep[];
     blockers: readonly string[];
@@ -100,13 +102,13 @@ function step(toolName: string, input: ResolverInput, inputs: readonly string[] 
 function result(input: ResolverInput, profile: ResolverProfile, status: ResolverResult["status"], nextSteps: readonly (ResolverStep | null)[], blockers: readonly string[] = [], prohibitedTools: readonly string[] = []): ResolverResult {
     return {
         workflowId: `creditsync.${input.intent}`, workflowVersion: WORKFLOW_VERSION, catalogVersion: profile.catalogVersion, policyRevision: WORKFLOW_POLICY_REVISION,
-        observed: { state: null, loanType: null, evidenceReady: false, restoreCancellationAllowed: null, restoreCancellationBlockedReason: null, restoreCancellationStateHash: null }, status, nextSteps: nextSteps.filter((value): value is ResolverStep => value !== null).slice(0, 3), blockers: blockers.slice(0, 8), prohibitedTools: prohibitedTools.slice(0, 8),
+        observed: { state: null, loanType: null, evidenceReady: false, restoreCancellationAllowed: null, restoreCancellationBlockedReason: null, restoreCancellationStateHash: null, paymentBlockers: [] }, status, nextSteps: nextSteps.filter((value): value is ResolverStep => value !== null).slice(0, 3), blockers: blockers.slice(0, 8), prohibitedTools: prohibitedTools.slice(0, 8),
         reevaluateOn: input.intent === "tool_help" ? "version_change" : input.attachments && input.attachments !== "none" ? "evidence_change" : "target_change",
     };
 }
 
 function withObservation(value: ResolverResult, observation: ResolverObservation): ResolverResult {
-    return { ...value, observed: { state: observation.state ?? null, loanType: observation.loanType ?? null, evidenceReady: observation.evidenceReady === true, restoreCancellationAllowed: observation.restoreCancellationAllowed ?? null, restoreCancellationBlockedReason: observation.restoreCancellationBlockedReason ?? null, restoreCancellationStateHash: observation.restoreCancellationStateHash ?? null } };
+    return { ...value, observed: { state: observation.state ?? null, loanType: observation.loanType ?? null, evidenceReady: observation.evidenceReady === true, restoreCancellationAllowed: observation.restoreCancellationAllowed ?? null, restoreCancellationBlockedReason: observation.restoreCancellationBlockedReason ?? null, restoreCancellationStateHash: observation.restoreCancellationStateHash ?? null, paymentBlockers: observation.paymentBlockers ?? [] } };
 }
 
 function validTarget(input: ResolverInput) {

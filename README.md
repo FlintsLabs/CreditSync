@@ -26,6 +26,8 @@ Evidence declarations and accepted payment/payout evidence attempts are sticky s
 
 Cancelled duplicate reviews retain the ordinary strict evidence rule by default. Only an explicit, audited selection may use the canonical intake's single complete ready evidence for a cancelled, unposted duplicate that has exactly one persisted requirement, no effective evidence, and no authoritative attempts; selection is immutable and revalidated before replacement authorization.
 
+Payment recovery decisions are also explicit and append-only. Identity decisions snapshot the exact tenant-scoped participants and require a fresh preview, confirmation, reason, and idempotency key; they do not rewrite posted or cancelled history and do not exempt a later third intake. A cancelled intake with failed or incomplete evidence can receive one linked recovery successor with a preserved requirement floor; the successor remains blocked until its required evidence and ordinary payment preview are complete. Recovery is bounded by deterministic identity locks and retries only confirmed PostgreSQL deadlock/serialization failures.
+
 Concurrent same-tenant/kind/import-key races resolve to one durable binding and a stable conflict before a second download.
 
 MCP clients can use the bounded read-only composite tools `borrower.resolve-and-portfolio`, `loan.inspect-context`, and `payment.match-context` for summary-first context. Each collection reports `hasMore` and an opaque `nextCursor`; follow named child cursors before presenting a portfolio, schedule, or payment history as complete. Ambiguous borrower resolution remains a candidate set, and these tools do not write or calculate financial values.

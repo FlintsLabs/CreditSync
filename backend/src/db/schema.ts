@@ -1697,6 +1697,38 @@ export const paymentDuplicateReviewMemberships = pgTable("payment_duplicate_revi
     check("payment_duplicate_review_memberships_distinct_check", sql`${table.canonicalPaymentIntakeId} <> ${table.candidatePaymentIntakeId}`),
 ]);
 
+/** Immutable pair/group identity decisions. These authorize only the explicit participant snapshot. */
+export const paymentIdentityDecisions = pgTable("payment_identity_decisions", {
+    id: serial("id").primaryKey(),
+    publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),
+    tenantId: tenantId,
+    decision: text("decision").notNull(),
+    reason: text("reason").notNull(),
+    participantPublicIds: jsonb("participant_public_ids").$type<string[]>().notNull(),
+    participantSnapshotHash: text("participant_snapshot_hash").notNull(),
+    supersedesDecisionId: integer("supersedes_decision_id"),
+    requestId: text("request_id").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    auditPublicId: uuid("audit_public_id").notNull(),
+    createdByUserId: integer("created_by_user_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+    uniqueIndex("payment_identity_decisions_tenant_id_id_unique").on(table.tenantId, table.id),
+    uniqueIndex("payment_identity_decisions_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey),
+    index("payment_identity_decisions_tenant_participant_idx").using("gin", table.participantPublicIds),
+    foreignKey({ name: "payment_identity_decisions_tenant_actor_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }),
+    foreignKey({ name: "payment_identity_decisions_tenant_audit_fk", columns: [table.tenantId, table.auditPublicId], foreignColumns: [auditLogs.tenantId, auditLogs.publicId] }),
+    check("payment_identity_decisions_kind_check", sql`${table.decision} IN ('same_payment', 'distinct_payment')`),
+    check("payment_identity_decisions_reason_check", sql`length(trim(${table.reason})) BETWEEN 1 AND 2000`),
+]);
+
+export const paymentIdentityDecisionPreviews = pgTable("payment_identity_decision_previews", {
+    id: serial("id").primaryKey(), publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(), tenantId: tenantId,
+    participantPublicIds: jsonb("participant_public_ids").$type<string[]>().notNull(), participantSnapshotHash: text("participant_snapshot_hash").notNull(), decision: text("decision").notNull(), reason: text("reason").notNull(),
+    previewHash: text("preview_hash").notNull(), expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(), requestId: text("request_id").notNull(), correlationId: text("correlation_id").notNull(), idempotencyKey: text("idempotency_key").notNull(), createdByUserId: integer("created_by_user_id").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [uniqueIndex("payment_identity_decision_previews_tenant_id_id_unique").on(table.tenantId, table.id), uniqueIndex("payment_identity_decision_previews_tenant_idempotency_unique").on(table.tenantId, table.idempotencyKey), foreignKey({ name: "payment_identity_decision_previews_tenant_actor_fk", columns: [table.tenantId, table.createdByUserId], foreignColumns: [users.tenantId, users.id] }), check("payment_identity_decision_previews_kind_check", sql`${table.decision} IN ('same_payment', 'distinct_payment')`)]);
+
 export const paymentEvidenceSupplements = pgTable("payment_evidence_supplements", {
     id: serial("id").primaryKey(),
     publicId: uuid("public_id").default(sql`uuidv7()`).notNull().unique(),

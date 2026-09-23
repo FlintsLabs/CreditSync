@@ -9,6 +9,7 @@ import type { ToolProfile } from "./catalog-types";
 import { effectivePaymentEvidence } from "../services/payment-effective-evidence-service";
 import { countAuthoritativeEvidenceAttempts } from "../services/financial-evidence-requirement-service";
 import { inspectPaymentReplacement } from "../services/payment-replacement-service";
+import { classifyPaymentWorkflowBlocker } from "../services/payment-workflow-blockers";
 
 type ResolverWireInput = Omit<ResolverInput, "profile"> & { profile?: never };
 
@@ -53,6 +54,7 @@ async function paymentObservation(ctx: CommandContext, publicId: string): Promis
         restoreCancellationStateHash: restoreCancellation?.stateHash,
         duplicateReviewRequired: !!duplicateReview?.blockerPublicIds?.length,
         duplicateBlockerPublicIds: duplicateReview?.blockerPublicIds ?? [],
+        paymentBlockers: duplicateReview?.blockerPublicIds?.length ? [classifyPaymentWorkflowBlocker("PAYMENT_DUPLICATE_REQUIRES_REVIEW", duplicateReview.blockerPublicIds)] : [],
     };
 }
 
