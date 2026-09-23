@@ -302,7 +302,7 @@ export function createDefaultMcpToolHandlers(
         identityDecisionPreviewPublicId: asString(input, "identityDecisionPreviewPublicId"), previewHash: asString(input, "previewHash"), confirmed: true, reason: asString(input, "reason"), idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"),
     }),
     "payment.evidence-recovery.preview": (ctx, input) => previewPaymentEvidenceRecovery(ctx, {
-        sourcePaymentIntakePublicId: asString(input, "sourcePaymentIntakePublicId"), reason: asString(input, "reason"), expectedCount: input.expectedCount as number, reuseEvidence: input.reuseEvidence === true, idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"),
+        sourcePaymentIntakePublicId: asString(input, "sourcePaymentIntakePublicId"), reason: asString(input, "reason"), expectedCount: input.expectedCount as number, reuseEvidence: input.reuseEvidence === true, requirementDecision: input.requirementDecision as { confirmed: true; reason: string } | undefined, idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"),
     }),
     "payment.evidence-recovery.execute": (ctx, input) => executePaymentEvidenceRecovery(ctx, {
         recoveryPreviewPublicId: asString(input, "recoveryPreviewPublicId"), previewHash: asString(input, "previewHash"), confirmed: true, reason: asString(input, "reason"), idempotencyKey: ctx.idempotencyKey ?? asString(input, "idempotencyKey"),

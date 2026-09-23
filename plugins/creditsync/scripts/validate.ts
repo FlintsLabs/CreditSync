@@ -80,7 +80,7 @@ export async function validatePlugin() {
     const errors: string[] = [];
     const manifest = await parseJson(resolve(pluginRoot, ".codex-plugin/plugin.json"));
     if (manifest.name !== "creditsync") errors.push("manifest name must be creditsync");
-    if (manifest.version !== "10.8.0") errors.push("manifest version must be 10.8.0");
+    if (manifest.version !== "10.9.0") errors.push("manifest version must be 10.9.0");
     if (manifest.skills !== "./skills/") errors.push("manifest skills path must be ./skills/");
     if (manifest.apps !== "./.app.json") errors.push("manifest apps path must be ./.app.json");
     for (const field of ["mcpServers", "hooks", "ui", "oauth"]) {
@@ -129,6 +129,8 @@ export async function validatePlugin() {
             "payment.restore.create", "payment.restore.preview", "payment.restore.execute", "payment.restore.cancel",
             "payment.restore.evidence.prepare", "payment.restore.evidence.finalize",
             "payment.replacement.inspect", "payment.replacement.create",
+            "payment.identity-decision.preview", "payment.identity-decision.execute",
+            "payment.evidence-recovery.preview", "payment.evidence-recovery.execute",
             "payment.reconcile.preflight",
             "payment.reconcile.reflow.preview", "payment.reconcile.reflow.execute",
             "payment.allocation-correction.preview", "payment.allocation-correction.execute",
@@ -233,5 +235,5 @@ if (import.meta.main) {
     }
     const app = await parseJson(resolve(pluginRoot, ".app.json")) as { apps?: Record<string, { id?: string }> };
     const registration = classifyPrivateAppId(app.apps?.creditsync?.id);
-    console.log(`CreditSync plugin validation passed (10.8.0, 11 skills, ${MCP_TOOL_NAMES.length} tools, no bundled MCP/secrets; private app: ${registration}${registration === "placeholder" ? ", non-live" : ""}).`);
+    console.log(`CreditSync plugin validation passed (10.9.0, 11 skills, ${MCP_TOOL_NAMES.length} tools, no bundled MCP/secrets; private app: ${registration}${registration === "placeholder" ? ", non-live" : ""}).`);
 }

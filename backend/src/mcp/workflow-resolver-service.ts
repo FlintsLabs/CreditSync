@@ -1,6 +1,6 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "../db";
-import { borrowers, files, financialEvidenceRequirementAttempts, financialEvidenceRequirements, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loans, paymentIntakes, users } from "../db/schema";
+import { borrowers, files, financialEvidenceRequirementAttempts, financialEvidenceRequirements, loanDisbursementEvidence, loanDisbursementEvidenceIntents, loanDisbursementEvents, loans, paymentIntakes, paymentReplacementLineages, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import type { CommandContext } from "../services/command-context";
 import { getPaymentRestoreCancellationCapability } from "../services/payment-reconciliation-service";
@@ -44,6 +44,10 @@ async function paymentObservation(ctx: CommandContext, publicId: string): Promis
     const duplicateReview = intake.status === "cancelled"
         ? await inspectPaymentReplacement(ctx, publicId).catch(() => null)
         : null;
+    const duplicateIds = duplicateReview?.blockerPublicIds ?? [];
+    const duplicateRows = duplicateIds.length ? await db.select({ id: paymentIntakes.id }).from(paymentIntakes).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.publicId, duplicateIds))) : [];
+    const participantIds = [intake.id, ...duplicateRows.map((row) => row.id)];
+    const identityDecisionRequired = duplicateRows.length > 0 && (await db.select({ id: paymentReplacementLineages.id }).from(paymentReplacementLineages).where(and(eq(paymentReplacementLineages.tenantId, ctx.tenantId), or(inArray(paymentReplacementLineages.sourcePaymentIntakeId, participantIds), inArray(paymentReplacementLineages.replacementPaymentIntakeId, participantIds))))).length > 0;
     return {
         targetAvailable: true, identityResolved: true, state: intake.status === "cancelled" ? "cancelled" : intake.status === "duplicate" ? "duplicate" : intake.status === "reversed" ? "reversed" : intake.status === "posted" ? "posted" : "mutable",
         evidenceRequired: required, evidenceReady: evidenceTotal <= 20 && attemptTotal <= 20 && (!required || (expected > 0 && ready >= expected && evidenceTotal === ready)),
@@ -54,6 +58,7 @@ async function paymentObservation(ctx: CommandContext, publicId: string): Promis
         restoreCancellationStateHash: restoreCancellation?.stateHash,
         duplicateReviewRequired: !!duplicateReview?.blockerPublicIds?.length,
         duplicateBlockerPublicIds: duplicateReview?.blockerPublicIds ?? [],
+        identityDecisionRequired,
         paymentBlockers: duplicateReview?.blockerPublicIds?.length ? [classifyPaymentWorkflowBlocker("PAYMENT_DUPLICATE_REQUIRES_REVIEW", duplicateReview.blockerPublicIds)] : [],
     };
 }

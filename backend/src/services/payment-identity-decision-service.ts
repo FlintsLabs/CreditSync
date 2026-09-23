@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { db, type DbExecutor } from "../db";
-import { paymentIdentityDecisionPreviews, paymentIdentityDecisions, paymentIntakes, users } from "../db/schema";
+import { paymentIdentityDecisionPreviews, paymentIdentityDecisions, paymentIntakes, paymentReplacementLineages, users } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
@@ -11,9 +11,12 @@ import { canAccessTenantWideData } from "../lib/access";
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const operators = new Set(["owner", "manager", "collector"]);
 
-type PaymentSnapshot = { publicId: string; amount: string; payerName: string | null; receivedAt: string; bankReferenceHash: string | null; qrPayloadHash: string | null; status: string };
+// Lifecycle is deliberately excluded.  A reviewed identity remains useful
+// when a draft becomes ready or posted; lifecycle/dependency authorization is
+// checked live by the reader below.
+type PaymentSnapshot = { publicId: string; amount: string; payerName: string | null; receivedAt: string; bankReferenceHash: string | null; qrPayloadHash: string | null };
 function paymentSnapshot(row: typeof paymentIntakes.$inferSelect): PaymentSnapshot {
-    return { publicId: row.publicId, amount: row.amount, payerName: row.payerName, receivedAt: row.receivedAt.toISOString(), bankReferenceHash: row.bankReferenceHash, qrPayloadHash: row.qrPayloadHash, status: row.status };
+    return { publicId: row.publicId, amount: row.amount, payerName: row.payerName, receivedAt: row.receivedAt.toISOString(), bankReferenceHash: row.bankReferenceHash, qrPayloadHash: row.qrPayloadHash };
 }
 function snapshotsHash(rows: Array<typeof paymentIntakes.$inferSelect>) { return digest(rows.map(paymentSnapshot).sort((a, b) => a.publicId.localeCompare(b.publicId))); }
 function hardIdentityConflicts(rows: Array<typeof paymentIntakes.$inferSelect>) {
@@ -22,6 +25,30 @@ function hardIdentityConflicts(rows: Array<typeof paymentIntakes.$inferSelect>) 
     return new Set(bank).size !== bank.length || new Set(qr).size !== qr.length;
 }
 function exactPair(participants: string[], first: string, second: string) { return participants.length === 2 && participants[0] === first && participants[1] === second; }
+
+async function identityComponent(tenantId: string, seed: string, executor: DbExecutor) {
+    const decisions = await executor.select().from(paymentIdentityDecisions).where(eq(paymentIdentityDecisions.tenantId, tenantId));
+    const lineages = await executor.select().from(paymentReplacementLineages).where(eq(paymentReplacementLineages.tenantId, tenantId));
+    const members = new Set([seed]);
+    const hasIdentityDecision = decisions.some((decision) => decision.decision === "same_payment" && decision.participantPublicIds.includes(seed));
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const decision of decisions) {
+            if (decision.decision !== "same_payment" || !decision.participantPublicIds.some((id) => members.has(id))) continue;
+            for (const id of decision.participantPublicIds) if (!members.has(id)) { members.add(id); changed = true; }
+        }
+        for (const lineage of hasIdentityDecision ? lineages : []) {
+            const source = (await executor.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, tenantId), eq(paymentIntakes.id, lineage.sourcePaymentIntakeId)) }))?.publicId;
+            const replacement = (await executor.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, tenantId), eq(paymentIntakes.id, lineage.replacementPaymentIntakeId)) }))?.publicId;
+            if (source && replacement && (members.has(source) || members.has(replacement))) {
+                if (!members.has(source)) { members.add(source); changed = true; }
+                if (!members.has(replacement)) { members.add(replacement); changed = true; }
+            }
+        }
+    }
+    return members;
+}
 
 async function requireOperator(ctx: CommandContext, tx: DbExecutor) {
     const user = ctx.actorUserId === null ? null : await tx.query.users.findFirst({ where: and(eq(users.tenantId, ctx.tenantId), eq(users.id, ctx.actorUserId)) });
@@ -62,6 +89,11 @@ export async function executePaymentIdentityDecision(ctx: CommandContext, input:
         const user = await requireOperator(ctx, tx);
         const preview = await tx.query.paymentIdentityDecisionPreviews.findFirst({ where: and(eq(paymentIdentityDecisionPreviews.tenantId, ctx.tenantId), eq(paymentIdentityDecisionPreviews.publicId, input.identityDecisionPreviewPublicId)) });
         if (!preview) throw new DomainError("PAYMENT_IDENTITY_PREVIEW_NOT_FOUND", "Identity decision preview not found", 404);
+        // Replay is not an access bypass: load and authorize every participant
+        // before returning a stored receipt.
+        const replayParticipants = await tx.query.paymentIntakes.findMany({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.publicId, preview.participantPublicIds)) });
+        if (replayParticipants.length !== preview.participantPublicIds.length) throw new DomainError("PAYMENT_INTAKE_NOT_FOUND", "Every payment participant must belong to the tenant", 404);
+        requireParticipantAccess(user, replayParticipants);
         await lockPaymentWorkflowIdentity(ctx, tx, preview.participantPublicIds);
         const requestHash = digest({ preview: input.identityDecisionPreviewPublicId, previewHash: input.previewHash, reason: input.reason.trim(), idempotencyKey: input.idempotencyKey.trim() });
         const existing = await tx.query.paymentIdentityDecisions.findFirst({ where: and(eq(paymentIdentityDecisions.tenantId, ctx.tenantId), eq(paymentIdentityDecisions.idempotencyKey, input.idempotencyKey.trim())) });
@@ -70,6 +102,11 @@ export async function executePaymentIdentityDecision(ctx: CommandContext, input:
         const current = await tx.query.paymentIntakes.findMany({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.publicId, preview.participantPublicIds)) });
         if (current.length !== preview.participantPublicIds.length) throw new DomainError("PAYMENT_INTAKE_NOT_FOUND", "Every payment participant must belong to the tenant", 404);
         requireParticipantAccess(user, current);
+        if (preview.decision === "same_payment") {
+            const component = await identityComponent(ctx.tenantId, preview.participantPublicIds[0]!, tx);
+            const componentRows = await tx.query.paymentIntakes.findMany({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.publicId, [...component])) });
+            if (current.filter((row) => row.status === "posted").length > 1 || componentRows.length !== component.size || componentRows.filter((row) => row.status === "posted").length > 1) throw new DomainError("PAYMENT_IDENTITY_GROUP_FINANCIAL_CONFLICT", "A same-payment decision would merge multiple active postings", 409);
+        }
         const snapshotHash = snapshotsHash(current);
         if (snapshotHash !== preview.participantSnapshotHash) throw new DomainError("PAYMENT_IDENTITY_PREVIEW_STALE", "Payment participants changed; preview again", 409);
         if (preview.decision === "distinct_payment" && hardIdentityConflicts(current)) throw new DomainError("PAYMENT_IDENTITY_HARD_CONFLICT", "Matching bank or QR identity prevents a distinct decision", 409);
@@ -91,10 +128,15 @@ export async function identityDecisionAuthorizesPair(ctx: CommandContext, firstP
     const latest = pairRows[0];
     if (!latest) return false;
     const participantIds = [...new Set(latest.participantPublicIds)].sort();
-    if (latest.decision === "distinct_payment" && !exactPair(participantIds, ...[firstPublicId, secondPublicId].sort() as [string, string])) return false;
-    const current = await executor.query.paymentIntakes.findMany({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.publicId, participantIds)) });
-    if (current.length !== participantIds.length || snapshotsHash(current) !== latest.participantSnapshotHash) return false;
-    if (latest.decision === "distinct_payment") return !hardIdentityConflicts(current);
-    const activePosted = current.filter((row) => row.status === "posted").length;
-    return activePosted <= 1;
+    if (latest.decision === "distinct_payment") {
+        if (!exactPair(participantIds, ...[firstPublicId, secondPublicId].sort() as [string, string])) return false;
+        const current = await executor.query.paymentIntakes.findMany({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.publicId, participantIds)) });
+        return current.length === participantIds.length && snapshotsHash(current) === latest.participantSnapshotHash && !hardIdentityConflicts(current);
+    }
+    const component = await identityComponent(ctx.tenantId, firstPublicId, executor);
+    if (!component.has(secondPublicId)) return false;
+    const current = await executor.query.paymentIntakes.findMany({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.publicId, [...component])) });
+    // A same-payment review can connect a pending successor, but can never
+    // authorize another active posting in a group that already has one.
+    return current.length === component.size && current.filter((row) => row.status === "posted").length === 0;
 }

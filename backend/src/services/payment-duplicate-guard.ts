@@ -9,6 +9,7 @@ import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import { classifyPaymentWorkflowBlocker, type PaymentWorkflowBlocker } from "./payment-workflow-blockers";
 import { identityDecisionAuthorizesPair } from "./payment-identity-decision-service";
+import { lockPaymentWorkflowIdentity } from "./payment-workflow-locks";
 
 const duplicateWindowMs = 5 * 60 * 1000;
 
@@ -48,8 +49,9 @@ function warningReferencesOnlyKnownChain(warnings: unknown, chain: Set<number>, 
 export async function assessPaymentReplacementDuplicates(ctx: CommandContext, intake: typeof paymentIntakes.$inferSelect, executor: DbExecutor = db, forceReplacement = false) {
     const rows = await executor.select().from(paymentIntakes).where(eq(paymentIntakes.tenantId, ctx.tenantId));
     const lineages = await executor.select().from(paymentReplacementLineages).where(eq(paymentReplacementLineages.tenantId, ctx.tenantId));
-    const isReplacement = intake.replacementOfIntakeId !== null || lineages.some((lineage) => lineage.sourcePaymentIntakeId === intake.id || lineage.replacementPaymentIntakeId === intake.id);
-    if (!isReplacement && !forceReplacement) return { blockerPublicIds: [] as string[], blockers: [] as PaymentWorkflowBlocker[] };
+    // Ordinary payment preview/post must use the same duplicate decision
+    // reader as replacements. `forceReplacement` only controls replacement
+    // lifecycle semantics; it is not an authorization bypass.
     const chain = ancestorChain(intake, rows, lineages);
     const identities = lineages.filter((lineage) => chain.has(lineage.sourcePaymentIntakeId) || chain.has(lineage.replacementPaymentIntakeId));
     const bankHashes = new Set(identities.map((lineage) => lineage.bankReferenceHash).filter((value): value is string => !!value));
@@ -60,11 +62,12 @@ export async function assessPaymentReplacementDuplicates(ctx: CommandContext, in
     const blockerPublicIds: string[] = [];
     for (const row of rows) {
         if (chain.has(row.id)) continue;
-        if (await Promise.any([...chain].map(async (chainId) => {
+        const identityReviewed = (await Promise.all([...chain].map(async (chainId) => {
             const chainRow = rows.find((candidate) => candidate.id === chainId);
             return chainRow ? identityDecisionAuthorizesPair(ctx, chainRow.publicId, row.publicId, executor) : false;
-        })).catch(() => false)) continue;
-        const reviewedByChain = await Promise.any([...chain].map(async (canonicalId) => await reviewAuthorizesPair(ctx, canonicalId, row.id, executor).then((authorized) => authorized ? true : Promise.reject(false)))).catch(() => false);
+        }))).some(Boolean);
+        if (identityReviewed) continue;
+        const reviewedByChain = (await Promise.all([...chain].map((canonicalId) => reviewAuthorizesPair(ctx, canonicalId, row.id, executor)))).some(Boolean);
         if (reviewedByChain) continue;
         if ((row.bankReferenceHash && bankHashes.has(row.bankReferenceHash)) || (row.qrPayloadHash && qrHashes.has(row.qrPayloadHash))) {
             blockerPublicIds.push(row.publicId);
@@ -75,7 +78,10 @@ export async function assessPaymentReplacementDuplicates(ctx: CommandContext, in
     }
     const acceptedReviewedIds = new Set<string>();
     for (const row of rows) {
-        for (const canonicalId of chain) if (await reviewAuthorizesPair(ctx, canonicalId, row.id, executor)) acceptedReviewedIds.add(row.publicId);
+        for (const canonicalId of chain) {
+            const canonical = rows.find((candidate) => candidate.id === canonicalId);
+            if (canonical && (await reviewAuthorizesPair(ctx, canonical.id, row.id, executor) || await identityDecisionAuthorizesPair(ctx, canonical.publicId, row.publicId, executor))) acceptedReviewedIds.add(row.publicId);
+        }
     }
     if (!warningReferencesOnlyKnownChain(intake.warnings, chain, rows, acceptedReviewedIds)) {
         blockerPublicIds.push(...own.map((row) => row.publicId));
@@ -90,7 +96,6 @@ export async function assertPaymentReplacementDuplicateSafe(ctx: CommandContext,
     const rows = await executor.select().from(paymentIntakes).where(eq(paymentIntakes.tenantId, ctx.tenantId));
     const lineages = await executor.select().from(paymentReplacementLineages).where(eq(paymentReplacementLineages.tenantId, ctx.tenantId));
     const isReplacement = intake.replacementOfIntakeId !== null || lineages.some((lineage) => lineage.sourcePaymentIntakeId === intake.id || lineage.replacementPaymentIntakeId === intake.id);
-    if (!isReplacement && !forceReplacement) return;
     const result = await assessPaymentReplacementDuplicates(ctx, intake, executor, forceReplacement);
     if (result.blockerPublicIds.length) throw new DomainError("PAYMENT_DUPLICATE_REQUIRES_REVIEW", "An unrelated payment requires explicit duplicate review", 409, { blockerPublicIds: result.blockerPublicIds, blockers: result.blockers });
 }
@@ -98,6 +103,11 @@ export async function assertPaymentReplacementDuplicateSafe(ctx: CommandContext,
 export async function duplicateIdentityLock(ctx: CommandContext, input: { bankReferenceHash?: string | null; qrPayloadHash?: string | null; amount: string; payerName?: string | null; receivedAt: Date }, executor: DbExecutor = db) {
     const minute = Math.floor(input.receivedAt.getTime() / 60_000);
     const semanticKeys = Array.from({ length: 9 }, (_, index) => hash(`${new Decimal(input.amount).toFixed(2)}:${normalizeBorrowerText(input.payerName ?? "")}:${minute + index - 4}`));
+    await lockPaymentWorkflowIdentity(ctx, executor, [
+        input.bankReferenceHash ? `bank:${input.bankReferenceHash}` : "",
+        input.qrPayloadHash ? `qr:${input.qrPayloadHash}` : "",
+        ...semanticKeys.map((key) => `semantic:${key}`),
+    ]);
     const keys = ["tenant-identity", input.bankReferenceHash, input.qrPayloadHash, ...semanticKeys].filter((value): value is string => !!value);
     for (const key of [...new Set(keys)].sort()) await executor.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`payment-duplicate:${ctx.tenantId}:${key}`}, 0))`);
 }

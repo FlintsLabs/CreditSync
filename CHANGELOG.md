@@ -8,8 +8,9 @@
 
 ### Changed
 
-- Revalidated identity snapshots and active postings before duplicate authorization, enforced request-hash idempotency conflicts, synchronized five-minute duplicate locks across minute boundaries, and applied bounded transaction retry to replay-safe payment writers.
-- Regenerated the CreditSync 10.8.0 MCP contract and profile inventory at 145 tools.
+- Revalidated immutable identity snapshots and complete transitive groups against active postings before duplicate authorization, fixed all-reviewed warning handling, synchronized tenant-first duplicate locks across minute boundaries, and traversed wrapped PostgreSQL causes for bounded replay-safe retry.
+- Added explicit audited recovery requirement reinterpretation, replay ownership checks, and deterministic create-vs-create disposable-DB contention coverage.
+- Regenerated the CreditSync 10.9.0 MCP contract and profile inventory at 145 tools.
 
 ## v0.4.53 - 2026-09-23
 

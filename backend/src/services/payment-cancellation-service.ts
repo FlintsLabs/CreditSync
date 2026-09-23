@@ -7,7 +7,7 @@ import { createAuditLog } from "../lib/audit-log";
 import { lockPaymentBorrowers, paymentIntakeBorrowerIds } from "./payment-chronology-service";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
-import { withPaymentWorkflowTransaction } from "./payment-workflow-locks";
+import { lockPaymentWorkflowTenant, withPaymentWorkflowTransaction } from "./payment-workflow-locks";
 
 type Executor = DbExecutor;
 type Intake = typeof paymentIntakes.$inferSelect;
@@ -177,6 +177,7 @@ async function cancelPaymentIntakeInternal(
     const key = requireKey(input.idempotencyKey);
     if (!input.expectedStateHash || !/^[0-9a-f]{64}$/iu.test(input.expectedStateHash)) throw new DomainError("PAYMENT_CANCEL_STALE", "A current cancellation state hash is required", 409);
     const run = async (tx: Executor) => {
+        await lockPaymentWorkflowTenant(ctx, tx);
         const found = await accessible(ctx, publicId, tx);
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`payment-intake-cancel:${ctx.tenantId}:${key}`}, 0))`);
         const existingKey = await tx.query.paymentIntakeCancellations.findFirst({ where: and(eq(paymentIntakeCancellations.tenantId, ctx.tenantId), eq(paymentIntakeCancellations.operationKey, key)) });

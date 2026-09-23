@@ -37,6 +37,7 @@ interface PaymentIntake extends PaymentIntakeSummary {
     payerName?: string | null; bankReference?: string | null; notes?: string | null;
     warnings?: WorkflowWarning[];
     evidence?: Array<{ publicId: string; status: string; mimeType: string; filePublicId?: string | null }>;
+    evidenceRequirement?: { expectedCount: number; authoritativeAttemptCount: number; readyCount: number } | null;
     latestProposal?: PaymentProposal | null;
     cancellation: { allowed: boolean; stateHash: string; blockedReason: string | null; batchPublicId: string | null };
     cancellationMetadata?: { reason: string | null; cancelledAt: string | null; auditPublicId: string | null } | null;
@@ -244,7 +245,7 @@ export default function PaymentInbox() {
     });
 
     const previewRecovery = () => void mutate(async () => {
-        const expectedCount = Math.max(1, detail?.evidence?.length ?? 1);
+        const expectedCount = Math.max(1, detail?.evidenceRequirement?.expectedCount ?? detail?.evidence?.length ?? 1);
         const response = await api.post(`/payment-intakes/${detail!.publicId}/evidence-recovery/preview`, { reason: recoveryReason.trim(), expectedCount, reuseEvidence: false, idempotencyKey: crypto.randomUUID() });
         setRecoveryPreview(response.data); setRecoveryConfirmed(false);
     }, false);

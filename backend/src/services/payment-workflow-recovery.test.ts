@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql as drizzleSql } from "drizzle-orm";
 import { db } from "../db";
 import { paymentEvidenceRecoveryExecutions, paymentEvidenceRecoveryPreviews, paymentIdentityDecisions, paymentIdentityDecisionPreviews, paymentIntakes, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import { executePaymentEvidenceRecovery, previewPaymentEvidenceRecovery } from "./payment-evidence-recovery-service";
 import { executePaymentIdentityDecision, identityDecisionAuthorizesPair, previewPaymentIdentityDecision } from "./payment-identity-decision-service";
 import { cancelPaymentIntake, getPaymentCancellationCapability } from "./payment-cancellation-service";
+import { createPaymentIntake } from "./payment-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
 function context(tenantId: string, actorUserId: number): CommandContext { return { tenantId, actorUserId, actorSource: "web", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID() }; }
@@ -35,9 +36,9 @@ integrationTest("identity decisions authorize only reviewed participants and rej
     expect(await identityDecisionAuthorizesPair(ctx, first.publicId, third.publicId)).toBe(false);
     expect(await db.select().from(paymentIdentityDecisions).where(eq(paymentIdentityDecisions.tenantId, tenantId))).toHaveLength(2);
     const correctionPreview = await previewPaymentIdentityDecision(ctx, { participantPaymentIntakePublicIds: [first.publicId, third.publicId], decision: "same_payment", reason: "Correction confirms the reviewed pair", idempotencyKey: "identity-preview-correction" });
-    const correction = await executePaymentIdentityDecision(ctx, { identityDecisionPreviewPublicId: correctionPreview.identityDecisionPreviewPublicId, previewHash: correctionPreview.previewHash, confirmed: true, reason: "Correction confirms the reviewed pair", idempotencyKey: "identity-execute-correction" });
+    await expect(executePaymentIdentityDecision(ctx, { identityDecisionPreviewPublicId: correctionPreview.identityDecisionPreviewPublicId, previewHash: correctionPreview.previewHash, confirmed: true, reason: "Correction confirms the reviewed pair", idempotencyKey: "identity-execute-correction" })).rejects.toMatchObject({ code: "PAYMENT_IDENTITY_GROUP_FINANCIAL_CONFLICT" });
     const decisions = await db.select().from(paymentIdentityDecisions).where(eq(paymentIdentityDecisions.tenantId, tenantId));
-    expect(decisions.find((row) => row.publicId === correction.decisionPublicId)?.supersedesDecisionId).not.toBeNull();
+    expect(decisions).toHaveLength(2);
     const concurrentResults = await Promise.all(Array.from({ length: 20 }, () => previewPaymentIdentityDecision(context(tenantId, owner.id), { participantPaymentIntakePublicIds: [first.publicId, second.publicId], decision: "distinct_payment", reason: "Concurrent replay-safe preview", idempotencyKey: "identity-preview-concurrent" })));
     expect(new Set(concurrentResults.map((row) => row.identityDecisionPreviewPublicId)).size).toBe(1);
     expect(await db.select().from(paymentIdentityDecisionPreviews).where(and(eq(paymentIdentityDecisionPreviews.tenantId, tenantId), eq(paymentIdentityDecisionPreviews.idempotencyKey, "identity-preview-concurrent")))).toHaveLength(1);
@@ -58,4 +59,33 @@ integrationTest("evidence recovery requires an explicit preview, preserves the f
     await expect(executePaymentEvidenceRecovery(ctx, { recoveryPreviewPublicId: preview.recoveryPreviewPublicId, previewHash: preview.previewHash, confirmed: true, reason: "Different recovery", idempotencyKey: "recovery-execute-1" })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
     expect(await db.select().from(paymentEvidenceRecoveryPreviews).where(eq(paymentEvidenceRecoveryPreviews.tenantId, tenantId))).toHaveLength(1);
     expect(await db.select().from(paymentEvidenceRecoveryExecutions).where(eq(paymentEvidenceRecoveryExecutions.tenantId, tenantId))).toHaveLength(1);
+});
+
+integrationTest("serializes real create-vs-create duplicate inspection behind a tenant barrier", async () => {
+    const tenantId = `create-barrier-${crypto.randomUUID()}`;
+    const owner = (await db.insert(users).values({ tenantId, email: `${crypto.randomUUID()}@test.invalid`, role: "owner" }).returning())[0]!;
+    const release = (() => { let resolve!: () => void; const promise = new Promise<void>((done) => { resolve = done; }); return { promise, resolve }; })();
+    let acquired!: () => void;
+    const holderAcquired = new Promise<void>((resolve) => { acquired = resolve; });
+    const holder = db.transaction(async (tx) => {
+        await tx.execute(drizzleSql`SELECT pg_advisory_xact_lock(hashtextextended(${`payment-workflow-tenant:${tenantId}`}, 0))`);
+        acquired();
+        await release.promise;
+    });
+    await holderAcquired;
+    const outcomePromise = Promise.all(Array.from({ length: 20 }, async (_, index) => {
+        const receivedAt = new Date(Date.UTC(2026, 8, 23, 4, index, 0));
+        const [first, second] = await Promise.all([
+            createPaymentIntake(context(tenantId, owner.id), { amount: "20.00", receivedAt: receivedAt.toISOString(), payerName: `barrier-${index}`, bankReference: `barrier-ref-${index}` }),
+            createPaymentIntake(context(tenantId, owner.id), { amount: "20.00", receivedAt: receivedAt.toISOString(), payerName: `barrier-${index}`, bankReference: `barrier-ref-${index}` }),
+        ]);
+        return [first, second];
+    }));
+    release.resolve();
+    const outcomes = await outcomePromise;
+    await holder;
+    const flattened = outcomes.flat();
+    expect(flattened.filter((row) => row.duplicate === false)).toHaveLength(20);
+    expect(flattened.filter((row) => row.duplicate === true)).toHaveLength(20);
+    expect(await db.select().from(paymentIntakes).where(eq(paymentIntakes.tenantId, tenantId))).toHaveLength(20);
 });

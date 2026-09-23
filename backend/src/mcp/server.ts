@@ -299,6 +299,7 @@ const intakeOutput = z.object({
     replacementOfIntakePublicId: uuid.nullable().optional(),
     replacedByIntakePublicId: uuid.nullable().optional(),
     replacementEligibility: z.object({ allowed: z.boolean(), stateHash: z.string().regex(/^[0-9a-f]{64}$/i), blockers: z.array(z.string()), blockerPublicIds: z.array(uuid).optional(), replacementPaymentIntakePublicId: uuid.nullable(), lineagePublicId: uuid.nullable().optional() }).nullable().optional(),
+    evidenceRequirement: z.object({ expectedCount: z.number().int().nonnegative(), authoritativeAttemptCount: z.number().int().nonnegative(), readyCount: z.number().int().nonnegative() }).nullable().optional(),
     cancellationMetadata: z.object({ reason: z.string().nullable(), cancelledAt: nullableIsoDateTime, auditPublicId: uuid.nullable(), actorPublicId: uuid.nullable() }).nullable().optional(),
 }).strict();
 const paymentEvidenceOutput = z.object({
@@ -1672,7 +1673,7 @@ export const toolInputSchemas: Record<McpToolName, z.ZodType<Record<string, unkn
     "payment.replacement.duplicate-review.execute": z.object({ duplicateReviewPublicId: uuid, previewHash: z.string().regex(/^[0-9a-f]{64}$/i), confirmed: z.literal(true), reason: shortText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
     "payment.identity-decision.preview": z.object({ participantPaymentIntakePublicIds: z.array(uuid).min(2).max(50), decision: z.enum(["same_payment", "distinct_payment"]), reason: shortText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
     "payment.identity-decision.execute": z.object({ identityDecisionPreviewPublicId: uuid, previewHash: z.string().regex(/^[0-9a-f]{64}$/i), confirmed: z.literal(true), reason: shortText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
-    "payment.evidence-recovery.preview": z.object({ sourcePaymentIntakePublicId: uuid, reason: shortText, expectedCount: z.number().int().min(1).max(20), reuseEvidence: z.boolean(), idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
+    "payment.evidence-recovery.preview": z.object({ sourcePaymentIntakePublicId: uuid, reason: shortText, expectedCount: z.number().int().min(1).max(20), reuseEvidence: z.boolean(), requirementDecision: z.object({ confirmed: z.literal(true), reason: shortText }).strict().optional(), idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
     "payment.evidence-recovery.execute": z.object({ recoveryPreviewPublicId: uuid, previewHash: z.string().regex(/^[0-9a-f]{64}$/i), confirmed: z.literal(true), reason: shortText, idempotencyKey: z.string().trim().min(1).max(200) }).strict(),
     "payment.post": z.object({ paymentIntakePublicId: uuid, proposalPublicId: uuid }).strict(),
     "payment.reverse": z.object({

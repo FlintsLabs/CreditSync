@@ -6,6 +6,7 @@ import {
     borrowerAliases,
     borrowers,
     files,
+    financialEvidenceRequirements,
     floatingPenaltyLedgerEntries,
     floatingTransactionAllocations,
     fundLedgerEntries,
@@ -47,8 +48,8 @@ import { DomainError } from "./domain-error";
 import { getPaymentCancellationCapability } from "./payment-cancellation-service";
 import { effectivePaymentEvidenceWithFiles } from "./payment-effective-evidence-service";
 import { assertPaymentReplacementDuplicateSafe, duplicateIdentityLock } from "./payment-duplicate-guard";
-import { withPaymentWorkflowTransaction } from "./payment-workflow-locks";
-import { assertFinancialEvidenceReady, registerFinancialEvidenceRequirement } from "./financial-evidence-requirement-service";
+import { lockPaymentWorkflowIdentity, withPaymentWorkflowTransaction } from "./payment-workflow-locks";
+import { assertFinancialEvidenceReady, countAuthoritativeEvidenceAttempts, registerFinancialEvidenceRequirement } from "./financial-evidence-requirement-service";
 import { assertNoLaterFloatingPayment, assertNoOlderPendingPayment, lockPaymentBorrowers, paymentIntakeBorrowerIds } from "./payment-chronology-service";
 import { normalizeBorrowerText } from "./borrower-service";
 import { executeLoanWaiver, getLoanWaiverAvailability, previewLoanWaiver } from "./loan-waiver-service";
@@ -258,7 +259,7 @@ export interface CreatePaymentIntakeInput {
     attachmentRequirement?: { expectedCount: number };
 }
 
-export async function createPaymentIntake(ctx: CommandContext, input: CreatePaymentIntakeInput) {
+export async function createPaymentIntake(ctx: CommandContext, input: CreatePaymentIntakeInput): Promise<any> {
     const idempotencyKey = ctx.idempotencyKey?.trim();
     if (ctx.idempotencyKey !== undefined && !idempotencyKey) {
         throw new DomainError("INVALID_IDEMPOTENCY_KEY", "Idempotency-Key must not be blank", 400);
@@ -272,27 +273,20 @@ export async function createPaymentIntake(ctx: CommandContext, input: CreatePaym
     const normalizedReference = input.bankReference ? normalizeBankReference(input.bankReference) : "";
     const bankReferenceHash = normalizedReference ? hash(normalizedReference) : null;
     const qrPayloadHash = input.qrPayload ? hash(input.qrPayload) : null;
-    const duplicate = await findHardDuplicate(ctx, {
-        idempotencyKey,
-        bankReferenceHash,
-        qrPayloadHash,
-    });
-    if (duplicate) return duplicateResult(duplicate.row, duplicate.reason);
-
-    const normalizedPayer = normalizeBorrowerText(input.payerName ?? "");
-    const possibleDuplicates = (await db.select().from(paymentIntakes).where(and(
-        eq(paymentIntakes.tenantId, ctx.tenantId),
-        eq(paymentIntakes.amount, serializeMoney(amount)),
-    ))).filter((candidate) => candidate.publicId && candidate.payerName
-        && normalizeBorrowerText(candidate.payerName) === normalizedPayer
-        && Math.abs(candidate.receivedAt.getTime() - receivedAt.getTime()) <= semanticDuplicateWindowMs);
-    const warnings = possibleDuplicates.length ? [{
-        code: "POSSIBLE_SEMANTIC_DUPLICATE",
-        intakePublicIds: possibleDuplicates.map((candidate) => candidate.publicId),
-    }] : [];
-
     try {
-        const row = await db.transaction(async (tx) => {
+        const result = await withPaymentWorkflowTransaction(async (tx) => {
+            // Duplicate inspection and insertion share the same tenant-first
+            // identity lock. This closes the create-vs-preview/post race.
+            await duplicateIdentityLock(ctx, { amount: serializeMoney(amount), payerName: input.payerName, receivedAt, bankReferenceHash, qrPayloadHash }, tx);
+            const duplicate = await findHardDuplicate(ctx, { idempotencyKey, bankReferenceHash, qrPayloadHash }, tx);
+            if (duplicate) return { duplicateResult: duplicateResult(duplicate.row, duplicate.reason) };
+            const normalizedPayer = normalizeBorrowerText(input.payerName ?? "");
+            const possibleDuplicates = (await tx.select().from(paymentIntakes).where(and(
+                eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.amount, serializeMoney(amount)),
+            ))).filter((candidate) => candidate.publicId && candidate.payerName
+                && normalizeBorrowerText(candidate.payerName) === normalizedPayer
+                && Math.abs(candidate.receivedAt.getTime() - receivedAt.getTime()) <= semanticDuplicateWindowMs);
+            const warnings = possibleDuplicates.length ? [{ code: "POSSIBLE_SEMANTIC_DUPLICATE", intakePublicIds: possibleDuplicates.map((candidate) => candidate.publicId) }] : [];
             const created = await tx.insert(paymentIntakes).values({
                 tenantId: ctx.tenantId,
                 ownerUserId: ctx.actorUserId,
@@ -324,17 +318,19 @@ export async function createPaymentIntake(ctx: CommandContext, input: CreatePaym
                     warningCodes: warnings.map((item) => item.code),
                 },
             });
-            return created;
+            return { created, warnings };
         });
+        if ("duplicateResult" in result) return result.duplicateResult;
+        const row = result.created;
         return {
             ...presentIntake(row),
             originLoanPublicId: originLoan?.publicId ?? null,
             duplicate: false as const,
             duplicateReason: null,
-            warnings,
+            warnings: result.warnings,
         };
     } catch (error) {
-        if ((error as { code?: string }).code === "23505") {
+        if (isUniqueViolation(error)) {
             const raced = await findHardDuplicate(ctx, {
                 idempotencyKey,
                 bankReferenceHash,
@@ -344,6 +340,15 @@ export async function createPaymentIntake(ctx: CommandContext, input: CreatePaym
         }
         throw error;
     }
+}
+
+function isUniqueViolation(error: unknown) {
+    let current: unknown = error;
+    for (let depth = 0; depth < 5 && current; depth += 1) {
+        if (typeof current === "object" && current !== null && "code" in current && String((current as { code?: unknown }).code) === "23505") return true;
+        current = typeof current === "object" && current !== null && "cause" in current ? (current as { cause?: unknown }).cause : undefined;
+    }
+    return false;
 }
 
 export async function listPaymentIntakes(ctx: CommandContext, input: { status?: string } = {}) {
@@ -552,11 +557,12 @@ export async function getPaymentIntake(ctx: CommandContext, publicId: string) {
     const replacementEligibility = row.status === "cancelled" ? await (async () => {
         try { return (await import("./payment-replacement-service")).inspectPaymentReplacement(ctx, publicId); } catch { return null; }
     })() : null;
-    const [evidenceRows, proposals, lineage, cancellationActor] = await Promise.all([
+    const [evidenceRows, proposals, lineage, cancellationActor, evidenceRequirement] = await Promise.all([
         effectivePaymentEvidenceWithFiles(ctx.tenantId, row.id),
         db.select().from(paymentMatchProposals).where(and(eq(paymentMatchProposals.tenantId, ctx.tenantId), eq(paymentMatchProposals.paymentIntakeId, row.id))).orderBy(desc(paymentMatchProposals.version)),
         loadIntakeLineage(ctx, [row]),
         row.cancelledByUserId === null ? Promise.resolve(null) : db.query.users.findFirst({ where: and(eq(users.tenantId, ctx.tenantId), eq(users.id, row.cancelledByUserId)) }),
+        db.query.financialEvidenceRequirements.findFirst({ where: and(eq(financialEvidenceRequirements.tenantId, ctx.tenantId), eq(financialEvidenceRequirements.paymentIntakeId, row.id)) }),
     ]);
     const latest = proposals[0];
     let latestAllocations: Array<AllocationRow & { borrowerPublicId: string; loanPublicId: string; schedulePublicId: string | null }> = [];
@@ -590,6 +596,11 @@ export async function getPaymentIntake(ctx: CommandContext, publicId: string) {
             sha256: null,
             filePublicId: item.filePublicId,
         })),
+        evidenceRequirement: evidenceRequirement ? {
+            expectedCount: evidenceRequirement.expectedCount,
+            authoritativeAttemptCount: await countAuthoritativeEvidenceAttempts(db, ctx.tenantId, evidenceRequirement.id, { kind: "payment", paymentIntakeId: row.id }),
+            readyCount: evidenceRows.filter((item) => item.status === "ready" && item.finalizedAt !== null && item.fileId !== null).length,
+        } : null,
         latestProposal: latest ? presentProposal(latest, latestAllocations) : null,
         cancellation,
         restoreCancellation,
@@ -936,6 +947,7 @@ export async function finalizePaymentEvidence(
         && head.metadata.intake === intake.publicId;
     if (!valid) throw new DomainError("EVIDENCE_METADATA_MISMATCH", "Stored evidence metadata, size, type, ownership, or checksum does not match", 409);
     return db.transaction(async (tx) => {
+        await lockPaymentWorkflowIdentity(ctx, tx, [intake.publicId]);
         await lockMutableEvidenceIntake(tx, ctx, intake.id);
         await tx.execute(sql`SELECT id FROM payment_evidence WHERE tenant_id = ${ctx.tenantId} AND id = ${evidence.id} FOR UPDATE`);
         const current = await tx.query.paymentEvidence.findFirst({ where: and(
@@ -1244,6 +1256,7 @@ export async function previewPaymentMatch(
     if (["posted", "reversed", "duplicate", "cancelled"].includes(existing.status)) throw new DomainError("PAYMENT_INTAKE_IMMUTABLE", "This intake cannot be matched", 409);
     if (existing.repostOfIntakeId !== null) throw new DomainError("PAYMENT_RESTORE_DRAFT_REQUIRES_RESTORE_WORKFLOW", "Restore drafts must use payment.restore workflow", 409);
     const run = async (tx: Executor) => {
+        await duplicateIdentityLock(ctx, existing, tx);
         await tx.execute(sql`SELECT id FROM payment_intakes WHERE id = ${existing.id} FOR UPDATE`);
         const intake = await tx.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.id, existing.id), eq(paymentIntakes.tenantId, ctx.tenantId)) });
         if (!intake) throw new DomainError("PAYMENT_INTAKE_NOT_FOUND", "Payment intake not found", 404);
@@ -1251,7 +1264,6 @@ export async function previewPaymentMatch(
             throw new DomainError("PAYMENT_INTAKE_IMMUTABLE", "This intake cannot be matched", 409);
         }
         if (intake.repostOfIntakeId !== null) throw new DomainError("PAYMENT_RESTORE_DRAFT_REQUIRES_RESTORE_WORKFLOW", "Restore drafts must use payment.restore workflow", 409);
-        await duplicateIdentityLock(ctx, intake, tx);
         await assertPaymentReplacementDuplicateSafe(ctx, intake, tx);
         await assertPaymentEvidenceReady(tx, ctx.tenantId, intake);
         const actor = await actorFor(ctx, tx);
@@ -1731,6 +1743,7 @@ async function postPaymentKernel(ctx: CommandContext, intakePublicId: string, in
     const accessible = await accessibleIntake(ctx, intakePublicId, executor ?? db);
     requirePublicId(input.proposalPublicId, "proposalId");
     const run = async (tx: Executor) => {
+        await duplicateIdentityLock(ctx, accessible, tx);
         const selected = await tx.query.paymentMatchProposals.findFirst({ where: and(eq(paymentMatchProposals.tenantId, ctx.tenantId), eq(paymentMatchProposals.paymentIntakeId, accessible.id), eq(paymentMatchProposals.publicId, input.proposalPublicId)) });
         const selectedAllocations: AllocationRow[] = selected ? await tx.select().from(paymentMatchAllocations).where(and(eq(paymentMatchAllocations.tenantId, ctx.tenantId), eq(paymentMatchAllocations.proposalId, selected.id))) : [];
         await lockPaymentBorrowers(tx, ctx.tenantId, selectedAllocations.map((row) => row.borrowerId));
@@ -1746,7 +1759,6 @@ async function postPaymentKernel(ctx: CommandContext, intakePublicId: string, in
         if (intake.status !== "ready") {
             throw new DomainError("PAYMENT_NOT_READY", "Payment intake must be ready before posting", 409);
         }
-        await duplicateIdentityLock(ctx, intake, tx);
         await assertPaymentEvidenceReady(tx, ctx.tenantId, intake);
         await assertPaymentReplacementDuplicateSafe(ctx, intake, tx);
         const proposal = await tx.query.paymentMatchProposals.findFirst({ where: and(

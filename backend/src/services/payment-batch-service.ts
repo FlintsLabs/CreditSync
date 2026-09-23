@@ -21,7 +21,7 @@ import { emptyFloatingBatchState, projectFloatingBatchPayment, type FloatingBatc
 import { BUCKET_NAME, createSignedPutUrl, headStoredObject, toStorageReference } from "../lib/storage";
 import { cancelLockedPaymentIntake } from "./payment-cancellation-service";
 import { effectivePaymentEvidence, effectiveReadyPaymentEvidence } from "./payment-effective-evidence-service";
-import { withPaymentWorkflowTransaction } from "./payment-workflow-locks";
+import { lockPaymentWorkflowTenant, withPaymentWorkflowTransaction } from "./payment-workflow-locks";
 
 type BatchRow = typeof paymentBatches.$inferSelect;
 type ItemRow = typeof paymentBatchItems.$inferSelect;
@@ -225,6 +225,7 @@ export async function createPaymentBatch(ctx: CommandContext, input: { idempoten
         borrowerId = borrower.id;
     }
     const created = await db.transaction(async (tx) => {
+        await lockPaymentWorkflowTenant(ctx, tx);
         const row = await tx.insert(paymentBatches).values({ tenantId: ctx.tenantId, borrowerId, status: borrowerId ? "draft" : "needs_review", version: 0, stateHash: digest({ borrowerPublicId: input.borrowerPublicId ?? null, items: [] }), createIdempotencyKey: key, notes: input.notes ?? null, createdByUserId: ctx.actorUserId, updatedByUserId: ctx.actorUserId }).returning().then((rows) => rows[0]!);
         await createAuditLog(tx, { tenantId: ctx.tenantId, actorUserId: ctx.actorUserId, actorSource: ctx.actorSource, requestId: ctx.requestId, correlationId: ctx.correlationId, entityType: "payment_batch", entityId: row.publicId, action: "created", payload: { batchPublicId: row.publicId } });
         return row;
@@ -722,6 +723,7 @@ export async function cancelPaymentBatch(ctx: CommandContext, batchPublicId: str
     if (!reason || reason.length > 2000 || !input.idempotencyKey.trim() || !Number.isInteger(input.revision) || input.revision < -1) throw new DomainError("INVALID_BATCH_CANCEL", "Cancellation needs a reason, current revision and idempotency key", 400);
     const requestHash = digest({ batchPublicId, reason, revision: input.revision });
     const updated = await db.transaction(async (tx) => {
+        await lockPaymentWorkflowTenant(ctx, tx);
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${ctx.tenantId}:batch-cancel:${input.idempotencyKey.trim()}`}, 0))`);
         const membersBeforeLock = await tx.select({ paymentIntakeId: paymentBatchItems.paymentIntakeId }).from(paymentBatchItems).where(and(eq(paymentBatchItems.tenantId, ctx.tenantId), eq(paymentBatchItems.batchId, batch.id))).orderBy(asc(paymentBatchItems.id));
         const borrowerIds = new Set<number>();
@@ -801,6 +803,7 @@ export async function decidePaymentBatch(ctx: CommandContext, batchPublicId: str
 export type PreviewPaymentBatchInput = { borrowerPublicId: string; allocations?: Array<ExplicitBatchAllocation>; decisionPublicId?: string };
 export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: string, input: PreviewPaymentBatchInput) {
     return db.transaction(async (db) => {
+    await lockPaymentWorkflowTenant(ctx, db);
     requireId(input.borrowerPublicId, "borrowerPublicId");
     const batchForResolution = await accessibleBatch(ctx, batchPublicId, db);
     const stagedForResolution = await db.select().from(paymentBatchStagingItems).where(and(eq(paymentBatchStagingItems.tenantId, ctx.tenantId), eq(paymentBatchStagingItems.batchId, batchForResolution.id)));
@@ -972,6 +975,7 @@ export async function executePaymentBatch(ctx: CommandContext, batchPublicId: st
     const requestHash = digest({ batchPublicId, ...input });
     requireId(input.previewPublicId, "previewPublicId");
     const run = async (tx: DbExecutor) => {
+        await lockPaymentWorkflowTenant(ctx, tx);
         const selected = await tx.query.paymentBatchPreviews.findFirst({ where: and(eq(paymentBatchPreviews.tenantId, ctx.tenantId), eq(paymentBatchPreviews.batchId, batch.id), eq(paymentBatchPreviews.publicId, input.previewPublicId)) });
         const selectedAllocations = selected ? await tx.select().from(paymentBatchAllocations).where(and(eq(paymentBatchAllocations.tenantId, ctx.tenantId), eq(paymentBatchAllocations.previewId, selected.id))) : [];
         const initialBorrowerIds = [...new Set([...(batch.borrowerId === null ? [] : [batch.borrowerId]), ...selectedAllocations.map((row) => row.borrowerId)])].sort((a, b) => a - b);

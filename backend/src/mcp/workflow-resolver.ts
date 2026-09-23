@@ -33,6 +33,7 @@ export type ResolverObservation = Readonly<{
     restoreCancellationStateHash?: string | null;
     duplicateReviewRequired?: boolean;
     duplicateBlockerPublicIds?: readonly string[];
+    identityDecisionRequired?: boolean;
     paymentBlockers?: readonly PaymentWorkflowBlocker[];
 }>;
 
@@ -97,6 +98,11 @@ function step(toolName: string, input: ResolverInput, inputs: readonly string[] 
         else arguments_[targetArgumentFields[toolName] ?? `${targetKind === "payment_intake" ? "paymentIntake" : targetKind === "loan_disbursement" ? "disbursement" : targetKind}PublicId`] = input.target.publicId;
     }
     return { toolName, arguments: arguments_, requiredInputs: inputs, requiresConfirmation };
+}
+
+function identityDecisionStep(input: ResolverInput, participantPublicIds: readonly string[]) {
+    if (!input.target || !MCP_TOOL_NAMES.includes("payment.identity-decision.preview" as never) || !toolIsVisibleInProfile("payment.identity-decision.preview", input.profile)) return null;
+    return { toolName: "payment.identity-decision.preview", arguments: { participantPaymentIntakePublicIds: [input.target.publicId, ...participantPublicIds].join(",") }, requiredInputs: ["participantPaymentIntakePublicIds", "decision", "reason", "idempotencyKey"], requiresConfirmation: false } satisfies ResolverStep;
 }
 
 function result(input: ResolverInput, profile: ResolverProfile, status: ResolverResult["status"], nextSteps: readonly (ResolverStep | null)[], blockers: readonly string[] = [], prohibitedTools: readonly string[] = []): ResolverResult {
@@ -184,7 +190,10 @@ export function resolveWorkflowPolicy(input: ResolverInput, observation: Resolve
         return withObservation(result(input, profile, restoreCancelNextStep ? "confirmation_required" : inspectStep ? "next_step" : "needs_input", [inspectStep, restoreCancelNextStep], inspectStep ? [] : ["TARGET_REQUIRES_PARENT_READ"]), observation);
     }
     if (input.target!.kind === "payment_intake" && observation.state === "cancelled" && input.intent === "receive_payment") {
-        if (observation.duplicateReviewRequired === true) return withObservation(result(input, profile, "next_step", [step("payment.replacement.duplicate-review.preview", input)], ["PAYMENT_DUPLICATE_REQUIRES_REVIEW"], ["payment.post", "payment.replacement.create"]), observation);
+        if (observation.duplicateReviewRequired === true) {
+            const identityStep = observation.identityDecisionRequired ? identityDecisionStep(input, observation.duplicateBlockerPublicIds ?? []) : null;
+            return withObservation(result(input, profile, "next_step", [identityStep ?? step("payment.replacement.duplicate-review.preview", input)], ["PAYMENT_DUPLICATE_REQUIRES_REVIEW"], ["payment.post", "payment.replacement.create"]), observation);
+        }
         if (observation.evidenceRequired === true && observation.evidenceReady !== true) return withObservation(result(input, profile, "next_step", [step("payment.evidence-recovery.preview", input)], ["PAYMENT_REPLACEMENT_EVIDENCE_NOT_READY"], ["payment.post", "payment.replacement.create"]), observation);
         return withObservation(result(input, profile, "next_step", [step("payment.replacement.inspect", input)], ["CANCELLED_PAYMENT_REQUIRES_REPLACEMENT_INSPECTION"], ["payment.post", "evidence.prepare", "evidence.finalize"]), observation);
     }

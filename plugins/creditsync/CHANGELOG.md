@@ -1,5 +1,11 @@
 # CreditSync Plugin Changelog
 
+## v10.9.0 - 2026-09-23
+
+### Added
+
+- Added participant-scoped identity decision and cancelled-evidence recovery tool contracts, including explicit confirmation, requirement reinterpretation, ownership checks, and replay-safe recovery guidance.
+
 ## v10.8.0 - 2026-09-23
 
 ### Added

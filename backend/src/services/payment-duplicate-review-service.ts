@@ -9,7 +9,7 @@ import { DomainError } from "./domain-error";
 import { countAuthoritativeEvidenceAttempts } from "./financial-evidence-requirement-service";
 import { effectivePaymentEvidence } from "./payment-effective-evidence-service";
 import { normalizeBorrowerText } from "./borrower-service";
-import { withPaymentWorkflowTransaction } from "./payment-workflow-locks";
+import { lockPaymentWorkflowIdentity, withPaymentWorkflowTransaction } from "./payment-workflow-locks";
 
 type Executor = DbExecutor;
 const operatorRoles = new Set(["owner", "manager", "collector"]);
@@ -108,6 +108,7 @@ export type DuplicateReviewPreview = {
 export async function previewPaymentDuplicateReview(ctx: CommandContext, input: { canonicalPaymentIntakePublicId: string; candidatePaymentIntakePublicIds: string[]; canonicalEvidenceCandidatePublicIds?: string[]; reason: string; idempotencyKey: string }, executor?: Executor): Promise<DuplicateReviewPreview> {
     if (!input.reason?.trim() || !input.idempotencyKey?.trim() || !input.candidatePaymentIntakePublicIds?.length || input.candidatePaymentIntakePublicIds.length > 50) throw new DomainError("PAYMENT_DUPLICATE_REVIEW_COMMAND_INVALID", "Canonical intake, bounded candidates, reason, and idempotency key are required", 400);
     const run = async (tx: Executor) => {
+        await lockPaymentWorkflowIdentity(ctx, tx, []);
         const user = await actor(ctx, tx);
         let canonical = await intake(ctx, input.canonicalPaymentIntakePublicId, tx);
         const candidateIds = [...new Set(input.candidatePaymentIntakePublicIds)];
@@ -158,6 +159,7 @@ export async function previewPaymentDuplicateReview(ctx: CommandContext, input: 
 export async function executePaymentDuplicateReview(ctx: CommandContext, input: { duplicateReviewPublicId: string; previewHash: string; confirmed: true; reason: string; idempotencyKey: string }, executor?: Executor) {
     if (input.confirmed !== true || !input.reason?.trim() || !input.idempotencyKey?.trim()) throw new DomainError("PAYMENT_DUPLICATE_REVIEW_CONFIRMATION_REQUIRED", "Fresh preview confirmation, reason, and idempotency key are required", 400);
     const run = async (tx: Executor) => {
+        await lockPaymentWorkflowIdentity(ctx, tx, []);
         const user = await actor(ctx, tx);
         const review = await tx.query.paymentDuplicateReviews.findFirst({ where: and(eq(paymentDuplicateReviews.tenantId, ctx.tenantId), eq(paymentDuplicateReviews.publicId, input.duplicateReviewPublicId)) });
         if (!review) throw new DomainError("PAYMENT_DUPLICATE_REVIEW_NOT_FOUND", "Duplicate review preview not found", 404);

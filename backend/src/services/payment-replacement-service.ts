@@ -10,7 +10,7 @@ import { countAuthoritativeEvidenceAttempts, registerFinancialEvidenceRequiremen
 import { effectivePaymentEvidence } from "./payment-effective-evidence-service";
 import { assessPaymentReplacementDuplicates, assertPaymentReplacementDuplicateSafe, duplicateIdentityLock } from "./payment-duplicate-guard";
 import { classifyPaymentWorkflowBlocker } from "./payment-workflow-blockers";
-import { withPaymentWorkflowTransaction } from "./payment-workflow-locks";
+import { lockPaymentWorkflowIdentity, withPaymentWorkflowTransaction } from "./payment-workflow-locks";
 
 type Executor = DbExecutor;
 type Intake = typeof paymentIntakes.$inferSelect;
@@ -74,6 +74,7 @@ export async function createPaymentReplacement(ctx: CommandContext, input: { pay
     if (!input.reason?.trim() || !input.idempotencyKey?.trim() || !/^[0-9a-f]{64}$/iu.test(input.expectedStateHash)) throw new DomainError("PAYMENT_REPLACEMENT_COMMAND_INVALID", "Reason, idempotency key, and current state hash are required", 400);
     const run = async (tx: Executor) => {
         const { row: source } = await accessible(ctx, input.paymentIntakePublicId, tx);
+        await lockPaymentWorkflowIdentity(ctx, tx, [source.publicId]);
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`payment-replacement-key:${ctx.tenantId}:${input.idempotencyKey.trim()}`}, 0))`);
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`payment-replacement:${ctx.tenantId}:${source.id}`}, 0))`);
         const hash = requestHash({ paymentIntakePublicId: input.paymentIntakePublicId, reason: input.reason.trim(), idempotencyKey: input.idempotencyKey.trim(), expectedStateHash: input.expectedStateHash });
