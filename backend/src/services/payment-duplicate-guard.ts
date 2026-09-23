@@ -8,7 +8,7 @@ import { normalizeBorrowerText } from "./borrower-service";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import { classifyPaymentWorkflowBlocker, type PaymentWorkflowBlocker } from "./payment-workflow-blockers";
-import { identityDecisionAuthorizesPair } from "./payment-identity-decision-service";
+import { identityDecisionAuthorizesPair, inspectPaymentIdentity } from "./payment-identity-decision-service";
 import { lockPaymentWorkflowIdentity } from "./payment-workflow-locks";
 
 const duplicateWindowMs = 5 * 60 * 1000;
@@ -67,6 +67,19 @@ export async function assessPaymentReplacementDuplicates(ctx: CommandContext, in
             return chainRow ? identityDecisionAuthorizesPair(ctx, chainRow.publicId, row.publicId, executor) : false;
         }))).some(Boolean);
         if (identityReviewed) continue;
+        // A same-payment decision is not a duplicate exemption once any
+        // member already has an active financial effect. This check is
+        // independent of the five-minute heuristic, so a late retry cannot
+        // reopen a second posting route.
+        const identityConflict = await Promise.all([...chain].map(async (chainId) => {
+            const chainRow = rows.find((candidate) => candidate.id === chainId);
+            if (!chainRow) return false;
+            const identity = await inspectPaymentIdentity(ctx, [chainRow.publicId, row.publicId], executor);
+            if (!identity.connected) return false;
+            if (identity.activeFinancialEffectCount > 0) blockerPublicIds.push(row.publicId);
+            return true;
+        }));
+        if (identityConflict.some(Boolean)) continue;
         const reviewedByChain = (await Promise.all([...chain].map((canonicalId) => reviewAuthorizesPair(ctx, canonicalId, row.id, executor)))).some(Boolean);
         if (reviewedByChain) continue;
         if ((row.bankReferenceHash && bankHashes.has(row.bankReferenceHash)) || (row.qrPayloadHash && qrHashes.has(row.qrPayloadHash))) {

@@ -39,7 +39,7 @@ export type ResolverObservation = Readonly<{
 
 export type ResolverStep = Readonly<{
     toolName: string;
-    arguments: Readonly<Record<string, string>>;
+    arguments: Readonly<Record<string, string | readonly string[]>>;
     requiredInputs: readonly string[];
     requiresConfirmation: boolean;
 }>;
@@ -87,7 +87,7 @@ const targetArgumentFields: Readonly<Record<string, string>> = Object.freeze({
 
 function step(toolName: string, input: ResolverInput, inputs: readonly string[] = requiredInputs[toolName] ?? [], requiresConfirmation = false): ResolverStep | null {
     if (!MCP_TOOL_NAMES.includes(toolName as never) || !toolIsVisibleInProfile(toolName, input.profile)) return null;
-    const arguments_: Record<string, string> = {};
+    const arguments_: Record<string, string | readonly string[]> = {};
     const targetKind = targetArguments[toolName];
     if (targetKind) {
         if (!input.target) return null;
@@ -102,7 +102,7 @@ function step(toolName: string, input: ResolverInput, inputs: readonly string[] 
 
 function identityDecisionStep(input: ResolverInput, participantPublicIds: readonly string[]) {
     if (!input.target || !MCP_TOOL_NAMES.includes("payment.identity-decision.preview" as never) || !toolIsVisibleInProfile("payment.identity-decision.preview", input.profile)) return null;
-    return { toolName: "payment.identity-decision.preview", arguments: { participantPaymentIntakePublicIds: [input.target.publicId, ...participantPublicIds].join(",") }, requiredInputs: ["participantPaymentIntakePublicIds", "decision", "reason", "idempotencyKey"], requiresConfirmation: false } satisfies ResolverStep;
+    return { toolName: "payment.identity-decision.preview", arguments: { participantPaymentIntakePublicIds: [input.target.publicId, ...participantPublicIds] }, requiredInputs: ["participantPaymentIntakePublicIds", "decision", "reason", "idempotencyKey"], requiresConfirmation: false } satisfies ResolverStep;
 }
 
 function result(input: ResolverInput, profile: ResolverProfile, status: ResolverResult["status"], nextSteps: readonly (ResolverStep | null)[], blockers: readonly string[] = [], prohibitedTools: readonly string[] = []): ResolverResult {

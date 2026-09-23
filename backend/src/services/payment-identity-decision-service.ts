@@ -26,11 +26,23 @@ function hardIdentityConflicts(rows: Array<typeof paymentIntakes.$inferSelect>) 
 }
 function exactPair(participants: string[], first: string, second: string) { return participants.length === 2 && participants[0] === first && participants[1] === second; }
 
-async function identityComponent(tenantId: string, seed: string, executor: DbExecutor) {
+async function effectiveDecisions(tenantId: string, executor: DbExecutor) {
     const decisions = await executor.select().from(paymentIdentityDecisions).where(eq(paymentIdentityDecisions.tenantId, tenantId));
+    const superseded = new Set(decisions.map((decision) => decision.supersedesDecisionId).filter((id): id is number => id !== null));
+    const effective = [] as typeof decisions;
+    for (const decision of decisions) {
+        if (superseded.has(decision.id)) continue;
+        const rows = await executor.query.paymentIntakes.findMany({ where: and(eq(paymentIntakes.tenantId, tenantId), inArray(paymentIntakes.publicId, decision.participantPublicIds)) });
+        if (rows.length !== decision.participantPublicIds.length || snapshotsHash(rows) !== decision.participantSnapshotHash) continue;
+        effective.push(decision);
+    }
+    return effective;
+}
+
+async function identityComponent(tenantId: string, seed: string, executor: DbExecutor) {
+    const decisions = await effectiveDecisions(tenantId, executor);
     const lineages = await executor.select().from(paymentReplacementLineages).where(eq(paymentReplacementLineages.tenantId, tenantId));
     const members = new Set([seed]);
-    const hasIdentityDecision = decisions.some((decision) => decision.decision === "same_payment" && decision.participantPublicIds.includes(seed));
     let changed = true;
     while (changed) {
         changed = false;
@@ -38,7 +50,7 @@ async function identityComponent(tenantId: string, seed: string, executor: DbExe
             if (decision.decision !== "same_payment" || !decision.participantPublicIds.some((id) => members.has(id))) continue;
             for (const id of decision.participantPublicIds) if (!members.has(id)) { members.add(id); changed = true; }
         }
-        for (const lineage of hasIdentityDecision ? lineages : []) {
+        for (const lineage of lineages) {
             const source = (await executor.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, tenantId), eq(paymentIntakes.id, lineage.sourcePaymentIntakeId)) }))?.publicId;
             const replacement = (await executor.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, tenantId), eq(paymentIntakes.id, lineage.replacementPaymentIntakeId)) }))?.publicId;
             if (source && replacement && (members.has(source) || members.has(replacement))) {
@@ -48,6 +60,16 @@ async function identityComponent(tenantId: string, seed: string, executor: DbExe
         }
     }
     return members;
+}
+
+export async function inspectPaymentIdentity(ctx: CommandContext, participantPublicIds: readonly string[], executor: DbExecutor = db) {
+    const components = new Set<string>();
+    const firstComponent = await identityComponent(ctx.tenantId, participantPublicIds[0]!, executor);
+    for (const participant of participantPublicIds) {
+        for (const member of await identityComponent(ctx.tenantId, participant, executor)) components.add(member);
+    }
+    const rows = await executor.query.paymentIntakes.findMany({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.publicId, [...components])) });
+    return { participantPublicIds: [...components].sort(), connected: participantPublicIds.every((participant) => firstComponent.has(participant)), activeFinancialEffectCount: rows.filter((row) => row.status === "posted").length };
 }
 
 async function requireOperator(ctx: CommandContext, tx: DbExecutor) {
@@ -103,9 +125,8 @@ export async function executePaymentIdentityDecision(ctx: CommandContext, input:
         if (current.length !== preview.participantPublicIds.length) throw new DomainError("PAYMENT_INTAKE_NOT_FOUND", "Every payment participant must belong to the tenant", 404);
         requireParticipantAccess(user, current);
         if (preview.decision === "same_payment") {
-            const component = await identityComponent(ctx.tenantId, preview.participantPublicIds[0]!, tx);
-            const componentRows = await tx.query.paymentIntakes.findMany({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.publicId, [...component])) });
-            if (current.filter((row) => row.status === "posted").length > 1 || componentRows.length !== component.size || componentRows.filter((row) => row.status === "posted").length > 1) throw new DomainError("PAYMENT_IDENTITY_GROUP_FINANCIAL_CONFLICT", "A same-payment decision would merge multiple active postings", 409);
+            const affected = await inspectPaymentIdentity(ctx, preview.participantPublicIds, tx);
+            if (affected.activeFinancialEffectCount > 1) throw new DomainError("PAYMENT_IDENTITY_GROUP_FINANCIAL_CONFLICT", "A same-payment decision would merge multiple active postings", 409);
         }
         const snapshotHash = snapshotsHash(current);
         if (snapshotHash !== preview.participantSnapshotHash) throw new DomainError("PAYMENT_IDENTITY_PREVIEW_STALE", "Payment participants changed; preview again", 409);
@@ -123,7 +144,7 @@ export async function executePaymentIdentityDecision(ctx: CommandContext, input:
 /** Compatibility reader used by duplicate detection; historical duplicate-review rows remain authoritative too. */
 export async function identityDecisionAuthorizesPair(ctx: CommandContext, firstPublicId: string, secondPublicId: string, executor: DbExecutor = db) {
     if (firstPublicId === secondPublicId) return false;
-    const rows = await executor.select().from(paymentIdentityDecisions).where(eq(paymentIdentityDecisions.tenantId, ctx.tenantId));
+    const rows = await effectiveDecisions(ctx.tenantId, executor);
     const pairRows = rows.filter((row) => row.participantPublicIds.includes(firstPublicId) && row.participantPublicIds.includes(secondPublicId)).sort((a, b) => b.id - a.id);
     const latest = pairRows[0];
     if (!latest) return false;

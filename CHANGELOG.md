@@ -9,6 +9,9 @@
 ### Changed
 
 - Applied replay-safe transient transaction retry to payment matching previews and evidence finalization so serialization/deadlock failures replay the complete operation.
+### Fixed
+
+- Hardened payment identity recovery against transitive superseding decisions, replacement-lineage unions, active-posting bypasses, and resolver arguments that did not match the closed MCP UUID-array schema.
 
 ## v0.4.54 - 2026-09-23
 

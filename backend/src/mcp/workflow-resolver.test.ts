@@ -9,6 +9,20 @@ const target = { kind: "payment_intake" as const, publicId: "0198c481-3e2b-7000-
 const base = { profile: "payments" as const, catalogVersion, workflowVersion: WORKFLOW_VERSION };
 
 describe("workflow resolver policy", () => {
+    test("emits schema-valid UUID arrays for identity review participants", () => {
+        const first = "0198c481-3e2b-7000-8000-000000000001";
+        const second = "0198c481-3e2b-7000-8000-000000000002";
+        const resolved = resolveWorkflowPolicy(
+            { intent: "receive_payment", profile: "full", target: { kind: "payment_intake", publicId: first }, attachments: "none" },
+            { targetAvailable: true, identityResolved: true, state: "cancelled", evidenceReady: true, duplicateReviewRequired: true, identityDecisionRequired: true, duplicateBlockerPublicIds: [second] },
+            { profile: "full", catalogVersion },
+        );
+        expect(resolved.nextSteps[0]?.arguments).toEqual({ participantPaymentIntakePublicIds: [first, second] });
+        expect(toolInputSchemas["payment.identity-decision.preview"].safeParse({
+            ...resolved.nextSteps[0]?.arguments,
+            decision: "same_payment", reason: "reviewed", idempotencyKey: "resolver-test",
+        }).success).toBe(true);
+    });
     test("does not route scheduled close-out to floating settlement", () => {
         const resolved = resolveWorkflowPolicy({ intent: "close_loan", profile: "loans", target: { kind: "loan", publicId: target.publicId }, attachments: "none" }, { targetAvailable: true, identityResolved: true, state: "mutable", loanType: "scheduled", evidenceReady: true }, { ...base, profile: "loans" });
         expect(resolved.nextSteps.some((step) => step.toolName === "loan.settlement.preview")).toBe(false);
