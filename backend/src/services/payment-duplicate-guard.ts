@@ -13,6 +13,10 @@ import { lockPaymentWorkflowIdentity } from "./payment-workflow-locks";
 
 const duplicateWindowMs = 5 * 60 * 1000;
 
+async function acceptedByAnyIdentityReview(ctx: CommandContext, first: typeof paymentIntakes.$inferSelect, second: typeof paymentIntakes.$inferSelect, executor: DbExecutor) {
+    return (await identityDecisionAuthorizesPair(ctx, first.publicId, second.publicId, executor)) || (await reviewAuthorizesPair(ctx, first.id, second.id, executor));
+}
+
 function hash(value: string) { return createHash("sha256").update(value).digest("hex"); }
 function ancestorChain(current: typeof paymentIntakes.$inferSelect, rows: Array<typeof paymentIntakes.$inferSelect>, lineages: Array<typeof paymentReplacementLineages.$inferSelect>) {
     const ids = new Set<number>([current.id]);
@@ -62,11 +66,6 @@ export async function assessPaymentReplacementDuplicates(ctx: CommandContext, in
     const blockerPublicIds: string[] = [];
     for (const row of rows) {
         if (chain.has(row.id)) continue;
-        const identityReviewed = (await Promise.all([...chain].map(async (chainId) => {
-            const chainRow = rows.find((candidate) => candidate.id === chainId);
-            return chainRow ? identityDecisionAuthorizesPair(ctx, chainRow.publicId, row.publicId, executor) : false;
-        }))).some(Boolean);
-        if (identityReviewed) continue;
         // A same-payment decision is not a duplicate exemption once any
         // member already has an active financial effect. This check is
         // independent of the five-minute heuristic, so a late retry cannot
@@ -80,7 +79,10 @@ export async function assessPaymentReplacementDuplicates(ctx: CommandContext, in
             return true;
         }));
         if (identityConflict.some(Boolean)) continue;
-        const reviewedByChain = (await Promise.all([...chain].map((canonicalId) => reviewAuthorizesPair(ctx, canonicalId, row.id, executor)))).some(Boolean);
+        const reviewedByChain = (await Promise.all([...chain].map((canonicalId) => {
+            const chainRow = rows.find((candidate) => candidate.id === canonicalId);
+            return chainRow ? acceptedByAnyIdentityReview(ctx, chainRow, row, executor) : false;
+        }))).some(Boolean);
         if (reviewedByChain) continue;
         if ((row.bankReferenceHash && bankHashes.has(row.bankReferenceHash)) || (row.qrPayloadHash && qrHashes.has(row.qrPayloadHash))) {
             blockerPublicIds.push(row.publicId);
@@ -93,7 +95,7 @@ export async function assessPaymentReplacementDuplicates(ctx: CommandContext, in
     for (const row of rows) {
         for (const canonicalId of chain) {
             const canonical = rows.find((candidate) => candidate.id === canonicalId);
-            if (canonical && (await reviewAuthorizesPair(ctx, canonical.id, row.id, executor) || await identityDecisionAuthorizesPair(ctx, canonical.publicId, row.publicId, executor))) acceptedReviewedIds.add(row.publicId);
+            if (canonical && await acceptedByAnyIdentityReview(ctx, canonical, row, executor)) acceptedReviewedIds.add(row.publicId);
         }
     }
     if (!warningReferencesOnlyKnownChain(intake.warnings, chain, rows, acceptedReviewedIds)) {

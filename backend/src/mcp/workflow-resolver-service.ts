@@ -10,6 +10,8 @@ import { effectivePaymentEvidence } from "../services/payment-effective-evidence
 import { countAuthoritativeEvidenceAttempts } from "../services/financial-evidence-requirement-service";
 import { inspectPaymentReplacement } from "../services/payment-replacement-service";
 import { classifyPaymentWorkflowBlocker } from "../services/payment-workflow-blockers";
+import { paymentDuplicateReviewMemberships } from "../db/schema";
+import { normalizeBorrowerText } from "../services/borrower-service";
 
 type ResolverWireInput = Omit<ResolverInput, "profile"> & { profile?: never };
 
@@ -45,9 +47,12 @@ async function paymentObservation(ctx: CommandContext, publicId: string): Promis
         ? await inspectPaymentReplacement(ctx, publicId).catch(() => null)
         : null;
     const duplicateIds = duplicateReview?.blockerPublicIds ?? [];
-    const duplicateRows = duplicateIds.length ? await db.select({ id: paymentIntakes.id }).from(paymentIntakes).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.publicId, duplicateIds))) : [];
+    const duplicateRows = duplicateIds.length ? await db.select().from(paymentIntakes).where(and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.publicId, duplicateIds))) : [];
     const participantIds = [intake.id, ...duplicateRows.map((row) => row.id)];
-    const identityDecisionRequired = duplicateRows.length > 0 && (await db.select({ id: paymentReplacementLineages.id }).from(paymentReplacementLineages).where(and(eq(paymentReplacementLineages.tenantId, ctx.tenantId), or(inArray(paymentReplacementLineages.sourcePaymentIntakeId, participantIds), inArray(paymentReplacementLineages.replacementPaymentIntakeId, participantIds))))).length > 0;
+    const lineaged = duplicateRows.length > 0 && (await db.select({ id: paymentReplacementLineages.id }).from(paymentReplacementLineages).where(and(eq(paymentReplacementLineages.tenantId, ctx.tenantId), or(inArray(paymentReplacementLineages.sourcePaymentIntakeId, participantIds), inArray(paymentReplacementLineages.replacementPaymentIntakeId, participantIds))))).length > 0;
+    const legacyMembership = duplicateRows.length > 0 && (await db.select({ id: paymentDuplicateReviewMemberships.id }).from(paymentDuplicateReviewMemberships).where(and(eq(paymentDuplicateReviewMemberships.tenantId, ctx.tenantId), or(inArray(paymentDuplicateReviewMemberships.canonicalPaymentIntakeId, participantIds), inArray(paymentDuplicateReviewMemberships.candidatePaymentIntakeId, participantIds))))).length > 0;
+    const malformedCandidate = duplicateRows.some((candidate) => candidate.status !== "cancelled" || candidate.amount !== intake.amount || candidate.receivedAt.getTime() !== intake.receivedAt.getTime() || !candidate.payerName || !intake.payerName || normalizeBorrowerText(candidate.payerName) !== normalizeBorrowerText(intake.payerName));
+    const identityDecisionRequired = duplicateRows.length > 0 && (lineaged || legacyMembership || malformedCandidate);
     return {
         targetAvailable: true, identityResolved: true, state: intake.status === "cancelled" ? "cancelled" : intake.status === "duplicate" ? "duplicate" : intake.status === "reversed" ? "reversed" : intake.status === "posted" ? "posted" : "mutable",
         evidenceRequired: required, evidenceReady: evidenceTotal <= 20 && attemptTotal <= 20 && (!required || (expected > 0 && ready >= expected && evidenceTotal === ready)),

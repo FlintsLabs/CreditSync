@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.56 - 2026-09-25
+
+### Fixed
+
+- Hardened payment identity duplicate detection so active same-payment components cannot be bypassed by ancestor exemptions, valid legacy duplicate-review memberships participate in transitive groups, expanded component authorization is enforced for identity decisions, and resolver observations route mutable or mismatched duplicate candidates to fresh identity review.
+
 ## v0.4.55 - 2026-09-24
 
 ### Added

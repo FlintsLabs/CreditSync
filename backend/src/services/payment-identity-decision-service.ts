@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { db, type DbExecutor } from "../db";
-import { paymentIdentityDecisionPreviews, paymentIdentityDecisions, paymentIntakes, paymentReplacementLineages, users } from "../db/schema";
+import { paymentDuplicateReviewExecutions, paymentDuplicateReviewMemberships, paymentDuplicateReviews, paymentIdentityDecisionPreviews, paymentIdentityDecisions, paymentIntakes, paymentReplacementLineages, users } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import { lockPaymentWorkflowIdentity, withPaymentWorkflowTransaction } from "./payment-workflow-locks";
 import { canAccessTenantWideData } from "../lib/access";
+import { normalizeBorrowerText } from "./borrower-service";
 
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const operators = new Set(["owner", "manager", "collector"]);
@@ -42,6 +43,7 @@ async function effectiveDecisions(tenantId: string, executor: DbExecutor) {
 async function identityComponent(tenantId: string, seed: string, executor: DbExecutor) {
     const decisions = await effectiveDecisions(tenantId, executor);
     const lineages = await executor.select().from(paymentReplacementLineages).where(eq(paymentReplacementLineages.tenantId, tenantId));
+    const legacyMemberships = await executor.select().from(paymentDuplicateReviewMemberships).where(eq(paymentDuplicateReviewMemberships.tenantId, tenantId));
     const members = new Set([seed]);
     let changed = true;
     while (changed) {
@@ -58,8 +60,34 @@ async function identityComponent(tenantId: string, seed: string, executor: DbExe
                 if (!members.has(replacement)) { members.add(replacement); changed = true; }
             }
         }
+        // Executed legacy duplicate reviews are durable identity evidence too.
+        // Validate each membership through the same live reader used by the
+        // duplicate guard before allowing it to connect the graph.
+        for (const membership of legacyMemberships) {
+            const canonical = await executor.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, tenantId), eq(paymentIntakes.id, membership.canonicalPaymentIntakeId)) });
+            const candidate = await executor.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, tenantId), eq(paymentIntakes.id, membership.candidatePaymentIntakeId)) });
+            if (!canonical || !candidate) continue;
+            const valid = await legacyMembershipAuthorizesPair(tenantId, canonical.publicId, candidate.publicId, executor);
+            if (!valid || (!members.has(canonical.publicId) && !members.has(candidate.publicId))) continue;
+            if (!members.has(canonical.publicId)) { members.add(canonical.publicId); changed = true; }
+            if (!members.has(candidate.publicId)) { members.add(candidate.publicId); changed = true; }
+        }
     }
     return members;
+}
+
+async function legacyMembershipAuthorizesPair(tenantId: string, canonicalPublicId: string, candidatePublicId: string, executor: DbExecutor) {
+    const rows = await executor.query.paymentIntakes.findMany({ where: and(eq(paymentIntakes.tenantId, tenantId), inArray(paymentIntakes.publicId, [canonicalPublicId, candidatePublicId])) });
+    if (rows.length !== 2) return false;
+    const canonical = rows.find((row) => row.publicId === canonicalPublicId)!;
+    const candidate = rows.find((row) => row.publicId === candidatePublicId)!;
+    if (canonical.status !== "cancelled" || candidate.status !== "cancelled" || canonical.postedAt !== null || candidate.postedAt !== null || candidate.replacementOfIntakeId !== null || candidate.repostOfIntakeId !== null) return false;
+    if (canonical.amount !== candidate.amount || canonical.receivedAt.getTime() !== candidate.receivedAt.getTime() || !canonical.payerName || !candidate.payerName || normalizeBorrowerText(canonical.payerName) !== normalizeBorrowerText(candidate.payerName)) return false;
+    const membership = await executor.query.paymentDuplicateReviewMemberships.findFirst({ where: and(eq(paymentDuplicateReviewMemberships.tenantId, tenantId), eq(paymentDuplicateReviewMemberships.canonicalPaymentIntakeId, canonical.id), eq(paymentDuplicateReviewMemberships.candidatePaymentIntakeId, candidate.id)) });
+    if (!membership) return false;
+    const review = await executor.query.paymentDuplicateReviews.findFirst({ where: and(eq(paymentDuplicateReviews.tenantId, tenantId), eq(paymentDuplicateReviews.id, membership.reviewId)) });
+    const execution = await executor.query.paymentDuplicateReviewExecutions.findFirst({ where: and(eq(paymentDuplicateReviewExecutions.tenantId, tenantId), eq(paymentDuplicateReviewExecutions.id, membership.executionId), eq(paymentDuplicateReviewExecutions.reviewId, membership.reviewId)) });
+    return !!review && !!execution;
 }
 
 export async function inspectPaymentIdentity(ctx: CommandContext, participantPublicIds: readonly string[], executor: DbExecutor = db) {
@@ -83,6 +111,14 @@ function requireParticipantAccess(user: typeof users.$inferSelect, rows: Array<t
     if (rows.some((row) => row.ownerUserId !== user.id)) throw new DomainError("PAYMENT_IDENTITY_DECISION_FORBIDDEN", "Collector access is limited to owned payment participants", 403);
 }
 
+async function requireExpandedComponentAccess(ctx: CommandContext, user: typeof users.$inferSelect, participantPublicIds: readonly string[], executor: DbExecutor) {
+    const inspected = await inspectPaymentIdentity(ctx, participantPublicIds, executor);
+    const expanded = await executor.query.paymentIntakes.findMany({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.publicId, inspected.participantPublicIds)) });
+    if (expanded.length !== inspected.participantPublicIds.length) throw new DomainError("PAYMENT_INTAKE_NOT_FOUND", "Every connected payment participant must belong to the tenant", 404);
+    requireParticipantAccess(user, expanded);
+    return inspected;
+}
+
 export async function previewPaymentIdentityDecision(ctx: CommandContext, input: { participantPaymentIntakePublicIds: string[]; decision: "same_payment" | "distinct_payment"; reason: string; idempotencyKey: string }, executor?: DbExecutor) {
     const run = async (tx: DbExecutor) => {
         const user = await requireOperator(ctx, tx);
@@ -92,6 +128,7 @@ export async function previewPaymentIdentityDecision(ctx: CommandContext, input:
         const rows = await tx.query.paymentIntakes.findMany({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), inArray(paymentIntakes.publicId, participantPublicIds)) });
         if (rows.length !== participantPublicIds.length) throw new DomainError("PAYMENT_INTAKE_NOT_FOUND", "Every payment participant must belong to the tenant", 404);
         requireParticipantAccess(user, rows);
+        await requireExpandedComponentAccess(ctx, user, participantPublicIds, tx);
         const snapshots = rows.map(paymentSnapshot).sort((a, b) => a.publicId.localeCompare(b.publicId));
         if (input.decision === "distinct_payment" && hardIdentityConflicts(rows)) throw new DomainError("PAYMENT_IDENTITY_HARD_CONFLICT", "Matching bank or QR identity prevents a distinct decision", 409);
         const participantSnapshotHash = digest(snapshots);
@@ -125,7 +162,7 @@ export async function executePaymentIdentityDecision(ctx: CommandContext, input:
         if (current.length !== preview.participantPublicIds.length) throw new DomainError("PAYMENT_INTAKE_NOT_FOUND", "Every payment participant must belong to the tenant", 404);
         requireParticipantAccess(user, current);
         if (preview.decision === "same_payment") {
-            const affected = await inspectPaymentIdentity(ctx, preview.participantPublicIds, tx);
+            const affected = await requireExpandedComponentAccess(ctx, user, preview.participantPublicIds, tx);
             if (affected.activeFinancialEffectCount > 1) throw new DomainError("PAYMENT_IDENTITY_GROUP_FINANCIAL_CONFLICT", "A same-payment decision would merge multiple active postings", 409);
         }
         const snapshotHash = snapshotsHash(current);
