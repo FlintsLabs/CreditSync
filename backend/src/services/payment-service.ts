@@ -259,7 +259,7 @@ export interface CreatePaymentIntakeInput {
     attachmentRequirement?: { expectedCount: number };
 }
 
-export async function createPaymentIntake(ctx: CommandContext, input: CreatePaymentIntakeInput): Promise<any> {
+export async function createPaymentIntake(ctx: CommandContext, input: CreatePaymentIntakeInput, executor?: DbExecutor): Promise<any> {
     const idempotencyKey = ctx.idempotencyKey?.trim();
     if (ctx.idempotencyKey !== undefined && !idempotencyKey) {
         throw new DomainError("INVALID_IDEMPOTENCY_KEY", "Idempotency-Key must not be blank", 400);
@@ -274,7 +274,7 @@ export async function createPaymentIntake(ctx: CommandContext, input: CreatePaym
     const bankReferenceHash = normalizedReference ? hash(normalizedReference) : null;
     const qrPayloadHash = input.qrPayload ? hash(input.qrPayload) : null;
     try {
-        const result = await withPaymentWorkflowTransaction(async (tx) => {
+        const run = async (tx: DbExecutor) => {
             // Duplicate inspection and insertion share the same tenant-first
             // identity lock. This closes the create-vs-preview/post race.
             await duplicateIdentityLock(ctx, { amount: serializeMoney(amount), payerName: input.payerName, receivedAt, bankReferenceHash, qrPayloadHash }, tx);
@@ -319,7 +319,8 @@ export async function createPaymentIntake(ctx: CommandContext, input: CreatePaym
                 },
             });
             return { created, warnings };
-        });
+        };
+        const result = await (executor ? run(executor) : withPaymentWorkflowTransaction(run));
         if ("duplicateResult" in result) return result.duplicateResult;
         const row = result.created;
         return {

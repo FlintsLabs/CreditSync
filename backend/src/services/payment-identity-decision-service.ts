@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { db, type DbExecutor } from "../db";
-import { paymentDuplicateReviewExecutions, paymentDuplicateReviewMemberships, paymentDuplicateReviews, paymentIdentityDecisionPreviews, paymentIdentityDecisions, paymentIntakes, paymentReplacementLineages, users } from "../db/schema";
+import { paymentDuplicateReviewMemberships, paymentIdentityDecisionPreviews, paymentIdentityDecisions, paymentIntakes, paymentReplacementLineages, users } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
 import { lockPaymentWorkflowIdentity, withPaymentWorkflowTransaction } from "./payment-workflow-locks";
 import { canAccessTenantWideData } from "../lib/access";
-import { normalizeBorrowerText } from "./borrower-service";
+import { reviewAuthorizesPair } from "./payment-duplicate-review-service";
 
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const operators = new Set(["owner", "manager", "collector"]);
@@ -81,13 +81,10 @@ async function legacyMembershipAuthorizesPair(tenantId: string, canonicalPublicI
     if (rows.length !== 2) return false;
     const canonical = rows.find((row) => row.publicId === canonicalPublicId)!;
     const candidate = rows.find((row) => row.publicId === candidatePublicId)!;
-    if (canonical.status !== "cancelled" || candidate.status !== "cancelled" || canonical.postedAt !== null || candidate.postedAt !== null || candidate.replacementOfIntakeId !== null || candidate.repostOfIntakeId !== null) return false;
-    if (canonical.amount !== candidate.amount || canonical.receivedAt.getTime() !== candidate.receivedAt.getTime() || !canonical.payerName || !candidate.payerName || normalizeBorrowerText(canonical.payerName) !== normalizeBorrowerText(candidate.payerName)) return false;
-    const membership = await executor.query.paymentDuplicateReviewMemberships.findFirst({ where: and(eq(paymentDuplicateReviewMemberships.tenantId, tenantId), eq(paymentDuplicateReviewMemberships.canonicalPaymentIntakeId, canonical.id), eq(paymentDuplicateReviewMemberships.candidatePaymentIntakeId, candidate.id)) });
-    if (!membership) return false;
-    const review = await executor.query.paymentDuplicateReviews.findFirst({ where: and(eq(paymentDuplicateReviews.tenantId, tenantId), eq(paymentDuplicateReviews.id, membership.reviewId)) });
-    const execution = await executor.query.paymentDuplicateReviewExecutions.findFirst({ where: and(eq(paymentDuplicateReviewExecutions.tenantId, tenantId), eq(paymentDuplicateReviewExecutions.id, membership.executionId), eq(paymentDuplicateReviewExecutions.reviewId, membership.reviewId)) });
-    return !!review && !!execution;
+    // Identity connectivity must use the same live evidence/dependency
+    // validation as replacement duplicate detection. A historical membership
+    // is not a permanent exemption when its candidate later drifts.
+    return reviewAuthorizesPair({ tenantId } as CommandContext, canonical.id, candidate.id, executor);
 }
 
 export async function inspectPaymentIdentity(ctx: CommandContext, participantPublicIds: readonly string[], executor: DbExecutor = db) {

@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.57 - 2026-09-25
+
+### Fixed
+
+- Added disposable PostgreSQL regressions for validated legacy identity membership expansion, posted replacement-descendant merge rejection, resolver-service observation routing, and both lock-barrier orders for overlapping identity decisions.
+
 ## v0.4.56 - 2026-09-25
 
 ### Fixed

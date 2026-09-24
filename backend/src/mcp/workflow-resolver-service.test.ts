@@ -6,12 +6,26 @@ import { borrowers, files, financialEvidenceRequirementAttempts, financialEviden
 import type { CommandContext } from "../services/command-context";
 import { createDisbursementDraft } from "../services/loan-disbursement-service";
 import { createPaymentIntake } from "../services/payment-service";
+import { cancelPaymentIntake, getPaymentCancellationCapability } from "../services/payment-cancellation-service";
+import { executePaymentDuplicateReview, previewPaymentDuplicateReview } from "../services/payment-duplicate-review-service";
 import { resolveWorkflowFromBackend } from "./workflow-resolver-service";
 
 const integrationTest = process.env.TEST_DATABASE_URL ? test : test.skip;
 
 function context(user: { id: number; tenantId: string }): CommandContext {
     return { tenantId: user.tenantId, actorUserId: user.id, actorSource: "mcp", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID() };
+}
+
+async function cancelPayment(user: { id: number; tenantId: string }, publicId: string) {
+    const ctx = context(user);
+    const capability = await getPaymentCancellationCapability(ctx, publicId);
+    await cancelPaymentIntake(ctx, publicId, { reason: "resolver observation regression", idempotencyKey: crypto.randomUUID(), expectedStateHash: capability.stateHash });
+}
+
+async function executeLegacyMembership(user: { id: number; tenantId: string }, canonicalPublicId: string, candidatePublicId: string) {
+    const ctx = context(user);
+    const preview = await previewPaymentDuplicateReview(ctx, { canonicalPaymentIntakePublicId: canonicalPublicId, candidatePaymentIntakePublicIds: [candidatePublicId], reason: "resolver legacy membership", idempotencyKey: crypto.randomUUID() });
+    return executePaymentDuplicateReview(ctx, { duplicateReviewPublicId: preview.duplicateReviewPublicId, previewHash: preview.previewHash, confirmed: true, reason: "resolver legacy membership", idempotencyKey: crypto.randomUUID() });
 }
 
 if (process.env.TEST_DATABASE_URL) {
@@ -133,4 +147,33 @@ integrationTest("does not advertise a ready loan observation when more than twen
     expect(resolved.observed.evidenceReady).toBe(false);
     expect(resolved.status).toBe("blocked");
     expect(resolved.blockers).toContain("EVIDENCE_SUMMARY_OVERFLOW_REQUIRES_REVIEW");
+});
+
+integrationTest("observes executed legacy membership without replacement and routes to fresh identity review after a timestamp change", async () => {
+    const owner = await db.insert(users).values({ tenantId: "resolver-legacy-observation", email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+    const canonical = await createPaymentIntake(context(owner), { amount: "10.00", receivedAt: "2026-09-14T08:00:00.000Z", payerName: "Legacy payer" });
+    const candidate = await createPaymentIntake(context(owner), { amount: "10.00", receivedAt: "2026-09-14T08:00:00.000Z", payerName: "Legacy payer" });
+    await cancelPayment(owner, canonical.publicId);
+    await cancelPayment(owner, candidate.publicId);
+    await executeLegacyMembership(owner, canonical.publicId, candidate.publicId);
+    const candidateRow = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, candidate.publicId) });
+    await db.transaction(async (tx) => {
+        await tx.execute(sql`SET LOCAL session_replication_role = replica`);
+        await tx.update(paymentIntakes).set({ receivedAt: new Date("2026-09-14T08:01:00.000Z") }).where(eq(paymentIntakes.id, candidateRow!.id));
+    });
+    const resolved = await resolveWorkflowFromBackend(context(owner), { intent: "receive_payment", target: { kind: "payment_intake", publicId: canonical.publicId }, attachments: "none" }, "payments", "resolver-catalog", "resolver-workflow");
+    expect(resolved.nextSteps.map((step) => step.toolName)).toContain("payment.identity-decision.preview");
+    expect(resolved.nextSteps.map((step) => step.toolName)).not.toContain("payment.replacement.duplicate-review.preview");
+    expect(resolved.blockers).toContain("PAYMENT_DUPLICATE_REQUIRES_REVIEW");
+});
+
+integrationTest("observes a mutable candidate as requiring identity review instead of advertising legacy review", async () => {
+    const owner = await db.insert(users).values({ tenantId: "resolver-mutable-observation", email: `${crypto.randomUUID()}@example.test`, role: "owner" }).returning().then((rows) => rows[0]!);
+    const canonical = await createPaymentIntake(context(owner), { amount: "10.00", receivedAt: "2026-09-14T08:10:00.000Z", payerName: "Mutable payer" });
+    const candidate = await createPaymentIntake(context(owner), { amount: "10.00", receivedAt: "2026-09-14T08:10:00.000Z", payerName: "Mutable payer" });
+    await cancelPayment(owner, canonical.publicId);
+    const resolved = await resolveWorkflowFromBackend(context(owner), { intent: "receive_payment", target: { kind: "payment_intake", publicId: canonical.publicId }, attachments: "none" }, "payments", "resolver-catalog", "resolver-workflow");
+    expect(resolved.nextSteps.map((step) => step.toolName)).toContain("payment.identity-decision.preview");
+    expect(resolved.blockers).toContain("PAYMENT_DUPLICATE_REQUIRES_REVIEW");
+    expect(candidate.publicId).toBeTruthy();
 });

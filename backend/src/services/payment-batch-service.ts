@@ -801,8 +801,8 @@ export async function decidePaymentBatch(ctx: CommandContext, batchPublicId: str
     });
 }
 export type PreviewPaymentBatchInput = { borrowerPublicId: string; allocations?: Array<ExplicitBatchAllocation>; decisionPublicId?: string };
-export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: string, input: PreviewPaymentBatchInput) {
-    return db.transaction(async (db) => {
+export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: string, input: PreviewPaymentBatchInput, executor?: DbExecutor) {
+    const run = async (db: DbExecutor) => {
     await lockPaymentWorkflowTenant(ctx, db);
     requireId(input.borrowerPublicId, "borrowerPublicId");
     const batchForResolution = await accessibleBatch(ctx, batchPublicId, db);
@@ -964,9 +964,10 @@ export async function previewPaymentBatch(ctx: CommandContext, batchPublicId: st
     })();
     const publicAllocations = solved.allocations.map((allocation) => ({ ...allocation, calculatedComponents: componentsByAllocation.get(allocation)! }));
     return { id: created.publicId, publicId: created.publicId, batchPublicId: batch.publicId, version: created.version, status, stateHash, previewHash, confirmationHash, evidenceReady, allocations: publicAllocations, candidates: solved.candidates, warnings: solved.warnings };
-    });
+    };
+    return executor ? run(executor) : db.transaction(run);
 }
-export type PaymentBatchExecutionOptions = { afterStage?: (stage: "locks" | "preview" | "item" | "all") => Promise<void> | void };
+export type PaymentBatchExecutionOptions = { afterStage?: (stage: "locks" | "preview" | "item" | "all") => Promise<void> | void; executor?: DbExecutor };
 
 export async function executePaymentBatch(ctx: CommandContext, batchPublicId: string, input: { previewPublicId: string; previewHash: string; confirmationHash: string; confirmed: true; idempotencyKey: string }, options: PaymentBatchExecutionOptions = {}) {
     const batch = await accessibleBatch(ctx, batchPublicId);
@@ -1062,7 +1063,7 @@ export async function executePaymentBatch(ctx: CommandContext, batchPublicId: st
         await options.afterStage?.("all");
         return presentExecutionReceipt(await recordOperation(tx, ctx, updated, null, "batch.execute", input.idempotencyKey, requestHash, { batchPublicId: updated.publicId, status: "posted", posted, auditPublicIds: [audit.publicId] }));
     };
-    return withPaymentWorkflowTransaction(run);
+    return options.executor ? run(options.executor) : withPaymentWorkflowTransaction(run);
 }
 
 export type { BatchObligation, BatchSlip };

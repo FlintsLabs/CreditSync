@@ -245,7 +245,7 @@ export async function reviewAuthorizesPair(ctx: CommandContext, canonicalId: num
     const selectedCandidateIds = new Set(reviewCandidates.filter((row) => row.usesCanonicalEvidence).map((row) => currentCandidates.find((candidate) => candidate.id === row.candidatePaymentIntakeId)?.publicId).filter((value): value is string => Boolean(value)));
     if (selectedCandidateIds.size > 0 && (await supplementRows(ctx, [...selectedCandidateIds].map((id) => currentCandidates.find((candidate) => candidate.publicId === id)!.id), executor)).length > 0) return false;
     const evidence = await participantEvidenceHash(ctx, canonical, currentCandidates, selectedCandidateIds, executor).catch(() => null);
-    if (!evidence || (selectedCandidateIds.size > 0 ? !hasExactCanonicalEvidence(evidence.canonicalEvidence) : evidence.canonicalEvidence.expected === 0 || evidence.canonicalEvidence.ready.length !== evidence.canonicalEvidence.expected) || canonicalSnapshot(canonical) !== review.canonicalStateHash || evidence.hash !== review.evidenceHash) return false;
+    if (!evidence || (selectedCandidateIds.size > 0 ? !hasExactCanonicalEvidence(evidence.canonicalEvidence) : evidence.canonicalEvidence.expected > 0 && evidence.canonicalEvidence.ready.length !== evidence.canonicalEvidence.expected) || canonicalSnapshot(canonical) !== review.canonicalStateHash || evidence.hash !== review.evidenceHash) return false;
     const currentHashes = currentCandidates.map(candidateSnapshot).sort();
     const storedHashes = reviewCandidates.map((row) => row.candidateStateHash).sort();
     if (currentHashes.length !== storedHashes.length || currentHashes.some((value, index) => value !== storedHashes[index])) return false;
