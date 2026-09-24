@@ -12,6 +12,7 @@
 ### Fixed
 
 - Hardened payment identity recovery against transitive superseding decisions, replacement-lineage unions, active-posting bypasses, and resolver arguments that did not match the closed MCP UUID-array schema.
+- Included evidence state in cancellation capability hashes so a finalize/cancel race fails closed with a stale-state conflict.
 
 ## v0.4.54 - 2026-09-23
 

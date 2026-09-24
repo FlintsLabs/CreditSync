@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db, type DbExecutor } from "../db";
-import { paymentBatchItems, paymentBatches, paymentIntakeCancellations, paymentIntakes, paymentMatchProposals, paymentReconciliationProposals, users } from "../db/schema";
+import { paymentBatchItems, paymentBatches, paymentEvidence, paymentIntakeCancellations, paymentIntakes, paymentMatchProposals, paymentReconciliationProposals, users } from "../db/schema";
 import { canAccessTenantWideData } from "../lib/access";
 import { createAuditLog } from "../lib/audit-log";
 import { lockPaymentBorrowers, paymentIntakeBorrowerIds } from "./payment-chronology-service";
@@ -64,7 +64,8 @@ async function assertCancellationDependencies(tx: Executor, ctx: CommandContext,
 async function snapshot(executor: Executor, row: Intake) {
     const proposal = await executor.query.paymentMatchProposals.findFirst({ where: and(eq(paymentMatchProposals.tenantId, row.tenantId), eq(paymentMatchProposals.paymentIntakeId, row.id)), orderBy: [desc(paymentMatchProposals.version)] });
     const membership = await executor.select({ batchPublicId: paymentBatches.publicId, revision: paymentBatches.version }).from(paymentBatchItems).innerJoin(paymentBatches, and(eq(paymentBatches.tenantId, paymentBatchItems.tenantId), eq(paymentBatches.id, paymentBatchItems.batchId))).where(and(eq(paymentBatchItems.tenantId, row.tenantId), eq(paymentBatchItems.paymentIntakeId, row.id))).limit(1);
-    const value = { status: row.status, updatedAt: row.updatedAt.toISOString(), proposal: proposal ? { version: proposal.version, status: proposal.status, proposalHash: proposal.proposalHash } : null, batch: membership[0] ?? null };
+    const evidence = await executor.select({ id: paymentEvidence.id, status: paymentEvidence.status, finalizedAt: paymentEvidence.finalizedAt, fileId: paymentEvidence.fileId, updatedAt: paymentEvidence.updatedAt }).from(paymentEvidence).where(and(eq(paymentEvidence.tenantId, row.tenantId), eq(paymentEvidence.paymentIntakeId, row.id))).orderBy(paymentEvidence.id);
+    const value = { status: row.status, updatedAt: row.updatedAt.toISOString(), proposal: proposal ? { version: proposal.version, status: proposal.status, proposalHash: proposal.proposalHash } : null, batch: membership[0] ?? null, evidence: evidence.map((item) => ({ id: item.id, status: item.status, finalizedAt: item.finalizedAt?.toISOString() ?? null, fileId: item.fileId, updatedAt: item.updatedAt.toISOString() })) };
     return { hash: createHash("sha256").update(JSON.stringify(value)).digest("hex"), batch: membership[0]?.batchPublicId ?? null };
 }
 function result(row: Intake, cancellationPublicId: string, auditPublicId: string, correlationId: string, reason: string, cancelledAt: Date) {

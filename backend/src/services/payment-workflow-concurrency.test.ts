@@ -1,13 +1,15 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { and, eq, sql } from "drizzle-orm";
+import postgres from "postgres";
 import { db } from "../db";
-import { borrowers, loanSchedules, loans, paymentEvidence, paymentIntakes, transactions, users } from "../db/schema";
+import { auditLogs, borrowers, loanSchedules, loans, paymentBatchAllocations, paymentEvidence, paymentIntakes, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import { cancelPaymentIntake, getPaymentCancellationCapability } from "./payment-cancellation-service";
 import { createPaymentIntake, finalizePaymentEvidence, postPayment, preparePaymentEvidence, previewPaymentMatch, type EvidenceStorageGateway } from "./payment-service";
 import { addPaymentBatchItem, createPaymentBatch, executePaymentBatch, previewPaymentBatch } from "./payment-batch-service";
 import { executePaymentDuplicateReview, previewPaymentDuplicateReview } from "./payment-duplicate-review-service";
 import { createPaymentReplacement, inspectPaymentReplacement } from "./payment-replacement-service";
+import { lockPaymentWorkflowTenant } from "./payment-workflow-locks";
 
 const integration = process.env.TEST_DATABASE_URL ? test : test.skip;
 const ITERATIONS = 20;
@@ -55,11 +57,66 @@ async function bounded<T>(promise: Promise<T>) {
     } finally { if (timer) clearTimeout(timer); }
 }
 
-function fakeStorage(entered: Deferred<void>, release: Promise<void>): EvidenceStorageGateway {
+function fakeStorage(tenantId: string, intakePublicId: string, entered: Deferred<void>, release: Promise<void>): EvidenceStorageGateway {
     return {
         preparePut: async () => ({ uploadUrl: "https://storage.invalid/concurrency", expiresAt: new Date(Date.now() + 60_000) }),
-        head: async () => { entered.resolve(); await release; return { exists: true, contentType: "image/png", contentLength: 8, checksumSha256: "a".repeat(64), metadata: { tenant: "", intake: "" } }; },
+        head: async () => { entered.resolve(); await release; return { exists: true, contentType: "image/png", contentLength: 8, checksumSha256: "a".repeat(64), metadata: { tenant: tenantId, intake: intakePublicId } }; },
     };
+}
+
+async function waitForTenantAdvisoryLock(holderPid: number, connection: ReturnType<typeof postgres>) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        const waiting = await connection<{ waiting: boolean }[]>`
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_locks waiting
+                JOIN pg_stat_activity activity ON activity.pid = waiting.pid
+                WHERE waiting.locktype = 'advisory'
+                  AND waiting.granted = false
+                  AND activity.wait_event_type = 'Lock'
+                  AND waiting.pid <> ${holderPid}
+            ) AS waiting`;
+        if (waiting[0]?.waiting) return;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    throw new Error(`second transaction did not wait for tenant advisory lock within ${timeoutMs}ms`);
+}
+
+/**
+ * Start the second real service first, prove it is blocked on the tenant
+ * advisory lock from a third connection, then execute the requested winner in
+ * the holder transaction. This is deliberately independent of Promise order.
+ */
+async function forceTransactionOrder(f: Seed, intakePublicId: string, first: "cancel" | "post", cancelInput: { reason: string; idempotencyKey: string; expectedStateHash: string }, proposalPublicId: string) {
+    const observer = postgres(process.env.TEST_DATABASE_URL!, { max: 1 });
+    const holderReady = deferred<void>();
+    const secondStarted = deferred<void>();
+    const second = (async () => {
+        await holderReady.promise;
+        secondStarted.resolve();
+        return first === "cancel"
+            ? postPayment(ctx(f.actor), intakePublicId, { proposalPublicId }).catch((error) => { throw error; })
+            : cancelPaymentIntake(ctx(f.actor), intakePublicId, cancelInput).catch((error) => { throw error; });
+    })();
+    const holder = db.transaction(async (tx) => {
+        await lockPaymentWorkflowTenant(f.actor, tx);
+        const holderPid = Number((await tx.execute(sql`SELECT pg_backend_pid() AS pid`))[0]?.pid);
+        holderReady.resolve();
+        await secondStarted.promise;
+        await waitForTenantAdvisoryLock(holderPid, observer);
+        try {
+            return first === "cancel"
+                ? await cancelPaymentIntake(ctx(f.actor), intakePublicId, cancelInput, tx)
+                : await postPayment(ctx(f.actor), intakePublicId, { proposalPublicId }, tx);
+        } catch (error) {
+            return error;
+        }
+    });
+    const holderResult = await bounded(holder);
+    const secondResult = await bounded(second).catch((error) => error);
+    await observer.end({ timeout: 5 });
+    return { holderResult, secondResult };
 }
 
 async function pendingEvidence(f: Seed) {
@@ -92,12 +149,14 @@ describe("payment workflow DB concurrency regressions", () => {
             for (const first of ["cancel", "post"] as const) {
                 const f = await seed();
                 const { intake, preview } = await readyPayment(f);
-                const cancel = cancellationInput(f.actor, intake.publicId).then((input) => cancelPaymentIntake(ctx(f.actor), intake.publicId, input));
-                const post = postPayment(ctx(f.actor), intake.publicId, { proposalPublicId: preview.publicId });
-                const outcomes = await bounded(Promise.allSettled(first === "cancel" ? [cancel, post] : [post, cancel]));
-                expect(outcomes.some((item) => item.status === "fulfilled")).toBe(true);
+                const cancel = await cancellationInput(f.actor, intake.publicId);
+                const outcomes = await forceTransactionOrder(f, intake.publicId, first, cancel, preview.publicId);
+                const errors = [outcomes.holderResult, outcomes.secondResult].filter((value): value is Error => value instanceof Error);
+                expect(errors.length).toBe(1);
+                expect(errors[0]).toMatchObject({ code: first === "cancel" ? "PAYMENT_CANCEL_NOT_ALLOWED" : "PAYMENT_CANCEL_STALE" });
                 await assertNoPartialPayment(f, intake.publicId);
-                expect((await db.select().from(transactions).where(eq(transactions.tenantId, f.actor.tenantId))).length).toBeLessThanOrEqual(1);
+                const rows = await db.select().from(transactions).where(eq(transactions.tenantId, f.actor.tenantId));
+                expect(rows).toHaveLength(first === "cancel" ? 0 : 1);
             }
         }
     });
@@ -112,16 +171,26 @@ describe("payment workflow DB concurrency regressions", () => {
                 // its DB transition until the adapter confirms that both sides can proceed.
                 const entered = deferred<void>();
                 const release = deferred<void>();
-                const storage = fakeStorage(entered, release.promise);
+                const storage = fakeStorage(f.actor.tenantId, pending.intake.publicId, entered, release.promise);
                 const finalize = finalizePaymentEvidence(ctx(f.actor), pending.intake.publicId, pending.evidence.publicId, storage);
                 await bounded(entered.promise);
-                const cancel = cancellationInput(f.actor, pending.intake.publicId).then((input) => cancelPaymentIntake(ctx(f.actor), pending.intake.publicId, input));
-                if (first === "cancel") await bounded(cancel);
-                release.resolve();
-                const outcomes = await bounded(Promise.allSettled(first === "finalize" ? [finalize, cancel] : [cancel, finalize]));
-                expect(outcomes.some((item) => item.status === "fulfilled")).toBe(true);
+                const cancelInput = await cancellationInput(f.actor, pending.intake.publicId);
+                if (first === "cancel") {
+                    const cancel = cancelPaymentIntake(ctx(f.actor), pending.intake.publicId, cancelInput);
+                    const cancelResult = await bounded(cancel);
+                    release.resolve();
+                    const finalizeResult = await bounded(finalize).catch((error) => error);
+                    expect(cancelResult.status).toBe("cancelled");
+                    expect(finalizeResult).toMatchObject({ code: "PAYMENT_INTAKE_IMMUTABLE" });
+                } else {
+                    release.resolve();
+                    const finalizeResult = await bounded(finalize);
+                    const cancelResult = await bounded(cancelPaymentIntake(ctx(f.actor), pending.intake.publicId, cancelInput)).catch((error) => error);
+                    expect(finalizeResult.status).toBe("ready");
+                    expect(cancelResult).toMatchObject({ code: "PAYMENT_CANCEL_STALE" });
+                }
                 const evidence = await db.query.paymentEvidence.findFirst({ where: eq(paymentEvidence.publicId, pending.evidence.publicId) });
-                expect(evidence?.status).toMatch(/^(pending|ready)$/);
+                expect(evidence?.status).toBe(first === "finalize" ? "ready" : "pending");
             }
         }
     });
@@ -141,10 +210,16 @@ describe("payment workflow DB concurrency regressions", () => {
             const nextPreview = previewPaymentMatch(ctx(f.actor), intake.publicId, { allocations: [{ borrowerPublicId: f.borrower.publicId, loanPublicId: f.loan.publicId, schedulePublicId: f.schedule.publicId, amount: "10.00" }] });
             const post = executePaymentBatch(ctx(f.actor), batch.publicId, { previewPublicId: batchPreview.publicId, previewHash: batchPreview.previewHash, confirmationHash: batchPreview.confirmationHash, confirmed: true, idempotencyKey: crypto.randomUUID() });
             const outcomes = await bounded(Promise.allSettled([nextPreview, post]));
-            expect(outcomes.some((item) => item.status === "fulfilled")).toBe(true);
+            if (outcomes[1]?.status === "fulfilled") expect(outcomes[1].value.status).toBe("posted");
+            else expect(outcomes[1]?.reason).toMatchObject({ code: "BATCH_CONFIRMATION_STALE" });
+            if (outcomes[0]?.status === "rejected") expect(outcomes[0].reason).toMatchObject({ code: "PAYMENT_INTAKE_IMMUTABLE" });
+            else expect(outcomes[0]?.value.status).toBe("ready");
             const finalIntake = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, intake.publicId) });
             expect(finalIntake?.status).toMatch(/^(ready|posted)$/);
-            expect((await db.select().from(transactions).where(eq(transactions.tenantId, f.actor.tenantId))).length).toBeLessThanOrEqual(1);
+            const ledger = await db.select().from(transactions).where(eq(transactions.tenantId, f.actor.tenantId));
+            expect(ledger).toHaveLength(finalIntake?.status === "posted" ? 1 : 0);
+            expect(await db.select().from(paymentBatchAllocations).where(eq(paymentBatchAllocations.tenantId, f.actor.tenantId))).toHaveLength(1);
+            expect((await db.select().from(auditLogs).where(eq(auditLogs.tenantId, f.actor.tenantId))).length).toBeGreaterThan(0);
         }
     });
 

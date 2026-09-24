@@ -23,6 +23,27 @@ describe("workflow resolver policy", () => {
             decision: "same_payment", reason: "reviewed", idempotencyKey: "resolver-test",
         }).success).toBe(true);
     });
+
+    test.each([
+        ["membership-only", { duplicateReviewRequired: true, identityDecisionRequired: true }],
+        ["sixty-second mismatch", { duplicateReviewRequired: true, identityDecisionRequired: true }],
+        ["mutable candidate", { duplicateReviewRequired: true, identityDecisionRequired: true }],
+    ])("routes %s identity observations to a legal typed decision step", (_name, flags) => {
+        const second = "0198c481-3e2b-7000-8000-000000000002";
+        const resolved = resolveWorkflowPolicy(
+            { intent: "receive_payment", profile: "full", target, attachments: "none" },
+            { targetAvailable: true, identityResolved: true, state: "cancelled", evidenceReady: true, duplicateBlockerPublicIds: [second], ...flags },
+            { profile: "full", catalogVersion },
+        );
+        const next = resolved.nextSteps[0]!;
+        expect(resolved.status).toBe("next_step");
+        expect(next.toolName).toBe("payment.identity-decision.preview");
+        expect(Array.isArray(next.arguments.participantPaymentIntakePublicIds)).toBe(true);
+        expect(toolInputSchemas["payment.identity-decision.preview"].safeParse({
+            ...next.arguments, decision: "same_payment", reason: "identity decision", idempotencyKey: "resolver-typed-values",
+        }).success).toBe(true);
+        expect(resolved.nextSteps.some((step) => step.toolName === "payment.replacement.duplicate-review.preview")).toBe(false);
+    });
     test("does not route scheduled close-out to floating settlement", () => {
         const resolved = resolveWorkflowPolicy({ intent: "close_loan", profile: "loans", target: { kind: "loan", publicId: target.publicId }, attachments: "none" }, { targetAvailable: true, identityResolved: true, state: "mutable", loanType: "scheduled", evidenceReady: true }, { ...base, profile: "loans" });
         expect(resolved.nextSteps.some((step) => step.toolName === "loan.settlement.preview")).toBe(false);
