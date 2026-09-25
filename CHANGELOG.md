@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.61 - 2026-09-25
+
+### Fixed
+
+- Allow independently completed recovery groups to merge when every incomplete historical member has its own explicitly authorized coverage, while preserving single-post protection.
+
 ## v0.4.60 - 2026-09-25
 
 ### Fixed

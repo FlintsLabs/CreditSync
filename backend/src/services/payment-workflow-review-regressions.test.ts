@@ -145,3 +145,21 @@ integration("review: mutable target duplicate resolves to identity review instea
     const result = await resolveWorkflowFromBackend(context(f.actor), { intent: "receive_payment", target: { kind: "payment_intake", publicId: a.publicId }, attachments: "none" }, "payments", "review-catalog", "review-workflow");
     expect(result.nextSteps.map((step) => step.toolName)).toContain("payment.identity-decision.preview");
 });
+
+integration("review: two independently recovered groups can merge without losing per-source evidence coverage", async () => {
+    await reset(); const f = await fixture(2);
+    const recoveredIds: string[] = [];
+    for (const minute of [0, 1]) {
+        const source = await createPaymentIntake(context(f.actor), { amount: "10.00", payerName: "Identity payer", receivedAt: `2026-09-24T03:0${minute}:00Z`, attachmentRequirement: { expectedCount: 1 } });
+        await cancelIntake(f, source.publicId);
+        const preview = await previewPaymentEvidenceRecovery(context(f.actor), { sourcePaymentIntakePublicId: source.publicId, reason: "independent recovery", expectedCount: 1, reuseEvidence: false, idempotencyKey: crypto.randomUUID() });
+        const child = await executePaymentEvidenceRecovery(context(f.actor), { recoveryPreviewPublicId: preview.recoveryPreviewPublicId, previewHash: preview.previewHash, confirmed: true, reason: "independent recovery", idempotencyKey: crypto.randomUUID() });
+        await attachReady(f, child.recoveryIntakePublicId);
+        recoveredIds.push(child.recoveryIntakePublicId);
+    }
+    await decide(f, recoveredIds, "same_payment");
+    const matched = await matchReady(f, 0, recoveredIds[0]!);
+    await postPayment(context(f.actor), recoveredIds[0]!, { proposalPublicId: matched.publicId });
+    await expect(matchReady(f, 1, recoveredIds[1]!)).rejects.toMatchObject({ code: "PAYMENT_DUPLICATE_REQUIRES_REVIEW" });
+    expect(await db.select().from(transactions)).toHaveLength(1);
+});

@@ -46,15 +46,14 @@ async function requireParticipantEvidenceCoverage(ctx: CommandContext, rows: Arr
     // coverage rule.  Every async authorization is resolved explicitly: a
     // Promise must never be treated as a truthy authorization.  A canonical
     // that is itself incomplete can never authorize another participant.
-    const canonicalCoverage = (await Promise.all(rows.map(async (canonical, canonicalIndex) => {
-        if (!states[canonicalIndex]!.complete) return false;
-        const candidateChecks = await Promise.all(incomplete.map(async (candidate) => {
-            if (candidate.id === canonical.id) return true;
+    const completeCanonicals = rows.filter((_row, index) => states[index]!.complete);
+    const canonicalCoverage = (await Promise.all(incomplete.map(async (candidate) => {
+        const authorizations = await Promise.all(completeCanonicals.map(async (canonical) => {
             if (await reviewAuthorizesPair(ctx, canonical.id, candidate.id, executor)) return true;
             return recoveryCoverageAuthorizesPair(ctx, canonical.id, candidate.id, executor);
         }));
-        return candidateChecks.every(Boolean);
-    }))).some(Boolean);
+        return authorizations.some(Boolean);
+    }))).every(Boolean);
     if (!canonicalCoverage) throw new DomainError("PAYMENT_IDENTITY_EVIDENCE_INCOMPLETE", "Every same-payment participant needs complete finalized evidence, or an existing audited canonical coverage rule", 409, {
         participantPublicIds: incomplete.map((row) => row.publicId),
         expectedSlots: incomplete.map((row, index) => ({ publicId: row.publicId, expected: states[rows.indexOf(row)]!.expected, ready: states[rows.indexOf(row)]!.ready })),
