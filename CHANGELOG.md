@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.62 - 2026-09-25
+
+### Added
+
+- Documented the proposed recoverable payment workspace, unified impact previews, evidence-slot retries, historical correction, intermediary routing, bounded locking, and end-to-end acceptance criteria; documentation only, with no runtime or financial changes.
+
 ## v0.4.61 - 2026-09-25
 
 ### Fixed
