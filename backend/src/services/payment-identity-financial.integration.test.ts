@@ -2,7 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { db } from "../db";
 import postgres from "postgres";
-import { auditLogs, borrowers, files, loanSchedules, loans, paymentEvidence, paymentIntakes, paymentMatchAllocations, paymentIdentityDecisions, transactions, users } from "../db/schema";
+import { auditLogs, borrowers, files, financialEvidenceRequirements, loanSchedules, loans, paymentEvidence, paymentIntakes, paymentMatchAllocations, paymentIdentityDecisions, transactions, users } from "../db/schema";
 import type { CommandContext } from "./command-context";
 import { createPaymentIntake, postPayment, previewPaymentMatch } from "./payment-service";
 import { cancelPaymentIntake, getPaymentCancellationCapability } from "./payment-cancellation-service";
@@ -97,6 +97,38 @@ async function readyEvidence(f: Fixture, intakeId: number) {
 }
 
 describe("payment identity decisions preserve financial invariants", () => {
+    integration("fails closed for multiple incomplete participant slots without a partial decision, audit, or ledger write", async () => {
+        await reset();
+        const f = await fixture(2);
+        const first = await createRaw(f, 0, "2026-09-24T03:00:00.000Z");
+        const second = await createRaw(f, 1, "2026-09-24T03:01:00.000Z");
+        const firstRow = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, first.publicId) });
+        const secondRow = await db.query.paymentIntakes.findFirst({ where: eq(paymentIntakes.publicId, second.publicId) });
+        await db.insert(financialEvidenceRequirements).values([
+            { tenantId: f.actor.tenantId, paymentIntakeId: firstRow!.id, expectedCount: 2, source: "incomplete-regression", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), createdByUserId: f.actor.id },
+            { tenantId: f.actor.tenantId, paymentIntakeId: secondRow!.id, expectedCount: 2, source: "incomplete-regression", requestId: crypto.randomUUID(), correlationId: crypto.randomUUID(), createdByUserId: f.actor.id },
+        ]);
+        await db.insert(paymentEvidence).values([
+            { tenantId: f.actor.tenantId, paymentIntakeId: firstRow!.id, status: "pending", evidenceType: "slip", evidenceHash: crypto.randomUUID(), createdByUserId: f.actor.id, updatedByUserId: f.actor.id },
+            { tenantId: f.actor.tenantId, paymentIntakeId: firstRow!.id, status: "rejected", evidenceType: "slip", evidenceHash: crypto.randomUUID(), createdByUserId: f.actor.id, updatedByUserId: f.actor.id },
+            { tenantId: f.actor.tenantId, paymentIntakeId: secondRow!.id, status: "pending", evidenceType: "slip", evidenceHash: crypto.randomUUID(), createdByUserId: f.actor.id, updatedByUserId: f.actor.id },
+            { tenantId: f.actor.tenantId, paymentIntakeId: secondRow!.id, status: "rejected", evidenceType: "slip", evidenceHash: crypto.randomUUID(), createdByUserId: f.actor.id, updatedByUserId: f.actor.id },
+        ]);
+        const preview = await previewPaymentIdentityDecision(context(f.actor), { participantPaymentIntakePublicIds: [first.publicId, second.publicId], decision: "same_payment", reason: "incomplete participants must stop", idempotencyKey: "incomplete-participants-preview" });
+        const before = await Promise.all([
+            db.select().from(paymentIdentityDecisions).where(eq(paymentIdentityDecisions.tenantId, f.actor.tenantId)),
+            db.select().from(auditLogs).where(eq(auditLogs.tenantId, f.actor.tenantId)),
+            db.select().from(transactions).where(eq(transactions.tenantId, f.actor.tenantId)),
+        ]);
+        await expect(executePaymentIdentityDecision(context(f.actor), { identityDecisionPreviewPublicId: preview.identityDecisionPreviewPublicId, previewHash: preview.previewHash, confirmed: true, reason: "incomplete participants must stop", idempotencyKey: "incomplete-participants-execute" })).rejects.toMatchObject({ code: "PAYMENT_IDENTITY_EVIDENCE_INCOMPLETE" });
+        const after = await Promise.all([
+            db.select().from(paymentIdentityDecisions).where(eq(paymentIdentityDecisions.tenantId, f.actor.tenantId)),
+            db.select().from(auditLogs).where(eq(auditLogs.tenantId, f.actor.tenantId)),
+            db.select().from(transactions).where(eq(transactions.tenantId, f.actor.tenantId)),
+        ]);
+        expect(after.map((rows) => rows.length)).toEqual(before.map((rows) => rows.length));
+    });
+
     integration("same-payment receipts six minutes apart block the second real post without partial effects", async () => {
         await reset();
         const f = await fixture(2);

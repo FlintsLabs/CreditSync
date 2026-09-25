@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { db, type DbExecutor } from "../db";
-import { financialEvidenceRequirements, paymentDuplicateReviewMemberships, paymentIdentityDecisionPreviews, paymentIdentityDecisions, paymentIntakes, paymentReplacementLineages, users } from "../db/schema";
+import { financialEvidenceRequirements, paymentDuplicateReviewMemberships, paymentEvidenceRecoveryExecutions, paymentIdentityDecisionPreviews, paymentIdentityDecisions, paymentIntakes, paymentReplacementLineages, users } from "../db/schema";
 import { createAuditLog } from "../lib/audit-log";
 import type { CommandContext } from "./command-context";
 import { DomainError } from "./domain-error";
@@ -43,13 +43,48 @@ async function requireParticipantEvidenceCoverage(ctx: CommandContext, rows: Arr
     const incomplete = rows.filter((_row, index) => !states[index]!.complete);
     if (!incomplete.length) return;
     // The only permitted exception is an already executed, audited canonical
-    // coverage rule.  It is checked live, so later evidence drift cannot
-    // silently authorize a posting.
-    const canonicalCoverage = rows.some((canonical) => incomplete.every((candidate) => candidate.id === canonical.id || reviewAuthorizesPair(ctx, canonical.id, candidate.id, executor)));
+    // coverage rule.  Every async authorization is resolved explicitly: a
+    // Promise must never be treated as a truthy authorization.  A canonical
+    // that is itself incomplete can never authorize another participant.
+    const canonicalCoverage = (await Promise.all(rows.map(async (canonical, canonicalIndex) => {
+        if (!states[canonicalIndex]!.complete) return false;
+        const candidateChecks = await Promise.all(incomplete.map(async (candidate) => {
+            if (candidate.id === canonical.id) return true;
+            if (await reviewAuthorizesPair(ctx, canonical.id, candidate.id, executor)) return true;
+            return recoveryCoverageAuthorizesPair(ctx, canonical.id, candidate.id, executor);
+        }));
+        return candidateChecks.every(Boolean);
+    }))).some(Boolean);
     if (!canonicalCoverage) throw new DomainError("PAYMENT_IDENTITY_EVIDENCE_INCOMPLETE", "Every same-payment participant needs complete finalized evidence, or an existing audited canonical coverage rule", 409, {
         participantPublicIds: incomplete.map((row) => row.publicId),
         expectedSlots: incomplete.map((row, index) => ({ publicId: row.publicId, expected: states[rows.indexOf(row)]!.expected, ready: states[rows.indexOf(row)]!.ready })),
     });
+}
+
+async function recoveryCoverageAuthorizesPair(ctx: CommandContext, canonicalId: number, incompleteId: number, executor: DbExecutor) {
+    // A cancelled source may remain incomplete forever.  It is covered only
+    // when this exact canonical is its immutable, complete recovery successor
+    // and the append-only recovery execution receipt exists.  Lineage alone
+    // is intentionally insufficient: this is the explicit audited recovery
+    // rule, not an arbitrary ancestry exemption.
+    const lineage = await executor.query.paymentReplacementLineages.findFirst({ where: and(
+        eq(paymentReplacementLineages.tenantId, ctx.tenantId),
+        eq(paymentReplacementLineages.sourcePaymentIntakeId, incompleteId),
+        eq(paymentReplacementLineages.replacementPaymentIntakeId, canonicalId),
+    ) });
+    if (!lineage) return false;
+    const receipt = await executor.query.paymentEvidenceRecoveryExecutions.findFirst({ where: and(
+        eq(paymentEvidenceRecoveryExecutions.tenantId, ctx.tenantId),
+        eq(paymentEvidenceRecoveryExecutions.lineageId, lineage.id),
+    ) });
+    if (!receipt) return false;
+    const [source, canonical] = await Promise.all([
+        executor.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, incompleteId)) }),
+        executor.query.paymentIntakes.findFirst({ where: and(eq(paymentIntakes.tenantId, ctx.tenantId), eq(paymentIntakes.id, canonicalId)) }),
+    ]);
+    if (!source || !canonical || source.status !== "cancelled" || source.postedAt !== null || source.repostOfIntakeId !== null || source.replacementOfIntakeId !== null) return false;
+    const canonicalState = await participantEvidenceComplete(ctx, canonical, executor);
+    return canonicalState.complete;
 }
 
 async function effectiveDecisions(tenantId: string, executor: DbExecutor) {

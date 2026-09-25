@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.59 - 2026-09-25
+
+### Fixed
+
+- Fixed payment identity evidence coverage to await every audited authorization, reject incomplete self-authorizing canonicals, and permit only receipt-backed recovery successors to cover an immutable incomplete source; added a no-partial-write database regression.
+
 ## v0.4.58 - 2026-09-25
 
 ### Fixed
